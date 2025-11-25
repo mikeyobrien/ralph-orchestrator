@@ -1,5 +1,6 @@
 # ABOUTME: Claude SDK adapter implementation
 # ABOUTME: Provides integration with Anthropic's Claude via Python SDK
+# ABOUTME: Supports inheriting user's Claude Code settings (MCP servers, CLAUDE.md, etc.)
 
 """Claude SDK adapter for Ralph Orchestrator."""
 
@@ -29,7 +30,8 @@ class ClaudeAdapter(ToolAdapter):
     # Default max buffer size: 10MB (handles large screenshots from chrome-devtools-mcp)
     DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024
 
-    def __init__(self, verbose: bool = False, max_buffer_size: int = None):
+    def __init__(self, verbose: bool = False, max_buffer_size: int = None,
+                 inherit_user_settings: bool = True, cli_path: str = None):
         super().__init__("claude")
         self.sdk_available = CLAUDE_SDK_AVAILABLE
         self._system_prompt = None
@@ -39,33 +41,49 @@ class ClaudeAdapter(ToolAdapter):
         self._enable_web_search = True  # Enable WebSearch by default
         self._max_buffer_size = max_buffer_size or self.DEFAULT_MAX_BUFFER_SIZE
         self.verbose = verbose
+        # Enable loading user's Claude Code settings (including MCP servers) by default
+        self._inherit_user_settings = inherit_user_settings
+        # Optional path to user's Claude Code CLI (uses bundled CLI if not specified)
+        self._cli_path = cli_path
     
     def check_availability(self) -> bool:
         """Check if Claude SDK is available and properly configured."""
         # Claude Code SDK works without API key - it uses the local environment
         return CLAUDE_SDK_AVAILABLE
     
-    def configure(self, 
+    def configure(self,
                   system_prompt: Optional[str] = None,
                   allowed_tools: Optional[list] = None,
                   disallowed_tools: Optional[list] = None,
                   enable_all_tools: bool = False,
-                  enable_web_search: bool = True):
+                  enable_web_search: bool = True,
+                  inherit_user_settings: Optional[bool] = None,
+                  cli_path: Optional[str] = None):
         """Configure the Claude adapter with custom options.
-        
+
         Args:
             system_prompt: Custom system prompt for Claude
             allowed_tools: List of allowed tools for Claude to use (if None and enable_all_tools=True, all tools are enabled)
             disallowed_tools: List of disallowed tools
             enable_all_tools: If True and allowed_tools is None, enables all native Claude tools
             enable_web_search: If True, explicitly enables WebSearch tool (default: True)
+            inherit_user_settings: If True, load user's Claude Code settings including MCP servers (default: True)
+            cli_path: Path to user's Claude Code CLI (uses bundled CLI if not specified)
         """
         self._system_prompt = system_prompt
         self._allowed_tools = allowed_tools
         self._disallowed_tools = disallowed_tools
         self._enable_all_tools = enable_all_tools
         self._enable_web_search = enable_web_search
-        
+
+        # Update user settings inheritance if specified
+        if inherit_user_settings is not None:
+            self._inherit_user_settings = inherit_user_settings
+
+        # Update CLI path if specified
+        if cli_path is not None:
+            self._cli_path = cli_path
+
         # If web search is enabled and we have an allowed tools list, add WebSearch to it
         if enable_web_search and allowed_tools is not None and 'WebSearch' not in allowed_tools:
             self._allowed_tools = allowed_tools + ['WebSearch']
@@ -172,6 +190,22 @@ class ClaudeAdapter(ToolAdapter):
             options_dict['max_buffer_size'] = max_buffer_size
             if self.verbose:
                 logger.info(f"Max buffer size: {max_buffer_size} bytes")
+
+            # Configure setting sources to inherit user's Claude Code configuration
+            # This enables MCP servers, CLAUDE.md files, and other user settings
+            inherit_user_settings = kwargs.get('inherit_user_settings', self._inherit_user_settings)
+            if inherit_user_settings:
+                # Load user, project, and local settings (includes MCP servers)
+                options_dict['setting_sources'] = ['user', 'project', 'local']
+                if self.verbose:
+                    logger.info("Inheriting user's Claude Code settings (MCP servers, CLAUDE.md, etc.)")
+
+            # Optional: use user's installed Claude Code CLI instead of bundled
+            cli_path = kwargs.get('cli_path', self._cli_path)
+            if cli_path:
+                options_dict['cli_path'] = cli_path
+                if self.verbose:
+                    logger.info(f"Using custom Claude CLI: {cli_path}")
 
             # Create options
             options = ClaudeAgentOptions(**options_dict)
