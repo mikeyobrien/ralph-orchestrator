@@ -231,8 +231,29 @@
   - Validation: permission modes, timeout, agent_command paths, agent_args
 - All tests pass (252 total ACP tests)
 
-### Next iteration:
-**Step 10: Add CLI integration** - Expose ACP adapter through Ralph CLI with `-a acp`, `--acp-agent`, and `--acp-permission-mode` arguments.
+### Step 10: CLI integration (COMPLETED - Dec 13, 2025)
+- Added `ACP` to `AgentType` enum in `main.py`
+- Updated CLI argument parser in `__main__.py`:
+  - Added `'acp'` to agent choices (`-a acp`)
+  - Added `--acp-agent` argument for specifying ACP agent binary (default: gemini)
+  - Added `--acp-permission-mode` argument with choices: auto_approve, deny_all, allowlist, interactive
+- Updated `agent_map` and `tool_name_map` to include 'acp' mappings
+- Updated `orchestrator.py`:
+  - Added import for `ACPAdapter`
+  - Added ACPAdapter initialization in `_initialize_adapters()`
+- Created `tests/test_acp_cli.py` with 13 tests covering:
+  - Agent choice validation
+  - AgentType enum verification
+  - CLI argument parsing for --acp-agent and --acp-permission-mode
+  - Agent/tool name mapping
+  - Orchestrator adapter initialization
+  - Auto-detection checks
+  - CLI config overrides
+  - Main entry point parsing
+  - Init template verification
+- All tests pass (311 total ACP + config tests, 265 ACP-only)
+
+**Next iteration**: Step 11 - Integration testing with Gemini CLI.
 
 ---
 

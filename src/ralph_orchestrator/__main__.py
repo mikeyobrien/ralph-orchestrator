@@ -469,9 +469,22 @@ Examples:
         
         p.add_argument(
             "-a", "--agent",
-            choices=["claude", "q", "gemini", "auto"],
+            choices=["claude", "q", "gemini", "acp", "auto"],
             default="auto",
             help="AI agent to use (default: auto)"
+        )
+
+        p.add_argument(
+            "--acp-agent",
+            default=None,
+            help="ACP agent binary/command (default: gemini)"
+        )
+
+        p.add_argument(
+            "--acp-permission-mode",
+            choices=["auto_approve", "deny_all", "allowlist", "interactive"],
+            default=None,
+            help="ACP permission mode (default: auto_approve)"
         )
         
         p.add_argument(
@@ -643,6 +656,7 @@ Examples:
         "qchat": AgentType.Q,
         "gemini": AgentType.GEMINI,
         "g": AgentType.GEMINI,
+        "acp": AgentType.ACP,
         "auto": AgentType.AUTO
     }
     
@@ -744,9 +758,14 @@ Examples:
             "q": "qchat",
             "claude": "claude",
             "gemini": "gemini",
+            "acp": "acp",
             "auto": "auto"
         }
         primary_tool = tool_name_map.get(agent_name, agent_name)
+
+        # Pass ACP-specific CLI arguments if using ACP adapter
+        acp_agent = getattr(args, 'acp_agent', None)
+        acp_permission_mode = getattr(args, 'acp_permission_mode', None)
 
         # Pass full config to orchestrator so prompt_text is available
         orchestrator = RalphOrchestrator(

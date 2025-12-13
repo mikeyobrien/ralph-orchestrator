@@ -50,6 +50,7 @@ class AgentType(Enum):
     CLAUDE = "claude"
     Q = "q"
     GEMINI = "gemini"
+    ACP = "acp"
     AUTO = "auto"
 
 class ConfigValidator:

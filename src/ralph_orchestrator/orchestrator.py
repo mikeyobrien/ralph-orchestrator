@@ -16,6 +16,7 @@ from .adapters.base import ToolAdapter
 from .adapters.claude import ClaudeAdapter
 from .adapters.qchat import QChatAdapter
 from .adapters.gemini import GeminiAdapter
+from .adapters.acp import ACPAdapter
 from .metrics import Metrics, CostTracker
 from .safety import SafetyGuard
 from .context import ContextManager
@@ -122,7 +123,7 @@ class RalphOrchestrator:
     def _initialize_adapters(self) -> Dict[str, ToolAdapter]:
         """Initialize available adapters."""
         adapters = {}
-        
+
         # Try to initialize each adapter
         try:
             adapter = ClaudeAdapter(verbose=self.verbose)
@@ -133,7 +134,7 @@ class RalphOrchestrator:
                 logger.warning("Claude SDK not available")
         except Exception as e:
             logger.warning(f"Claude adapter error: {e}")
-        
+
         try:
             adapter = QChatAdapter()
             if adapter.available:
@@ -143,7 +144,7 @@ class RalphOrchestrator:
                 logger.warning("Q Chat CLI not available")
         except Exception as e:
             logger.warning(f"Q Chat adapter error: {e}")
-        
+
         try:
             adapter = GeminiAdapter()
             if adapter.available:
@@ -153,7 +154,18 @@ class RalphOrchestrator:
                 logger.warning("Gemini CLI not available")
         except Exception as e:
             logger.warning(f"Gemini adapter error: {e}")
-        
+
+        # Initialize ACP adapter
+        try:
+            adapter = ACPAdapter()
+            if adapter.available:
+                adapters['acp'] = adapter
+                logger.info("ACP adapter initialized")
+            else:
+                logger.warning("ACP agent not available")
+        except Exception as e:
+            logger.warning(f"ACP adapter error: {e}")
+
         return adapters
     
     def _signal_handler(self, signum, frame):
