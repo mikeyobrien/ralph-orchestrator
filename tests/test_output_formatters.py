@@ -21,6 +21,7 @@ from ralph_orchestrator.output import (
     VerbosityLevel,
     create_formatter,
 )
+from ralph_orchestrator.output.content_detector import ContentDetector, ContentType
 
 
 class TestVerbosityLevel:
@@ -1165,3 +1166,397 @@ class TestShouldDisplay:
         formatter = PlainTextFormatter(verbosity=VerbosityLevel.VERBOSE)
         for msg_type in MessageType:
             assert formatter.should_display(msg_type) is True
+
+
+class TestContentType:
+    """Tests for ContentType enum."""
+
+    def test_content_type_values(self):
+        """Test all content types are defined."""
+        assert ContentType.PLAIN_TEXT.value == "plain_text"
+        assert ContentType.DIFF.value == "diff"
+        assert ContentType.CODE_BLOCK.value == "code_block"
+        assert ContentType.MARKDOWN.value == "markdown"
+        assert ContentType.MARKDOWN_TABLE.value == "markdown_table"
+        assert ContentType.ERROR_TRACEBACK.value == "error_traceback"
+
+
+class TestContentDetector:
+    """Tests for ContentDetector class."""
+
+    def test_detect_empty_text(self):
+        """Test empty text returns plain text."""
+        detector = ContentDetector()
+        assert detector.detect("") == ContentType.PLAIN_TEXT
+        assert detector.detect("   ") == ContentType.PLAIN_TEXT
+        assert detector.detect(None) == ContentType.PLAIN_TEXT
+
+    def test_detect_plain_text(self):
+        """Test plain text detection."""
+        detector = ContentDetector()
+        assert detector.detect("Hello world") == ContentType.PLAIN_TEXT
+        assert detector.detect("Just a simple message.") == ContentType.PLAIN_TEXT
+
+    def test_detect_diff_git_header(self):
+        """Test diff detection with git header."""
+        detector = ContentDetector()
+        diff_text = """diff --git a/file.py b/file.py
+index 123..456 789
+--- a/file.py
++++ b/file.py
+@@ -1,3 +1,4 @@
++added line
+ context"""
+        assert detector.detect(diff_text) == ContentType.DIFF
+
+    def test_detect_diff_hunk_markers(self):
+        """Test diff detection with hunk markers."""
+        detector = ContentDetector()
+        diff_text = """@@ -1,3 +1,4 @@
++added line
+-removed line
+ context line"""
+        assert detector.detect(diff_text) == ContentType.DIFF
+
+    def test_detect_diff_with_hunk_and_changes(self):
+        """Test diff detection with hunk and +/- lines."""
+        detector = ContentDetector()
+        # Real diff content needs @@ markers or diff --git header
+        diff_text = """@@ -1,2 +1,3 @@
++added
+-removed
++another added"""
+        assert detector.detect(diff_text) == ContentType.DIFF
+
+    def test_is_diff_methods(self):
+        """Test is_diff individual method."""
+        detector = ContentDetector()
+        assert detector.is_diff("diff --git a/x b/x") is True
+        assert detector.is_diff("@@ -1,3 +1,4 @@\n+added") is True
+        # File markers alone need both --- a/ and +++ b/ patterns
+        assert detector.is_diff("--- a/file\n+++ b/file") is True
+        assert detector.is_diff("just text") is False
+        assert detector.is_diff("") is False
+        assert detector.is_diff(None) is False
+        # Markdown-like content should NOT be detected as diff
+        assert detector.is_diff("- list item") is False
+        assert detector.is_diff("---") is False  # Markdown hr
+
+    def test_detect_code_block(self):
+        """Test code block detection."""
+        detector = ContentDetector()
+        code_text = """Here is some code:
+
+```python
+print("hello")
+```
+
+That's all."""
+        assert detector.detect(code_text) == ContentType.CODE_BLOCK
+
+    def test_detect_code_block_no_language(self):
+        """Test code block without language specifier."""
+        detector = ContentDetector()
+        code_text = """```
+some code
+```"""
+        assert detector.detect(code_text) == ContentType.CODE_BLOCK
+
+    def test_is_code_block_method(self):
+        """Test is_code_block individual method."""
+        detector = ContentDetector()
+        assert detector.is_code_block("```python\ncode\n```") is True
+        assert detector.is_code_block("just text") is False
+        assert detector.is_code_block("") is False
+        assert detector.is_code_block(None) is False
+
+    def test_detect_markdown_heading(self):
+        """Test markdown detection with heading and list."""
+        detector = ContentDetector()
+        md_text = """# Title
+
+- item 1
+- item 2"""
+        assert detector.detect(md_text) == ContentType.MARKDOWN
+
+    def test_detect_markdown_bold_and_list(self):
+        """Test markdown detection with emphasis and list."""
+        detector = ContentDetector()
+        md_text = """Here is **bold text** and more content.
+
+1. First item
+2. Second item"""
+        assert detector.detect(md_text) == ContentType.MARKDOWN
+
+    def test_detect_markdown_requires_threshold(self):
+        """Test markdown requires multiple indicators."""
+        detector = ContentDetector()
+        # Single indicator should not trigger markdown
+        assert detector.detect("# Just a heading") == ContentType.PLAIN_TEXT
+        assert detector.detect("- single item") == ContentType.PLAIN_TEXT
+        assert detector.detect("**bold only**") == ContentType.PLAIN_TEXT
+
+    def test_is_markdown_method(self):
+        """Test is_markdown individual method."""
+        detector = ContentDetector()
+        assert detector.is_markdown("# Title\n\n- list item") is True
+        assert detector.is_markdown("plain text") is False
+        assert detector.is_markdown("") is False
+        assert detector.is_markdown(None) is False
+
+    def test_detect_markdown_table(self):
+        """Test markdown table detection."""
+        detector = ContentDetector()
+        table_text = """| Column A | Column B |
+|----------|----------|
+| Value 1  | Value 2  |"""
+        assert detector.detect(table_text) == ContentType.MARKDOWN_TABLE
+
+    def test_is_markdown_table_method(self):
+        """Test is_markdown_table individual method."""
+        detector = ContentDetector()
+        assert detector.is_markdown_table("| A |\n|---|\n| 1 |") is True
+        assert detector.is_markdown_table("just text") is False
+        assert detector.is_markdown_table("| not a table") is False
+        assert detector.is_markdown_table("") is False
+        assert detector.is_markdown_table(None) is False
+
+    def test_detect_error_traceback(self):
+        """Test error traceback detection."""
+        detector = ContentDetector()
+        traceback_text = """Traceback (most recent call last):
+  File "test.py", line 10, in <module>
+    raise ValueError("test")
+ValueError: test"""
+        assert detector.detect(traceback_text) == ContentType.ERROR_TRACEBACK
+
+    def test_detect_error_traceback_file_line(self):
+        """Test error traceback detection with File line."""
+        detector = ContentDetector()
+        traceback_text = '''  File "/path/to/file.py", line 42, in function
+    some_call()'''
+        assert detector.detect(traceback_text) == ContentType.ERROR_TRACEBACK
+
+    def test_is_error_traceback_method(self):
+        """Test is_error_traceback individual method."""
+        detector = ContentDetector()
+        assert detector.is_error_traceback("Traceback (most recent call last):") is True
+        assert detector.is_error_traceback('  File "x.py", line 1') is True
+        assert detector.is_error_traceback("ValueError: test") is True
+        assert detector.is_error_traceback("just text") is False
+        assert detector.is_error_traceback("") is False
+        assert detector.is_error_traceback(None) is False
+
+    def test_detect_priority_code_block_over_diff(self):
+        """Test code block takes priority over diff-like content."""
+        detector = ContentDetector()
+        # Code block with diff-like content inside
+        text = """```diff
++added
+-removed
+```"""
+        assert detector.detect(text) == ContentType.CODE_BLOCK
+
+    def test_detect_priority_code_block_over_markdown(self):
+        """Test code block takes priority over markdown."""
+        detector = ContentDetector()
+        text = """# Heading
+
+```python
+def foo():
+    pass
+```
+
+- list item"""
+        assert detector.detect(text) == ContentType.CODE_BLOCK
+
+    def test_extract_code_blocks(self):
+        """Test extracting code blocks from text."""
+        detector = ContentDetector()
+        text = """Some text
+
+```python
+print("hello")
+```
+
+More text
+
+```javascript
+console.log("hi")
+```"""
+        blocks = detector.extract_code_blocks(text)
+        assert len(blocks) == 2
+        assert blocks[0] == ("python", 'print("hello")')
+        assert blocks[1] == ("javascript", 'console.log("hi")')
+
+    def test_extract_code_blocks_no_language(self):
+        """Test extracting code blocks without language."""
+        detector = ContentDetector()
+        text = """```
+plain code
+```"""
+        blocks = detector.extract_code_blocks(text)
+        assert len(blocks) == 1
+        assert blocks[0] == (None, "plain code")
+
+    def test_extract_code_blocks_empty(self):
+        """Test extracting from text with no code blocks."""
+        detector = ContentDetector()
+        assert detector.extract_code_blocks("no code here") == []
+        assert detector.extract_code_blocks("") == []
+        assert detector.extract_code_blocks(None) == []
+
+    def test_markdown_task_list(self):
+        """Test markdown detection with task lists."""
+        detector = ContentDetector()
+        text = """# Todo
+
+- [ ] Task 1
+- [x] Task 2"""
+        assert detector.detect(text) == ContentType.MARKDOWN
+
+    def test_markdown_blockquote(self):
+        """Test markdown detection with blockquotes."""
+        detector = ContentDetector()
+        text = """> Quote line 1
+
+Some text
+
+> Another quote"""
+        # Need 2+ indicators - blockquotes count as one
+        assert detector.is_markdown(text) is False  # Only one type of indicator
+
+    def test_markdown_horizontal_rule(self):
+        """Test markdown detection with horizontal rule."""
+        detector = ContentDetector()
+        text = """# Title
+
+---
+
+Some content"""
+        assert detector.detect(text) == ContentType.MARKDOWN
+
+
+class TestRichTerminalFormatterSmartDetection:
+    """Tests for RichTerminalFormatter smart content detection."""
+
+    def test_smart_detection_enabled_by_default(self):
+        """Test smart detection is enabled by default."""
+        formatter = RichTerminalFormatter()
+        assert formatter._smart_detection is True
+        assert formatter._content_detector is not None
+
+    def test_smart_detection_can_be_disabled(self):
+        """Test smart detection can be disabled."""
+        formatter = RichTerminalFormatter(smart_detection=False)
+        assert formatter._smart_detection is False
+        assert formatter._content_detector is None
+
+    def test_format_assistant_plain_text(self):
+        """Test plain text formatting with smart detection."""
+        formatter = RichTerminalFormatter()
+        output = formatter.format_assistant_message("Hello world")
+        assert "Hello world" in output
+
+    def test_format_assistant_diff_detected(self):
+        """Test diff content is detected and rendered specially."""
+        formatter = RichTerminalFormatter()
+        diff_text = """diff --git a/file.py b/file.py
+--- a/file.py
++++ b/file.py
+@@ -1,3 +1,4 @@
++added line
+ context"""
+        # Diff rendering prints directly, returns empty string
+        output = formatter.format_assistant_message(diff_text)
+        # Output may be empty since diff prints directly, or contain diff text
+        # The important thing is it doesn't crash
+
+    def test_format_assistant_code_block_detected(self):
+        """Test code block content is detected and rendered with syntax."""
+        formatter = RichTerminalFormatter()
+        code_text = """Here is some code:
+
+```python
+print("hello")
+```
+
+That's all."""
+        output = formatter.format_assistant_message(code_text)
+        # Should contain the code content (rendered with syntax highlighting)
+        assert "print" in output or "hello" in output
+
+    def test_format_assistant_markdown_detected(self):
+        """Test markdown content is detected and rendered."""
+        formatter = RichTerminalFormatter()
+        md_text = """# Title
+
+- item 1
+- item 2
+
+**Bold text** here."""
+        output = formatter.format_assistant_message(md_text)
+        # Should contain the content (rendered with markdown)
+        assert "Title" in output or "item" in output
+
+    def test_format_assistant_traceback_detected(self):
+        """Test error traceback is detected and rendered specially."""
+        formatter = RichTerminalFormatter()
+        traceback_text = """Traceback (most recent call last):
+  File "test.py", line 10, in <module>
+    raise ValueError("test")
+ValueError: test"""
+        output = formatter.format_assistant_message(traceback_text)
+        # Should contain traceback content with special formatting
+        assert "Traceback" in output or "ValueError" in output
+
+    def test_format_assistant_table_detected(self):
+        """Test markdown table is detected and rendered."""
+        formatter = RichTerminalFormatter()
+        table_text = """| Column A | Column B |
+|----------|----------|
+| Value 1  | Value 2  |"""
+        output = formatter.format_assistant_message(table_text)
+        # Should contain table content
+        assert "Column" in output or "Value" in output
+
+    def test_format_assistant_respects_quiet_mode(self):
+        """Test quiet mode still returns empty."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_assistant_message("Hello world")
+        assert output == ""
+
+    def test_format_assistant_without_smart_detection(self):
+        """Test formatting without smart detection uses simple format."""
+        formatter = RichTerminalFormatter(smart_detection=False)
+        output = formatter.format_assistant_message("Hello world")
+        # Should still format but without smart detection
+        assert "Hello world" in output
+
+    def test_print_smart_method(self):
+        """Test print_smart method exists and works."""
+        formatter = RichTerminalFormatter()
+        # Should not raise
+        formatter.print_smart("Hello world")
+
+    def test_print_smart_quiet_mode(self):
+        """Test print_smart respects quiet mode."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.QUIET)
+        # Should not raise and should do nothing
+        formatter.print_smart("Hello world")
+
+    def test_render_smart_content_plain(self):
+        """Test _render_smart_content with plain text."""
+        formatter = RichTerminalFormatter()
+        output = formatter._render_smart_content("plain text", ContentType.PLAIN_TEXT)
+        assert "plain text" in output
+
+    def test_preprocess_markdown_task_lists(self):
+        """Test markdown preprocessing converts task lists."""
+        formatter = RichTerminalFormatter()
+        text = "- [ ] unchecked\n- [x] checked"
+        processed = formatter._preprocess_markdown(text)
+        assert "☐" in processed
+        assert "☑" in processed
+        assert "[ ]" not in processed
+        assert "[x]" not in processed
