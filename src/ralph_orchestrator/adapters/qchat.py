@@ -347,12 +347,15 @@ class QChatAdapter(ToolAdapter):
             logger.exception(f"Exception during Q chat execution: {str(e)}")
             if verbose:
                 print(f"Exception occurred: {str(e)}", file=sys.stderr)
+            # Clean up process reference on exception (matches async version's finally block)
+            with self._lock:
+                self.current_process = None
             return ToolResponse(
                 success=False,
                 output="",
                 error=str(e)
             )
-    
+
     def _make_non_blocking(self, pipe):
         """Make a pipe non-blocking to prevent deadlock."""
         if pipe:

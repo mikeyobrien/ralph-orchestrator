@@ -354,3 +354,20 @@ After implementation, verify:
 - Before: Potential `ZeroDivisionError` on edge case
 - After: Graceful early return when `total <= 0`
 - Test suite: 625 passed, 36 skipped
+
+### Process Reference Leak in QChatAdapter.execute() Fixed (2025-12-13)
+
+**Location:** `src/ralph_orchestrator/adapters/qchat.py:346-357` (execute() exception handler)
+
+**Issue:** When an exception occurred during `execute()` (e.g., during pipe setup), the `current_process` reference was not cleaned up in the exception handler. The async version `aexecute()` already had proper cleanup via a `finally` block, but the sync version was missing it.
+
+**Bug Impact:** Resource leak - `current_process` would retain a stale process reference after exceptions, potentially interfering with subsequent operations or shutdown handling.
+
+**Fix:** Added process cleanup (`with self._lock: self.current_process = None`) to the exception handler in `execute()` method to match the async version's `finally` block behavior.
+
+**Test Added:** `tests/test_qchat_adapter.py::TestSyncExecution::test_sync_process_cleanup_on_exception`
+
+**Results:**
+- Before: `current_process` remained set after exception
+- After: `current_process` properly cleaned up on exception
+- Test suite: 626 passed, 36 skipped

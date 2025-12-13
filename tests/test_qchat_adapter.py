@@ -127,14 +127,43 @@ class TestSyncExecution:
         """Test exception handling during execution."""
         adapter = QChatAdapter()
         adapter.available = True
-        
+
         with patch('subprocess.Popen') as mock_popen:
             mock_popen.side_effect = Exception("Test exception")
-            
+
             response = adapter.execute("test prompt", verbose=False)
-            
+
             assert response.success is False
             assert "Test exception" in response.error
+
+    def test_sync_process_cleanup_on_exception(self):
+        """Test that current_process is cleaned up when execute() raises an exception.
+
+        This mirrors test_async_process_cleanup_on_exception for the sync version.
+        Bug: The sync execute() method was missing process cleanup in exception handler.
+        """
+        adapter = QChatAdapter()
+        adapter.available = True
+
+        # Mock Popen to create a process, then raise exception during pipe setup
+        mock_process = Mock()
+        mock_process.stdout = Mock()
+        mock_process.stderr = Mock()
+        mock_process.poll.return_value = None
+
+        with patch('subprocess.Popen') as mock_popen:
+            # First call succeeds (creates process), but make_non_blocking fails
+            mock_popen.return_value = mock_process
+
+            with patch.object(adapter, '_make_non_blocking') as mock_non_blocking:
+                mock_non_blocking.side_effect = Exception("Pipe setup failed")
+
+                response = adapter.execute("test prompt", verbose=False)
+
+                assert response.success is False
+                assert "Pipe setup failed" in response.error
+                # This assertion catches the bug - process must be cleaned up
+                assert adapter.current_process is None
 
 
 class TestAsyncExecution:
