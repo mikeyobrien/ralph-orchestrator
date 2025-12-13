@@ -279,7 +279,7 @@ class RalphOrchestrator:
             )
             
             if not safety_check.passed:
-                logger.warning(f"Safety limit reached: {safety_check.reason}")
+                logger.info(f"Safety limit reached: {safety_check.reason}")
                 break
             
             # No longer checking for task completion - run until limits
@@ -312,7 +312,7 @@ class RalphOrchestrator:
                     )
 
             except Exception as e:
-                logger.error(f"Error in iteration: {e}")
+                logger.warning(f"Error in iteration: {e}")
                 self.metrics.errors += 1
                 self.console.print_error(f"Error in iteration: {e}")
                 self._handle_error(e)
@@ -420,14 +420,14 @@ class RalphOrchestrator:
     
     def _handle_error(self, error: Exception):
         """Handle iteration error."""
-        logger.error(f"Handling error: {error}")
+        logger.warning(f"Handling error: {error}")
         
         # Archive current prompt
         self._archive_prompt()
         
         # Reset if too many errors
         if self.metrics.errors > 5:
-            logger.warning("Too many errors, resetting state")
+            logger.info("Too many errors, resetting state")
             self._reset_state()
     
     def _create_checkpoint(self):

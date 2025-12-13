@@ -82,7 +82,7 @@ class QChatAdapter(ToolAdapter):
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    logger.error("Process may still be running after force kill")
+                    logger.warning("Process may still be running after force kill")
     
     def check_availability(self) -> bool:
         """Check if q CLI is available."""
@@ -214,7 +214,7 @@ class QChatAdapter(ToolAdapter):
                     # Check if the process seems stuck (no output for a while)
                     time_since_output = time.time() - last_output_time
                     if time_since_output > 60:
-                        logger.warning(f"No output received for {time_since_output:.1f}s, Q might be stuck")
+                        logger.info(f"No output received for {time_since_output:.1f}s, Q might be stuck")
                     
                     if verbose:
                         print(f"Q chat still running... elapsed: {elapsed_time:.1f}s / {timeout}s", file=sys.stderr)
@@ -238,7 +238,7 @@ class QChatAdapter(ToolAdapter):
                         try:
                             process.wait(timeout=2)
                         except subprocess.TimeoutExpired:
-                            logger.error("Process may still be running after kill")
+                            logger.warning("Process may still be running after kill")
                             if verbose:
                                 print("Warning: Process may still be running after kill", file=sys.stderr)
                     
@@ -340,7 +340,7 @@ class QChatAdapter(ToolAdapter):
                     }
                 )
             else:
-                logger.error(f"Q chat failed - Return code: {returncode}, Error: {full_stderr[:200]}")
+                logger.warning(f"Q chat failed - Return code: {returncode}, Error: {full_stderr[:200]}")
                 return ToolResponse(
                     success=False,
                     output=full_stdout,
@@ -469,7 +469,7 @@ class QChatAdapter(ToolAdapter):
                         }
                     )
                 else:
-                    logger.error(f"Async Q chat failed - Return code: {process.returncode}")
+                    logger.warning(f"Async Q chat failed - Return code: {process.returncode}")
                     return ToolResponse(
                         success=False,
                         output=stdout,

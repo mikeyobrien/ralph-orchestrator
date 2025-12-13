@@ -150,7 +150,7 @@ class ClaudeAdapter(ToolAdapter):
     async def aexecute(self, prompt: str, **kwargs) -> ToolResponse:
         """Execute Claude with the given prompt asynchronously."""
         if not self.available:
-            logger.warning("Claude SDK not available")
+            logger.info("Claude SDK not available")
             return ToolResponse(
                 success=False,
                 output="",
@@ -463,13 +463,23 @@ class ClaudeAdapter(ToolAdapter):
                 iteration=kwargs.get('iteration', 0),
                 exception=e
             )
-            logger.error(f"Claude SDK request timed out: {error_msg.message}")
+            logger.warning(f"Claude SDK request timed out: {error_msg.message}")
             return ToolResponse(
                 success=False,
                 output="",
                 error=str(error_msg)
             )
         except Exception as e:
+            # Check if this is a user-initiated cancellation (SIGINT = exit code -2)
+            error_str = str(e)
+            if "exit code -2" in error_str or "exit code: -2" in error_str:
+                logger.info("Claude execution cancelled by user")
+                return ToolResponse(
+                    success=False,
+                    output="",
+                    error="Execution cancelled by user"
+                )
+
             # Use error formatter for user-friendly error messages
             error_msg = ClaudeErrorFormatter.format_error_from_exception(
                 iteration=kwargs.get('iteration', 0),

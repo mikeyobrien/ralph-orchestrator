@@ -54,16 +54,16 @@ class ContextManager:
             try:
                 content = self.prompt_file.read_text()
             except UnicodeDecodeError as e:
-                logger.error(f"Encoding error reading {self.prompt_file}: {e}")
+                logger.warning(f"Encoding error reading {self.prompt_file}: {e}")
                 return
             except PermissionError as e:
-                logger.error(f"Permission denied reading {self.prompt_file}: {e}")
+                logger.warning(f"Permission denied reading {self.prompt_file}: {e}")
                 return
             except OSError as e:
-                logger.error(f"OS error reading {self.prompt_file}: {e}")
+                logger.warning(f"OS error reading {self.prompt_file}: {e}")
                 return
         else:
-            logger.warning(f"Prompt file {self.prompt_file} not found")
+            logger.info(f"Prompt file {self.prompt_file} not found")
             return
         
         # Extract stable prefix (instructions that don't change)
@@ -91,16 +91,16 @@ class ContextManager:
             try:
                 base_content = self.prompt_file.read_text()
             except UnicodeDecodeError as e:
-                logger.error(f"Encoding error reading {self.prompt_file}: {e}")
+                logger.warning(f"Encoding error reading {self.prompt_file}: {e}")
                 return ""
             except PermissionError as e:
-                logger.error(f"Permission denied reading {self.prompt_file}: {e}")
+                logger.warning(f"Permission denied reading {self.prompt_file}: {e}")
                 return ""
             except OSError as e:
-                logger.error(f"OS error reading {self.prompt_file}: {e}")
+                logger.warning(f"OS error reading {self.prompt_file}: {e}")
                 return ""
         else:
-            logger.error(f"No prompt available: prompt_text={self.prompt_text is not None}, prompt_file={self.prompt_file}")
+            logger.warning(f"No prompt available: prompt_text={self.prompt_text is not None}, prompt_file={self.prompt_file}")
             return ""
         
         # Check if we need to optimize
