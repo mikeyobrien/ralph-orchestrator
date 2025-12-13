@@ -253,7 +253,31 @@
   - Init template verification
 - All tests pass (311 total ACP + config tests, 265 ACP-only)
 
-**Next iteration**: Step 11 - Integration testing with Gemini CLI.
+### Step 11: Integration testing with Gemini CLI (COMPLETED - Dec 13, 2025)
+- Created `tests/conftest.py` with:
+  - `integration` marker for integration tests
+  - `slow` marker for long-running tests
+  - Auto-skip for integration tests when `GOOGLE_API_KEY` not set
+  - `temp_workspace` and `google_api_key` fixtures
+- Created `tests/test_acp_integration.py` with 28 tests:
+  - **TestACPIntegrationUnit** (7 tests): Adapter creation, config, availability
+  - **TestACPMockedIntegration** (5 tests): Initialize flow, execute, permissions
+  - **TestACPFileOperationsMocked** (4 tests): Read/write file handlers
+  - **TestACPTerminalOperationsMocked** (3 tests): Terminal create/workflow/not found
+  - **TestACPGeminiIntegration** (8 tests): Real integration tests (require API key)
+    - Basic prompt response
+    - Streaming updates
+    - Permission flow (auto_approve, deny_all)
+    - Error handling and timeout
+    - Shutdown cleanup
+    - Session persistence
+  - **TestACPManualTestingGuide** (1 test): Documentation for manual testing
+- Test execution:
+  - 20 unit/mocked tests passing
+  - 8 integration tests properly skipped when GOOGLE_API_KEY not set
+  - 285 total ACP tests passing
+
+**Next iteration**: Step 12 - Final integration with orchestrator loop.
 
 ---
 
