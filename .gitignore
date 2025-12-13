@@ -37,6 +37,7 @@ env/
 # Ralph specific
 .ralph/
 .agent/
+.logs/
 prompts/
 prompts/archive/
 ralph_*.log
