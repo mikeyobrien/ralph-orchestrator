@@ -337,3 +337,20 @@ After implementation, verify:
 **Results:**
 - Before: 27 linting errors
 - After: 0 linting errors (`ruff check src/` passes)
+
+### Division by Zero Bug Fixed (2025-12-13)
+
+**Location:** `src/ralph_orchestrator/output/console.py:568` (print_countdown method)
+
+**Issue:** `print_countdown(remaining, total)` method calculated `progress = (total - remaining) / total` without checking if `total` was zero. This could cause `ZeroDivisionError` if called with `total=0`.
+
+**Fix:** Added guard clause `if total <= 0: return` before the division operation.
+
+**Test Added:** `tests/test_output.py::TestRalphConsole::test_countdown_bar_zero_total`
+
+**Note:** Other formatter modules (`json_formatter.py`, `plain.py`, `rich_formatter.py`) already had this check. The `console.py` implementation was missing it.
+
+**Results:**
+- Before: Potential `ZeroDivisionError` on edge case
+- After: Graceful early return when `total <= 0`
+- Test suite: 625 passed, 36 skipped
