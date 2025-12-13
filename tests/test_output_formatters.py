@@ -326,6 +326,96 @@ class TestPlainTextFormatter:
         assert len(callback_data) == 1
         assert callback_data[0][0] == MessageType.ASSISTANT
 
+    def test_format_tool_call_long_param_truncation(self):
+        """Test tool call truncates long parameter values."""
+        formatter = PlainTextFormatter(verbosity=VerbosityLevel.VERBOSE)
+        long_value = "x" * 200
+        tool_info = ToolCallInfo(
+            tool_name="Write",
+            tool_id="abc123def456",
+            input_params={"content": long_value},
+        )
+        output = formatter.format_tool_call(tool_info)
+        # Should contain truncated value (97 chars + "...")
+        assert "..." in output
+        # Full value should not be in output
+        assert long_value not in output
+
+    def test_format_tool_result_quiet(self):
+        """Test tool result returns empty in quiet mode."""
+        formatter = PlainTextFormatter(verbosity=VerbosityLevel.QUIET)
+        tool_info = ToolCallInfo(tool_name="Read", tool_id="123", result="ok")
+        output = formatter.format_tool_result(tool_info)
+        assert output == ""
+
+    def test_format_tool_result_long_summarization(self):
+        """Test tool result summarizes long output."""
+        formatter = PlainTextFormatter(verbosity=VerbosityLevel.VERBOSE)
+        long_result = "x" * 1000
+        tool_info = ToolCallInfo(
+            tool_name="Read",
+            tool_id="123",
+            result=long_result,
+        )
+        output = formatter.format_tool_result(tool_info)
+        # Should be truncated
+        assert "truncated" in output
+        assert len(output) < len(long_result)
+
+    def test_format_assistant_quiet(self):
+        """Test assistant returns empty in quiet mode."""
+        formatter = PlainTextFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_assistant_message("Hello")
+        assert output == ""
+
+    def test_format_system_quiet(self):
+        """Test system message returns empty in quiet mode."""
+        formatter = PlainTextFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_system_message("System init")
+        assert output == ""
+
+    def test_format_progress_quiet(self):
+        """Test progress returns empty in quiet mode."""
+        formatter = PlainTextFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_progress("Working", 50, 100)
+        assert output == ""
+
+    def test_format_progress_without_total(self):
+        """Test progress without total shows indeterminate."""
+        formatter = PlainTextFormatter()
+        output = formatter.format_progress("Processing", current=0, total=0)
+        assert "[...]" in output
+        assert "Processing" in output
+
+    def test_format_token_usage_with_model(self):
+        """Test token usage includes model when set."""
+        formatter = PlainTextFormatter()
+        formatter.update_tokens(input_tokens=100, output_tokens=50, cost=0.01, model="claude-3-opus")
+        output = formatter.format_token_usage()
+        assert "claude-3-opus" in output
+
+    def test_callback_exception_ignored(self):
+        """Test callback exceptions don't break formatting."""
+        formatter = PlainTextFormatter()
+
+        def bad_callback(msg_type, content, ctx):
+            raise ValueError("Callback error")
+
+        formatter.register_callback(bad_callback)
+        # Should not raise despite bad callback
+        output = formatter.format_assistant_message("Test")
+        assert "ASSISTANT" in output
+        assert "Test" in output
+
+    def test_token_usage_property(self):
+        """Test token_usage property access."""
+        formatter = PlainTextFormatter()
+        usage = formatter.token_usage
+        assert usage is not None
+        assert usage.input_tokens == 0
+        formatter.update_tokens(input_tokens=100, output_tokens=50)
+        assert formatter.token_usage.input_tokens == 100
+
 
 class TestRichTerminalFormatter:
     """Tests for RichTerminalFormatter."""
@@ -411,6 +501,324 @@ class TestRichTerminalFormatter:
         # Console may or may not be available depending on Rich
         console = formatter.console
         # Just verify the property works
+
+    def test_format_system_message(self):
+        """Test system message formatting with Rich."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        output = formatter.format_system_message("System message here")
+        assert "SYSTEM" in output
+        assert "System message here" in output
+
+    def test_format_section_header(self):
+        """Test section header formatting with Rich."""
+        formatter = RichTerminalFormatter()
+        output = formatter.format_section_header("Test Section", iteration=5)
+        assert "Test Section" in output
+        assert "Iteration 5" in output
+
+    def test_format_section_header_no_iteration(self):
+        """Test section header without iteration number."""
+        formatter = RichTerminalFormatter()
+        output = formatter.format_section_header("Just Title")
+        assert "Just Title" in output
+
+    def test_format_section_footer(self):
+        """Test section footer formatting with Rich."""
+        formatter = RichTerminalFormatter()
+        output = formatter.format_section_footer()
+        assert "Elapsed" in output
+
+    def test_print_method(self):
+        """Test print method outputs to console."""
+        formatter = RichTerminalFormatter()
+        # Should not raise - just verify it works
+        formatter.print("[bold]Test output[/]")
+
+    def test_print_panel(self):
+        """Test print_panel method."""
+        formatter = RichTerminalFormatter()
+        # Should not raise
+        formatter.print_panel("Content here", title="Test Panel", border_style="green")
+
+    def test_create_progress_bar(self):
+        """Test creating progress bar."""
+        formatter = RichTerminalFormatter()
+        progress = formatter.create_progress_bar()
+        # May be None if Rich not available, but shouldn't raise
+        if progress is not None:
+            assert hasattr(progress, 'add_task')
+
+    def test_format_tool_call_with_long_params(self):
+        """Test tool call with long parameter values gets truncated."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        long_value = "x" * 200
+        tool_info = ToolCallInfo(
+            tool_name="Write",
+            tool_id="abc123def456",
+            input_params={"content": long_value},
+        )
+        output = formatter.format_tool_call(tool_info)
+        # Should be truncated - value itself is truncated to 97 chars + "..."
+        assert "..." in output
+        # The full 200 char value should not be in output
+        assert long_value not in output
+
+    def test_format_tool_result_with_long_output(self):
+        """Test tool result with long output gets summarized."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        long_result = "line\n" * 100  # More than 20 lines
+        tool_info = ToolCallInfo(
+            tool_name="Read",
+            tool_id="abc123",
+            result=long_result,
+            is_error=False,
+        )
+        output = formatter.format_tool_result(tool_info)
+        # Should have indication of more lines
+        assert "more lines" in output or "..." in output
+
+    def test_format_progress_without_total(self):
+        """Test progress without total shows spinner style."""
+        formatter = RichTerminalFormatter()
+        output = formatter.format_progress("Working", current=0, total=0)
+        assert "Working" in output
+        assert "..." in output
+
+    def test_format_token_usage_without_session(self):
+        """Test token usage without session totals."""
+        formatter = RichTerminalFormatter()
+        formatter.update_tokens(input_tokens=100, output_tokens=50, cost=0.01)
+        output = formatter.format_token_usage(show_session=False)
+        assert "TOKEN USAGE" in output
+        assert "100" in output
+
+    def test_format_token_usage_with_model(self):
+        """Test token usage displays model name."""
+        formatter = RichTerminalFormatter()
+        formatter.update_tokens(input_tokens=100, output_tokens=50, cost=0.01, model="claude-3-opus")
+        output = formatter.format_token_usage()
+        assert "claude-3-opus" in output
+
+    def test_format_error_with_exception_verbose(self):
+        """Test error with exception shows traceback in verbose mode."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        try:
+            raise ValueError("Test exception")
+        except ValueError as e:
+            output = formatter.format_error("Error occurred", exception=e, iteration=1)
+            assert "ValueError" in output
+            assert "Traceback" in output
+
+    def test_format_assistant_quiet_mode(self):
+        """Test assistant message hidden in quiet mode."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_assistant_message("Hello")
+        assert output == ""
+
+    def test_format_assistant_normal_truncation(self):
+        """Test long assistant message gets truncated in normal mode."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.NORMAL)
+        long_message = "x" * 2000
+        output = formatter.format_assistant_message(long_message)
+        # Should be truncated
+        assert "truncated" in output or len(output) < len(long_message) + 50
+
+
+class TestRichFormatterWithoutRich:
+    """Tests for RichTerminalFormatter when Rich is not available."""
+
+    def test_fallback_tool_call(self):
+        """Test tool call fallback without Rich."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        formatter._rich_available = False
+        formatter._console = None
+
+        tool_info = ToolCallInfo(
+            tool_name="Read",
+            tool_id="abc123def456",
+            input_params={"path": "test.py"},
+        )
+        output = formatter.format_tool_call(tool_info)
+        assert "TOOL CALL: Read" in output
+        assert "abc123def456"[:12] in output
+
+    def test_fallback_tool_result(self):
+        """Test tool result fallback without Rich."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        formatter._rich_available = False
+        formatter._console = None
+
+        tool_info = ToolCallInfo(
+            tool_name="Write",
+            tool_id="xyz789",
+            result="File content here",
+            is_error=False,
+        )
+        output = formatter.format_tool_result(tool_info)
+        assert "TOOL RESULT: Write" in output
+        assert "Success" in output
+        assert "File content here" in output
+
+    def test_fallback_tool_result_error(self):
+        """Test error tool result fallback without Rich."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        formatter._rich_available = False
+        formatter._console = None
+
+        tool_info = ToolCallInfo(
+            tool_name="Write",
+            tool_id="xyz789",
+            result="Error message",
+            is_error=True,
+        )
+        output = formatter.format_tool_result(tool_info)
+        assert "ERROR" in output
+
+    def test_fallback_assistant_message(self):
+        """Test assistant message fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_assistant_message("Hello there!")
+        assert "ASSISTANT: Hello there!" in output
+
+    def test_fallback_system_message(self):
+        """Test system message fallback without Rich."""
+        formatter = RichTerminalFormatter(verbosity=VerbosityLevel.VERBOSE)
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_system_message("System init")
+        assert "SYSTEM: System init" in output
+
+    def test_fallback_error(self):
+        """Test error fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_error("Something failed", iteration=1)
+        assert "ERROR: Something failed" in output
+
+    def test_fallback_progress_with_total(self):
+        """Test progress with total fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_progress("Working", current=50, total=100)
+        assert "50%" in output
+        assert "Working" in output
+
+    def test_fallback_progress_without_total(self):
+        """Test progress without total fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_progress("Processing")
+        assert "[...]" in output
+        assert "Processing" in output
+
+    def test_fallback_token_usage(self):
+        """Test token usage fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+        formatter.update_tokens(input_tokens=100, output_tokens=50, cost=0.01)
+
+        output = formatter.format_token_usage()
+        assert "TOKEN USAGE" in output
+        assert "150" in output
+
+    def test_fallback_token_usage_with_session(self):
+        """Test token usage with session fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+        formatter.update_tokens(input_tokens=100, output_tokens=50, cost=0.01)
+        formatter.update_tokens(input_tokens=200, output_tokens=100, cost=0.02)
+
+        output = formatter.format_token_usage(show_session=True)
+        assert "Session" in output
+
+    def test_fallback_section_header(self):
+        """Test section header fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_section_header("Test", iteration=3)
+        assert "=" in output
+        assert "Test" in output
+        assert "Iteration 3" in output
+
+    def test_fallback_section_footer(self):
+        """Test section footer fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        output = formatter.format_section_footer()
+        assert "=" in output
+        assert "Elapsed" in output
+
+    def test_fallback_print(self):
+        """Test print fallback without Rich strips markup."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        # Should not raise and should strip markup
+        formatter.print("[bold]Test[/]")
+
+    def test_fallback_print_panel(self):
+        """Test print_panel fallback without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        # Should not raise
+        formatter.print_panel("Content", title="Title")
+
+    def test_fallback_print_panel_no_title(self):
+        """Test print_panel without title fallback."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        # Should not raise
+        formatter.print_panel("Content")
+
+    def test_fallback_create_progress_bar(self):
+        """Test create_progress_bar returns None without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+        formatter._console = None
+
+        result = formatter.create_progress_bar()
+        assert result is None
+
+    def test_fallback_timestamp(self):
+        """Test timestamp formatting without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+
+        ts = formatter._timestamp()
+        # Should be plain timestamp without markup
+        assert "[" not in ts or ts.count("[") == 0
+
+    def test_fallback_full_timestamp(self):
+        """Test full timestamp formatting without Rich."""
+        formatter = RichTerminalFormatter()
+        formatter._rich_available = False
+
+        ts = formatter._full_timestamp()
+        # Should contain date
+        import datetime
+        year = str(datetime.datetime.now().year)
+        assert year in ts
 
 
 class TestJsonFormatter:
@@ -595,6 +1003,97 @@ class TestJsonFormatter:
         data = json.loads(output)
 
         assert "timestamp" not in data
+
+    def test_format_tool_call_quiet(self):
+        """Test tool call returns empty in quiet mode."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.QUIET)
+        tool_info = ToolCallInfo(tool_name="Read", tool_id="123")
+        output = formatter.format_tool_call(tool_info)
+        assert output == ""
+
+    def test_format_tool_call_with_start_time(self):
+        """Test tool call includes start_time when set."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.VERBOSE)
+        start = datetime.now()
+        tool_info = ToolCallInfo(
+            tool_name="Read",
+            tool_id="123",
+            start_time=start,
+        )
+        output = formatter.format_tool_call(tool_info)
+        data = json.loads(output)
+        assert "start_time" in data["data"]
+
+    def test_format_tool_result_quiet(self):
+        """Test tool result returns empty in quiet mode."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.QUIET)
+        tool_info = ToolCallInfo(tool_name="Read", tool_id="123", result="ok")
+        output = formatter.format_tool_result(tool_info)
+        assert output == ""
+
+    def test_format_tool_result_with_end_time(self):
+        """Test tool result includes end_time when set."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.VERBOSE)
+        end = datetime.now()
+        tool_info = ToolCallInfo(
+            tool_name="Read",
+            tool_id="123",
+            result="content",
+            end_time=end,
+        )
+        output = formatter.format_tool_result(tool_info)
+        data = json.loads(output)
+        assert "end_time" in data["data"]
+
+    def test_format_tool_result_truncated(self):
+        """Test very long tool result gets truncated."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.VERBOSE)
+        long_result = "x" * 2000
+        tool_info = ToolCallInfo(
+            tool_name="Read",
+            tool_id="123",
+            result=long_result,
+        )
+        output = formatter.format_tool_result(tool_info)
+        data = json.loads(output)
+        assert data["data"]["result_truncated"] is True
+        assert data["data"]["result_full_length"] == 2000
+
+    def test_format_assistant_quiet(self):
+        """Test assistant message returns empty in quiet mode."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_assistant_message("Hello")
+        assert output == ""
+
+    def test_format_system_quiet(self):
+        """Test system message returns empty in quiet mode."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_system_message("System")
+        assert output == ""
+
+    def test_format_progress_quiet(self):
+        """Test progress returns empty in quiet mode."""
+        formatter = JsonFormatter(verbosity=VerbosityLevel.QUIET)
+        output = formatter.format_progress("Working", 50, 100)
+        assert output == ""
+
+    def test_format_section_header(self):
+        """Test section header formatting."""
+        formatter = JsonFormatter()
+        output = formatter.format_section_header("Test Section", iteration=2)
+        data = json.loads(output)
+        assert data["type"] == "section_start"
+        assert data["data"]["title"] == "Test Section"
+        assert data["iteration"] == 2
+        assert "elapsed_seconds" in data["data"]
+
+    def test_format_section_footer(self):
+        """Test section footer formatting."""
+        formatter = JsonFormatter()
+        output = formatter.format_section_footer()
+        data = json.loads(output)
+        assert data["type"] == "section_end"
+        assert "elapsed_seconds" in data["data"]
 
 
 class TestCreateFormatter:
