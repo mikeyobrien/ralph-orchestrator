@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .base import (
-    FormatContext,
     MessageType,
     OutputFormatter,
     ToolCallInfo,

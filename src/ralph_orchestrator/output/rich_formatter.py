@@ -470,7 +470,7 @@ class RichTerminalFormatter(OutputFormatter):
             temp_console.print(syntax)
             return buffer.getvalue()
         except Exception as e:
-            _logger.debug("Rich traceback rendering failed: %s: %s", type(e).__name__, e)
+            _logger.warning("Rich traceback rendering failed: %s: %s", type(e).__name__, e)
             return f"[red]{escape(text)}[/red]"
 
     def print_smart(self, message: str, iteration: int = 0) -> None:

@@ -907,5 +907,5 @@ class RalphConsole:
             self.console.print()
         except Exception as e:
             # Fallback to simple red text if syntax highlighting fails
-            _logger.debug("Syntax highlighting failed for traceback: %s: %s", type(e).__name__, e)
+            _logger.warning("Syntax highlighting failed for traceback: %s: %s", type(e).__name__, e)
             self.console.print(f"[red]{text}[/red]")
