@@ -1,18 +1,27 @@
 # ABOUTME: Rich terminal formatter with colors, panels, and progress indicators
-# ABOUTME: Provides visually enhanced output using the Rich library
+# ABOUTME: Provides visually enhanced output using the Rich library with smart content detection
 
-"""Rich terminal output formatter for Claude adapter."""
+"""Rich terminal output formatter for Claude adapter.
 
+This formatter provides intelligent content detection and rendering:
+- Diffs are rendered with color-coded additions/deletions
+- Code blocks get syntax highlighting
+- Markdown is rendered with proper formatting
+- Error tracebacks are highlighted for readability
+"""
+
+import re
 from datetime import datetime
+from io import StringIO
 from typing import Optional
 
 from .base import (
-    FormatContext,
     MessageType,
     OutputFormatter,
     ToolCallInfo,
     VerbosityLevel,
 )
+from .content_detector import ContentDetector, ContentType
 
 # Try to import Rich components with fallback
 try:
@@ -20,8 +29,6 @@ try:
     from rich.panel import Panel
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
     from rich.syntax import Syntax
-    from rich.table import Table
-    from rich.text import Text
     from rich.markup import escape
 
     RICH_AVAILABLE = True
@@ -73,20 +80,28 @@ class RichTerminalFormatter(OutputFormatter):
         self,
         verbosity: VerbosityLevel = VerbosityLevel.NORMAL,
         console: Optional["Console"] = None,
+        smart_detection: bool = True,
     ) -> None:
         """Initialize rich terminal formatter.
 
         Args:
             verbosity: Output verbosity level
             console: Optional Rich console instance (creates new if None)
+            smart_detection: Enable smart content detection (diff, code, markdown)
         """
         super().__init__(verbosity)
         self._rich_available = RICH_AVAILABLE
+        self._smart_detection = smart_detection
+        self._content_detector = ContentDetector() if smart_detection else None
 
         if RICH_AVAILABLE:
             self._console = console or Console()
+            # Import DiffFormatter for diff rendering
+            from .console import DiffFormatter
+            self._diff_formatter = DiffFormatter(self._console)
         else:
             self._console = None
+            self._diff_formatter = None
 
     @property
     def console(self) -> Optional["Console"]:
@@ -240,6 +255,12 @@ class RichTerminalFormatter(OutputFormatter):
     ) -> str:
         """Format an assistant message for rich terminal display.
 
+        With smart_detection enabled, detects and renders:
+        - Diffs with color-coded additions/deletions
+        - Code blocks with syntax highlighting
+        - Markdown with proper formatting
+        - Error tracebacks with special highlighting
+
         Args:
             message: Assistant message text
             iteration: Current iteration number
@@ -256,7 +277,7 @@ class RichTerminalFormatter(OutputFormatter):
         if self._verbosity == VerbosityLevel.QUIET:
             return ""
 
-        # Summarize if needed
+        # Summarize if needed (only for normal verbosity)
         display_message = message
         if self._verbosity == VerbosityLevel.NORMAL and len(message) > 1000:
             display_message = self.summarize_content(message, 1000)
@@ -264,8 +285,224 @@ class RichTerminalFormatter(OutputFormatter):
         if not self._rich_available:
             return f"ASSISTANT: {display_message}"
 
+        # Use smart detection if enabled
+        if self._smart_detection and self._content_detector:
+            content_type = self._content_detector.detect(display_message)
+            return self._render_smart_content(display_message, content_type)
+
+        # Fallback to simple formatting
         icon = self.ICONS["assistant"]
-        return f"{icon} [{self.COLORS['assistant']}]{display_message}[/]"
+        return f"{icon} [{self.COLORS['assistant']}]{escape(display_message)}[/]"
+
+    def _render_smart_content(self, text: str, content_type: ContentType) -> str:
+        """Render content based on detected type.
+
+        Args:
+            text: Text content to render
+            content_type: Detected content type
+
+        Returns:
+            Formatted string (may include Rich markup)
+        """
+        if content_type == ContentType.DIFF:
+            return self._render_diff(text)
+        elif content_type == ContentType.CODE_BLOCK:
+            return self._render_code_blocks(text)
+        elif content_type == ContentType.MARKDOWN:
+            return self._render_markdown(text)
+        elif content_type == ContentType.MARKDOWN_TABLE:
+            return self._render_markdown(text)  # Tables use markdown renderer
+        elif content_type == ContentType.ERROR_TRACEBACK:
+            return self._render_traceback(text)
+        else:
+            # Plain text - escape and format
+            icon = self.ICONS["assistant"]
+            return f"{icon} [{self.COLORS['assistant']}]{escape(text)}[/]"
+
+    def _render_diff(self, text: str) -> str:
+        """Render diff content with colors.
+
+        Uses the DiffFormatter for enhanced diff visualization with
+        color-coded additions/deletions and file statistics.
+
+        Args:
+            text: Diff text to render
+
+        Returns:
+            Empty string (diff is printed directly to console)
+        """
+        if self._diff_formatter and self._console:
+            # DiffFormatter prints directly, so capture would require buffer
+            # For now, print directly and return marker
+            self._diff_formatter.format_and_print(text)
+            return ""  # Already printed
+        return f"[dim]{text}[/dim]"
+
+    def _render_code_blocks(self, text: str) -> str:
+        """Render text with code blocks using syntax highlighting.
+
+        Extracts code blocks, renders them with Rich Syntax, and
+        formats the surrounding text.
+
+        Args:
+            text: Text containing code blocks
+
+        Returns:
+            Formatted string with code block markers for print_smart()
+        """
+        if not self._console or not self._content_detector:
+            return f"[dim]{text}[/dim]"
+
+        # Split by code blocks and render each part
+        parts = []
+        pattern = r"```(\w+)?\n(.*?)\n```"
+        last_end = 0
+
+        for match in re.finditer(pattern, text, re.DOTALL):
+            # Text before code block
+            before = text[last_end:match.start()].strip()
+            if before:
+                parts.append(("text", before))
+
+            # Code block
+            language = match.group(1) or "text"
+            code = match.group(2)
+            parts.append(("code", language, code))
+            last_end = match.end()
+
+        # Text after last code block
+        after = text[last_end:].strip()
+        if after:
+            parts.append(("text", after))
+
+        # Render to string buffer using console
+        buffer = StringIO()
+        temp_console = Console(file=buffer, force_terminal=True, width=100)
+
+        for part in parts:
+            if part[0] == "text":
+                temp_console.print(part[1], markup=True, highlight=True)
+            else:  # code
+                _, language, code = part
+                syntax = Syntax(
+                    code,
+                    language,
+                    theme="monokai",
+                    line_numbers=True,
+                    word_wrap=True,
+                )
+                temp_console.print(syntax)
+
+        return buffer.getvalue()
+
+    def _render_markdown(self, text: str) -> str:
+        """Render markdown content with Rich formatting.
+
+        Uses Rich's Markdown renderer for headings, lists, emphasis, etc.
+
+        Args:
+            text: Markdown text to render
+
+        Returns:
+            Formatted markdown string
+        """
+        if not self._console:
+            return text
+
+        try:
+            from rich.markdown import Markdown
+
+            # Preprocess for task lists
+            processed = self._preprocess_markdown(text)
+
+            buffer = StringIO()
+            temp_console = Console(file=buffer, force_terminal=True, width=100)
+            temp_console.print(Markdown(processed))
+            return buffer.getvalue()
+        except ImportError:
+            return text
+
+    def _preprocess_markdown(self, text: str) -> str:
+        """Preprocess markdown for enhanced rendering.
+
+        Converts task list checkboxes to visual indicators.
+
+        Args:
+            text: Raw markdown
+
+        Returns:
+            Preprocessed markdown
+        """
+        # Convert task lists: [ ] -> ☐, [x] -> ☑
+        text = re.sub(r"\[\s\]", "☐", text)
+        text = re.sub(r"\[[xX]\]", "☑", text)
+        return text
+
+    def _render_traceback(self, text: str) -> str:
+        """Render error traceback with syntax highlighting.
+
+        Uses Python syntax highlighting for better readability.
+
+        Args:
+            text: Traceback text to render
+
+        Returns:
+            Formatted traceback string
+        """
+        if not self._console:
+            return f"[red]{text}[/red]"
+
+        try:
+            buffer = StringIO()
+            temp_console = Console(file=buffer, force_terminal=True, width=100)
+            temp_console.print("[red bold]⚠ Error Traceback:[/red bold]")
+            syntax = Syntax(
+                text,
+                "python",
+                theme="monokai",
+                line_numbers=False,
+                word_wrap=True,
+                background_color="grey11",
+            )
+            temp_console.print(syntax)
+            return buffer.getvalue()
+        except Exception:
+            return f"[red]{escape(text)}[/red]"
+
+    def print_smart(self, message: str, iteration: int = 0) -> None:
+        """Print message with smart content detection directly to console.
+
+        This is the preferred method for displaying assistant messages
+        as it handles all content types appropriately and prints directly.
+
+        Args:
+            message: Message text to print
+            iteration: Current iteration number
+        """
+        if not self.should_display(MessageType.ASSISTANT):
+            return
+
+        if self._verbosity == VerbosityLevel.QUIET:
+            return
+
+        if not self._console:
+            print(f"ASSISTANT: {message}")
+            return
+
+        # Use smart detection
+        if self._smart_detection and self._content_detector:
+            content_type = self._content_detector.detect(message)
+
+            if content_type == ContentType.DIFF:
+                # DiffFormatter prints directly
+                if self._diff_formatter:
+                    self._diff_formatter.format_and_print(message)
+                return
+
+        # For other content types, use format and print
+        formatted = self.format_assistant_message(message, iteration)
+        if formatted:
+            self._console.print(formatted, markup=True)
 
     def format_system_message(
         self,

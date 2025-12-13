@@ -52,6 +52,9 @@ from .base import (
     VerbosityLevel,
 )
 
+# Import content detection
+from .content_detector import ContentDetector, ContentType
+
 # Import new formatter implementations
 from .json_formatter import JsonFormatter
 from .plain import PlainTextFormatter
@@ -70,6 +73,9 @@ __all__ = [
     "TokenUsage",
     "ToolCallInfo",
     "FormatContext",
+    # Content detection
+    "ContentDetector",
+    "ContentType",
     # New formatters
     "PlainTextFormatter",
     "RichTerminalFormatter",
