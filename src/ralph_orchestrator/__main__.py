@@ -203,11 +203,17 @@ def generate_prompt(rough_ideas: List[str], output_file: str = "PROMPT.md", inte
         # Just a filename, put it in prompts directory
         # Look for the project root (where .git is located)
         project_root = current_dir
+        found_git = False
         while project_root.parent != project_root:
             if (project_root / '.git').exists():
+                found_git = True
                 break
             project_root = project_root.parent
-        
+
+        # If no .git found, fall back to current directory
+        if not found_git:
+            project_root = current_dir
+
         # Create prompts directory in project root
         prompts_dir = project_root / 'prompts'
         prompts_dir.mkdir(exist_ok=True)
