@@ -258,9 +258,9 @@ After implementation, verify:
 - [x] `ralph init` creates identical directory structure (verified: prompts, checkpoints, metrics, plans, memory, cache)
 - [x] `ralph run` accepts all documented flags (verified: all CLI flags present and documented)
 - [x] `ralph.yml` files from existing users load without errors (fixed: added tool_permissions field to AdapterConfig)
-- [ ] Web API endpoints return same response schemas (needs manual verification)
-- [ ] Metrics JSON format unchanged (IterationStats.to_dict() is backwards compatible)
-- [ ] Git checkpoint commit messages unchanged (commit format: "Ralph checkpoint {iteration}")
+- [x] Web API endpoints return same response schemas (verified: server.py endpoints return unchanged response structures)
+- [x] Metrics JSON format unchanged (verified: Metrics.to_dict() returns same keys; IterationStats.to_dict() is backwards compatible)
+- [x] Git checkpoint commit messages unchanged (verified: orchestrator.py line 430 uses format "Ralph checkpoint {iteration}")
 - [x] All adapters (claude, qchat, gemini) work identically (ToolAdapter interface unchanged)
 - [x] `--verbose` output enhanced but not breaking (VerboseLogger with re-entrancy protection)
 
