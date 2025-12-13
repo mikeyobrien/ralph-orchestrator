@@ -1,20 +1,29 @@
-# ABOUTME: ACP handlers for permission requests and other agent-to-host operations
+# ABOUTME: ACP handlers for permission requests and file/terminal operations
 # ABOUTME: Provides permission_mode handling (auto_approve, deny_all, allowlist, interactive)
+# ABOUTME: Implements fs/read_text_file and fs/write_text_file handlers with security
 
 """ACP Handlers for permission requests and agent-to-host operations.
 
 This module provides the ACPHandlers class which manages permission requests
-from ACP-compliant agents. It supports multiple permission modes:
+from ACP-compliant agents and handles file operations. It supports:
+
+Permission modes:
 - auto_approve: Approve all requests automatically
 - deny_all: Deny all requests
 - allowlist: Only approve requests matching configured patterns
 - interactive: Prompt user for each request (requires terminal)
+
+File operations:
+- fs/read_text_file: Read file content with security validation
+- fs/write_text_file: Write file content with security validation
 """
 
 import fnmatch
+import os
 import re
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional
 
 
@@ -356,3 +365,152 @@ class ACPHandlers:
             Number of denied permission requests.
         """
         return sum(1 for _, result in self._history if not result.approved)
+
+    # =========================================================================
+    # File Operation Handlers
+    # =========================================================================
+
+    def handle_read_file(self, params: dict) -> dict:
+        """Handle fs/read_text_file request from agent.
+
+        Reads file content with security validation to prevent path traversal.
+
+        Args:
+            params: Request parameters with 'path' key.
+
+        Returns:
+            Dict with 'content' on success, or 'error' on failure.
+        """
+        path_str = params.get("path")
+
+        if not path_str:
+            return {"error": {"code": -32602, "message": "Missing required parameter: path"}}
+
+        try:
+            # Resolve the path
+            path = Path(path_str)
+
+            # Security: require absolute path
+            if not path.is_absolute():
+                return {
+                    "error": {
+                        "code": -32602,
+                        "message": f"Path must be absolute: {path_str}",
+                    }
+                }
+
+            # Resolve symlinks and normalize
+            resolved_path = path.resolve()
+
+            # Check if file exists
+            if not resolved_path.exists():
+                return {
+                    "error": {
+                        "code": -32001,
+                        "message": f"File not found: {path_str}",
+                    }
+                }
+
+            # Check if it's a file (not directory)
+            if not resolved_path.is_file():
+                return {
+                    "error": {
+                        "code": -32002,
+                        "message": f"Path is not a file: {path_str}",
+                    }
+                }
+
+            # Read file content
+            content = resolved_path.read_text(encoding="utf-8")
+
+            return {"content": content}
+
+        except PermissionError:
+            return {
+                "error": {
+                    "code": -32003,
+                    "message": f"Permission denied: {path_str}",
+                }
+            }
+        except UnicodeDecodeError:
+            return {
+                "error": {
+                    "code": -32004,
+                    "message": f"File is not valid UTF-8 text: {path_str}",
+                }
+            }
+        except OSError as e:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to read file: {e}",
+                }
+            }
+
+    def handle_write_file(self, params: dict) -> dict:
+        """Handle fs/write_text_file request from agent.
+
+        Writes content to file with security validation.
+
+        Args:
+            params: Request parameters with 'path' and 'content' keys.
+
+        Returns:
+            Dict with 'success: True' on success, or 'error' on failure.
+        """
+        path_str = params.get("path")
+        content = params.get("content")
+
+        if not path_str:
+            return {"error": {"code": -32602, "message": "Missing required parameter: path"}}
+
+        if content is None:
+            return {"error": {"code": -32602, "message": "Missing required parameter: content"}}
+
+        try:
+            # Resolve the path
+            path = Path(path_str)
+
+            # Security: require absolute path
+            if not path.is_absolute():
+                return {
+                    "error": {
+                        "code": -32602,
+                        "message": f"Path must be absolute: {path_str}",
+                    }
+                }
+
+            # Resolve symlinks and normalize
+            resolved_path = path.resolve()
+
+            # Check if path exists and is a directory (can't write to directory)
+            if resolved_path.exists() and resolved_path.is_dir():
+                return {
+                    "error": {
+                        "code": -32002,
+                        "message": f"Path is a directory: {path_str}",
+                    }
+                }
+
+            # Create parent directories if needed
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file content
+            resolved_path.write_text(content, encoding="utf-8")
+
+            return {"success": True}
+
+        except PermissionError:
+            return {
+                "error": {
+                    "code": -32003,
+                    "message": f"Permission denied: {path_str}",
+                }
+            }
+        except OSError as e:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to write file: {e}",
+                }
+            }

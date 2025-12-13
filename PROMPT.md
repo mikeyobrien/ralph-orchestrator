@@ -142,8 +142,29 @@
   - ACPAdapter integration tests
 - All tests pass (181 total ACP tests)
 
-### Next Step: Step 7 - Implement file operation handlers
-See `.sop/planning/implementation/plan.md` for full implementation plan.
+### Step 7: File operation handlers (COMPLETED - Dec 13, 2025)
+- Updated `src/ralph_orchestrator/adapters/acp_handlers.py` with:
+  - `handle_read_file(params)` method for `fs/read_text_file` operations:
+    - Requires absolute path (rejects relative paths for security)
+    - Reads file content as UTF-8 text
+    - Returns `{"content": "..."}` on success
+    - Returns `{"error": {"code": ..., "message": "..."}}` on failure
+    - Error codes: -32602 (invalid params), -32001 (not found), -32002 (not a file), -32003 (permission denied), -32004 (not UTF-8), -32000 (other OS error)
+  - `handle_write_file(params)` method for `fs/write_text_file` operations:
+    - Requires absolute path (rejects relative paths for security)
+    - Writes content as UTF-8 text
+    - Creates parent directories if needed
+    - Returns `{"success": true}` on success
+    - Returns `{"error": {"code": ..., "message": "..."}}` on failure
+    - Error codes: -32602 (invalid params), -32002 (is directory), -32003 (permission denied), -32000 (other OS error)
+- Added 20 new tests in `tests/test_acp_handlers.py`:
+  - `TestACPHandlersReadFile`: 8 tests covering success, missing path, not found, is directory, relative path rejection, multiline content, empty file, unicode content
+  - `TestACPHandlersWriteFile`: 10 tests covering success, missing path, missing content, empty content, overwrite existing, create parent dirs, relative path rejection, is directory, unicode content, multiline content
+  - `TestACPHandlersFileIntegration`: 2 tests covering read/write roundtrip, large file handling (1MB)
+- All tests pass (201 total ACP tests)
+
+### Next iteration:
+**Step 8: Implement terminal handlers** - Create terminal operation handlers for `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, `terminal/release` operations.
 
 ---
 

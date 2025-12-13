@@ -555,3 +555,273 @@ class TestACPHandlersIntegration:
             {"operation": "fs/read_text_file"}
         )
         assert result == {"approved": True}
+
+
+class TestACPHandlersReadFile:
+    """Tests for handle_read_file method."""
+
+    def test_read_file_success(self, tmp_path):
+        """Test successful file read."""
+        handlers = ACPHandlers()
+
+        # Create a test file
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Hello, World!")
+
+        result = handlers.handle_read_file({"path": str(test_file)})
+
+        assert "content" in result
+        assert result["content"] == "Hello, World!"
+
+    def test_read_file_missing_path(self):
+        """Test read file with missing path parameter."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_read_file({})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32602
+        assert "Missing required parameter: path" in result["error"]["message"]
+
+    def test_read_file_not_found(self, tmp_path):
+        """Test read file that doesn't exist."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_read_file({"path": str(tmp_path / "nonexistent.txt")})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32001
+        assert "File not found" in result["error"]["message"]
+
+    def test_read_file_is_directory(self, tmp_path):
+        """Test read file when path is a directory."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_read_file({"path": str(tmp_path)})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32002
+        assert "Path is not a file" in result["error"]["message"]
+
+    def test_read_file_relative_path_rejected(self, tmp_path):
+        """Test that relative paths are rejected."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_read_file({"path": "relative/path.txt"})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32602
+        assert "Path must be absolute" in result["error"]["message"]
+
+    def test_read_file_multiline_content(self, tmp_path):
+        """Test reading file with multiple lines."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "multiline.txt"
+        content = "Line 1\nLine 2\nLine 3"
+        test_file.write_text(content)
+
+        result = handlers.handle_read_file({"path": str(test_file)})
+
+        assert result["content"] == content
+
+    def test_read_file_empty_file(self, tmp_path):
+        """Test reading empty file."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "empty.txt"
+        test_file.write_text("")
+
+        result = handlers.handle_read_file({"path": str(test_file)})
+
+        assert result["content"] == ""
+
+    def test_read_file_unicode_content(self, tmp_path):
+        """Test reading file with unicode content."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "unicode.txt"
+        content = "Hello, 世界! 🌍 Привет"
+        test_file.write_text(content, encoding="utf-8")
+
+        result = handlers.handle_read_file({"path": str(test_file)})
+
+        assert result["content"] == content
+
+
+class TestACPHandlersWriteFile:
+    """Tests for handle_write_file method."""
+
+    def test_write_file_success(self, tmp_path):
+        """Test successful file write."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "output.txt"
+
+        result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": "Hello, World!"
+        })
+
+        assert result == {"success": True}
+        assert test_file.read_text() == "Hello, World!"
+
+    def test_write_file_missing_path(self):
+        """Test write file with missing path parameter."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_write_file({"content": "test"})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32602
+        assert "Missing required parameter: path" in result["error"]["message"]
+
+    def test_write_file_missing_content(self, tmp_path):
+        """Test write file with missing content parameter."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_write_file({"path": str(tmp_path / "test.txt")})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32602
+        assert "Missing required parameter: content" in result["error"]["message"]
+
+    def test_write_file_empty_content(self, tmp_path):
+        """Test write file with empty content."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "empty.txt"
+
+        result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": ""
+        })
+
+        assert result == {"success": True}
+        assert test_file.read_text() == ""
+
+    def test_write_file_overwrites_existing(self, tmp_path):
+        """Test write file overwrites existing file."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "existing.txt"
+        test_file.write_text("Old content")
+
+        result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": "New content"
+        })
+
+        assert result == {"success": True}
+        assert test_file.read_text() == "New content"
+
+    def test_write_file_creates_parent_dirs(self, tmp_path):
+        """Test write file creates parent directories."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "nested" / "path" / "file.txt"
+
+        result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": "Nested content"
+        })
+
+        assert result == {"success": True}
+        assert test_file.read_text() == "Nested content"
+
+    def test_write_file_relative_path_rejected(self, tmp_path):
+        """Test that relative paths are rejected."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_write_file({
+            "path": "relative/path.txt",
+            "content": "test"
+        })
+
+        assert "error" in result
+        assert result["error"]["code"] == -32602
+        assert "Path must be absolute" in result["error"]["message"]
+
+    def test_write_file_to_directory_rejected(self, tmp_path):
+        """Test write file to directory path rejected."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_write_file({
+            "path": str(tmp_path),
+            "content": "test"
+        })
+
+        assert "error" in result
+        assert result["error"]["code"] == -32002
+        assert "Path is a directory" in result["error"]["message"]
+
+    def test_write_file_unicode_content(self, tmp_path):
+        """Test writing file with unicode content."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "unicode.txt"
+        content = "Hello, 世界! 🌍 Привет"
+
+        result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": content
+        })
+
+        assert result == {"success": True}
+        assert test_file.read_text(encoding="utf-8") == content
+
+    def test_write_file_multiline_content(self, tmp_path):
+        """Test writing file with multiple lines."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "multiline.txt"
+        content = "Line 1\nLine 2\nLine 3"
+
+        result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": content
+        })
+
+        assert result == {"success": True}
+        assert test_file.read_text() == content
+
+
+class TestACPHandlersFileIntegration:
+    """Integration tests for file operations."""
+
+    def test_read_write_roundtrip(self, tmp_path):
+        """Test write then read returns same content."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "roundtrip.txt"
+        original = "Test content for roundtrip"
+
+        # Write
+        write_result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": original
+        })
+        assert write_result == {"success": True}
+
+        # Read
+        read_result = handlers.handle_read_file({"path": str(test_file)})
+        assert read_result["content"] == original
+
+    def test_read_write_large_file(self, tmp_path):
+        """Test read/write with large file."""
+        handlers = ACPHandlers()
+
+        test_file = tmp_path / "large.txt"
+        # Create ~1MB content
+        original = "x" * (1024 * 1024)
+
+        # Write
+        write_result = handlers.handle_write_file({
+            "path": str(test_file),
+            "content": original
+        })
+        assert write_result == {"success": True}
+
+        # Read
+        read_result = handlers.handle_read_file({"path": str(test_file)})
+        assert read_result["content"] == original
