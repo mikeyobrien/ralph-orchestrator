@@ -174,17 +174,17 @@ class TestWebMonitor:
     def auth_client(self, auth_web_monitor):
         """Create FastAPI test client with auth."""
         client = TestClient(auth_web_monitor.app)
-        
-        # Login to get token
+
+        # Login to get token (using default password from auth.py)
         response = client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "ralph-admin-2024"
+            "password": "admin123"
         })
-        
+
         if response.status_code == 200:
             token = response.json()["access_token"]
             client.headers = {"Authorization": f"Bearer {token}"}
-        
+
         return client
     
     @pytest.fixture
@@ -251,10 +251,10 @@ class TestWebMonitor:
         """Test authentication login."""
         client = TestClient(auth_web_monitor.app)
         
-        # Test successful login
+        # Test successful login (using default password from auth.py)
         response = client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "ralph-admin-2024"
+            "password": "admin123"
         })
         assert response.status_code == 200
         assert "access_token" in response.json()
@@ -375,14 +375,14 @@ class TestWebMonitor:
     def test_websocket_auth(self, auth_web_monitor):
         """Test WebSocket with authentication."""
         client = TestClient(auth_web_monitor.app)
-        
-        # Get token first
+
+        # Get token first (using default password from auth.py)
         response = client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "ralph-admin-2024"
+            "password": "admin123"
         })
         token = response.json()["access_token"]
-        
+
         # Connect with token
         with client.websocket_connect(f"/ws?token={token}") as websocket:
             data = websocket.receive_json()
