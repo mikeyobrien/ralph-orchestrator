@@ -10,7 +10,7 @@
 - [x] Step 6: Implement permission handler
 - [x] Step 7: Implement file operation handlers
 - [x] Step 8: Implement terminal handlers
-- [ ] Step 9: Add configuration support (ralph.yml)
+- [x] Step 9: Add configuration support (ralph.yml)
 - [ ] Step 10: Add CLI integration
 - [ ] Step 11: Integration testing with Gemini CLI
 - [ ] Step 12: Final integration with orchestrator loop

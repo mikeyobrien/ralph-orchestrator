@@ -3,8 +3,14 @@
 
 """Typed data models for ACP messages and session state."""
 
+from __future__ import annotations
+
+import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ralph_orchestrator.main import AdapterConfig
 
 
 @dataclass
@@ -418,4 +424,53 @@ class ACPAdapterConfig:
             timeout=data.get("timeout", 300),
             permission_mode=data.get("permission_mode", "auto_approve"),
             permission_allowlist=data.get("permission_allowlist", []),
+        )
+
+    @classmethod
+    def from_adapter_config(cls, adapter_config: "AdapterConfig") -> "ACPAdapterConfig":
+        """Create ACPAdapterConfig from AdapterConfig with env var overrides.
+
+        Extracts ACP-specific settings from AdapterConfig.tool_permissions
+        and applies environment variable overrides.
+
+        Environment Variables:
+            RALPH_ACP_AGENT: Override agent_command
+            RALPH_ACP_PERMISSION_MODE: Override permission_mode
+            RALPH_ACP_TIMEOUT: Override timeout (integer)
+
+        Args:
+            adapter_config: General adapter configuration.
+
+        Returns:
+            ACPAdapterConfig with ACP-specific settings.
+        """
+        # Start with tool_permissions or empty dict
+        tool_perms = adapter_config.tool_permissions or {}
+
+        # Get base values from tool_permissions
+        agent_command = tool_perms.get("agent_command", "gemini")
+        agent_args = tool_perms.get("agent_args", [])
+        timeout = tool_perms.get("timeout", adapter_config.timeout)
+        permission_mode = tool_perms.get("permission_mode", "auto_approve")
+        permission_allowlist = tool_perms.get("permission_allowlist", [])
+
+        # Apply environment variable overrides
+        if env_agent := os.environ.get("RALPH_ACP_AGENT"):
+            agent_command = env_agent
+
+        if env_mode := os.environ.get("RALPH_ACP_PERMISSION_MODE"):
+            permission_mode = env_mode
+
+        if env_timeout := os.environ.get("RALPH_ACP_TIMEOUT"):
+            try:
+                timeout = int(env_timeout)
+            except ValueError:
+                pass  # Keep existing value if invalid
+
+        return cls(
+            agent_command=agent_command,
+            agent_args=agent_args,
+            timeout=timeout,
+            permission_mode=permission_mode,
+            permission_allowlist=permission_allowlist,
         )

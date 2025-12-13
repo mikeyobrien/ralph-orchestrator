@@ -198,8 +198,41 @@
   - `TestACPHandlersTerminalIntegration`: 3 tests (workflow, stderr, not found)
 - All tests pass (227 total ACP tests)
 
+### Step 9: ACP configuration support (COMPLETED - Dec 13, 2025)
+- Added `from_adapter_config()` class method to `ACPAdapterConfig`:
+  - Extracts ACP-specific settings from `AdapterConfig.tool_permissions`
+  - Applies environment variable overrides: `RALPH_ACP_AGENT`, `RALPH_ACP_PERMISSION_MODE`, `RALPH_ACP_TIMEOUT`
+  - Falls back to defaults for missing values
+- Updated `ralph init` template (`__main__.py`):
+  - Added ACP adapter section with `tool_permissions` for ACP-specific fields
+  - Includes `agent_command`, `agent_args`, `permission_mode`, `permission_allowlist`
+  - Documented permission modes in comments
+- ACP configuration structure in `ralph.yml`:
+  ```yaml
+  adapters:
+    acp:
+      enabled: true
+      timeout: 300
+      tool_permissions:
+        agent_command: gemini
+        agent_args: []
+        permission_mode: auto_approve
+        permission_allowlist: []
+  ```
+- Environment variable overrides:
+  - `RALPH_ACP_AGENT`: Override `agent_command`
+  - `RALPH_ACP_PERMISSION_MODE`: Override `permission_mode`
+  - `RALPH_ACP_TIMEOUT`: Override `timeout` (integer)
+- Created `tests/test_acp_config.py` with 25 tests covering:
+  - YAML parsing: basic, full options, disabled, simple boolean, missing (defaults)
+  - Environment variable overrides: agent, permission mode, timeout, invalid timeout
+  - Default values: ACPAdapterConfig defaults, from_dict, from_adapter_config
+  - Init template: creates ACP config, valid YAML
+  - Validation: permission modes, timeout, agent_command paths, agent_args
+- All tests pass (252 total ACP tests)
+
 ### Next iteration:
-**Step 9: Add configuration support (ralph.yml)** - Enable ACP adapter configuration via ralph.yml with agent_command, agent_args, timeout, permission_mode, and permission_allowlist.
+**Step 10: Add CLI integration** - Expose ACP adapter through Ralph CLI with `-a acp`, `--acp-agent`, and `--acp-permission-mode` arguments.
 
 ---
 

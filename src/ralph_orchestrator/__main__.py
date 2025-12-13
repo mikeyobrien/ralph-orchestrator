@@ -83,6 +83,16 @@ adapters:
   gemini:
     enabled: true
     timeout: 300
+  # ACP (Agent Client Protocol) adapter for Gemini CLI and other ACP-compatible agents
+  acp:
+    enabled: true
+    timeout: 300
+    # ACP-specific settings (stored in tool_permissions)
+    tool_permissions:
+      agent_command: gemini
+      agent_args: []
+      permission_mode: auto_approve  # auto_approve, deny_all, allowlist, interactive
+      permission_allowlist: []       # Patterns for allowlist mode: "fs/*", "/^terminal\\/.*$/"
 """)
         _console.print_success("Created ralph.yml configuration")
 
