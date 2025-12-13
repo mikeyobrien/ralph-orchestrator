@@ -10,7 +10,7 @@ from typing import Dict, Optional, Tuple
 from functools import wraps
 import logging
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)

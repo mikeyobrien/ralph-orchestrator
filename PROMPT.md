@@ -313,3 +313,27 @@ After implementation, verify:
 5. **QChat Message Queue Tests** (`tests/test_qchat_message_queue.py`)
    - Tests require `q` CLI to be available (integration tests)
    - Fixed: Added `@pytest.mark.skipif` to skip when q CLI not available
+
+### Linting Issues Fixed (2025-12-13)
+
+**Summary:** Fixed 27 linting issues found by ruff.
+
+1. **Unused Imports (20 fixes)** - Auto-fixed by `ruff --fix`
+   - Removed unused imports across multiple files (F401)
+   - Files: adapters/base.py, adapters/gemini.py, adapters/qchat.py, error_formatter.py, output/plain.py, security.py, web/rate_limit.py, web/server.py
+
+2. **F-strings Without Placeholders (2 fixes)** - Auto-fixed
+   - Converted unnecessary f-strings to regular strings in qchat.py
+
+3. **Unused Local Variables (4 fixes)** - Manual fixes
+   - `verbose_logger.py:387`: Removed unused `loop` variable in `log_message_sync()`
+   - `verbose_logger.py:947`: Removed unused `loop` variable in `close_sync()`
+   - `web/database.py:439`: Removed unused `cutoff` variable in `cleanup_old_records()`
+   - `web/server.py:115`: Removed unused `loop` variable in `_schedule_broadcast()`
+
+4. **Unused Rich Imports (3 fixes)** - Manual fix
+   - Commented out unused `Progress`, `SpinnerColumn`, `TextColumn` imports in verbose_logger.py
+
+**Results:**
+- Before: 27 linting errors
+- After: 0 linting errors (`ruff check src/` passes)

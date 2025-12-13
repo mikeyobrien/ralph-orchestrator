@@ -5,7 +5,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any
 from pathlib import Path
 import asyncio
 

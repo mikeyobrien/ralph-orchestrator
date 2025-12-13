@@ -3,7 +3,6 @@
 
 """FastAPI web server for Ralph Orchestrator monitoring."""
 
-import os
 import json
 import time
 import asyncio
@@ -14,22 +13,20 @@ from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 import uvicorn
 import psutil
 
-from ..metrics import Metrics, CostTracker
 from ..orchestrator import RalphOrchestrator
 from .auth import (
     auth_manager, LoginRequest, TokenResponse,
     get_current_user, require_admin
 )
 from .database import DatabaseManager
-from .rate_limit import rate_limit_middleware, setup_rate_limit_cleanup, rate_limit
+from .rate_limit import rate_limit_middleware, setup_rate_limit_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +111,8 @@ class OrchestratorMonitor:
     def _schedule_broadcast(self, message: Dict[str, Any]):
         """Schedule a broadcast to clients, handling both sync and async contexts."""
         try:
-            # Check if there's a running event loop
-            loop = asyncio.get_running_loop()
+            # Check if there's a running event loop (raises RuntimeError if not)
+            asyncio.get_running_loop()
             # If we're in an async context, schedule the broadcast
             asyncio.create_task(self._broadcast_to_clients(message))
         except RuntimeError:

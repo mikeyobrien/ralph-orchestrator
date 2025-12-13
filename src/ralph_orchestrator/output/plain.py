@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Optional
 
 from .base import (
-    FormatContext,
     MessageType,
     OutputFormatter,
     ToolCallInfo,

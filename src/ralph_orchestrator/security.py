@@ -8,7 +8,6 @@ This module provides security hardening functions including input validation,
 path sanitization, and sensitive data protection.
 """
 
-import os
 import re
 import logging
 from pathlib import Path

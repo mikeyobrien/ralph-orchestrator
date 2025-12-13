@@ -17,7 +17,8 @@ try:
     from rich.syntax import Syntax
     from rich.table import Table
     from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn
+    # Unused imports commented out but kept for future reference:
+    # from rich.progress import Progress, SpinnerColumn, TextColumn
 
     RICH_AVAILABLE = True
 except ImportError:
@@ -383,7 +384,7 @@ class VerboseLogger:
             return
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()  # Check if loop exists (raises RuntimeError if not)
             asyncio.create_task(
                 self.log_message(message_type, content, iteration, metadata)
             )
@@ -943,7 +944,7 @@ class VerboseLogger:
     def close_sync(self) -> None:
         """Synchronous close method."""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()  # Check if loop exists (raises RuntimeError if not)
             asyncio.create_task(self.close())
         except RuntimeError:
             asyncio.run(self.close())

@@ -436,9 +436,8 @@ class DatabaseManager:
         with self._lock:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cutoff = datetime.now().isoformat()
-                
-                # Get run IDs to delete
+
+                # Get run IDs to delete (using SQLite datetime functions directly)
                 cursor.execute("""
                     SELECT id FROM orchestrator_runs
                     WHERE datetime(start_time) < datetime('now', '-' || ? || ' days')

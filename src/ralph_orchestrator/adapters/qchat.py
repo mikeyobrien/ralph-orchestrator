@@ -9,12 +9,8 @@ import sys
 import signal
 import threading
 import asyncio
-import select
 import time
 import fcntl
-import logging
-from typing import Optional, Dict, Any
-from contextlib import contextmanager
 from .base import ToolAdapter, ToolResponse
 from ..logging_config import RalphLogger
 
@@ -147,7 +143,7 @@ class QChatAdapter(ToolAdapter):
             timeout = kwargs.get("timeout", self.default_timeout)
             
             if verbose:
-                logger.info(f"Starting q chat command...")
+                logger.info("Starting q chat command...")
                 logger.info(f"Command: {' '.join(cmd)}")
                 logger.info(f"Working directory: {os.getcwd()}")
                 logger.info(f"Timeout: {timeout} seconds")
@@ -423,7 +419,7 @@ class QChatAdapter(ToolAdapter):
             
             logger.debug(f"Starting async Q chat command: {' '.join(cmd)}")
             if verbose:
-                print(f"Starting q chat command (async)...", file=sys.stderr)
+                print("Starting q chat command (async)...", file=sys.stderr)
                 print(f"Command: {' '.join(cmd)}", file=sys.stderr)
                 print("-" * 60, file=sys.stderr)
             

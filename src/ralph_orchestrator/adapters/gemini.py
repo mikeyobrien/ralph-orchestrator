@@ -4,7 +4,6 @@
 """Gemini CLI adapter for Ralph Orchestrator."""
 
 import subprocess
-import os
 from typing import Optional
 from .base import ToolAdapter, ToolResponse
 
