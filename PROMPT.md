@@ -1,4 +1,27 @@
-# Task: Port Improvements from Loop to Ralph-Orchestrator
+# Task: Implement ACP Adapter for Ralph-Orchestrator
+
+## Current Progress - ACP Implementation
+
+### Step 1: ACPProtocol class (COMPLETED - Dec 13, 2025)
+- Created `src/ralph_orchestrator/adapters/acp_protocol.py` with:
+  - `ACPProtocol` class for JSON-RPC 2.0 message handling
+  - `MessageType` enum for message classification
+  - `ACPErrorCodes` class with standard JSON-RPC and ACP-specific error codes
+  - Methods: `create_request()`, `create_notification()`, `parse_message()`, `create_response()`, `create_error_response()`
+- Created `tests/test_acp_protocol.py` with 34 unit tests covering:
+  - Request creation and ID incrementing
+  - Notification creation (no ID)
+  - Message parsing for requests, notifications, responses, and errors
+  - Response and error response creation
+  - Round-trip serialization tests
+- All tests pass
+
+### Next Step: Step 2 - Create ACPMessage data models
+See `.sop/planning/implementation/plan.md` for full implementation plan.
+
+---
+
+# Previous Task: Port Improvements from Loop to Ralph-Orchestrator
 
 ## Context
 
