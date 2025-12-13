@@ -19,13 +19,13 @@ Ralph Orchestrator implements a simple but effective pattern for autonomous task
 
 Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/ralph/), this implementation provides a robust, tested, and feature-complete orchestration system for AI-driven development.
 
-## ✅ Production Ready - v1.0.0
+## ✅ Production Ready - v1.1.0
 
-- **Claude Integration**: ✅ COMPLETE
-- **Q Chat Integration**: ✅ COMPLETE  
+- **Claude Integration**: ✅ COMPLETE (with Agent SDK)
+- **Q Chat Integration**: ✅ COMPLETE
 - **Gemini Integration**: ✅ COMPLETE
 - **Core Orchestration**: ✅ OPERATIONAL
-- **Test Suite**: ✅ 17 tests passing
+- **Test Suite**: ✅ 620+ tests passing
 - **Documentation**: ✅ [COMPLETE](https://mikeyobrien.github.io/ralph-orchestrator/)
 - **Production Deployment**: ✅ [READY](https://mikeyobrien.github.io/ralph-orchestrator/advanced/production-deployment/)
 
@@ -33,13 +33,17 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 
 - 🤖 **Multiple AI Agent Support**: Works with Claude, Q Chat, and Gemini CLI tools
 - 🔍 **Auto-detection**: Automatically detects which AI agents are available
-- 🌐 **WebSearch Support**: Claude can search the web for current information (NEW!)
-- 💾 **Checkpointing**: Git-based checkpointing for recovery and history
+- 🌐 **WebSearch Support**: Claude can search the web for current information
+- 💾 **Checkpointing**: Git-based async checkpointing for recovery and history
 - 📚 **Prompt Archiving**: Tracks prompt evolution over iterations
-- 🔄 **Error Recovery**: Automatic retry with exponential backoff
+- 🔄 **Error Recovery**: Automatic retry with exponential backoff (non-blocking)
 - 📊 **State Persistence**: Saves metrics and state for analysis
 - ⏱️ **Configurable Limits**: Set max iterations and runtime limits
-- 🧪 **Comprehensive Testing**: Full test coverage with unit and integration tests
+- 🧪 **Comprehensive Testing**: 620+ tests with unit, integration, and async coverage
+- 🎨 **Rich Terminal Output**: Beautiful formatted output with syntax highlighting
+- 🔒 **Security Features**: Automatic masking of API keys et sensitive data in logs
+- ⚡ **Async-First Design**: Non-blocking I/O throughout (logging, git operations)
+- 📝 **Inline Prompts**: Run with `-p "your task"` without needing a file
 
 ## Installation
 
@@ -175,7 +179,8 @@ Commands:
 Core Options:
   -c, --config CONFIG             Configuration file (YAML format)
   -a, --agent {claude,q,gemini,auto}  AI agent to use (default: auto)
-  -p, --prompt PROMPT             Prompt file path (default: PROMPT.md)
+  -P, --prompt-file FILE          Prompt file path (default: PROMPT.md)
+  -p, --prompt-text TEXT          Inline prompt text (overrides file)
   -i, --max-iterations N          Maximum iterations (default: 100)
   -t, --max-runtime SECONDS      Maximum runtime (default: 14400)
   -v, --verbose                   Enable verbose output
@@ -239,18 +244,28 @@ ralph-orchestrator/
 │   └── ralph_orchestrator/
 │       ├── __main__.py      # CLI entry point
 │       ├── main.py          # Configuration and types
-│       ├── orchestrator.py  # Core orchestration logic
+│       ├── orchestrator.py  # Core orchestration logic (async)
 │       ├── adapters/        # AI agent adapters
 │       │   ├── base.py      # Base adapter interface
-│       │   ├── claude.py    # Claude SDK adapter
+│       │   ├── claude.py    # Claude Agent SDK adapter
 │       │   ├── gemini.py    # Gemini CLI adapter
 │       │   └── qchat.py     # Q Chat adapter
+│       ├── output/          # Output formatting (NEW)
+│       │   ├── base.py      # Base formatter interface
+│       │   ├── console.py   # Rich console output
+│       │   ├── rich_formatter.py  # Rich text formatting
+│       │   └── plain.py     # Plain text fallback
+│       ├── async_logger.py  # Thread-safe async logging
 │       ├── context.py       # Context management
+│       ├── logging_config.py # Centralized logging setup
 │       ├── metrics.py       # Metrics tracking
+│       ├── security.py      # Security validation & masking
 │       └── safety.py        # Safety checks
-├── tests/                   # Test suite
+├── tests/                   # Test suite (620+ tests)
 │   ├── test_orchestrator.py
 │   ├── test_adapters.py
+│   ├── test_async_logger.py
+│   ├── test_output_formatters.py
 │   ├── test_config.py
 │   └── test_integration.py
 ├── docs/                    # Documentation
@@ -296,7 +311,14 @@ uv run pytest tests/test_integration.py -v
 
 ## Examples
 
-### Simple Function
+### Inline Prompt (Quick Tasks)
+
+```bash
+# Run directly with inline prompt - no file needed
+ralph run -p "Write a Python function to check if a number is prime" -a claude --max-iterations 5
+```
+
+### Simple Function (File-Based)
 
 ```bash
 echo "Write a Python function to check if a number is prime" > PROMPT.md
@@ -475,6 +497,16 @@ MIT License - See LICENSE file for details
 - **Research**: [Ralph Wiggum Research](../)
 
 ## Version History
+
+- **v1.1.0** (2025-12)
+  - Async-first architecture for non-blocking operations
+  - Thread-safe async logging with rotation and security masking
+  - Rich terminal output with syntax highlighting
+  - Inline prompt support (`-p "your task"`)
+  - Claude Agent SDK integration with MCP server support
+  - Async git checkpointing (non-blocking)
+  - Expanded test suite (620+ tests)
+  - Improved error handling with debug logging
 
 - **v1.0.0** (2025-09-07)
   - Initial release with Claude, Q, and Gemini support
