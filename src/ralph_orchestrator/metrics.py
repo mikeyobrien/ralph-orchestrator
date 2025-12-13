@@ -4,7 +4,8 @@
 """Metrics and cost tracking for Ralph Orchestrator."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from datetime import datetime
+from typing import Dict, List, Any
 import time
 import json
 
@@ -132,3 +133,173 @@ class CostTracker:
     def to_json(self) -> str:
         """Convert to JSON string."""
         return json.dumps(self.get_summary(), indent=2)
+
+
+@dataclass
+class IterationStats:
+    """Memory-efficient iteration statistics tracking.
+
+    Tracks per-iteration details (duration, success/failure, errors) while
+    limiting stored iterations to prevent memory leaks in long-running sessions.
+    """
+
+    total: int = 0
+    successes: int = 0
+    failures: int = 0
+    start_time: datetime | None = None
+    current_iteration: int = 0
+    iterations: List[Dict[str, Any]] = field(default_factory=list)
+    max_iterations_stored: int = 1000  # Memory limit for stored iterations
+
+    def __post_init__(self) -> None:
+        """Initialize start time if not set."""
+        if self.start_time is None:
+            self.start_time = datetime.now()
+
+    def record_start(self, iteration: int) -> None:
+        """Record iteration start.
+
+        Args:
+            iteration: Iteration number
+        """
+        self.current_iteration = iteration
+        self.total = max(self.total, iteration)
+
+    def record_success(self, iteration: int) -> None:
+        """Record successful iteration.
+
+        Args:
+            iteration: Iteration number
+        """
+        self.total = iteration
+        self.successes += 1
+
+    def record_failure(self, iteration: int) -> None:
+        """Record failed iteration.
+
+        Args:
+            iteration: Iteration number
+        """
+        self.total = iteration
+        self.failures += 1
+
+    def record_iteration(
+        self,
+        iteration: int,
+        duration: float,
+        success: bool,
+        error: str
+    ) -> None:
+        """Record iteration with full details.
+
+        Args:
+            iteration: Iteration number
+            duration: Duration in seconds
+            success: Whether iteration was successful
+            error: Error message if any
+        """
+        # Update basic statistics
+        self.total = max(self.total, iteration)
+        self.current_iteration = iteration
+
+        if success:
+            self.successes += 1
+        else:
+            self.failures += 1
+
+        # Store detailed iteration information
+        iteration_data = {
+            "iteration": iteration,
+            "duration": duration,
+            "success": success,
+            "error": error,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self.iterations.append(iteration_data)
+
+        # Enforce memory limit by evicting oldest entries
+        if len(self.iterations) > self.max_iterations_stored:
+            excess = len(self.iterations) - self.max_iterations_stored
+            self.iterations = self.iterations[excess:]
+
+    def get_success_rate(self) -> float:
+        """Calculate success rate as percentage.
+
+        Returns:
+            Success rate (0-100)
+        """
+        total_attempts = self.successes + self.failures
+        if total_attempts == 0:
+            return 0.0
+        return (self.successes / total_attempts) * 100
+
+    def get_runtime(self) -> str:
+        """Get human-readable runtime duration.
+
+        Returns:
+            Runtime string (e.g., "2h 30m 15s")
+        """
+        if self.start_time is None:
+            return "Unknown"
+
+        delta = datetime.now() - self.start_time
+        hours, remainder = divmod(int(delta.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        if minutes > 0:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
+
+    def get_recent_iterations(self, count: int) -> List[Dict[str, Any]]:
+        """Get most recent iterations.
+
+        Args:
+            count: Maximum number of iterations to return
+
+        Returns:
+            List of recent iteration data dictionaries
+        """
+        if count >= len(self.iterations):
+            return self.iterations.copy()
+        return self.iterations[-count:]
+
+    def get_average_duration(self) -> float:
+        """Calculate average iteration duration.
+
+        Returns:
+            Average duration in seconds, or 0.0 if no iterations
+        """
+        if not self.iterations:
+            return 0.0
+        total_duration = sum(it["duration"] for it in self.iterations)
+        return total_duration / len(self.iterations)
+
+    def get_error_messages(self) -> List[str]:
+        """Extract error messages from failed iterations.
+
+        Returns:
+            List of non-empty error messages
+        """
+        return [
+            it["error"]
+            for it in self.iterations
+            if not it["success"] and it["error"]
+        ]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization.
+
+        Returns:
+            Stats as dictionary (excludes iteration list for compatibility)
+        """
+        return {
+            "total": self.total,
+            "current": self.current_iteration,
+            "successes": self.successes,
+            "failures": self.failures,
+            "success_rate": self.get_success_rate(),
+            "runtime": self.get_runtime(),
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+        }

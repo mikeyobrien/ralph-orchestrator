@@ -6,7 +6,7 @@
 __version__ = "0.1.0"
 
 from .orchestrator import RalphOrchestrator
-from .metrics import Metrics, CostTracker
+from .metrics import Metrics, CostTracker, IterationStats
 from .error_formatter import ClaudeErrorFormatter, ErrorMessage
 from .verbose_logger import VerboseLogger
 
@@ -14,6 +14,7 @@ __all__ = [
     "RalphOrchestrator",
     "Metrics",
     "CostTracker",
+    "IterationStats",
     "ClaudeErrorFormatter",
     "ErrorMessage",
     "VerboseLogger",

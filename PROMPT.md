@@ -198,12 +198,27 @@ Port the following capabilities:
 
 **Constraint:** `-v/--verbose` flag behavior must remain consistent. Preserved.
 
-### 7. Statistics Improvements (LOW)
+### 7. Statistics Improvements (LOW) - DONE
 **Source:** `/home/arch/code/loop/ralph/utils/stats.py`
 
-- [ ] Memory-efficient iteration tracking (limit to 1,000 stored)
-- [ ] Per-iteration: duration, success/failure, error messages
-- [ ] Success rate computation
+- [x] Memory-efficient iteration tracking (limit to 1,000 stored)
+- [x] Per-iteration: duration, success/failure, error messages
+- [x] Success rate computation
+
+**Implementation:**
+- Created `IterationStats` dataclass in `src/ralph_orchestrator/metrics.py`
+- Features:
+  - `max_iterations_stored=1000` default limit prevents memory leaks
+  - `record_iteration(iteration, duration, success, error)` for detailed tracking
+  - `record_start()`, `record_success()`, `record_failure()` for simple tracking
+  - `get_success_rate()` returns percentage (0-100)
+  - `get_average_duration()` computes mean iteration time
+  - `get_recent_iterations(count)` retrieves most recent N iterations
+  - `get_error_messages()` extracts errors from failed iterations
+  - `get_runtime()` returns human-readable duration string
+  - `to_dict()` for JSON serialization (backwards compatible)
+- 34 unit tests in `tests/test_metrics.py`
+- Exported in package `__init__.py`
 
 **Integration:** Enhance existing `metrics.py`.
 
