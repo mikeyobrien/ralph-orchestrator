@@ -398,3 +398,22 @@ After implementation, verify:
 - Before: 6 ruff B-rule violations
 - After: All B-rule checks pass
 - Test suite: 626 passed, 36 skipped (unchanged)
+
+### Blocking File I/O in Async Function Fixed (ASYNC230) (2025-12-13)
+
+**Location:** `src/ralph_orchestrator/adapters/base.py:85` (aexecute_with_file method)
+
+**Issue:** The `aexecute_with_file()` async method used blocking `open()` and `read()` calls, which would block the event loop and cause performance issues when reading large files or on slow filesystems.
+
+**Bug Impact:** Event loop stalls during file reads, reducing concurrency in async code paths.
+
+**Fix:** Replaced blocking file I/O with `asyncio.to_thread(prompt_file.read_text, encoding='utf-8')` to run file reading in a thread pool without blocking the event loop.
+
+**Tests Added:**
+- `tests/test_adapters.py::TestToolAdapterBase::test_aexecute_with_file_uses_asyncio_to_thread`
+- `tests/test_adapters.py::TestToolAdapterBase::test_aexecute_with_file_file_not_found`
+
+**Results:**
+- Before: Blocking I/O in async function (ASYNC230 violation)
+- After: Non-blocking async file I/O
+- Test suite: 628 passed, 36 skipped (+2 new tests)
