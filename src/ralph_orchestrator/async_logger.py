@@ -210,8 +210,9 @@ class AsyncFileLogger:
         """
         Rotate log file if it exceeds max size.
 
-        Note: This method should only be called from within _rotate_if_needed_thread_safe()
-        or when the rotation lock is already held to prevent race conditions.
+        Note: This method should only be called:
+        - During __init__ (single-threaded, safe before logger is shared)
+        - From within _rotate_if_needed_thread_safe() when rotation lock is held
         """
         if not self.log_file.exists():
             return

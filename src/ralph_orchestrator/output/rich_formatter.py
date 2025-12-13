@@ -10,6 +10,7 @@ This formatter provides intelligent content detection and rendering:
 - Error tracebacks are highlighted for readability
 """
 
+import logging
 import re
 from datetime import datetime
 from io import StringIO
@@ -22,6 +23,8 @@ from .base import (
     VerbosityLevel,
 )
 from .content_detector import ContentDetector, ContentType
+
+_logger = logging.getLogger(__name__)
 
 # Try to import Rich components with fallback
 try:
@@ -466,7 +469,8 @@ class RichTerminalFormatter(OutputFormatter):
             )
             temp_console.print(syntax)
             return buffer.getvalue()
-        except Exception:
+        except Exception as e:
+            _logger.debug("Rich traceback rendering failed: %s: %s", type(e).__name__, e)
             return f"[red]{escape(text)}[/red]"
 
     def print_smart(self, message: str, iteration: int = 0) -> None:

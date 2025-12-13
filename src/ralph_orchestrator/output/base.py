@@ -3,11 +3,14 @@
 
 """Base classes for Claude adapter output formatting."""
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 class VerbosityLevel(Enum):
@@ -185,8 +188,16 @@ class OutputFormatter(ABC):
         for callback in self._callbacks:
             try:
                 callback(message_type, content, context)
-            except Exception:
-                pass  # Don't let callback errors break formatting
+            except Exception as e:
+                # Log but don't let callback errors break formatting
+                callback_name = getattr(callback, "__name__", repr(callback))
+                _logger.debug(
+                    "Callback %s failed for %s: %s: %s",
+                    callback_name,
+                    message_type,
+                    type(e).__name__,
+                    e,
+                )
 
     def _create_context(
         self, iteration: int = 0, metadata: Optional[Dict[str, Any]] = None

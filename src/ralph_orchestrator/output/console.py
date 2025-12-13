@@ -3,9 +3,12 @@
 
 """Colored terminal output utilities using Rich."""
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+_logger = logging.getLogger(__name__)
 
 # Try to import Rich components with fallback
 try:
@@ -902,6 +905,7 @@ class RalphConsole:
             self.console.print("\n[red bold]⚠ Error Traceback:[/red bold]")
             self.console.print(syntax)
             self.console.print()
-        except Exception:
+        except Exception as e:
             # Fallback to simple red text if syntax highlighting fails
+            _logger.debug("Syntax highlighting failed for traceback: %s: %s", type(e).__name__, e)
             self.console.print(f"[red]{text}[/red]")

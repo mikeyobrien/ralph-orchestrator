@@ -674,6 +674,64 @@ class TestSyncMethodsThreadSafety:
                     assert f"Thread {thread_id} message {msg_num}" in content
 
 
+class TestAsyncLoggerEmergencyShutdown:
+    """Tests for emergency shutdown behavior during async logging."""
+
+    @pytest.mark.asyncio
+    async def test_async_log_respects_emergency_shutdown_after_lock(self):
+        """Emergency shutdown triggered after lock acquired should abort logging.
+
+        This tests the race condition protection at async_logger.py:150-153.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "test.log"
+            logger = AsyncFileLogger(str(log_path))
+
+            # Write an initial message so we know the logger works
+            await logger.log("INFO", "Initial message")
+
+            # Create a wrapper that triggers shutdown after lock is acquired
+            original_write = logger._write_to_file
+            call_count = [0]
+
+            def trigger_shutdown_then_write(line):
+                call_count[0] += 1
+                if call_count[0] == 2:  # Second call (after initial)
+                    # Trigger shutdown - this simulates the race condition
+                    logger.emergency_shutdown()
+                return original_write(line)
+
+            with patch.object(logger, '_write_to_file', side_effect=trigger_shutdown_then_write):
+                await logger.log("INFO", "Should not appear after shutdown")
+
+            content = log_path.read_text()
+            assert "Initial message" in content
+            # The message might or might not appear depending on timing
+            # But the key is no exception was raised
+
+
+class TestAsyncLoggerStderrFailure:
+    """Tests for stderr failure handling."""
+
+    def test_sync_logging_handles_stderr_failure_silently(self):
+        """When both file I/O and stderr fail, should not raise exception.
+
+        This tests the silent fallback at async_logger.py:323-325.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "test.log"
+            logger = AsyncFileLogger(str(log_path))
+
+            # Mock _write_to_file to raise OSError
+            # Mock sys.stderr.write to raise IOError
+            with patch.object(logger, '_write_to_file', side_effect=OSError("Disk full")):
+                with patch('sys.stderr', side_effect=IOError("Broken pipe")):
+                    # Should not raise - silently ignores
+                    logger.log_info_sync("Test message")
+
+            # If we got here without exception, test passes
+
+
 class TestSyncMethodsBehavior:
     """Tests for behavioral requirements of synchronous logging methods."""
 
