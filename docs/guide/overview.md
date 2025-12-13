@@ -10,14 +10,41 @@ The system is named after Ralph Wiggum from The Simpsons, embodying the philosop
 
 ### The Ralph Wiggum Technique
 
-The Ralph Wiggum technique is a simple yet powerful approach to AI orchestration:
+At its core, as [Geoffrey Huntley](https://ghuntley.com/ralph/) originally defined it: **"Ralph is a Bash loop."**
 
-1. **Give the AI a task** via a prompt file
+```bash
+while :; do cat PROMPT.md | claude ; done
+```
+
+This simple yet powerful approach to AI orchestration is "deterministically bad in an undeterministic world" - it fails predictably but in ways you can address. The technique requires "faith and belief in eventual consistency," improving through iterative tuning.
+
+The workflow is straightforward:
+
+1. **Give the AI a task** via a prompt file (PROMPT.md)
 2. **Let it iterate** continuously on the problem
 3. **Monitor progress** through checkpoints and metrics
 4. **Stop when complete** or when limits are reached
 
-This approach leverages the AI's ability to self-correct and improve through multiple iterations, similar to how humans refine their work through multiple drafts.
+This approach leverages the AI's ability to self-correct and improve through multiple iterations, inverting typical AI workflows by defining success criteria upfront rather than directing step-by-step.
+
+### Enhanced Implementation: Claude Code Plugin
+
+The official [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for Claude Code extends the basic technique with:
+
+- **Stop Hook Mechanism**: Intercepts exit code 2 to re-inject prompts and continue iteration
+- **Iteration Limits**: Primary safety mechanism to prevent runaway loops
+- **Completion Promises**: Optional string matching to detect task completion
+- **Full Context Preservation**: Each cycle has access to modified files and git history from previous runs
+
+**Available commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/ralph-loop "<prompt>"` | Start an autonomous loop with optional `--max-iterations` |
+| `/cancel-ralph` | Stop an active Ralph loop |
+| `/help` | Display plugin help and documentation |
+
+For detailed Claude Code integration, see [paddo.dev/blog/ralph-wiggum-autonomous-loops](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/).
 
 ### Core Components
 
@@ -38,6 +65,9 @@ graph TB
     B --> K[Metrics]
     B --> L[Cost Control]
 ```
+
+!!! warning "Cost Awareness"
+    Autonomous loops consume significant tokens. **A 50-iteration cycle on large codebases can cost $50-100+ in API credits**, quickly exhausting subscription limits. Always set iteration limits and monitor costs carefully. See [Cost Management](cost-management.md) for strategies.
 
 ## How It Works
 
@@ -86,6 +116,27 @@ When the task completes or limits are reached:
 ## Use Cases
 
 Ralph Orchestrator excels at:
+
+### Optimal Use Cases
+- **Large Refactors**: Framework migrations, dependency upgrades
+- **Batch Operations**: Documentation generation, code standardization
+- **Test Coverage Expansion**: Generating comprehensive test suites
+- **Greenfield Project Scaffolding**: New project setup and boilerplate
+
+### Not Recommended For
+- Ambiguous requirements lacking clear completion criteria
+- Architectural decisions requiring human reasoning
+- Security-sensitive code (authentication, payments)
+- Exploratory work requiring human curiosity
+
+!!! info "Real-World Results (2024-2025)"
+    The technique has proven effective at scale:
+
+    - **Y Combinator Hackathon**: Team shipped 6 repositories overnight using Ralph loops
+    - **Contract MVP**: One engineer completed a $50,000 contract for just **$297** in API costs
+    - **Language Development**: Geoffrey Huntley's 3-month loop created a complete esoteric programming language (CURSED) - the AI successfully programs in a language it invented that doesn't exist in any training data
+
+    These results demonstrate that with clear prompts and patience, Ralph can replace substantial outsourcing work for new projects.
 
 ### Software Development
 - Writing complete applications from specifications

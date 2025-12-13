@@ -6,9 +6,17 @@
 
 The Ralph Wiggum technique was created by [Geoffrey Huntley](https://ghuntley.com/ralph/) as a response to the increasing complexity of modern software development. Named after the Simpsons character's famous quote "Me fail English? That's unpossible!", the technique embraces a philosophy of deterministic failure in an unpredictable world.
 
+As Huntley defines it: **"Ralph is a Bash loop."**
+
+```bash
+while :; do cat PROMPT.md | claude ; done
+```
+
 ### Core Philosophy
 
-> "Keep it simple, keep it running, keep it trying until it's done."
+> "It's better to fail predictably than succeed unpredictably."
+
+The technique is "deterministically bad in an undeterministic world" - it fails predictably but in ways you can address. This requires "faith and belief in eventual consistency," improving through iterative tuning (described as "like a guitar").
 
 The technique is based on several key observations:
 
@@ -16,6 +24,15 @@ The technique is based on several key observations:
 2. **Simple loops are robust** - Complex orchestration often fails in complex ways
 3. **Git provides perfect memory** - Version control gives us time travel for free
 4. **Deterministic failure is debuggable** - When things fail predictably, we can fix them
+5. **Success criteria upfront** - Define the end state, not the step-by-step process
+
+!!! warning "Cost Awareness"
+    Autonomous loops consume significant tokens. **A 50-iteration cycle on large codebases can cost $50-100+ in API credits**, quickly exhausting subscription limits. Always:
+
+    - Set iteration limits as the **primary safety mechanism**
+    - Monitor costs in real-time during execution
+    - Start with small iteration counts and scale up
+    - Use completion promises carefully (string matching can be unreliable)
 
 ## Theoretical Foundations
 
@@ -187,7 +204,53 @@ The technique balances:
 
 ## Case Studies
 
-### Case 1: API Development
+### Real-World Results (2024-2025)
+
+!!! success "Verified Production Results"
+    These examples demonstrate the technique's capability at scale with verifiable outcomes.
+
+#### Y Combinator Hackathon (2024)
+
+**Task**: Build multiple products for hackathon submission
+**Approach**: Multiple Ralph loops running in parallel overnight
+**Result**: **6 repositories shipped** in a single session
+**Cost**: Minimal compared to traditional development time
+
+Key insights:
+
+- Parallel execution multiplied productivity
+- Clear product specifications per repo
+- Automated testing validated each output
+
+#### Contract MVP ($50K → $297)
+
+**Task**: Build complete MVP for client contract
+**Traditional Estimate**: $50,000 outsourcing cost
+**Actual Cost**: **$297** in API credits
+**Outcome**: Successful delivery
+
+Key insights:
+
+- Detailed specification crucial for success
+- Iterative refinement improved quality
+- ROI: 16,835% cost savings
+
+#### CURSED Language Compiler (3-Month Loop)
+
+**Task**: Create complete esoteric programming language
+**Duration**: 3+ months of continuous iteration
+**Result**: Working language and compiler that **the AI invented and programs in**
+**Significance**: Language doesn't exist in training data
+
+Key insights:
+
+- Long-running loops can achieve complex emergent behavior
+- AI can work beyond its training boundaries
+- Patience and consistent prompting enables breakthrough results
+
+### Legacy Case Studies
+
+#### Case 1: API Development
 
 **Task**: Build REST API with 10 endpoints
 **Iterations**: 28
@@ -195,11 +258,12 @@ The technique balances:
 **Result**: Fully functional API with tests
 
 Key insights:
+
 - Clear endpoint specifications reduced iterations
 - Agent understood RESTful conventions
 - Test generation happened naturally
 
-### Case 2: Data Analysis Script
+#### Case 2: Data Analysis Script
 
 **Task**: Analyze CSV and generate reports
 **Iterations**: 15
@@ -207,11 +271,12 @@ Key insights:
 **Result**: Complete analysis pipeline
 
 Key insights:
+
 - Data structure clarity was critical
 - Visualization requirements needed examples
 - Agent leveraged common libraries effectively
 
-### Case 3: CLI Tool
+#### Case 3: CLI Tool
 
 **Task**: Create file management CLI
 **Iterations**: 42
@@ -219,13 +284,54 @@ Key insights:
 **Result**: Full-featured CLI with help system
 
 Key insights:
+
 - Command structure specification was vital
 - Error handling emerged through iteration
 - Documentation generated alongside code
 
 ## Implementation Variations
 
-### Minimal Implementation (50 lines)
+### Original Bash Loop (1 line)
+
+The original technique as defined by Geoffrey Huntley:
+
+```bash
+while :; do cat PROMPT.md | claude ; done
+```
+
+### Claude Code Plugin
+
+The official [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for Claude Code provides an enhanced implementation:
+
+**Stop Hook Mechanism:**
+
+The plugin implements a persistent loop using Claude Code's Stop hook system. When Claude attempts to exit with code 2, the hook intercepts it, re-injects the original prompt, and continues iteration. Each cycle has access to modified files and git history from previous runs.
+
+**Available Commands:**
+
+```bash
+# Start a loop with iteration limit
+/ralph-loop "implement feature X" --max-iterations 50
+
+# Start with completion promise
+/ralph-loop "build the API" --max-iterations 100 --completion-promise "ALL TESTS PASSING"
+
+# Cancel active loop
+/cancel-ralph
+
+# Get help
+/help
+```
+
+**Safety Considerations:**
+
+- Iteration limits are the **primary safety mechanism**
+- Completion promises use string matching (can be unreliable)
+- Always monitor costs during execution
+
+For detailed integration guide, see [paddo.dev/blog/ralph-wiggum-autonomous-loops](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/).
+
+### Minimal Python Implementation (50 lines)
 
 ```python
 while not task_complete:
@@ -241,6 +347,8 @@ while not task_complete:
 - Add configuration
 
 ### Enterprise Implementation (2000+ lines)
+
+Ralph Orchestrator represents this tier:
 
 - Add monitoring
 - Add security
@@ -288,15 +396,24 @@ As Geoffrey Huntley noted: "Sometimes the simplest solution is the best solution
 
 ## References
 
-1. Huntley, G. (2024). "The Ralph Wiggum Technique". https://ghuntley.com/ralph/
-2. Reed, H. (2024). "Spec-Driven Development with AI". https://harper.blog/
-3. Brooks, F. (1975). "The Mythical Man-Month" - On software complexity
-4. Simon, H. (1996). "The Sciences of the Artificial" - On bounded rationality
-5. Wiener, N. (1948). "Cybernetics" - On feedback systems
+### Primary Sources
+
+1. Huntley, G. (2024). "The Ralph Wiggum Technique". [ghuntley.com/ralph/](https://ghuntley.com/ralph/) - Origin of the technique
+2. Paddock, P. (2024). "Ralph Wiggum: Autonomous Development Loops". [paddo.dev/blog/ralph-wiggum-autonomous-loops/](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/) - Claude Code integration guide
+3. Anthropic. (2024). "Ralph Wiggum Plugin". [github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) - Official plugin source
+
+### Background Reading
+
+4. Reed, H. (2024). "Spec-Driven Development with AI". https://harper.blog/
+5. Brooks, F. (1975). "The Mythical Man-Month" - On software complexity
+6. Simon, H. (1996). "The Sciences of the Artificial" - On bounded rationality
+7. Wiener, N. (1948). "Cybernetics" - On feedback systems
 
 ## Further Reading
 
-- [Original Ralph Wiggum article](https://ghuntley.com/ralph/)
-- [Ralph Orchestrator GitHub](https://github.com/mikeyobrien/ralph-orchestrator)
-- [AI Agent Comparison Study](06-analysis/comparison-matrix.md)
-- [Implementation Best Practices](03-best-practices/best-practices.md)
+- [Original Ralph Wiggum article](https://ghuntley.com/ralph/) - Geoffrey Huntley's original technique
+- [Claude Code Plugin Guide](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/) - Detailed integration walkthrough
+- [Official Plugin Source](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) - Reference implementation
+- [Ralph Orchestrator GitHub](https://github.com/mikeyobrien/ralph-orchestrator) - This project
+- [AI Agent Comparison Study](06-analysis/comparison-matrix.md) - Agent comparison matrix
+- [Implementation Best Practices](03-best-practices/best-practices.md) - Best practices guide

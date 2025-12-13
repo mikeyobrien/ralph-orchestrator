@@ -17,9 +17,9 @@
 
 ## What is Ralph Orchestrator?
 
-Ralph Orchestrator is a production-ready implementation of the **Ralph Wiggum orchestration technique** - a simple yet powerful pattern for autonomous AI task completion. It continuously runs an AI agent against a prompt file until the task is marked as complete or limits are reached.
+Ralph Orchestrator is a production-ready implementation of the **Ralph Wiggum orchestration technique** - a simple yet powerful pattern for autonomous AI task completion. As [Geoffrey Huntley](https://ghuntley.com/ralph/) originally defined it: **"Ralph is a Bash loop"** that continuously runs an AI agent against a prompt file until the task is marked as complete or limits are reached.
 
-Based on the technique by [Geoffrey Huntley](https://ghuntley.com/ralph/), this implementation provides enterprise-grade safety, monitoring, and cost controls suitable for production environments.
+Based on Huntley's technique, this implementation provides enterprise-grade safety, monitoring, and cost controls suitable for production environments. For Claude Code users, also see the official [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum).
 
 ## Key Features
 

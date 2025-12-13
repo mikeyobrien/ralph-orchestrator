@@ -111,6 +111,7 @@ class RalphOrchestrator:
         self.current_task = None  # Currently executing task
         self.completed_tasks = []  # List of completed tasks with results
         self.task_start_time = None  # Start time of current task
+        self.last_response_output = None  # Final agent output from last iteration
         
         # Create directories
         self.archive_dir.mkdir(parents=True, exist_ok=True)
@@ -296,6 +297,10 @@ class RalphOrchestrator:
                     self.console.print_success(
                         f"Iteration {self.metrics.iterations} completed successfully"
                     )
+                    # Show agent output for this iteration
+                    if self.last_response_output:
+                        self.console.print_header(f"Agent Output (Iteration {self.metrics.iterations})")
+                        self.console.print_message(self.last_response_output)
                 else:
                     self.metrics.failed_iterations += 1
                     self.console.print_warning(
@@ -364,8 +369,9 @@ class RalphOrchestrator:
                     if response.success:
                         break
         
-        # Log the response output (already streamed to console if verbose)
+        # Store and log the response output (already streamed to console if verbose)
         if response.success and response.output:
+            self.last_response_output = response.output
             # Log a preview for the logs
             output_preview = response.output[:500] if len(response.output) > 500 else response.output
             logger.debug(f"Agent response preview: {output_preview}")
@@ -503,6 +509,11 @@ class RalphOrchestrator:
         """Print execution summary with enhanced console output."""
         # Use RalphConsole for enhanced summary display
         self.console.print_header("Ralph Orchestration Summary")
+
+        # Display final agent output if available
+        if self.last_response_output:
+            self.console.print_header("Final Agent Output")
+            self.console.print_message(self.last_response_output)
 
         # Print stats using RalphConsole
         self.console.print_stats(
