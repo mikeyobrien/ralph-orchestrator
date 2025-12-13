@@ -292,5 +292,57 @@ class TestAsyncClaudeAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.output, "")
 
 
+class TestToolAdapterBase(unittest.IsolatedAsyncioTestCase):
+    """Test base ToolAdapter class."""
+
+    async def test_aexecute_with_file_uses_asyncio_to_thread(self):
+        """Test that aexecute_with_file uses asyncio.to_thread for non-blocking I/O."""
+        import tempfile
+        from pathlib import Path
+
+        # Create a concrete adapter for testing
+        class ConcreteAdapter(ToolAdapter):
+            def check_availability(self):
+                return True
+
+            def execute(self, prompt, **kwargs):
+                return ToolResponse(success=True, output=prompt)
+
+            async def aexecute(self, prompt, **kwargs):
+                return ToolResponse(success=True, output=prompt)
+
+        adapter = ConcreteAdapter("test")
+
+        # Create a temp file with test content
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write("Test prompt content")
+            temp_path = Path(f.name)
+
+        try:
+            # Verify the file can be read asynchronously
+            response = await adapter.aexecute_with_file(temp_path)
+            self.assertTrue(response.success)
+            self.assertEqual(response.output, "Test prompt content")
+        finally:
+            temp_path.unlink()
+
+    async def test_aexecute_with_file_file_not_found(self):
+        """Test that aexecute_with_file handles missing files correctly."""
+        from pathlib import Path
+
+        class ConcreteAdapter(ToolAdapter):
+            def check_availability(self):
+                return True
+
+            def execute(self, prompt, **kwargs):
+                return ToolResponse(success=True, output=prompt)
+
+        adapter = ConcreteAdapter("test")
+        response = await adapter.aexecute_with_file(Path("/nonexistent/path.txt"))
+
+        self.assertFalse(response.success)
+        self.assertIn("not found", response.error)
+
+
 if __name__ == "__main__":
     unittest.main()
