@@ -32,7 +32,28 @@
   - Session update processing by kind
 - All tests pass (77 total ACP tests)
 
-### Next Step: Step 3 - Create ACPClient subprocess manager
+### Step 3: ACPClient subprocess manager (COMPLETED - Dec 13, 2025)
+- Created `src/ralph_orchestrator/adapters/acp_client.py` with:
+  - `ACPClient` class for subprocess lifecycle management
+  - `start()` / `stop()` for subprocess lifecycle with graceful shutdown
+  - `_read_loop()` for continuous stdout reading and JSON-RPC message parsing
+  - `_write_message()` with `asyncio.Lock` for thread-safe writes
+  - `send_request()` returning `Future` for response routing by ID
+  - `send_notification()` for fire-and-forget messages
+  - `on_notification()` / `on_request()` for callback registration
+  - Response routing to pending requests by ID
+  - Error response handling with `ACPClientError` exception
+- Created `tests/test_acp_client.py` with 25 unit tests covering:
+  - Initialization with defaults and custom args/timeout
+  - Subprocess spawn, pipe setup, and shutdown
+  - Message write/read cycle
+  - Request ID tracking and pending request management
+  - Response routing to resolve/reject Futures
+  - Notification and request handler callbacks
+  - Thread-safe write locking
+- All tests pass (102 total ACP tests)
+
+### Next Step: Step 4 - Implement basic ACPAdapter with initialize/session flow
 See `.sop/planning/implementation/plan.md` for full implementation plan.
 
 ---
