@@ -220,6 +220,12 @@ class RalphConfig:
     agent_args: List[str] = field(default_factory=list)
     adapters: Dict[str, AdapterConfig] = field(default_factory=dict)
 
+    # Output formatting configuration
+    output_format: str = "rich"  # "plain", "rich", or "json"
+    output_verbosity: str = "normal"  # "quiet", "normal", "verbose", "debug"
+    show_token_usage: bool = True  # Display token usage after iterations
+    show_timestamps: bool = True  # Include timestamps in output
+
     # Thread safety lock - not included in initialization/equals
     _lock: threading.RLock = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
@@ -366,6 +372,29 @@ class RalphConfig:
 
         return warnings
 
+    def create_output_formatter(self):
+        """Create an output formatter based on configuration settings.
+
+        Returns:
+            OutputFormatter instance configured according to settings.
+        """
+        from ralph_orchestrator.output import VerbosityLevel, create_formatter
+
+        # Map verbosity string to enum
+        verbosity_map = {
+            "quiet": VerbosityLevel.QUIET,
+            "normal": VerbosityLevel.NORMAL,
+            "verbose": VerbosityLevel.VERBOSE,
+            "debug": VerbosityLevel.DEBUG,
+        }
+
+        with self._lock:
+            verbosity = verbosity_map.get(self.output_verbosity.lower(), VerbosityLevel.NORMAL)
+            return create_formatter(
+                format_type=self.output_format,
+                verbosity=verbosity,
+            )
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -494,13 +523,42 @@ def main():
         action="store_true",
         help="Enable verbose output"
     )
-    
+
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Dry run mode (don't execute agents)"
     )
-    
+
+    # Output formatting options
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["plain", "rich", "json"],
+        default="rich",
+        help="Output format (default: rich)"
+    )
+
+    parser.add_argument(
+        "--output-verbosity",
+        type=str,
+        choices=["quiet", "normal", "verbose", "debug"],
+        default="normal",
+        help="Output verbosity level (default: normal)"
+    )
+
+    parser.add_argument(
+        "--no-token-usage",
+        action="store_true",
+        help="Disable token usage display"
+    )
+
+    parser.add_argument(
+        "--no-timestamps",
+        action="store_true",
+        help="Disable timestamps in output"
+    )
+
     parser.add_argument(
         "agent_args",
         nargs="*",
@@ -534,7 +592,12 @@ def main():
         enable_metrics=not args.no_metrics,
         max_prompt_size=args.max_prompt_size,
         allow_unsafe_paths=args.allow_unsafe_paths,
-        agent_args=args.agent_args
+        agent_args=args.agent_args,
+        # Output formatting options
+        output_format=args.output_format,
+        output_verbosity=args.output_verbosity,
+        show_token_usage=not args.no_token_usage,
+        show_timestamps=not args.no_timestamps,
     )
     
     # Run orchestrator

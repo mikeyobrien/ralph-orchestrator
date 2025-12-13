@@ -251,19 +251,19 @@ ValueError: test"""
 class TestRalphConsoleWithoutRich:
     """Tests for RalphConsole fallback behavior."""
 
-    @patch("ralph_orchestrator.output.RICH_AVAILABLE", False)
-    @patch("ralph_orchestrator.output.Console", None)
+    @patch("ralph_orchestrator.output.console.RICH_AVAILABLE", False)
+    @patch("ralph_orchestrator.output.console.Console", None)
     def test_init_without_rich(self):
         """Test initialization without Rich available."""
         # Re-import to get patched version
-        from ralph_orchestrator import output
+        from ralph_orchestrator.output import console
 
         # Create a mock module state
-        original_rich = output.RICH_AVAILABLE
-        output.RICH_AVAILABLE = False
+        original_rich = console.RICH_AVAILABLE
+        console.RICH_AVAILABLE = False
 
         try:
             rc = RalphConsole()
             # Should have fallback behavior
         finally:
-            output.RICH_AVAILABLE = original_rich
+            console.RICH_AVAILABLE = original_rich
