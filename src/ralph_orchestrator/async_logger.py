@@ -95,7 +95,8 @@ class AsyncFileLogger:
 
         self.log_file = Path(log_file)
         self.verbose = verbose
-        self._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()  # For async methods (single event loop)
+        self._thread_lock = threading.Lock()  # For sync methods (multi-threaded)
         self._rotation_lock = threading.Lock()  # Thread safety for file rotation
 
         # Emergency shutdown flag for graceful signal handling
@@ -284,47 +285,44 @@ class AsyncFileLogger:
             pass
 
     # Synchronous wrapper methods for compatibility
-    def log_info_sync(self, message: str) -> None:
-        """Log info message synchronously (creates a new event loop if needed)."""
+    def _log_sync_direct(self, level: str, message: str) -> None:
+        """
+        Log a message synchronously using threading.Lock (thread-safe).
+
+        This bypasses asyncio entirely for true multi-threaded safety.
+        """
         if self._emergency_shutdown:
             return
-        self._run_sync(self.log("INFO", message))
+
+        # Sanitize and secure the message
+        sanitized_message = self._sanitize_unicode(message)
+        secure_message = SecurityValidator.mask_sensitive_data(sanitized_message)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_line = f"{timestamp} [{level}] {secure_message}\n"
+
+        with self._thread_lock:
+            if self._emergency_shutdown:
+                return
+            self._write_to_file(log_line)
+            if self.verbose:
+                print(log_line.rstrip())
+
+    def log_info_sync(self, message: str) -> None:
+        """Log info message synchronously (thread-safe)."""
+        self._log_sync_direct("INFO", message)
 
     def log_success_sync(self, message: str) -> None:
-        """Log success message synchronously (creates a new event loop if needed)."""
-        if self._emergency_shutdown:
-            return
-        self._run_sync(self.log("SUCCESS", message))
+        """Log success message synchronously (thread-safe)."""
+        self._log_sync_direct("SUCCESS", message)
 
     def log_error_sync(self, message: str) -> None:
-        """Log error message synchronously (creates a new event loop if needed)."""
-        if self._emergency_shutdown:
-            return
-        self._run_sync(self.log("ERROR", message))
+        """Log error message synchronously (thread-safe)."""
+        self._log_sync_direct("ERROR", message)
 
     def log_warning_sync(self, message: str) -> None:
-        """Log warning message synchronously (creates a new event loop if needed)."""
-        if self._emergency_shutdown:
-            return
-        self._run_sync(self.log("WARNING", message))
-
-    def _run_sync(self, coro) -> None:
-        """Run a coroutine synchronously, handling event loop detection."""
-        try:
-            asyncio.get_running_loop()
-            # If there's already a running loop, this is being called incorrectly
-            raise RuntimeError(
-                "_sync() methods called from async context. "
-                "Use await instead of _sync methods."
-            )
-        except RuntimeError as e:
-            # Check if this is our own RuntimeError or the one from get_running_loop
-            if "_sync() methods called from async context" in str(e):
-                # Re-raise our own error
-                raise
-            else:
-                # No running loop, safe to create one
-                asyncio.run(coro)
+        """Log warning message synchronously (thread-safe)."""
+        self._log_sync_direct("WARNING", message)
 
     # Standard logging interface methods for compatibility
     def info(self, message: str) -> None:
