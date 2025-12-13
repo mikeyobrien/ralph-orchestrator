@@ -247,6 +247,15 @@ ValueError: test"""
 
         assert filled == 15  # Half of 30 width bar
 
+    def test_countdown_bar_zero_total(self):
+        """Test countdown bar handles zero total gracefully (no ZeroDivisionError)."""
+        rc = RalphConsole()
+
+        # Should not raise ZeroDivisionError
+        rc.print_countdown(remaining=0, total=0)
+        rc.print_countdown(remaining=5, total=0)
+        rc.print_countdown(remaining=0, total=-1)
+
 
 class TestRalphConsoleWithoutRich:
     """Tests for RalphConsole fallback behavior."""

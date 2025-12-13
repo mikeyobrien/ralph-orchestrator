@@ -564,6 +564,10 @@ class RalphConsole:
             remaining: Seconds remaining
             total: Total delay seconds
         """
+        # Guard against division by zero
+        if total <= 0:
+            return
+
         # Calculate progress
         progress = (total - remaining) / total
         filled = int(self.PROGRESS_BAR_WIDTH * progress)
