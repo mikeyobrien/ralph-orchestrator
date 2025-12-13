@@ -176,7 +176,7 @@ class SecurityValidator:
                 # Relative path that goes outside base directory
                 raise ValueError(
                     f"Path traversal detected: {path} -> {resolved_path}"
-                )
+                ) from None
 
         return resolved_path
 

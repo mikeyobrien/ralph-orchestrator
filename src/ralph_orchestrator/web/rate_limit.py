@@ -113,7 +113,7 @@ class RateLimiter:
             current_time = time.time()
             to_remove = []
             
-            for identifier, (tokens, last_refill, _) in self.buckets.items():
+            for identifier, (_tokens, last_refill, _) in self.buckets.items():
                 if current_time - last_refill > max_age:
                     to_remove.append(identifier)
             

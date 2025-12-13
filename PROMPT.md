@@ -371,3 +371,30 @@ After implementation, verify:
 - Before: `current_process` remained set after exception
 - After: `current_process` properly cleaned up on exception
 - Test suite: 626 passed, 36 skipped
+
+### Exception Chaining Bugs Fixed (B904) (2025-12-13)
+
+**Issue:** Several `except` clauses raised new exceptions without using `from err` or `from None`, causing Python to show misleading "During handling of the above exception, another exception occurred" messages. This violates Python best practices (ruff rule B904).
+
+**Locations Fixed:**
+1. `src/ralph_orchestrator/security.py:177` - `raise ValueError(...) from None`
+   - Context: Path traversal detection within a ValueError handler
+   - Fix: Added `from None` to suppress original exception (intentional replacement)
+
+2. `src/ralph_orchestrator/web/auth.py:127,133` - JWT exception handlers
+   - Context: Converting `jwt.ExpiredSignatureError` and `jwt.InvalidTokenError` to HTTPException
+   - Fix: Added `from None` to both (security: don't expose JWT internals)
+
+3. `src/ralph_orchestrator/web/server.py:540,604` - HTTP error handlers
+   - Context: Converting generic exceptions to HTTPException for API responses
+   - Fix: Added `from e` to preserve exception chain for debugging
+
+**B007 Bug Fixed:**
+4. `src/ralph_orchestrator/web/rate_limit.py:116` - Unused loop variable
+   - Context: `tokens` variable unused in loop
+   - Fix: Renamed to `_tokens` to indicate intentionally unused
+
+**Results:**
+- Before: 6 ruff B-rule violations
+- After: All B-rule checks pass
+- Test suite: 626 passed, 36 skipped (unchanged)

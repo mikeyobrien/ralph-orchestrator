@@ -537,7 +537,7 @@ class WebMonitor:
                 }
             except Exception as e:
                 logger.error(f"Error updating prompt: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to update prompt: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to update prompt: {str(e)}") from e
         
         @self.app.get("/api/metrics", dependencies=[auth_dependency] if self.enable_auth else [])
         async def get_metrics():
@@ -601,7 +601,7 @@ class WebMonitor:
                 return {"status": "success", "message": f"Cleaned up records older than {days} days"}
             except Exception as e:
                 logger.error(f"Error cleaning up database: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
         
         # Admin endpoints for user management
         @self.app.post("/api/admin/users", dependencies=[Depends(require_admin)] if self.enable_auth else [])
