@@ -7,7 +7,7 @@
 - [x] Step 3: Create ACPClient subprocess manager
 - [x] Step 4: Implement basic ACPAdapter with initialize/session flow
 - [x] Step 5: Implement session/prompt and update handling
-- [ ] Step 6: Implement permission handler
+- [x] Step 6: Implement permission handler
 - [ ] Step 7: Implement file operation handlers
 - [ ] Step 8: Implement terminal handlers
 - [ ] Step 9: Add configuration support (ralph.yml)

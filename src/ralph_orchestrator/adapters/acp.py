@@ -17,6 +17,7 @@ from typing import Optional
 from .base import ToolAdapter, ToolResponse
 from .acp_client import ACPClient, ACPClientError
 from .acp_models import ACPAdapterConfig, ACPSession, UpdatePayload
+from .acp_handlers import ACPHandlers
 
 
 # ACP Protocol version this adapter supports
@@ -42,6 +43,7 @@ class ACPAdapter(ToolAdapter):
         agent_args: Optional[list[str]] = None,
         timeout: int = 300,
         permission_mode: str = "auto_approve",
+        permission_allowlist: Optional[list[str]] = None,
     ) -> None:
         """Initialize ACPAdapter.
 
@@ -50,17 +52,26 @@ class ACPAdapter(ToolAdapter):
             agent_args: Additional command-line arguments.
             timeout: Request timeout in seconds (default: 300).
             permission_mode: Permission handling mode (default: auto_approve).
+            permission_allowlist: Patterns for allowlist mode.
         """
         self.agent_command = agent_command
         self.agent_args = agent_args or []
         self.timeout = timeout
         self.permission_mode = permission_mode
+        self.permission_allowlist = permission_allowlist or []
 
         # State
         self._client: Optional[ACPClient] = None
         self._session_id: Optional[str] = None
         self._initialized = False
         self._session: Optional[ACPSession] = None
+
+        # Create permission handlers
+        self._handlers = ACPHandlers(
+            permission_mode=permission_mode,
+            permission_allowlist=self.permission_allowlist,
+            on_permission_log=self._log_permission,
+        )
 
         # Thread synchronization
         self._lock = threading.Lock()
@@ -91,6 +102,7 @@ class ACPAdapter(ToolAdapter):
             agent_args=config.agent_args,
             timeout=config.timeout,
             permission_mode=config.permission_mode,
+            permission_allowlist=config.permission_allowlist,
         )
 
     def check_availability(self) -> bool:
@@ -260,20 +272,47 @@ class ACPAdapter(ToolAdapter):
     def _handle_permission_request(self, params: dict) -> dict:
         """Handle permission request from agent.
 
+        Delegates to ACPHandlers which supports multiple modes:
+        - auto_approve: Always approve
+        - deny_all: Always deny
+        - allowlist: Check against configured patterns
+        - interactive: Prompt user (if terminal available)
+
         Args:
             params: Permission request parameters.
 
         Returns:
             Response with approved: True/False.
         """
-        if self.permission_mode == "auto_approve":
-            return {"approved": True}
-        elif self.permission_mode == "deny_all":
-            return {"approved": False}
-        else:
-            # For allowlist and interactive modes, default to deny
-            # These will be fully implemented in Step 6
-            return {"approved": False}
+        return self._handlers.handle_request_permission(params)
+
+    def _log_permission(self, message: str) -> None:
+        """Log permission decision.
+
+        Args:
+            message: Permission decision message.
+        """
+        # TODO: Integrate with Ralph's logging system
+        pass
+
+    def get_permission_history(self) -> list:
+        """Get permission decision history.
+
+        Returns:
+            List of (request, result) tuples.
+        """
+        return self._handlers.get_history()
+
+    def get_permission_stats(self) -> dict:
+        """Get permission decision statistics.
+
+        Returns:
+            Dict with approved_count and denied_count.
+        """
+        return {
+            "approved_count": self._handlers.get_approved_count(),
+            "denied_count": self._handlers.get_denied_count(),
+        }
 
     async def _execute_prompt(self, prompt: str, **kwargs) -> ToolResponse:
         """Execute a prompt through the ACP agent.

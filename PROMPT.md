@@ -110,7 +110,39 @@
   - Covers: error stop_reason handling, timeout handling, message formatting
 - All tests pass (155 total adapter/ACP tests)
 
-### Next Step: Step 6 - Implement permission handler
+### Step 6: Permission handler (COMPLETED - Dec 13, 2025)
+- Created `src/ralph_orchestrator/adapters/acp_handlers.py` with:
+  - `PermissionRequest` dataclass for parsing permission request params
+  - `PermissionResult` dataclass with `to_dict()` for ACP response
+  - `ACPHandlers` class supporting four permission modes:
+    - `auto_approve`: Always approve all requests (for trusted environments)
+    - `deny_all`: Always deny all requests (for testing/restricted use)
+    - `allowlist`: Approve only operations matching patterns:
+      - Exact match: `'fs/read_text_file'`
+      - Glob patterns: `'fs/*'`, `'terminal/execute?'`
+      - Regex patterns: `'/^fs\\/.*$/'` (surrounded by slashes)
+    - `interactive`: Prompt user via stdin (falls back to deny if no terminal)
+  - Permission history tracking with `get_history()`, `clear_history()`
+  - Statistics: `get_approved_count()`, `get_denied_count()`
+  - Optional logging callback via `on_permission_log`
+- Updated `src/ralph_orchestrator/adapters/acp.py`:
+  - Added `permission_allowlist` parameter to `__init__` and `from_config`
+  - Integrated `ACPHandlers` instance for permission request handling
+  - Added `get_permission_history()` and `get_permission_stats()` methods
+  - `_handle_permission_request()` now delegates to `ACPHandlers`
+- Updated `src/ralph_orchestrator/adapters/__init__.py`:
+  - Exported `ACPHandlers`, `PermissionRequest`, `PermissionResult`
+- Created `tests/test_acp_handlers.py` with 43 unit tests covering:
+  - `PermissionRequest` and `PermissionResult` dataclasses
+  - All four permission modes with various scenarios
+  - Allowlist pattern matching (exact, glob, regex)
+  - Interactive mode (approval, denial, keyboard interrupt, EOF)
+  - History tracking and statistics
+  - Logging callback integration
+  - ACPAdapter integration tests
+- All tests pass (181 total ACP tests)
+
+### Next Step: Step 7 - Implement file operation handlers
 See `.sop/planning/implementation/plan.md` for full implementation plan.
 
 ---
