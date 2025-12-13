@@ -417,3 +417,19 @@ After implementation, verify:
 - Before: Blocking I/O in async function (ASYNC230 violation)
 - After: Non-blocking async file I/O
 - Test suite: 628 passed, 36 skipped (+2 new tests)
+
+### Blocking File I/O in VerboseLogger._write_raw_log() Fixed (ASYNC230) (2025-12-13)
+
+**Location:** `src/ralph_orchestrator/verbose_logger.py:692` (_write_raw_log method)
+
+**Issue:** The async method `_write_raw_log()` used blocking `open()` call to open the raw log file handle. This blocks the event loop when the file is first opened.
+
+**Bug Impact:** Event loop stalls during file opening, reducing concurrency in async code paths. This is especially problematic if the filesystem is slow or the file needs to be created.
+
+**Fix:** Replaced blocking `open()` with `await asyncio.to_thread(open, self.raw_output_file, "a", encoding="utf-8")` to run file opening in a thread pool without blocking the event loop.
+
+**Results:**
+- Before: Blocking I/O in async function (ASYNC230 violation)
+- After: Non-blocking async file I/O
+- Test suite: 628 passed, 36 skipped (unchanged)
+- `ruff check src/ralph_orchestrator/verbose_logger.py --select ASYNC` now passes

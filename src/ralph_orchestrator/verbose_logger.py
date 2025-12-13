@@ -689,8 +689,9 @@ class VerboseLogger:
         try:
             if self._raw_file_handle is None:
                 try:
-                    self._raw_file_handle = open(
-                        self.raw_output_file, "a", encoding="utf-8"
+                    # Use asyncio.to_thread to avoid blocking the event loop
+                    self._raw_file_handle = await asyncio.to_thread(
+                        open, self.raw_output_file, "a", encoding="utf-8"
                     )
                 except (OSError, IOError):
                     return
