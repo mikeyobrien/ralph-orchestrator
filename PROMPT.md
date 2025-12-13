@@ -133,15 +133,30 @@ Port the following capabilities:
 
 **Constraint:** Must not break existing logging calls in orchestrator.py. ✓ Preserved
 
-### 4. Graceful Signal Handling (HIGH)
+### 4. Graceful Signal Handling (HIGH) - DONE
 **Source:** `/home/arch/code/loop/ralph/core/runner.py` (lines 87-114)
 
-- [ ] Kill subprocesses FIRST (synchronous, signal-safe)
-- [ ] Emergency shutdown flag for logger
-- [ ] Async task cancellation after subprocess cleanup
-- [ ] Schedule emergency cleanup on event loop
+- [x] Kill subprocesses FIRST (synchronous, signal-safe)
+- [x] Emergency shutdown flag for logger
+- [x] Async task cancellation after subprocess cleanup
+- [x] Schedule emergency cleanup on event loop
 
-**Constraint:** Current SIGINT/SIGTERM behavior must remain functional.
+**Implementation:**
+- Added `kill_subprocess_sync()` method to ClaudeAdapter for signal-safe subprocess termination
+- Added `_cleanup_transport()` async method for graceful transport cleanup
+- Added `emergency_shutdown()` method to AsyncFileLogger with `_emergency_event` threading.Event
+- Added `is_shutdown()` method to check shutdown status
+- All sync/async logging methods now skip operations when shutdown is triggered
+- Enhanced orchestrator signal handler with subprocess-first cleanup sequence:
+  1. Kill subprocess synchronously (signal-safe)
+  2. Trigger logger emergency shutdown
+  3. Set stop flag and cancel running task
+  4. Schedule async emergency cleanup on event loop
+- Added `set_async_logger()` method for optional logger integration
+- Added `_setup_async_signal_handlers()` for proper async context signal handling
+- 18 new tests in `tests/test_signal_handling.py` covering all functionality
+
+**Constraint:** Current SIGINT/SIGTERM behavior must remain functional. ✓ Preserved
 
 ### 5. Error Formatter (MEDIUM)
 **Source:** `/home/arch/code/loop/ralph/core/claude_client.py` (ClaudeErrorFormatter class)

@@ -98,11 +98,31 @@ class AsyncFileLogger:
         self._lock = asyncio.Lock()
         self._rotation_lock = threading.Lock()  # Thread safety for file rotation
 
+        # Emergency shutdown flag for graceful signal handling
+        self._emergency_shutdown = False
+        # Threading event for immediate signal-safe notification
+        self._emergency_event = threading.Event()
+
         # Ensure log directory exists
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Rotate log if needed on startup (single-threaded, safe)
         self._rotate_if_needed()
+
+    def emergency_shutdown(self) -> None:
+        """
+        Signal emergency shutdown to make logging operations non-blocking.
+
+        This method is signal-safe and can be called from signal handlers.
+        After calling this, all logging operations will be skipped to allow
+        rapid shutdown without blocking on file I/O.
+        """
+        self._emergency_shutdown = True
+        self._emergency_event.set()
+
+    def is_shutdown(self) -> bool:
+        """Check if emergency shutdown has been triggered."""
+        return self._emergency_shutdown
 
     async def log(self, level: str, message: str) -> None:
         """
@@ -112,6 +132,10 @@ class AsyncFileLogger:
             level: Log level (INFO, SUCCESS, ERROR, WARNING)
             message: Message to log
         """
+        # Skip logging during emergency shutdown
+        if self._emergency_shutdown:
+            return
+
         # Sanitize the message to handle problematic unicode
         sanitized_message = self._sanitize_unicode(message)
 
@@ -122,6 +146,10 @@ class AsyncFileLogger:
         log_line = f"{timestamp} [{level}] {secure_message}\n"
 
         async with self._lock:
+            # Double-check shutdown flag after acquiring lock
+            if self._emergency_shutdown:
+                return
+
             # Write to file
             await asyncio.to_thread(self._write_to_file, log_line)
 
@@ -258,18 +286,26 @@ class AsyncFileLogger:
     # Synchronous wrapper methods for compatibility
     def log_info_sync(self, message: str) -> None:
         """Log info message synchronously (creates a new event loop if needed)."""
+        if self._emergency_shutdown:
+            return
         self._run_sync(self.log("INFO", message))
 
     def log_success_sync(self, message: str) -> None:
         """Log success message synchronously (creates a new event loop if needed)."""
+        if self._emergency_shutdown:
+            return
         self._run_sync(self.log("SUCCESS", message))
 
     def log_error_sync(self, message: str) -> None:
         """Log error message synchronously (creates a new event loop if needed)."""
+        if self._emergency_shutdown:
+            return
         self._run_sync(self.log("ERROR", message))
 
     def log_warning_sync(self, message: str) -> None:
         """Log warning message synchronously (creates a new event loop if needed)."""
+        if self._emergency_shutdown:
+            return
         self._run_sync(self.log("WARNING", message))
 
     def _run_sync(self, coro) -> None:

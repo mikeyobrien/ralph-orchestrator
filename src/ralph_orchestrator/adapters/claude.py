@@ -6,6 +6,8 @@
 
 import asyncio
 import logging
+import os
+import signal
 from typing import Optional
 from .base import ToolAdapter, ToolResponse
 
@@ -62,6 +64,8 @@ class ClaudeAdapter(ToolAdapter):
         self._cli_path = cli_path
         # Model selection - defaults to Opus 4.5
         self._model = model or self.DEFAULT_MODEL
+        # Subprocess tracking for signal-safe termination
+        self._subprocess_pid: Optional[int] = None
     
     def check_availability(self) -> bool:
         """Check if Claude SDK is available and properly configured."""
@@ -525,3 +529,57 @@ class ClaudeAdapter(ToolAdapter):
         # Rough estimation: 1 token ≈ 4 characters
         estimated_tokens = len(prompt) / 4
         return self._calculate_cost(int(estimated_tokens), model) or 0.0
+
+    def kill_subprocess_sync(self) -> None:
+        """
+        Kill subprocess synchronously (safe to call from signal handler).
+
+        This method uses os.kill() which is signal-safe and can be called
+        from the signal handler context. It immediately terminates the subprocess,
+        which unblocks any I/O operations waiting on it.
+        """
+        if self._subprocess_pid:
+            try:
+                # Try SIGTERM first for graceful shutdown
+                os.kill(self._subprocess_pid, signal.SIGTERM)
+                # Small delay to allow graceful shutdown - keep minimal for signal handler
+                import time
+                try:
+                    time.sleep(0.01)
+                except Exception:
+                    pass  # Ignore errors during sleep in signal handler
+                # Then SIGKILL if still alive (more forceful)
+                try:
+                    os.kill(self._subprocess_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # Already dead from SIGTERM
+            except ProcessLookupError:
+                pass  # Already dead
+            except (PermissionError, OSError):
+                pass  # Best effort - process might be owned by another user
+            finally:
+                self._subprocess_pid = None
+
+    async def _cleanup_transport(self) -> None:
+        """Clean up transport and kill subprocess with timeout protection."""
+        # Kill subprocess first (if not already killed by signal handler)
+        if self._subprocess_pid:
+            try:
+                # Try SIGTERM first
+                os.kill(self._subprocess_pid, signal.SIGTERM)
+                # Wait with timeout to avoid hanging
+                try:
+                    await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.05)
+                except asyncio.TimeoutError:
+                    pass  # Continue even if sleep times out
+                # Force kill if still alive
+                try:
+                    os.kill(self._subprocess_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # Already dead
+            except ProcessLookupError:
+                pass  # Already terminated
+            except (PermissionError, OSError):
+                pass  # Best effort cleanup
+            finally:
+                self._subprocess_pid = None

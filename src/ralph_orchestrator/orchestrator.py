@@ -98,11 +98,14 @@ class RalphOrchestrator:
         if not self.current_adapter:
             raise ValueError(f"Unknown tool: {primary_tool}")
         
-        # Signal handling
+        # Signal handling - use basic signal registration here
+        # The async handlers will be set up when arun() is called
         self.stop_requested = False
+        self._running_task = None  # Track the current async task for cancellation
+        self._async_logger = None  # Will hold optional AsyncFileLogger for emergency shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-        
+
         # Task queue tracking
         self.task_queue = []  # List of pending tasks extracted from prompt
         self.current_task = None  # Currently executing task
@@ -153,9 +156,58 @@ class RalphOrchestrator:
         return adapters
     
     def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
+        """Handle shutdown signals with subprocess-first cleanup.
+
+        This handler follows a critical shutdown sequence:
+        1. Kill subprocess FIRST (synchronous, signal-safe) - unblocks I/O
+        2. Set emergency shutdown on logger (prevents blocking log writes)
+        3. Set stop flag and cancel async task
+        4. Schedule async emergency cleanup
+        """
         logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+
+        # CRITICAL: Kill subprocess FIRST (synchronous, signal-safe)
+        # This unblocks any I/O operations waiting on subprocess
+        if hasattr(self.current_adapter, 'kill_subprocess_sync'):
+            self.current_adapter.kill_subprocess_sync()
+
+        # Force emergency shutdown on async logger if present
+        if self._async_logger is not None:
+            self._async_logger.emergency_shutdown()
+
+        # Set stop flag
         self.stop_requested = True
+
+        # Cancel running async task if present
+        if self._running_task and not self._running_task.done():
+            self._running_task.cancel()
+
+        # Schedule emergency cleanup on the event loop (if available)
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(self._emergency_cleanup())
+        except RuntimeError:
+            # No running event loop - sync cleanup handled by finally blocks
+            pass
+
+    async def _emergency_cleanup(self) -> None:
+        """Emergency cleanup scheduled from signal handler.
+
+        This method handles any remaining async cleanup that needs to happen
+        after the signal handler has done its synchronous cleanup.
+        """
+        try:
+            # Clean up adapter transport if available
+            if hasattr(self.current_adapter, '_cleanup_transport'):
+                try:
+                    await asyncio.wait_for(
+                        self.current_adapter._cleanup_transport(),
+                        timeout=0.5
+                    )
+                except asyncio.TimeoutError:
+                    pass  # Continue even if cleanup times out
+        except Exception:
+            pass  # Ignore errors during emergency cleanup
     
     def run(self) -> None:
         """Run the main orchestration loop."""
@@ -167,12 +219,56 @@ class RalphOrchestrator:
             loop = asyncio.get_event_loop()
             loop.run_until_complete(self.arun())
     
+    def set_async_logger(self, async_logger) -> None:
+        """Set the AsyncFileLogger for emergency shutdown during signal handling.
+
+        Args:
+            async_logger: An AsyncFileLogger instance with emergency_shutdown() method
+        """
+        self._async_logger = async_logger
+
+    def _setup_async_signal_handlers(self) -> None:
+        """Set up async signal handlers for graceful shutdown in event loop context."""
+        try:
+            loop = asyncio.get_running_loop()
+
+            def async_signal_handler(signum: int) -> None:
+                """Handle shutdown signals in async context."""
+                logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+
+                # CRITICAL: Kill subprocess FIRST (synchronous, signal-safe)
+                if hasattr(self.current_adapter, 'kill_subprocess_sync'):
+                    self.current_adapter.kill_subprocess_sync()
+
+                # Force emergency shutdown on async logger if present
+                if self._async_logger is not None:
+                    self._async_logger.emergency_shutdown()
+
+                # Set stop flag and cancel running task
+                self.stop_requested = True
+                if self._running_task and not self._running_task.done():
+                    self._running_task.cancel()
+
+                # Schedule emergency cleanup
+                asyncio.create_task(self._emergency_cleanup())
+
+            # Register handlers with event loop for proper async handling
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, lambda s=sig: async_signal_handler(s))
+        except NotImplementedError:
+            # Windows doesn't support add_signal_handler, fall back to basic handling
+            pass
+
     async def arun(self) -> None:
         """Run the main orchestration loop asynchronously."""
         logger.info("Starting Ralph orchestration loop")
+
+        # Set up async signal handlers now that we have a running loop
+        self._setup_async_signal_handlers()
+
         start_time = time.time()
         self._start_time = start_time  # Store for state retrieval
-        
+
         while not self.stop_requested:
             # Check safety limits
             safety_check = self.safety_guard.check(
