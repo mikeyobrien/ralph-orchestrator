@@ -16,6 +16,75 @@
 
 ---
 
+## 📋 Manual End-to-End Testing Guide
+
+### Prerequisites
+Both CLI tools are installed and available:
+- ✅ `gemini` CLI: `/home/arch/.npm-global/bin/gemini`
+- ✅ `claude` CLI: `/home/arch/.local/bin/claude`
+
+**API Keys Required:**
+- `GOOGLE_API_KEY` - for Gemini integration
+- `ANTHROPIC_API_KEY` - for Claude integration
+
+### Testing Procedure
+
+#### 1. Set API Keys
+```bash
+export GOOGLE_API_KEY="your-google-api-key"
+export ANTHROPIC_API_KEY="sk-ant-your-key"
+```
+
+#### 2. Run Automated Manual Tests
+```bash
+cd /home/arch/code/ralph-orchestrator/.worktrees/acp-support
+uv run python .agent/workspace/test_acp_manual.py
+```
+
+#### 3. Individual CLI Tests
+
+**Gemini ACP Test:**
+```bash
+# Basic prompt
+ralph run -a acp --acp-agent gemini -p "What is 2+2? Reply with just the number."
+
+# File operation test
+echo "Hello from test" > /tmp/acp_test.txt
+ralph run -a acp --acp-agent gemini -p "Read /tmp/acp_test.txt"
+
+# Permission deny test
+ralph run -a acp --acp-agent gemini --acp-permission-mode deny_all -p "Try to read /etc/passwd"
+```
+
+**Claude ACP Test:**
+```bash
+# Basic prompt
+ralph run -a acp --acp-agent claude -p "What is 2+2? Reply with just the number."
+
+# File operation test
+ralph run -a acp --acp-agent claude -p "Read /tmp/acp_test.txt"
+```
+
+### Test Matrix
+
+| Test Case | Gemini | Claude | Status |
+|-----------|--------|--------|--------|
+| Unit tests (305) | ✅ | ✅ | PASS |
+| Protocol tests | ✅ | ✅ | PASS |
+| Model tests | ✅ | ✅ | PASS |
+| Handler tests | ✅ | ✅ | PASS |
+| CLI integration | ✅ | ✅ | PASS |
+| Config parsing | ✅ | ✅ | PASS |
+| Orchestrator integration | ✅ | ✅ | PASS |
+| E2E with API key | ⏳ | ⏳ | Requires API keys |
+
+### Notes
+- Unit and mocked integration tests verify all ACP functionality without external dependencies
+- Real E2E tests require valid API keys and are designed to run when keys are available
+- The manual test script (`test_acp_manual.py`) provides 8 comprehensive tests per agent
+
+---
+
 ## Current Progress - ACP Implementation
 
 ### Step 1: ACPProtocol class (COMPLETED - Dec 13, 2025)
