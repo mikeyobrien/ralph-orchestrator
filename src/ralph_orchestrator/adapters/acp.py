@@ -9,11 +9,14 @@ handles the initialization handshake, and routes session messages.
 """
 
 import asyncio
+import logging
 import os
 import shutil
 import signal
 import threading
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .base import ToolAdapter, ToolResponse
 from .acp_client import ACPClient, ACPClientError
@@ -119,9 +122,8 @@ class ACPAdapter(ToolAdapter):
         try:
             self._original_sigint = signal.signal(signal.SIGINT, self._signal_handler)
             self._original_sigterm = signal.signal(signal.SIGTERM, self._signal_handler)
-        except ValueError:
-            # Signal handlers can only be set in main thread
-            pass
+        except ValueError as e:
+            logger.warning("Cannot register signal handlers (not in main thread): %s. Graceful shutdown via Ctrl+C will not work.", e)
 
     def _restore_signal_handlers(self) -> None:
         """Restore original signal handlers."""
@@ -130,8 +132,8 @@ class ACPAdapter(ToolAdapter):
                 signal.signal(signal.SIGINT, self._original_sigint)
             if self._original_sigterm is not None:
                 signal.signal(signal.SIGTERM, self._original_sigterm)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as e:
+            logger.warning("Failed to restore signal handlers: %s", e)
 
     def _signal_handler(self, signum: int, frame) -> None:
         """Handle shutdown signals.
@@ -178,10 +180,10 @@ class ACPAdapter(ToolAdapter):
                         # Brief wait to ensure kill completes
                         time.sleep(0.1)
                         process.poll()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as e:
+                        logger.debug("Exception during subprocess kill: %s", e)
+            except Exception as e:
+                logger.debug("Exception during subprocess kill: %s", e)
 
     async def _initialize(self) -> None:
         """Initialize ACP connection with agent.
@@ -336,8 +338,9 @@ class ACPAdapter(ToolAdapter):
         if method == "terminal/release":
             return self._handlers.handle_terminal_release(params)
 
-        # Unknown request - return empty result
-        return {}
+        # Unknown request - log and return error
+        logger.warning("Unknown ACP request method: %s", method)
+        return {"error": {"code": -32601, "message": f"Method not found: {method}"}}
 
     def _handle_permission_request(self, params: dict) -> dict:
         """Handle permission request from agent.
@@ -362,8 +365,7 @@ class ACPAdapter(ToolAdapter):
         Args:
             message: Permission decision message.
         """
-        # TODO: Integrate with Ralph's logging system
-        pass
+        logger.info(message)
 
     def get_permission_history(self) -> list:
         """Get permission decision history.
@@ -467,6 +469,14 @@ class ACPAdapter(ToolAdapter):
 
         Stops the client and cleans up state.
         """
+        # Kill all running terminals first
+        if self._handlers:
+            for terminal_id in list(self._handlers._terminals.keys()):
+                try:
+                    self._handlers.handle_terminal_kill({"terminalId": terminal_id})
+                except Exception as e:
+                    logger.warning("Failed to kill terminal %s: %s", terminal_id, e)
+
         if self._client:
             await self._client.stop()
             self._client = None
@@ -609,5 +619,5 @@ Create the .agent/ directory if it doesn't exist.
         if self._client:
             try:
                 self.kill_subprocess_sync()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Exception during cleanup in __del__: %s", e)

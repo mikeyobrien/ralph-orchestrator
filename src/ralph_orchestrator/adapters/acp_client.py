@@ -4,9 +4,12 @@
 """ACPClient subprocess manager for ACP (Agent Client Protocol)."""
 
 import asyncio
+import logging
 from typing import Any, Callable, Optional
 
 from .acp_protocol import ACPProtocol, MessageType
+
+logger = logging.getLogger(__name__)
 
 
 class ACPClientError(Exception):
@@ -107,8 +110,10 @@ class ACPClient:
             self._read_task.cancel()
             try:
                 await asyncio.wait_for(self._read_task, timeout=0.5)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+            except asyncio.CancelledError:
+                logger.debug("Read task cancelled during shutdown")
+            except asyncio.TimeoutError:
+                logger.warning("Read task cancellation timed out")
 
         # Terminate subprocess with 2 second timeout
         if self._process:
@@ -118,13 +123,14 @@ class ACPClient:
                     await asyncio.wait_for(self._process.wait(), timeout=2.0)
                 except asyncio.TimeoutError:
                     # Force kill if graceful termination fails
+                    logger.warning("Process did not terminate gracefully, killing")
                     self._process.kill()
                     try:
                         await asyncio.wait_for(self._process.wait(), timeout=0.5)
                     except asyncio.TimeoutError:
-                        pass  # Best effort, move on
+                        logger.error("Process did not die after kill signal")
             except ProcessLookupError:
-                pass  # Already dead
+                logger.debug("Process already terminated")
 
         self._process = None
         self._read_task = None
@@ -153,9 +159,14 @@ class ACPClient:
                 if message_str:
                     await self._handle_message(message_str)
         except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass  # Log error in production
+            pass  # Expected during shutdown
+        except Exception as e:
+            logger.error("ACP read loop failed: %s", e, exc_info=True)
+            # Cancel all pending requests with the actual error
+            for future in self._pending_requests.values():
+                if not future.done():
+                    future.set_exception(ACPClientError(f"Read loop failed: {e}"))
+            self._pending_requests.clear()
 
     async def _handle_message(self, message_str: str) -> None:
         """Handle a received JSON-RPC message.
@@ -193,8 +204,8 @@ class ACPClient:
             for handler in self._notification_handlers:
                 try:
                     handler(method, params)
-                except Exception:
-                    pass  # Log in production
+                except Exception as e:
+                    logger.error("Notification handler failed for method=%s: %s", method, e, exc_info=True)
 
         elif msg_type == MessageType.REQUEST:
             # Invoke request handlers and send response
@@ -237,6 +248,20 @@ class ACPClient:
             self._process.stdin.write((message + "\n").encode())
             await self._process.stdin.drain()
 
+    async def _do_send(self, request_id: int, message: str) -> None:
+        """Helper to send message and handle write errors.
+
+        Args:
+            request_id: The request ID.
+            message: The JSON-RPC message to send.
+        """
+        try:
+            await self._write_message(message)
+        except Exception as e:
+            future = self._pending_requests.pop(request_id, None)
+            if future and not future.done():
+                future.set_exception(ACPClientError(f"Failed to send request: {e}"))
+
     def send_request(
         self, method: str, params: dict[str, Any]
     ) -> asyncio.Future[Any]:
@@ -252,12 +277,12 @@ class ACPClient:
         request_id, message = self._protocol.create_request(method, params)
 
         # Create future for response
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[Any] = loop.create_future()
         self._pending_requests[request_id] = future
 
-        # Schedule write
-        asyncio.create_task(self._write_message(message))
+        # Schedule write with error handling
+        asyncio.create_task(self._do_send(request_id, message))
 
         return future
 

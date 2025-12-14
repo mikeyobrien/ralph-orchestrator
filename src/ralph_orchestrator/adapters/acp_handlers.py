@@ -27,6 +27,7 @@ Terminal operations:
 """
 
 import fnmatch
+import logging
 import os
 import re
 import subprocess
@@ -35,6 +36,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -76,16 +79,20 @@ class Terminal:
             if stream is None:
                 continue
 
-            # Non-blocking read using select
-            while True:
-                ready, _, _ = select.select([stream], [], [], 0)
-                if not ready:
-                    break
-                chunk = stream.read(4096)
-                if chunk:
-                    new_output += chunk
-                else:
-                    break
+            try:
+                # Non-blocking read using select
+                while True:
+                    ready, _, _ = select.select([stream], [], [], 0)
+                    if not ready:
+                        break
+                    chunk = stream.read(4096)
+                    if chunk:
+                        new_output += chunk
+                    else:
+                        break
+            except (OSError, IOError) as e:
+                logger.debug("Error reading terminal output: %s", e)
+                break
 
         self.output_buffer += new_output
         return new_output
@@ -370,7 +377,8 @@ class ACPHandlers:
             try:
                 regex_pattern = pattern[1:-1]
                 return bool(re.match(regex_pattern, operation))
-            except re.error:
+            except re.error as e:
+                logger.warning("Invalid regex pattern '%s' in permission allowlist: %s", pattern, e)
                 return False
 
         # Check for glob pattern
@@ -860,7 +868,7 @@ class ACPHandlers:
     def handle_terminal_release(self, params: dict) -> dict:
         """Handle terminal/release request from agent.
 
-        Releases terminal resources without killing the process.
+        Releases terminal resources, killing the process if still running.
 
         Args:
             params: Request parameters with 'terminalId'.
@@ -886,6 +894,13 @@ class ACPHandlers:
                     "message": f"Terminal not found: {terminal_id}",
                 }
             }
+
+        # Kill the process if still running before releasing
+        if terminal.is_running:
+            try:
+                terminal.kill()
+            except Exception as e:
+                logger.warning("Failed to kill terminal %s during release: %s", terminal_id, e)
 
         # Clean up the terminal
         del self._terminals[terminal_id]

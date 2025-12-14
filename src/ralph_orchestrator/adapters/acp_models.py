@@ -5,12 +5,45 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ralph_orchestrator.main import AdapterConfig
+
+# Get logger for this module
+_logger = logging.getLogger(__name__)
+
+
+class UpdateKind(str, Enum):
+    """Types of session updates."""
+
+    AGENT_MESSAGE_CHUNK = "agent_message_chunk"
+    AGENT_THOUGHT_CHUNK = "agent_thought_chunk"
+    TOOL_CALL = "tool_call"
+    TOOL_CALL_UPDATE = "tool_call_update"
+    PLAN = "plan"
+
+
+class ToolCallStatus(str, Enum):
+    """Status of a tool call."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PermissionMode(str, Enum):
+    """Permission modes for ACP operations."""
+
+    AUTO_APPROVE = "auto_approve"
+    DENY_ALL = "deny_all"
+    ALLOWLIST = "allowlist"
+    INTERACTIVE = "interactive"
 
 
 @dataclass
@@ -174,17 +207,17 @@ class UpdatePayload:
     - plan: Agent's execution plan
 
     Attributes:
-        kind: The update type.
+        kind: The update type (see UpdateKind enum for valid values).
         content: Text content (for message/thought chunks).
         tool_name: Name of tool being called.
         tool_call_id: Unique identifier for tool call.
         arguments: Tool call arguments.
-        status: Tool call status (pending/running/completed/failed).
+        status: Tool call status (see ToolCallStatus enum for valid values).
         result: Tool call result data.
         error: Tool call error message.
     """
 
-    kind: str
+    kind: str  # Valid values: UpdateKind enum members
     content: Optional[str] = None
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
@@ -459,13 +492,26 @@ class ACPAdapterConfig:
             agent_command = env_agent
 
         if env_mode := os.environ.get("RALPH_ACP_PERMISSION_MODE"):
-            permission_mode = env_mode
+            valid_modes = {"auto_approve", "deny_all", "allowlist", "interactive"}
+            if env_mode in valid_modes:
+                permission_mode = env_mode
+            else:
+                _logger.warning(
+                    "Invalid RALPH_ACP_PERMISSION_MODE value '%s'. Valid modes: %s. Using default: %s",
+                    env_mode,
+                    ", ".join(valid_modes),
+                    permission_mode,
+                )
 
         if env_timeout := os.environ.get("RALPH_ACP_TIMEOUT"):
             try:
                 timeout = int(env_timeout)
             except ValueError:
-                pass  # Keep existing value if invalid
+                _logger.warning(
+                    "Invalid RALPH_ACP_TIMEOUT value '%s' - must be integer. Using default: %d",
+                    env_timeout,
+                    timeout,
+                )
 
         return cls(
             agent_command=agent_command,
