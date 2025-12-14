@@ -778,3 +778,60 @@ class TestACPAdapterPromptExecution:
         params = call_args[0][1]
 
         assert params.get("sessionId") == "my-session-123"
+
+
+class TestACPAdapterPromptEnhancement:
+    """Tests for _enhance_prompt_with_instructions method."""
+
+    def test_enhance_prompt_includes_scratchpad_instructions(self):
+        """Test enhanced prompt includes scratchpad mechanism instructions."""
+        adapter = ACPAdapter()
+        original_prompt = "Write a simple calculator function"
+
+        enhanced = adapter._enhance_prompt_with_instructions(original_prompt)
+
+        # Should include base orchestration context
+        assert "ORCHESTRATION CONTEXT:" in enhanced
+
+        # Should include scratchpad instructions
+        assert "Agent Scratchpad" in enhanced
+        assert ".agent/scratchpad.md" in enhanced
+        assert "What you accomplished this iteration" in enhanced
+        assert "Continue where the previous iteration left off" in enhanced
+
+    def test_enhance_prompt_idempotent(self):
+        """Test enhancing an already enhanced prompt is idempotent."""
+        adapter = ACPAdapter()
+        original_prompt = "Write a function"
+
+        # Enhance once
+        enhanced_once = adapter._enhance_prompt_with_instructions(original_prompt)
+
+        # Enhance again
+        enhanced_twice = adapter._enhance_prompt_with_instructions(enhanced_once)
+
+        # Should be identical (no double enhancement)
+        assert enhanced_once == enhanced_twice
+
+    def test_enhance_prompt_preserves_original(self):
+        """Test enhanced prompt preserves original prompt content."""
+        adapter = ACPAdapter()
+        original_prompt = "Implement feature X with requirements Y and Z"
+
+        enhanced = adapter._enhance_prompt_with_instructions(original_prompt)
+
+        # Original prompt should be present
+        assert original_prompt in enhanced
+
+    def test_enhance_prompt_orders_instructions_correctly(self):
+        """Test scratchpad instructions appear before original prompt."""
+        adapter = ACPAdapter()
+        original_prompt = "Do task ABC"
+
+        enhanced = adapter._enhance_prompt_with_instructions(original_prompt)
+
+        # Scratchpad section should come before original prompt
+        scratchpad_pos = enhanced.find("Agent Scratchpad")
+        original_pos = enhanced.find("Do task ABC")
+
+        assert scratchpad_pos < original_pos

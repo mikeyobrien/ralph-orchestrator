@@ -163,6 +163,42 @@ class TestOrchestratorACPAdapter:
             assert adapter.permission_mode == "deny_all"
             assert adapter.timeout == 600
 
+    def test_orchestrator_passes_acp_agent_cli_param(self):
+        """Test orchestrator passes acp_agent CLI parameter to ACPAdapter."""
+        from ralph_orchestrator.orchestrator import RalphOrchestrator
+
+        with patch('ralph_orchestrator.orchestrator.ClaudeAdapter') as mock_claude, \
+             patch('ralph_orchestrator.orchestrator.QChatAdapter') as mock_qchat, \
+             patch('ralph_orchestrator.orchestrator.GeminiAdapter') as mock_gemini, \
+             patch('ralph_orchestrator.orchestrator.ACPAdapter') as mock_acp:
+
+            # Make all adapters unavailable except ACP
+            mock_claude.return_value.available = False
+            mock_qchat.return_value.available = False
+            mock_gemini.return_value.available = False
+            mock_acp.return_value.available = True
+
+            # Create a minimal config
+            from ralph_orchestrator.main import RalphConfig, AgentType
+            config = RalphConfig(
+                agent=AgentType.ACP,
+                prompt_file="PROMPT.md"
+            )
+
+            # Initialize orchestrator with acp_agent parameter
+            orch = RalphOrchestrator(
+                prompt_file_or_config=config,
+                primary_tool="acp",
+                acp_agent="claude-code-acp",
+                acp_permission_mode="auto_approve"
+            )
+
+            # Verify ACPAdapter was called with correct parameters
+            mock_acp.assert_called_once_with(
+                agent_command="claude-code-acp",
+                permission_mode="auto_approve"
+            )
+
 
 class TestACPAutoDetection:
     """Test ACP auto-detection in 'auto' mode."""

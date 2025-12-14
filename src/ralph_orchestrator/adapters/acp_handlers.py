@@ -225,11 +225,15 @@ class ACPHandlers:
     def handle_request_permission(self, params: dict) -> dict:
         """Handle a permission request from an agent.
 
+        When permission is granted for a toolCall, this method also executes
+        the requested action (file write, terminal command, etc.) and returns
+        the result.
+
         Args:
-            params: Permission request parameters.
+            params: Permission request parameters including toolCall with rawInput.
 
         Returns:
-            Dict with 'approved' key for ACP response.
+            Dict with 'approved' key and optionally 'result' for executed actions.
         """
         request = PermissionRequest.from_params(params)
         result = self._evaluate_permission(request)
@@ -240,7 +244,50 @@ class ACPHandlers:
         # Store in history
         self._history.append((request, result))
 
-        return result.to_dict()
+        response = result.to_dict()
+
+        # If approved and there's a toolCall, execute the action
+        if result.approved:
+            tool_call = params.get("toolCall", {})
+            raw_input = tool_call.get("rawInput", {})
+            title = tool_call.get("title", "")
+
+            # Determine action type from title or rawInput
+            if "Write" in title or "file_path" in raw_input and "content" in raw_input:
+                # File write operation
+                file_path = raw_input.get("file_path") or raw_input.get("path")
+                content = raw_input.get("content", "")
+                if file_path:
+                    write_result = self.handle_write_file({
+                        "path": file_path,
+                        "content": content
+                    })
+                    if "error" not in write_result:
+                        response["result"] = write_result
+                    else:
+                        response["error"] = write_result.get("error")
+
+            elif "Read" in title or ("file_path" in raw_input and "content" not in raw_input):
+                # File read operation
+                file_path = raw_input.get("file_path") or raw_input.get("path")
+                if file_path:
+                    read_result = self.handle_read_file({"path": file_path})
+                    if "error" not in read_result:
+                        response["result"] = read_result
+                    else:
+                        response["error"] = read_result.get("error")
+
+            elif "command" in raw_input or "Bash" in title or "Terminal" in title:
+                # Terminal/command operation - create terminal and run command
+                command = raw_input.get("command", "")
+                if command:
+                    terminal_result = self.handle_terminal_create({"command": command})
+                    if "error" not in terminal_result:
+                        response["result"] = terminal_result
+                    else:
+                        response["error"] = terminal_result.get("error")
+
+        return response
 
     def _evaluate_permission(self, request: PermissionRequest) -> PermissionResult:
         """Evaluate a permission request based on current mode.

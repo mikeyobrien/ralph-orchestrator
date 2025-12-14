@@ -152,19 +152,34 @@ class ACPAdapter(ToolAdapter):
         """Synchronously kill the agent subprocess (signal-safe).
 
         This method is safe to call from signal handlers.
+        Uses non-blocking approach with immediate force kill after 2 seconds.
         """
         if self._client and self._client._process:
             try:
                 process = self._client._process
                 if process.returncode is None:
+                    # Try graceful termination first
                     process.terminate()
+
+                    # Non-blocking poll with timeout
+                    import time
+                    start = time.time()
+                    timeout = 2.0
+
+                    while time.time() - start < timeout:
+                        if process.poll() is not None:
+                            # Process terminated successfully
+                            return
+                        time.sleep(0.01)  # Brief sleep to avoid busy-wait
+
+                    # Timeout reached, force kill
                     try:
-                        process.wait(timeout=3)
+                        process.kill()
+                        # Brief wait to ensure kill completes
+                        time.sleep(0.1)
+                        process.poll()
                     except Exception:
-                        try:
-                            process.kill()
-                        except Exception:
-                            pass
+                        pass
             except Exception:
                 pass
 
@@ -287,7 +302,11 @@ class ACPAdapter(ToolAdapter):
     def _handle_request(self, method: str, params: dict) -> dict:
         """Handle requests from agent.
 
-        Currently handles permission requests based on permission_mode.
+        Routes requests to appropriate handlers:
+        - session/request_permission: Permission checks
+        - fs/read_text_file: File read operations
+        - fs/write_text_file: File write operations
+        - terminal/*: Terminal operations
 
         Args:
             method: Request method name.
@@ -298,6 +317,24 @@ class ACPAdapter(ToolAdapter):
         """
         if method == "session/request_permission":
             return self._handle_permission_request(params)
+
+        # File operations
+        if method == "fs/read_text_file":
+            return self._handlers.handle_read_file(params)
+        if method == "fs/write_text_file":
+            return self._handlers.handle_write_file(params)
+
+        # Terminal operations
+        if method == "terminal/create":
+            return self._handlers.handle_terminal_create(params)
+        if method == "terminal/output":
+            return self._handlers.handle_terminal_output(params)
+        if method == "terminal/wait_for_exit":
+            return self._handlers.handle_terminal_wait_for_exit(params)
+        if method == "terminal/kill":
+            return self._handlers.handle_terminal_kill(params)
+        if method == "terminal/release":
+            return self._handlers.handle_terminal_release(params)
 
         # Unknown request - return empty result
         return {}
@@ -505,6 +542,51 @@ class ACPAdapter(ToolAdapter):
                 output="",
                 error=str(e),
             )
+
+    def _enhance_prompt_with_instructions(self, prompt: str) -> str:
+        """Enhance prompt with ACP-specific orchestration and scratchpad instructions.
+
+        Adds scratchpad persistence mechanism to base orchestration instructions.
+
+        Args:
+            prompt: The original prompt
+
+        Returns:
+            Enhanced prompt with orchestration and scratchpad instructions
+        """
+        # Get base orchestration instructions
+        enhanced_prompt = super()._enhance_prompt_with_instructions(prompt)
+
+        # Check if scratchpad instructions already exist
+        if "Agent Scratchpad" in enhanced_prompt:
+            return enhanced_prompt
+
+        # Add scratchpad instructions before the "ORIGINAL PROMPT:" marker
+        scratchpad_instructions = """
+## Agent Scratchpad
+Before starting your work, check if .agent/scratchpad.md exists in the current working directory.
+If it does, read it to understand what was accomplished in previous iterations and continue from there.
+
+At the end of your iteration, update .agent/scratchpad.md with:
+- What you accomplished this iteration
+- What remains to be done
+- Any important context or decisions made
+- Current blockers or issues (if any)
+
+Do NOT restart from scratch if the scratchpad shows previous progress. Continue where the previous iteration left off.
+
+Create the .agent/ directory if it doesn't exist.
+
+---
+"""
+
+        # Insert scratchpad instructions before "ORIGINAL PROMPT:"
+        if "ORIGINAL PROMPT:" in enhanced_prompt:
+            parts = enhanced_prompt.split("ORIGINAL PROMPT:")
+            return parts[0] + scratchpad_instructions + "ORIGINAL PROMPT:" + parts[1]
+        else:
+            # Fallback: append if marker not found
+            return enhanced_prompt + "\n" + scratchpad_instructions
 
     def estimate_cost(self, prompt: str) -> float:
         """Estimate execution cost.

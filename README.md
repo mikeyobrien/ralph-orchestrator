@@ -45,6 +45,7 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 - 🔒 **Security Features**: Automatic masking of API keys et sensitive data in logs
 - ⚡ **Async-First Design**: Non-blocking I/O throughout (logging, git operations)
 - 📝 **Inline Prompts**: Run with `-p "your task"` without needing a file
+- 🧠 **Agent Scratchpad**: ACP agents persist context across iterations via `.agent/scratchpad.md`
 
 ## Installation
 
@@ -532,6 +533,7 @@ MIT License - See LICENSE file for details
     - File operations (read/write with security)
     - Terminal operations (create, output, wait, kill, release)
     - Session management and streaming updates
+    - Agent scratchpad mechanism for context persistence across iterations
   - New CLI options: `--acp-agent`, `--acp-permission-mode`
   - Configuration support in ralph.yml
   - 305+ new ACP-specific tests

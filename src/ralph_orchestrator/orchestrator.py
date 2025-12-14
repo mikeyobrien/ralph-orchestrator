@@ -43,7 +43,9 @@ class RalphOrchestrator:
         max_cost: float = 10.0,
         checkpoint_interval: int = 5,
         archive_dir: str = "./prompts/archive",
-        verbose: bool = False
+        verbose: bool = False,
+        acp_agent: str = None,
+        acp_permission_mode: str = None
     ):
         """Initialize the orchestrator.
         
@@ -57,7 +59,12 @@ class RalphOrchestrator:
             checkpoint_interval: Git checkpoint frequency
             archive_dir: Directory for prompt archives
             verbose: Enable verbose logging output
+            acp_agent: ACP agent command (e.g., claude-code-acp, gemini)
+            acp_permission_mode: ACP permission handling mode
         """
+        # Store ACP-specific settings
+        self.acp_agent = acp_agent
+        self.acp_permission_mode = acp_permission_mode
         # Handle both config object and individual parameters
         if hasattr(prompt_file_or_config, 'prompt_file'):
             # It's a config object
@@ -155,12 +162,17 @@ class RalphOrchestrator:
         except Exception as e:
             logger.warning(f"Gemini adapter error: {e}")
 
-        # Initialize ACP adapter
+        # Initialize ACP adapter with CLI parameters
         try:
-            adapter = ACPAdapter()
+            acp_kwargs = {}
+            if self.acp_agent:
+                acp_kwargs['agent_command'] = self.acp_agent
+            if self.acp_permission_mode:
+                acp_kwargs['permission_mode'] = self.acp_permission_mode
+            adapter = ACPAdapter(**acp_kwargs)
             if adapter.available:
                 adapters['acp'] = adapter
-                logger.info("ACP adapter initialized")
+                logger.info(f"ACP adapter initialized (agent: {adapter.agent_command})")
             else:
                 logger.warning("ACP agent not available")
         except Exception as e:

@@ -96,36 +96,40 @@ class ACPClient:
     async def stop(self) -> None:
         """Stop the agent subprocess.
 
-        Terminates the subprocess gracefully, then kills if necessary.
-        Cancels the read loop task.
+        Terminates the subprocess gracefully with 2 second timeout, then kills if necessary.
+        Cancels the read loop task and all pending requests.
         """
         if not self.is_running:
             return
 
-        # Cancel read loop
+        # Cancel read loop first
         if self._read_task and not self._read_task.done():
             self._read_task.cancel()
             try:
-                await self._read_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self._read_task, timeout=0.5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
-        # Terminate subprocess
+        # Terminate subprocess with 2 second timeout
         if self._process:
             try:
                 self._process.terminate()
                 try:
-                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                    await asyncio.wait_for(self._process.wait(), timeout=2.0)
                 except asyncio.TimeoutError:
+                    # Force kill if graceful termination fails
                     self._process.kill()
-                    await self._process.wait()
+                    try:
+                        await asyncio.wait_for(self._process.wait(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        pass  # Best effort, move on
             except ProcessLookupError:
                 pass  # Already dead
 
         self._process = None
         self._read_task = None
 
-        # Cancel pending requests
+        # Cancel all pending requests
         for future in self._pending_requests.values():
             if not future.done():
                 future.cancel()

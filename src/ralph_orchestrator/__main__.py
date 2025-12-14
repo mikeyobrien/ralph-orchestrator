@@ -776,7 +776,9 @@ Examples:
             track_costs=True,  # Enable cost tracking by default
             max_cost=config.max_cost,
             checkpoint_interval=config.checkpoint_interval,
-            verbose=config.verbose
+            verbose=config.verbose,
+            acp_agent=acp_agent,
+            acp_permission_mode=acp_permission_mode
         )
 
         # Enable all tools for Claude adapter (including WebSearch)
