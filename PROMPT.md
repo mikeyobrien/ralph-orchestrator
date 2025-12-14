@@ -412,6 +412,19 @@ ralph run -a claude -p "Your prompt here"
   - Project structure showing ACP adapter files
   - Version history entry for ACP features
 
+### Documentation Update (COMPLETED - Dec 14, 2025)
+- Updated docs/guide/agents.md with comprehensive ACP documentation:
+  - Added full ACP agent section alongside Claude, Q Chat, and Gemini
+  - Detailed permission modes (auto_approve, deny_all, allowlist, interactive)
+  - Supported operations table (file and terminal operations)
+  - Configuration examples (CLI, ralph.yml, environment variables)
+  - Updated Agent Comparison table with ACP column and new rows
+  - Updated Decision Tree diagram to include ACP path
+  - Added Task-Agent Mapping for CI/CD, sandboxed execution, multi-agent workflows
+  - Added ACP Configuration section with examples
+  - Added ACP Features section with permission mode and allowlist examples
+  - Documented Agent Scratchpad feature for context persistence
+
 ---
 
 ## ACP Implementation Summary

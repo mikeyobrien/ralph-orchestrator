@@ -116,6 +116,96 @@ python ralph_orchestrator.py --agent gemini
 - Input: $0.50 per million tokens
 - Output: $1.50 per million tokens
 
+### ACP (Agent Client Protocol)
+
+ACP enables integration with any agent that implements the [Agent Client Protocol](https://github.com/anthropics/agent-client-protocol). This provides a standardized way to communicate with AI agents regardless of their underlying implementation.
+
+**Strengths:**
+- Works with any ACP-compliant agent
+- Standardized JSON-RPC 2.0 protocol
+- Flexible permission handling (4 modes)
+- File and terminal operation support
+- Session persistence via scratchpad
+- Streaming update support
+
+**Best For:**
+- Using multiple agent backends
+- Custom agent implementations
+- Sandboxed execution environments
+- CI/CD pipelines with controlled permissions
+- Enterprise deployments with security requirements
+
+**Installation:**
+```bash
+# Gemini CLI with ACP support
+npm install -g @google/gemini-cli
+
+# Any other ACP-compliant agent
+# Follow the agent's installation instructions
+```
+
+**Usage:**
+```bash
+# Basic ACP usage with Gemini
+python ralph_orchestrator.py --agent acp --acp-agent gemini
+
+# With specific permission mode
+python ralph_orchestrator.py --agent acp --acp-agent gemini --acp-permission-mode auto_approve
+
+# Using allowlist mode
+python ralph_orchestrator.py --agent acp --acp-permission-mode allowlist
+```
+
+**Permission Modes:**
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `auto_approve` | Approve all requests automatically | Trusted environments, CI/CD |
+| `deny_all` | Deny all permission requests | Testing, sandboxed execution |
+| `allowlist` | Only approve matching patterns | Production with specific tools |
+| `interactive` | Prompt user for each request | Development, manual oversight |
+
+**Configuration (ralph.yml):**
+```yaml
+adapters:
+  acp:
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: gemini
+      agent_args: []
+      permission_mode: auto_approve
+      permission_allowlist:
+        - "fs/read_text_file:*.py"
+        - "fs/write_text_file:src/*"
+        - "terminal/create:pytest*"
+```
+
+**Environment Variables:**
+```bash
+export RALPH_ACP_AGENT=gemini
+export RALPH_ACP_PERMISSION_MODE=auto_approve
+export RALPH_ACP_TIMEOUT=300
+```
+
+**Supported Operations:**
+
+| Operation | Description |
+|-----------|-------------|
+| `fs/read_text_file` | Read file contents (with path security) |
+| `fs/write_text_file` | Write file contents (with path security) |
+| `terminal/create` | Create subprocess with command |
+| `terminal/output` | Read process output |
+| `terminal/wait_for_exit` | Wait for process completion |
+| `terminal/kill` | Terminate process |
+| `terminal/release` | Release terminal resources |
+
+**Cost:**
+- Input: $0.00 (billing handled by underlying agent)
+- Output: $0.00 (billing handled by underlying agent)
+
+**Note:** Claude CLI does not currently support native ACP mode. For Claude, use the native `ClaudeAdapter` (`--agent claude`) instead.
+
 ## Auto-Detection
 
 Ralph Orchestrator can automatically detect and use available agents:
@@ -131,16 +221,18 @@ python ralph_orchestrator.py --agent auto
 
 ## Agent Comparison
 
-| Feature | Claude | Q Chat | Gemini |
-|---------|--------|--------|---------|
-| **Context Window** | 200K | 100K | 128K |
-| **Code Quality** | Excellent | Good | Very Good |
-| **Documentation** | Excellent | Good | Good |
-| **Speed** | Moderate | Fast | Fast |
-| **Cost** | High | Low | Low |
-| **Reasoning** | Excellent | Good | Very Good |
-| **Creativity** | Excellent | Good | Good |
-| **Math/Data** | Very Good | Good | Excellent |
+| Feature | Claude | Q Chat | Gemini | ACP |
+|---------|--------|--------|---------|-----|
+| **Context Window** | 200K | 100K | 128K | Varies |
+| **Code Quality** | Excellent | Good | Very Good | Varies |
+| **Documentation** | Excellent | Good | Good | Varies |
+| **Speed** | Moderate | Fast | Fast | Varies |
+| **Cost** | High | Low | Low | Agent-dependent |
+| **Reasoning** | Excellent | Good | Very Good | Varies |
+| **Creativity** | Excellent | Good | Good | Varies |
+| **Math/Data** | Very Good | Good | Excellent | Varies |
+| **Permission Control** | Basic | Basic | Basic | **4 modes** |
+| **Protocol** | SDK | CLI | CLI | JSON-RPC 2.0 |
 
 ## Choosing the Right Agent
 
@@ -152,11 +244,14 @@ graph TD
     B -->|Complex Code| C[Claude]
     B -->|Simple Task| D{Budget?}
     B -->|Data Analysis| E[Gemini]
+    B -->|Sandboxed/CI| K{Need Control?}
     D -->|Limited| F[Q Chat]
     D -->|Flexible| G[Claude/Gemini]
     B -->|Documentation| H{Quality Need?}
     H -->|High| I[Claude]
     H -->|Standard| J[Q Chat/Gemini]
+    K -->|Yes| L[ACP]
+    K -->|No| M[Any Agent]
 ```
 
 ### Task-Agent Mapping
@@ -173,6 +268,9 @@ graph TD
 | **Research** | Claude | Gemini |
 | **Prototyping** | Q Chat | Gemini |
 | **Production Code** | Claude | - |
+| **CI/CD Pipelines** | ACP | Claude |
+| **Sandboxed Execution** | ACP | - |
+| **Multi-Agent Workflows** | ACP | - |
 
 ## Agent Configuration
 
@@ -241,6 +339,53 @@ python ralph_orchestrator.py --agent gemini
 python ralph_orchestrator.py \
   --agent gemini \
   --agent-args "--model gemini-pro"
+```
+
+### ACP Configuration
+
+```bash
+# Standard ACP usage with Gemini
+python ralph_orchestrator.py --agent acp --acp-agent gemini
+
+# With custom permission mode
+python ralph_orchestrator.py \
+  --agent acp \
+  --acp-agent gemini \
+  --acp-permission-mode allowlist
+
+# Production configuration
+python ralph_orchestrator.py \
+  --agent acp \
+  --acp-agent gemini \
+  --acp-permission-mode auto_approve \
+  --max-iterations 100 \
+  --checkpoint-interval 10 \
+  --verbose
+```
+
+**Configuration File (ralph.yml):**
+```yaml
+adapters:
+  acp:
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: gemini
+      agent_args: ["--experimental-acp"]
+      permission_mode: auto_approve
+      permission_allowlist: []
+```
+
+**Environment Variables:**
+```bash
+# Override agent command
+export RALPH_ACP_AGENT=gemini
+
+# Override permission mode
+export RALPH_ACP_PERMISSION_MODE=auto_approve
+
+# Override timeout
+export RALPH_ACP_TIMEOUT=300
 ```
 
 ## Agent-Specific Features
@@ -316,6 +461,65 @@ python ralph_orchestrator.py \
 python ralph_orchestrator.py \
   --agent gemini \
   --prompt data_analysis.md
+```
+
+### ACP Features
+
+- **Protocol Standardization**: JSON-RPC 2.0 communication
+- **Permission Control**: Four modes for fine-grained access control
+- **File Operations**: Secure read/write with path validation
+- **Terminal Operations**: Full subprocess lifecycle management
+- **Session Persistence**: Scratchpad for cross-iteration context
+- **Streaming Updates**: Real-time agent output and thoughts
+
+**Permission Mode Examples:**
+```bash
+# Auto-approve all requests (CI/CD)
+python ralph_orchestrator.py \
+  --agent acp \
+  --acp-agent gemini \
+  --acp-permission-mode auto_approve
+
+# Deny all requests (testing)
+python ralph_orchestrator.py \
+  --agent acp \
+  --acp-agent gemini \
+  --acp-permission-mode deny_all
+
+# Interactive approval (development)
+python ralph_orchestrator.py \
+  --agent acp \
+  --acp-agent gemini \
+  --acp-permission-mode interactive
+```
+
+**Allowlist Pattern Examples:**
+```yaml
+# ralph.yml
+adapters:
+  acp:
+    tool_permissions:
+      permission_mode: allowlist
+      permission_allowlist:
+        # Exact match
+        - "fs/read_text_file"
+        # Glob patterns
+        - "fs/*"
+        - "terminal/create:pytest*"
+        # Regex patterns (surrounded by slashes)
+        - "/^fs\\/.*$/"
+```
+
+**Agent Scratchpad:**
+ACP agents maintain context across iterations via `.agent/scratchpad.md`:
+- Persists progress from previous iterations
+- Records decisions and context
+- Tracks current blockers or issues
+- Lists remaining work items
+
+```bash
+# The scratchpad is automatically managed
+cat .agent/scratchpad.md
 ```
 
 ## Multi-Agent Strategies
