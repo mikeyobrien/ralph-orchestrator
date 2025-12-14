@@ -9,6 +9,7 @@ handles the initialization handshake, and routes session messages.
 """
 
 import asyncio
+import os
 import shutil
 import signal
 import threading
@@ -20,8 +21,8 @@ from .acp_models import ACPAdapterConfig, ACPSession, UpdatePayload
 from .acp_handlers import ACPHandlers
 
 
-# ACP Protocol version this adapter supports
-ACP_PROTOCOL_VERSION = "2024-01"
+# ACP Protocol version this adapter supports (integer per spec)
+ACP_PROTOCOL_VERSION = 1
 
 
 class ACPAdapter(ToolAdapter):
@@ -199,14 +200,22 @@ class ACPAdapter(ToolAdapter):
         self._client.on_request(self._handle_request)
 
         try:
-            # Send initialize request
+            # Send initialize request (per ACP spec)
             init_future = self._client.send_request(
                 "initialize",
                 {
                     "protocolVersion": ACP_PROTOCOL_VERSION,
-                    "capabilities": {
-                        "fs": True,
+                    "clientCapabilities": {
+                        "fs": {
+                            "readTextFile": True,
+                            "writeTextFile": True,
+                        },
                         "terminal": True,
+                    },
+                    "clientInfo": {
+                        "name": "ralph-orchestrator",
+                        "title": "Ralph Orchestrator",
+                        "version": "1.2.0",
                     },
                 },
             )
@@ -216,10 +225,13 @@ class ACPAdapter(ToolAdapter):
             if "protocolVersion" not in init_response:
                 raise ACPClientError("Invalid initialize response: missing protocolVersion")
 
-            # Create new session
+            # Create new session (cwd and mcpServers are required per ACP spec)
             session_future = self._client.send_request(
                 "session/new",
-                {},
+                {
+                    "cwd": os.getcwd(),
+                    "mcpServers": [],  # No MCP servers by default
+                },
             )
             session_response = await asyncio.wait_for(session_future, timeout=self.timeout)
 
@@ -248,7 +260,28 @@ class ACPAdapter(ToolAdapter):
             params: Notification parameters.
         """
         if method == "session/update" and self._session:
-            payload = UpdatePayload.from_dict(params)
+            # Handle both notification formats:
+            # Format 1 (flat): {"kind": "agent_message_chunk", "content": "..."}
+            # Format 2 (nested): {"update": {"sessionUpdate": "agent_message_chunk", "content": {...}}}
+            if "update" in params:
+                # Nested format (Gemini)
+                update = params["update"]
+                kind = update.get("sessionUpdate", "")
+                content_obj = update.get("content", {})
+                # Extract text content if it's an object
+                if isinstance(content_obj, dict):
+                    content = content_obj.get("text", "")
+                else:
+                    content = str(content_obj) if content_obj else ""
+                flat_params = {"kind": kind, "content": content}
+                # Copy other fields if present
+                for key in ["toolName", "toolCallId", "arguments", "status", "result", "error"]:
+                    if key in update:
+                        flat_params[key] = update[key]
+                payload = UpdatePayload.from_dict(flat_params)
+            else:
+                # Flat format
+                payload = UpdatePayload.from_dict(params)
             self._session.process_update(payload)
 
     def _handle_request(self, method: str, params: dict) -> dict:
@@ -332,8 +365,8 @@ class ACPAdapter(ToolAdapter):
         if self._session:
             self._session.reset()
 
-        # Build messages array for ACP protocol
-        messages = [{"role": "user", "content": prompt}]
+        # Build prompt array per ACP spec (ContentBlock format)
+        prompt_blocks = [{"type": "text", "text": prompt}]
 
         # Send session/prompt request
         try:
@@ -341,7 +374,7 @@ class ACPAdapter(ToolAdapter):
                 "session/prompt",
                 {
                     "sessionId": self._session_id,
-                    "messages": messages,
+                    "prompt": prompt_blocks,
                 },
             )
 

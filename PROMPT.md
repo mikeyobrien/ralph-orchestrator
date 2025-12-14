@@ -16,72 +16,79 @@
 
 ---
 
-## 📋 Manual End-to-End Testing Guide
+## 📋 Manual End-to-End Testing Results (Dec 14, 2025)
 
-### Prerequisites
+### Prerequisites Verification
 Both CLI tools are installed and available:
-- ✅ `gemini` CLI: `/home/arch/.npm-global/bin/gemini`
-- ✅ `claude` CLI: `/home/arch/.local/bin/claude`
+- ✅ `gemini` CLI: v0.20.2 at `/home/arch/.npm-global/bin/gemini`
+- ✅ `claude` CLI: v2.0.69 at `/home/arch/.local/bin/claude`
 
-**API Keys Required:**
-- `GOOGLE_API_KEY` - for Gemini integration
-- `ANTHROPIC_API_KEY` - for Claude integration
+### E2E Test Results
 
-### Testing Procedure
+#### Gemini CLI (Native ACP Support) ✅ WORKING
 
-#### 1. Set API Keys
-```bash
-export GOOGLE_API_KEY="your-google-api-key"
-export ANTHROPIC_API_KEY="sk-ant-your-key"
+| Test | Result | Notes |
+|------|--------|-------|
+| Basic prompt | ✅ PASS | Returns expected response ("hello") |
+| Session initialization | ✅ PASS | `session/new` now includes required `mcpServers` param |
+| Notification parsing | ✅ PASS | Fixed to handle nested `update.sessionUpdate` format |
+| Streaming updates | ✅ PASS | `agent_thought_chunk` and `agent_message_chunk` accumulate correctly |
+| Permission auto_approve | ✅ PASS | Shell commands approved, history recorded |
+| Permission deny_all | ✅ PASS | Shell commands denied, Gemini falls back to built-in tools |
+| File operations | ✅ PASS | Works for files in workspace (Gemini sandbox restriction) |
+| Session persistence | ✅ PASS | Same session ID maintained across prompts |
+
+**Gemini Example:**
+```python
+adapter = ACPAdapter(
+    agent_command='gemini',
+    agent_args=['--experimental-acp'],  # Required flag for ACP mode
+    timeout=120,
+    permission_mode='auto_approve'
+)
+response = await adapter.aexecute('Say hello')
+# Success: True, Output: 'hello'
 ```
 
-#### 2. Run Automated Manual Tests
+#### Claude CLI (No Native ACP Support) ⚠️ NOT SUPPORTED
+
+The Claude CLI does **not** have native ACP mode. Key findings:
+- Claude CLI uses its own `stream-json` format, NOT the ACP JSON-RPC protocol
+- Claude Code supports ACP only through "Zed's SDK adapter" (external integration)
+- The `--input-format stream-json --output-format stream-json` mode uses a different message schema
+
+**Workaround:** To use Claude with Ralph Orchestrator, use the existing `ClaudeAdapter` instead of `ACPAdapter`:
 ```bash
-cd /home/arch/code/ralph-orchestrator/.worktrees/acp-support
-uv run python .agent/workspace/test_acp_manual.py
-```
-
-#### 3. Individual CLI Tests
-
-**Gemini ACP Test:**
-```bash
-# Basic prompt
-ralph run -a acp --acp-agent gemini -p "What is 2+2? Reply with just the number."
-
-# File operation test
-echo "Hello from test" > /tmp/acp_test.txt
-ralph run -a acp --acp-agent gemini -p "Read /tmp/acp_test.txt"
-
-# Permission deny test
-ralph run -a acp --acp-agent gemini --acp-permission-mode deny_all -p "Try to read /etc/passwd"
-```
-
-**Claude ACP Test:**
-```bash
-# Basic prompt
-ralph run -a acp --acp-agent claude -p "What is 2+2? Reply with just the number."
-
-# File operation test
-ralph run -a acp --acp-agent claude -p "Read /tmp/acp_test.txt"
+ralph run -a claude -p "Your prompt here"
 ```
 
 ### Test Matrix
 
 | Test Case | Gemini | Claude | Status |
 |-----------|--------|--------|--------|
-| Unit tests (305) | ✅ | ✅ | PASS |
-| Protocol tests | ✅ | ✅ | PASS |
-| Model tests | ✅ | ✅ | PASS |
-| Handler tests | ✅ | ✅ | PASS |
-| CLI integration | ✅ | ✅ | PASS |
-| Config parsing | ✅ | ✅ | PASS |
-| Orchestrator integration | ✅ | ✅ | PASS |
-| E2E with API key | ⏳ | ⏳ | Requires API keys |
+| Unit tests (305) | ✅ | N/A | PASS |
+| Protocol tests | ✅ | N/A | PASS |
+| Model tests | ✅ | N/A | PASS |
+| Handler tests | ✅ | N/A | PASS |
+| CLI integration | ✅ | N/A | PASS |
+| Config parsing | ✅ | N/A | PASS |
+| Orchestrator integration | ✅ | N/A | PASS |
+| E2E basic prompt | ✅ | ❌ No ACP mode | PASS/N/A |
+| E2E file operations | ✅ | ❌ No ACP mode | PASS/N/A |
+| E2E permission modes | ✅ | ❌ No ACP mode | PASS/N/A |
+
+### Fixes Applied During Testing
+
+1. **session/new parameter**: Added required `mcpServers: []` parameter per ACP spec
+2. **Notification format**: Fixed to handle Gemini's nested format:
+   - Before: Expected `{"kind": "...", "content": "..."}`
+   - After: Also handles `{"update": {"sessionUpdate": "...", "content": {...}}}`
 
 ### Notes
-- Unit and mocked integration tests verify all ACP functionality without external dependencies
-- Real E2E tests require valid API keys and are designed to run when keys are available
-- The manual test script (`test_acp_manual.py`) provides 8 comprehensive tests per agent
+- Gemini CLI requires `--experimental-acp` flag for ACP mode
+- Gemini has workspace sandbox restrictions for file access
+- Permission handling works correctly for shell commands
+- Claude users should continue using the native `ClaudeAdapter` (`ralph run -a claude`)
 
 ---
 

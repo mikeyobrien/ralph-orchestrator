@@ -408,11 +408,11 @@ class TestACPAdapterPromptExecution:
 
         await adapter._execute_prompt("Test prompt")
 
-        # Verify session/prompt was called
+        # Verify session/prompt was called with prompt ContentBlocks
         mock_client.send_request.assert_called_once()
         call_args = mock_client.send_request.call_args
         assert call_args[0][0] == "session/prompt"
-        assert "messages" in call_args[0][1]
+        assert "prompt" in call_args[0][1]  # ACP spec uses 'prompt' array
 
     @pytest.mark.asyncio
     async def test_execute_prompt_returns_tool_response(self):
@@ -746,12 +746,12 @@ class TestACPAdapterPromptExecution:
         call_args = mock_client.send_request.call_args
         params = call_args[0][1]
 
-        # Verify messages format
-        assert "messages" in params
-        messages = params["messages"]
-        assert len(messages) == 1
-        assert messages[0]["role"] == "user"
-        assert messages[0]["content"] == "User prompt content"
+        # Verify prompt ContentBlocks format (per ACP spec)
+        assert "prompt" in params
+        prompt_blocks = params["prompt"]
+        assert len(prompt_blocks) == 1
+        assert prompt_blocks[0]["type"] == "text"
+        assert prompt_blocks[0]["text"] == "User prompt content"
 
     @pytest.mark.asyncio
     async def test_execute_prompt_includes_session_id(self):
