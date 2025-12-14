@@ -218,6 +218,75 @@ Advanced Options:
   --no-metrics                    Disable metrics collection
 ```
 
+## ACP (Agent Client Protocol) Integration
+
+Ralph supports any ACP-compliant agent through its ACP adapter. This enables integration with agents like Gemini CLI that implement the [Agent Client Protocol](https://github.com/anthropics/agent-client-protocol).
+
+### Quick Start with ACP
+
+```bash
+# Basic usage with Gemini CLI
+ralph run -a acp --acp-agent gemini
+
+# With permission mode
+ralph run -a acp --acp-agent gemini --acp-permission-mode auto_approve
+```
+
+### Permission Modes
+
+The ACP adapter supports four permission modes for handling agent tool requests:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `auto_approve` | Approve all requests automatically | Trusted environments, CI/CD |
+| `deny_all` | Deny all permission requests | Testing, sandboxed execution |
+| `allowlist` | Only approve matching patterns | Production with specific tools |
+| `interactive` | Prompt user for each request | Development, manual oversight |
+
+### Configuration
+
+Configure ACP in `ralph.yml`:
+
+```yaml
+adapters:
+  acp:
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: gemini      # Agent CLI command
+      agent_args: []             # Additional CLI arguments
+      permission_mode: auto_approve
+      permission_allowlist:      # For allowlist mode
+        - "fs/read_text_file:*.py"
+        - "fs/write_text_file:src/*"
+        - "terminal/create:pytest*"
+```
+
+### Agent Scratchpad
+
+ACP agents maintain context across iterations via `.agent/scratchpad.md`. This file persists:
+- Progress from previous iterations
+- Decisions and context
+- Current blockers or issues
+- Remaining work items
+
+The scratchpad enables agents to continue from where they left off rather than restarting each iteration.
+
+### Supported Operations
+
+The ACP adapter handles these agent requests:
+
+**File Operations:**
+- `fs/read_text_file` - Read file contents (with path security validation)
+- `fs/write_text_file` - Write file contents (with path security validation)
+
+**Terminal Operations:**
+- `terminal/create` - Create subprocess with command
+- `terminal/output` - Read process output
+- `terminal/wait_for_exit` - Wait for process completion
+- `terminal/kill` - Terminate process
+- `terminal/release` - Release terminal resources
+
 ## How It Works
 
 ### The Ralph Loop
