@@ -220,8 +220,14 @@ class ACPClient:
                     else:
                         result = handler(method, params)
 
-                    # Send response
-                    response = self._protocol.create_response(request_id, result)
+                    # Check if handler returned an error (dict with "error" key)
+                    if isinstance(result, dict) and "error" in result:
+                        error_info = result["error"]
+                        error_code = error_info.get("code", -32603) if isinstance(error_info, dict) else -32603
+                        error_msg = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+                        response = self._protocol.create_error_response(request_id, error_code, error_msg)
+                    else:
+                        response = self._protocol.create_response(request_id, result)
                     await self._write_message(response)
                     break  # Only first handler responds
                 except Exception as e:

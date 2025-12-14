@@ -258,9 +258,20 @@ class ACPHandlers:
             tool_call = params.get("toolCall", {})
             raw_input = tool_call.get("rawInput", {})
             title = tool_call.get("title", "")
+            tool_call_id = tool_call.get("toolCallId", "")
 
-            # Determine action type from title or rawInput
-            if "Write" in title or "file_path" in raw_input and "content" in raw_input:
+            # Determine action type from toolCallId, title, or rawInput
+            is_shell_command = (
+                "run_shell_command" in tool_call_id or
+                "shell" in tool_call_id.lower() or
+                "command" in raw_input or
+                "Bash" in title or
+                "Terminal" in title
+            )
+            is_write = "Write" in title or ("file_path" in raw_input and "content" in raw_input)
+            is_read = "Read" in title or ("file_path" in raw_input and "content" not in raw_input)
+
+            if is_write:
                 # File write operation
                 file_path = raw_input.get("file_path") or raw_input.get("path")
                 content = raw_input.get("content", "")
@@ -270,29 +281,51 @@ class ACPHandlers:
                         "content": content
                     })
                     if "error" not in write_result:
-                        response["result"] = write_result
+                        response["outcome"] = write_result
                     else:
-                        response["error"] = write_result.get("error")
+                        response["outcome"] = {"error": write_result.get("error")}
 
-            elif "Read" in title or ("file_path" in raw_input and "content" not in raw_input):
+            elif is_read:
                 # File read operation
                 file_path = raw_input.get("file_path") or raw_input.get("path")
                 if file_path:
                     read_result = self.handle_read_file({"path": file_path})
                     if "error" not in read_result:
-                        response["result"] = read_result
+                        response["outcome"] = read_result
                     else:
-                        response["error"] = read_result.get("error")
+                        response["outcome"] = {"error": read_result.get("error")}
 
-            elif "command" in raw_input or "Bash" in title or "Terminal" in title:
-                # Terminal/command operation - create terminal and run command
+            elif is_shell_command:
+                # Shell command - extract from title or rawInput and execute
                 command = raw_input.get("command", "")
-                if command:
-                    terminal_result = self.handle_terminal_create({"command": command})
-                    if "error" not in terminal_result:
-                        response["result"] = terminal_result
+                if not command and title:
+                    # Extract command from title (format: "command [current working directory ...]")
+                    if "[current working directory" in title:
+                        command = title.split("[current working directory")[0].strip()
                     else:
-                        response["error"] = terminal_result.get("error")
+                        command = title.strip()
+
+                if command:
+                    # Execute the command directly and return result
+                    import subprocess
+                    try:
+                        result_proc = subprocess.run(
+                            command,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            cwd=os.getcwd()
+                        )
+                        response["outcome"] = {
+                            "exitCode": result_proc.returncode,
+                            "stdout": result_proc.stdout,
+                            "stderr": result_proc.stderr,
+                        }
+                    except subprocess.TimeoutExpired:
+                        response["outcome"] = {"error": "Command timed out"}
+                    except Exception as e:
+                        response["outcome"] = {"error": str(e)}
 
         return response
 
@@ -548,14 +581,10 @@ class ACPHandlers:
             # Resolve symlinks and normalize
             resolved_path = path.resolve()
 
-            # Check if file exists
+            # Check if file exists - return null content for non-existent files
+            # (this allows agents to check file existence without error)
             if not resolved_path.exists():
-                return {
-                    "error": {
-                        "code": -32001,
-                        "message": f"File not found: {path_str}",
-                    }
-                }
+                return {"content": None, "exists": False}
 
             # Check if it's a file (not directory)
             if not resolved_path.is_file():

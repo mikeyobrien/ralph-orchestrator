@@ -279,11 +279,13 @@ class TestACPFileOperationsMocked:
         assert result["content"] == "Hello, World!"
 
     def test_read_file_not_found(self):
-        """Test file read handler with missing file."""
+        """Test file read handler with missing file returns null content."""
         adapter = ACPAdapter()
         result = adapter._handlers.handle_read_file({"path": "/nonexistent/file.txt"})
-        assert "error" in result
-        assert result["error"]["code"] == -32001  # Not found
+        # Non-existent files return success with null content (allows existence checks)
+        assert "error" not in result
+        assert result["content"] is None
+        assert result["exists"] is False
 
     def test_write_file_handler(self, tmp_path):
         """Test file write handler."""

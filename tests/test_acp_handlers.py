@@ -585,14 +585,16 @@ class TestACPHandlersReadFile:
         assert "Missing required parameter: path" in result["error"]["message"]
 
     def test_read_file_not_found(self, tmp_path):
-        """Test read file that doesn't exist."""
+        """Test read file that doesn't exist returns null content."""
         handlers = ACPHandlers()
 
         result = handlers.handle_read_file({"path": str(tmp_path / "nonexistent.txt")})
 
-        assert "error" in result
-        assert result["error"]["code"] == -32001
-        assert "File not found" in result["error"]["message"]
+        # Non-existent files return success with null content and exists=False
+        # This allows agents to check file existence without error
+        assert "error" not in result
+        assert result["content"] is None
+        assert result["exists"] is False
 
     def test_read_file_is_directory(self, tmp_path):
         """Test read file when path is a directory."""
