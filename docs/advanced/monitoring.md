@@ -6,6 +6,35 @@ Ralph Orchestrator provides comprehensive monitoring capabilities to track execu
 
 ## Built-in Monitoring
 
+Ralph's monitoring system collects and routes execution data through multiple channels:
+
+```
+                           📊 Metrics Collection Flow
+
+                                                                        ┌────────────────────┐
+                                                                   ┌──> │ .agent/metrics/    │
+                                                                   │    └────────────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌───────────────┐ │    ┌────────────────────┐
+│   Orchestrator  │ ──> │ Iteration Events │ ──> │    Metrics    │ ┼──> │   .agent/logs/     │
+└─────────────────┘     └──────────────────┘     │   Collector   │ │    └────────────────────┘
+                                                 └───────────────┘ │    ┌────────────────────┐
+                                                                   └──> │     Console        │
+                                                                        └────────────────────┘
+```
+
+<details>
+<summary>graph-easy source</summary>
+
+```
+graph { label: "📊 Metrics Collection Flow"; flow: east; }
+[ Orchestrator ] -> [ Iteration Events ] -> [ Metrics Collector ]
+[ Metrics Collector ] -> [ .agent/metrics/ ]
+[ Metrics Collector ] -> [ .agent/logs/ ]
+[ Metrics Collector ] -> [ Console ]
+```
+
+</details>
+
 ### State Files
 
 Ralph automatically generates state files in `.agent/metrics/`:
@@ -44,6 +73,7 @@ Errors: 0
 ### Execution Logs
 
 #### Verbose Mode
+
 ```bash
 # Enable detailed logging
 ./ralph run --verbose
@@ -56,6 +86,7 @@ Errors: 0
 ```
 
 #### Log Levels
+
 ```python
 import logging
 
@@ -99,7 +130,7 @@ class MetricsCollector:
             'value': value,
             'timestamp': timestamp
         })
-    
+
     def export_metrics(self):
         """Export metrics to JSON"""
         with open('.agent/metrics/custom.json', 'w') as f:
@@ -152,6 +183,7 @@ inotifywait -m -r . -e modify,create,delete
 ### Terminal Dashboard
 
 Create `monitor.sh`:
+
 ```bash
 #!/bin/bash
 # Ralph Monitoring Dashboard
@@ -160,25 +192,25 @@ while true; do
     clear
     echo "=== RALPH ORCHESTRATOR MONITOR ==="
     echo ""
-    
+
     # Status
     ./ralph status
     echo ""
-    
+
     # Recent errors
     echo "Recent Errors:"
     tail -n 5 .agent/logs/ralph.log | grep ERROR || echo "No errors"
     echo ""
-    
+
     # Resource usage
     echo "Resource Usage:"
     ps aux | grep ralph_orchestrator | grep -v grep
     echo ""
-    
+
     # Latest checkpoint
     echo "Latest Checkpoint:"
     ls -lt .agent/checkpoints/ | head -2
-    
+
     sleep 5
 done
 ```
@@ -214,7 +246,7 @@ def dashboard():
                     fetch('/metrics')
                         .then(response => response.json())
                         .then(data => {
-                            document.getElementById('metrics').innerHTML = 
+                            document.getElementById('metrics').innerHTML =
                                 JSON.stringify(data, null, 2);
                         });
                 }
@@ -241,13 +273,13 @@ if __name__ == '__main__':
 def check_errors():
     with open('.agent/metrics/state_latest.json') as f:
         state = json.load(f)
-    
+
     if state.get('errors'):
         send_alert(f"Ralph encountered errors: {state['errors']}")
-    
+
     if state.get('iteration_count', 0) > 100:
         send_alert("Ralph exceeded 100 iterations")
-    
+
     if state.get('runtime', 0) > 14400:  # 4 hours
         send_alert("Ralph runtime exceeded 4 hours")
 ```
@@ -282,10 +314,10 @@ def analyze_iterations():
     for file in glob.glob('.agent/metrics/state_*.json'):
         with open(file) as f:
             metrics.append(json.load(f))
-    
+
     # Create DataFrame
     df = pd.DataFrame(metrics)
-    
+
     # Plot iteration times
     plt.figure(figsize=(10, 6))
     plt.plot(df['iteration_count'], df['runtime'])
@@ -293,7 +325,7 @@ def analyze_iterations():
     plt.ylabel('Cumulative Runtime (seconds)')
     plt.title('Ralph Execution Performance')
     plt.savefig('.agent/performance.png')
-    
+
     # Statistics
     print(f"Average iteration time: {df['runtime'].diff().mean():.2f}s")
     print(f"Total iterations: {df['iteration_count'].max()}")
@@ -310,14 +342,14 @@ def calculate_costs():
         'gemini': 0.005,   # $ per call
         'q': 0.0           # Free
     }
-    
+
     total_cost = 0
     for file in glob.glob('.agent/metrics/state_*.json'):
         with open(file) as f:
             state = json.load(f)
             agent = state.get('agent', 'claude')
             total_cost += costs.get(agent, 0)
-    
+
     print(f"Estimated cost: ${total_cost:.2f}")
     return total_cost
 ```
@@ -376,32 +408,32 @@ def health_check():
         'status': 'healthy',
         'checks': []
     }
-    
+
     # Check prompt file exists
     if not os.path.exists('PROMPT.md'):
         health['status'] = 'unhealthy'
         health['checks'].append('PROMPT.md missing')
-    
+
     # Check agent availability
     for agent in ['claude', 'q', 'gemini']:
         if shutil.which(agent):
             health['checks'].append(f'{agent}: available')
         else:
             health['checks'].append(f'{agent}: not found')
-    
+
     # Check disk space
     stat = os.statvfs('.')
     free_space = stat.f_bavail * stat.f_frsize / (1024**3)  # GB
     if free_space < 1:
         health['status'] = 'warning'
         health['checks'].append(f'Low disk space: {free_space:.2f}GB')
-    
+
     # Check Git status
-    result = subprocess.run(['git', 'status', '--porcelain'], 
+    result = subprocess.run(['git', 'status', '--porcelain'],
                           capture_output=True, text=True)
     if result.stdout:
         health['checks'].append('Uncommitted changes present')
-    
+
     return health
 ```
 
@@ -409,13 +441,13 @@ def health_check():
 
 ### Common Issues
 
-| Symptom | Check | Solution |
-|---------|-------|----------|
-| High iteration count | `.agent/metrics/state_*.json` | Review prompt clarity |
-| Slow performance | Iteration times in logs | Check agent response times |
-| Memory issues | System monitor | Increase limits or add swap |
-| Repeated errors | Error patterns in logs | Fix underlying issue |
-| No progress | Git diff output | Check if agent is making changes |
+| Symptom              | Check                         | Solution                         |
+| -------------------- | ----------------------------- | -------------------------------- |
+| High iteration count | `.agent/metrics/state_*.json` | Review prompt clarity            |
+| Slow performance     | Iteration times in logs       | Check agent response times       |
+| Memory issues        | System monitor                | Increase limits or add swap      |
+| Repeated errors      | Error patterns in logs        | Fix underlying issue             |
+| No progress          | Git diff output               | Check if agent is making changes |
 
 ### Debug Mode
 

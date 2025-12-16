@@ -72,6 +72,7 @@ nav:
     - deployment/production.md
   - Advanced:
     - advanced/architecture.md
+    - advanced/loop-detection.md
     - advanced/security.md
     - advanced/monitoring.md
     - advanced/context-management.md

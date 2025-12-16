@@ -16,6 +16,27 @@ The `SafetyGuard` class maintains a sliding window of the last 5 agent outputs. 
 4. The current output is added to the history (oldest removed if at capacity)
 5. When a loop is detected, the orchestrator logs a warning and exits
 
+#### Sliding Window Visualization
+
+```
+                                         🔄 Sliding Window (deque maxlen=5)
+
+┌────────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐  evicted   ╭───╮
+│ New Output │ ──> │ Output 5 │ ──> │ Output 4 │ ──> │ Output 3 │ ──> │ Output 2 │ ──> │ Output 1 │ ─────────> │ X │
+└────────────┘     └──────────┘     └──────────┘     └──────────┘     └──────────┘     └──────────┘            ╰───╯
+```
+
+<details>
+<summary>graph-easy source</summary>
+
+```
+graph { label: "🔄 Sliding Window (deque maxlen=5)"; flow: east; }
+[ New Output ] -> [ Output 5 ] -> [ Output 4 ] -> [ Output 3 ] -> [ Output 2 ] -> [ Output 1 ]
+[ Output 1 ] -- evicted --> [ X ] { shape: rounded; }
+```
+
+</details>
+
 ### Similarity Threshold
 
 The default threshold is **90% similarity** (0.9 ratio). This was chosen based on industry best practices:
@@ -23,6 +44,62 @@ The default threshold is **90% similarity** (0.9 ratio). This was chosen based o
 - **0.95**: Too strict - only catches nearly identical outputs
 - **0.90**: Balanced - catches repetitive patterns while allowing variation (recommended)
 - **0.85**: Loose - higher false positive rate
+
+#### Decision Flow
+
+```
+              🔍 Loop Detection Decision
+
+                         ╭────────────────────╮
+                         │   Current Output   │
+                         ╰────────────────────╯
+                           │
+                           │
+                           ∨
+                         ┌────────────────────┐
+                         │ Compare to History │ <┐
+                         └────────────────────┘  │
+                           │                     │
+                           │                     │
+                           ∨                     │
+╔═══════════════╗  yes   ┌────────────────────┐  │
+║ LOOP DETECTED ║ <───── │   ratio >= 90%?    │  │ yes
+╚═══════════════╝        └────────────────────┘  │
+                           │                     │
+                           │ no                  │
+                           ∨                     │
+                         ┌────────────────────┐  │
+                         │   More outputs?    │ ─┘
+                         └────────────────────┘
+                           │
+                           │ no
+                           ∨
+                         ┌────────────────────┐
+                         │   Add to History   │
+                         └────────────────────┘
+                           │
+                           │
+                           ∨
+                         ╭────────────────────╮
+                         │      Continue      │
+                         ╰────────────────────╯
+```
+
+<details>
+<summary>graph-easy source</summary>
+
+```
+graph { label: "🔍 Loop Detection Decision"; flow: south; }
+[ Current Output ] { shape: rounded; } -> [ Compare to History ]
+[ Compare to History ] -> [ ratio >= 90%? ]
+[ ratio >= 90%? ] -- yes --> [ LOOP DETECTED ] { border: double; }
+[ ratio >= 90%? ] -- no --> [ More outputs? ]
+[ More outputs? ] -- yes --> [ Compare to History ]
+[ More outputs? ] -- no --> [ Add to History ]
+[ Add to History ] -> [ Continue ] { shape: rounded; }
+```
+
+</details>
 
 ## Example
 
@@ -65,6 +142,95 @@ Loop detection works alongside other safety mechanisms:
 5. **Loop Detection**: Similarity-based output comparison
 
 The orchestrator exits when **any** of these conditions are met.
+
+### Integration Architecture
+
+The following diagram shows how loop detection integrates with the main orchestration loop:
+
+```
+            ⚙️ SafetyGuard in Orchestration Loop
+
+                               ╭─────────────────────╮
+  ┌──────────────────────────> │   Start Iteration   │ <┐
+  │                            ╰─────────────────────╯  │
+  │                              │                      │
+  │                              │                      │
+  │                              ∨                      │
+  │                            ┌─────────────────────┐  │
+  │                            │ SafetyGuard.check() │  │
+  │                            └─────────────────────┘  │
+  │                              │                      │
+  │                              │                      │
+  │                              ∨                      │
+  │  ╔════════════════╗  no    ┌─────────────────────┐  │
+  │  ║  STOP: Limit   ║ <───── │     Limits OK?      │  │
+  │  ╚════════════════╝        └─────────────────────┘  │
+  │                              │                      │
+  │                              │ yes                  │
+  │                              ∨                      │
+  │                            ┌─────────────────────┐  │
+  │                            │  Check Completion   │  │
+  │                            └─────────────────────┘  │
+  │                              │                      │
+  │                              │                      │
+  │                              ∨                      │
+  │  ╔════════════════╗  yes   ┌─────────────────────┐  │
+  │  ║   STOP: Done   ║ <───── │   TASK_COMPLETE?    │  │ no
+  │  ╚════════════════╝        └─────────────────────┘  │
+  │                              │                      │
+  └────┐                         │ no                   │
+       │                         ∨                      │
+       │                       ┌─────────────────────┐  │
+       │                       │    Execute Agent    │  │
+       │                       └─────────────────────┘  │
+       │                         │                      │
+       │                         │                      │
+       │                         ∨                      │
+     ┌────────────────┐  no    ┌─────────────────────┐  │
+     │ Handle Failure │ <───── │      Success?       │  │
+     └────────────────┘        └─────────────────────┘  │
+                                 │                      │
+                                 │ yes                  │
+                                 ∨                      │
+                               ┌─────────────────────┐  │
+                               │    detect_loop()    │  │
+                               └─────────────────────┘  │
+                                 │                      │
+                                 │                      │
+                                 ∨                      │
+                               ┌─────────────────────┐  │
+                               │     Loop Found?     │ ─┘
+                               └─────────────────────┘
+                                 │
+                                 │ yes
+                                 ∨
+                               ╔═════════════════════╗
+                               ║     STOP: Loop      ║
+                               ╚═════════════════════╝
+```
+
+<details>
+<summary>graph-easy source</summary>
+
+```
+graph { label: "⚙️ SafetyGuard in Orchestration Loop"; flow: south; }
+[ Start Iteration ] { shape: rounded; } -> [ SafetyGuard.check() ]
+[ SafetyGuard.check() ] -> [ Limits OK? ]
+[ Limits OK? ] -- no --> [ STOP: Limit ] { border: double; }
+[ Limits OK? ] -- yes --> [ Check Completion ]
+[ Check Completion ] -> [ TASK_COMPLETE? ]
+[ TASK_COMPLETE? ] -- yes --> [ STOP: Done ] { border: double; }
+[ TASK_COMPLETE? ] -- no --> [ Execute Agent ]
+[ Execute Agent ] -> [ Success? ]
+[ Success? ] -- no --> [ Handle Failure ]
+[ Handle Failure ] -> [ Start Iteration ]
+[ Success? ] -- yes --> [ detect_loop() ]
+[ detect_loop() ] -> [ Loop Found? ]
+[ Loop Found? ] -- yes --> [ STOP: Loop ] { border: double; }
+[ Loop Found? ] -- no --> [ Start Iteration ]
+```
+
+</details>
 
 ## When Loop Detection Triggers
 

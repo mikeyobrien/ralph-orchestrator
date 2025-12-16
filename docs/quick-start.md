@@ -63,6 +63,7 @@ Create a `PROMPT.md` file with your task:
 # Task: Create a Todo List CLI
 
 Build a Python command-line todo list application with:
+
 - Add tasks
 - List tasks
 - Mark tasks as complete
@@ -89,12 +90,14 @@ python ralph_orchestrator.py --agent acp --acp-agent gemini --prompt PROMPT.md
 ## Step 5: Monitor Progress
 
 Ralph will now:
+
 1. Read your prompt file
 2. Execute the AI agent
 3. Check for completion
 4. Iterate until done or limits reached
 
 You'll see output like:
+
 ```
 2025-09-08 10:30:45 - INFO - Starting Ralph Orchestrator v1.0.0
 2025-09-08 10:30:45 - INFO - Using agent: claude
@@ -112,6 +115,24 @@ Ralph will continue iterating until one of these conditions is met:
 - ⏰ Maximum runtime exceeded (default: 4 hours)
 - 💰 Token or cost limits reached
 - ❌ Unrecoverable error occurs
+- ✅ Completion marker detected in prompt file
+- 🔄 Loop detection triggers (repetitive outputs)
+
+## Signaling Completion
+
+Add a completion marker to your PROMPT.md when the task is done:
+
+```markdown
+## Status
+
+- [x] Created todo.py with CLI interface
+- [x] Implemented add, list, complete commands
+- [x] Added JSON persistence
+- [x] Wrote unit tests
+- [x] TASK_COMPLETE
+```
+
+Ralph will detect the `- [x] TASK_COMPLETE` marker and stop orchestration immediately. This allows the AI agent to signal "I'm done" rather than relying solely on iteration limits.
 
 ## Basic Configuration
 
@@ -144,16 +165,18 @@ Include comprehensive unit tests.
 
 ```markdown
 Create a web scraper that:
+
 1. Fetches the HackerNews homepage
 2. Extracts the top 10 stories
 3. Saves them to a JSON file
-Use requests and BeautifulSoup.
+   Use requests and BeautifulSoup.
 ```
 
 ### CLI Tool
 
 ```markdown
 Build a markdown to HTML converter CLI tool:
+
 - Accept input/output file arguments
 - Support basic markdown syntax
 - Add --watch mode for auto-conversion
@@ -174,6 +197,7 @@ Now that you've run your first Ralph task:
 ### Agent Not Found
 
 If Ralph can't find an AI agent:
+
 ```bash
 ERROR: No AI agents detected. Please install claude, q, gemini, or an ACP-compliant agent.
 ```
@@ -183,6 +207,7 @@ ERROR: No AI agents detected. Please install claude, q, gemini, or an ACP-compli
 ### Permission Denied
 
 If you get permission errors:
+
 ```bash
 chmod +x ralph_orchestrator.py
 ```
@@ -190,6 +215,7 @@ chmod +x ralph_orchestrator.py
 ### Task Not Completing
 
 If your task runs indefinitely:
+
 - Check that your prompt includes clear completion criteria
 - Ensure the agent can modify files and work towards completion
 - Review iteration logs in `.agent/metrics/`

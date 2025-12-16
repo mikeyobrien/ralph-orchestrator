@@ -30,9 +30,71 @@ Ralph Orchestrator executes AI agents with significant system access. This docum
 
 ## Security Controls
 
+Ralph implements multiple security layers to protect against threats:
+
+```
+ 🔒 Security Defense Layers
+
+   ╭───────────────────╮
+   │    User Input     │
+   ╰───────────────────╯
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │ Input Validation  │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │ Process Isolation │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │  File Boundaries  │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │    Git Safety     │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │ Env Sanitization  │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ╭───────────────────╮
+   │     AI Agent      │
+   ╰───────────────────╯
+```
+
+<details>
+<summary>graph-easy source</summary>
+
+```
+graph { label: "🔒 Security Defense Layers"; flow: south; }
+[ User Input ] { shape: rounded; } -> [ Input Validation ]
+[ Input Validation ] -> [ Process Isolation ]
+[ Process Isolation ] -> [ File Boundaries ]
+[ File Boundaries ] -> [ Git Safety ]
+[ Git Safety ] -> [ Env Sanitization ]
+[ Env Sanitization ] -> [ AI Agent ] { shape: rounded; }
+```
+
+</details>
+
 ### Process Isolation
 
 Ralph runs AI agents in subprocesses with:
+
 - Timeout protection (5 minutes default)
 - Output size limits
 - Error boundaries
@@ -50,11 +112,13 @@ result = subprocess.run(
 ### File System Boundaries
 
 #### Restricted Paths
+
 - Work within project directory
 - No access to system files
 - Preserve .git integrity
 
 #### Safe Defaults
+
 ```python
 # Validate paths stay within project
 def validate_path(path):
@@ -66,11 +130,13 @@ def validate_path(path):
 ### Git Safety
 
 #### Protected Operations
+
 - No force pushes
 - No branch deletion
 - No history rewriting
 
 #### Checkpoint-Only Commits
+
 ```bash
 # Ralph only creates checkpoint commits
 git add .
@@ -80,18 +146,20 @@ git commit -m "Ralph checkpoint: iteration N"
 ### Environment Sanitization
 
 #### Filtered Variables
+
 ```python
 SAFE_ENV_VARS = [
-    'PATH', 'HOME', 'USER', 
+    'PATH', 'HOME', 'USER',
     'LANG', 'LC_ALL', 'TERM'
 ]
 
 def get_safe_env():
-    return {k: v for k, v in os.environ.items() 
+    return {k: v for k, v in os.environ.items()
             if k in SAFE_ENV_VARS}
 ```
 
 #### No Credential Exposure
+
 - Never pass API keys through environment
 - Agents should use their own credential stores
 - No secrets in prompts or logs
@@ -100,12 +168,14 @@ def get_safe_env():
 
 ### 1. Prompt Security
 
-#### DO:
+#### DO
+
 - Review prompts before execution
 - Use specific, bounded instructions
 - Include safety constraints
 
-#### DON'T:
+#### DON'T
+
 - Include credentials in prompts
 - Request system-level changes
 - Use unbounded iterations
@@ -113,12 +183,14 @@ def get_safe_env():
 ### 2. Agent Configuration
 
 #### Claude
+
 ```bash
 # Use restricted mode if available
 claude --safe-mode PROMPT.md
 ```
 
 #### Gemini
+
 ```bash
 # Limit context and capabilities
 gemini --no-web --no-exec PROMPT.md
@@ -127,6 +199,7 @@ gemini --no-web --no-exec PROMPT.md
 ### 3. Repository Setup
 
 #### .gitignore
+
 ```gitignore
 # Security-sensitive files
 *.key
@@ -142,18 +215,20 @@ credentials/
 ```
 
 #### Pre-commit Hooks
+
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/Yelp/detect-secrets
     hooks:
       - id: detect-secrets
-        args: ['--baseline', '.secrets.baseline']
+        args: ["--baseline", ".secrets.baseline"]
 ```
 
 ### 4. Runtime Monitoring
 
 #### Resource Limits
+
 ```python
 # Set resource limits
 import resource
@@ -172,6 +247,7 @@ resource.setrlimit(
 ```
 
 #### Audit Logging
+
 ```python
 import logging
 import json
@@ -217,32 +293,34 @@ logging.info(json.dumps({
 ### If Compromise Suspected
 
 1. **Immediate Actions**
+
    ```bash
    # Stop Ralph
    pkill -f ralph_orchestrator
-   
+
    # Preserve evidence
    cp -r .agent /tmp/ralph-incident-$(date +%s)
-   
+
    # Check for modifications
    git status
    git diff
    ```
 
 2. **Investigation**
-   - Review .agent/metrics/state_*.json
+   - Review .agent/metrics/state\_\*.json
    - Check system logs
    - Examine Git history
    - Analyze agent outputs
 
 3. **Recovery**
+
    ```bash
    # Reset to last known good state
    git reset --hard <last-good-commit>
-   
+
    # Clean workspace
    rm -rf .agent
-   
+
    # Rotate credentials if needed
    # Update API keys for affected services
    ```
@@ -284,13 +362,15 @@ sudo -u ralph-runner ./ralph run
 
 ### Secure Storage
 
-#### Never Store Keys In:
+#### Never Store Keys In
+
 - PROMPT.md files
 - Git repositories
 - Environment variables in scripts
 - Log files
 
-#### Recommended Approaches:
+#### Recommended Approaches
+
 1. Agent-specific credential stores
 2. System keychain/keyring
 3. Encrypted vault (e.g., HashiCorp Vault)
@@ -309,16 +389,19 @@ sudo -u ralph-runner ./ralph run
 ## Compliance Considerations
 
 ### Data Privacy
+
 - Don't process PII in prompts
 - Sanitize outputs before sharing
 - Comply with data residency requirements
 
 ### Audit Trail
+
 - Maintain execution logs
 - Track prompt modifications
 - Document agent interactions
 
 ### Access Control
+
 - Limit who can run Ralph
 - Restrict agent permissions
 - Control repository access
@@ -326,6 +409,7 @@ sudo -u ralph-runner ./ralph run
 ## Security Updates
 
 Stay current with:
+
 - AI CLI tool updates
 - Python security patches
 - Git security advisories
@@ -343,7 +427,7 @@ git --version
 If you discover a security vulnerability:
 
 1. **Do NOT** open a public issue
-2. Email security report to: security@ralph-orchestrator.org
+2. Email security report to: <security@ralph-orchestrator.org>
 3. Include:
    - Description of vulnerability
    - Steps to reproduce

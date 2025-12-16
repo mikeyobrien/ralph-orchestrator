@@ -17,6 +17,7 @@ The Ralph Wiggum technique was created by [Geoffrey Huntley](https://ghuntley.co
 ### What AI agents does it support?
 
 Ralph Orchestrator currently supports:
+
 - **Claude** (Anthropic Claude Code CLI)
 - **Gemini** (Google Gemini CLI)
 - **Q Chat** (Q CLI tool)
@@ -53,6 +54,7 @@ npm install -g @google/gemini-cli
 ### Can I run Ralph in Docker?
 
 Yes! A Dockerfile is provided:
+
 ```bash
 docker build -t ralph-orchestrator .
 docker run -v $(pwd):/workspace ralph-orchestrator
@@ -63,14 +65,54 @@ docker run -v $(pwd):/workspace ralph-orchestrator
 ### How do I know when Ralph is done?
 
 Ralph stops when:
+
 1. Maximum iterations are reached (default: 100)
 2. Maximum runtime is exceeded (default: 4 hours)
 3. Cost limits are reached (default: $50)
 4. Too many consecutive errors occur
+5. A completion marker is detected
+6. Loop detection triggers (repetitive outputs)
+
+### How do I signal task completion?
+
+Add a checkbox marker to your PROMPT.md:
+
+```markdown
+- [x] TASK_COMPLETE
+```
+
+Ralph will detect this marker and stop orchestration immediately. This allows the AI agent to signal "I'm done" instead of relying solely on iteration limits.
+
+**Important**: The marker must be in checkbox format (`- [x]` or `[x]`), not plain text.
+
+### What triggers loop detection?
+
+Loop detection triggers when the current agent output is ≥90% similar (using fuzzy string matching) to any of the last 5 outputs. This prevents infinite loops where an agent produces essentially the same response repeatedly.
+
+Common triggers:
+
+- Agent stuck on the same task
+- Oscillating between similar approaches
+- Consistent API error messages
+- Placeholder "still working" responses
+
+When triggered, you'll see: `WARNING - Loop detected: 92.3% similarity to previous output`
+
+### Can I disable loop detection?
+
+Loop detection cannot be disabled directly, but it only triggers on highly similar outputs (≥90% threshold). To avoid false positives:
+
+1. Ensure agent outputs include iteration-specific details
+2. Add progress indicators that change each iteration
+3. Check if agent is stuck on the same subtask
+4. Refine your prompt to encourage varied responses
+
+See [Loop Detection](advanced/loop-detection.md) for detailed documentation.
 
 ### What should I put in PROMPT.md?
 
 Write clear, specific requirements with measurable success criteria. Include:
+
 - Task description
 - Requirements list
 - Success criteria
@@ -80,6 +122,7 @@ Write clear, specific requirements with measurable success criteria. Include:
 ### How many iterations does it typically take?
 
 This varies by task complexity:
+
 - Simple functions: 5-10 iterations
 - Web APIs: 20-30 iterations
 - Complex applications: 50-100 iterations
@@ -87,6 +130,7 @@ This varies by task complexity:
 ### Can I resume if Ralph stops?
 
 Yes! Ralph saves state and can resume from where it left off:
+
 ```bash
 # Ralph will automatically resume from last state
 ralph run
@@ -110,13 +154,15 @@ tail -f .agent/logs/ralph.log
 ### How do I change the default agent?
 
 Edit `ralph.json`:
+
 ```json
 {
-  "agent": "claude"  // or "gemini", "q", "auto"
+  "agent": "claude" // or "gemini", "q", "auto"
 }
 ```
 
 Or use command line:
+
 ```bash
 ralph run --agent claude
 ```
@@ -124,6 +170,7 @@ ralph run --agent claude
 ### Can I set custom iteration limits?
 
 Yes, in multiple ways:
+
 ```bash
 # Command line
 ralph run --max-iterations 50
@@ -148,6 +195,7 @@ ralph run --no-git
 ```
 
 Or in config:
+
 ```json
 {
   "git_enabled": false
@@ -159,6 +207,7 @@ Or in config:
 ### Why isn't my task completing?
 
 Common reasons:
+
 1. Task description is unclear
 2. Requirements are too complex for single prompt
 3. Agent doesn't understand the format
@@ -167,6 +216,7 @@ Common reasons:
 ### Ralph keeps hitting the same error
 
 Try:
+
 1. Simplifying the task
 2. Adding clarification to PROMPT.md
 3. Using a different agent
@@ -188,11 +238,12 @@ No, Ralph requires internet access to communicate with AI agent APIs. However, y
 ### Can I extend Ralph with custom agents?
 
 Yes! Implement the Agent interface:
+
 ```python
 class MyAgent(Agent):
     def __init__(self):
         super().__init__('myagent', 'myagent-cli')
-    
+
     def execute(self, prompt_file):
         # Your implementation
         pass
@@ -201,6 +252,7 @@ class MyAgent(Agent):
 ### Can I run multiple Ralph instances?
 
 Yes, but in different directories to avoid conflicts:
+
 ```bash
 # Terminal 1
 cd project1 && ralph run
@@ -216,7 +268,7 @@ cd project2 && ralph run
 - name: Run Ralph
   run: |
     ralph run --max-iterations 50 --dry-run
-    
+
 - name: Check completion
   run: |
     ralph status
@@ -231,6 +283,7 @@ By default, Ralph works within the current directory. For safety, it's designed 
 ### What makes a good prompt?
 
 Good prompts are:
+
 - **Specific**: Clear requirements and constraints
 - **Measurable**: Defined success criteria
 - **Structured**: Organized with sections
@@ -239,6 +292,7 @@ Good prompts are:
 ### Should I commit PROMPT.md to Git?
 
 Yes! Version control your prompts to:
+
 - Track requirement changes
 - Share with team members
 - Reproduce results
@@ -247,6 +301,7 @@ Yes! Version control your prompts to:
 ### How often should I check on Ralph?
 
 For typical tasks:
+
 - First 5 iterations: Watch closely
 - 5-20 iterations: Check every 5 minutes
 - 20+ iterations: Check every 15 minutes
@@ -254,6 +309,7 @@ For typical tasks:
 ### When should I intervene manually?
 
 Intervene when:
+
 - Same error repeats 3+ times
 - Progress stalls for 10+ iterations
 - Output diverges from requirements
@@ -264,6 +320,7 @@ Intervene when:
 ### How much does it cost to run Ralph?
 
 Approximate costs per task:
+
 - Simple function: $0.05-0.10
 - Web API: $0.20-0.30
 - Complex application: $0.50-1.00
@@ -273,6 +330,7 @@ Approximate costs per task:
 ### Which agent is fastest?
 
 Generally:
+
 1. **Q**: Fastest response time
 2. **Gemini**: Balanced speed and capability
 3. **Claude**: Most capable but slower
@@ -288,6 +346,7 @@ Generally:
 ### Does Ralph work with rate limits?
 
 Yes, Ralph handles rate limits with:
+
 - Exponential backoff
 - Retry logic
 - Agent switching (if multiple available)
@@ -297,6 +356,7 @@ Yes, Ralph handles rate limits with:
 ### Is my code sent to AI providers?
 
 Yes, the contents of PROMPT.md and relevant files are sent to the AI agent's API. Never include sensitive data like:
+
 - API keys
 - Passwords
 - Personal information
@@ -313,6 +373,7 @@ Yes, the contents of PROMPT.md and relevant files are sent to the AI agent's API
 ### Can Ralph access my system?
 
 Ralph runs AI agents in subprocesses with:
+
 - Timeout protection
 - Resource limits
 - Working directory restrictions
@@ -337,6 +398,7 @@ Not recommended. Ralph is designed for development environments. For production,
 ### Can I contribute to Ralph?
 
 Yes! We welcome contributions:
+
 - Bug fixes
 - New features
 - Documentation improvements
