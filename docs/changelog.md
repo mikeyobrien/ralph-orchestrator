@@ -8,22 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- **Completion Marker Detection**: Task can now signal completion via `- [x] TASK_COMPLETE` checkbox marker in prompt file
+  - Orchestrator checks for marker before each iteration
+  - Immediately exits loop when marker is found
+  - Supports both `- [x] TASK_COMPLETE` and `[x] TASK_COMPLETE` formats
+- **Loop Detection**: Automatic detection of repetitive agent outputs using rapidfuzz
+  - Compares current output against last 5 outputs
+  - Uses 90% similarity threshold to detect loops
+  - Prevents infinite loops from runaway agents
+- New dependency: `rapidfuzz>=3.0.0,<4.0.0` for fast fuzzy string matching
 - Documentation static site with MkDocs
 - Comprehensive API reference documentation
 - Additional example scenarios
 - Performance monitoring tools
 
 ### Changed
+
 - Improved error handling in agent execution
 - Enhanced checkpoint creation logic
+- `SafetyGuard.reset()` now also clears loop detection history
 
 ### Fixed
+
 - Race condition in state file updates
 - Memory leak in long-running sessions
 
 ## [1.2.0] - 2025-12
 
 ### Added
+
 - **ACP (Agent Client Protocol) Support**: Full integration with ACP-compliant agents
   - JSON-RPC 2.0 message protocol implementation
   - Permission handling with four modes: `auto_approve`, `deny_all`, `allowlist`, `interactive`
@@ -37,12 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 305+ new ACP-specific tests
 
 ### Changed
+
 - Expanded test suite to 920+ tests
 - Updated documentation for ACP support
 
 ## [1.1.0] - 2025-12
 
 ### Added
+
 - Async-first architecture for non-blocking operations
 - Thread-safe async logging with rotation and security masking
 - Rich terminal output with syntax highlighting
@@ -56,11 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Iteration statistics tracking with memory-efficient storage
 
 ### Changed
+
 - Expanded test suite to 620+ tests
 - Improved error handling with ClaudeErrorFormatter
 - Enhanced signal handling with subprocess-first cleanup
 
 ### Fixed
+
 - Division by zero in countdown progress bar
 - Process reference leak in QChatAdapter
 - Blocking file I/O in async functions
@@ -69,51 +87,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.3] - 2025-09-07
 
 ### Added
+
 - Production deployment guide
 - Docker support with Dockerfile and docker-compose.yml
 - Kubernetes deployment manifests
 - Health check endpoint for monitoring
 
 ### Changed
+
 - Improved resource limit handling
 - Enhanced logging with structured JSON output
 - Updated dependencies to latest versions
 
 ### Fixed
+
 - Git checkpoint creation on Windows
 - Agent timeout handling in edge cases
 
 ## [1.0.2] - 2025-09-07
 
 ### Added
+
 - Q Chat integration improvements
 - Real-time metrics collection
 - Interactive CLI mode
 - Bash and ZSH completion scripts
 
 ### Changed
+
 - Refactored agent manager for better extensibility
 - Improved context window management
 - Enhanced progress reporting
 
 ### Fixed
+
 - Unicode handling in prompt files
 - State persistence across interruptions
 
 ## [1.0.1] - 2025-09-07
 
 ### Added
+
 - Gemini CLI integration
 - Advanced context management strategies
 - Cost tracking and estimation
 - HTML report generation
 
 ### Changed
+
 - Optimized iteration performance
 - Improved error recovery mechanisms
 - Enhanced Git operations
 
 ### Fixed
+
 - Agent detection on macOS
 - Prompt archiving with special characters
 - Checkpoint interval calculation
@@ -121,6 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2025-09-07
 
 ### Added
+
 - Initial release with core functionality
 - Claude CLI integration
 - Q Chat integration
@@ -133,6 +161,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics collection
 
 ### Features
+
 - Auto-detection of available AI agents
 - Configurable iteration and runtime limits
 - Error recovery with exponential backoff
@@ -141,6 +170,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable configuration
 
 ### Documentation
+
 - Complete README with examples
 - Installation instructions
 - Usage guide
@@ -150,12 +180,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.0] - 2025-09-06 (Beta)
 
 ### Added
+
 - Beta release for testing
 - Basic orchestration loop
 - Claude integration
 - Simple checkpointing
 
 ### Known Issues
+
 - Limited error handling
 - No metrics collection
 - Single agent support only
@@ -163,6 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2025-09-05 (Alpha)
 
 ### Added
+
 - Initial alpha release
 - Proof of concept implementation
 - Basic Ralph loop
@@ -173,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Version History Summary
 
 ### Major Versions
+
 - **1.0.0** - First stable release with full feature set
 - **0.9.0** - Beta release for community testing
 - **0.5.0** - Alpha proof of concept
@@ -180,6 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Versioning Policy
 
 We use Semantic Versioning (SemVer):
+
 - **MAJOR** version for incompatible API changes
 - **MINOR** version for backwards-compatible functionality additions
 - **PATCH** version for backwards-compatible bug fixes
@@ -187,6 +222,7 @@ We use Semantic Versioning (SemVer):
 ### Deprecation Policy
 
 Features marked for deprecation will:
+
 1. Be documented in the changelog
 2. Show deprecation warnings for 2 minor versions
 3. Be removed in the next major version
@@ -249,6 +285,7 @@ echo "Migration complete!"
 ## Release Process
 
 ### 1. Pre-release Checklist
+
 - [ ] All tests passing
 - [ ] Documentation updated
 - [ ] Changelog updated
@@ -256,6 +293,7 @@ echo "Migration complete!"
 - [ ] README examples tested
 
 ### 2. Release Steps
+
 ```bash
 # 1. Update version
 vim setup.py  # Update version number
@@ -279,6 +317,7 @@ twine upload dist/*
 ```
 
 ### 3. Post-release
+
 - [ ] Announce on social media
 - [ ] Update documentation site
 - [ ] Close related issues
@@ -294,6 +333,7 @@ Thanks to all contributors who have helped improve Ralph Orchestrator:
 ## How to Contribute
 
 See [CONTRIBUTING.md](contributing.md) for details on:
+
 - Reporting bugs
 - Suggesting features
 - Submitting pull requests

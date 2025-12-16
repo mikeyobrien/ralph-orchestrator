@@ -3,6 +3,7 @@
 
 """Safety mechanisms for Ralph Orchestrator."""
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 import logging
@@ -40,6 +41,9 @@ class SafetyGuard:
         self.max_cost = max_cost
         self.consecutive_failure_limit = consecutive_failure_limit
         self.consecutive_failures = 0
+        # Loop detection state
+        self.recent_outputs: deque = deque(maxlen=5)
+        self.loop_threshold: float = 0.9
     
     def check(
         self,
@@ -113,3 +117,40 @@ class SafetyGuard:
     def reset(self):
         """Reset safety counters."""
         self.consecutive_failures = 0
+        self.recent_outputs.clear()
+
+    def detect_loop(self, current_output: str) -> bool:
+        """Detect if agent is looping based on output similarity.
+
+        Uses rapidfuzz for fast fuzzy string matching. If the current output
+        is more than 90% similar to any recent output, a loop is detected.
+
+        Args:
+            current_output: The current agent output to check.
+
+        Returns:
+            True if loop detected (similar output found), False otherwise.
+        """
+        if not current_output:
+            return False
+
+        try:
+            from rapidfuzz import fuzz
+
+            for prev_output in self.recent_outputs:
+                ratio = fuzz.ratio(current_output, prev_output) / 100.0
+                if ratio >= self.loop_threshold:
+                    logger.warning(
+                        f"Loop detected: {ratio:.1%} similarity to previous output"
+                    )
+                    return True
+
+            self.recent_outputs.append(current_output)
+            return False
+        except ImportError:
+            # rapidfuzz not installed, skip loop detection
+            logger.debug("rapidfuzz not installed, skipping loop detection")
+            return False
+        except Exception as e:
+            logger.warning(f"Error in loop detection: {e}")
+            return False

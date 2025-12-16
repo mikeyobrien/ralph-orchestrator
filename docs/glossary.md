@@ -34,6 +34,9 @@
 **Convergence**
 : The process of iterations gradually approaching task completion through successive improvements.
 
+**Completion Marker**
+: A special checkbox pattern (`- [x] TASK_COMPLETE`) in the prompt file that signals task completion. When the orchestrator detects this marker, it immediately exits the loop.
+
 ## D
 
 **Dry Run**
@@ -70,6 +73,9 @@
 
 **Loop**
 : The core Ralph pattern - continuously running an AI agent until task completion or limits are reached.
+
+**Loop Detection**
+: Safety feature that detects when an agent is producing repetitive outputs. Uses fuzzy string matching (rapidfuzz) with a 90% similarity threshold to compare recent outputs and prevent infinite loops.
 
 ## M
 

@@ -306,8 +306,12 @@ class RalphOrchestrator:
             if not safety_check.passed:
                 logger.info(f"Safety limit reached: {safety_check.reason}")
                 break
-            
-            # No longer checking for task completion - run until limits
+
+            # Check for explicit completion marker in prompt
+            if self._check_completion_marker():
+                logger.info("Completion marker found - task marked complete")
+                self.console.print_success("Task completion marker detected - stopping orchestration")
+                break
             
             # Execute iteration
             self.metrics.iterations += 1
@@ -326,6 +330,14 @@ class RalphOrchestrator:
                     if self.last_response_output:
                         self.console.print_header(f"Agent Output (Iteration {self.metrics.iterations})")
                         self.console.print_message(self.last_response_output)
+
+                        # Check for loop (repeated similar outputs)
+                        if self.safety_guard.detect_loop(self.last_response_output):
+                            self.console.print_warning(
+                                "Loop detected - agent producing repetitive outputs"
+                            )
+                            logger.warning("Breaking loop due to repetitive agent outputs")
+                            break
                 else:
                     self.metrics.failed_iterations += 1
                     self.console.print_warning(
@@ -638,7 +650,31 @@ class RalphOrchestrator:
                 self.completed_tasks.append(self.current_task)
                 self.current_task = None
                 self.task_start_time = None
-    
+
+    def _check_completion_marker(self) -> bool:
+        """Check if prompt contains TASK_COMPLETE marker (checkbox style).
+
+        Supports the following marker formats:
+        - `- [x] TASK_COMPLETE` (checkbox style, recommended)
+        - `[x] TASK_COMPLETE` (checkbox without dash)
+
+        Returns:
+            True if completion marker found, False otherwise.
+        """
+        if not self.prompt_file.exists():
+            return False
+
+        try:
+            content = self.prompt_file.read_text()
+            for line in content.split('\n'):
+                line_stripped = line.strip()
+                if line_stripped in ('- [x] TASK_COMPLETE', '[x] TASK_COMPLETE'):
+                    return True
+            return False
+        except Exception as e:
+            logger.warning(f"Error checking completion marker: {e}")
+            return False
+
     def _reload_prompt(self):
         """Reload the prompt file to pick up any changes."""
         logger.info("Reloading prompt file due to external update")
