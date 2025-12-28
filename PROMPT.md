@@ -12,8 +12,8 @@ All must be checked for task completion:
 - [x] `TriggerReason` enum added to `metrics.py`
 - [x] `IterationStats.record_iteration()` extended with new fields
 - [x] `orchestrator.py` uses `IterationStats` alongside `Metrics`
-- [ ] `_determine_trigger_reason()` method added to orchestrator
-- [ ] `arun()` loop records per-iteration details
+- [x] `_determine_trigger_reason()` method added to orchestrator
+- [x] `arun()` loop records per-iteration details
 - [ ] `_print_summary()` saves full iteration list to JSON
 - [ ] Unit tests added for new functionality
 - [ ] All existing tests pass
@@ -128,11 +128,13 @@ metrics_data = {
 | 2 | ✅ DONE | Extend record_iteration() with telemetry fields | Committed 20005a0 |
 | 3 | ✅ DONE | Add unit tests for TriggerReason and telemetry fields | Committed e589ce0 |
 | 4 | ✅ DONE | Add IterationStats to orchestrator.py | Committed 2262a80 |
+| 5 | ✅ DONE | Add _determine_trigger_reason() method | Committed 819754b |
+| 6 | ✅ DONE | Modify arun() loop for per-iteration telemetry | Committed 6135c16 |
 
 ### Current State
-- **Phase:** Phase 2 - Orchestrator Integration (Step 1 of 4 complete)
+- **Phase:** Phase 2 - Orchestrator Integration (Step 3 of 4 complete)
 - **Blockers:** None
-- **Last Action:** Added `self.iteration_stats = IterationStats()` to orchestrator initialization at line 97, and reset it in `_reset_state()`. Import updated to include IterationStats. All 48 metrics tests pass, all 16 orchestrator tests pass.
+- **Last Action:** Modified arun() loop to call `_determine_trigger_reason()` before each iteration, track timing, extract cost/tokens from usage history, capture output preview, and call `iteration_stats.record_iteration()` with all details. All 48 metrics tests pass, all 16 orchestrator tests pass.
 
 ### What Remains
 **Phase 1 (metrics.py):**
@@ -142,8 +144,8 @@ metrics_data = {
 
 **Phase 2 (orchestrator.py):**
 - [x] Add `self.iteration_stats = IterationStats()` alongside Metrics (DONE)
-- [ ] Add `_determine_trigger_reason()` method
-- [ ] Modify `arun()` loop to record per-iteration details
+- [x] Add `_determine_trigger_reason()` method (DONE)
+- [x] Modify `arun()` loop to record per-iteration details (DONE)
 - [ ] Modify `_print_summary()` to save enhanced JSON
 
 **Phase 3 (Testing):**
