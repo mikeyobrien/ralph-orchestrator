@@ -17,7 +17,7 @@ from .adapters.claude import ClaudeAdapter
 from .adapters.qchat import QChatAdapter
 from .adapters.gemini import GeminiAdapter
 from .adapters.acp import ACPAdapter
-from .metrics import Metrics, CostTracker, IterationStats
+from .metrics import Metrics, CostTracker, IterationStats, TriggerReason
 from .safety import SafetyGuard
 from .context import ContextManager
 from .output import RalphConsole
@@ -676,6 +676,37 @@ class RalphOrchestrator:
         except Exception as e:
             logger.warning(f"Error checking completion marker: {e}")
             return False
+
+    def _determine_trigger_reason(self) -> str:
+        """Determine why this iteration is being triggered.
+
+        Analyzes the current orchestrator state to determine the reason
+        for triggering a new iteration. This is used for per-iteration
+        telemetry to understand orchestration patterns.
+
+        Returns:
+            str: The trigger reason value from TriggerReason enum.
+        """
+        # First iteration is always INITIAL
+        if self.metrics.iterations == 0:
+            return TriggerReason.INITIAL.value
+
+        # Check if we're in recovery mode (recent failures)
+        # Recovery if the last iteration failed and we've had multiple failures
+        if self.metrics.failed_iterations > 0:
+            # If failures are increasing relative to successes, we're recovering
+            recent_failure_rate = self.metrics.failed_iterations / max(1, self.metrics.iterations)
+            if recent_failure_rate > 0.5:
+                return TriggerReason.RECOVERY.value
+
+        # Check if previous iteration was successful
+        # The iteration counter has already been incremented by the time we check
+        # So we compare successful iterations to iterations - 1 (previous)
+        if self.metrics.successful_iterations == self.metrics.iterations - 1:
+            return TriggerReason.PREVIOUS_SUCCESS.value
+
+        # Default: task is incomplete and we're continuing
+        return TriggerReason.TASK_INCOMPLETE.value
 
     def _reload_prompt(self):
         """Reload the prompt file to pick up any changes."""
