@@ -10,6 +10,7 @@ from ralph_orchestrator.metrics import (
     Metrics,
     CostTracker,
     IterationStats,
+    TriggerReason,
 )
 
 
@@ -336,3 +337,202 @@ class TestIterationStats:
             stats.record_iteration(i, 1.0, True, "")
 
         assert len(stats.iterations) == 50
+
+
+class TestTriggerReason:
+    """Test TriggerReason enum."""
+
+    def test_enum_values_exist(self):
+        """Test all expected enum values exist."""
+        assert TriggerReason.INITIAL.value == "initial"
+        assert TriggerReason.TASK_INCOMPLETE.value == "task_incomplete"
+        assert TriggerReason.PREVIOUS_SUCCESS.value == "previous_success"
+        assert TriggerReason.RECOVERY.value == "recovery"
+        assert TriggerReason.LOOP_DETECTED.value == "loop_detected"
+        assert TriggerReason.SAFETY_LIMIT.value == "safety_limit"
+        assert TriggerReason.USER_STOP.value == "user_stop"
+
+    def test_enum_is_string(self):
+        """Test TriggerReason inherits from str for JSON serialization."""
+        assert isinstance(TriggerReason.INITIAL, str)
+        assert TriggerReason.INITIAL == "initial"
+
+    def test_enum_count(self):
+        """Test expected number of trigger reasons."""
+        assert len(TriggerReason) == 7
+
+
+class TestIterationStatsTelemetry:
+    """Test new telemetry fields in IterationStats."""
+
+    def test_record_iteration_with_trigger_reason(self):
+        """Test recording iteration with trigger reason."""
+        stats = IterationStats()
+        stats.record_iteration(
+            iteration=1,
+            duration=2.5,
+            success=True,
+            error="",
+            trigger_reason=TriggerReason.INITIAL.value,
+        )
+
+        assert len(stats.iterations) == 1
+        assert stats.iterations[0]["trigger_reason"] == "initial"
+
+    def test_record_iteration_with_all_telemetry_fields(self):
+        """Test recording iteration with all telemetry fields."""
+        stats = IterationStats()
+        stats.record_iteration(
+            iteration=1,
+            duration=5.0,
+            success=True,
+            error="",
+            trigger_reason=TriggerReason.TASK_INCOMPLETE.value,
+            output_preview="Task completed successfully",
+            tokens_used=1500,
+            cost=0.025,
+            tools_used=["Read", "Edit", "Bash"],
+        )
+
+        iter_data = stats.iterations[0]
+        assert iter_data["trigger_reason"] == "task_incomplete"
+        assert iter_data["output_preview"] == "Task completed successfully"
+        assert iter_data["tokens_used"] == 1500
+        assert iter_data["cost"] == 0.025
+        assert iter_data["tools_used"] == ["Read", "Edit", "Bash"]
+
+    def test_output_preview_truncation(self):
+        """Test output preview is truncated at 500 characters."""
+        stats = IterationStats()
+        long_output = "x" * 600  # 600 chars, exceeds 500 limit
+
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+            output_preview=long_output,
+        )
+
+        preview = stats.iterations[0]["output_preview"]
+        # Should be 500 chars + "..." = 503 chars total
+        assert len(preview) == 503
+        assert preview.endswith("...")
+        assert preview[:500] == "x" * 500
+
+    def test_output_preview_under_limit_not_truncated(self):
+        """Test output preview under limit is not truncated."""
+        stats = IterationStats()
+        short_output = "x" * 400  # Under 500 limit
+
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+            output_preview=short_output,
+        )
+
+        preview = stats.iterations[0]["output_preview"]
+        assert len(preview) == 400
+        assert not preview.endswith("...")
+
+    def test_output_preview_exactly_at_limit(self):
+        """Test output preview exactly at limit is not truncated."""
+        stats = IterationStats()
+        exact_output = "x" * 500  # Exactly 500 chars
+
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+            output_preview=exact_output,
+        )
+
+        preview = stats.iterations[0]["output_preview"]
+        assert len(preview) == 500
+        assert not preview.endswith("...")
+
+    def test_tools_used_defaults_to_empty_list(self):
+        """Test tools_used defaults to empty list when not provided."""
+        stats = IterationStats()
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+        )
+
+        assert stats.iterations[0]["tools_used"] == []
+
+    def test_trigger_reason_defaults_to_empty_string(self):
+        """Test trigger_reason defaults to empty string when not provided."""
+        stats = IterationStats()
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+        )
+
+        assert stats.iterations[0]["trigger_reason"] == ""
+
+    def test_multiple_iterations_with_different_triggers(self):
+        """Test tracking multiple iterations with different trigger reasons."""
+        stats = IterationStats()
+
+        # Simulate orchestration flow
+        stats.record_iteration(1, 2.0, True, "", trigger_reason=TriggerReason.INITIAL.value)
+        stats.record_iteration(2, 3.0, True, "", trigger_reason=TriggerReason.TASK_INCOMPLETE.value)
+        stats.record_iteration(3, 1.5, False, "Error occurred", trigger_reason=TriggerReason.TASK_INCOMPLETE.value)
+        stats.record_iteration(4, 2.5, True, "", trigger_reason=TriggerReason.RECOVERY.value)
+
+        assert len(stats.iterations) == 4
+        assert stats.iterations[0]["trigger_reason"] == "initial"
+        assert stats.iterations[1]["trigger_reason"] == "task_incomplete"
+        assert stats.iterations[2]["trigger_reason"] == "task_incomplete"
+        assert stats.iterations[3]["trigger_reason"] == "recovery"
+
+    def test_cost_accumulation_tracking(self):
+        """Test that cost is properly stored per iteration."""
+        stats = IterationStats()
+
+        stats.record_iteration(1, 2.0, True, "", cost=0.01)
+        stats.record_iteration(2, 3.0, True, "", cost=0.02)
+        stats.record_iteration(3, 1.5, True, "", cost=0.015)
+
+        costs = [it["cost"] for it in stats.iterations]
+        assert costs == [0.01, 0.02, 0.015]
+        # Note: IterationStats doesn't track total cost - that's CostTracker's job
+        # But we can verify each iteration stores its cost
+
+    def test_tokens_used_tracking(self):
+        """Test that tokens_used is properly stored per iteration."""
+        stats = IterationStats()
+
+        stats.record_iteration(1, 2.0, True, "", tokens_used=1000)
+        stats.record_iteration(2, 3.0, True, "", tokens_used=1500)
+        stats.record_iteration(3, 1.5, True, "", tokens_used=800)
+
+        tokens = [it["tokens_used"] for it in stats.iterations]
+        assert tokens == [1000, 1500, 800]
+
+    def test_backward_compatibility_old_record_iteration_call(self):
+        """Test backward compatibility with old record_iteration() signature."""
+        stats = IterationStats()
+
+        # Old-style call with positional args (pre-telemetry)
+        stats.record_iteration(1, 5.5, True, "")
+
+        # Should still work, with new fields defaulting appropriately
+        iter_data = stats.iterations[0]
+        assert iter_data["iteration"] == 1
+        assert iter_data["duration"] == 5.5
+        assert iter_data["success"] is True
+        assert iter_data["error"] == ""
+        assert iter_data["trigger_reason"] == ""
+        assert iter_data["output_preview"] == ""
+        assert iter_data["tokens_used"] == 0
+        assert iter_data["cost"] == 0.0
+        assert iter_data["tools_used"] == []
