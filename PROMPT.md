@@ -10,7 +10,7 @@ Implement per-iteration telemetry capture in ralph-orchestrator so that each ite
 
 All must be checked for task completion:
 - [x] `TriggerReason` enum added to `metrics.py`
-- [ ] `IterationStats.record_iteration()` extended with new fields
+- [x] `IterationStats.record_iteration()` extended with new fields
 - [ ] `orchestrator.py` uses `IterationStats` alongside `Metrics`
 - [ ] `_determine_trigger_reason()` method added to orchestrator
 - [ ] `arun()` loop records per-iteration details
@@ -125,15 +125,17 @@ metrics_data = {
 | # | Status | Action | Result |
 |---|--------|--------|--------|
 | 1 | ✅ DONE | Add TriggerReason enum to metrics.py | Committed 8dec3ef |
+| 2 | ✅ DONE | Extend record_iteration() with telemetry fields | Committed 20005a0 |
 
 ### Current State
-- **Phase:** Phase 1 - Metrics Enhancement (Step 1 of 3 complete)
+- **Phase:** Phase 1 - Metrics Enhancement (Step 2 of 3 complete)
 - **Blockers:** None
-- **Last Action:** Added TriggerReason enum with all 7 values to metrics.py
+- **Last Action:** Extended IterationStats.record_iteration() with new fields: trigger_reason, output_preview, tokens_used, cost, tools_used. Added 500-char truncation for output_preview. All 34 existing tests pass.
 
 ### What Remains
 **Phase 1 (metrics.py):**
-- [ ] Step 2: Extend `IterationStats.record_iteration()` with new fields (trigger_reason, output_preview, tokens_used, cost, tools_used)
+- [x] Step 1: Add TriggerReason enum (DONE)
+- [x] Step 2: Extend `IterationStats.record_iteration()` with new fields (DONE)
 - [ ] Step 3: Add unit tests for TriggerReason and new fields
 
 **Phase 2 (orchestrator.py):**
