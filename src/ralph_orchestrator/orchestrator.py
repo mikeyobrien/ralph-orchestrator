@@ -314,15 +314,25 @@ class RalphOrchestrator:
                 self.console.print_success("Task completion marker detected - stopping orchestration")
                 break
             
+            # Determine trigger reason BEFORE incrementing iteration
+            trigger_reason = self._determine_trigger_reason()
+
             # Execute iteration
             self.metrics.iterations += 1
             self.console.print_iteration_header(self.metrics.iterations)
             logger.info(f"Starting iteration {self.metrics.iterations}")
-            
+
+            # Record iteration timing
+            iteration_start = time.time()
+            iteration_success = False
+            iteration_error = ""
+            loop_detected = False
+
             try:
                 success = await self._aexecute_iteration()
 
                 if success:
+                    iteration_success = True
                     self.metrics.successful_iterations += 1
                     self.console.print_success(
                         f"Iteration {self.metrics.iterations} completed successfully"
@@ -334,13 +344,14 @@ class RalphOrchestrator:
 
                         # Check for loop (repeated similar outputs)
                         if self.safety_guard.detect_loop(self.last_response_output):
+                            loop_detected = True
                             self.console.print_warning(
                                 "Loop detected - agent producing repetitive outputs"
                             )
                             logger.warning("Breaking loop due to repetitive agent outputs")
-                            break
                 else:
                     self.metrics.failed_iterations += 1
+                    iteration_error = "Iteration failed"
                     self.console.print_warning(
                         f"Iteration {self.metrics.iterations} failed"
                     )
@@ -356,8 +367,42 @@ class RalphOrchestrator:
             except Exception as e:
                 logger.warning(f"Error in iteration: {e}")
                 self.metrics.errors += 1
+                iteration_error = str(e)
                 self.console.print_error(f"Error in iteration: {e}")
                 self._handle_error(e)
+
+            # Record per-iteration telemetry
+            iteration_duration = time.time() - iteration_start
+
+            # Extract cost/tokens from the latest usage if available
+            iteration_tokens = 0
+            iteration_cost = 0.0
+            if self.cost_tracker and self.cost_tracker.usage_history:
+                latest_usage = self.cost_tracker.usage_history[-1]
+                # Only use if this usage is from this iteration (recent timestamp)
+                if latest_usage.get("timestamp", 0) >= iteration_start:
+                    iteration_tokens = latest_usage.get("input_tokens", 0) + latest_usage.get("output_tokens", 0)
+                    iteration_cost = latest_usage.get("cost", 0.0)
+
+            # Get output preview (truncated)
+            output_preview = ""
+            if self.last_response_output:
+                output_preview = self.last_response_output[:500] if len(self.last_response_output) > 500 else self.last_response_output
+
+            self.iteration_stats.record_iteration(
+                iteration=self.metrics.iterations,
+                duration=iteration_duration,
+                success=iteration_success,
+                error=iteration_error,
+                trigger_reason=trigger_reason,
+                output_preview=output_preview,
+                tokens_used=iteration_tokens,
+                cost=iteration_cost,
+            )
+
+            # Break loop if detected (after recording telemetry)
+            if loop_detected:
+                break
             
             # Brief pause between iterations
             await asyncio.sleep(2)
