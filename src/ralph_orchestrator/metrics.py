@@ -5,9 +5,25 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Dict, List, Any
 import time
 import json
+
+
+class TriggerReason(str, Enum):
+    """Reasons why an iteration was triggered.
+
+    Used for per-iteration telemetry to understand why the orchestrator
+    started each iteration, enabling analysis of orchestration patterns.
+    """
+    INITIAL = "initial"              # First iteration of a session
+    TASK_INCOMPLETE = "task_incomplete"  # Previous iteration didn't complete task
+    PREVIOUS_SUCCESS = "previous_success"  # Previous iteration succeeded, continuing
+    RECOVERY = "recovery"            # Recovering from a previous failure
+    LOOP_DETECTED = "loop_detected"  # Loop detection triggered intervention
+    SAFETY_LIMIT = "safety_limit"    # Safety limits triggered
+    USER_STOP = "user_stop"          # User requested stop
 
 
 @dataclass
