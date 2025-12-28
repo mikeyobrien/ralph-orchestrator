@@ -17,7 +17,7 @@ from .adapters.claude import ClaudeAdapter
 from .adapters.qchat import QChatAdapter
 from .adapters.gemini import GeminiAdapter
 from .adapters.acp import ACPAdapter
-from .metrics import Metrics, CostTracker
+from .metrics import Metrics, CostTracker, IterationStats
 from .safety import SafetyGuard
 from .context import ContextManager
 from .output import RalphConsole
@@ -94,6 +94,7 @@ class RalphOrchestrator:
         
         # Initialize components
         self.metrics = Metrics()
+        self.iteration_stats = IterationStats()  # Per-iteration telemetry
         self.cost_tracker = CostTracker() if track_costs else None
         self.safety_guard = SafetyGuard(max_iterations, max_runtime, max_cost)
         self.context_manager = ContextManager(self.prompt_file, prompt_text=self.prompt_text)
@@ -540,6 +541,7 @@ class RalphOrchestrator:
         """Reset the orchestrator state."""
         logger.info("Resetting orchestrator state")
         self.metrics = Metrics()
+        self.iteration_stats = IterationStats()  # Reset per-iteration telemetry
         if self.cost_tracker:
             self.cost_tracker = CostTracker()
         self.context_manager.reset()
