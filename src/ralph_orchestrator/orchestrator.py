@@ -621,24 +621,36 @@ class RalphOrchestrator:
             for tool, cost in self.cost_tracker.costs_by_tool.items():
                 self.console.print_info(f"  {tool}: ${cost:.4f}")
 
-        # Save metrics to file
+        # Save metrics to file with enhanced per-iteration telemetry
         metrics_dir = Path(".agent") / "metrics"
         metrics_dir.mkdir(parents=True, exist_ok=True)
         metrics_file = metrics_dir / f"metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        metrics_data = {
-            "iterations": self.metrics.iterations,
-            "successful": self.metrics.successful_iterations,
-            "failed": self.metrics.failed_iterations,
-            "errors": self.metrics.errors,
-            "checkpoints": self.metrics.checkpoints,
-            "rollbacks": self.metrics.rollbacks,
-        }
 
-        if self.cost_tracker:
-            metrics_data["cost"] = {
-                "total": self.cost_tracker.total_cost,
-                "by_tool": self.cost_tracker.costs_by_tool
+        # Build enhanced metrics data structure
+        metrics_data = {
+            # Summary section (backward compatible)
+            "summary": {
+                "iterations": self.metrics.iterations,
+                "successful": self.metrics.successful_iterations,
+                "failed": self.metrics.failed_iterations,
+                "errors": self.metrics.errors,
+                "checkpoints": self.metrics.checkpoints,
+                "rollbacks": self.metrics.rollbacks,
+            },
+            # Per-iteration details
+            "iterations": self.iteration_stats.iterations,
+            # Cost tracking
+            "cost": {
+                "total": self.cost_tracker.total_cost if self.cost_tracker else 0,
+                "by_tool": self.cost_tracker.costs_by_tool if self.cost_tracker else {},
+                "history": self.cost_tracker.usage_history if self.cost_tracker else [],
+            },
+            # Analysis metrics
+            "analysis": {
+                "avg_iteration_duration": self.iteration_stats.get_average_duration(),
+                "success_rate": self.iteration_stats.get_success_rate(),
             }
+        }
 
         metrics_file.write_text(json.dumps(metrics_data, indent=2))
         self.console.print_success(f"Metrics saved to {metrics_file}")
