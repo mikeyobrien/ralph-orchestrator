@@ -208,7 +208,12 @@ class IterationStats:
         iteration: int,
         duration: float,
         success: bool,
-        error: str
+        error: str,
+        trigger_reason: str = "",
+        output_preview: str = "",
+        tokens_used: int = 0,
+        cost: float = 0.0,
+        tools_used: List[str] | None = None,
     ) -> None:
         """Record iteration with full details.
 
@@ -217,6 +222,11 @@ class IterationStats:
             duration: Duration in seconds
             success: Whether iteration was successful
             error: Error message if any
+            trigger_reason: Why this iteration was triggered (from TriggerReason)
+            output_preview: Preview of iteration output (truncated for privacy)
+            tokens_used: Total tokens consumed in this iteration
+            cost: Cost in dollars for this iteration
+            tools_used: List of tools/MCPs invoked during iteration
         """
         # Update basic statistics
         self.total = max(self.total, iteration)
@@ -227,6 +237,11 @@ class IterationStats:
         else:
             self.failures += 1
 
+        # Truncate output preview to 500 chars for privacy
+        max_preview_length = 500
+        if output_preview and len(output_preview) > max_preview_length:
+            output_preview = output_preview[:max_preview_length] + "..."
+
         # Store detailed iteration information
         iteration_data = {
             "iteration": iteration,
@@ -234,6 +249,11 @@ class IterationStats:
             "success": success,
             "error": error,
             "timestamp": datetime.now().isoformat(),
+            "trigger_reason": trigger_reason,
+            "output_preview": output_preview,
+            "tokens_used": tokens_used,
+            "cost": cost,
+            "tools_used": tools_used or [],
         }
         self.iterations.append(iteration_data)
 
