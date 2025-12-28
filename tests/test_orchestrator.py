@@ -265,5 +265,116 @@ class TestRalphOrchestrator(unittest.TestCase):
     # Task completion detection has been removed - orchestrator runs until limits
 
 
+class TestIterationTelemetry(unittest.TestCase):
+    """Test per-iteration telemetry capture in orchestrator."""
+
+    @patch('ralph_orchestrator.orchestrator.ClaudeAdapter')
+    @patch('ralph_orchestrator.orchestrator.QChatAdapter')
+    @patch('ralph_orchestrator.orchestrator.GeminiAdapter')
+    def test_orchestrator_has_iteration_stats(self, mock_gemini, mock_qchat, mock_claude):
+        """Test orchestrator initializes iteration_stats."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.available = True
+        mock_claude.return_value = mock_claude_instance
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Test Task\n- [ ] TASK_COMPLETE")
+            prompt_file = f.name
+
+        try:
+            orchestrator = RalphOrchestrator(
+                prompt_file_or_config=prompt_file,
+                primary_tool="claude",
+                max_iterations=5
+            )
+
+            # Should have iteration_stats
+            self.assertIsNotNone(orchestrator.iteration_stats)
+            self.assertEqual(len(orchestrator.iteration_stats.iterations), 0)
+        finally:
+            Path(prompt_file).unlink()
+
+    @patch('ralph_orchestrator.orchestrator.ClaudeAdapter')
+    @patch('ralph_orchestrator.orchestrator.QChatAdapter')
+    @patch('ralph_orchestrator.orchestrator.GeminiAdapter')
+    def test_determine_trigger_reason_initial(self, mock_gemini, mock_qchat, mock_claude):
+        """Test _determine_trigger_reason returns INITIAL for first iteration."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.available = True
+        mock_claude.return_value = mock_claude_instance
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Test Task")
+            prompt_file = f.name
+
+        try:
+            orchestrator = RalphOrchestrator(
+                prompt_file_or_config=prompt_file,
+                primary_tool="claude",
+            )
+
+            reason = orchestrator._determine_trigger_reason()
+            self.assertEqual(reason, "initial")
+        finally:
+            Path(prompt_file).unlink()
+
+    @patch('ralph_orchestrator.orchestrator.ClaudeAdapter')
+    @patch('ralph_orchestrator.orchestrator.QChatAdapter')
+    @patch('ralph_orchestrator.orchestrator.GeminiAdapter')
+    def test_determine_trigger_reason_task_incomplete(self, mock_gemini, mock_qchat, mock_claude):
+        """Test _determine_trigger_reason returns TASK_INCOMPLETE after first iteration."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.available = True
+        mock_claude.return_value = mock_claude_instance
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Test Task")
+            prompt_file = f.name
+
+        try:
+            orchestrator = RalphOrchestrator(
+                prompt_file_or_config=prompt_file,
+                primary_tool="claude",
+            )
+
+            # Simulate first iteration completed successfully
+            orchestrator.metrics.iterations = 1
+            orchestrator.metrics.successful_iterations = 1
+
+            reason = orchestrator._determine_trigger_reason()
+            self.assertEqual(reason, "task_incomplete")
+        finally:
+            Path(prompt_file).unlink()
+
+    @patch('ralph_orchestrator.orchestrator.ClaudeAdapter')
+    @patch('ralph_orchestrator.orchestrator.QChatAdapter')
+    @patch('ralph_orchestrator.orchestrator.GeminiAdapter')
+    def test_determine_trigger_reason_recovery(self, mock_gemini, mock_qchat, mock_claude):
+        """Test _determine_trigger_reason returns RECOVERY after failures."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.available = True
+        mock_claude.return_value = mock_claude_instance
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Test Task")
+            prompt_file = f.name
+
+        try:
+            orchestrator = RalphOrchestrator(
+                prompt_file_or_config=prompt_file,
+                primary_tool="claude",
+            )
+
+            # Simulate failures - all iterations failed
+            orchestrator.metrics.iterations = 3
+            orchestrator.metrics.successful_iterations = 0
+            orchestrator.metrics.failed_iterations = 3
+
+            reason = orchestrator._determine_trigger_reason()
+            self.assertEqual(reason, "recovery")
+        finally:
+            Path(prompt_file).unlink()
+
+
 if __name__ == "__main__":
     unittest.main()
