@@ -536,3 +536,44 @@ class TestIterationStatsTelemetry:
         assert iter_data["tokens_used"] == 0
         assert iter_data["cost"] == 0.0
         assert iter_data["tools_used"] == []
+
+    def test_custom_max_preview_length(self):
+        """Test configurable max_preview_length."""
+        stats = IterationStats(max_preview_length=100)
+        long_output = "x" * 150  # Exceeds custom limit
+
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+            output_preview=long_output,
+        )
+
+        preview = stats.iterations[0]["output_preview"]
+        # Should be 100 chars + "..." = 103 chars total
+        assert len(preview) == 103
+        assert preview.endswith("...")
+        assert preview[:100] == "x" * 100
+
+    def test_custom_max_preview_length_small(self):
+        """Test very small max_preview_length."""
+        stats = IterationStats(max_preview_length=10)
+        output = "Hello World Test"  # 16 chars
+
+        stats.record_iteration(
+            iteration=1,
+            duration=1.0,
+            success=True,
+            error="",
+            output_preview=output,
+        )
+
+        preview = stats.iterations[0]["output_preview"]
+        assert preview == "Hello Worl..."
+        assert len(preview) == 13  # 10 + "..."
+
+    def test_default_max_preview_length(self):
+        """Test default max_preview_length is 500."""
+        stats = IterationStats()
+        assert stats.max_preview_length == 500

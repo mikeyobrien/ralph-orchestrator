@@ -170,6 +170,7 @@ class IterationStats:
     current_iteration: int = 0
     iterations: List[Dict[str, Any]] = field(default_factory=list)
     max_iterations_stored: int = 1000  # Memory limit for stored iterations
+    max_preview_length: int = 500  # Max chars for output preview truncation
 
     def __post_init__(self) -> None:
         """Initialize start time if not set."""
@@ -237,10 +238,9 @@ class IterationStats:
         else:
             self.failures += 1
 
-        # Truncate output preview to 500 chars for privacy
-        max_preview_length = 500
-        if output_preview and len(output_preview) > max_preview_length:
-            output_preview = output_preview[:max_preview_length] + "..."
+        # Truncate output preview for privacy (configurable length)
+        if output_preview and len(output_preview) > self.max_preview_length:
+            output_preview = output_preview[:self.max_preview_length] + "..."
 
         # Store detailed iteration information
         iteration_data = {

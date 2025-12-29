@@ -45,10 +45,12 @@ class RalphOrchestrator:
         archive_dir: str = "./prompts/archive",
         verbose: bool = False,
         acp_agent: str = None,
-        acp_permission_mode: str = None
+        acp_permission_mode: str = None,
+        iteration_telemetry: bool = True,
+        output_preview_length: int = 500
     ):
         """Initialize the orchestrator.
-        
+
         Args:
             prompt_file_or_config: Path to prompt file or RalphConfig object
             primary_tool: Primary AI tool to use (claude, qchat, gemini)
@@ -61,6 +63,8 @@ class RalphOrchestrator:
             verbose: Enable verbose logging output
             acp_agent: ACP agent command (e.g., claude-code-acp, gemini)
             acp_permission_mode: ACP permission handling mode
+            iteration_telemetry: Enable per-iteration telemetry capture
+            output_preview_length: Max chars for output preview in telemetry
         """
         # Store ACP-specific settings
         self.acp_agent = acp_agent
@@ -79,6 +83,8 @@ class RalphOrchestrator:
             self.checkpoint_interval = config.checkpoint_interval
             self.archive_dir = Path(config.archive_dir if hasattr(config, 'archive_dir') else archive_dir)
             self.verbose = config.verbose if hasattr(config, 'verbose') else False
+            self.iteration_telemetry = getattr(config, 'iteration_telemetry', True)
+            self.output_preview_length = getattr(config, 'output_preview_length', 500)
         else:
             # Individual parameters
             self.prompt_file = Path(prompt_file_or_config if prompt_file_or_config else "PROMPT.md")
@@ -91,10 +97,14 @@ class RalphOrchestrator:
             self.checkpoint_interval = checkpoint_interval
             self.archive_dir = Path(archive_dir)
             self.verbose = verbose
-        
+            self.iteration_telemetry = iteration_telemetry
+            self.output_preview_length = output_preview_length
+
         # Initialize components
         self.metrics = Metrics()
-        self.iteration_stats = IterationStats()  # Per-iteration telemetry
+        self.iteration_stats = IterationStats(
+            max_preview_length=self.output_preview_length
+        ) if self.iteration_telemetry else None
         self.cost_tracker = CostTracker() if track_costs else None
         self.safety_guard = SafetyGuard(max_iterations, max_runtime, max_cost)
         self.context_manager = ContextManager(self.prompt_file, prompt_text=self.prompt_text)
@@ -384,21 +394,24 @@ class RalphOrchestrator:
                     iteration_tokens = latest_usage.get("input_tokens", 0) + latest_usage.get("output_tokens", 0)
                     iteration_cost = latest_usage.get("cost", 0.0)
 
-            # Get output preview (truncated)
-            output_preview = ""
-            if self.last_response_output:
-                output_preview = self.last_response_output[:500] if len(self.last_response_output) > 500 else self.last_response_output
+            # Record per-iteration telemetry if enabled
+            if self.iteration_stats:
+                # Get output preview (truncated to configured length)
+                output_preview = ""
+                if self.last_response_output:
+                    preview_len = self.output_preview_length
+                    output_preview = self.last_response_output[:preview_len] if len(self.last_response_output) > preview_len else self.last_response_output
 
-            self.iteration_stats.record_iteration(
-                iteration=self.metrics.iterations,
-                duration=iteration_duration,
-                success=iteration_success,
-                error=iteration_error,
-                trigger_reason=trigger_reason,
-                output_preview=output_preview,
-                tokens_used=iteration_tokens,
-                cost=iteration_cost,
-            )
+                self.iteration_stats.record_iteration(
+                    iteration=self.metrics.iterations,
+                    duration=iteration_duration,
+                    success=iteration_success,
+                    error=iteration_error,
+                    trigger_reason=trigger_reason,
+                    output_preview=output_preview,
+                    tokens_used=iteration_tokens,
+                    cost=iteration_cost,
+                )
 
             # Break loop if detected (after recording telemetry)
             if loop_detected:
@@ -586,7 +599,10 @@ class RalphOrchestrator:
         """Reset the orchestrator state."""
         logger.info("Resetting orchestrator state")
         self.metrics = Metrics()
-        self.iteration_stats = IterationStats()  # Reset per-iteration telemetry
+        if self.iteration_telemetry:
+            self.iteration_stats = IterationStats(
+                max_preview_length=self.output_preview_length
+            )
         if self.cost_tracker:
             self.cost_tracker = CostTracker()
         self.context_manager.reset()
@@ -637,18 +653,18 @@ class RalphOrchestrator:
                 "checkpoints": self.metrics.checkpoints,
                 "rollbacks": self.metrics.rollbacks,
             },
-            # Per-iteration details
-            "iterations": self.iteration_stats.iterations,
+            # Per-iteration details (if telemetry enabled)
+            "iterations": self.iteration_stats.iterations if self.iteration_stats else [],
             # Cost tracking
             "cost": {
                 "total": self.cost_tracker.total_cost if self.cost_tracker else 0,
                 "by_tool": self.cost_tracker.costs_by_tool if self.cost_tracker else {},
                 "history": self.cost_tracker.usage_history if self.cost_tracker else [],
             },
-            # Analysis metrics
+            # Analysis metrics (if telemetry enabled)
             "analysis": {
-                "avg_iteration_duration": self.iteration_stats.get_average_duration(),
-                "success_rate": self.iteration_stats.get_success_rate(),
+                "avg_iteration_duration": self.iteration_stats.get_average_duration() if self.iteration_stats else 0,
+                "success_rate": self.iteration_stats.get_success_rate() if self.iteration_stats else 0,
             }
         }
 

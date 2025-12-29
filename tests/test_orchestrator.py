@@ -375,6 +375,57 @@ class TestIterationTelemetry(unittest.TestCase):
         finally:
             Path(prompt_file).unlink()
 
+    @patch('ralph_orchestrator.orchestrator.ClaudeAdapter')
+    @patch('ralph_orchestrator.orchestrator.QChatAdapter')
+    @patch('ralph_orchestrator.orchestrator.GeminiAdapter')
+    def test_iteration_telemetry_disabled(self, mock_gemini, mock_qchat, mock_claude):
+        """Test orchestrator with iteration_telemetry=False."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.available = True
+        mock_claude.return_value = mock_claude_instance
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Test Task")
+            prompt_file = f.name
+
+        try:
+            orchestrator = RalphOrchestrator(
+                prompt_file_or_config=prompt_file,
+                primary_tool="claude",
+                iteration_telemetry=False,
+            )
+
+            # iteration_stats should be None when telemetry disabled
+            self.assertIsNone(orchestrator.iteration_stats)
+        finally:
+            Path(prompt_file).unlink()
+
+    @patch('ralph_orchestrator.orchestrator.ClaudeAdapter')
+    @patch('ralph_orchestrator.orchestrator.QChatAdapter')
+    @patch('ralph_orchestrator.orchestrator.GeminiAdapter')
+    def test_custom_output_preview_length(self, mock_gemini, mock_qchat, mock_claude):
+        """Test orchestrator with custom output_preview_length."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.available = True
+        mock_claude.return_value = mock_claude_instance
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("# Test Task")
+            prompt_file = f.name
+
+        try:
+            orchestrator = RalphOrchestrator(
+                prompt_file_or_config=prompt_file,
+                primary_tool="claude",
+                output_preview_length=200,
+            )
+
+            self.assertEqual(orchestrator.output_preview_length, 200)
+            self.assertIsNotNone(orchestrator.iteration_stats)
+            self.assertEqual(orchestrator.iteration_stats.max_preview_length, 200)
+        finally:
+            Path(prompt_file).unlink()
+
 
 if __name__ == "__main__":
     unittest.main()
