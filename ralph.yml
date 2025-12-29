@@ -1,17 +1,50 @@
-# Ralph config for implementing per-iteration telemetry feature
-# Target: ralph-orchestrator repository
+# Ralph Orchestrator Configuration
+# This file configures Ralph and its AI agent adapters
 
-agent: claude
-prompt_file: PROMPT.md
-max_iterations: 15              # Feature implementation may need more iterations
-max_runtime: 3600               # 1 hour max
-max_cost: 15.0                  # $15 budget for feature work
-max_tokens: 750000
-verbose: true
-checkpoint_interval: 3          # Git checkpoint every 3 iterations
-retry_delay: 5
+# Core orchestrator settings
+agent: auto                    # Which agent to use: claude, q, gemini, auto
+prompt_file: PROMPT.md         # Path to prompt file
+max_iterations: 100            # Maximum iterations before stopping
+max_runtime: 14400             # Maximum runtime in seconds (4 hours)
+checkpoint_interval: 5         # Git checkpoint every N iterations
+retry_delay: 2                 # Delay between retries in seconds
 
-# Keep metrics for analysis
-no_git: false
-no_archive: false
-no_metrics: false
+# Resource limits
+max_tokens: 1000000           # Maximum total tokens (1M)
+max_cost: 50.0                # Maximum cost in USD
+context_window: 200000        # Context window size in tokens
+context_threshold: 0.8        # Trigger summarization at 80% of context
+
+# Features
+archive_prompts: true         # Archive prompt history
+git_checkpoint: true          # Enable git checkpointing
+enable_metrics: true          # Enable metrics collection
+verbose: false                # Enable verbose output
+dry_run: false                # Test mode without execution
+
+# Safety settings
+max_prompt_size: 10485760     # Max prompt file size (10MB)
+allow_unsafe_paths: false     # Allow potentially unsafe prompt paths
+
+# Adapter-specific configurations
+adapters:
+  claude:
+    enabled: true
+    timeout: 300              # Timeout in seconds
+    max_retries: 3            # Max retry attempts
+    tool_permissions:         # Tool permissions for Claude
+      allow_all: true         # Allow all tools without approval
+  
+  q:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+    args: []
+    env: {}
+  
+  gemini:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+    args: []
+    env: {}
