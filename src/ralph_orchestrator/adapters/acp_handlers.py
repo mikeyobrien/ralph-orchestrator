@@ -939,3 +939,313 @@ class ACPHandlers:
                     "message": f"Failed to execute command: {e}",
                 }
             }
+
+    def handle_list_directory(self, params: dict) -> dict:
+        """Handle list_directory request from agent.
+
+        Lists files and directories in a given path.
+
+        Args:
+            params: Request parameters with 'path'.
+
+        Returns:
+            Dict with 'entries' (list of names) on success.
+        """
+        path_str = params.get("dir_path") or params.get("path") or "."
+
+        try:
+            path = Path(path_str).resolve()
+
+            if not path.exists():
+                return {
+                    "error": {
+                        "code": -32002,
+                        "message": f"Path does not exist: {path_str}",
+                    }
+                }
+
+            if not path.is_dir():
+                return {
+                    "error": {
+                        "code": -32002,
+                        "message": f"Path is not a directory: {path_str}",
+                    }
+                }
+
+            # List directory content
+            # We return a simple list of names to keep it compact
+            # Agents can use read_file or stat if they need more info
+            entries = [p.name for p in path.iterdir()]
+            entries.sort()
+
+            return {"entries": entries}
+
+        except PermissionError:
+            return {
+                "error": {
+                    "code": -32003,
+                    "message": f"Permission denied: {path_str}",
+                }
+            }
+        except OSError as e:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to list directory: {e}",
+                }
+            }
+
+    def handle_glob(self, params: dict) -> dict:
+        """Handle glob request from agent.
+
+        Finds files matching a glob pattern.
+
+        Args:
+            params: Request parameters with 'pattern' and optional 'path'.
+
+        Returns:
+            Dict with 'matches' (list of paths) on success.
+        """
+        pattern = params.get("pattern")
+        path_str = params.get("dir_path") or params.get("path") or "."
+
+        if not pattern:
+            return {
+                "error": {
+                    "code": -32602,
+                    "message": "Missing required parameter: pattern",
+                }
+            }
+
+        try:
+            path = Path(path_str).resolve()
+
+            if not path.exists() or not path.is_dir():
+                return {
+                    "error": {
+                        "code": -32002,
+                        "message": f"Invalid base path: {path_str}",
+                    }
+                }
+
+            # Run glob
+            # rglob if pattern starts with **/ or contains /**/, else glob
+            # actually Path.glob handles ** recursively
+            matches = list(path.glob(pattern))
+            
+            # Return string paths relative to the base path if possible, else absolute
+            # But for safety/clarity, absolute paths are often better for agents,
+            # or relative to CWD. Let's return absolute paths as strings.
+            # Limit results to avoid huge payloads
+            max_matches = 200
+            
+            result_paths = [str(p.absolute()) for p in matches[:max_matches]]
+            
+            return {
+                "matches": result_paths,
+                "limit_reached": len(matches) > max_matches,
+                "count": len(matches)
+            }
+
+        except Exception as e:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to execute glob: {e}",
+                }
+            }
+
+    def handle_replace(self, params: dict) -> dict:
+        """Handle replace request from agent.
+
+        Replaces text in a file.
+
+        Args:
+            params: Request parameters with 'file_path', 'old_string', 'new_string'.
+
+        Returns:
+            Dict with 'success' or 'error'.
+        """
+        file_path = params.get("file_path")
+        old_string = params.get("old_string")
+        new_string = params.get("new_string")
+        expected_replacements = params.get("expected_replacements", 1)
+
+        if not file_path or old_string is None or new_string is None:
+            return {
+                "error": {
+                    "code": -32602,
+                    "message": "Missing required parameters: file_path, old_string, new_string",
+                }
+            }
+
+        try:
+            path = Path(file_path).resolve()
+            
+            if not path.exists() or not path.is_file():
+                return {
+                    "error": {
+                        "code": -32002,
+                        "message": f"File not found: {file_path}",
+                    }
+                }
+
+            # Read content
+            content = path.read_text(encoding="utf-8")
+            
+            # Count occurrences
+            count = content.count(old_string)
+            
+            if count == 0:
+                return {
+                    "error": {
+                        "code": -32000,
+                        "message": "old_string not found in file",
+                    }
+                }
+                
+            if count != expected_replacements:
+                 return {
+                    "error": {
+                        "code": -32000,
+                        "message": f"Found {count} occurrences of old_string, expected {expected_replacements}",
+                    }
+                }
+
+            # Replace
+            new_content = content.replace(old_string, new_string)
+            
+            # Write back
+            path.write_text(new_content, encoding="utf-8")
+            
+            return {"success": True, "replacements": count}
+
+        except Exception as e:
+             return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to replace text: {e}",
+                }
+            }
+
+    def handle_search_file_content(self, params: dict) -> dict:
+        """Handle search_file_content request from agent.
+
+        Searches for text in files using ripgrep (rg) or grep.
+
+        Args:
+            params: Request parameters with 'pattern'.
+
+        Returns:
+            Dict with 'matches' (list of strings) or 'output' (raw string).
+        """
+        pattern = params.get("pattern")
+        dir_path = params.get("dir_path") or params.get("path") or "."
+        case_sensitive = params.get("case_sensitive", False)
+        fixed_strings = params.get("fixed_strings", False)
+        include_pattern = params.get("include")
+
+        if not pattern:
+             return {
+                "error": {
+                    "code": -32602,
+                    "message": "Missing required parameter: pattern",
+                }
+            }
+
+        # Check for ripgrep
+        import shutil
+        has_rg = shutil.which("rg") is not None
+        
+        cmd = []
+        if has_rg:
+            cmd = ["rg", "--line-number", "--no-heading", "--color=never"]
+            if not case_sensitive:
+                cmd.append("--ignore-case")
+            if fixed_strings:
+                cmd.append("--fixed-strings")
+            if include_pattern:
+                cmd.extend(["--glob", include_pattern])
+            
+            cmd.append(pattern)
+            cmd.append(dir_path)
+        else:
+            # Fallback to grep
+            cmd = ["grep", "-rn"] # recursive, line number
+            if not case_sensitive:
+                cmd.append("-i")
+            if fixed_strings:
+                cmd.append("-F")
+            if include_pattern:
+                cmd.extend(["--include", include_pattern])
+            
+            cmd.append(pattern)
+            cmd.append(dir_path)
+
+        try:
+             # Execute
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60, # 1 minute timeout
+            )
+            
+            # Limit output size
+            output = result.stdout
+            if len(output) > 100000:
+                output = output[:100000] + "\n... (truncated)"
+                
+            return {
+                "output": output,
+                "exitCode": result.returncode
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": "Search timed out",
+                }
+            }
+        except Exception as e:
+             return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to execute search: {e}",
+                }
+            }
+
+    def handle_read_many_files(self, params: dict) -> dict:
+        """Handle read_many_files request from agent.
+
+        Reads multiple files.
+
+        Args:
+            params: Request parameters with 'file_paths' (list).
+
+        Returns:
+            Dict mapping file paths to content (or error message).
+        """
+        file_paths = params.get("file_paths", [])
+        
+        if not isinstance(file_paths, list):
+             return {
+                "error": {
+                    "code": -32602,
+                    "message": "file_paths must be a list",
+                }
+            }
+
+        results = {}
+        for path in file_paths:
+            # Re-use existing read logic
+            res = self.handle_read_file({"path": path})
+            if "content" in res:
+                results[path] = res["content"]
+            elif "error" in res:
+                results[path] = f"Error: {res['error']['message']}"
+            else:
+                results[path] = "Unknown error"
+                
+        return {"files": results}

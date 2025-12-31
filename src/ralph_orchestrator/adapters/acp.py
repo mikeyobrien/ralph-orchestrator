@@ -442,6 +442,20 @@ class ACPAdapter(ToolAdapter):
         if method == "run_shell_command":
             return self._handlers.handle_run_shell_command(params)
 
+        # Filesystem navigation
+        if method == "list_directory":
+            return self._handlers.handle_list_directory(params)
+        if method == "glob":
+            return self._handlers.handle_glob(params)
+
+        # File modification
+        if method == "replace":
+            return self._handlers.handle_replace(params)
+        if method == "search_file_content":
+            return self._handlers.handle_search_file_content(params)
+        if method == "read_many_files":
+            return self._handlers.handle_read_many_files(params)
+
         # Terminal operations - return raw result (client wraps in JSON-RPC)
         if method == "terminal/create":
             return self._handlers.handle_terminal_create(params)

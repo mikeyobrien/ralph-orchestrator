@@ -1380,3 +1380,180 @@ class TestACPHandlersRunShellCommand:
         assert "error" in result
         assert result["error"]["code"] == -32000
         assert "timed out" in result["error"]["message"]
+
+class TestACPHandlersListDirectory:
+    """Tests for handle_list_directory method."""
+
+    def test_list_directory_success(self, tmp_path):
+        """Test successful directory listing."""
+        handlers = ACPHandlers()
+        
+        (tmp_path / "file1.txt").touch()
+        (tmp_path / "dir1").mkdir()
+
+        result = handlers.handle_list_directory({"path": str(tmp_path)})
+
+        assert "entries" in result
+        assert "file1.txt" in result["entries"]
+        assert "dir1" in result["entries"]
+
+    def test_list_directory_not_found(self, tmp_path):
+        """Test listing non-existent directory."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_list_directory({"path": str(tmp_path / "nonexistent")})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32002
+
+    def test_list_directory_is_file(self, tmp_path):
+        """Test listing a file path."""
+        handlers = ACPHandlers()
+        
+        file_path = tmp_path / "file.txt"
+        file_path.touch()
+
+        result = handlers.handle_list_directory({"path": str(file_path)})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32002
+
+
+class TestACPHandlersGlob:
+    """Tests for handle_glob method."""
+
+    def test_glob_success(self, tmp_path):
+        """Test successful glob."""
+        handlers = ACPHandlers()
+        
+        (tmp_path / "test1.py").touch()
+        (tmp_path / "test2.txt").touch()
+
+        result = handlers.handle_glob({
+            "pattern": "*.py",
+            "path": str(tmp_path)
+        })
+
+        assert "matches" in result
+        assert len(result["matches"]) == 1
+        assert result["matches"][0].endswith("test1.py")
+
+    def test_glob_recursive(self, tmp_path):
+        """Test recursive glob."""
+        handlers = ACPHandlers()
+        
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "test.py").touch()
+
+        result = handlers.handle_glob({
+            "pattern": "**/*.py",
+            "path": str(tmp_path)
+        })
+
+        assert "matches" in result
+        assert len(result["matches"]) == 1
+        assert result["matches"][0].endswith("test.py")
+
+
+class TestACPHandlersReplace:
+    """Tests for handle_replace method."""
+
+    def test_replace_success(self, tmp_path):
+        """Test successful replacement."""
+        handlers = ACPHandlers()
+        
+        file_path = tmp_path / "replace.txt"
+        file_path.write_text("Hello World", encoding="utf-8")
+
+        result = handlers.handle_replace({
+            "file_path": str(file_path),
+            "old_string": "World",
+            "new_string": "Ralph"
+        })
+
+        assert result["success"] is True
+        assert result["replacements"] == 1
+        assert file_path.read_text(encoding="utf-8") == "Hello Ralph"
+
+    def test_replace_not_found(self, tmp_path):
+        """Test replacement when old_string not found."""
+        handlers = ACPHandlers()
+        
+        file_path = tmp_path / "replace.txt"
+        file_path.write_text("Hello World", encoding="utf-8")
+
+        result = handlers.handle_replace({
+            "file_path": str(file_path),
+            "old_string": "Missing",
+            "new_string": "Ralph"
+        })
+
+        assert "error" in result
+        assert result["error"]["code"] == -32000
+
+    def test_replace_count_mismatch(self, tmp_path):
+        """Test replacement when count mismatches."""
+        handlers = ACPHandlers()
+        
+        file_path = tmp_path / "replace.txt"
+        file_path.write_text("Hello World World", encoding="utf-8")
+
+        result = handlers.handle_replace({
+            "file_path": str(file_path),
+            "old_string": "World",
+            "new_string": "Ralph",
+            "expected_replacements": 1
+        })
+
+        assert "error" in result
+        assert "expected 1" in result["error"]["message"]
+
+
+class TestACPHandlersSearchFileContent:
+    """Tests for handle_search_file_content method."""
+
+    def test_search_success(self, tmp_path):
+        """Test successful search using grep (since rg might be missing)."""
+        handlers = ACPHandlers()
+        
+        file_path = tmp_path / "search.txt"
+        file_path.write_text("Found Me", encoding="utf-8")
+
+        # Mock shutil.which to ensure we use grep or rg consistently or just test integration
+        # Here we trust the implementation uses available tool
+        
+        result = handlers.handle_search_file_content({
+            "pattern": "Found",
+            "path": str(tmp_path)
+        })
+
+        assert "output" in result
+        assert "Found Me" in result["output"] or "search.txt" in result["output"]
+
+    def test_search_missing_pattern(self):
+        """Test search with missing pattern."""
+        handlers = ACPHandlers()
+        result = handlers.handle_search_file_content({})
+        assert "error" in result
+
+
+class TestACPHandlersReadManyFiles:
+    """Tests for handle_read_many_files method."""
+
+    def test_read_many_success(self, tmp_path):
+        """Test reading multiple files."""
+        handlers = ACPHandlers()
+        
+        f1 = tmp_path / "f1.txt"
+        f1.write_text("content1")
+        f2 = tmp_path / "f2.txt"
+        f2.write_text("content2")
+
+        result = handlers.handle_read_many_files({
+            "file_paths": [str(f1), str(f2)]
+        })
+
+        assert "files" in result
+        assert result["files"][str(f1)] == "content1"
+        assert result["files"][str(f2)] == "content2"
