@@ -85,6 +85,8 @@ class RalphOrchestrator:
             self.verbose = config.verbose if hasattr(config, 'verbose') else False
             self.iteration_telemetry = getattr(config, 'iteration_telemetry', True)
             self.output_preview_length = getattr(config, 'output_preview_length', 500)
+            self.acp_agent = getattr(config, 'acp_agent', None) or self.acp_agent
+            self.acp_permission_mode = getattr(config, 'acp_permission_mode', None) or self.acp_permission_mode
         else:
             # Individual parameters
             self.prompt_file = Path(prompt_file_or_config if prompt_file_or_config else "PROMPT.md")

@@ -222,6 +222,10 @@ class RalphConfig:
     allow_unsafe_paths: bool = False
     agent_args: List[str] = field(default_factory=list)
     adapters: Dict[str, AdapterConfig] = field(default_factory=dict)
+    
+    # ACP Configuration
+    acp_agent: Optional[str] = None
+    acp_permission_mode: Optional[str] = None
 
     # Output formatting configuration
     output_format: str = "rich"  # "plain", "rich", or "json"
@@ -413,6 +417,21 @@ def main():
     )
     
     parser.add_argument(
+        "--acp-agent",
+        type=str,
+        default=None,
+        help="ACP agent command (default: gemini)"
+    )
+
+    parser.add_argument(
+        "--acp-permission-mode",
+        type=str,
+        choices=["auto_approve", "deny_all", "allowlist", "interactive"],
+        default=None,
+        help="ACP permission mode (default: auto_approve)"
+    )
+    
+    parser.add_argument(
         "--prompt-file", "-P",
         type=str,
         default=DEFAULT_PROMPT_FILE,
@@ -596,6 +615,8 @@ def main():
         max_prompt_size=args.max_prompt_size,
         allow_unsafe_paths=args.allow_unsafe_paths,
         agent_args=args.agent_args,
+        acp_agent=args.acp_agent,
+        acp_permission_mode=args.acp_permission_mode,
         # Output formatting options
         output_format=args.output_format,
         output_verbosity=args.output_verbosity,
