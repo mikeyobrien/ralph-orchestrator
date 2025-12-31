@@ -1,54 +1,26 @@
 # Ralph Orchestrator Configuration
-# This file configures Ralph and its AI agent adapters
-
-# Core orchestrator settings
-agent: auto                    # Which agent to use: claude, q, gemini, auto
+agent: claude                    # Which agent to use: claude, q, gemini, acp, auto
 prompt_file: PROMPT.md         # Path to prompt file
 max_iterations: 100            # Maximum iterations before stopping
 max_runtime: 14400             # Maximum runtime in seconds (4 hours)
-checkpoint_interval: 5         # Git checkpoint every N iterations
-retry_delay: 2                 # Delay between retries in seconds
+verbose: false                 # Enable verbose output
 
-# Resource limits
-max_tokens: 1000000           # Maximum total tokens (1M)
-max_cost: 50.0                # Maximum cost in USD
-context_window: 200000        # Context window size in tokens
-context_threshold: 0.8        # Trigger summarization at 80% of context
-
-# Features
-archive_prompts: true         # Archive prompt history
-git_checkpoint: true          # Enable git checkpointing
-enable_metrics: true          # Enable metrics collection
-verbose: false                # Enable verbose output
-dry_run: false                # Test mode without execution
-
-# Telemetry settings
-iteration_telemetry: true     # Enable per-iteration telemetry capture
-output_preview_length: 500    # Max chars for output preview in telemetry (truncated for privacy)
-
-# Safety settings
-max_prompt_size: 10485760     # Max prompt file size (10MB)
-allow_unsafe_paths: false     # Allow potentially unsafe prompt paths
-
-# Adapter-specific configurations
+# Adapter configurations
 adapters:
   claude:
     enabled: true
     timeout: 300              # Timeout in seconds
-    max_retries: 3            # Max retry attempts
-    tool_permissions:         # Tool permissions for Claude
-      allow_all: true         # Allow all tools without approval
-  
   q:
-    enabled: true
+    enabled: false
     timeout: 300
-    max_retries: 3
-    args: []
-    env: {}
-  
   gemini:
     enabled: true
     timeout: 300
-    max_retries: 3
-    args: []
-    env: {}
+  acp:                        # Agent Client Protocol adapter
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: gemini   # Command to run the ACP agent
+      agent_args: []          # Additional arguments
+      permission_mode: auto_approve  # auto_approve, deny_all, allowlist, interactive
+      permission_allowlist: []  # Patterns for allowlist mode

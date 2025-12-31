@@ -7,12 +7,21 @@ NOTE: Some tests in this module require q CLI to be available. Tests that
 depend on q CLI are marked to skip when it's not installed.
 """
 
-import pytest
 import asyncio
 import signal
 import shutil
+import platform
+import pytest
+import platform
 from unittest.mock import patch, Mock
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
+
+# We don't need magicmock. We just need a path to patch.
+if platform.system() == "Windows":
+    # On Windows, we patch the 'fcntl' attribute we set to None in our adapter
+    MOCK_FCNTL_PATH = "ralph_orchestrator.adapters.qchat.fcntl"
+else:
+    MOCK_FCNTL_PATH = "fcntl.fcntl"
 
 
 # Check if q CLI is available
@@ -193,7 +202,7 @@ class TestQChatIntegration:
         mock_pipe = Mock()
         mock_pipe.fileno.return_value = 5
         
-        with patch('fcntl.fcntl') as mock_fcntl:
+        with patch(MOCK_FCNTL_PATH) as mock_fcntl:
             adapter._make_non_blocking(mock_pipe)
             # Should call fcntl twice (get flags, set flags)
             assert mock_fcntl.call_count == 2
