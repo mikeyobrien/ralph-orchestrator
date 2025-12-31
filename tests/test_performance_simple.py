@@ -33,7 +33,7 @@ def main():
         elapsed = time.perf_counter() - start
         if result.success:
             print(f"   Response time: {elapsed:.3f}s")
-            print(f"   Success: ✅")
+            print("   Success: ✅")
             print(f"   Output: {result.output[:50]}...")
         else:
             print(f"   Error: {result.error}")
@@ -73,7 +73,7 @@ def main():
             elapsed = time.perf_counter() - start
             if result.success:
                 print(f"   Async response time: {elapsed:.3f}s")
-                print(f"   Success: ✅")
+                print("   Success: ✅")
             else:
                 print(f"   Error: {result.error}")
         except Exception as e:

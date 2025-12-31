@@ -5,8 +5,7 @@
 
 import pytest
 import argparse
-import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 class TestACPAgentChoice:
@@ -14,7 +13,6 @@ class TestACPAgentChoice:
 
     def test_acp_in_agent_choices(self):
         """Test that 'acp' is accepted as an agent choice."""
-        from ralph_orchestrator.__main__ import main
 
         # Import argparse setup from __main__
         parser = argparse.ArgumentParser()
@@ -137,7 +135,7 @@ class TestOrchestratorACPAdapter:
                             )
 
                             # Initialize orchestrator
-                            orch = RalphOrchestrator(
+                            RalphOrchestrator(
                                 prompt_file_or_config=config,
                                 primary_tool="acp"
                             )
@@ -186,7 +184,7 @@ class TestOrchestratorACPAdapter:
             )
 
             # Initialize orchestrator with acp_agent parameter
-            orch = RalphOrchestrator(
+            RalphOrchestrator(
                 prompt_file_or_config=config,
                 primary_tool="acp",
                 acp_agent="claude-code-acp",
@@ -265,7 +263,7 @@ class TestACPMainEntryPoint:
         # We can't easily test main() directly without mocking everything
         # Instead, verify the parser accepts the args
         with patch('sys.argv', ['ralph', '--dry-run', '-a', 'acp']):
-            with patch('ralph_orchestrator.__main__.RalphOrchestrator') as mock_orch:
+            with patch('ralph_orchestrator.__main__.RalphOrchestrator'):
                 with patch('ralph_orchestrator.__main__.Path') as mock_path:
                     mock_path.return_value.exists.return_value = True
                     # main() will exit with dry-run, which is fine

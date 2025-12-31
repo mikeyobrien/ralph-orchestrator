@@ -9,13 +9,8 @@ depend on q CLI are marked to skip when it's not installed.
 
 import pytest
 import asyncio
-import threading
-import time
 import signal
-import os
-import tempfile
 import shutil
-from pathlib import Path
 from unittest.mock import patch, Mock
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
 

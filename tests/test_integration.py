@@ -7,14 +7,11 @@ import unittest
 import subprocess
 import tempfile
 import os
-import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
-import time
+from unittest.mock import patch, MagicMock
 
 from ralph_orchestrator.adapters.claude import ClaudeAdapter
 from ralph_orchestrator.adapters.qchat import QChatAdapter
-from ralph_orchestrator.adapters.gemini import GeminiAdapter
 from ralph_orchestrator.orchestrator import RalphOrchestrator
 
 

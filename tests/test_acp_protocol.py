@@ -4,7 +4,6 @@
 """Tests for ACP Protocol JSON-RPC 2.0 handling."""
 
 import json
-import pytest
 
 from ralph_orchestrator.adapters.acp_protocol import (
     ACPProtocol,

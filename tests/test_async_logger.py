@@ -4,7 +4,6 @@
 """Tests for async_logger.py module."""
 
 import asyncio
-import os
 import tempfile
 import threading
 from pathlib import Path
@@ -22,7 +21,7 @@ class TestAsyncFileLoggerInit:
         """Logger should create log directory if it doesn't exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "subdir" / "test.log"
-            logger = AsyncFileLogger(str(log_path))
+            AsyncFileLogger(str(log_path))
             assert log_path.parent.exists()
 
     def test_init_rejects_empty_path(self):

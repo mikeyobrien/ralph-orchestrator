@@ -9,9 +9,8 @@ import threading
 import time
 import signal
 import subprocess
-from unittest.mock import Mock, patch, MagicMock, call, AsyncMock
+from unittest.mock import Mock, patch, AsyncMock
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
-from src.ralph_orchestrator.adapters.base import ToolResponse
 
 
 class TestQChatAdapterInit:
@@ -30,7 +29,7 @@ class TestQChatAdapterInit:
     def test_signal_handlers_registered(self):
         """Test signal handlers are properly registered."""
         with patch('signal.signal') as mock_signal:
-            adapter = QChatAdapter()
+            QChatAdapter()
             # Should register SIGINT and SIGTERM handlers
             assert mock_signal.call_count >= 2
             calls = mock_signal.call_args_list

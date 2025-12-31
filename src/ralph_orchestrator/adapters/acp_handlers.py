@@ -28,7 +28,6 @@ Terminal operations:
 
 import fnmatch
 import logging
-import os
 import re
 import subprocess
 import sys

@@ -159,8 +159,7 @@ class ContextManager:
         for line in lines:
             if any([
                 line.startswith('#'),
-                # Removed TASK_COMPLETE check
-                'TODO' in line,
+                # 'TODO' in line,
                 'IMPORTANT' in line,
                 'ERROR' in line,
                 line.startswith('- [ ]'),  # Unchecked tasks

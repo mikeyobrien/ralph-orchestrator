@@ -6,7 +6,6 @@
 import pytest
 from pathlib import Path
 import tempfile
-import os
 
 from ralph_orchestrator.security import (
     SecurityValidator,

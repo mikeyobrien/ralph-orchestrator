@@ -3,21 +3,15 @@
 
 import pytest
 import asyncio
-import json
 import tempfile
 import shutil
 import os
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime
-import jwt
 
 from fastapi.testclient import TestClient
-from fastapi.websockets import WebSocketDisconnect
-import httpx
 
 from src.ralph_orchestrator.web.server import OrchestratorMonitor, WebMonitor
-from src.ralph_orchestrator.web.auth import AuthManager, auth_manager
-from src.ralph_orchestrator.web.database import DatabaseManager
 
 
 class TestOrchestratorMonitor:
@@ -299,12 +293,12 @@ class TestWebMonitor:
         # Test pause (sets stop_requested flag)
         response = client.post("/api/orchestrators/test-123/pause")
         assert response.status_code == 200
-        assert mock_orchestrator.stop_requested == True
+        assert mock_orchestrator.stop_requested
         
         # Test resume (clears stop_requested flag)
         response = client.post("/api/orchestrators/test-123/resume")
         assert response.status_code == 200
-        assert mock_orchestrator.stop_requested == False
+        assert not mock_orchestrator.stop_requested
     
     def test_stop_orchestrator(self, client, web_monitor, mock_orchestrator):
         """Test stopping orchestrator."""
@@ -314,13 +308,12 @@ class TestWebMonitor:
         # Pause is the way to stop
         response = client.post("/api/orchestrators/test-123/pause")
         assert response.status_code == 200
-        assert mock_orchestrator.stop_requested == True
+        assert mock_orchestrator.stop_requested
     
     def test_update_prompt(self, client, web_monitor, mock_orchestrator):
         """Test updating orchestrator prompt."""
         # Mock prompt file - needs to be a Path object
         from pathlib import Path
-        from unittest.mock import PropertyMock
         
         mock_path = MagicMock(spec=Path)
         mock_path.exists.return_value = True

@@ -5,10 +5,8 @@
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from ralph_orchestrator.adapters.acp_client import ACPClient
-from ralph_orchestrator.adapters.acp_protocol import MessageType
 
 
 class TestACPClientInit:
@@ -350,7 +348,6 @@ class TestACPClientRequestHandler:
         client.on_request(handler)
 
         # Mock the write to capture what would be sent
-        original_write = client._write_message
 
         async def capture_write(msg: str) -> None:
             response_sent.append(msg)
@@ -395,11 +392,9 @@ class TestACPClientThreadSafety:
         # Test that the write lock prevents interleaving
         # by verifying writes are serialized
         client = ACPClient(command="cat")
-        written_messages = []
         write_order = []
 
         # Mock write to track order and verify lock behavior
-        original_write = client._write_message
 
         async def tracking_write(msg: str) -> None:
             write_order.append(msg)

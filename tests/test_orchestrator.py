@@ -4,14 +4,13 @@
 """Tests for Ralph Orchestrator."""
 
 import unittest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 import tempfile
-import json
 
 from ralph_orchestrator.orchestrator import RalphOrchestrator
 from ralph_orchestrator.metrics import Metrics, CostTracker
-from ralph_orchestrator.safety import SafetyGuard, SafetyCheckResult
+from ralph_orchestrator.safety import SafetyGuard
 from ralph_orchestrator.context import ContextManager
 
 

@@ -4,8 +4,6 @@
 """Tests for ACP configuration in ralph.yml."""
 
 import os
-import pytest
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 

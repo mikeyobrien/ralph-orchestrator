@@ -5,7 +5,6 @@
 
 import json
 from datetime import datetime
-from unittest.mock import Mock, patch
 
 import pytest
 
@@ -13,7 +12,6 @@ from ralph_orchestrator.output import (
     FormatContext,
     JsonFormatter,
     MessageType,
-    OutputFormatter,
     PlainTextFormatter,
     RichTerminalFormatter,
     TokenUsage,
@@ -498,9 +496,8 @@ class TestRichTerminalFormatter:
 
     def test_console_property(self):
         """Test console property access."""
-        formatter = RichTerminalFormatter()
+        RichTerminalFormatter()
         # Console may or may not be available depending on Rich
-        console = formatter.console
         # Just verify the property works
 
     def test_format_system_message(self):
@@ -1468,7 +1465,7 @@ class TestRichTerminalFormatterSmartDetection:
 +added line
  context"""
         # Diff rendering prints directly, returns empty string
-        output = formatter.format_assistant_message(diff_text)
+        formatter.format_assistant_message(diff_text)
         # Output may be empty since diff prints directly, or contain diff text
         # The important thing is it doesn't crash
 

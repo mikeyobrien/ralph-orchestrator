@@ -3,7 +3,6 @@
 
 """Tests for metrics module."""
 
-import pytest
 import time
 from datetime import datetime
 from ralph_orchestrator.metrics import (

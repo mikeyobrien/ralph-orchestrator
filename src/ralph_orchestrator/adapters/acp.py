@@ -16,13 +16,13 @@ import signal
 import threading
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 from .base import ToolAdapter, ToolResponse
 from .acp_client import ACPClient, ACPClientError
 from .acp_models import ACPAdapterConfig, ACPSession, UpdatePayload
 from .acp_handlers import ACPHandlers
 from ..output.console import RalphConsole
+
+logger = logging.getLogger(__name__)
 
 
 # ACP Protocol version this adapter supports (integer per spec)

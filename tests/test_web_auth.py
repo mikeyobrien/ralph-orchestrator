@@ -2,10 +2,6 @@
 # ABOUTME: Verifies JWT authentication, password hashing, and user management
 
 import pytest
-import os
-import tempfile
-import shutil
-from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 import jwt
 
@@ -117,7 +113,7 @@ class TestAuthManager:
         try:
             payload = auth_manager.verify_token(token)
             assert payload['sub'] == 'testuser'
-        except:
+        except (AttributeError, KeyError):
             # If verify_token doesn't exist, test decode directly
             payload = jwt.decode(token, auth_manager.secret_key, algorithms=[auth_manager.algorithm])
             assert payload['sub'] == 'testuser'

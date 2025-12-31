@@ -10,7 +10,6 @@ from pathlib import Path
 
 from ralph_orchestrator.main import (
     RalphConfig,
-    AdapterConfig,
     AgentType,
     ConfigValidator,
 )
@@ -195,7 +194,6 @@ class TestThreadSafeConfig:
     def test_concurrent_thread_pool_access(self):
         """Test thread-safe access with ThreadPoolExecutor."""
         config = RalphConfig(max_iterations=0)
-        results = []
 
         def increment():
             for _ in range(10):

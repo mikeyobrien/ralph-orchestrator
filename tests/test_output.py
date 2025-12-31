@@ -4,8 +4,7 @@
 """Tests for the output module."""
 
 import pytest
-from io import StringIO
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from ralph_orchestrator.output import (
     DiffStats,
@@ -272,7 +271,7 @@ class TestRalphConsoleWithoutRich:
         console.RICH_AVAILABLE = False
 
         try:
-            rc = RalphConsole()
+            RalphConsole()
             # Should have fallback behavior
         finally:
             console.RICH_AVAILABLE = original_rich

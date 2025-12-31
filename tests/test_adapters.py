@@ -4,10 +4,7 @@
 """Tests for Ralph Orchestrator adapters."""
 
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
-import subprocess
-import asyncio
-import os
+from unittest.mock import patch, MagicMock
 
 from ralph_orchestrator.adapters.base import ToolAdapter, ToolResponse
 from ralph_orchestrator.adapters.claude import ClaudeAdapter
@@ -117,7 +114,7 @@ class TestQChatAdapter(unittest.TestCase):
         """Test Q Chat availability check when available."""
         mock_run.return_value = MagicMock(returncode=0)
         
-        adapter = QChatAdapter()
+        QChatAdapter()
         # Note: availability check uses 'which q'
         mock_run.assert_called_with(
             ["which", "q"],

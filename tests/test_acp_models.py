@@ -4,7 +4,6 @@
 """Tests for ACP data models."""
 
 import pytest
-from typing import Any
 
 from ralph_orchestrator.adapters.acp_models import (
     ACPRequest,

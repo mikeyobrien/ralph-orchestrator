@@ -1,8 +1,5 @@
 """Tests for ContextManager prompt_text functionality."""
 
-import pytest
-import tempfile
-from pathlib import Path
 
 from ralph_orchestrator.context import ContextManager
 

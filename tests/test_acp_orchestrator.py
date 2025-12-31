@@ -12,10 +12,6 @@ orchestrator's iteration loop, including:
 - Graceful shutdown during iteration
 """
 
-import asyncio
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest

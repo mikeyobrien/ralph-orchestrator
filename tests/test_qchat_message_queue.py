@@ -10,16 +10,13 @@ to skip when q CLI is not installed.
 import asyncio
 import concurrent.futures
 import pytest
-import time
 import threading
-import queue
 import random
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch
 import subprocess
 import shutil
 
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
-from src.ralph_orchestrator.adapters.base import ToolResponse
 
 
 # Check if q CLI is available
@@ -75,10 +72,11 @@ class TestMessageQueueProcessing:
         processed_messages = []
         processing_lock = threading.Lock()
         
-        def mock_process_factory(cmd):
+        def mock_process_factory(*args, **kwargs):
             """Create a mock process that records the message."""
+            cmd = args[0] if args else kwargs.get('args', [])
             mock_process = Mock()
-            mock_process.poll.side_effect = [None, None, 0]
+            mock_process.poll.side_effect = [None] * 10 + [0] * 5
             mock_process.stdout = Mock()
             mock_process.stderr = Mock()
             mock_process.stdout.read.return_value = "Processed"
@@ -161,7 +159,7 @@ class TestMessageQueueProcessing:
         with patch('subprocess.Popen') as mock_popen:
             # Simulate process failure
             mock_process = Mock()
-            mock_process.poll.side_effect = [None, None, 1]  # Running, running, failed
+            mock_process.poll.side_effect = [None] * 10 + [1] * 5  # Running, running, failed
             mock_process.stdout = Mock()
             mock_process.stderr = Mock()
             mock_process.stdout.read.return_value = "Partial output"
@@ -223,7 +221,7 @@ class TestMessageQueueProcessing:
         with patch('subprocess.Popen') as mock_popen:
             mock_process = Mock()
             # Simulate process that outputs data over time
-            mock_process.poll.side_effect = [None] * len(output_chunks) + [0]
+            mock_process.poll.side_effect = [None] * (len(output_chunks) + 10) + [0] * 5
             mock_process.stdout = Mock()
             mock_process.stderr = Mock()
             mock_process.stdout.read = mock_read
@@ -245,7 +243,13 @@ class TestMessageQueueProcessing:
         
         with patch('subprocess.Popen') as mock_popen:
             mock_process = Mock()
-            mock_process.poll.return_value = None  # Process running
+            # Define side effect to trigger shutdown during execution
+            def mock_poll_side_effect():
+                adapter.shutdown_requested = True
+                return None
+            
+            mock_process.poll.side_effect = mock_poll_side_effect
+            # mock_process.poll.return_value = None  # Replaced by side_effect
             mock_process.stdout = Mock()
             mock_process.stderr = Mock()
             mock_process.stdout.read.return_value = "Output before signal"
@@ -259,8 +263,8 @@ class TestMessageQueueProcessing:
             # Set process as current
             adapter.current_process = mock_process
             
-            # Trigger signal handler
-            adapter.shutdown_requested = True
+            # Trigger shutdown is now handled by side_effect
+            # adapter.shutdown_requested = True
             
             # Execute should handle shutdown gracefully
             response = adapter.execute("Test message", verbose=False, timeout=5)
@@ -277,19 +281,19 @@ class TestMessageQueueProcessing:
         success_count = 0
         failure_count = 0
         
-        def mock_process_factory(cmd):
+        def mock_process_factory(*args, **kwargs):
             """Create mock processes with random success/failure."""
             mock_process = Mock()
             success = random.random() > 0.2  # 80% success rate
             
             if success:
-                mock_process.poll.side_effect = [None, None, 0]
+                mock_process.poll.side_effect = [None] * 5 + [0] * 5
                 mock_process.stdout = Mock()
                 mock_process.stderr = Mock()
                 mock_process.stdout.read.return_value = "Success"
                 mock_process.stderr.read.return_value = ""
             else:
-                mock_process.poll.side_effect = [None, None, 1]
+                mock_process.poll.side_effect = [None] * 5 + [1] * 5
                 mock_process.stdout = Mock()
                 mock_process.stderr = Mock()
                 mock_process.stdout.read.return_value = ""
@@ -375,10 +379,11 @@ class TestMessageQueueProcessing:
         message_integrity = {}
         integrity_lock = threading.Lock()
         
-        def mock_process_factory(cmd):
+        def mock_process_factory(*args, **kwargs):
             """Create mock process that validates message integrity."""
+            cmd = args[0] if args else kwargs.get('args', [])
             mock_process = Mock()
-            mock_process.poll.side_effect = [None, None, 0]
+            mock_process.poll.side_effect = [None] * 10 + [0] * 5
             mock_process.stdout = Mock()
             mock_process.stderr = Mock()
             

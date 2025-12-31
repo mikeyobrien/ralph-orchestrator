@@ -5,9 +5,7 @@
 
 import os
 import sys
-import tempfile
 import logging
-import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -175,7 +173,6 @@ class TestRalphLogger:
     
     def test_convenience_function(self):
         """Test the convenience get_logger function."""
-        from ralph_orchestrator.logging_config import get_logger
         
         logger = get_logger("test.module")
         assert logger.name == "test.module"
@@ -258,7 +255,7 @@ class TestQChatLogging:
             adapter = QChatAdapter()
             
             # Check that availability was logged
-            qchat_logger = logging.getLogger(RalphLogger.ADAPTER_QCHAT)
+            logging.getLogger(RalphLogger.ADAPTER_QCHAT)
             
             # Adapter should log initialization
             assert adapter.available is False

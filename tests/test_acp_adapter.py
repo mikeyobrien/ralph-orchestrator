@@ -4,7 +4,7 @@
 """Tests for ACPAdapter - the main ACP adapter for Ralph Orchestrator."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import shutil
 
@@ -359,7 +359,7 @@ class TestACPAdapterSignalHandling:
     def test_signal_handler_registration(self):
         """Test signal handlers are registered on init."""
         with patch("signal.signal") as mock_signal:
-            adapter = ACPAdapter()
+            ACPAdapter()
 
             # Should register SIGINT and SIGTERM handlers
             assert mock_signal.called

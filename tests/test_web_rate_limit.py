@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import Request
-from fastapi.testclient import TestClient
 
 from ralph_orchestrator.web.rate_limit import (
     RateLimiter,
@@ -310,7 +309,7 @@ class TestCleanupTask:
     async def test_setup_cleanup_task(self):
         """Test that cleanup task is set up correctly."""
         with patch('asyncio.create_task') as mock_create_task:
-            task = await setup_rate_limit_cleanup()
+            await setup_rate_limit_cleanup()
             mock_create_task.assert_called_once()
     
     @pytest.mark.asyncio

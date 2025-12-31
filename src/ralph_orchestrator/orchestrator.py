@@ -782,7 +782,11 @@ class RalphOrchestrator:
         return TriggerReason.TASK_INCOMPLETE.value
 
     def _reload_prompt(self):
-        """Reload the prompt file to pick up any changes."""
+        """Reload the prompt file to pick up any changes.
+        
+        Note:
+            Used by external web monitor to reload prompt state on user request.
+        """
         logger.info("Reloading prompt file due to external update")
         # The context manager will automatically reload on next get_prompt() call
         # Clear the context manager's cache to force reload

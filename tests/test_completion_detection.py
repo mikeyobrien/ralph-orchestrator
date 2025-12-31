@@ -6,7 +6,6 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 from ralph_orchestrator.orchestrator import RalphOrchestrator
 

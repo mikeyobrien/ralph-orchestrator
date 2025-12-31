@@ -7,8 +7,6 @@ import tempfile
 import shutil
 import json
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
-import sqlite3
 import threading
 import time
 
@@ -253,7 +251,6 @@ class TestDatabaseManager:
                    VALUES (?, ?, ?, ?, ?)""",
                 ('old-orch', '/old.md', 'completed', old_date, 0)
             )
-            old_run_id = cursor.lastrowid
             conn.commit()
         
         # Create recent run
@@ -334,7 +331,7 @@ class TestDatabaseManager:
         db_manager.update_task_status(99999, 'completed')
         
         # Test adding iteration to non-existent run
-        result = db_manager.add_iteration(99999, 1, 'task')
+        db_manager.add_iteration(99999, 1, 'task')
         # Should handle gracefully (might return None or raise)
         
         # Test invalid status values (if validation exists)
@@ -363,7 +360,7 @@ class TestDatabaseManager:
     def test_get_active_runs(self, db_manager):
         """Test retrieving active (running/paused) runs."""
         # Create runs with different statuses
-        running = db_manager.create_run('running-orch', '/p1.md')
+        db_manager.create_run('running-orch', '/p1.md')
         paused = db_manager.create_run('paused-orch', '/p2.md')
         completed = db_manager.create_run('completed-orch', '/p3.md')
         
