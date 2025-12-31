@@ -3,14 +3,22 @@
 
 """Comprehensive test suite for Q Chat adapter."""
 
-import pytest
 import asyncio
 import threading
 import time
 import signal
 import subprocess
+import platform
+import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
+
+# We don't need magicmock. We just need a path to patch.
+if platform.system() == "Windows":
+    # On Windows, we patch the 'fcntl' attribute we set to None in our adapter
+    MOCK_FCNTL_PATH = "ralph_orchestrator.adapters.qchat.fcntl"
+else:
+    MOCK_FCNTL_PATH = "fcntl.fcntl"
 
 
 class TestQChatAdapterInit:
@@ -319,6 +327,7 @@ class TestConcurrencyAndThreadSafety:
 class TestResourceManagement:
     """Test resource management and cleanup."""
     
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Internal fcntl logic is Unix-specific")
     def test_pipe_non_blocking_setup(self):
         """Test non-blocking pipe setup."""
         adapter = QChatAdapter()
@@ -327,9 +336,10 @@ class TestResourceManagement:
         mock_pipe = Mock()
         mock_pipe.fileno.return_value = 5
         
-        with patch('fcntl.fcntl') as mock_fcntl:
+        with patch(MOCK_FCNTL_PATH) as mock_fcntl:
             adapter._make_non_blocking(mock_pipe)
-            assert mock_fcntl.call_count == 2  # Get flags, then set flags
+            # This assertion is for Unix; skipped on Windows
+            assert mock_fcntl.call_count == 2  
     
     def test_pipe_non_blocking_invalid_fd(self):
         """Test non-blocking setup with invalid file descriptor."""

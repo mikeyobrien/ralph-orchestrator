@@ -52,7 +52,7 @@ class ContextManager:
             content = self.prompt_text
         elif self.prompt_file.exists():
             try:
-                content = self.prompt_file.read_text()
+                content = self.prompt_file.read_text(encoding="utf-8")
             except UnicodeDecodeError as e:
                 logger.warning(f"Encoding error reading {self.prompt_file}: {e}")
                 return
@@ -89,7 +89,7 @@ class ContextManager:
             base_content = self.prompt_text
         elif self.prompt_file.exists():
             try:
-                base_content = self.prompt_file.read_text()
+                base_content = self.prompt_file.read_text(encoding="utf-8")
             except UnicodeDecodeError as e:
                 logger.warning(f"Encoding error reading {self.prompt_file}: {e}")
                 return ""

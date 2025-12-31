@@ -4,13 +4,27 @@
 """Q Chat adapter for Ralph Orchestrator."""
 
 import subprocess
-import os
 import sys
 import signal
 import threading
 import asyncio
 import time
-import fcntl
+import os
+import platform
+
+# 1. REMOVE the standalone 'import fcntl' from the top
+# 2. Use this conditional block instead:
+if platform.system() != "Windows":
+    import fcntl
+else:
+    fcntl = None
+
+try:
+    import msvcrt
+    from ctypes import windll, wintypes, byref
+except ImportError:
+    msvcrt = None
+
 from .base import ToolAdapter, ToolResponse
 from ..logging_config import RalphLogger
 
@@ -358,16 +372,29 @@ class QChatAdapter(ToolAdapter):
 
     def _make_non_blocking(self, pipe):
         """Make a pipe non-blocking to prevent deadlock."""
-        if pipe:
-            try:
-                fd = pipe.fileno()
-                # Check if fd is a valid integer file descriptor
-                if isinstance(fd, int) and fd >= 0:
-                    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-                    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-            except (AttributeError, ValueError, OSError):
-                # In tests or when pipe doesn't support fileno()
-                pass
+        if not pipe:
+            return
+
+        try:
+            fd = pipe.fileno()
+            # Check if fd is a valid integer file descriptor
+            if isinstance(fd, int) and fd >= 0:
+                if platform.system() != "Windows":
+                    # Unix logic: requires fcntl
+                    if fcntl:
+                        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+                        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+                else:
+                    # Windows logic: requires msvcrt and ctypes
+                    if msvcrt:
+                        handle = msvcrt.get_osfhandle(fd)
+                        PIPE_NOWAIT = wintypes.DWORD(0x00000001)
+                        windll.kernel32.SetNamedPipeHandleState(
+                            handle, byref(PIPE_NOWAIT), None, None
+                        )
+        except (AttributeError, ValueError, OSError):
+            # In tests or when pipe doesn't support fileno()
+            pass
     
     def _read_available(self, pipe):
         """Read available data from a non-blocking pipe."""
