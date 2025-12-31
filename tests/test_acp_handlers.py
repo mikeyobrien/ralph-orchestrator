@@ -6,6 +6,7 @@
 
 from unittest.mock import patch, MagicMock
 import pytest
+import subprocess
 
 from ralph_orchestrator.adapters.acp_handlers import (
     ACPHandlers,
@@ -1317,3 +1318,65 @@ class TestACPHandlersTerminalIntegration:
         assert "error" in result
         assert result["error"]["code"] == -32001
         assert "Command not found" in result["error"]["message"]
+
+
+class TestACPHandlersRunShellCommand:
+    """Tests for handle_run_shell_command method."""
+
+    def test_run_shell_command_success(self):
+        """Test successful shell command execution."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_run_shell_command({
+            "command": "echo 'hello world'"
+        })
+
+        assert "stdout" in result
+        assert "hello world" in result["stdout"]
+        assert result["exitCode"] == 0
+
+    def test_run_shell_command_stderr(self):
+        """Test shell command with stderr output."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_run_shell_command({
+            "command": "echo 'error message' >&2"
+        })
+
+        assert "stderr" in result
+        assert "error message" in result["stderr"]
+        assert result["exitCode"] == 0
+
+    def test_run_shell_command_failure(self):
+        """Test failed shell command."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_run_shell_command({
+            "command": "false"
+        })
+
+        assert result["exitCode"] != 0
+
+    def test_run_shell_command_missing_command(self):
+        """Test missing command parameter."""
+        handlers = ACPHandlers()
+
+        result = handlers.handle_run_shell_command({})
+
+        assert "error" in result
+        assert result["error"]["code"] == -32602
+        assert "Missing required parameter: command" in result["error"]["message"]
+
+    @patch("subprocess.run")
+    def test_run_shell_command_timeout(self, mock_run):
+        """Test timeout handling."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="sleep 10", timeout=300)
+
+        handlers = ACPHandlers()
+        result = handlers.handle_run_shell_command({
+            "command": "sleep 10"
+        })
+
+        assert "error" in result
+        assert result["error"]["code"] == -32000
+        assert "timed out" in result["error"]["message"]

@@ -887,3 +887,55 @@ class ACPHandlers:
         # Clean up the terminal
         del self._terminals[terminal_id]
         return {"success": True}
+
+    def handle_run_shell_command(self, params: dict) -> dict:
+        """Handle run_shell_command request from agent.
+
+        Executes a shell command synchronously.
+
+        Args:
+            params: Request parameters with 'command'.
+
+        Returns:
+            Dict with 'stdout', 'stderr', and 'exitCode'.
+        """
+        command = params.get("command")
+
+        if not command:
+            return {
+                "error": {
+                    "code": -32602,
+                    "message": "Missing required parameter: command",
+                }
+            }
+
+        try:
+            # Execute command
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+            )
+
+            return {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exitCode": result.returncode,
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": "Command timed out after 300s",
+                }
+            }
+        except Exception as e:
+            return {
+                "error": {
+                    "code": -32000,
+                    "message": f"Failed to execute command: {e}",
+                }
+            }

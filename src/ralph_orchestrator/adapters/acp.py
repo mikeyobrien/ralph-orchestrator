@@ -230,8 +230,8 @@ class ACPAdapter(ToolAdapter):
                 logger.info("Auto-adding --yolo flag for Gemini CLI tool execution")
                 effective_args.append("--yolo")
             # Enable native Gemini tools for ACP mode
-            # Note: Excluding write_file and run_shell_command - they have bugs in ACP mode
-            # Gemini should fall back to ACP's fs/write_text_file and terminal/create
+            # We enable all standard tools including write_file and run_shell_command
+            # as they are critical for agent operation (file creation, editing, shell execution).
             if "--allowed-tools" not in effective_args:
                 logger.info("Auto-adding --allowed-tools for Gemini CLI native tools")
                 effective_args.extend([
@@ -239,6 +239,11 @@ class ACPAdapter(ToolAdapter):
                     "list_directory",
                     "read_many_files",
                     "read_file",
+                    "write_file",
+                    "replace",
+                    "run_shell_command",
+                    "glob",
+                    "search_file_content",
                     "web_fetch",
                     "google_web_search",
                 ])
@@ -432,6 +437,10 @@ class ACPAdapter(ToolAdapter):
             return self._handlers.handle_read_file(params)
         if method == "fs/write_text_file":
             return self._handlers.handle_write_file(params)
+
+        # Shell operations
+        if method == "run_shell_command":
+            return self._handlers.handle_run_shell_command(params)
 
         # Terminal operations - return raw result (client wraps in JSON-RPC)
         if method == "terminal/create":
