@@ -2,9 +2,9 @@
 # This file configures Ralph and its AI agent adapters
 
 # Core orchestrator settings
-agent: auto                    # Which agent to use: claude, q, gemini, auto
+agent: gemini                    # Which agent to use: claude, q, gemini, auto
 prompt_file: PROMPT.md         # Path to prompt file
-max_iterations: 100            # Maximum iterations before stopping
+max_iterations: 10             # Maximum iterations before stopping
 max_runtime: 14400             # Maximum runtime in seconds (4 hours)
 checkpoint_interval: 5         # Git checkpoint every N iterations
 retry_delay: 2                 # Delay between retries in seconds
@@ -50,5 +50,5 @@ adapters:
     enabled: true
     timeout: 300
     max_retries: 3
-    args: []
+    args: ["-y"]
     env: {}

@@ -17,7 +17,7 @@ class ContextManager:
     def __init__(
         self,
         prompt_file: Path,
-        max_context_size: int = 8000,
+        max_context_size: int = 64000,
         cache_dir: Path = Path(".agent/cache"),
         prompt_text: Optional[str] = None
     ):
