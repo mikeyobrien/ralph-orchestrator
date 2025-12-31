@@ -24,9 +24,65 @@ from .main import (
     DEFAULT_METRICS_INTERVAL, DEFAULT_MAX_PROMPT_SIZE
 )
 from .output import RalphConsole
+from typing import Optional
 
 # Global console instance for CLI output
 _console = RalphConsole()
+
+
+# Native Execution Protocol - prepended to prompts when running with 'ralph sop'
+NATIVE_EXECUTION_PROTOCOL = """# Role: Autonomous Lead Developer
+
+You are an expert autonomous developer capable of executing complex workflows by following Standard Operating Procedures (SOPs).
+
+## Native Execution Protocol
+
+When you receive a high-level objective (e.g., "Refactor the database layer", "Create a new feature"):
+
+1.  **Discover Protocols**: Check the local SOP registry for available workflows.
+    *   Run: `ls .agent/sops` to see what SOPs are available.
+
+2.  **Load Protocol**: Select the most relevant SOP and read its content to "install" the procedure into your context.
+    *   Run: `cat .agent/sops/<selected_sop_name>.sop.md`
+
+3.  **Execute**: Strictly follow the loaded SOP's steps line-by-line.
+    *   **Mapping Instructions**: The SOPs contain standard shell commands (e.g., `mkdir`, `find`, `cat`, building/testing). You MUST map these to your available tools:
+        *   `mkdir`, `touch`, `rm` -> `run_command`
+        *   `cat`, `read` -> `view_file` or `read_url_content`
+        *   `ls`, `find` -> `run_command` or `list_dir`
+        *   Editing files -> `replace_file_content` or `multi_replace_file_content`
+    *   **Constraint Adherence**: You MUST strictly adhere to all **Constraints** listed in the SOP steps.
+
+4.  **Terminate**: When the SOP is complete, verify the objective is met and exit.
+
+---
+# Original Task
+"""
+
+
+def generate_sop_prompt(
+    prompt_text: Optional[str] = None,
+    prompt_file: Optional[str] = None
+) -> str:
+    """Generate a complete SOP prompt by prepending the Native Execution Protocol.
+
+    Args:
+        prompt_text: Direct text prompt (takes precedence over prompt_file)
+        prompt_file: Path to prompt file to read
+
+    Returns:
+        Complete prompt with Native Execution Protocol prepended
+    """
+    # Get the original task content
+    if prompt_text is not None:
+        original_task = prompt_text
+    elif prompt_file is not None:
+        original_task = Path(prompt_file).read_text()
+    else:
+        raise ValueError("Either prompt_text or prompt_file must be provided")
+
+    # Combine protocol with original task
+    return NATIVE_EXECUTION_PROTOCOL + original_task
 
 
 def init_project():
@@ -40,7 +96,8 @@ def init_project():
         ".agent/metrics",
         ".agent/plans",
         ".agent/memory",
-        ".agent/cache"
+        ".agent/cache",
+        ".agent/sops"
     ]
 
     for dir_path in dirs:
@@ -396,10 +453,11 @@ def main():
         epilog="""
 Commands:
     ralph               Run the orchestrator (default)
-    ralph init          Initialize a new Ralph project  
+    ralph init          Initialize a new Ralph project
     ralph status        Show current Ralph status
     ralph clean         Clean up agent workspace
     ralph prompt        Generate structured prompt from rough ideas
+    ralph sop           Run with SOP-based workflow (Native Execution Protocol)
 
 Configuration:
     Use -c/--config to load settings from a YAML file.
@@ -418,6 +476,8 @@ Examples:
     ralph prompt "build a web API"  # Generate API prompt
     ralph prompt -i                 # Interactive prompt creation
     ralph prompt -o task.md "scrape data" "save to CSV"  # Custom output
+    ralph sop -p "Refactor the API" # Run SOP-based workflow
+    ralph sop -a claude -i 50       # SOP with Claude, 50 iterations
 """
     )
     
@@ -459,9 +519,12 @@ Examples:
     
     # Run command (default) - add all the run options
     run_parser = subparsers.add_parser('run', help='Run the orchestrator')
-    
+
+    # SOP command - run with Native Execution Protocol
+    sop_parser = subparsers.add_parser('sop', help='Run with SOP-based workflow (Native Execution Protocol)')
+
     # Core arguments (also at root level for backward compatibility)
-    for p in [parser, run_parser]:
+    for p in [parser, run_parser, sop_parser]:
         p.add_argument(
             "-c", "--config",
             help="Configuration file (YAML format)"
@@ -639,8 +702,27 @@ Examples:
         interactive_mode = args.interactive or not args.ideas
         generate_prompt(args.ideas, args.output, interactive_mode, args.agent)
         sys.exit(0)
-    
-    # Run command (default)
+
+    # SOP command - run with Native Execution Protocol prepended
+    if command == 'sop':
+        # Generate the SOP prompt by prepending the Native Execution Protocol
+        if args.prompt_text:
+            sop_prompt = generate_sop_prompt(prompt_text=args.prompt_text)
+        else:
+            # Use prompt file if no direct text provided
+            prompt_path = Path(args.prompt)
+            if not prompt_path.exists():
+                _console.print_error(f"Prompt file '{args.prompt}' not found")
+                _console.print_info("Please create a PROMPT.md file with your task description.")
+                _console.print_info("Or use -p to provide a prompt directly.")
+                sys.exit(1)
+            sop_prompt = generate_sop_prompt(prompt_file=args.prompt)
+
+        # Override prompt_text with the SOP-enhanced prompt
+        args.prompt_text = sop_prompt
+        # Fall through to the run logic below
+
+    # Run command (default) or SOP command (falls through)
     # Set up logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(

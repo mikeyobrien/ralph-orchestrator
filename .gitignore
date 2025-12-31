@@ -37,7 +37,9 @@ env/
 # Ralph specific
 .ralph/
 .sop/
-.agent/
+# Ignore .agent except for sops (templates for SOP-based workflows)
+.agent/*
+!.agent/sops/
 .logs/
 prompts/
 prompts/archive/
