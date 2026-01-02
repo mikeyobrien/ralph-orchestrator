@@ -22,7 +22,7 @@ retry_delay: 2
 max_tokens: 2000000   # 2M tokens for long sessions
 max_cost: 100.0       # $100 budget for full implementation
 context_window: 200000
-context_threshold: 0.75  # Summarize earlier due to task complexity
+context_threshold: 0.95  # Summarize earlier due to task complexity
 
 # Enable all features for maximum visibility
 archive_prompts: true
@@ -36,7 +36,7 @@ output_preview_length: 1000
 
 # Safety settings
 max_prompt_size: 10485760  # 10MB
-allow_unsafe_paths: false
+allow_unsafe_paths: true
 
 # Web monitoring dashboard settings
 # Enable web UI to monitor self-improvement progress in real-time
