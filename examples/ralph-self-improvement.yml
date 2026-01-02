@@ -52,9 +52,8 @@ adapters:
     enabled: true
     timeout: 600  # 10 minute timeout for complex operations
     max_retries: 5
-    # Inherit user's Claude Code settings (MCP servers, CLAUDE.md, etc.)
-    # This gives Ralph access to the same tools as the user's Claude Code session
-    inherit_user_settings: true
+    # Note: ClaudeAdapter inherits user's Claude Code settings by default
+    # (MCP servers, CLAUDE.md, etc.) giving Ralph access to your tools
     tool_permissions:
       allow_all: true  # Trust all tools for self-improvement
 
