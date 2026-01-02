@@ -50,9 +50,3 @@ adapters:
       agent_command: gemini
       agent_args: ["--experimental-acp"]
       permission_mode: auto_approve
-
-# Output formatting for development
-output_format: rich
-output_verbosity: verbose
-show_token_usage: true
-show_timestamps: true
