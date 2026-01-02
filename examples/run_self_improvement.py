@@ -10,7 +10,8 @@ It handles:
 - Fork verification and sync
 - Feature branch creation
 - RALPH orchestration with proper configuration
-- Progress monitoring
+- Progress monitoring via web UI
+- Inheriting user's Claude Code settings (MCP servers, CLAUDE.md, etc.)
 
 Usage:
     # Implement the Onboarding feature
@@ -19,13 +20,18 @@ Usage:
     # Implement the TUI feature
     python examples/run_self_improvement.py --feature tui
 
+    # Implement the Validation feature with web UI monitoring
+    python examples/run_self_improvement.py --feature validation --with-web-ui
+
     # Check status only
     python examples/run_self_improvement.py --status
 """
 
 import argparse
+import asyncio
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -42,6 +48,12 @@ FEATURES = {
         "prompt": "prompts/TUI_PROMPT.md",
         "title": "Real-Time Terminal User Interface",
         "description": "Live terminal interface for watching RALPH in action",
+    },
+    "validation": {
+        "branch": "feat/agnostic-validation-gates",
+        "prompt": "prompts/VALIDATION_FEATURE_PROMPT.md",
+        "title": "User-Collaborative Validation Gate System",
+        "description": "Opt-in functional validation with user confirmation before proceeding",
     },
 }
 
@@ -145,14 +157,58 @@ def setup_fork(feature: str) -> bool:
     return True
 
 
-def run_ralph(feature: str, verbose: bool = True) -> None:
+def start_web_monitor(port: int = 8000) -> Optional[subprocess.Popen]:
+    """Start the web monitoring server in the background."""
+    print(f"\n🖥️  Starting web monitoring dashboard on port {port}...")
+
+    try:
+        # Start web server as a background process
+        process = subprocess.Popen(
+            [sys.executable, "-m", "ralph_orchestrator.web", "--port", str(port)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Give it a moment to start
+        import time
+        time.sleep(2)
+
+        # Check if it started successfully
+        if process.poll() is None:
+            print(f"  ✓ Web UI started at http://localhost:{port}")
+            print("    Default credentials: admin / ralph-admin-2024")
+            return process
+        else:
+            print("  ✗ Web UI failed to start")
+            return None
+    except Exception as e:
+        print(f"  ✗ Could not start web UI: {e}")
+        return None
+
+
+def run_ralph(feature: str, verbose: bool = True, with_web_ui: bool = False,
+              web_port: int = 8000, open_browser: bool = True) -> None:
     """Run RALPH with the appropriate configuration."""
     feature_info = FEATURES[feature]
+    web_process = None
 
     print(f"\n🚀 Starting RALPH to implement: {feature_info['title']}")
     print(f"   {feature_info['description']}")
     print(f"   Prompt: {feature_info['prompt']}")
+
+    # Start web UI if requested
+    if with_web_ui:
+        web_process = start_web_monitor(web_port)
+        if web_process and open_browser:
+            try:
+                webbrowser.open(f"http://localhost:{web_port}")
+            except Exception:
+                pass  # Browser open is optional
+
     print("\n" + "=" * 60)
+    print("📝 Note: Ralph inherits your Claude Code settings (MCP servers, tools)")
+    print("   This gives Ralph access to all your configured capabilities.")
+    print("=" * 60 + "\n")
 
     cmd = [
         "ralph", "run",
@@ -170,6 +226,15 @@ def run_ralph(feature: str, verbose: bool = True) -> None:
         print("\n⚠️  RALPH exited with errors")
     except KeyboardInterrupt:
         print("\n\n⏹️  RALPH interrupted by user")
+    finally:
+        # Clean up web server if we started it
+        if web_process:
+            print("\n🛑 Stopping web monitoring server...")
+            web_process.terminate()
+            try:
+                web_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                web_process.kill()
 
 
 def show_status() -> None:
@@ -210,8 +275,17 @@ def main():
         epilog="""
 Examples:
   python examples/run_self_improvement.py --feature onboarding
+  python examples/run_self_improvement.py --feature validation --with-web-ui
   python examples/run_self_improvement.py --feature tui --no-setup
   python examples/run_self_improvement.py --status
+
+Web Monitoring:
+  When using --with-web-ui, the script starts a web dashboard at http://localhost:8000
+  to monitor RALPH's progress in real-time. Default credentials: admin / ralph-admin-2024
+
+Claude Code Integration:
+  RALPH automatically inherits your Claude Code settings (MCP servers, CLAUDE.md, etc.)
+  This gives RALPH access to all tools you have configured in your Claude Code session.
         """
     )
 
@@ -239,6 +313,25 @@ Examples:
         help="Run RALPH without verbose output"
     )
 
+    parser.add_argument(
+        "--with-web-ui", "-w",
+        action="store_true",
+        help="Start web monitoring dashboard for real-time progress tracking"
+    )
+
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=8000,
+        help="Port for web monitoring dashboard (default: 8000)"
+    )
+
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Don't automatically open browser when starting web UI"
+    )
+
     args = parser.parse_args()
 
     print("\n🤖 RALPH Self-Improvement Runner")
@@ -260,7 +353,13 @@ Examples:
             sys.exit(1)
 
     # Run RALPH
-    run_ralph(args.feature, verbose=not args.quiet)
+    run_ralph(
+        args.feature,
+        verbose=not args.quiet,
+        with_web_ui=args.with_web_ui,
+        web_port=args.web_port,
+        open_browser=not args.no_browser
+    )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,11 @@
 # Usage:
 #   ralph run -c examples/ralph-self-improvement.yml -P prompts/ONBOARDING_PROMPT.md
 #   ralph run -c examples/ralph-self-improvement.yml -P prompts/TUI_PROMPT.md
+#   ralph run -c examples/ralph-self-improvement.yml -P prompts/VALIDATION_FEATURE_PROMPT.md
+#
+# Or use the self-improvement runner:
+#   python examples/run_self_improvement.py --feature validation
+#   python examples/run_self_improvement.py --feature onboarding --with-web-ui
 
 # Core orchestrator settings
 agent: claude
@@ -33,12 +38,23 @@ output_preview_length: 1000
 max_prompt_size: 10485760  # 10MB
 allow_unsafe_paths: false
 
+# Web monitoring dashboard settings
+# Enable web UI to monitor self-improvement progress in real-time
+web_monitoring:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8000
+  enable_auth: false  # Disable for local development; enable for production
+
 # Adapter configurations optimized for development work
 adapters:
   claude:
     enabled: true
     timeout: 600  # 10 minute timeout for complex operations
     max_retries: 5
+    # Inherit user's Claude Code settings (MCP servers, CLAUDE.md, etc.)
+    # This gives Ralph access to the same tools as the user's Claude Code session
+    inherit_user_settings: true
     tool_permissions:
       allow_all: true  # Trust all tools for self-improvement
 

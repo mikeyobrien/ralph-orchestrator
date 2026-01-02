@@ -47,7 +47,9 @@ class RalphOrchestrator:
         acp_agent: str = None,
         acp_permission_mode: str = None,
         iteration_telemetry: bool = True,
-        output_preview_length: int = 500
+        output_preview_length: int = 500,
+        enable_validation: bool = False,
+        validation_interactive: bool = True
     ):
         """Initialize the orchestrator.
 
@@ -65,6 +67,8 @@ class RalphOrchestrator:
             acp_permission_mode: ACP permission handling mode
             iteration_telemetry: Enable per-iteration telemetry capture
             output_preview_length: Max chars for output preview in telemetry
+            enable_validation: Enable functional validation (opt-in, Claude-only)
+            validation_interactive: Require user confirmation for validation strategy
         """
         # Store ACP-specific settings
         self.acp_agent = acp_agent
@@ -117,7 +121,21 @@ class RalphOrchestrator:
         if not self.current_adapter:
             logger.error(f"DEBUG: primary_tool={self.primary_tool}, adapters={list(self.adapters.keys())}")
             raise ValueError(f"Unknown tool: {self.primary_tool}")
-        
+
+        # Validation feature (opt-in, Claude-only)
+        # Guard: validation only available with Claude adapter
+        if enable_validation and self.primary_tool != "claude":
+            raise ValueError(
+                f"Validation feature is only available with Claude adapter. "
+                f"Current adapter: {self.primary_tool}. "
+                f"Set enable_validation=False or use primary_tool='claude'."
+            )
+
+        self.enable_validation = enable_validation
+        self.validation_interactive = validation_interactive
+        self.validation_proposal = None  # AI's proposed validation strategy
+        self.validation_approved = False  # User confirmation status
+
         # Signal handling - use basic signal registration here
         # The async handlers will be set up when arun() is called
         self.stop_requested = False
@@ -302,6 +320,22 @@ class RalphOrchestrator:
 
         # Set up async signal handlers now that we have a running loop
         self._setup_async_signal_handlers()
+
+        # Phase 0: Validation proposal (if enabled)
+        if self.enable_validation:
+            await self._propose_validation_strategy()
+            
+            if self.validation_interactive:
+                self.validation_approved = await self._get_user_confirmation()
+                
+                if not self.validation_approved:
+                    logger.info("Validation not approved, proceeding without validation")
+                    self.enable_validation = False
+            else:
+                # Non-interactive: auto-approve if proposal was generated
+                self.validation_approved = self.validation_proposal is not None
+                if self.validation_approved:
+                    logger.info("Non-interactive mode: validation auto-approved")
 
         start_time = time.time()
         self._start_time = start_time  # Store for state retrieval
@@ -532,6 +566,95 @@ class RalphOrchestrator:
         if self.metrics.errors > 5:
             logger.info("Too many errors, resetting state")
             self._reset_state()
+
+    # ==========================================================================
+    # Validation Proposal Methods (user-collaborative validation)
+    # ==========================================================================
+
+    def _load_proposal_prompt(self) -> str:
+        """Load the validation proposal prompt from file.
+        
+        Returns:
+            The content of VALIDATION_PROPOSAL_PROMPT.md
+        """
+        prompt_path = Path(__file__).parent.parent.parent / "prompts" / "VALIDATION_PROPOSAL_PROMPT.md"
+        
+        if not prompt_path.exists():
+            logger.warning(f"Validation proposal prompt not found: {prompt_path}")
+            return ""
+        
+        return prompt_path.read_text()
+
+    async def _propose_validation_strategy(self) -> None:
+        """AI proposes validation strategy, stores in validation_proposal.
+        
+        This method loads the proposal prompt and executes it with the
+        current adapter to generate a validation strategy proposal.
+        The proposal is stored for user review before approval.
+        """
+        if not self.enable_validation:
+            return
+        
+        logger.info("Generating validation strategy proposal")
+        
+        # Load the collaborative proposal prompt
+        proposal_prompt = self._load_proposal_prompt()
+        
+        if not proposal_prompt:
+            logger.warning("No proposal prompt available, skipping validation proposal")
+            return
+        
+        # Execute proposal phase with current adapter
+        try:
+            response = await self.current_adapter.arun(
+                proposal_prompt,
+                timeout=300  # 5 minute timeout for proposal
+            )
+            self.validation_proposal = response
+            logger.info("Validation proposal generated successfully")
+        except Exception as e:
+            logger.error(f"Failed to generate validation proposal: {e}")
+            self.validation_proposal = None
+
+    async def _get_user_confirmation(self) -> bool:
+        """Get user confirmation for the validation strategy.
+        
+        In interactive mode, displays the proposal and asks for confirmation.
+        In non-interactive mode, auto-approves.
+        
+        Returns:
+            True if user approves, False otherwise
+        """
+        if not self.validation_interactive:
+            # Non-interactive mode: auto-approve
+            logger.info("Non-interactive mode: auto-approving validation strategy")
+            return True
+        
+        if not self.validation_proposal:
+            logger.warning("No validation proposal to confirm")
+            return False
+        
+        # Display proposal to user
+        self.console.print_header("Validation Strategy Proposal")
+        self.console.print_message(self.validation_proposal)
+        self.console.print_divider()
+        
+        # Ask for confirmation
+        try:
+            response = input("\nDo you approve this validation strategy? (yes/no/skip): ").strip().lower()
+            
+            if response in ("yes", "y"):
+                logger.info("User approved validation strategy")
+                return True
+            elif response in ("skip", "s"):
+                logger.info("User chose to skip validation")
+                return False
+            else:
+                logger.info("User declined validation strategy")
+                return False
+        except (EOFError, KeyboardInterrupt):
+            logger.info("User interrupted confirmation")
+            return False
     
     async def _create_checkpoint(self):
         """Create a git checkpoint asynchronously."""

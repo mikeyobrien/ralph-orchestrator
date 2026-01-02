@@ -61,3 +61,8 @@ site/
 
 .worktrees
 PROMPT.md
+
+# Local tool directories
+.prompts/
+.serena/
+plans/
