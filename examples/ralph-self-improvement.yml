@@ -1,0 +1,58 @@
+# RALPH Self-Improvement Configuration
+# Use this configuration when running RALPH to enhance itself
+#
+# Usage:
+#   ralph run -c examples/ralph-self-improvement.yml -P prompts/ONBOARDING_PROMPT.md
+#   ralph run -c examples/ralph-self-improvement.yml -P prompts/TUI_PROMPT.md
+
+# Core orchestrator settings
+agent: claude
+prompt_file: prompts/TUI_PROMPT.md  # Set to TUI for this branch
+max_iterations: 100
+max_runtime: 14400  # 4 hours
+checkpoint_interval: 3  # Frequent checkpoints for safety
+retry_delay: 2
+
+# Resource limits - generous for complex development tasks
+max_tokens: 2000000   # 2M tokens for long sessions
+max_cost: 100.0       # $100 budget for full implementation
+context_window: 200000
+context_threshold: 0.75  # Summarize earlier due to task complexity
+
+# Enable all features for maximum visibility
+archive_prompts: true
+git_checkpoint: true
+enable_metrics: true
+verbose: true
+
+# Enhanced telemetry for debugging self-improvement
+iteration_telemetry: true
+output_preview_length: 1000
+
+# Safety settings
+max_prompt_size: 10485760  # 10MB
+allow_unsafe_paths: false
+
+# Adapter configurations optimized for development work
+adapters:
+  claude:
+    enabled: true
+    timeout: 600  # 10 minute timeout for complex operations
+    max_retries: 5
+    tool_permissions:
+      allow_all: true  # Trust all tools for self-improvement
+
+  # ACP available as backup
+  acp:
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: gemini
+      agent_args: ["--experimental-acp"]
+      permission_mode: auto_approve
+
+# Output formatting for development
+output_format: rich
+output_verbosity: verbose
+show_token_usage: true
+show_timestamps: true
