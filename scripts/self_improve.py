@@ -6,29 +6,27 @@
 RALPH Self-Improvement Runner
 
 Uses Ralph's Python API directly (no CLI subprocess) to implement features.
-Supports both predefined features and direct prompt file paths.
 All orchestrator parameters are exposed as CLI options.
 
 Usage:
-    # Using direct prompt file (recommended)
-    python scripts/self_improve.py -P prompts/VALIDATION_FEATURE_PROMPT.md
-    python scripts/self_improve.py -P prompts/MY_PROMPT.md --with-web-ui
+    # Run with a prompt file
+    python scripts/self_improve.py -P prompts/MY_FEATURE_PROMPT.md
 
-    # Using predefined features
-    python scripts/self_improve.py --feature validation
-    python scripts/self_improve.py --feature onboarding --verbose
+    # With web UI monitoring
+    python scripts/self_improve.py -P prompts/PROMPT.md --with-web-ui
 
-    # Status
-    python scripts/self_improve.py --status
+    # With custom limits
+    python scripts/self_improve.py -P prompts/PROMPT.md --max-cost 50 --max-iterations 50
+
+    # Dry run to validate setup
+    python scripts/self_improve.py -P prompts/PROMPT.md --dry-run
 """
 
 import argparse
-import subprocess
 import sys
 import threading
 import time
 import webbrowser
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -51,42 +49,6 @@ DEFAULT_CONTEXT_THRESHOLD = 0.95  # Summarize at 95%
 DEFAULT_OUTPUT_PREVIEW = 1000
 
 
-@dataclass
-class FeatureConfig:
-    """Configuration for a self-improvement feature."""
-    name: str
-    branch: str
-    prompt_file: str
-    title: str
-    description: str
-
-
-# Predefined features - use --prompt for custom prompts
-FEATURES = {
-    "onboarding": FeatureConfig(
-        name="onboarding",
-        branch="feature/intelligent-onboarding",
-        prompt_file="prompts/ONBOARDING_PROMPT.md",
-        title="Intelligent Project Onboarding & Pattern Analysis",
-        description="Analyzes project patterns and generates custom configurations",
-    ),
-    "tui": FeatureConfig(
-        name="tui",
-        branch="feature/realtime-tui",
-        prompt_file="prompts/TUI_PROMPT.md",
-        title="Real-Time Terminal User Interface",
-        description="Live terminal interface for watching RALPH in action",
-    ),
-    "validation": FeatureConfig(
-        name="validation",
-        branch="feat/agnostic-validation-gates",
-        prompt_file="prompts/VALIDATION_FEATURE_PROMPT.md",
-        title="User-Collaborative Validation Gate System",
-        description="Opt-in functional validation with user confirmation before proceeding",
-    ),
-}
-
-
 class SelfImprovementRunner:
     """Runs Ralph self-improvement using the Python API directly."""
 
@@ -96,37 +58,6 @@ class SelfImprovementRunner:
         self.orchestrator: Optional[RalphOrchestrator] = None
         self.web_monitor = None
         self.web_thread = None
-
-    def show_status(self) -> None:
-        """Show current status of self-improvement features."""
-        self.console.print_header("RALPH Self-Improvement Status")
-
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True
-        )
-        current_branch = result.stdout.strip() if result.returncode == 0 else "unknown"
-
-        for name, config in FEATURES.items():
-            is_current = current_branch == config.branch
-            marker = ">" if is_current else " "
-
-            prompt_path = Path(config.prompt_file)
-            if prompt_path.exists():
-                content = prompt_path.read_text()
-                if "[x] TASK_COMPLETE" in content:
-                    status_text = "Complete"
-                elif "IN PROGRESS" in content.upper():
-                    status_text = "In Progress"
-                else:
-                    status_text = "Ready"
-            else:
-                status_text = "Prompt missing"
-
-            print(f"\n{marker} {config.title}")
-            print(f"    Branch: {config.branch}")
-            print(f"    Status: {status_text}")
-            print(f"    Prompt: {config.prompt_file}")
 
     def create_orchestrator(
         self,
@@ -139,8 +70,6 @@ class SelfImprovementRunner:
         context_threshold: float = DEFAULT_CONTEXT_THRESHOLD,
         output_preview_length: int = DEFAULT_OUTPUT_PREVIEW,
         iteration_telemetry: bool = True,
-        enable_validation: bool = False,
-        validation_interactive: bool = True,
     ) -> RalphOrchestrator:
         """Create a properly configured RalphOrchestrator instance."""
         prompt_path = Path(prompt_file)
@@ -164,8 +93,6 @@ class SelfImprovementRunner:
             prompt_file_or_config=config,
             iteration_telemetry=iteration_telemetry,
             output_preview_length=output_preview_length,
-            enable_validation=enable_validation,
-            validation_interactive=validation_interactive,
         )
 
         # Configure Claude adapter with all tools
@@ -182,15 +109,15 @@ class SelfImprovementRunner:
 
         return orchestrator
 
-    def start_web_ui(self, port: int = 8000, open_browser: bool = True) -> None:
-        """Start the web monitoring UI."""
+    def start_web_ui(self, port: int = 8000, open_browser: bool = True) -> bool:
+        """Start the web monitoring UI. Returns True if started successfully."""
         try:
             from ralph_orchestrator.web import WebMonitor
 
             self.web_monitor = WebMonitor(
                 host="0.0.0.0",
                 port=port,
-                enable_auth=False,
+                enable_auth=False,  # No auth for self-improvement
             )
 
             def run_server():
@@ -214,18 +141,20 @@ class SelfImprovementRunner:
                 except Exception:
                     pass
 
+            return True
+
         except ImportError as e:
             self.console.print_warning(f"Web UI not available: {e}")
             self.web_monitor = None
+            return False
         except Exception as e:
             self.console.print_warning(f"Could not start web UI: {e}")
             self.web_monitor = None
+            return False
 
     def run_prompt(
         self,
         prompt_file: str,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
         # Orchestration params
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         max_runtime: int = DEFAULT_MAX_RUNTIME,
@@ -235,8 +164,6 @@ class SelfImprovementRunner:
         context_threshold: float = DEFAULT_CONTEXT_THRESHOLD,
         output_preview_length: int = DEFAULT_OUTPUT_PREVIEW,
         iteration_telemetry: bool = True,
-        enable_validation: bool = False,
-        validation_interactive: bool = True,
         # Web UI params
         with_web_ui: bool = False,
         web_port: int = 8000,
@@ -244,13 +171,9 @@ class SelfImprovementRunner:
     ) -> None:
         """Run Ralph with a prompt file."""
         prompt_path = Path(prompt_file)
-        display_title = title or prompt_path.stem
-        display_desc = description or f"Running prompt: {prompt_file}"
 
         self.console.print_header("RALPH Self-Improvement")
-        print(f"\n  Implementing: {display_title}")
-        print(f"   {display_desc}")
-        print(f"   Prompt: {prompt_file}")
+        print(f"\n  Prompt: {prompt_file}")
         print()
         print("=" * 60)
         print("  Ralph inherits your Claude Code settings (MCP servers, tools)")
@@ -271,8 +194,6 @@ class SelfImprovementRunner:
                 context_threshold=context_threshold,
                 output_preview_length=output_preview_length,
                 iteration_telemetry=iteration_telemetry,
-                enable_validation=enable_validation,
-                validation_interactive=validation_interactive,
             )
 
             if self.web_monitor and self.orchestrator:
@@ -296,21 +217,6 @@ class SelfImprovementRunner:
                 traceback.print_exc()
             sys.exit(1)
 
-    def run_feature(self, feature_name: str, **kwargs) -> None:
-        """Run Ralph to implement a predefined feature."""
-        if feature_name not in FEATURES:
-            self.console.print_error(f"Unknown feature: {feature_name}")
-            self.console.print_info(f"Available: {', '.join(FEATURES.keys())}")
-            sys.exit(1)
-
-        feature = FEATURES[feature_name]
-        self.run_prompt(
-            prompt_file=feature.prompt_file,
-            title=feature.title,
-            description=feature.description,
-            **kwargs,
-        )
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -318,41 +224,29 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Direct prompt file (recommended)
-  python scripts/self_improve.py -P prompts/VALIDATION_FEATURE_PROMPT.md
-  python scripts/self_improve.py -P prompts/MY_PROMPT.md --with-web-ui
+  # Run with a prompt file
+  python scripts/self_improve.py -P prompts/MY_FEATURE_PROMPT.md
+
+  # With web UI monitoring
+  python scripts/self_improve.py -P prompts/PROMPT.md --with-web-ui
 
   # With custom limits
   python scripts/self_improve.py -P prompts/PROMPT.md --max-cost 50 --max-iterations 50
 
-  # Predefined features
-  python scripts/self_improve.py --feature validation
-  python scripts/self_improve.py --feature onboarding --verbose
-
-  # Check status
-  python scripts/self_improve.py --status
+  # Dry run to validate setup
+  python scripts/self_improve.py -P prompts/PROMPT.md --with-web-ui --dry-run
 
 Note:
   Ralph automatically inherits your Claude Code settings (MCP servers, etc.)
         """
     )
 
-    # Input options (mutually exclusive)
-    input_group = parser.add_mutually_exclusive_group()
-    input_group.add_argument(
+    # Required: prompt file
+    parser.add_argument(
         "--prompt", "-P",
         type=str,
+        required=True,
         help="Path to prompt file"
-    )
-    input_group.add_argument(
-        "--feature", "-f",
-        choices=list(FEATURES.keys()),
-        help="Predefined feature to implement"
-    )
-    input_group.add_argument(
-        "--status", "-s",
-        action="store_true",
-        help="Show status of predefined features"
     )
 
     # Orchestration limits
@@ -408,18 +302,6 @@ Note:
         help="Disable per-iteration telemetry"
     )
 
-    # Validation settings
-    parser.add_argument(
-        "--enable-validation",
-        action="store_true",
-        help="Enable functional validation (opt-in, Claude-only)"
-    )
-    parser.add_argument(
-        "--no-validation-interactive",
-        action="store_true",
-        help="Skip user confirmation for validation strategy"
-    )
-
     # Web UI options
     parser.add_argument(
         "--with-web-ui", "-w",
@@ -444,23 +326,55 @@ Note:
         action="store_true",
         help="Enable verbose output"
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show configuration without running (validates setup)"
+    )
 
     args = parser.parse_args()
 
     runner = SelfImprovementRunner(verbose=args.verbose)
 
-    if args.status:
-        runner.show_status()
+    # Handle dry-run mode
+    if args.dry_run:
+        prompt_path = Path(args.prompt)
+
+        runner.console.print_header("RALPH Self-Improvement (DRY RUN)")
+        print(f"\n  Prompt: {args.prompt}")
+        print(f"  Prompt exists: {prompt_path.exists()}")
+        print()
+        print("  Configuration:")
+        print(f"    Max iterations: {args.max_iterations}")
+        print(f"    Max runtime: {args.max_runtime}s ({args.max_runtime // 3600}h)")
+        print(f"    Max cost: ${args.max_cost:.2f}")
+        print(f"    Context window: {args.context_window:,} tokens")
+        print(f"    Context threshold: {args.context_threshold:.0%}")
+        print(f"    Checkpoint interval: {args.checkpoint_interval}")
+        print(f"    Web UI: {'enabled' if args.with_web_ui else 'disabled'}")
+        if args.with_web_ui:
+            print(f"    Web port: {args.web_port}")
+        print()
+
+        if not prompt_path.exists():
+            runner.console.print_error(f"Prompt file not found: {args.prompt}")
+            sys.exit(1)
+
+        runner.console.print_success("Dry run complete - configuration valid")
+
+        # Start web UI if requested to verify it works
+        if args.with_web_ui:
+            if runner.start_web_ui(port=args.web_port, open_browser=not args.no_browser):
+                print("\n  Web UI started - press Ctrl+C to stop")
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\n  Stopped")
         return
 
-    if not args.feature and not args.prompt:
-        parser.print_help()
-        print("\n  Please specify --prompt or --feature")
-        sys.exit(1)
-
-    # Build kwargs from all CLI args
+    # Build kwargs from CLI args
     run_kwargs = {
-        # Orchestration
         "max_iterations": args.max_iterations,
         "max_runtime": args.max_runtime,
         "max_cost": args.max_cost,
@@ -469,18 +383,12 @@ Note:
         "context_threshold": args.context_threshold,
         "output_preview_length": args.output_preview_length,
         "iteration_telemetry": not args.no_telemetry,
-        "enable_validation": args.enable_validation,
-        "validation_interactive": not args.no_validation_interactive,
-        # Web UI
         "with_web_ui": args.with_web_ui,
         "web_port": args.web_port,
         "open_browser": not args.no_browser,
     }
 
-    if args.prompt:
-        runner.run_prompt(prompt_file=args.prompt, **run_kwargs)
-    else:
-        runner.run_feature(args.feature, **run_kwargs)
+    runner.run_prompt(prompt_file=args.prompt, **run_kwargs)
 
 
 if __name__ == "__main__":
