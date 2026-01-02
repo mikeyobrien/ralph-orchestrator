@@ -7,22 +7,22 @@ RALPH Self-Improvement Runner
 
 Uses Ralph's Python API directly (no CLI subprocess) to implement features.
 Supports both predefined features and direct prompt file paths.
+All orchestrator parameters are exposed as CLI options.
 
 Usage:
+    # Using direct prompt file (recommended)
+    python scripts/self_improve.py -P prompts/VALIDATION_FEATURE_PROMPT.md
+    python scripts/self_improve.py -P prompts/MY_PROMPT.md --with-web-ui
+
     # Using predefined features
     python scripts/self_improve.py --feature validation
     python scripts/self_improve.py --feature onboarding --verbose
-
-    # Using direct prompt file (more flexible)
-    python scripts/self_improve.py --prompt prompts/VALIDATION_FEATURE_PROMPT.md
-    python scripts/self_improve.py -P prompts/MY_CUSTOM_PROMPT.md --with-web-ui
 
     # Status
     python scripts/self_improve.py --status
 """
 
 import argparse
-import asyncio
 import subprocess
 import sys
 import threading
@@ -38,6 +38,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from ralph_orchestrator.orchestrator import RalphOrchestrator
 from ralph_orchestrator.adapters.claude import ClaudeAdapter
 from ralph_orchestrator.output import RalphConsole
+from ralph_orchestrator.main import RalphConfig, AgentType
+
+
+# Defaults optimized for self-improvement tasks
+DEFAULT_MAX_ITERATIONS = 100
+DEFAULT_MAX_RUNTIME = 14400  # 4 hours
+DEFAULT_MAX_COST = 100.0
+DEFAULT_CHECKPOINT_INTERVAL = 3
+DEFAULT_CONTEXT_WINDOW = 200000  # 200k tokens
+DEFAULT_CONTEXT_THRESHOLD = 0.95  # Summarize at 95%
+DEFAULT_OUTPUT_PREVIEW = 1000
 
 
 @dataclass
@@ -48,11 +59,6 @@ class FeatureConfig:
     prompt_file: str
     title: str
     description: str
-    # Orchestration settings
-    max_iterations: int = 100
-    max_runtime: int = 14400  # 4 hours
-    max_cost: float = 100.0
-    checkpoint_interval: int = 3
 
 
 # Predefined features - use --prompt for custom prompts
@@ -89,12 +95,12 @@ class SelfImprovementRunner:
         self.console = RalphConsole()
         self.orchestrator: Optional[RalphOrchestrator] = None
         self.web_monitor = None
+        self.web_thread = None
 
     def show_status(self) -> None:
         """Show current status of self-improvement features."""
         self.console.print_header("RALPH Self-Improvement Status")
 
-        # Get current git branch
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True
@@ -103,9 +109,8 @@ class SelfImprovementRunner:
 
         for name, config in FEATURES.items():
             is_current = current_branch == config.branch
-            marker = "→" if is_current else " "
+            marker = ">" if is_current else " "
 
-            # Check prompt file status
             prompt_path = Path(config.prompt_file)
             if prompt_path.exists():
                 content = prompt_path.read_text()
@@ -126,38 +131,49 @@ class SelfImprovementRunner:
     def create_orchestrator(
         self,
         prompt_file: str,
-        max_iterations: int = 100,
-        max_runtime: int = 14400,
-        max_cost: float = 100.0,
-        checkpoint_interval: int = 3,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        max_runtime: int = DEFAULT_MAX_RUNTIME,
+        max_cost: float = DEFAULT_MAX_COST,
+        checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
+        context_threshold: float = DEFAULT_CONTEXT_THRESHOLD,
+        output_preview_length: int = DEFAULT_OUTPUT_PREVIEW,
+        iteration_telemetry: bool = True,
+        enable_validation: bool = False,
+        validation_interactive: bool = True,
     ) -> RalphOrchestrator:
         """Create a properly configured RalphOrchestrator instance."""
         prompt_path = Path(prompt_file)
         if not prompt_path.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_file}")
 
-        # Create orchestrator with Python parameters (no YAML)
-        orchestrator = RalphOrchestrator(
-            prompt_file_or_config=str(prompt_path),
-            primary_tool="claude",
+        # Use RalphConfig for full parameter support
+        config = RalphConfig(
+            agent=AgentType.CLAUDE,
+            prompt_file=str(prompt_path),
             max_iterations=max_iterations,
             max_runtime=max_runtime,
-            track_costs=True,
             max_cost=max_cost,
             checkpoint_interval=checkpoint_interval,
+            context_window=context_window,
+            context_threshold=context_threshold,
             verbose=self.verbose,
-            iteration_telemetry=True,
-            output_preview_length=1000,
         )
 
-        # Configure Claude adapter with all tools enabled
+        orchestrator = RalphOrchestrator(
+            prompt_file_or_config=config,
+            iteration_telemetry=iteration_telemetry,
+            output_preview_length=output_preview_length,
+            enable_validation=enable_validation,
+            validation_interactive=validation_interactive,
+        )
+
+        # Configure Claude adapter with all tools
         if 'claude' in orchestrator.adapters:
             claude_adapter: ClaudeAdapter = orchestrator.adapters['claude']
             claude_adapter.configure(
                 enable_all_tools=True,
                 enable_web_search=True,
-                # inherit_user_settings is True by default in ClaudeAdapter
-                # This loads user's MCP servers from ~/.claude/settings.json
             )
             if self.verbose:
                 self.console.print_success(
@@ -174,10 +190,9 @@ class SelfImprovementRunner:
             self.web_monitor = WebMonitor(
                 host="0.0.0.0",
                 port=port,
-                enable_auth=False,  # Disable for local development
+                enable_auth=False,
             )
 
-            # Start web server in background thread
             def run_server():
                 import uvicorn
                 uvicorn.run(
@@ -189,8 +204,6 @@ class SelfImprovementRunner:
 
             self.web_thread = threading.Thread(target=run_server, daemon=True)
             self.web_thread.start()
-
-            # Give server time to start
             time.sleep(1)
 
             self.console.print_success(f"Web UI started at http://localhost:{port}")
@@ -199,7 +212,7 @@ class SelfImprovementRunner:
                 try:
                     webbrowser.open(f"http://localhost:{port}")
                 except Exception:
-                    pass  # Browser open is optional
+                    pass
 
         except ImportError as e:
             self.console.print_warning(f"Web UI not available: {e}")
@@ -213,10 +226,18 @@ class SelfImprovementRunner:
         prompt_file: str,
         title: Optional[str] = None,
         description: Optional[str] = None,
-        max_iterations: int = 100,
-        max_runtime: int = 14400,
-        max_cost: float = 100.0,
-        checkpoint_interval: int = 3,
+        # Orchestration params
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        max_runtime: int = DEFAULT_MAX_RUNTIME,
+        max_cost: float = DEFAULT_MAX_COST,
+        checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
+        context_threshold: float = DEFAULT_CONTEXT_THRESHOLD,
+        output_preview_length: int = DEFAULT_OUTPUT_PREVIEW,
+        iteration_telemetry: bool = True,
+        enable_validation: bool = False,
+        validation_interactive: bool = True,
+        # Web UI params
         with_web_ui: bool = False,
         web_port: int = 8000,
         open_browser: bool = True,
@@ -233,25 +254,27 @@ class SelfImprovementRunner:
         print()
         print("=" * 60)
         print("  Ralph inherits your Claude Code settings (MCP servers, tools)")
-        print("   This gives Ralph access to all your configured capabilities.")
         print("=" * 60)
         print()
 
-        # Start web UI if requested
         if with_web_ui:
             self.start_web_ui(port=web_port, open_browser=open_browser)
 
         try:
-            # Create and run orchestrator
             self.orchestrator = self.create_orchestrator(
                 prompt_file=prompt_file,
                 max_iterations=max_iterations,
                 max_runtime=max_runtime,
                 max_cost=max_cost,
                 checkpoint_interval=checkpoint_interval,
+                context_window=context_window,
+                context_threshold=context_threshold,
+                output_preview_length=output_preview_length,
+                iteration_telemetry=iteration_telemetry,
+                enable_validation=enable_validation,
+                validation_interactive=validation_interactive,
             )
 
-            # Register with web monitor if available
             if self.web_monitor and self.orchestrator:
                 try:
                     self.web_monitor.register_orchestrator(
@@ -281,15 +304,10 @@ class SelfImprovementRunner:
             sys.exit(1)
 
         feature = FEATURES[feature_name]
-
         self.run_prompt(
             prompt_file=feature.prompt_file,
             title=feature.title,
             description=feature.description,
-            max_iterations=feature.max_iterations,
-            max_runtime=feature.max_runtime,
-            max_cost=feature.max_cost,
-            checkpoint_interval=feature.checkpoint_interval,
             **kwargs,
         )
 
@@ -300,42 +318,106 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Using predefined features
+  # Direct prompt file (recommended)
+  python scripts/self_improve.py -P prompts/VALIDATION_FEATURE_PROMPT.md
+  python scripts/self_improve.py -P prompts/MY_PROMPT.md --with-web-ui
+
+  # With custom limits
+  python scripts/self_improve.py -P prompts/PROMPT.md --max-cost 50 --max-iterations 50
+
+  # Predefined features
   python scripts/self_improve.py --feature validation
   python scripts/self_improve.py --feature onboarding --verbose
-
-  # Using direct prompt file (more flexible)
-  python scripts/self_improve.py --prompt prompts/VALIDATION_FEATURE_PROMPT.md
-  python scripts/self_improve.py -P prompts/MY_CUSTOM_PROMPT.md --with-web-ui
-
-  # With web monitoring dashboard
-  python scripts/self_improve.py -P prompts/PROMPT.md --with-web-ui --web-port 9000
 
   # Check status
   python scripts/self_improve.py --status
 
 Note:
   Ralph automatically inherits your Claude Code settings (MCP servers, etc.)
-  giving it access to all tools you have configured.
         """
     )
 
     # Input options (mutually exclusive)
     input_group = parser.add_mutually_exclusive_group()
     input_group.add_argument(
+        "--prompt", "-P",
+        type=str,
+        help="Path to prompt file"
+    )
+    input_group.add_argument(
         "--feature", "-f",
         choices=list(FEATURES.keys()),
         help="Predefined feature to implement"
     )
     input_group.add_argument(
-        "--prompt", "-P",
-        type=str,
-        help="Direct path to prompt file (more flexible than --feature)"
-    )
-    input_group.add_argument(
         "--status", "-s",
         action="store_true",
         help="Show status of predefined features"
+    )
+
+    # Orchestration limits
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=DEFAULT_MAX_ITERATIONS,
+        help=f"Maximum iterations (default: {DEFAULT_MAX_ITERATIONS})"
+    )
+    parser.add_argument(
+        "--max-runtime",
+        type=int,
+        default=DEFAULT_MAX_RUNTIME,
+        help=f"Maximum runtime in seconds (default: {DEFAULT_MAX_RUNTIME} = 4 hours)"
+    )
+    parser.add_argument(
+        "--max-cost",
+        type=float,
+        default=DEFAULT_MAX_COST,
+        help=f"Maximum cost in dollars (default: {DEFAULT_MAX_COST})"
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=DEFAULT_CHECKPOINT_INTERVAL,
+        help=f"Git checkpoint frequency (default: {DEFAULT_CHECKPOINT_INTERVAL})"
+    )
+
+    # Context settings
+    parser.add_argument(
+        "--context-window",
+        type=int,
+        default=DEFAULT_CONTEXT_WINDOW,
+        help=f"Context window size in tokens (default: {DEFAULT_CONTEXT_WINDOW:,})"
+    )
+    parser.add_argument(
+        "--context-threshold",
+        type=float,
+        default=DEFAULT_CONTEXT_THRESHOLD,
+        help=f"Context summarization threshold (default: {DEFAULT_CONTEXT_THRESHOLD})"
+    )
+
+    # Telemetry settings
+    parser.add_argument(
+        "--output-preview-length",
+        type=int,
+        default=DEFAULT_OUTPUT_PREVIEW,
+        help=f"Max chars for output preview in telemetry (default: {DEFAULT_OUTPUT_PREVIEW})"
+    )
+    parser.add_argument(
+        "--no-telemetry",
+        action="store_true",
+        help="Disable per-iteration telemetry"
+    )
+
+    # Validation settings
+    parser.add_argument(
+        "--enable-validation",
+        action="store_true",
+        help="Enable functional validation (opt-in, Claude-only)"
+    )
+    parser.add_argument(
+        "--no-validation-interactive",
+        action="store_true",
+        help="Skip user confirmation for validation strategy"
     )
 
     # Web UI options
@@ -356,26 +438,6 @@ Note:
         help="Don't automatically open browser when starting web UI"
     )
 
-    # Orchestration options
-    parser.add_argument(
-        "--max-iterations",
-        type=int,
-        default=100,
-        help="Maximum iterations (default: 100)"
-    )
-    parser.add_argument(
-        "--max-runtime",
-        type=int,
-        default=14400,
-        help="Maximum runtime in seconds (default: 14400 = 4 hours)"
-    )
-    parser.add_argument(
-        "--max-cost",
-        type=float,
-        default=100.0,
-        help="Maximum cost in dollars (default: 100.0)"
-    )
-
     # Output options
     parser.add_argument(
         "--verbose", "-v",
@@ -393,27 +455,31 @@ Note:
 
     if not args.feature and not args.prompt:
         parser.print_help()
-        print("\n  Please specify --feature or --prompt")
+        print("\n  Please specify --prompt or --feature")
         sys.exit(1)
 
-    # Common kwargs for both modes
+    # Build kwargs from all CLI args
     run_kwargs = {
+        # Orchestration
+        "max_iterations": args.max_iterations,
+        "max_runtime": args.max_runtime,
+        "max_cost": args.max_cost,
+        "checkpoint_interval": args.checkpoint_interval,
+        "context_window": args.context_window,
+        "context_threshold": args.context_threshold,
+        "output_preview_length": args.output_preview_length,
+        "iteration_telemetry": not args.no_telemetry,
+        "enable_validation": args.enable_validation,
+        "validation_interactive": not args.no_validation_interactive,
+        # Web UI
         "with_web_ui": args.with_web_ui,
         "web_port": args.web_port,
         "open_browser": not args.no_browser,
     }
 
     if args.prompt:
-        # Direct prompt file mode
-        runner.run_prompt(
-            prompt_file=args.prompt,
-            max_iterations=args.max_iterations,
-            max_runtime=args.max_runtime,
-            max_cost=args.max_cost,
-            **run_kwargs,
-        )
+        runner.run_prompt(prompt_file=args.prompt, **run_kwargs)
     else:
-        # Predefined feature mode
         runner.run_feature(args.feature, **run_kwargs)
 
 
