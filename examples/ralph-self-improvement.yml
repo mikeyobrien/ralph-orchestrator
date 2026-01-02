@@ -7,7 +7,7 @@
 
 # Core orchestrator settings
 agent: claude
-prompt_file: prompts/TUI_PROMPT.md  # TUI feature for this branch
+prompt_file: prompts/TUI_PROMPT.md  # Default to TUI for this branch
 max_iterations: 100
 max_runtime: 14400  # 4 hours
 checkpoint_interval: 3  # Frequent checkpoints for safety
@@ -50,9 +50,3 @@ adapters:
       agent_command: gemini
       agent_args: ["--experimental-acp"]
       permission_mode: auto_approve
-
-# Output formatting for development
-output_format: rich
-output_verbosity: verbose
-show_token_usage: true
-show_timestamps: true

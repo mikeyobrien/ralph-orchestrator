@@ -1,300 +1,199 @@
-# Task: RALPH Self-Improvement Bootstrap
+# Task: RALPH Self-Improvement - Build Onboarding & TUI Features
 
-This meta-prompt enables RALPH to enhance itself by implementing the Intelligent Project Onboarding and Real-Time TUI features. Run this on your fork of ralph-orchestrator to have RALPH build its own improvements.
+**YOU ARE RALPH ORCHESTRATOR BUILDING YOURSELF.**
 
-## Overview
+This is a meta-prompt that instructs RALPH to implement two major features on its own codebase. You will analyze the existing code, implement new modules, write tests, and update documentation.
 
-This prompt orchestrates RALPH to:
-1. Work on your fork of the ralph-orchestrator repository
-2. Implement one of two major features (Onboarding or TUI)
-3. Create a pull request when success criteria are met
-4. Iterate until the feature is production-ready
+## Mission
 
-## Prerequisites
+Implement these two features:
 
-Before running this prompt, ensure:
+### 1. Intelligent Project Onboarding (`prompts/ONBOARDING_PROMPT.md`)
+Enable ANY Claude Code user to automatically onboard their existing projects to RALPH. The system analyzes:
+- `~/.claude/projects/[hash]/*.jsonl` - Conversation history 
+- `CLAUDE.md` files - Project instructions
+- `.mcp.json` - MCP server configurations
+- Project manifests (package.json, pyproject.toml, etc.)
 
-1. **Fork Setup**
-   ```bash
-   # If you haven't forked yet
-   gh repo fork mikeyobrien/ralph-orchestrator --clone
-   cd ralph-orchestrator
-   git remote add upstream https://github.com/mikeyobrien/ralph-orchestrator.git
-   ```
+And generates optimized `ralph.yml` and system prompts based on proven workflows.
 
-2. **Sync with upstream**
-   ```bash
-   git fetch upstream
-   git checkout main
-   git merge upstream/main
-   ```
-
-3. **Create feature branch**
-   ```bash
-   # For Onboarding feature
-   git checkout -b feature/intelligent-onboarding
-
-   # For TUI feature
-   git checkout -b feature/realtime-tui
-   ```
-
-4. **MCP Configuration**
-   Ensure your Claude configuration includes these MCP servers:
-   - `filesystem` - For reading/writing code files
-   - `github` - For creating PRs and managing the repo
-   - `memory` - For persisting context across sessions
-   - `sequential-thinking` - For complex problem decomposition
-
-## Configuration
-
-### ralph.yml for self-improvement
-
-```yaml
-# Ralph Orchestrator Self-Improvement Configuration
-agent: claude
-prompt_file: prompts/ONBOARDING_PROMPT.md  # or TUI_PROMPT.md
-max_iterations: 100
-max_runtime: 14400  # 4 hours
-checkpoint_interval: 3  # Frequent checkpoints for safety
-retry_delay: 2
-max_tokens: 2000000
-max_cost: 100.0
-context_window: 200000
-context_threshold: 0.75  # Summarize earlier due to complexity
-
-# Features
-archive_prompts: true
-git_checkpoint: true
-enable_metrics: true
-verbose: true
-
-# Telemetry for debugging
-iteration_telemetry: true
-output_preview_length: 1000
-
-# Claude adapter settings
-adapters:
-  claude:
-    enabled: true
-    timeout: 600  # Longer timeout for complex operations
-    max_retries: 5
-    tool_permissions:
-      allow_all: true
-```
-
-### Required MCP Servers
-
-Ensure these are configured in your Claude settings:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-filesystem", "/path/to/ralph-orchestrator"]
-    },
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-github"],
-      "env": {
-        "GITHUB_TOKEN": "your-github-token"
-      }
-    },
-    "memory": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-memory"]
-    },
-    "sequential-thinking": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/mcp-sequential-thinking"]
-    }
-  }
-}
-```
-
-## Execution
-
-### Option 1: Implement Onboarding Feature
-
-```bash
-cd /path/to/your-fork/ralph-orchestrator
-git checkout -b feature/intelligent-onboarding
-
-# Run RALPH to implement the onboarding feature
-ralph run -P prompts/ONBOARDING_PROMPT.md -v
-```
-
-### Option 2: Implement TUI Feature
-
-```bash
-cd /path/to/your-fork/ralph-orchestrator
-git checkout -b feature/realtime-tui
-
-# Run RALPH to implement the TUI feature  
-ralph run -P prompts/TUI_PROMPT.md -v
-```
-
-### Option 3: Use This Bootstrap (Recommended)
-
-This bootstrap prompt handles branch creation, implementation, and PR submission:
-
-```bash
-ralph run -P prompts/BOOTSTRAP_SELF_IMPROVEMENT.md -v
-```
-
-## Feature Selection
-
-Which feature are you implementing? (Select one by uncommenting)
-
-```
-# FEATURE_TARGET: onboarding
-# FEATURE_TARGET: tui
-```
-
-## Implementation Instructions
-
-### Phase 1: Setup (Iteration 1-3)
-
-1. **Verify environment**
-   - [ ] Confirm we're on the correct feature branch
-   - [ ] Verify all MCP servers are accessible
-   - [ ] Check that tests pass in current state
-
-2. **Read the feature prompt**
-   - For Onboarding: Read `prompts/ONBOARDING_PROMPT.md`
-   - For TUI: Read `prompts/TUI_PROMPT.md`
-
-3. **Create module structure**
-   - Create necessary directories
-   - Add `__init__.py` files
-   - Set up basic imports
-
-### Phase 2: Core Implementation (Iteration 4-50)
-
-1. **Follow the Implementation Steps** in the feature prompt
-2. **Write tests as you go** - TDD approach
-3. **Commit after each major step** with descriptive messages
-4. **Update progress** in the feature prompt file
-
-### Phase 3: Integration (Iteration 51-70)
-
-1. **Add CLI commands** to `__main__.py`
-2. **Update documentation** in `docs/`
-3. **Run full test suite** and fix any failures
-4. **Verify backwards compatibility**
-
-### Phase 4: Polish (Iteration 71-90)
-
-1. **Run linting** with `ruff check src/`
-2. **Fix any type errors** if using mypy
-3. **Optimize performance** where needed
-4. **Add examples** to `examples/`
-
-### Phase 5: PR Submission (Iteration 91-100)
-
-1. **Verify all success criteria** are met
-2. **Push to fork**
-   ```bash
-   git push origin feature/<feature-name>
-   ```
-
-3. **Create Pull Request** using GitHub MCP:
-   ```python
-   # Using mcp_github_create_pull_request
-   {
-     "owner": "mikeyobrien",
-     "repo": "ralph-orchestrator",
-     "title": "feat: Intelligent Project Onboarding & Pattern Analysis",
-     "body": "## Summary\n\nImplements intelligent project onboarding...",
-     "head": "<your-username>:feature/intelligent-onboarding",
-     "base": "main"
-   }
-   ```
-
-4. **Mark task complete** in the feature prompt
-
-## Success Criteria Validation
-
-Before creating a PR, verify:
-
-### For Onboarding Feature
-- [ ] `ralph onboard --analyze` produces valid output
-- [ ] `ralph onboard --apply` creates proper configuration files
-- [ ] All new code has test coverage ≥90%
-- [ ] Documentation is complete with examples
-- [ ] All existing tests still pass
-- [ ] No new linting errors
-
-### For TUI Feature
-- [ ] `ralph tui` launches the interface
-- [ ] Real-time output streaming works
-- [ ] All keyboard shortcuts function correctly
-- [ ] WebSocket connection mode works
-- [ ] Test coverage ≥85%
-- [ ] Documentation includes screenshots
-
-## Rollback Strategy
-
-If issues occur:
-
-```bash
-# Reset to last good checkpoint
-git log --oneline -10  # Find good commit
-git reset --hard <good-commit>
-
-# Or reset to main
-git fetch upstream
-git reset --hard upstream/main
-```
-
-## Monitoring Progress
-
-Watch progress with the web UI:
-```bash
-# In another terminal
-uv run python -m ralph_orchestrator.web
-# Open http://localhost:8080
-```
-
-Or check metrics:
-```bash
-ls -la .agent/metrics/
-cat .agent/metrics/metrics_*.json | jq '.summary'
-```
-
-## Communication Protocol
-
-### Updating the prompt file
-
-After completing each major step, update the relevant prompt file:
-- Check off completed items in requirements
-- Update the Progress section
-- Add notes about any deviations
-
-### Signaling completion
-
-When all success criteria are met:
-1. Add `- [x] TASK_COMPLETE` to the feature prompt
-2. This will stop the orchestration loop
-3. The final iteration should create the PR
-
-## Notes
-
-- This is a meta-prompt: RALPH improving RALPH
-- The implementation should respect all existing conventions
-- Focus on incremental, tested changes
-- Each commit should leave the codebase in a working state
-- Prefer small, focused iterations over large changes
-
-## Progress Tracking
-
-### Current Feature: [TO BE SELECTED]
-
-### Status: NOT STARTED
-
-### Session Notes:
-(Add notes during implementation)
+### 2. Real-Time TUI (`prompts/TUI_PROMPT.md`)
+Build a beautiful terminal interface using Textual for live orchestration monitoring:
+- Real-time progress display
+- Streaming agent output
+- Live metrics visualization
+- Keyboard navigation and controls
 
 ---
 
-**Completion Marker:** When the PR is successfully created, add `- [x] TASK_COMPLETE` here.
+## Execution Protocol
+
+### Pre-Flight Checks
+Before starting, verify:
+1. [ ] Read `prompts/ONBOARDING_PROMPT.md` completely
+2. [ ] Read `prompts/TUI_PROMPT.md` completely
+3. [ ] Understand existing code structure in `src/ralph_orchestrator/`
+4. [ ] Review `src/ralph_orchestrator/__main__.py` for CLI patterns
+5. [ ] Check `pyproject.toml` for dependency management
+
+### Phase 1: Onboarding Feature (HIGH PRIORITY)
+
+**Objective**: Create `ralph onboard <project_path>` CLI command
+
+**Implementation Order**:
+1. Create `src/ralph_orchestrator/onboarding/__init__.py`
+2. Implement `scanner.py` - Find Claude history, CLAUDE.md, MCP configs
+3. Implement `history_analyzer.py` - Parse JSONL, extract tool patterns
+4. Implement `pattern_extractor.py` - Identify workflows
+5. Implement `config_generator.py` - Generate ralph.yml
+6. Add CLI subcommand in `__main__.py`
+7. Write tests in `tests/test_onboarding.py`
+8. Create `docs/guide/onboarding.md`
+
+**Key Technical Challenges**:
+- Parsing Claude Code's JSONL format (multiple message types)
+- Mapping project paths to `~/.claude/projects/[hash]/` directories
+- Handling projects with no conversation history gracefully
+- Generating valid YAML configuration
+
+**Success Markers**:
+```bash
+# These should work when Phase 1 is complete:
+ralph onboard ~/projects/my-app --analyze-only
+ralph onboard ~/projects/my-app
+ralph onboard . --merge
+```
+
+### Phase 2: TUI Feature (MEDIUM PRIORITY)
+
+**Objective**: Create `ralph tui` and `ralph watch` CLI commands
+
+**Implementation Order**:
+1. Add `textual` dependency to `pyproject.toml`
+2. Create `src/ralph_orchestrator/tui/__init__.py`
+3. Implement main app in `tui/app.py`
+4. Create widgets: `progress.py`, `output.py`, `tasks.py`, `metrics.py`
+5. Add styling in `tui/ralph.tcss`
+6. Implement `connection.py` for orchestrator communication
+7. Add CLI subcommands in `__main__.py`
+8. Write tests in `tests/test_tui.py`
+9. Create `docs/guide/tui.md`
+
+**Key Technical Challenges**:
+- Integrating Textual's async event loop with orchestrator
+- Real-time data streaming without blocking
+- Responsive layout for different terminal sizes
+- Smooth animations without flickering
+
+**Success Markers**:
+```bash
+# These should work when Phase 2 is complete:
+ralph tui -P PROMPT.md
+ralph watch
+```
+
+---
+
+## Code Quality Standards
+
+### Python Style
+- Type hints for all functions
+- Docstrings for all public classes/methods
+- Follow existing code patterns in the codebase
+- Use dataclasses for data models
+- Use async/await for I/O operations
+
+### Testing
+- Unit tests for all new modules
+- Integration tests for CLI commands
+- Mock external dependencies (file system, Claude history)
+- Target 85%+ coverage
+
+### Documentation
+- Update relevant docs in `docs/`
+- Add CLI help text
+- Include usage examples
+
+---
+
+## Tool Usage Guidelines
+
+### File Operations
+- Use `Read` to examine existing files before modifying
+- Use `Edit` for targeted changes to existing files
+- Use `Write` for new files
+- Use `Grep` to find patterns across the codebase
+
+### Testing
+- Run `pytest tests/test_onboarding.py -v` after implementing onboarding
+- Run `pytest tests/test_tui.py -v` after implementing TUI
+- Run `ruff check src/` to verify code quality
+
+### Git
+- Commit after completing each major component
+- Use descriptive commit messages
+- Check git status before committing
+
+---
+
+## Completion Checklist
+
+### Onboarding Feature
+- [ ] `src/ralph_orchestrator/onboarding/` module exists
+- [ ] `scanner.py` finds all data sources
+- [ ] `history_analyzer.py` parses JSONL files
+- [ ] `pattern_extractor.py` identifies workflows
+- [ ] `config_generator.py` generates ralph.yml
+- [ ] CLI `ralph onboard` command works
+- [ ] Tests pass with 85%+ coverage
+- [ ] Documentation is complete
+
+### TUI Feature
+- [ ] `src/ralph_orchestrator/tui/` module exists
+- [ ] Main TUI application launches
+- [ ] Progress panel shows real-time updates
+- [ ] Output viewer streams agent output
+- [ ] Metrics panel displays live stats
+- [ ] Task sidebar shows queue
+- [ ] Keyboard shortcuts work
+- [ ] CLI `ralph tui` command works
+- [ ] Tests pass with 85%+ coverage
+- [ ] Documentation is complete
+
+---
+
+## When Complete
+
+When BOTH features are fully implemented and tested:
+
+1. Update this file to mark completion:
+   ```markdown
+   - [x] TASK_COMPLETE
+   ```
+
+2. Update the individual feature prompts:
+   - `prompts/ONBOARDING_PROMPT.md` → Status: ✅ COMPLETE
+   - `prompts/TUI_PROMPT.md` → Status: ✅ COMPLETE
+
+3. Run final verification:
+   ```bash
+   pytest tests/ -v
+   ruff check src/
+   ralph onboard --help
+   ralph tui --help
+   ```
+
+---
+
+## Current Status
+
+**Status**: 🚧 IN PROGRESS
+**Phase**: Starting Phase 1 (Onboarding)
+**Priority**: Onboarding > TUI
+
+### Next Action
+Begin implementing `src/ralph_orchestrator/onboarding/scanner.py` to find and inventory all Claude Code data sources for a project.
+
+---
+
+- [ ] TASK_COMPLETE
