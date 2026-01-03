@@ -1,0 +1,100 @@
+=== TEST 1: HELP COMMAND ===
+usage: ralph-validator [-h] [--version] {info,analyze,transform} ...
+
+Ralph Validation CLI - A tool for testing Ralph Orchestrator validation
+
+positional arguments:
+  {info,analyze,transform}
+                        Available commands
+    info                Display tool information
+    analyze             Analyze a file
+    transform           Transform data
+
+options:
+  -h, --help            show this help message and exit
+  --version, -v         show program's version number and exit
+
+Example: ralph-validator info
+
+Exit code: 0
+
+=== TEST 2: INFO COMMAND ===
+==================================================
+       RALPH VALIDATION CLI TOOL
+==================================================
+
+  Name: Ralph Validation CLI
+  Version: 1.0.0
+  Description: Ralph Validation Test - CLI Tool
+  Author: Ralph Orchestrator
+  Timestamp: 2026-01-02T19:40:57.203029
+  Python Version: 3.12.12
+  Platform: darwin
+
+==================================================
+
+Exit code: 0
+
+=== TEST 3: VERSION FLAG ===
+ralph-validator 1.0.0
+
+Exit code: 0
+
+=== TEST 4: ANALYZE COMMAND ===
+
+FILE ANALYSIS REPORT
+----------------------------------------
+  File: test_file.txt
+  Size Bytes: 134
+  Lines: 5
+  Words: 21
+  Characters: 134
+  Non Empty Lines: 4
+  Extension: .txt
+----------------------------------------
+
+
+Exit code: 0
+
+=== TEST 5: TRANSFORM COMMAND (JSON) ===
+{
+  "input": "Hello Ralph",
+  "format": "json",
+  "timestamp": "2026-01-02T19:41:15.013848",
+  "tool": "Ralph Validation CLI",
+  "validation_marker": "Ralph Validation Test"
+}
+
+Exit code: 0
+
+=== TEST 6: TRANSFORM COMMAND (YAML) ===
+---
+input: Hello Ralph
+format: yaml
+timestamp: 2026-01-02T19:41:15.038296
+tool: Ralph Validation CLI
+validation_marker: Ralph Validation Test
+
+Exit code: 0
+
+=== TEST 7: TRANSFORM COMMAND (TEXT) ===
+TRANSFORMED DATA
+========================================
+input: Hello Ralph
+format: text
+timestamp: 2026-01-02T19:41:15.063884
+tool: Ralph Validation CLI
+validation_marker: Ralph Validation Test
+========================================
+
+Exit code: 0
+
+=== TEST 8: ERROR HANDLING (NON-EXISTENT FILE) ===
+Error: File not found: nonexistent_file.txt
+
+Exit code: 1 (correct - error case returns non-zero)
+
+=== VALIDATION SUMMARY ===
+All CLI tests completed successfully.
+Evidence captured: Fri Jan  2 19:41:15 EST 2026
+Sandbox: /tmp/ralph-validation-1767400806

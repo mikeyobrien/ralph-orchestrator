@@ -608,7 +608,22 @@ Examples:
             action="store_true",
             help="Allow potentially unsafe prompt paths"
         )
-        
+
+        # Validation feature flags
+        p.add_argument(
+            "--enable-validation",
+            action="store_true",
+            dest="enable_validation",
+            help="Enable validation feature (Claude-only, opt-in)"
+        )
+
+        p.add_argument(
+            "--no-validation-interactive",
+            action="store_true",
+            dest="no_validation_interactive",
+            help="Disable interactive validation confirmation (for CI/CD)"
+        )
+
         # Collect remaining arguments for agent
         p.add_argument(
             "agent_args",
@@ -767,6 +782,11 @@ Examples:
         acp_agent = getattr(args, 'acp_agent', None)
         acp_permission_mode = getattr(args, 'acp_permission_mode', None)
 
+        # Get validation flags from args
+        enable_validation = getattr(args, 'enable_validation', False)
+        # Note: validation_interactive is True by default, --no-validation-interactive sets it False
+        validation_interactive = not getattr(args, 'no_validation_interactive', False)
+
         # Pass full config to orchestrator so prompt_text is available
         orchestrator = RalphOrchestrator(
             prompt_file_or_config=config,
@@ -778,7 +798,9 @@ Examples:
             checkpoint_interval=config.checkpoint_interval,
             verbose=config.verbose,
             acp_agent=acp_agent,
-            acp_permission_mode=acp_permission_mode
+            acp_permission_mode=acp_permission_mode,
+            enable_validation=enable_validation,
+            validation_interactive=validation_interactive
         )
 
         # Enable all tools for Claude adapter (including WebSearch)

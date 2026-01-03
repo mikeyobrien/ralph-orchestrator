@@ -27,7 +27,7 @@ DEFAULT_PASSWORD_HASH = os.getenv("RALPH_WEB_PASSWORD_HASH", None)
 # If no password hash is provided, generate one for the default password
 if not DEFAULT_PASSWORD_HASH:
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    default_password = os.getenv("RALPH_WEB_PASSWORD", "admin123")
+    default_password = os.getenv("RALPH_WEB_PASSWORD", "admin")
     DEFAULT_PASSWORD_HASH = pwd_context.hash(default_password)
 
 # Password hashing

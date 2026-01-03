@@ -13,7 +13,7 @@ A somewhat functional implementation of the Ralph Wiggum software engineering te
 
 ## 📚 Documentation
 
-**[View Full Documentation](https://mikeyobrien.github.io/ralph-orchestrator/)** | [Quick Start](https://mikeyobrien.github.io/ralph-orchestrator/quick-start/) | [API Reference](https://mikeyobrien.github.io/ralph-orchestrator/api/) | [Examples](https://mikeyobrien.github.io/ralph-orchestrator/examples/)
+**[View Full Documentation](https://mikeyobrien.github.io/ralph-orchestrator/)** | [Quick Start](https://mikeyobrien.github.io/ralph-orchestrator/quick-start/) | [Validation Guide](docs/guide/validation.md) | [API Reference](https://mikeyobrien.github.io/ralph-orchestrator/api/) | [Examples](https://mikeyobrien.github.io/ralph-orchestrator/examples/)
 
 ## Overview
 
@@ -48,6 +48,7 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 - ⚡ **Async-First Design**: Non-blocking I/O throughout (logging, git operations)
 - 📝 **Inline Prompts**: Run with `-p "your task"` without needing a file
 - 🧠 **Agent Scratchpad**: ACP agents persist context across iterations via `.agent/scratchpad.md`
+- ✅ **Validation Feature**: Opt-in collaborative validation with real execution (Claude-only)
 
 ## Installation
 
@@ -218,6 +219,10 @@ Advanced Options:
   --no-git                        Disable git checkpointing
   --no-archive                    Disable prompt archiving
   --no-metrics                    Disable metrics collection
+
+Validation Options (Claude-only):
+  --enable-validation             Enable validation feature (opt-in)
+  --no-validation-interactive     Disable interactive confirmation (for CI/CD)
 ```
 
 ## ACP (Agent Client Protocol) Integration

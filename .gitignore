@@ -43,6 +43,11 @@ prompts/
 prompts/archive/
 ralph_*.log
 ralph_metrics_*.json
+docs-plans-prompts-specs/
+
+# Claude Flow / Swarm tooling
+.claude-flow/
+.swarm/
 
 # Test
 .coverage
@@ -56,3 +61,5 @@ site/
 
 .worktrees
 PROMPT.md
+/.prompts
+/.serena
