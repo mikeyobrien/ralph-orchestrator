@@ -117,7 +117,7 @@ class SelfImprovementRunner:
             self.web_monitor = WebMonitor(
                 host="0.0.0.0",
                 port=port,
-                enable_auth=False,  # No auth for self-improvement
+                enable_auth=True,  # Auth required - frontend always checks for token
             )
 
             def run_server():
