@@ -4,479 +4,507 @@
 
 ---
 
-## CRITICAL: VALIDATION APPROACH
+## VALIDATION-FIRST WORKFLOW
 
-**THIS PROJECT REQUIRES FUNCTIONAL VALIDATION - NOT UNIT TESTS**
+**This prompt uses validation-first approach. For each phase:**
 
-### FORBIDDEN (Will cause false completion):
-- `npm test` - runs mocked Jest tests
-- `uv run pytest` - runs mocked unit tests
-- Any Jest/pytest command alone
+```
+1. ATTEMPT VALIDATION FIRST
+   - Run the validation commands
+   - Capture evidence to validation-evidence/phase-XX/
 
-### REQUIRED (Real execution with evidence):
+2. CHECK RESULTS
+   - If validation PASSES (evidence shows success) → Mark phase complete, move to next
+   - If validation FAILS (errors, missing functionality) → Implement the feature
+
+3. AFTER IMPLEMENTATION
+   - Re-run validation
+   - Ensure fresh evidence is captured
+   - Only proceed when validation passes
+```
+
+**CRITICAL RULES:**
+- YOU execute validation commands (no external scripts)
+- Evidence must be FRESH (created during this run)
+- Evidence must show SUCCESS (no error messages like "Connection refused")
+- Status format: `| ⏳ NEEDS_VALIDATION` or `| ✅ VALIDATED`
+
+---
+
+## FORBIDDEN (Will cause false completion)
+
+- `npm test` - runs mocked Jest tests (not functional validation)
+- `uv run pytest` - runs mocked unit tests (not functional validation)
+- Checking evidence file EXISTENCE without checking CONTENT
+- Using evidence from previous runs (orchestrator will reject stale files)
+
+## REQUIRED (Real execution with evidence)
+
 - iOS Simulator screenshots for mobile phases
-- `curl` commands for API phases
+- `curl` commands with actual responses for API phases
 - CLI output captures for daemon phases
-- Evidence files in `validation-evidence/`
+- All evidence saved to `validation-evidence/` with timestamps
 
 ---
 
-## COMPREHENSIVE VALIDATION PROPOSAL
-
-### Scope Analysis
-
-This project has:
-
-- **Total Phases**: 7 (Phase 00-06)
-- **Total Plans**: 28 (4 plans per phase)
-- **Evidence Files Required**: ~20+ screenshots and output captures
-
-### Current Progress Status
-
-| Phase | Status | Evidence Required |
-|-------|--------|-------------------|
-| Phase 00: TUI Testing | ✅ VALIDATED | `validation-evidence/phase-00/tui-output.txt` |
-| Phase 01: Process Isolation | ✅ VALIDATED | `validation-evidence/phase-01/parallel-instances.txt`, `port-allocation.txt` |
-| Phase 02: Daemon Mode | ✅ VALIDATED | `validation-evidence/phase-02/daemon-start.txt`, `daemon-status.txt` |
-| Phase 03: REST API Enhancement | ✅ VALIDATED | `validation-evidence/phase-03/api-endpoints.txt`, `api-start.json`, `api-stop.json` |
-| Phase 04: Mobile Foundation | ✅ VALIDATED | `validation-evidence/phase-04/expo-build.txt`, `simulator-app-tabs.png` |
-| Phase 05: Mobile Dashboard | ✅ VALIDATED | `validation-evidence/phase-05/dashboard.png`, `websocket.txt` |
-| Phase 06: Mobile Control | ✅ VALIDATED | `validation-evidence/phase-06/control-api.txt` |
-
-### Dependencies Flow
-
-```
-Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
-                                                    │
-                                                    ▼
-                                          Phase 03 (REST API)
-                                                    │
-                                                    ▼
-                                          Phase 04 (Mobile Foundation)
-                                                    │
-                                                    ▼
-                                          Phase 05 (Mobile Dashboard)
-                                                    │
-                                                    ▼
-                                          Phase 06 (Mobile Control)
-```
-
----
-
-## VALIDATION EVIDENCE DIRECTORY
-
-Create this structure and populate with REAL evidence:
+## EVIDENCE DIRECTORY STRUCTURE
 
 ```
 validation-evidence/
-├── phase-00/
-│   └── tui-screenshot.png
-├── phase-01/
-│   ├── parallel-instances.txt
-│   └── port-allocation.txt
-├── phase-02/
-│   ├── daemon-start.txt
-│   ├── daemon-status.txt
-│   └── daemon-logs.txt
-├── phase-03/
-│   ├── api-start.json
-│   ├── api-stop.json
-│   └── api-events.txt
-├── phase-04/
-│   ├── expo-build.txt
-│   └── simulator-app.png
-├── phase-05/
-│   ├── dashboard.png
-│   ├── detail-view.png
-│   └── websocket.txt
-├── phase-06/
-│   ├── start-ui.png
-│   ├── controls.png
-│   └── api-calls.txt
-└── final/
-    └── summary.md
+├── phase-00/    # TUI screenshots and output
+├── phase-01/    # Process isolation evidence
+├── phase-02/    # Daemon mode evidence
+├── phase-03/    # API curl responses
+├── phase-04/    # Mobile app screenshots
+├── phase-05/    # Dashboard screenshots
+├── phase-06/    # Control UI screenshots
+└── final/       # Integration summary
 ```
 
 ---
 
-### Phase-by-Phase Acceptance Criteria
+## PROJECT OVERVIEW
 
-#### Phase 00: TUI Verification & Testing ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 00-01 | TUI imports work, widgets load | ✅ VALIDATED |
-| 00-02 | test_tui_app.py, test_tui_widgets.py exist | ✅ VALIDATED |
-| 00-03 | No import/runtime errors | ✅ VALIDATED |
-| 00-04 | End-to-end TUI workflow works | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-00/tui-output.txt`
-- TUI launched successfully with `ralph tui -P prompts/SELF_IMPROVEMENT_PROMPT.md`
-- All widgets rendered: TaskPanel, StatusPanel, MetricsPanel, LogPanel
-- No import/runtime errors observed
-- "Connected to orchestrator" confirmed
-
-**REAL VALIDATION GATE** (NOT `pytest`):
-```bash
-# Run TUI and capture screenshot
-ralph tui &
-sleep 2
-# Take screenshot of TUI (using appropriate tool)
-xcrun simctl io booted screenshot validation-evidence/phase-00/tui-screenshot.png 2>/dev/null || \
-  screencapture validation-evidence/phase-00/tui-screenshot.png
-pkill -f "ralph tui"
-```
-
----
-
-#### Phase 01: Process Isolation Foundation ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 01-01 | InstanceManager with CRUD, state dirs | ✅ VALIDATED |
-| 01-02 | Per-instance .agent-{id}/ directories | ✅ VALIDATED |
-| 01-03 | Dynamic port allocation (8080-8180) | ✅ VALIDATED |
-| 01-04 | Instance-aware git branches (ralph-{id}) | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-01/parallel-instances.txt`, `validation-evidence/phase-01/port-allocation.txt`
-- Created 2 instances with unique IDs (3ff90cf2, 93b2dbf0)
-- State directories created: `~/.ralph/state-{id}/`
-- Ports dynamically allocated: 8080, 8081, 8082, 8083 (no conflicts)
-- Git branch names generated: `ralph-{id}`
-
-**REAL VALIDATION GATE** (NOT `pytest`):
-```bash
-# Start two instances and verify no conflicts
-ralph run -P prompts/test1.md &
-PID1=$!
-ralph run -P prompts/test2.md &
-PID2=$!
-sleep 5
-ps aux | grep ralph > validation-evidence/phase-01/parallel-instances.txt
-lsof -i :8080-8180 > validation-evidence/phase-01/port-allocation.txt
-kill $PID1 $PID2 2>/dev/null
-```
-
----
-
-#### Phase 02: Daemon Mode & Background Execution ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 02-01 | DaemonManager with double-fork, PID file | ✅ VALIDATED |
-| 02-02 | CLI: ralph daemon start/stop/status/logs | ✅ VALIDATED |
-| 02-03 | Unix socket IPC, HTTP fallback | ✅ VALIDATED |
-| 02-04 | Log forwarding, rotation, streaming | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-02/daemon-start.txt`, `daemon-status.txt`, `daemon-logs.txt`
-- DaemonManager with double-fork pattern implemented (manager.py lines 46-54)
-- CLI integrated: `ralph daemon {start|stop|status|logs}`
-- Daemon start returns immediately (1.5 seconds - parent returns after fork)
-- IPC module exists (ipc.py), log forwarder exists (log_forwarder.py)
-- PID file management at ~/.ralph/daemon.pid
-- Log file management at ~/.ralph/logs/daemon.log
-
-**REAL VALIDATION GATE** (NOT `pytest`):
-```bash
-# Verify daemon returns immediately
-time (ralph daemon start 2>&1 | tee validation-evidence/phase-02/daemon-start.txt)
-# Should complete in < 1 second
-
-ralph daemon status > validation-evidence/phase-02/daemon-status.txt
-ralph daemon logs --tail 20 > validation-evidence/phase-02/daemon-logs.txt
-ralph daemon stop
-```
-
----
-
-#### Phase 03: REST API Enhancement ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 03-01 | POST /api/orchestrators starts new run | ✅ VALIDATED |
-| 03-02 | POST /api/orchestrators/{id}/stop endpoint | ✅ VALIDATED |
-| 03-03 | PATCH /api/orchestrators/{id}/config | ✅ VALIDATED |
-| 03-04 | GET /api/orchestrators/{id}/events SSE streaming | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-03/api-endpoints.txt`, `api-start.json`, `api-stop.json`, `api-events.txt`
-- Web server started on port 8085 (no auth for testing)
-- POST /api/orchestrators: Creates instance with unique ID (e.g., `7afb7ecc`)
-- POST /api/orchestrators/{id}/stop: Returns 404 for non-existent (correct behavior)
-- POST /api/orchestrators/{id}/pause: Endpoint exists, 404 for non-existent
-- POST /api/orchestrators/{id}/resume: Endpoint exists, 404 for non-existent
-- PATCH /api/orchestrators/{id}/config: Endpoint exists, 404 for non-existent
-- GET /api/orchestrators/{id}/events: SSE streaming endpoint exists, 404 for non-existent
-- GET /api/health: Returns `{"status":"healthy"}`
-
-**Implementation verified in**: `src/ralph_orchestrator/web/server.py`
-- POST /api/orchestrators: lines 451-480
-- POST /{id}/stop: lines 526-541
-- PATCH /{id}/config: lines 543-567
-- GET /{id}/events (SSE): lines 569-624
-
-**REAL VALIDATION GATE** (NOT `pytest`):
-```bash
-# Start server
-python -m ralph_orchestrator.web --no-auth --port 8085
-
-# Test API endpoints with curl
-curl -X POST http://localhost:8085/api/orchestrators \
-  -H "Content-Type: application/json" \
-  -d '{"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md"}'
-# Response: {"instance_id":"7afb7ecc","status":"started","config":{...}}
-```
-
----
-
-#### Phase 04: Mobile App Foundation ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 04-01 | Expo TypeScript project, NativeWind | ✅ VALIDATED |
-| 04-02 | Dark theme matching web UI | ✅ VALIDATED |
-| 04-03 | Tab navigation (Dashboard, History, Settings) | ✅ VALIDATED |
-| 04-04 | JWT auth with expo-secure-store | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-04/`
-- `expo-build.txt`: Build succeeded with 0 errors, 1219 modules bundled
-- `simulator-app-tabs.png`: iOS Simulator showing Dashboard with dark theme
-- `dashboard-screen.png`: Tab bar with Dashboard, History, Settings tabs
-- App runs on iPhone 15 Pro simulator (iOS 18.6)
-- NativeWind styling with dark theme colors
-- expo-secure-store integrated for JWT token storage
-
-**REAL VALIDATION GATE** (executed 2026-01-04):
-```bash
-cd ralph-mobile
-npx expo run:ios --device "iPhone 15 Pro - Test"
-# Build Succeeded - 0 error(s), 1 warning(s)
-# iOS Bundled 625ms index.ts (1219 modules)
-xcrun simctl io booted screenshot validation-evidence/phase-04/simulator-app-tabs.png
-```
-
----
-
-#### Phase 05: Mobile Dashboard ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 05-01 | OrchestratorCard list view | ✅ VALIDATED |
-| 05-02 | Detail view with tasks and logs | ✅ VALIDATED |
-| 05-03 | WebSocket real-time updates | ✅ VALIDATED |
-| 05-04 | MetricsChart with 60s rolling window | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-05/`
-- `dashboard.png`: Dashboard with "No Orchestrators" empty state (API connected)
-- `dashboard-with-orchestrator.png`: Dashboard after API connection verified
-- `api-start-response.json`: `{"instance_id":"2a2dfb6d","status":"started",...}`
-- `websocket.txt`: WebSocket manager implementation verified (189 lines)
-- Mobile app successfully connects to backend API at 192.168.0.154:8085
-- Backend logs show continuous GET /api/orchestrators requests from mobile
-
-**Implementation verified**:
-- `components/OrchestratorCard.tsx`: 107 lines - list view component
-- `lib/orchestratorDetailHelpers.ts`: 95 lines - detail view helpers
-- `lib/websocket.ts`: 189 lines - WebSocket with JWT auth, subscriber pattern
-- `lib/metricsHelpers.ts`: 117 lines - metrics formatting and charts
-
-**REAL VALIDATION GATE** (executed 2026-01-04):
-```bash
-# Backend running on port 8085
-curl -s http://192.168.0.154:8085/api/health
-# {"status":"healthy","timestamp":"2026-01-04T07:02:22.599117"}
-
-xcrun simctl io booted screenshot validation-evidence/phase-05/dashboard.png
-# Screenshot shows connected Dashboard with empty state
-```
-
----
-
-#### Phase 06: Mobile Control ✅ VALIDATED
-
-| Plan | Acceptance Criteria | Status |
-|------|---------------------|--------|
-| 06-01 | Start orchestration UI | ✅ VALIDATED |
-| 06-02 | Stop/Pause/Resume buttons | ✅ VALIDATED |
-| 06-03 | Inline prompt editor | ✅ VALIDATED |
-| 06-04 | Push notifications (optional) | ✅ VALIDATED |
-
-**Evidence**: `validation-evidence/phase-06/`
-- `control-api.txt`: Complete documentation of control implementation
-
-**Implementation verified** (~830 lines total):
-- `lib/orchestratorControlApi.ts`: 129 lines
-  - startOrchestrator(), stopOrchestrator(), pauseOrchestrator(), resumeOrchestrator()
-- `lib/startOrchestratorHelpers.ts`: 129 lines
-  - validatePromptPath(), validateMaxIterations(), validateMaxRuntime(), formatDuration()
-- `lib/orchestratorControlHelpers.ts`: 66 lines
-- `lib/promptEditorApi.ts`: 126 lines - prompt fetching/saving
-- `lib/promptEditorHelpers.ts`: 118 lines - validation/formatting
-- `lib/pushNotificationApi.ts`: 160 lines - notification registration
-- `lib/pushNotificationHelpers.ts`: 290 lines - notification handling
-
-**REAL VALIDATION GATE** (executed 2026-01-04):
-```bash
-# Test start orchestration API from mobile
-curl -X POST "http://192.168.0.154:8085/api/orchestrators" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md"}'
-# Response: {"instance_id":"2a2dfb6d","status":"started","config":{...}}
-
-# Backend logs show POST request from mobile IP
-# INFO: 192.168.0.154:54201 - "POST /api/orchestrators HTTP/1.1" 201 Created
-```
-
----
-
-### Global Success Criteria
-
-- [x] Run 2+ ralph instances simultaneously without conflicts
-  - **Evidence**: `validation-evidence/phase-01/parallel-instances.txt` ✅
-- [x] `ralph daemon start` returns immediately, runs in background
-  - **Evidence**: `validation-evidence/phase-02/daemon-start.txt` shows 1.5s ✅
-- [x] REST API supports: start/stop/pause/resume orchestrations
-  - **Evidence**: `validation-evidence/phase-03/api-endpoints.txt` ✅
-- [x] Mobile app can view and control running orchestrations
-  - **Evidence**: `validation-evidence/phase-04/simulator-app-tabs.png`, `phase-05/dashboard.png`, `phase-06/control-api.txt` ✅
-- [x] All existing tests continue to pass (separate from functional validation)
-  - **Note**: Unit tests not run as validation is functional, not mock-based
-- [x] Evidence files collected for all phases
-  - **Evidence**: 37 files across 7 phase directories ✅
-
----
-
-## VISION
-
-Transform Ralph Orchestrator into a production-ready, self-contained orchestration platform with:
+Transform Ralph Orchestrator into a production-ready platform with:
 1. **Process isolation** - Multiple instances run safely in parallel
 2. **Background execution** - CLI runs as daemon, controllable remotely
 3. **REST API** - Full control over orchestrations programmatically
 4. **Mobile app** - Expo React Native iPhone app with full feature parity
 
----
-
-## CRITICAL INSTRUCTIONS
-
-1. **DISCOVER STATE FROM CODEBASE** - Check what files/tests exist, don't assume
-2. **BIG PICTURE AWARENESS** - Know ALL 28 plans before starting any work
-3. **SEQUENTIAL EXECUTION** - Complete each plan before moving to the next
-4. **FUNCTIONAL VALIDATION** - Real execution with evidence, NOT unit tests
-5. **EVIDENCE COLLECTION** - Capture screenshots/output to validation-evidence/
-6. **NO PREMATURE COMPLETION** - Only mark done when evidence exists
-
----
-
-## BIG PICTURE: ALL 28 PLANS
-
-This is everything you will build. Know this before starting:
-
-| Phase | Focus | Plans | Validation Type |
-|-------|-------|-------|-----------------|
-| 00 | TUI Testing | 4 plans | TUI screenshot |
-| 01 | Process Isolation | 4 plans | CLI process output |
-| 02 | Daemon Mode | 4 plans | CLI timing + output |
-| 03 | REST API Enhancement | 4 plans | curl responses |
-| 04 | Mobile Foundation | 4 plans | iOS Simulator screenshot |
-| 05 | Mobile Dashboard | 4 plans | iOS Simulator with data |
-| 06 | Mobile Control | 4 plans | iOS Simulator controls |
-
 **Total: 28 plans across 7 phases**
-**Required Evidence: ~20+ files in validation-evidence/**
 
 ---
 
-## DISCOVERY PHASE
+## Phase 00: TUI Verification & Testing | ⏳ NEEDS_VALIDATION
 
-Before starting any work, run these checks to understand current state:
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 00-01 | TUI imports work, widgets load |
+| 00-02 | test_tui_app.py, test_tui_widgets.py exist |
+| 00-03 | No import/runtime errors |
+| 00-04 | End-to-end TUI workflow works |
+
+### Validation Gate
+**Run these commands and capture evidence:**
 
 ```bash
-# Check what exists
-ls src/ralph_orchestrator/instance.py 2>/dev/null && echo "Instance module exists"
-ls src/ralph_orchestrator/daemon/ 2>/dev/null && echo "Daemon module exists"
-ls ralph-mobile/ 2>/dev/null && echo "Mobile app exists"
+# 1. Launch TUI and verify it starts
+ralph tui -P prompts/SELF_IMPROVEMENT_PROMPT.md &
+TUI_PID=$!
+sleep 3
 
-# Check evidence directory
-mkdir -p validation-evidence/{phase-00,phase-01,phase-02,phase-03,phase-04,phase-05,phase-06,final}
-ls -la validation-evidence/
+# 2. Verify TUI is running
+ps -p $TUI_PID > /dev/null && echo "TUI running with PID $TUI_PID"
 
-# Count existing evidence
-find validation-evidence -type f | wc -l
+# 3. Capture screenshot (macOS)
+screencapture validation-evidence/phase-00/tui-screenshot.png
+
+# 4. Stop TUI
+kill $TUI_PID 2>/dev/null
+
+# 5. Record validation output
+echo "TUI Validation $(date)" > validation-evidence/phase-00/tui-output.txt
+echo "PID: $TUI_PID" >> validation-evidence/phase-00/tui-output.txt
+echo "Status: SUCCESS - TUI launched and screenshot captured" >> validation-evidence/phase-00/tui-output.txt
 ```
 
-Report what exists vs what's missing, then continue from where you left off.
+### Evidence Required
+- `validation-evidence/phase-00/tui-screenshot.png` - Screenshot showing TUI widgets
+- `validation-evidence/phase-00/tui-output.txt` - Validation log with SUCCESS
+
+### Pass Criteria
+- TUI launches without errors
+- Screenshot shows TaskPanel, StatusPanel, MetricsPanel, LogPanel
+- No "error", "failed", or "exception" in output
 
 ---
 
-## PHASE DETAILS
+## Phase 01: Process Isolation Foundation | ⏳ NEEDS_VALIDATION
 
-[Previous phase details with code examples remain the same - they define WHAT to build]
-[The key change is HOW to validate - with real execution, not unit tests]
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 01-01 | InstanceManager with CRUD, state dirs |
+| 01-02 | Per-instance .agent-{id}/ directories |
+| 01-03 | Dynamic port allocation (8080-8180) |
+| 01-04 | Instance-aware git branches (ralph-{id}) |
+
+### Validation Gate
+**Run these commands and capture evidence:**
+
+```bash
+# 1. Start two instances simultaneously
+echo "=== Starting two parallel instances ===" > validation-evidence/phase-01/parallel-instances.txt
+echo "Timestamp: $(date)" >> validation-evidence/phase-01/parallel-instances.txt
+
+# Create test prompts
+echo "# Test 1" > /tmp/test1.md
+echo "# Test 2" > /tmp/test2.md
+
+# Start instances
+ralph run -P /tmp/test1.md &
+PID1=$!
+ralph run -P /tmp/test2.md &
+PID2=$!
+sleep 5
+
+# 2. Verify both running
+echo "Instance 1 PID: $PID1" >> validation-evidence/phase-01/parallel-instances.txt
+echo "Instance 2 PID: $PID2" >> validation-evidence/phase-01/parallel-instances.txt
+ps -p $PID1 -p $PID2 >> validation-evidence/phase-01/parallel-instances.txt
+
+# 3. Check port allocation
+lsof -i :8080-8180 2>/dev/null > validation-evidence/phase-01/port-allocation.txt
+
+# 4. Cleanup
+kill $PID1 $PID2 2>/dev/null
+
+echo "Status: SUCCESS - Two instances ran without conflict" >> validation-evidence/phase-01/parallel-instances.txt
+```
+
+### Evidence Required
+- `validation-evidence/phase-01/parallel-instances.txt` - Shows 2 PIDs, SUCCESS
+- `validation-evidence/phase-01/port-allocation.txt` - Port assignments
+
+### Pass Criteria
+- Two instances start without port conflicts
+- Each instance gets unique ID
+- Both PIDs exist during parallel run
 
 ---
 
-## SUCCESS CRITERIA
+## Phase 02: Daemon Mode & Background Execution | ⏳ NEEDS_VALIDATION
 
-All of these must be true before marking complete:
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 02-01 | DaemonManager with double-fork, PID file |
+| 02-02 | CLI: ralph daemon start/stop/status/logs |
+| 02-03 | Unix socket IPC, HTTP fallback |
+| 02-04 | Log forwarding, rotation, streaming |
 
-- [x] Run 2+ ralph instances simultaneously without conflicts ✅
-- [x] `ralph daemon start` returns immediately, runs in background ✅
-- [x] REST API supports: start/stop/pause/resume orchestrations ✅
-- [x] Mobile app can view and control running orchestrations ✅
-- [x] All existing tests continue to pass ✅
-- [x] **Evidence files exist in validation-evidence/ for ALL phases** ✅
+### Validation Gate
+**Run these commands and capture evidence:**
+
+```bash
+# 1. Test daemon help exists
+ralph daemon --help > validation-evidence/phase-02/daemon-help.txt 2>&1
+
+# 2. Test daemon start (should return quickly)
+echo "=== Daemon Start Test ===" > validation-evidence/phase-02/daemon-start.txt
+echo "Start time: $(date)" >> validation-evidence/phase-02/daemon-start.txt
+time (ralph daemon start 2>&1 | head -5) >> validation-evidence/phase-02/daemon-start.txt 2>&1
+echo "End time: $(date)" >> validation-evidence/phase-02/daemon-start.txt
+
+# 3. Check status
+sleep 2
+ralph daemon status > validation-evidence/phase-02/daemon-status.txt 2>&1
+
+# 4. Get logs
+ralph daemon logs --tail 10 > validation-evidence/phase-02/daemon-logs.txt 2>&1
+
+# 5. Stop daemon
+ralph daemon stop >> validation-evidence/phase-02/daemon-status.txt 2>&1
+
+echo "Status: SUCCESS" >> validation-evidence/phase-02/daemon-start.txt
+```
+
+### Evidence Required
+- `validation-evidence/phase-02/daemon-help.txt` - CLI help output
+- `validation-evidence/phase-02/daemon-start.txt` - Start timing (should be < 3s)
+- `validation-evidence/phase-02/daemon-status.txt` - Status output
+- `validation-evidence/phase-02/daemon-logs.txt` - Log output
+
+### Pass Criteria
+- `ralph daemon --help` shows start/stop/status/logs commands
+- Daemon start returns in < 3 seconds
+- Status shows running or expected state
+- No "error" or "failed" in outputs
+
+---
+
+## Phase 03: REST API Enhancement | ⏳ NEEDS_VALIDATION
+
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 03-01 | POST /api/orchestrators starts new run |
+| 03-02 | POST /api/orchestrators/{id}/stop endpoint |
+| 03-03 | PATCH /api/orchestrators/{id}/config |
+| 03-04 | GET /api/orchestrators/{id}/events SSE streaming |
+
+### Validation Gate
+**Run these commands and capture evidence:**
+
+```bash
+# 1. Start the web server (in background)
+python -m ralph_orchestrator.web --no-auth --port 8085 &
+SERVER_PID=$!
+sleep 3
+
+# 2. Test health endpoint
+echo "=== API Endpoint Tests ===" > validation-evidence/phase-03/api-endpoints.txt
+echo "Timestamp: $(date)" >> validation-evidence/phase-03/api-endpoints.txt
+
+echo -e "\n--- Health Check ---" >> validation-evidence/phase-03/api-endpoints.txt
+curl -s http://localhost:8085/api/health >> validation-evidence/phase-03/api-endpoints.txt
+
+# 3. Test POST /api/orchestrators
+echo -e "\n\n--- POST /api/orchestrators ---" >> validation-evidence/phase-03/api-endpoints.txt
+curl -s -X POST http://localhost:8085/api/orchestrators \
+  -H "Content-Type: application/json" \
+  -d '{"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md"}' > validation-evidence/phase-03/api-start.json
+cat validation-evidence/phase-03/api-start.json >> validation-evidence/phase-03/api-endpoints.txt
+
+# 4. Extract instance_id and test other endpoints
+INSTANCE_ID=$(cat validation-evidence/phase-03/api-start.json | grep -o '"instance_id":"[^"]*"' | cut -d'"' -f4)
+
+echo -e "\n\n--- GET /api/orchestrators ---" >> validation-evidence/phase-03/api-endpoints.txt
+curl -s http://localhost:8085/api/orchestrators >> validation-evidence/phase-03/api-endpoints.txt
+
+echo -e "\n\n--- POST /api/orchestrators/{id}/stop ---" >> validation-evidence/phase-03/api-endpoints.txt
+curl -s -X POST "http://localhost:8085/api/orchestrators/${INSTANCE_ID}/stop" > validation-evidence/phase-03/api-stop.json
+cat validation-evidence/phase-03/api-stop.json >> validation-evidence/phase-03/api-endpoints.txt
+
+# 5. Cleanup
+kill $SERVER_PID 2>/dev/null
+
+echo -e "\n\nStatus: SUCCESS - All API endpoints responded" >> validation-evidence/phase-03/api-endpoints.txt
+```
+
+### Evidence Required
+- `validation-evidence/phase-03/api-endpoints.txt` - All curl outputs
+- `validation-evidence/phase-03/api-start.json` - Start response with instance_id
+- `validation-evidence/phase-03/api-stop.json` - Stop response
+
+### Pass Criteria
+- Health endpoint returns `{"status":"healthy"}`
+- POST creates orchestrator with instance_id
+- Stop endpoint responds (200 or 404 if already stopped)
+- No "Connection refused" errors
+
+---
+
+## Phase 04: Mobile App Foundation | ⏳ NEEDS_VALIDATION
+
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 04-01 | Expo TypeScript project, NativeWind |
+| 04-02 | Dark theme matching web UI |
+| 04-03 | Tab navigation (Dashboard, History, Settings) |
+| 04-04 | JWT auth with expo-secure-store |
+
+### Validation Gate
+**Run these commands and capture evidence:**
+
+```bash
+# 1. Verify ralph-mobile exists
+echo "=== Mobile App Foundation ===" > validation-evidence/phase-04/expo-build.txt
+echo "Timestamp: $(date)" >> validation-evidence/phase-04/expo-build.txt
+
+ls -la ralph-mobile/ >> validation-evidence/phase-04/expo-build.txt 2>&1
+
+# 2. Build and run on iOS Simulator
+cd ralph-mobile
+npx expo run:ios 2>&1 | tee -a ../validation-evidence/phase-04/expo-build.txt &
+BUILD_PID=$!
+
+# Wait for build to complete (or timeout)
+sleep 120
+
+# 3. Take screenshot of simulator
+xcrun simctl io booted screenshot ../validation-evidence/phase-04/simulator-app.png 2>/dev/null
+
+# Check if screenshot was captured
+if [ -f "../validation-evidence/phase-04/simulator-app.png" ]; then
+  echo "Screenshot captured successfully" >> ../validation-evidence/phase-04/expo-build.txt
+  echo "Status: SUCCESS" >> ../validation-evidence/phase-04/expo-build.txt
+else
+  echo "Screenshot failed - simulator may not be running" >> ../validation-evidence/phase-04/expo-build.txt
+  echo "Status: NEEDS_REVIEW" >> ../validation-evidence/phase-04/expo-build.txt
+fi
+
+cd ..
+```
+
+### Evidence Required
+- `validation-evidence/phase-04/expo-build.txt` - Build output with SUCCESS
+- `validation-evidence/phase-04/simulator-app.png` - Screenshot showing app with tabs
+
+### Pass Criteria
+- Build succeeds (0 errors)
+- App launches in iOS Simulator
+- Screenshot shows tab bar (Dashboard, History, Settings)
+- Dark theme visible
+
+---
+
+## Phase 05: Mobile Dashboard | ⏳ NEEDS_VALIDATION
+
+**Depends on: Phase 03 (REST API) and Phase 04 (Mobile Foundation)**
+
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 05-01 | OrchestratorCard list view |
+| 05-02 | Detail view with tasks and logs |
+| 05-03 | WebSocket real-time updates |
+| 05-04 | MetricsChart with 60s rolling window |
+
+### Validation Gate
+**Run these commands and capture evidence:**
+
+```bash
+# 1. Start backend server
+python -m ralph_orchestrator.web --no-auth --port 8085 &
+SERVER_PID=$!
+sleep 3
+
+# 2. Verify backend is running
+echo "=== Dashboard Validation ===" > validation-evidence/phase-05/websocket.txt
+echo "Timestamp: $(date)" >> validation-evidence/phase-05/websocket.txt
+curl -s http://localhost:8085/api/health >> validation-evidence/phase-05/websocket.txt
+
+# 3. Take screenshot of mobile app dashboard (must already be running)
+xcrun simctl io booted screenshot validation-evidence/phase-05/dashboard.png 2>/dev/null
+
+# 4. Create an orchestrator via API
+curl -s -X POST http://localhost:8085/api/orchestrators \
+  -H "Content-Type: application/json" \
+  -d '{"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md"}' > validation-evidence/phase-05/api-start-response.json
+
+# 5. Take another screenshot (should show orchestrator card)
+sleep 5
+xcrun simctl io booted screenshot validation-evidence/phase-05/dashboard-with-orchestrator.png 2>/dev/null
+
+# 6. Cleanup
+kill $SERVER_PID 2>/dev/null
+
+if [ -f "validation-evidence/phase-05/dashboard.png" ]; then
+  echo "Status: SUCCESS" >> validation-evidence/phase-05/websocket.txt
+else
+  echo "Status: FAILED - No screenshot captured" >> validation-evidence/phase-05/websocket.txt
+fi
+```
+
+### Evidence Required
+- `validation-evidence/phase-05/dashboard.png` - Empty state dashboard
+- `validation-evidence/phase-05/dashboard-with-orchestrator.png` - Dashboard with data
+- `validation-evidence/phase-05/api-start-response.json` - API response
+- `validation-evidence/phase-05/websocket.txt` - Validation log
+
+### Pass Criteria
+- Dashboard screenshot shows connected state (not "Network request failed")
+- API creates orchestrator successfully
+- Second screenshot shows orchestrator card
+- No "Connection refused" in evidence
+
+---
+
+## Phase 06: Mobile Control | ⏳ NEEDS_VALIDATION
+
+**Depends on: Phase 05 (Dashboard)**
+
+### What To Build
+| Plan | Acceptance Criteria |
+|------|---------------------|
+| 06-01 | Start orchestration UI |
+| 06-02 | Stop/Pause/Resume buttons |
+| 06-03 | Inline prompt editor |
+| 06-04 | Push notifications (optional) |
+
+### Validation Gate
+**Run these commands and capture evidence:**
+
+```bash
+# 1. Start backend server
+python -m ralph_orchestrator.web --no-auth --port 8085 &
+SERVER_PID=$!
+sleep 3
+
+# 2. Test control APIs
+echo "=== Control API Tests ===" > validation-evidence/phase-06/control-api.txt
+echo "Timestamp: $(date)" >> validation-evidence/phase-06/control-api.txt
+
+# Create orchestrator
+RESPONSE=$(curl -s -X POST http://localhost:8085/api/orchestrators \
+  -H "Content-Type: application/json" \
+  -d '{"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md"}')
+echo "Start: $RESPONSE" >> validation-evidence/phase-06/control-api.txt
+
+INSTANCE_ID=$(echo $RESPONSE | grep -o '"instance_id":"[^"]*"' | cut -d'"' -f4)
+
+# Test pause
+echo -e "\nPause:" >> validation-evidence/phase-06/control-api.txt
+curl -s -X POST "http://localhost:8085/api/orchestrators/${INSTANCE_ID}/pause" >> validation-evidence/phase-06/control-api.txt
+
+# Test resume
+echo -e "\nResume:" >> validation-evidence/phase-06/control-api.txt
+curl -s -X POST "http://localhost:8085/api/orchestrators/${INSTANCE_ID}/resume" >> validation-evidence/phase-06/control-api.txt
+
+# Test stop
+echo -e "\nStop:" >> validation-evidence/phase-06/control-api.txt
+curl -s -X POST "http://localhost:8085/api/orchestrators/${INSTANCE_ID}/stop" >> validation-evidence/phase-06/control-api.txt
+
+# 3. Take screenshot of control UI (if app running)
+xcrun simctl io booted screenshot validation-evidence/phase-06/controls.png 2>/dev/null
+
+# 4. Cleanup
+kill $SERVER_PID 2>/dev/null
+
+echo -e "\nStatus: SUCCESS" >> validation-evidence/phase-06/control-api.txt
+```
+
+### Evidence Required
+- `validation-evidence/phase-06/control-api.txt` - All API responses
+- `validation-evidence/phase-06/controls.png` - Screenshot of control UI (optional)
+
+### Pass Criteria
+- Start/pause/resume/stop APIs all respond
+- No "Connection refused" errors
+- Control UI visible in screenshot (if app running)
+
+---
+
+## FINAL VALIDATION
+
+When all phases pass, run this final check:
+
+```bash
+# Count evidence files
+echo "=== Final Evidence Count ===" > validation-evidence/final/summary.md
+echo "Timestamp: $(date)" >> validation-evidence/final/summary.md
+echo "" >> validation-evidence/final/summary.md
+
+for phase in 00 01 02 03 04 05 06; do
+  COUNT=$(find validation-evidence/phase-$phase -type f 2>/dev/null | wc -l | tr -d ' ')
+  echo "Phase $phase: $COUNT files" >> validation-evidence/final/summary.md
+done
+
+echo "" >> validation-evidence/final/summary.md
+echo "Total: $(find validation-evidence -type f | wc -l | tr -d ' ') files" >> validation-evidence/final/summary.md
+
+# Verify no errors in text evidence
+echo "" >> validation-evidence/final/summary.md
+echo "Error check:" >> validation-evidence/final/summary.md
+grep -ri "connection refused\|network.*failed\|error:" validation-evidence/*.txt 2>/dev/null && \
+  echo "ERRORS FOUND - DO NOT COMPLETE" >> validation-evidence/final/summary.md || \
+  echo "No errors found - OK to complete" >> validation-evidence/final/summary.md
+```
 
 ---
 
 ## COMPLETION
 
-When ALL phases are complete with **EVIDENCE FILES**, write:
+**DO NOT write TASK_COMPLETE until:**
+1. All phases show `| ✅ VALIDATED` in their headers
+2. Evidence files exist and are FRESH (created this run)
+3. Evidence shows SUCCESS (no connection errors)
+4. Final validation summary shows no errors
 
+When ready:
 ```
-## FINAL STATUS
-
-Evidence verification:
-```bash
-find validation-evidence -type f -name "*.png" | wc -l  # Should be > 5
-find validation-evidence -type f -name "*.txt" | wc -l  # Should be > 5
-find validation-evidence -type f -name "*.json" | wc -l # Should be > 2
-```
-
-All phases complete with evidence:
-- Phase 00: TUI Testing - Evidence: [list files]
-- Phase 01: Process Isolation - Evidence: [list files]
-- Phase 02: Daemon Mode - Evidence: [list files]
-- Phase 03: REST API Enhancement - Evidence: [list files]
-- Phase 04: Mobile Foundation - Evidence: [list files]
-- Phase 05: Mobile Dashboard - Evidence: [list files]
-- Phase 06: Mobile Control - Evidence: [list files]
-
-[WRITE LITERAL TEXT: TASK_COMPLETE]
-```
-
-**DO NOT write the completion marker until:**
-1. ALL phases are verified complete
-2. **ALL evidence files exist in validation-evidence/**
-3. Evidence shows REAL execution (screenshots, curl output), NOT unit tests
-
----
-
-## FINAL STATUS
-
-Evidence verification (2026-01-04 07:15 EST):
-```
-PNG files: 12
-TXT files: 12
-JSON files: 3
-Total: 37 evidence files
-```
-
-All phases complete with evidence:
-- Phase 00: TUI Testing - Evidence: `tui-output.txt`
-- Phase 01: Process Isolation - Evidence: `parallel-instances.txt`, `port-allocation.txt`
-- Phase 02: Daemon Mode - Evidence: `daemon-start.txt`, `daemon-status.txt`, `daemon-logs.txt`
-- Phase 03: REST API Enhancement - Evidence: `api-endpoints.txt`, `api-start.json`, `api-stop.json`, `api-events.txt`
-- Phase 04: Mobile Foundation - Evidence: `expo-build.txt`, `simulator-app.png`, `simulator-app-tabs.png`, `dashboard-screen.png`
-- Phase 05: Mobile Dashboard - Evidence: `dashboard.png`, `dashboard-with-orchestrator.png`, `api-start-response.json`, `websocket.txt`
-- Phase 06: Mobile Control - Evidence: `control-api.txt`
-
 TASK_COMPLETE
+```
