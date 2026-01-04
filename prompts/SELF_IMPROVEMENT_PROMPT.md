@@ -26,7 +26,7 @@ I have analyzed the complete prompt and identified:
 | Phase 03: REST API Enhancement | ✅ COMPLETE | 22 tests |
 | Phase 04: Mobile Foundation | ✅ COMPLETE | 42 tests |
 | Phase 05: Mobile Dashboard | ✅ COMPLETE | 96 tests |
-| Phase 06: Mobile Control | ⏳ IN PROGRESS | 80 tests |
+| Phase 06: Mobile Control | ✅ COMPLETE | 128 tests |
 
 ### Dependencies Flow
 
@@ -153,14 +153,14 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 
 ---
 
-#### Phase 06: Mobile Control ⏳ IN PROGRESS
+#### Phase 06: Mobile Control ✅ COMPLETE
 
 | Plan | Acceptance Criteria | Tests | Status |
 |------|---------------------|-------|--------|
 | 06-01 | Start orchestration UI | 22 | ✅ DONE |
 | 06-02 | Stop/Pause/Resume buttons | 26 | ✅ DONE |
 | 06-03 | Inline prompt editor | 32 | ✅ DONE |
-| 06-04 | Push notifications (optional) | ~7 | ⏳ PENDING |
+| 06-04 | Push notifications (optional) | 48 | ✅ DONE |
 
 **Plan 06-01 Implementation Notes:**
 - Created startOrchestratorHelpers.ts with validation and config utilities
@@ -187,6 +187,21 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 - getPromptMetadata: Extracts title, sections, line/char counts
 - hasUnsavedChanges: Compares normalized content for dirty state
 - Created promptEditorApi.ts with GET/PUT /prompt and /prompt/versions endpoints
+
+**Plan 06-04 Implementation Notes:**
+- Created pushNotificationHelpers.ts with notification utilities
+- validatePushToken: Validates Expo and APNs token formats
+- formatNotificationMessage: Formats messages for orchestration_complete, error, validation_required, paused
+- getNotificationType: Extracts type from payload, handles unknown types
+- parseNotificationPayload: Parses JSON, objects, and Expo notification format
+- shouldShowNotification: Checks preferences and mute state
+- createNotificationPreferences: Factory with defaults, all types enabled
+- updateNotificationPreference: Immutable preference updates
+- isNotificationEnabled/getEnabledNotificationTypes: Preference queries
+- formatNotificationTime: Relative time formatting (Just now, Xm ago, Xh ago, Xd ago)
+- Created pushNotificationApi.ts with register/unregister and preferences endpoints
+
+**Status**: 128 tests passing (22 + 26 + 32 + 48)
 
 **Validation Gate**: Complete mobile workflow functional
 
