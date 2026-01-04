@@ -224,7 +224,7 @@ uv run pytest tests/test_run_manager.py -v > .agent/runs/test/validation-evidenc
 
 ---
 
-## Phase O1: Subagent Types & Profiles | ⏳ NEEDS_VALIDATION
+## Phase O1: Subagent Types & Profiles | ✅ VALIDATED
 
 ### What To Build
 

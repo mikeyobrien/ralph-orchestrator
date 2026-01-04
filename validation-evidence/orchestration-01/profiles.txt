@@ -1,0 +1,5 @@
+Subagent profiles defined: ['validator', 'researcher', 'implementer', 'analyst']
+  validator: 2 tools, 2 MCPs
+  researcher: 2 tools, 2 MCPs
+  implementer: 3 tools, 1 MCPs
+  analyst: 1 tools, 1 MCPs

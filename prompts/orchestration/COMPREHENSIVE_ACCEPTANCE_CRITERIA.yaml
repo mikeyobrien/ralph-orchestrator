@@ -99,7 +99,7 @@ phase_00:
 # ============================================================================
 phase_01:
   name: "Subagent Types & Profiles"
-  status: "NEEDS_VALIDATION"
+  status: "VALIDATED"
   goal: |
     Define specialized subagent types (VALIDATOR, RESEARCHER, IMPLEMENTER, ANALYST)
     with specific capabilities, skills, and MCP tools.

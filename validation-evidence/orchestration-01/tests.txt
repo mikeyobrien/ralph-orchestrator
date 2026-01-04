@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.1, pytest-8.4.2, pluggy-1.6.0 -- /Users/nick/Desktop/ralph-orchestrator/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/nick/Desktop/ralph-orchestrator
+configfile: pyproject.toml
+plugins: asyncio-1.1.0, anyio-4.10.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items
+
+tests/test_orchestration_config.py::TestSubagentProfile::test_subagent_profile_is_dataclass PASSED [  8%]
+tests/test_orchestration_config.py::TestSubagentProfile::test_subagent_profile_has_required_fields PASSED [ 16%]
+tests/test_orchestration_config.py::TestSubagentProfile::test_subagent_profile_default_optional_mcps PASSED [ 25%]
+tests/test_orchestration_config.py::TestSubagentProfile::test_subagent_profile_serialization PASSED [ 33%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_subagent_profiles_exists PASSED [ 41%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_subagent_profiles_has_all_types PASSED [ 50%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_validator_profile PASSED [ 58%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_researcher_profile PASSED [ 66%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_implementer_profile PASSED [ 75%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_analyst_profile PASSED [ 83%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_all_profiles_have_prompt_template PASSED [ 91%]
+tests/test_orchestration_config.py::TestSubagentProfiles::test_profiles_are_immutable_copies PASSED [100%]
+
+============================== 12 passed in 0.18s ==============================
