@@ -780,8 +780,8 @@ Python 3.10+
 ### Phase 8: Testing & Documentation (Priority: MEDIUM) 🔄 IN PROGRESS
 - [x] Unit tests for all modules (134 tests across 6 test files)
 - [x] CLI integration tests for ralph onboard command (23 tests)
-- [ ] Integration tests for both analysis modes (static & agent)
-- [ ] Mock MCP servers for testing
+- [x] Integration tests for both analysis modes (static & agent)
+- [x] Mock MCP servers for testing
 - [ ] Usage documentation with examples
 - [ ] Document supported analysis plugins
 
@@ -789,6 +789,25 @@ Python 3.10+
 - Created `tests/test_onboarding_cli.py` with 23 comprehensive CLI integration tests
 - Tests cover: CLI invocation, --static mode, --analyze-only, --dry-run, --output-dir, --no-inherit, agent mode fallback, project type detection, merge mode, success completion
 - Total onboarding tests: 157 (134 unit + 23 CLI integration) - all passing
+
+**Progress (Iteration 9)**: Jan 3, 2026
+- Created `tests/test_onboarding_integration.py` with 14 integration tests
+- Added mock MCP server fixtures:
+  - `mock_mcp_servers`: Provides mock configurations for memory, filesystem, github, fogmap servers
+  - `mock_claude_settings_dir`: Creates mock ~/.claude directory with settings.json
+  - `mock_project_with_mcp`: Creates project with .mcp.json configuration
+  - `mock_project_with_history`: Creates project with mock Claude conversation history
+- Integration tests cover:
+  - Static mode full workflow with Python project
+  - Static mode with Expo project detection
+  - Static mode without history (graceful defaults)
+  - Agent mode with MCP memory detection
+  - Agent mode fallback without memory
+  - Agent mode with mocked Claude response
+  - Fallback from agent to static on failure
+  - MCP server detection (all analysis plugins)
+  - Project MCP overrides user MCP
+- Total onboarding tests: 171 (157 previous + 14 integration) - all passing
 
 ---
 
