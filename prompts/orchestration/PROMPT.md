@@ -6,6 +6,109 @@ This prompt focuses on HOW Ralph orchestrates work (meta-level), separate from W
 
 ---
 
+## COMPREHENSIVE VALIDATION PROPOSAL
+
+### Scope Analysis
+
+I have analyzed the complete prompt and identified:
+- **Total Phases**: 6 (O0-O5)
+- **Total Plans**: 12 (2 per phase)
+- **Evidence Files Required**: 12+ (2 per phase minimum)
+- **Dependencies**: Linear (O0 → O1 → O2 → O3 → O4 → O5)
+
+### Phase Flow Diagram
+
+```
+O0: Run Isolation     → O1: Subagent Profiles → O2: Skill Discovery
+        ↓                      ↓                      ↓
+O3: MCP Discovery    ← ─ ─ ─ ─ ┘                      ↓
+        ↓                                             ↓
+O4: Coordination     ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+        ↓
+O5: Integration      → COMPLETE
+```
+
+### VALIDATION APPROACH: REAL EXECUTION ONLY
+
+All validation uses:
+- **Real Python imports** - Import actual modules, create real objects
+- **CLI output capture** - Redirect output to validation-evidence/
+- **Functional tests** - Tests that create real files and state
+- **NO mock-only tests** - Unit tests supplement but don't replace real execution
+
+### Phase-by-Phase Acceptance Criteria
+
+| Phase | Name | Plans | Validation Method | Evidence Required |
+|-------|------|-------|-------------------|-------------------|
+| O0 | Run Isolation & State Management | 2 | Python import + file creation | run-manager-create.txt, tests.txt |
+| O1 | Subagent Types & Profiles | 2 | Python import + profile listing | profiles.txt, tests.txt |
+| O2 | Skill Discovery | 2 | Python import + skill scan | discovery.txt, tests.txt |
+| O3 | MCP Tool Discovery | 2 | Python import + MCP listing | mcps.txt, tests.txt |
+| O4 | Coordination Protocol | 2 | Python import + file creation | coordination.txt, tests.txt |
+| O5 | Integration & Subagent Spawning | 3 | Full integration test | config.txt, orchestration-manager.txt, tests.txt |
+
+### Global Success Criteria
+
+- [ ] All 6 phases show `| ✅ VALIDATED` status
+- [ ] All unit tests pass (`uv run pytest tests/test_orchestration*.py tests/test_run_manager.py tests/test_discovery.py tests/test_coordinator.py -v`)
+- [ ] Orchestration package exists with all modules
+- [ ] Integration test demonstrates subagent prompt generation
+- [ ] Evidence files exist for all phases (12+ files total)
+
+### Validation Strategy
+
+**FORBIDDEN** (Unit tests with mocks only):
+- `uv run pytest` alone without functional verification
+- Mock-only tests that don't verify real behavior
+
+**REQUIRED** (Real execution):
+- Python imports that verify module structure
+- Real file creation in validation-evidence/
+- CLI output capture showing actual behavior
+- Integration tests with real configuration
+
+### Evidence Directory Structure
+
+```
+validation-evidence/
+├── orchestration-00/           # Run Isolation
+│   ├── run-manager-create.txt  # Run creation output
+│   └── run-manager-tests.txt   # Test results
+├── orchestration-01/           # Subagent Profiles
+│   ├── profiles.txt            # Profile listing
+│   └── tests.txt               # Test results
+├── orchestration-02/           # Skill Discovery
+│   ├── discovery.txt           # Discovered skills
+│   └── tests.txt               # Test results
+├── orchestration-03/           # MCP Discovery
+│   ├── mcps.txt                # Discovered MCPs
+│   └── tests.txt               # Test results
+├── orchestration-04/           # Coordination
+│   ├── coordination.txt        # Coordination files created
+│   └── tests.txt               # Test results
+└── orchestration-05/           # Integration
+    ├── config.txt              # Config field verification
+    ├── orchestration-manager.txt # Manager output
+    └── tests.txt               # Test results
+```
+
+### Approval Required
+
+**Do you approve this REAL EXECUTION validation plan?**
+- [A]pprove - Proceed with functional validation
+- [M]odify - I want to change something
+- [S]kip - Skip validation, proceed without criteria
+
+**Full acceptance criteria saved to:** `prompts/orchestration/COMPREHENSIVE_ACCEPTANCE_CRITERIA.yaml`
+
+---
+
+## ✅ VALIDATION PROPOSAL APPROVED
+
+User approved the validation proposal. Proceeding with Phase O0.
+
+---
+
 ## VALIDATION-FIRST WORKFLOW
 
 For each phase, use the same validation-first approach:

@@ -1,0 +1,583 @@
+# COMPREHENSIVE ACCEPTANCE CRITERIA
+# Ralph Orchestrator - Orchestration Architecture Improvement
+# Generated: 2026-01-04T13:22:00-05:00
+
+project_summary: |
+  Improve Ralph's orchestration architecture to enable parallel subagent execution,
+  skill discovery, MCP tool profiling, coordination protocol, and context optimization.
+  This meta-level improvement focuses on HOW Ralph orchestrates work, separate from
+  WHAT Ralph builds.
+
+  Total: 6 phases (O0-O5)
+  - O0: Run Isolation & State Management
+  - O1: Subagent Types & Profiles
+  - O2: Skill Discovery
+  - O3: MCP Tool Discovery
+  - O4: Coordination Protocol
+  - O5: Integration & Subagent Spawning
+
+evidence_policy:
+  required: true
+  directory: validation-evidence/
+  per_phase: true
+  checkpoint_before_complete: true
+  naming_convention: "orchestration-{phase_number}/{artifact_name}.{ext}"
+
+# ============================================================================
+# PHASE O0: Run Isolation & State Management
+# ============================================================================
+phase_00:
+  name: "Run Isolation & State Management"
+  status: "NEEDS_VALIDATION"
+  goal: |
+    Create run isolation infrastructure so each prompt execution is ID-based,
+    traceable, resumable, and self-contained in .agent/runs/{id}/
+
+  plans:
+    - plan_id: "O0-01"
+      description: "Implement RunManager class with create/get/list operations"
+      acceptance_criteria:
+        - "RunManager class exists in src/ralph_orchestrator/run_manager.py"
+        - "create_run(prompt_path) returns run_id, creates directory structure"
+        - "get_run(run_id) returns RunInfo with manifest"
+        - "get_latest_run(prompt_name) returns most recent run for prompt"
+        - "Manifest includes: prompt_path, started_at, criteria, status"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.run_manager import RunManager
+            rm = RunManager()
+            run_id = rm.create_run('prompts/orchestration/PROMPT.md')
+            print(f'Created run: {run_id}')
+            run_info = rm.get_run(run_id)
+            print(f'Manifest: {run_info.manifest}')
+            print(f'Evidence dir: {run_info.evidence_dir}')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-00/run-manager-create.txt"
+          - "validation-evidence/orchestration-00/run-manager-tests.txt"
+
+    - plan_id: "O0-02"
+      description: "Unit tests for RunManager"
+      acceptance_criteria:
+        - "tests/test_run_manager.py exists with comprehensive coverage"
+        - "All tests pass"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - "uv run pytest tests/test_run_manager.py -v"
+        evidence_required:
+          - "validation-evidence/orchestration-00/run-manager-tests.txt"
+
+  phase_validation:
+    type: "functional"
+    command: |
+      uv run python -c "
+      from ralph_orchestrator.run_manager import RunManager
+      rm = RunManager()
+      # Create a test run
+      run_id = rm.create_run('prompts/orchestration/PROMPT.md')
+      assert run_id is not None
+      # Retrieve it
+      run_info = rm.get_run(run_id)
+      assert run_info.manifest['prompt_path'] == 'prompts/orchestration/PROMPT.md'
+      # Check evidence dir exists
+      import os
+      assert os.path.isdir(run_info.evidence_dir)
+      print('PHASE O0 VALIDATION: PASS')
+      "
+    evidence_directory: "validation-evidence/orchestration-00/"
+    expected_files:
+      - "run-manager-create.txt"
+      - "run-manager-tests.txt"
+    expected_result: "PHASE O0 VALIDATION: PASS"
+
+# ============================================================================
+# PHASE O1: Subagent Types & Profiles
+# ============================================================================
+phase_01:
+  name: "Subagent Types & Profiles"
+  status: "NEEDS_VALIDATION"
+  goal: |
+    Define specialized subagent types (VALIDATOR, RESEARCHER, IMPLEMENTER, ANALYST)
+    with specific capabilities, skills, and MCP tools.
+
+  plans:
+    - plan_id: "O1-01"
+      description: "Implement SubagentProfile dataclass and default profiles"
+      acceptance_criteria:
+        - "SubagentProfile dataclass exists in src/ralph_orchestrator/orchestration/config.py"
+        - "Default profiles for all 4 subagent types (validator, researcher, implementer, analyst)"
+        - "Each profile specifies: name, description, required_tools, required_mcps, optional_mcps, prompt_template"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.orchestration.config import SubagentProfile, SUBAGENT_PROFILES
+            print('Subagent profiles defined:', list(SUBAGENT_PROFILES.keys()))
+            for name, profile in SUBAGENT_PROFILES.items():
+                print(f'  {name}: {len(profile.required_tools)} tools, {len(profile.required_mcps)} MCPs')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-01/profiles.txt"
+
+    - plan_id: "O1-02"
+      description: "Unit tests for orchestration config"
+      acceptance_criteria:
+        - "tests/test_orchestration_config.py exists"
+        - "Tests cover profile creation, validation, serialization"
+        - "All tests pass"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - "uv run pytest tests/test_orchestration_config.py -v"
+        evidence_required:
+          - "validation-evidence/orchestration-01/tests.txt"
+
+  phase_validation:
+    type: "functional"
+    command: |
+      uv run python -c "
+      from ralph_orchestrator.orchestration.config import SubagentProfile, SUBAGENT_PROFILES
+      # Verify all 4 subagent types exist
+      required_types = {'validator', 'researcher', 'implementer', 'analyst'}
+      actual_types = set(SUBAGENT_PROFILES.keys())
+      assert required_types == actual_types, f'Missing types: {required_types - actual_types}'
+      # Verify each profile has required fields
+      for name, profile in SUBAGENT_PROFILES.items():
+          assert profile.name
+          assert profile.description
+          assert hasattr(profile, 'required_tools')
+          assert hasattr(profile, 'required_mcps')
+      print('PHASE O1 VALIDATION: PASS')
+      "
+    evidence_directory: "validation-evidence/orchestration-01/"
+    expected_files:
+      - "profiles.txt"
+      - "tests.txt"
+    expected_result: "PHASE O1 VALIDATION: PASS"
+
+# ============================================================================
+# PHASE O2: Skill Discovery
+# ============================================================================
+phase_02:
+  name: "Skill Discovery"
+  status: "NEEDS_VALIDATION"
+  goal: |
+    Create skill discovery mechanism that scans ~/.claude/skills/, reads SKILL.md
+    files, builds skill index, and maps skills to subagent types.
+
+  plans:
+    - plan_id: "O2-01"
+      description: "Implement discover_skills() and get_skills_for_subagent()"
+      acceptance_criteria:
+        - "discover_skills() function exists in src/ralph_orchestrator/orchestration/discovery.py"
+        - "Returns dict of skill_name -> SkillInfo objects"
+        - "SkillInfo contains: path, description, subagent_types"
+        - "get_skills_for_subagent(subagent_type) returns relevant skills"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.orchestration.discovery import discover_skills, get_skills_for_subagent
+            skills = discover_skills()
+            print(f'Discovered {len(skills)} skills')
+            for subagent_type in ['validator', 'researcher', 'implementer', 'analyst']:
+                relevant = get_skills_for_subagent(subagent_type)
+                print(f'{subagent_type}: {len(relevant)} relevant skills')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-02/discovery.txt"
+
+    - plan_id: "O2-02"
+      description: "Unit tests for skill discovery"
+      acceptance_criteria:
+        - "tests/test_discovery.py exists"
+        - "Tests cover skill scanning, parsing, filtering"
+        - "All tests pass"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - "uv run pytest tests/test_discovery.py::TestSkillDiscovery -v"
+        evidence_required:
+          - "validation-evidence/orchestration-02/tests.txt"
+
+  phase_validation:
+    type: "functional"
+    command: |
+      uv run python -c "
+      from ralph_orchestrator.orchestration.discovery import discover_skills, get_skills_for_subagent
+      skills = discover_skills()
+      # Should find at least some skills
+      assert len(skills) > 0, 'No skills discovered'
+      # Each skill should have required fields
+      for name, info in list(skills.items())[:3]:
+          assert info.path
+          assert info.description or info.description == ''
+      # Subagent filtering should work
+      validator_skills = get_skills_for_subagent('validator')
+      assert isinstance(validator_skills, dict)
+      print('PHASE O2 VALIDATION: PASS')
+      "
+    evidence_directory: "validation-evidence/orchestration-02/"
+    expected_files:
+      - "discovery.txt"
+      - "tests.txt"
+    expected_result: "PHASE O2 VALIDATION: PASS"
+
+# ============================================================================
+# PHASE O3: MCP Tool Discovery
+# ============================================================================
+phase_03:
+  name: "MCP Tool Discovery"
+  status: "NEEDS_VALIDATION"
+  goal: |
+    Create MCP discovery mechanism that reads ~/.claude.json for available MCP
+    servers, checks project-level disabledMcpServers, and maps MCPs to subagent types.
+
+  plans:
+    - plan_id: "O3-01"
+      description: "Implement discover_mcps() and get_mcps_for_subagent()"
+      acceptance_criteria:
+        - "discover_mcps() function exists in src/ralph_orchestrator/orchestration/discovery.py"
+        - "Returns dict of mcp_name -> MCPInfo objects"
+        - "MCPInfo contains: name, command, enabled, tools"
+        - "get_mcps_for_subagent(subagent_type) returns relevant MCPs"
+        - "Handles missing/disabled MCPs gracefully"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.orchestration.discovery import discover_mcps, get_mcps_for_subagent
+            mcps = discover_mcps()
+            print(f'Discovered {len(mcps)} MCP servers')
+            for name, info in list(mcps.items())[:5]:
+                print(f'  {name}: enabled={info.enabled}')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-03/mcps.txt"
+
+    - plan_id: "O3-02"
+      description: "Unit tests for MCP discovery"
+      acceptance_criteria:
+        - "tests/test_discovery.py::TestMCPDiscovery exists"
+        - "Tests cover MCP parsing, disabled server handling, filtering"
+        - "All tests pass"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - "uv run pytest tests/test_discovery.py::TestMCPDiscovery -v"
+        evidence_required:
+          - "validation-evidence/orchestration-03/tests.txt"
+
+  phase_validation:
+    type: "functional"
+    command: |
+      uv run python -c "
+      from ralph_orchestrator.orchestration.discovery import discover_mcps, get_mcps_for_subagent
+      mcps = discover_mcps()
+      # Should return dict (even if empty on systems without MCPs)
+      assert isinstance(mcps, dict)
+      # If MCPs found, verify structure
+      for name, info in list(mcps.items())[:3]:
+          assert hasattr(info, 'name')
+          assert hasattr(info, 'enabled')
+      # Subagent filtering should work
+      researcher_mcps = get_mcps_for_subagent('researcher')
+      assert isinstance(researcher_mcps, dict)
+      print('PHASE O3 VALIDATION: PASS')
+      "
+    evidence_directory: "validation-evidence/orchestration-03/"
+    expected_files:
+      - "mcps.txt"
+      - "tests.txt"
+    expected_result: "PHASE O3 VALIDATION: PASS"
+
+# ============================================================================
+# PHASE O4: Coordination Protocol
+# ============================================================================
+phase_04:
+  name: "Coordination Protocol"
+  status: "NEEDS_VALIDATION"
+  goal: |
+    Implement coordination via shared files: current-attempt.json, shared-context.md,
+    attempt-journal.md, and subagent-results/*.json
+
+  plans:
+    - plan_id: "O4-01"
+      description: "Implement CoordinationManager class"
+      acceptance_criteria:
+        - "CoordinationManager class exists in src/ralph_orchestrator/orchestration/coordinator.py"
+        - "init_coordination() creates directory structure"
+        - "write_attempt_start() creates current-attempt.json"
+        - "write_shared_context() updates shared-context.md"
+        - "collect_results() reads all subagent-results/*.json"
+        - "append_to_journal() updates attempt-journal.md"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.orchestration.coordinator import CoordinationManager
+            cm = CoordinationManager()
+            cm.init_coordination()
+            cm.write_attempt_start(1, 'phase-test', ['Test acceptance'])
+            cm.write_shared_context({'phase': 'test', 'criteria': ['Test']})
+            print('Coordination files created:')
+            import os
+            for f in os.listdir('.agent/coordination'):
+                print(f'  {f}')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-04/coordination.txt"
+
+    - plan_id: "O4-02"
+      description: "Unit tests for CoordinationManager"
+      acceptance_criteria:
+        - "tests/test_coordinator.py exists"
+        - "Tests cover all CoordinationManager methods"
+        - "All tests pass"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - "uv run pytest tests/test_coordinator.py -v"
+        evidence_required:
+          - "validation-evidence/orchestration-04/tests.txt"
+
+  phase_validation:
+    type: "functional"
+    command: |
+      uv run python -c "
+      import os
+      from ralph_orchestrator.orchestration.coordinator import CoordinationManager
+      cm = CoordinationManager()
+      cm.init_coordination()
+      # Verify directory structure
+      assert os.path.isdir('.agent/coordination')
+      # Write and verify files
+      cm.write_attempt_start(99, 'validation-phase', ['criterion1'])
+      assert os.path.isfile('.agent/coordination/current-attempt.json')
+      cm.write_shared_context({'test': True})
+      assert os.path.isfile('.agent/coordination/shared-context.md')
+      print('PHASE O4 VALIDATION: PASS')
+      "
+    evidence_directory: "validation-evidence/orchestration-04/"
+    expected_files:
+      - "coordination.txt"
+      - "tests.txt"
+    expected_result: "PHASE O4 VALIDATION: PASS"
+
+# ============================================================================
+# PHASE O5: Integration & Subagent Spawning
+# ============================================================================
+phase_05:
+  name: "Integration & Subagent Spawning"
+  status: "NEEDS_VALIDATION"
+  goal: |
+    Integrate all components with Ralph's main loop: add enable_orchestration to
+    RalphConfig, spawn subagents via Task tool, generate prompts with skills/MCPs,
+    aggregate results.
+
+  plans:
+    - plan_id: "O5-01"
+      description: "Add enable_orchestration to RalphConfig"
+      acceptance_criteria:
+        - "enable_orchestration: bool field exists in RalphConfig dataclass"
+        - "Default value is False"
+        - "Config validation accepts the field"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.main import RalphConfig
+            config = RalphConfig(enable_orchestration=True)
+            print(f'enable_orchestration: {config.enable_orchestration}')
+            config2 = RalphConfig()
+            print(f'default value: {config2.enable_orchestration}')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-05/config.txt"
+
+    - plan_id: "O5-02"
+      description: "Implement OrchestrationManager"
+      acceptance_criteria:
+        - "OrchestrationManager class exists in src/ralph_orchestrator/orchestration/__init__.py"
+        - "generate_subagent_prompt() creates prompt with skills/MCPs/coordination"
+        - "spawn_subagents() prepares Task tool invocations"
+        - "aggregate_results() combines subagent outputs"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - |
+            uv run python -c "
+            from ralph_orchestrator.main import RalphConfig
+            from ralph_orchestrator.orchestration import OrchestrationManager
+            config = RalphConfig(enable_orchestration=True)
+            om = OrchestrationManager(config)
+            prompt = om.generate_subagent_prompt('validator', 'Test phase', ['Criterion 1'])
+            print(f'Generated prompt length: {len(prompt)} chars')
+            print(f'Contains skill instructions: {\"Skill(\" in prompt or \"skill\" in prompt.lower()}')
+            print(f'Contains MCP references: {\"MCP\" in prompt or \"mcp\" in prompt.lower()}')
+            "
+        evidence_required:
+          - "validation-evidence/orchestration-05/orchestration-manager.txt"
+
+    - plan_id: "O5-03"
+      description: "Integration tests for subagent workflow"
+      acceptance_criteria:
+        - "tests/test_orchestration_integration.py exists"
+        - "Tests verify end-to-end orchestration flow"
+        - "All tests pass (using mocks for actual subagent execution)"
+      validation_gate:
+        type: "real_execution"
+        commands:
+          - "uv run pytest tests/test_orchestration_integration.py -v"
+        evidence_required:
+          - "validation-evidence/orchestration-05/tests.txt"
+
+  phase_validation:
+    type: "functional"
+    command: |
+      uv run python -c "
+      from ralph_orchestrator.main import RalphConfig
+      from ralph_orchestrator.orchestration import OrchestrationManager
+      from ralph_orchestrator.orchestration.config import SUBAGENT_PROFILES
+      from ralph_orchestrator.orchestration.discovery import discover_skills, discover_mcps
+      from ralph_orchestrator.orchestration.coordinator import CoordinationManager
+
+      # Full integration test
+      config = RalphConfig(enable_orchestration=True)
+      om = OrchestrationManager(config)
+
+      # Test all subagent types
+      for subagent_type in ['validator', 'researcher', 'implementer', 'analyst']:
+          prompt = om.generate_subagent_prompt(subagent_type, 'Integration test', ['Test criterion'])
+          assert len(prompt) > 100, f'{subagent_type} prompt too short'
+
+      # Verify coordination setup
+      cm = CoordinationManager()
+      cm.init_coordination()
+
+      # Verify discovery works
+      skills = discover_skills()
+      mcps = discover_mcps()
+
+      print('PHASE O5 VALIDATION: PASS')
+      print(f'Skills: {len(skills)}, MCPs: {len(mcps)}, Profiles: {len(SUBAGENT_PROFILES)}')
+      "
+    evidence_directory: "validation-evidence/orchestration-05/"
+    expected_files:
+      - "config.txt"
+      - "orchestration-manager.txt"
+      - "tests.txt"
+    expected_result: "PHASE O5 VALIDATION: PASS"
+
+# ============================================================================
+# GLOBAL SUCCESS CRITERIA
+# ============================================================================
+global_success_criteria:
+  - criterion: "All 6 phases complete with VALIDATED status"
+    verification: |
+      grep -c "| ✅ VALIDATED" prompts/orchestration/PROMPT.md
+      # Should return 6
+    evidence_type: "cli_output"
+
+  - criterion: "All unit tests pass"
+    verification: "uv run pytest tests/test_run_manager.py tests/test_orchestration_config.py tests/test_discovery.py tests/test_coordinator.py tests/test_orchestration_integration.py -v"
+    evidence_type: "cli_output"
+
+  - criterion: "Orchestration package fully implemented"
+    verification: |
+      ls -la src/ralph_orchestrator/orchestration/
+      # Should show: __init__.py, config.py, discovery.py, coordinator.py
+    evidence_type: "cli_output"
+
+  - criterion: "Integration test demonstrates full workflow"
+    verification: |
+      uv run python -c "
+      from ralph_orchestrator.orchestration import OrchestrationManager
+      from ralph_orchestrator.main import RalphConfig
+      config = RalphConfig(enable_orchestration=True)
+      om = OrchestrationManager(config)
+      for t in ['validator', 'researcher', 'implementer', 'analyst']:
+          prompt = om.generate_subagent_prompt(t, 'Test', ['Criterion'])
+          assert len(prompt) > 100
+      print('Integration: PASS')
+      "
+    evidence_type: "cli_output"
+
+  - criterion: "Evidence files exist for all phases"
+    verification: |
+      for phase in orchestration-00 orchestration-01 orchestration-02 orchestration-03 orchestration-04 orchestration-05; do
+        echo "$phase: $(ls validation-evidence/$phase 2>/dev/null | wc -l) files"
+      done
+    evidence_type: "cli_output"
+
+# ============================================================================
+# COMPLETION GATE
+# ============================================================================
+completion_gate:
+  verification_script: |
+    #!/bin/bash
+    set -e
+
+    echo "=== COMPLETION GATE VERIFICATION ==="
+
+    # 1. Check all evidence directories exist and have files
+    echo "Checking evidence directories..."
+    for phase in orchestration-00 orchestration-01 orchestration-02 orchestration-03 orchestration-04 orchestration-05; do
+      count=$(ls validation-evidence/$phase 2>/dev/null | wc -l)
+      echo "  $phase: $count files"
+      if [ "$count" -eq "0" ]; then
+        echo "ERROR: No evidence for $phase"
+        exit 1
+      fi
+    done
+
+    # 2. Run all orchestration tests
+    echo "Running orchestration tests..."
+    uv run pytest tests/test_run_manager.py tests/test_orchestration_config.py tests/test_discovery.py tests/test_coordinator.py tests/test_orchestration_integration.py -v
+
+    # 3. Verify package structure
+    echo "Verifying package structure..."
+    ls -la src/ralph_orchestrator/orchestration/
+
+    # 4. Run integration validation
+    echo "Running integration validation..."
+    uv run python -c "
+    from ralph_orchestrator.orchestration import OrchestrationManager
+    from ralph_orchestrator.main import RalphConfig
+    config = RalphConfig(enable_orchestration=True)
+    om = OrchestrationManager(config)
+    for t in ['validator', 'researcher', 'implementer', 'analyst']:
+        prompt = om.generate_subagent_prompt(t, 'Test', ['Criterion'])
+        assert len(prompt) > 100
+    print('COMPLETION GATE: PASS')
+    "
+
+    echo "=== ALL CHECKS PASSED ==="
+
+# ============================================================================
+# VALIDATION STRATEGY NOTES
+# ============================================================================
+validation_notes:
+  forbidden_patterns:
+    - "npm test alone (without real execution)"
+    - "pytest alone (without functional verification)"
+    - "Any test using only mocks without real validation"
+
+  required_patterns:
+    - "Real Python execution with actual module imports"
+    - "CLI output capture to validation-evidence/"
+    - "Functional tests that create real files/state"
+
+  evidence_retention:
+    - "Keep all evidence files until project complete"
+    - "Evidence should be human-readable (txt, json)"
+    - "Timestamp in evidence where relevant"
