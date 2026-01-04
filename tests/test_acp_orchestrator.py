@@ -191,6 +191,7 @@ class TestACPMultiIteration:
             {"stopReason": "end_turn"},  # Second prompt
         ]
 
+        adapter.available = True  # Mock availability
         with patch("src.ralph_orchestrator.adapters.acp.ACPClient", return_value=mock_client):
             # First execution
             await adapter.aexecute("First prompt")
@@ -200,7 +201,7 @@ class TestACPMultiIteration:
             await adapter.aexecute("Second prompt")
             session_id_2 = adapter._session_id
 
-        assert session_id_1 == session_id_2 == "session-123"
+            assert session_id_1 == session_id_2 == "session-123"
         # Session should be initialized only once
         assert adapter._initialized is True
 
@@ -227,6 +228,7 @@ class TestACPMultiIteration:
             {"stopReason": "end_turn"},
         ]
 
+        adapter.available = True  # Mock availability
         with patch("src.ralph_orchestrator.adapters.acp.ACPClient", return_value=mock_client):
             # First execution
             await adapter.aexecute("First prompt")
@@ -284,6 +286,7 @@ class TestACPGracefulShutdown:
             {"stopReason": "end_turn"},
         ]
 
+        adapter.available = True  # Mock availability
         with patch("src.ralph_orchestrator.adapters.acp.ACPClient", return_value=mock_client):
             await adapter.aexecute("Test prompt")
             assert adapter._initialized is True
@@ -291,7 +294,7 @@ class TestACPGracefulShutdown:
 
             await adapter._shutdown()
 
-        assert adapter._initialized is False
+            assert adapter._initialized is False
         assert adapter._session_id is None
         assert adapter._client is None
         assert adapter._session is None

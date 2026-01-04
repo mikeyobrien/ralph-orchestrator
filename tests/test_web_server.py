@@ -172,7 +172,7 @@ class TestWebMonitor:
         # Login to get token (using default password from auth.py)
         response = client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "admin123"
+            "password": "admin"
         })
 
         if response.status_code == 200:
@@ -248,7 +248,7 @@ class TestWebMonitor:
         # Test successful login (using default password from auth.py)
         response = client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "admin123"
+            "password": "admin"
         })
         assert response.status_code == 200
         assert "access_token" in response.json()
@@ -372,7 +372,7 @@ class TestWebMonitor:
         # Get token first (using default password from auth.py)
         response = client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "admin123"
+            "password": "admin"
         })
         token = response.json()["access_token"]
 
