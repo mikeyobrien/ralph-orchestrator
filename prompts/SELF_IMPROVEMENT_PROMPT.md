@@ -25,7 +25,7 @@ I have analyzed the complete prompt and identified:
 | Phase 02: Daemon Mode | ✅ COMPLETE | 63 tests |
 | Phase 03: REST API Enhancement | ✅ COMPLETE | 22 tests |
 | Phase 04: Mobile Foundation | ✅ COMPLETE | 42 tests |
-| Phase 05: Mobile Dashboard | ⏳ PENDING | 0 tests |
+| Phase 05: Mobile Dashboard | ✅ COMPLETE | 96 tests |
 | Phase 06: Mobile Control | ⏳ PENDING | 0 tests |
 
 ### Dependencies Flow
@@ -121,16 +121,16 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 
 ---
 
-#### Phase 05: Mobile Dashboard ⏳ IN PROGRESS
+#### Phase 05: Mobile Dashboard ✅ COMPLETE
 
 | Plan | Acceptance Criteria | Tests | Status |
 |------|---------------------|-------|--------|
 | 05-01 | OrchestratorCard list view | 20 | ✅ DONE |
 | 05-02 | Detail view with tasks and logs | 31 | ✅ DONE |
 | 05-03 | WebSocket real-time updates | 25 | ✅ DONE |
-| 05-04 | MetricsChart with 60s rolling window | ~7 | ⏳ PENDING |
+| 05-04 | MetricsChart with 60s rolling window | 20 | ✅ DONE |
 
-**Status**: 118 tests passing (42 Phase 04 + 20 Phase 05-01 + 31 Phase 05-02 + 25 Phase 05-03)
+**Status**: 138 tests passing (42 Phase 04 + 20 Phase 05-01 + 31 Phase 05-02 + 25 Phase 05-03 + 20 Phase 05-04)
 
 **Plan 05-03 Implementation Notes:**
 - Created WebSocketManager with connection lifecycle (connecting, connected, disconnected, error)
@@ -140,18 +140,36 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 - Auto-reconnection capability
 - JWT token auth via URL parameter
 
+**Plan 05-04 Implementation Notes:**
+- Created metricsHelpers.ts with rolling window data management
+- createMetricsWindow: Factory with configurable window size (default 60s) and max points (default 60)
+- addMetricsDataPoint: Appends data and auto-prunes old points
+- pruneOldDataPoints: Removes points beyond window cutoff
+- getChartData: Returns labels (relative time) and values for chart rendering
+- formatMetricValue: Formats CPU as %, memory as MB, iterations as integer
+- calculateAverageMetric: Computes rolling average for any metric type
+
 **Validation Gate**: Dashboard displays live orchestrators
 
 ---
 
-#### Phase 06: Mobile Control ⏳ PENDING
+#### Phase 06: Mobile Control ⏳ IN PROGRESS
 
-| Plan | Acceptance Criteria | Tests |
-|------|---------------------|-------|
-| 06-01 | Start orchestration UI | ~10 |
-| 06-02 | Stop/Pause/Resume buttons | ~12 |
-| 06-03 | Inline prompt editor | ~9 |
-| 06-04 | Push notifications (optional) | ~7 |
+| Plan | Acceptance Criteria | Tests | Status |
+|------|---------------------|-------|--------|
+| 06-01 | Start orchestration UI | 22 | ✅ DONE |
+| 06-02 | Stop/Pause/Resume buttons | ~12 | ⏳ PENDING |
+| 06-03 | Inline prompt editor | ~9 | ⏳ PENDING |
+| 06-04 | Push notifications (optional) | ~7 | ⏳ PENDING |
+
+**Plan 06-01 Implementation Notes:**
+- Created startOrchestratorHelpers.ts with validation and config utilities
+- validatePromptPath: Validates .md extension and no invalid characters
+- validateMaxIterations: Range 1-10000, must be integer
+- validateMaxRuntime: Range 1-604800 (7 days max)
+- formatDuration: Human-readable duration formatting (e.g., "1h 30m")
+- getDefaultConfig: Returns {max_iterations: 50, max_runtime: 3600, auto_commit: true}
+- Created orchestratorControlApi.ts with startOrchestrator POST endpoint
 
 **Validation Gate**: Complete mobile workflow functional
 
