@@ -13,7 +13,7 @@ A somewhat functional implementation of the Ralph Wiggum software engineering te
 
 ## 📚 Documentation
 
-**[View Full Documentation](https://mikeyobrien.github.io/ralph-orchestrator/)** | [Quick Start](https://mikeyobrien.github.io/ralph-orchestrator/quick-start/) | [API Reference](https://mikeyobrien.github.io/ralph-orchestrator/api/) | [Examples](https://mikeyobrien.github.io/ralph-orchestrator/examples/)
+**[View Full Documentation](https://mikeyobrien.github.io/ralph-orchestrator/)** | [Quick Start](https://mikeyobrien.github.io/ralph-orchestrator/quick-start/) | [Validation Guide](docs/guide/validation.md) | [API Reference](https://mikeyobrien.github.io/ralph-orchestrator/api/) | [Examples](https://mikeyobrien.github.io/ralph-orchestrator/examples/)
 
 ## Overview
 
@@ -27,8 +27,9 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 - **Q Chat Integration**: ✅ COMPLETE
 - **Gemini Integration**: ✅ COMPLETE
 - **ACP Protocol Support**: ✅ COMPLETE (Agent Client Protocol)
+- **Terminal UI (TUI)**: ✅ COMPLETE (real-time dashboard, 149 tests)
 - **Core Orchestration**: ✅ OPERATIONAL
-- **Test Suite**: ✅ 920+ tests passing
+- **Test Suite**: ✅ 1,200+ tests passing
 - **Documentation**: ✅ [COMPLETE](https://mikeyobrien.github.io/ralph-orchestrator/)
 - **Production Deployment**: ✅ [READY](https://mikeyobrien.github.io/ralph-orchestrator/advanced/production-deployment/)
 
@@ -42,12 +43,14 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 - 🔄 **Error Recovery**: Automatic retry with exponential backoff (non-blocking)
 - 📊 **State Persistence**: Saves metrics and state for analysis
 - ⏱️ **Configurable Limits**: Set max iterations and runtime limits
-- 🧪 **Comprehensive Testing**: 620+ tests with unit, integration, and async coverage
+- 🧪 **Comprehensive Testing**: 1,200+ tests with unit, integration, and async coverage
+- 🖥️ **Terminal UI**: Real-time TUI with Textual framework (149 tests, 87% coverage)
 - 🎨 **Rich Terminal Output**: Beautiful formatted output with syntax highlighting
 - 🔒 **Security Features**: Automatic masking of API keys et sensitive data in logs
 - ⚡ **Async-First Design**: Non-blocking I/O throughout (logging, git operations)
 - 📝 **Inline Prompts**: Run with `-p "your task"` without needing a file
 - 🧠 **Agent Scratchpad**: ACP agents persist context across iterations via `.agent/scratchpad.md`
+- ✅ **Validation Feature**: Opt-in collaborative validation with real execution (Claude-only)
 
 ## Installation
 
@@ -191,9 +194,11 @@ ralph [OPTIONS] [COMMAND]
 
 Commands:
   init                            Initialize a new Ralph project
-  status                          Show current Ralph status  
+  status                          Show current Ralph status
   clean                           Clean up agent workspace
   prompt                          Generate structured prompt from rough ideas
+  tui                             Run orchestrator with real-time Terminal UI
+  watch                           Watch running orchestrator via WebSocket
   run                             Run the orchestrator (default)
 
 Core Options:
@@ -218,6 +223,10 @@ Advanced Options:
   --no-git                        Disable git checkpointing
   --no-archive                    Disable prompt archiving
   --no-metrics                    Disable metrics collection
+
+Validation Options (Claude-only):
+  --enable-validation             Enable validation feature (opt-in)
+  --no-validation-interactive     Disable interactive confirmation (for CI/CD)
 ```
 
 ## ACP (Agent Client Protocol) Integration
@@ -273,6 +282,44 @@ ACP agents maintain context across iterations via `.agent/scratchpad.md`. This f
 - Remaining work items
 
 The scratchpad enables agents to continue from where they left off rather than restarting each iteration.
+
+## Terminal UI (TUI)
+
+Ralph includes a real-time Terminal User Interface built on the [Textual](https://textual.textualize.io/) framework for monitoring orchestration runs.
+
+### Quick Start with TUI
+
+```bash
+# Run orchestrator with TUI attached
+ralph tui
+
+# Or with specific options
+ralph tui -a claude -P PROMPT.md --max-iterations 50
+```
+
+### Watch Mode (Connect to Running Instance)
+
+```bash
+# Connect to a running orchestrator via WebSocket
+ralph watch
+
+# Connect to specific host/port
+ralph watch --host localhost --port 8765
+```
+
+### TUI Features
+
+- **Real-time Dashboard**: Live metrics, iteration progress, cost tracking
+- **Log Viewer**: Scrollable log panel with syntax highlighting
+- **Status Indicators**: Visual status for agent health, safety limits
+- **Keyboard Navigation**: Full keyboard control (q to quit, scroll with arrows)
+- **WebSocket Streaming**: Connect to running instances remotely
+
+### Architecture
+
+The TUI uses a connection abstraction layer supporting:
+- **Attached Mode**: Direct orchestrator control (via `ralph tui`)
+- **WebSocket Mode**: Remote monitoring (via `ralph watch`)
 
 ### Supported Operations
 
@@ -348,28 +395,37 @@ ralph-orchestrator/
 │       │   ├── acp_client.py    # Subprocess manager
 │       │   ├── acp_models.py    # Data models
 │       │   └── acp_handlers.py  # Permission/file/terminal handlers
-│       ├── output/          # Output formatting (NEW)
+│       ├── output/          # Output formatting
 │       │   ├── base.py      # Base formatter interface
 │       │   ├── console.py   # Rich console output
 │       │   ├── rich_formatter.py  # Rich text formatting
 │       │   └── plain.py     # Plain text fallback
+│       ├── tui/             # Terminal UI (Textual)
+│       │   ├── app.py       # Main TUI application
+│       │   ├── components/  # UI components (panels, widgets)
+│       │   ├── connections/ # WebSocket/attached connections
+│       │   └── events.py    # Event system
+│       ├── web/             # Web dashboard server
+│       │   ├── server.py    # FastAPI web server
+│       │   └── auth.py      # JWT authentication
 │       ├── async_logger.py  # Thread-safe async logging
 │       ├── context.py       # Context management
 │       ├── logging_config.py # Centralized logging setup
 │       ├── metrics.py       # Metrics tracking
 │       ├── security.py      # Security validation & masking
 │       └── safety.py        # Safety checks
-├── tests/                   # Test suite (620+ tests)
+├── tests/                   # Test suite (1,200+ tests)
 │   ├── test_orchestrator.py
 │   ├── test_adapters.py
 │   ├── test_async_logger.py
 │   ├── test_output_formatters.py
 │   ├── test_config.py
 │   ├── test_integration.py
-│   └── test_acp_*.py        # ACP adapter tests (305+ tests)
+│   ├── test_acp_*.py        # ACP adapter tests (305+ tests)
+│   └── test_tui/            # TUI tests (149 tests, 87% coverage)
 ├── docs/                    # Documentation
-├── PROMPT.md               # Task description (user created)
 ├── ralph.yml               # Configuration file (created by init)
+├── .env.example            # Environment variables template
 ├── pyproject.toml          # Project configuration
 ├── .agent/                 # CLI workspace (created by init)
 │   ├── prompts/            # Prompt workspace
@@ -597,7 +653,13 @@ MIT License - See LICENSE file for details
 
 ## Version History
 
-- **v1.2.0** (2025-12)
+- **v1.2.0** (2025-12 / 2026-01)
+  - **Terminal UI (TUI)**: Real-time dashboard built on Textual framework
+    - Live metrics, iteration progress, and cost tracking
+    - Log viewer with syntax highlighting
+    - WebSocket support for remote monitoring (`ralph watch`)
+    - Attached mode for direct control (`ralph tui`)
+    - 149 tests with 87% coverage
   - **ACP (Agent Client Protocol) Support**: Full integration with ACP-compliant agents
     - JSON-RPC 2.0 message protocol
     - Permission handling (auto_approve, deny_all, allowlist, interactive)
@@ -605,10 +667,10 @@ MIT License - See LICENSE file for details
     - Terminal operations (create, output, wait, kill, release)
     - Session management and streaming updates
     - Agent scratchpad mechanism for context persistence across iterations
+  - New CLI commands: `tui`, `watch`
   - New CLI options: `--acp-agent`, `--acp-permission-mode`
   - Configuration support in ralph.yml
-  - 305+ new ACP-specific tests
-  - Expanded test suite (920+ tests)
+  - Expanded test suite (1,200+ tests)
 
 - **v1.1.0** (2025-12)
   - Async-first architecture for non-blocking operations

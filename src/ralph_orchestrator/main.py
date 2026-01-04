@@ -150,6 +150,28 @@ class ConfigValidator:
         return errors
 
     @staticmethod
+    def validate_enable_validation(enable_validation: bool, agent: 'AgentType') -> List[str]:
+        """Validate enable_validation is only used with Claude adapter.
+
+        Args:
+            enable_validation: Whether validation is enabled
+            agent: The configured agent type
+
+        Returns:
+            List of validation errors
+        """
+        errors = []
+        if enable_validation:
+            # Get agent value for comparison
+            agent_value = agent.value if hasattr(agent, 'value') else str(agent)
+            if agent_value not in ("claude", "auto"):
+                errors.append(
+                    f"Validation feature is only available with Claude adapter. "
+                    f"Current agent: {agent_value}"
+                )
+        return errors
+
+    @staticmethod
     def get_warning_large_delay(retry_delay: int) -> List[str]:
         """Check for unusually large delay values."""
         if retry_delay > ConfigValidator.LARGE_DELAY_THRESHOLD_SECONDS:
@@ -228,6 +250,10 @@ class RalphConfig:
     output_verbosity: str = "normal"  # "quiet", "normal", "verbose", "debug"
     show_token_usage: bool = True  # Display token usage after iterations
     show_timestamps: bool = True  # Include timestamps in output
+
+    # Validation feature configuration
+    enable_validation: bool = False  # Enable validation feature (opt-in, Claude-only)
+    validation_interactive: bool = True  # Require user confirmation for validation
 
     # Thread safety lock - not included in initialization/equals
     _lock: threading.RLock = field(
@@ -357,6 +383,7 @@ class RalphConfig:
             errors.extend(ConfigValidator.validate_max_tokens(self.max_tokens))
             errors.extend(ConfigValidator.validate_max_cost(self.max_cost))
             errors.extend(ConfigValidator.validate_context_threshold(self.context_threshold))
+            errors.extend(ConfigValidator.validate_enable_validation(self.enable_validation, self.agent))
 
         return errors
 

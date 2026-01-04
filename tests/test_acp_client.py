@@ -77,7 +77,8 @@ class TestACPClientStart:
         """start() raises error for invalid command."""
         client = ACPClient(command="nonexistent_command_xyz")
 
-        with pytest.raises(FileNotFoundError):
+        # macOS raises PermissionError, Linux raises FileNotFoundError
+        with pytest.raises((FileNotFoundError, PermissionError)):
             await client.start()
 
 

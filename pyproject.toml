@@ -25,6 +25,13 @@ dependencies = [
     "bcrypt>=4.0.0,<5.0.0",
     "python-multipart>=0.0.20",
     "rich>=13.0.0",
+    "textual>=7.0.0",
+]
+
+[project.optional-dependencies]
+tui = [
+    "textual>=0.50.0",
+    "textual-plotext>=0.2.0",
 ]
 
 [project.scripts]
@@ -46,5 +53,6 @@ pythonpath = ["."]
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.1.0",
+    "pytest-cov>=7.0.0",
     "ruff>=0.12.12",
 ]

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ralph Validation Test - Web App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        
+        nav a {
+            color: white;
+            text-decoration: none;
+            margin-left: 2rem;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+        
+        nav a:hover {
+            opacity: 1;
+        }
+        
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .validation-marker {
+            background: white;
+            color: #764ba2;
+            padding: 0.5rem 1.5rem;
+            border-radius: 50px;
+            font-weight: 600;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: white;
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+        
+        .subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .btn {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .btn-primary {
+            background: white;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            max-width: 800px;
+            margin-top: 2rem;
+        }
+        
+        .feature-card {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+            color: white;
+        }
+        
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .feature-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .feature-desc {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+        
+        .counter-section {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2rem;
+            border-radius: 12px;
+            text-align: center;
+            color: white;
+            margin-top: 2rem;
+        }
+        
+        #counter {
+            font-size: 4rem;
+            font-weight: bold;
+            margin: 1rem 0;
+        }
+        
+        .counter-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+        
+        footer {
+            background: rgba(0, 0, 0, 0.2);
+            color: white;
+            text-align: center;
+            padding: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        /* Status indicator for validation */
+        #status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #4ade80;
+            color: #166534;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">🚀 Ralph Orchestrator</div>
+        <nav>
+            <a href="#home">Home</a>
+            <a href="#features">Features</a>
+            <a href="#about">About</a>
+        </nav>
+    </header>
+    
+    <main>
+        <div class="validation-marker" id="validation-marker">Ralph Validation Test</div>
+        
+        <h1>Welcome to Ralph</h1>
+        <p class="subtitle">AI-Powered Development Orchestration</p>
+        
+        <div class="button-group">
+            <button class="btn btn-primary" onclick="handlePrimaryClick()">Get Started</button>
+            <button class="btn btn-secondary" onclick="handleSecondaryClick()">Learn More</button>
+        </div>
+        
+        <div class="features">
+            <div class="feature-card">
+                <div class="feature-icon">🤖</div>
+                <div class="feature-title">AI Integration</div>
+                <div class="feature-desc">Powered by Claude for intelligent orchestration</div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <div class="feature-title">Fast Iteration</div>
+                <div class="feature-desc">Rapid development cycles with validation</div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔒</div>
+                <div class="feature-title">Secure</div>
+                <div class="feature-desc">Sandboxed execution for safety</div>
+            </div>
+        </div>
+        
+        <div class="counter-section">
+            <div>Interactive Counter Demo</div>
+            <div id="counter">0</div>
+            <div class="counter-buttons">
+                <button class="btn btn-primary" onclick="decrementCounter()">-</button>
+                <button class="btn btn-primary" onclick="incrementCounter()">+</button>
+                <button class="btn btn-secondary" onclick="resetCounter()">Reset</button>
+            </div>
+        </div>
+    </main>
+    
+    <footer>
+        Built with ❤️ by Ralph Orchestrator | Validation Test Page | 2025
+    </footer>
+    
+    <div id="status">✓ App Loaded</div>
+    
+    <script>
+        let count = 0;
+        
+        function updateCounter() {
+            document.getElementById('counter').textContent = count;
+        }
+        
+        function incrementCounter() {
+            count++;
+            updateCounter();
+            showStatus('Counter: ' + count);
+        }
+        
+        function decrementCounter() {
+            count--;
+            updateCounter();
+            showStatus('Counter: ' + count);
+        }
+        
+        function resetCounter() {
+            count = 0;
+            updateCounter();
+            showStatus('Counter reset');
+        }
+        
+        function handlePrimaryClick() {
+            showStatus('Get Started clicked!');
+        }
+        
+        function handleSecondaryClick() {
+            showStatus('Learn More clicked!');
+        }
+        
+        function showStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = '✓ ' + message;
+            status.style.animation = 'none';
+            status.offsetHeight; // Trigger reflow
+            status.style.animation = 'pulse 0.3s ease';
+        }
+        
+        // Log for Playwright verification
+        console.log('Ralph Validation Web App loaded successfully');
+        console.log('Validation marker present:', document.getElementById('validation-marker').textContent);
+    </script>
+</body>
+</html>

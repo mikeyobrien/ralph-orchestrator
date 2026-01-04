@@ -47,7 +47,9 @@ class RalphOrchestrator:
         acp_agent: str = None,
         acp_permission_mode: str = None,
         iteration_telemetry: bool = True,
-        output_preview_length: int = 500
+        output_preview_length: int = 500,
+        enable_validation: bool = False,
+        validation_interactive: bool = True,
     ):
         """Initialize the orchestrator.
 
@@ -65,6 +67,11 @@ class RalphOrchestrator:
             acp_permission_mode: ACP permission handling mode
             iteration_telemetry: Enable per-iteration telemetry capture
             output_preview_length: Max chars for output preview in telemetry
+            enable_validation: Enable validation feature (opt-in, Claude-only)
+            validation_interactive: Require user confirmation for validation (default True)
+
+        Raises:
+            ValueError: If enable_validation=True with non-Claude adapter
         """
         # Store ACP-specific settings
         self.acp_agent = acp_agent
@@ -85,6 +92,8 @@ class RalphOrchestrator:
             self.verbose = config.verbose if hasattr(config, 'verbose') else False
             self.iteration_telemetry = getattr(config, 'iteration_telemetry', True)
             self.output_preview_length = getattr(config, 'output_preview_length', 500)
+            self.enable_validation = getattr(config, 'enable_validation', False)
+            self.validation_interactive = getattr(config, 'validation_interactive', True)
         else:
             # Individual parameters
             self.prompt_file = Path(prompt_file_or_config if prompt_file_or_config else "PROMPT.md")
@@ -99,6 +108,8 @@ class RalphOrchestrator:
             self.verbose = verbose
             self.iteration_telemetry = iteration_telemetry
             self.output_preview_length = output_preview_length
+            self.enable_validation = enable_validation
+            self.validation_interactive = validation_interactive
 
         # Initialize components
         self.metrics = Metrics()
@@ -117,7 +128,18 @@ class RalphOrchestrator:
         if not self.current_adapter:
             logger.error(f"DEBUG: primary_tool={self.primary_tool}, adapters={list(self.adapters.keys())}")
             raise ValueError(f"Unknown tool: {self.primary_tool}")
-        
+
+        # Validation feature guard: Claude-only
+        if self.enable_validation and self.primary_tool != "claude":
+            raise ValueError(
+                f"Validation feature is only available with Claude adapter. "
+                f"Current adapter: {self.primary_tool}"
+            )
+
+        # Validation state attributes
+        self.validation_proposal = None   # Stores AI's proposed strategy
+        self.validation_approved = False  # User confirmation status
+
         # Signal handling - use basic signal registration here
         # The async handlers will be set up when arun() is called
         self.stop_requested = False
@@ -302,6 +324,17 @@ class RalphOrchestrator:
 
         # Set up async signal handlers now that we have a running loop
         self._setup_async_signal_handlers()
+
+        # Validation proposal phase (if enabled)
+        if self.enable_validation:
+            logger.info("Validation enabled - starting proposal phase")
+            await self._propose_validation_strategy()
+
+            if not self.validation_approved:
+                logger.info("Validation declined by user, proceeding without validation")
+                self.enable_validation = False
+            else:
+                logger.info("Validation approved by user")
 
         start_time = time.time()
         self._start_time = start_time  # Store for state retrieval
@@ -836,3 +869,227 @@ class RalphOrchestrator:
                 'limit': self.max_cost if self.track_costs else None
             }
         }
+
+    # =========================================================================
+    # VALIDATION PROPOSAL METHODS
+    # =========================================================================
+
+    def _load_proposal_prompt(self) -> str:
+        """Load the validation proposal prompt.
+
+        Attempts to load from prompts/VALIDATION_PROPOSAL_PROMPT.md first.
+        Falls back to an embedded default prompt if file doesn't exist.
+
+        Returns:
+            str: The validation proposal prompt text.
+        """
+        # Try to load from file first
+        prompt_path = Path(__file__).parent.parent.parent / "prompts" / "VALIDATION_PROPOSAL_PROMPT.md"
+        if prompt_path.exists():
+            return prompt_path.read_text()
+
+        # Fall back to embedded prompt (used before Phase 3 creates the file)
+        return self._get_default_proposal_prompt()
+
+    def _get_default_proposal_prompt(self) -> str:
+        """Get the default embedded validation proposal prompt.
+
+        Returns:
+            str: Default proposal prompt with collaborative language.
+        """
+        return """# Validation Strategy Proposal
+
+**SESSION 0 - PROPOSAL PHASE (requires user approval)**
+
+## Objective
+Analyze the project and PROPOSE (not auto-configure) a validation strategy.
+Present your proposal to the user for approval before proceeding.
+
+## Important Principles
+1. **Propose, don't prescribe** - Present recommendations, don't auto-generate
+2. **User decides** - The user confirms or modifies the approach
+3. **Be flexible** - Don't assume specific tools/MCPs are available
+4. **Ask questions** - Clarify what the user wants to validate
+5. **Real execution only** - No mocks, actual validation in sandbox
+
+## Your Task
+
+### Step 1: Analyze the Project
+Examine the project structure to understand:
+- What type of project is this? (web, iOS, CLI, API, library)
+- How is it built? (build commands, dependencies)
+- How does a user interact with it? (browser, simulator, command line)
+- Are there existing tests? (test frameworks, test commands)
+
+### Step 2: Discover Available Tools
+Check what MCP servers are available:
+- Browser automation (playwright, puppeteer)
+- iOS development (xc-mcp)
+- Container isolation (MCP_DOCKER)
+- Other relevant tools
+
+### Step 3: Draft a Validation Proposal
+Based on analysis, draft a proposal including:
+- What you found about the project
+- How you recommend validating it from an end-user perspective
+- What tools or methods you would use
+- How you'll capture REAL evidence (screenshots, output)
+- Where the sandbox will be located
+- What you need to know from the user
+
+### Step 4: Present to User for Confirmation
+Present your proposal conversationally and ask for confirmation.
+
+## Output Requirements
+Your output must be a **conversation with the user**, NOT a configuration file.
+
+- DO ask for explicit user confirmation
+- DO offer alternatives if the user disagrees
+- DO explain WHY you recommend a certain approach
+- DO list what questions you have for the user
+- DO explain sandbox/isolation strategy
+- DO NOT generate validation_config.json until user confirms
+- DO NOT assume specific MCP servers are available
+- DO NOT proceed with validation without user approval
+- DO NOT use mock tests - real execution only
+"""
+
+    async def _propose_validation_strategy(self) -> None:
+        """Execute validation proposal phase - AI analyzes and proposes strategy.
+
+        This method:
+        1. Loads the proposal prompt
+        2. Executes it with the Claude adapter to analyze the project
+        3. Stores the proposal for user review
+        4. Gets user confirmation if in interactive mode
+
+        After this method completes, validation_proposal will contain the AI's
+        proposed strategy, and validation_approved will indicate whether the
+        user confirmed the proposal.
+        """
+        logger.info("Starting validation proposal phase")
+        self.console.print_header("Validation Proposal Phase")
+
+        # Load the proposal prompt
+        proposal_prompt = self._load_proposal_prompt()
+
+        # Get project context for the proposal
+        project_context = self._get_project_context()
+
+        # Combine prompt with project context
+        full_prompt = f"{proposal_prompt}\n\n## Project Context\n{project_context}"
+
+        # Execute proposal phase - AI analyzes and proposes
+        response = await self.current_adapter.aexecute(
+            full_prompt,
+            prompt_file=str(self.prompt_file),
+            verbose=self.verbose
+        )
+
+        if response.success:
+            # Store proposal for user review
+            self.validation_proposal = response.output
+            self.console.print_success("Validation proposal generated")
+
+            # If interactive mode, wait for user confirmation
+            if self.validation_interactive:
+                self.validation_approved = await self._get_user_confirmation()
+            else:
+                # Non-interactive: auto-approve (for CI/CD scenarios)
+                self.validation_approved = True
+                logger.info("Auto-approved validation (non-interactive mode)")
+        else:
+            logger.warning("Failed to generate validation proposal")
+            self.validation_proposal = None
+            self.validation_approved = False
+
+    def _get_project_context(self) -> str:
+        """Gather project context for the validation proposal.
+
+        Collects information about the project structure to help the AI
+        generate an appropriate validation proposal.
+
+        Returns:
+            str: Project context summary including file types, build tools, etc.
+        """
+        context_parts = []
+
+        # Add prompt file info
+        context_parts.append(f"**Prompt File**: {self.prompt_file}")
+
+        # Check for common project indicators
+        project_root = self.prompt_file.parent
+        indicators = {
+            "package.json": "Node.js/JavaScript project",
+            "requirements.txt": "Python project",
+            "setup.py": "Python package",
+            "pyproject.toml": "Python project (modern)",
+            "Cargo.toml": "Rust project",
+            "go.mod": "Go project",
+            "Package.swift": "Swift package",
+            "*.xcodeproj": "Xcode project",
+            "*.xcworkspace": "Xcode workspace",
+            "Gemfile": "Ruby project",
+            "pom.xml": "Java Maven project",
+            "build.gradle": "Java Gradle project",
+        }
+
+        found_indicators = []
+        for pattern, description in indicators.items():
+            if pattern.startswith("*"):
+                # Glob pattern
+                matches = list(project_root.glob(pattern))
+                if matches:
+                    found_indicators.append(f"- {description} ({matches[0].name})")
+            elif (project_root / pattern).exists():
+                found_indicators.append(f"- {description}")
+
+        if found_indicators:
+            context_parts.append("**Detected Project Types**:")
+            context_parts.extend(found_indicators)
+
+        return "\n".join(context_parts)
+
+    async def _get_user_confirmation(self) -> bool:
+        """Present proposal and get user confirmation.
+
+        Displays the validation proposal to the user and prompts for
+        approval. This is only called when validation_interactive=True.
+
+        Returns:
+            bool: True if user approved, False otherwise.
+        """
+        if not self.validation_proposal:
+            logger.warning("No validation proposal to confirm")
+            return False
+
+        # Display the proposal
+        self.console.print_header("Validation Proposal")
+        self.console.print_message(self.validation_proposal)
+
+        # Prompt for user input
+        print("\n" + "=" * 60)
+        print("Do you approve this validation strategy?")
+        print("  [A]pprove - Proceed with validation")
+        print("  [M]odify  - Request changes (not yet implemented)")
+        print("  [S]kip    - Skip validation, proceed normally")
+        print("=" * 60)
+
+        try:
+            response = input("\nYour choice [A/M/S]: ").strip().lower()
+
+            if response in ('a', 'approve', 'yes', 'y'):
+                self.console.print_success("Validation approved")
+                return True
+            elif response in ('s', 'skip', 'no', 'n'):
+                self.console.print_info("Validation skipped")
+                return False
+            elif response in ('m', 'modify'):
+                self.console.print_warning("Modify not yet implemented - skipping validation")
+                return False
+            else:
+                self.console.print_warning(f"Unknown response '{response}' - skipping validation")
+                return False
+        except (EOFError, KeyboardInterrupt):
+            self.console.print_warning("Input interrupted - skipping validation")
+            return False

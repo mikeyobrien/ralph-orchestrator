@@ -34,6 +34,11 @@ env/
 *~
 .DS_Store
 
+# Environment (security)
+.env
+.env.*
+!.env.example
+
 # Ralph specific
 .ralph/
 .sop/
@@ -43,6 +48,13 @@ prompts/
 prompts/archive/
 ralph_*.log
 ralph_metrics_*.json
+docs-plans-prompts-specs/
+plans/
+
+# Claude Flow / Swarm / MCP tooling
+.claude-flow/
+.swarm/
+.playwright-mcp/
 
 # Test
 .coverage
@@ -56,3 +68,5 @@ site/
 
 .worktrees
 PROMPT.md
+/.prompts
+/.serena

@@ -1,8 +1,17 @@
 # Ralph Orchestrator Configuration
 # This file configures Ralph and its AI agent adapters
+#
+# For self-improvement tasks (RALPH building RALPH), see:
+#   examples/ralph-self-improvement.yml
+#
+# Available prompts:
+#   - PROMPT.md                           # Current task
+#   - prompts/ONBOARDING_PROMPT.md        # Intelligent project onboarding feature
+#   - prompts/TUI_PROMPT.md               # Real-time terminal UI feature
+#   - prompts/BOOTSTRAP_SELF_IMPROVEMENT.md  # Meta-prompt for self-enhancement
 
 # Core orchestrator settings
-agent: auto                    # Which agent to use: claude, q, gemini, auto
+agent: auto                    # Which agent to use: claude, q, gemini, acp, auto
 prompt_file: PROMPT.md         # Path to prompt file
 max_iterations: 100            # Maximum iterations before stopping
 max_runtime: 14400             # Maximum runtime in seconds (4 hours)
@@ -52,3 +61,12 @@ adapters:
     max_retries: 3
     args: []
     env: {}
+  
+  acp:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+    tool_permissions:
+      agent_command: gemini          # ACP agent CLI command
+      agent_args: ["--experimental-acp"]
+      permission_mode: auto_approve  # auto_approve, deny_all, allowlist, interactive

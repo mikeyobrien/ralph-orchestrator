@@ -72,6 +72,11 @@ max_iterations: 100
 max_runtime: 14400
 verbose: false
 
+# Validation feature (Claude-only, opt-in)
+# When enabled, AI proposes a validation strategy before executing
+enable_validation: false
+validation_interactive: true  # Require user confirmation for validation
+
 # Adapter configurations
 adapters:
   claude:
@@ -387,6 +392,98 @@ IMPORTANT:
 
 
 
+def cmd_tui(args):
+    """Run RALPH with TUI attached."""
+    try:
+        from .tui import RalphTUI
+        from .tui.connection import AttachedConnection
+    except ImportError as e:
+        _console.print_error(f"TUI dependencies not available: {e}")
+        _console.print_info("Install with: pip install 'ralph-orchestrator[tui]'")
+        sys.exit(1)
+
+    if not args.prompt_file and not args.config_file:
+        _console.print_error("Please provide a prompt file (-P) or config file (-c)")
+        sys.exit(1)
+
+    # Create orchestrator
+    orchestrator = RalphOrchestrator(
+        prompt_file_or_config=args.prompt_file or args.config_file,
+        max_iterations=args.max_iterations,
+        max_runtime=args.max_runtime,
+        max_cost=args.max_cost,
+        enable_validation=args.enable_validation,
+    )
+
+    # Create attached connection
+    connection = AttachedConnection(orchestrator)
+
+    # Create and run TUI
+    app = RalphTUI(
+        connection=connection,
+        prompt_file=args.prompt_file,
+    )
+
+    # Run orchestrator in background, TUI in foreground
+    async def run_with_tui():
+        import asyncio
+
+        # Start orchestrator in background task
+        orchestrator_task = asyncio.create_task(
+            asyncio.to_thread(orchestrator.run)
+        )
+
+        # Run TUI (blocks until quit)
+        await app.run_async()
+
+        # Cancel orchestrator if TUI exits
+        if not orchestrator_task.done():
+            orchestrator_task.cancel()
+
+    import asyncio
+    asyncio.run(run_with_tui())
+
+
+def cmd_watch(args):
+    """Watch a running orchestrator via WebSocket."""
+    try:
+        from .tui import RalphTUI
+        from .tui.connection import WebSocketConnection
+    except ImportError as e:
+        _console.print_error(f"TUI dependencies not available: {e}")
+        _console.print_info("Install with: pip install 'ralph-orchestrator[tui]'")
+        sys.exit(1)
+
+    # Create WebSocket connection
+    connection = WebSocketConnection()
+
+    # Create TUI in watch mode
+    app = RalphTUI(
+        connection=connection,
+        prompt_file=f"Watching: {args.url}",
+    )
+
+    # Set readonly mode if requested
+    if args.readonly:
+        # Disable control bindings
+        app.BINDINGS = [b for b in app.BINDINGS if b.key not in ("p", "c", "y", "n", "s")]
+
+    async def run_watch():
+        import asyncio
+
+        # Connect to WebSocket
+        connected = await connection.connect(args.url)
+        if not connected:
+            _console.print_error(f"Failed to connect to {args.url}")
+            sys.exit(1)
+
+        # Run TUI
+        await app.run_async()
+
+    import asyncio
+    asyncio.run(run_watch())
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -396,10 +493,12 @@ def main():
         epilog="""
 Commands:
     ralph               Run the orchestrator (default)
-    ralph init          Initialize a new Ralph project  
+    ralph init          Initialize a new Ralph project
     ralph status        Show current Ralph status
     ralph clean         Clean up agent workspace
     ralph prompt        Generate structured prompt from rough ideas
+    ralph tui           Run orchestrator with Terminal UI attached
+    ralph watch         Watch a running orchestrator via WebSocket
 
 Configuration:
     Use -c/--config to load settings from a YAML file.
@@ -418,6 +517,8 @@ Examples:
     ralph prompt "build a web API"  # Generate API prompt
     ralph prompt -i                 # Interactive prompt creation
     ralph prompt -o task.md "scrape data" "save to CSV"  # Custom output
+    ralph tui -P task.md            # Run with Terminal UI
+    ralph watch -u ws://host:8080   # Watch remote orchestrator
 """
     )
     
@@ -457,6 +558,75 @@ Examples:
         help='AI agent to use: claude/c, gemini/g, qchat/q, auto (default: auto)'
     )
     
+    # TUI command - run orchestrator with Terminal UI
+    tui_parser = subparsers.add_parser(
+        'tui',
+        help='Run orchestrator with Terminal UI attached',
+        description='Launch RALPH with a real-time Terminal User Interface for monitoring.',
+    )
+    tui_parser.add_argument(
+        '-P', '--prompt',
+        dest='prompt_file',
+        help='Path to prompt file',
+    )
+    tui_parser.add_argument(
+        '-c', '--config',
+        dest='config_file',
+        help='Path to configuration file',
+    )
+    tui_parser.add_argument(
+        '-i', '--max-iterations',
+        type=int,
+        default=100,
+        help='Maximum iterations (default: 100)',
+    )
+    tui_parser.add_argument(
+        '-t', '--max-runtime',
+        type=int,
+        default=3600,
+        help='Maximum runtime in seconds (default: 3600)',
+    )
+    tui_parser.add_argument(
+        '--max-cost',
+        type=float,
+        default=50.0,
+        help='Maximum cost limit in dollars (default: 50.0)',
+    )
+    tui_parser.add_argument(
+        '--theme',
+        choices=['default', 'cyberpunk', 'light'],
+        default='default',
+        help='TUI color theme (default: default)',
+    )
+    tui_parser.add_argument(
+        '--enable-validation',
+        action='store_true',
+        help='Enable validation gates',
+    )
+
+    # Watch command - connect to running orchestrator via WebSocket
+    watch_parser = subparsers.add_parser(
+        'watch',
+        help='Watch a running orchestrator via WebSocket',
+        description='Connect to a running RALPH orchestrator and display real-time progress.',
+    )
+    watch_parser.add_argument(
+        '-u', '--url',
+        default='ws://localhost:8080/ws',
+        help='WebSocket URL of running orchestrator (default: ws://localhost:8080/ws)',
+    )
+    watch_parser.add_argument(
+        '--readonly',
+        action='store_true',
+        help='Read-only mode (disable controls)',
+    )
+    watch_parser.add_argument(
+        '--theme',
+        choices=['default', 'cyberpunk', 'light'],
+        default='default',
+        help='TUI color theme (default: default)',
+    )
+
     # Run command (default) - add all the run options
     run_parser = subparsers.add_parser('run', help='Run the orchestrator')
     
@@ -608,7 +778,22 @@ Examples:
             action="store_true",
             help="Allow potentially unsafe prompt paths"
         )
-        
+
+        # Validation feature flags
+        p.add_argument(
+            "--enable-validation",
+            action="store_true",
+            dest="enable_validation",
+            help="Enable validation feature (Claude-only, opt-in)"
+        )
+
+        p.add_argument(
+            "--no-validation-interactive",
+            action="store_true",
+            dest="no_validation_interactive",
+            help="Disable interactive validation confirmation (for CI/CD)"
+        )
+
         # Collect remaining arguments for agent
         p.add_argument(
             "agent_args",
@@ -639,7 +824,15 @@ Examples:
         interactive_mode = args.interactive or not args.ideas
         generate_prompt(args.ideas, args.output, interactive_mode, args.agent)
         sys.exit(0)
-    
+
+    if command == 'tui':
+        cmd_tui(args)
+        sys.exit(0)
+
+    if command == 'watch':
+        cmd_watch(args)
+        sys.exit(0)
+
     # Run command (default)
     # Set up logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -671,6 +864,11 @@ Examples:
                 config.verbose = args.verbose
             if hasattr(args, 'dry_run') and args.dry_run:
                 config.dry_run = args.dry_run
+            # Override validation settings from CLI if explicitly provided
+            if getattr(args, 'enable_validation', False):
+                config.enable_validation = True
+            if getattr(args, 'no_validation_interactive', False):
+                config.validation_interactive = False
         except Exception as e:
             _console.print_error(f"Error loading config file: {e}")
             sys.exit(1)
@@ -696,7 +894,9 @@ Examples:
             enable_metrics=not args.no_metrics,
             max_prompt_size=args.max_prompt_size,
             allow_unsafe_paths=args.allow_unsafe_paths,
-            agent_args=args.agent_args if hasattr(args, 'agent_args') else []
+            agent_args=args.agent_args if hasattr(args, 'agent_args') else [],
+            enable_validation=getattr(args, 'enable_validation', False),
+            validation_interactive=not getattr(args, 'no_validation_interactive', False),
         )
 
     # Validate prompt source exists and has content (before dry-run check)
@@ -725,6 +925,19 @@ Examples:
 ---""")
             sys.exit(1)
 
+    # Validate config before proceeding
+    validation_errors = config.validate()
+    if validation_errors:
+        _console.print_error("Configuration validation failed:")
+        for error in validation_errors:
+            _console.print_error(f"  - {error}")
+        sys.exit(1)
+
+    # Show config warnings
+    config_warnings = config.get_warnings()
+    for warning in config_warnings:
+        _console.print_warning(warning)
+
     if config.dry_run:
         _console.print_info("Dry run mode - no tools will be executed")
         _console.print_info("Configuration:")
@@ -737,6 +950,9 @@ Examples:
         _console.print_info(f"  Max iterations: {config.max_iterations}")
         _console.print_info(f"  Max runtime: {config.max_runtime}s")
         _console.print_info(f"  Max cost: ${config.max_cost:.2f}")
+        _console.print_info(f"  Validation: {'enabled' if config.enable_validation else 'disabled'}")
+        if config.enable_validation:
+            _console.print_info(f"  Validation interactive: {config.validation_interactive}")
         sys.exit(0)
     
     try:
@@ -768,6 +984,7 @@ Examples:
         acp_permission_mode = getattr(args, 'acp_permission_mode', None)
 
         # Pass full config to orchestrator so prompt_text is available
+        # Validation settings are now part of the config object
         orchestrator = RalphOrchestrator(
             prompt_file_or_config=config,
             primary_tool=primary_tool,
@@ -778,7 +995,9 @@ Examples:
             checkpoint_interval=config.checkpoint_interval,
             verbose=config.verbose,
             acp_agent=acp_agent,
-            acp_permission_mode=acp_permission_mode
+            acp_permission_mode=acp_permission_mode,
+            enable_validation=config.enable_validation,
+            validation_interactive=config.validation_interactive
         )
 
         # Enable all tools for Claude adapter (including WebSearch)

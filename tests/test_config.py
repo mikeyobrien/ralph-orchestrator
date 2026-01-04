@@ -493,3 +493,134 @@ Build a REST API with:
         config = RalphConfig(prompt_text=prompt)
         assert "REST API" in config.prompt_text
         assert "Rate limiting" in config.prompt_text
+
+
+# =============================================================================
+# Validation Config Tests
+# =============================================================================
+
+
+class TestValidationConfig:
+    """Test validation configuration options."""
+
+    def test_enable_validation_defaults_to_false(self):
+        """Test that enable_validation defaults to False (opt-in)."""
+        config = RalphConfig()
+        assert config.enable_validation is False
+
+    def test_validation_interactive_defaults_to_true(self):
+        """Test that validation_interactive defaults to True."""
+        config = RalphConfig()
+        assert config.validation_interactive is True
+
+    def test_enable_validation_can_be_set(self):
+        """Test that enable_validation can be set directly."""
+        config = RalphConfig(enable_validation=True)
+        assert config.enable_validation is True
+
+    def test_validation_interactive_can_be_disabled(self):
+        """Test that validation_interactive can be disabled."""
+        config = RalphConfig(validation_interactive=False)
+        assert config.validation_interactive is False
+
+    def test_enable_validation_from_yaml(self):
+        """Test loading enable_validation from YAML config."""
+        config_data = {
+            'agent': 'claude',
+            'enable_validation': True,
+            'validation_interactive': False,
+            'max_iterations': 10
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+            yaml.dump(config_data, f)
+            config_path = f.name
+
+        try:
+            config = RalphConfig.from_yaml(config_path)
+            assert config.enable_validation is True
+            assert config.validation_interactive is False
+        finally:
+            Path(config_path).unlink()
+
+    def test_validation_with_claude_passes(self):
+        """Test that validation is allowed with Claude agent."""
+        config = RalphConfig(
+            agent=AgentType.CLAUDE,
+            enable_validation=True
+        )
+        errors = config.validate()
+        # Should not have validation-related errors
+        assert not any("Validation feature" in e for e in errors)
+
+    def test_validation_with_auto_passes(self):
+        """Test that validation is allowed with auto agent."""
+        config = RalphConfig(
+            agent=AgentType.AUTO,
+            enable_validation=True
+        )
+        errors = config.validate()
+        # Should not have validation-related errors
+        assert not any("Validation feature" in e for e in errors)
+
+    def test_validation_with_gemini_fails(self):
+        """Test that validation with Gemini agent produces error."""
+        config = RalphConfig(
+            agent=AgentType.GEMINI,
+            enable_validation=True
+        )
+        errors = config.validate()
+        assert len(errors) > 0
+        assert any("Validation feature is only available with Claude" in e for e in errors)
+
+    def test_validation_with_q_fails(self):
+        """Test that validation with Q agent produces error."""
+        config = RalphConfig(
+            agent=AgentType.Q,
+            enable_validation=True
+        )
+        errors = config.validate()
+        assert len(errors) > 0
+        assert any("Validation feature is only available with Claude" in e for e in errors)
+
+    def test_validation_disabled_with_non_claude_passes(self):
+        """Test that disabled validation with non-Claude agent is valid."""
+        config = RalphConfig(
+            agent=AgentType.GEMINI,
+            enable_validation=False
+        )
+        errors = config.validate()
+        # Should not have validation-related errors
+        assert not any("Validation feature" in e for e in errors)
+
+
+class TestConfigValidatorEnableValidation:
+    """Test ConfigValidator.validate_enable_validation method."""
+
+    def test_validation_enabled_with_claude(self):
+        """Test validation enabled with Claude agent."""
+        errors = ConfigValidator.validate_enable_validation(True, AgentType.CLAUDE)
+        assert errors == []
+
+    def test_validation_enabled_with_auto(self):
+        """Test validation enabled with auto agent."""
+        errors = ConfigValidator.validate_enable_validation(True, AgentType.AUTO)
+        assert errors == []
+
+    def test_validation_enabled_with_gemini(self):
+        """Test validation enabled with Gemini produces error."""
+        errors = ConfigValidator.validate_enable_validation(True, AgentType.GEMINI)
+        assert len(errors) == 1
+        assert "only available with Claude" in errors[0]
+
+    def test_validation_enabled_with_q(self):
+        """Test validation enabled with Q produces error."""
+        errors = ConfigValidator.validate_enable_validation(True, AgentType.Q)
+        assert len(errors) == 1
+        assert "only available with Claude" in errors[0]
+
+    def test_validation_disabled_always_valid(self):
+        """Test validation disabled is always valid."""
+        for agent in [AgentType.CLAUDE, AgentType.GEMINI, AgentType.Q, AgentType.AUTO]:
+            errors = ConfigValidator.validate_enable_validation(False, agent)
+            assert errors == []

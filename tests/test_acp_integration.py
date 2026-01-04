@@ -191,6 +191,7 @@ class TestACPMockedIntegration:
             {"stop_reason": "end_turn"}
         ]
 
+        adapter.available = True  # Mock availability
         with patch("src.ralph_orchestrator.adapters.acp.ACPClient", return_value=mock_client):
             # Simulate message chunks via notification handler
             response = await adapter.aexecute("Hello, world!")

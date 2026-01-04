@@ -1,0 +1,286 @@
+/* RALPH TUI Stylesheet - Cyberpunk/Terminal aesthetic */
+
+/* Base screen */
+Screen {
+    background: $surface;
+}
+
+/* Header styling */
+Header {
+    dock: top;
+    background: $primary-darken-2;
+    color: $text;
+}
+
+Header .clock {
+    color: $primary-lighten-2;
+}
+
+/* Footer styling */
+Footer {
+    dock: bottom;
+    background: $surface-darken-1;
+}
+
+Footer > .footer--key {
+    background: $primary-darken-3;
+    color: $text;
+}
+
+Footer > .footer--description {
+    color: $text-muted;
+}
+
+/* Main container layout */
+#main-container {
+    width: 100%;
+    height: 1fr;
+}
+
+/* Task sidebar */
+#tasks {
+    width: 32;
+    background: $surface-darken-2;
+    border-right: solid $primary-darken-3;
+}
+
+#tasks.collapsed {
+    width: 3;
+}
+
+/* Content area */
+#content {
+    width: 1fr;
+}
+
+/* Progress panel */
+#progress {
+    height: 8;
+    background: $surface-darken-1;
+    border-bottom: solid $primary-darken-2;
+    padding: 1;
+}
+
+/* Output viewer */
+#output {
+    height: 1fr;
+    background: $surface;
+    padding: 1;
+}
+
+/* Metrics panel */
+#metrics {
+    height: 5;
+    background: $surface-darken-1;
+    border-top: solid $primary-darken-2;
+}
+
+/* Status badges */
+.status-running {
+    color: $success;
+    text-style: bold;
+}
+
+.status-paused {
+    color: $warning;
+    text-style: italic;
+}
+
+.status-complete {
+    color: $primary;
+    text-style: bold;
+}
+
+.status-error {
+    color: $error;
+    text-style: bold;
+}
+
+/* Progress bar customization */
+ProgressBar > .bar--complete {
+    color: $success;
+}
+
+ProgressBar > .bar--indeterminate {
+    color: $primary;
+}
+
+/* Tool call cards */
+.tool-call {
+    background: $surface-darken-2;
+    border: solid $accent;
+    margin: 1 0;
+    padding: 1;
+}
+
+.tool-success {
+    border: solid $success-darken-1;
+}
+
+.tool-error {
+    border: solid $error;
+}
+
+/* Metric values */
+.metric-value {
+    text-style: bold;
+    color: $primary-lighten-2;
+}
+
+.metric-label {
+    color: $text-muted;
+}
+
+/* Sparkline charts */
+Sparkline {
+    height: 1;
+    color: $primary;
+}
+
+/* Validation prompt modal */
+ValidationPrompt {
+    align: center middle;
+}
+
+ValidationPrompt > Vertical {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+ValidationPrompt .title {
+    text-style: bold;
+    color: $primary;
+    text-align: center;
+    padding-bottom: 1;
+}
+
+ValidationPrompt .evidence-list {
+    height: auto;
+    max-height: 10;
+    background: $surface-darken-1;
+    padding: 1;
+    margin: 1 0;
+}
+
+ValidationPrompt Button {
+    margin: 1;
+}
+
+ValidationPrompt Button.approve {
+    background: $success;
+}
+
+ValidationPrompt Button.reject {
+    background: $error;
+}
+
+ValidationPrompt Button.skip {
+    background: $warning;
+}
+
+/* History screen */
+HistoryScreen {
+    align: center middle;
+}
+
+HistoryScreen DataTable {
+    height: 1fr;
+    width: 100%;
+}
+
+/* Help screen overlay */
+HelpScreen {
+    align: center middle;
+}
+
+HelpScreen > Vertical {
+    width: 50;
+    height: auto;
+    background: $surface;
+    border: thick $primary;
+    padding: 2;
+}
+
+HelpScreen .shortcut-key {
+    background: $primary-darken-3;
+    color: $text;
+    padding: 0 1;
+}
+
+/* Notification styling */
+Toast {
+    background: $surface-darken-1;
+    border: solid $primary;
+}
+
+Toast.-information {
+    border: solid $primary;
+}
+
+Toast.-warning {
+    border: solid $warning;
+}
+
+Toast.-error {
+    border: solid $error;
+}
+
+/* Loading indicator */
+LoadingIndicator {
+    color: $primary;
+}
+
+/* Collapsible sections */
+Collapsible {
+    background: transparent;
+    padding: 0;
+}
+
+Collapsible > CollapsibleTitle {
+    background: $surface-darken-2;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+Collapsible > CollapsibleTitle:hover {
+    background: $surface-darken-1;
+}
+
+/* Scrollbars */
+.scrollbar {
+    color: $primary-darken-2;
+}
+
+.scrollbar:hover {
+    color: $primary;
+}
+
+/* Panel borders */
+.panel-border {
+    border: solid $primary-darken-3;
+}
+
+/* Iteration markers in output */
+.iteration-marker {
+    background: $primary-darken-2;
+    color: $text;
+    text-style: bold;
+    padding: 0 2;
+    margin: 1 0;
+}
+
+/* Running indicator style (animations not supported in TCSS) */
+.running-indicator {
+    text-style: bold;
+    color: $primary;
+}
+
+/* No evidence placeholder */
+.no-evidence {
+    color: $text-muted;
+    text-style: italic;
+}
