@@ -283,3 +283,112 @@ class TestTUIImports:
         assert TaskSidebar is not None
         assert MetricsPanel is not None
         assert ValidationPrompt is not None
+
+
+class TestTUIEndToEnd:
+    """End-to-end tests for TUI using Textual's async pilot."""
+
+    @pytest.mark.asyncio
+    async def test_tui_mounts_and_composes(self):
+        """TUI app mounts and composes all widgets without errors."""
+        app = RalphTUI(prompt_file="prompts/test-tui.md")
+
+        async with app.run_test() as pilot:
+            # Verify app mounted successfully
+            assert pilot.app is not None
+            assert pilot.app.title.startswith("RALPH")
+
+            # Verify main widgets are composed
+            assert pilot.app.query_one("#progress") is not None
+            assert pilot.app.query_one("#output") is not None
+            assert pilot.app.query_one("#tasks") is not None
+            assert pilot.app.query_one("#metrics") is not None
+
+    @pytest.mark.asyncio
+    async def test_tui_keyboard_bindings(self):
+        """TUI responds to keyboard bindings."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            # Press 'l' to toggle logs
+            await pilot.press("l")
+            output = pilot.app.query_one("#output")
+            assert output.has_class("hidden")
+
+            # Press 'l' again to toggle back
+            await pilot.press("l")
+            assert not output.has_class("hidden")
+
+    @pytest.mark.asyncio
+    async def test_tui_toggle_tasks(self):
+        """TUI can toggle task sidebar."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            tasks = pilot.app.query_one("#tasks")
+            initial_collapsed = tasks.has_class("collapsed")
+
+            # Press 't' to toggle tasks
+            await pilot.press("t")
+            assert tasks.has_class("collapsed") != initial_collapsed
+
+    @pytest.mark.asyncio
+    async def test_tui_toggle_metrics(self):
+        """TUI can toggle metrics panel."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            metrics = pilot.app.query_one("#metrics")
+            initial_hidden = metrics.has_class("hidden")
+
+            # Press 'm' to toggle metrics
+            await pilot.press("m")
+            assert metrics.has_class("hidden") != initial_hidden
+
+    @pytest.mark.asyncio
+    async def test_tui_pause_resume_without_connection(self):
+        """TUI handles pause/resume gracefully without connection."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            # Press 'p' to toggle pause (should not crash without connection)
+            await pilot.press("p")
+            # The app should still be running
+            assert pilot.app is not None
+
+    @pytest.mark.asyncio
+    async def test_tui_help_screen(self):
+        """TUI can show help screen."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            # Press '?' to show help
+            await pilot.press("question_mark")
+            # Should have pushed a screen
+            assert len(pilot.app.screen_stack) > 1
+
+            # Press escape to go back
+            await pilot.press("escape")
+            assert len(pilot.app.screen_stack) == 1
+
+    @pytest.mark.asyncio
+    async def test_tui_history_screen(self):
+        """TUI can show history screen."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            # Press 'h' to show history
+            await pilot.press("h")
+            # Should have pushed a screen
+            assert len(pilot.app.screen_stack) > 1
+
+    @pytest.mark.asyncio
+    async def test_tui_quit(self):
+        """TUI can quit cleanly."""
+        app = RalphTUI()
+
+        async with app.run_test() as pilot:
+            # Press 'q' to quit
+            await pilot.press("q")
+            # App should have initiated quit
+            # (the test harness handles cleanup)
