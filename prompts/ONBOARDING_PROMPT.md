@@ -818,3 +818,162 @@ $ ralph onboard ~/projects/fastapi-backend
 **Status**: 🚧 IN PROGRESS
 **Priority**: HIGH
 **Estimated Effort**: 4-6 development iterations
+
+---
+
+## 🔍 VALIDATION STRATEGY PROPOSAL
+
+**Date**: 2026-01-03
+
+### Project Analysis
+
+I've examined the ralph-orchestrator project and found:
+
+| Aspect | Details |
+|--------|---------|
+| **Type** | Python CLI tool + Web API |
+| **Language** | Python 3.10+ |
+| **Framework** | Click CLI, FastAPI web server, Textual TUI |
+| **Dependencies** | claude-agent-sdk, fastapi, textual, pyyaml, sqlalchemy |
+| **Build System** | Hatchling (via pyproject.toml) |
+| **Test Framework** | pytest (1073 tests collected) |
+| **Package Manager** | uv (uv.lock present) |
+
+### How Users Interact
+
+1. **CLI**: `ralph onboard [project-path]` command (being implemented)
+2. **Web**: FastAPI server at `src/ralph_orchestrator/web/`
+3. **TUI**: Textual terminal UI at `src/ralph_orchestrator/tui/`
+
+### Existing Test Infrastructure
+
+- **Location**: `tests/` directory with 35+ test modules
+- **Coverage**: Comprehensive unit tests for adapters, orchestrator, web, TUI
+- **Commands**: `pytest` via `.venv`
+
+---
+
+### Available MCP Tools Detected
+
+| Tool | Available | Purpose |
+|------|-----------|---------|
+| **Playwright** | ✅ Yes | Browser automation (mcp__playwright__*) |
+| **Firecrawl** | ✅ Yes | Web scraping (mcp__firecrawl-mcp__*) |
+| **Tavily** | ✅ Yes | Web search (mcp__tavily__*) |
+| **Serena** | ✅ Yes | Code analysis (mcp__serena__*) |
+| **Context7** | ✅ Yes | Documentation (mcp__Context7__*) |
+| **Repomix** | ✅ Yes | Codebase packaging (mcp__repomix__*) |
+| **shadcn-ui** | ✅ Yes | UI components (mcp__shadcn-ui__*) |
+| **xc-mcp** | ❌ No | iOS Simulator (not relevant - Python project) |
+| **Docker MCP** | ❌ No | Container isolation |
+
+---
+
+### My Validation Proposal
+
+For this **Python CLI/API project**, I recommend validating through:
+
+#### 1. Unit Test Execution (Primary)
+Run existing pytest suite to validate core functionality:
+```bash
+cd /Users/nick/Desktop/ralph-orchestrator
+source .venv/bin/activate
+pytest tests/test_*.py -v --tb=short
+```
+
+**Evidence Captured**: Test results, pass/fail counts, coverage report
+
+#### 2. CLI Command Validation
+Once `ralph onboard` is implemented, validate with real execution:
+```bash
+# Create sandbox
+SANDBOX="/tmp/ralph-onboard-$(date +%s)"
+mkdir -p "$SANDBOX"
+cd "$SANDBOX"
+
+# Test onboard command on a sample project
+ralph onboard ~/some-project --analyze-only --dry-run
+```
+
+**Evidence Captured**: Command stdout/stderr, exit codes, generated files
+
+#### 3. API Endpoint Validation (if web server implemented)
+Use actual HTTP requests:
+```bash
+# Start server in sandbox
+uvicorn ralph_orchestrator.web.server:app --port 8765 &
+curl http://localhost:8765/health
+kill %1
+```
+
+**Evidence Captured**: HTTP responses, status codes
+
+---
+
+### Sandbox Strategy
+
+All validation runs in isolation:
+
+```bash
+# Option 1: Isolated temp directory (recommended for Python CLI)
+SANDBOX_DIR="/tmp/ralph-validation-$(date +%s)"
+mkdir -p "$SANDBOX_DIR"
+cp -r . "$SANDBOX_DIR/"
+cd "$SANDBOX_DIR"
+
+# Option 2: Virtual environment isolation
+python -m venv "$SANDBOX_DIR/.venv"
+source "$SANDBOX_DIR/.venv/bin/activate"
+pip install -e .
+```
+
+**No modifications to main project during validation.**
+
+---
+
+### Evidence I'll Capture
+
+| Type | Method | Storage |
+|------|--------|---------|
+| Test Results | pytest output capture | `validation-evidence/test-results.txt` |
+| CLI Output | Command execution | `validation-evidence/cli-output.txt` |
+| Exit Codes | Verify success/failure | `validation-evidence/exit-codes.log` |
+| Screenshots | Playwright for web UI (if needed) | `validation-evidence/screenshots/` |
+
+---
+
+### Questions for You
+
+1. **Scope**: Should validation focus on:
+   - [ ] Just the new `ralph onboard` feature?
+   - [ ] The entire orchestrator system?
+   - [ ] A subset of critical functionality?
+
+2. **Existing Tests**: Should I:
+   - [ ] Run the full test suite (1073 tests) as part of validation?
+   - [ ] Only run tests related to the onboarding feature?
+
+3. **Sample Project**: For testing `ralph onboard`, which project should be the target?
+   - [ ] This project itself (ralph-orchestrator)
+   - [ ] A separate test project in the sandbox
+   - [ ] User's choice
+
+4. **Validation Depth**:
+   - [ ] Quick validation (tests + basic CLI check)
+   - [ ] Comprehensive validation (tests + all CLI modes + API endpoints)
+
+---
+
+### Approval Request
+
+**Does this validation approach work for you?**
+
+- **[A]pprove**: Proceed with proposed validation
+- **[M]odify**: Change the approach (tell me what to adjust)
+- **[S]kip**: Skip validation for now
+
+Please respond with your choice and answer the questions above.
+
+---
+
+**Awaiting User Response**: ⏳
