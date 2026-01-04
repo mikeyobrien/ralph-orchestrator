@@ -26,7 +26,7 @@ I have analyzed the complete prompt and identified:
 | Phase 03: REST API Enhancement | ✅ COMPLETE | 22 tests |
 | Phase 04: Mobile Foundation | ✅ COMPLETE | 42 tests |
 | Phase 05: Mobile Dashboard | ✅ COMPLETE | 96 tests |
-| Phase 06: Mobile Control | ⏳ IN PROGRESS | 48 tests |
+| Phase 06: Mobile Control | ⏳ IN PROGRESS | 80 tests |
 
 ### Dependencies Flow
 
@@ -159,7 +159,7 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 |------|---------------------|-------|--------|
 | 06-01 | Start orchestration UI | 22 | ✅ DONE |
 | 06-02 | Stop/Pause/Resume buttons | 26 | ✅ DONE |
-| 06-03 | Inline prompt editor | ~9 | ⏳ PENDING |
+| 06-03 | Inline prompt editor | 32 | ✅ DONE |
 | 06-04 | Push notifications (optional) | ~7 | ⏳ PENDING |
 
 **Plan 06-01 Implementation Notes:**
@@ -178,6 +178,15 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 - isActionAllowed: State machine for valid transitions (running→pause, paused→resume, etc.)
 - getNextStatus: Returns expected status after action
 - Extended orchestratorControlApi.ts with stop/pause/resume endpoints
+
+**Plan 06-03 Implementation Notes:**
+- Created promptEditorHelpers.ts with prompt editing utilities
+- validatePromptContent: Checks empty, max size (100KB)
+- sanitizePromptContent: Normalizes line endings, removes null chars, trims
+- formatPromptPreview: Truncates with ellipsis, strips markdown headers
+- getPromptMetadata: Extracts title, sections, line/char counts
+- hasUnsavedChanges: Compares normalized content for dirty state
+- Created promptEditorApi.ts with GET/PUT /prompt and /prompt/versions endpoints
 
 **Validation Gate**: Complete mobile workflow functional
 
