@@ -1,13 +1,29 @@
 # Ralph Orchestrator v2.0 - Comprehensive Acceptance Criteria
-# Generated: 2026-01-04T04:20:00
+# Generated: 2026-01-04T10:18:00 (REFRESHED)
 # Scope: 7 Phases, 28 Plans
+# Validation Mode: REAL EXECUTION ONLY (no mocks)
 
 project_summary: |
-  Transform Ralph Orchestrator into a production-ready, self-contained orchestration
-  platform with process isolation, daemon mode, REST API, and an Expo React Native
-  mobile app for iPhone with full feature parity. This enables running multiple
-  ralph instances safely in parallel, background execution, programmatic control
-  via REST, and mobile monitoring/control.
+  Transform Ralph Orchestrator into a production-ready platform with:
+  1. Process isolation - Multiple instances run safely in parallel
+  2. Background execution - CLI runs as daemon, controllable remotely
+  3. REST API - Full control over orchestrations programmatically
+  4. Mobile app - Expo React Native iPhone app with full feature parity
+
+evidence_policy:
+  required: true
+  directory: validation-evidence/
+  per_phase: true
+  checkpoint_before_complete: true
+  freshness_required: true  # Evidence must be created during THIS run
+  error_patterns_rejected:
+    - "Connection refused"
+    - "ECONNREFUSED"
+    - "Network request failed"
+    - "error:"
+
+# CRITICAL: Evidence from Jan 4 06:16-07:06 AM is STALE
+# New evidence must be captured with timestamps AFTER current run start
 
 # ============================================================================
 # PHASE 00: TUI VERIFICATION & TESTING

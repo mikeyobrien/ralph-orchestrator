@@ -75,6 +75,81 @@ Transform Ralph Orchestrator into a production-ready platform with:
 
 ---
 
+---
+
+## VALIDATION PROPOSAL (Awaiting User Approval)
+
+### Scope Analysis
+I have analyzed the complete prompt and identified:
+- **Total Phases**: 7 (Phase 00-06 + Final)
+- **Total Plans**: 28 plans
+- **Evidence Files Required**: ~25+ (screenshots, CLI outputs, API responses)
+- **Dependencies**: Phase 04→05→06 depend on Phase 03 (API)
+
+### EXISTING EVIDENCE STATUS (STALE)
+
+Evidence files exist from a previous run (Jan 4, 06:16-07:06 AM):
+- **Phase 00**: 1 file (tui-output.txt)
+- **Phase 01**: 2 files (parallel-instances.txt, port-allocation.txt)
+- **Phase 02**: 4 files (daemon-*.txt)
+- **Phase 03**: 4 files (api-*.json, api-endpoints.txt)
+- **Phase 04**: 4 files (expo-build.txt, simulator-*.png)
+- **Phase 05**: 4 files (dashboard*.png, websocket.txt)
+- **Phase 06**: 1 file (control-api.txt)
+- **Final**: 0 files (empty)
+
+**PROBLEM**: These files are ~4 hours old (06:16-07:06 AM vs current 10:18 AM). The orchestrator's freshness check will reject stale evidence.
+
+### VALIDATION APPROACH: REAL EXECUTION ONLY
+
+I will validate using:
+- iOS Simulator screenshots (NOT Jest tests with mocks)
+- Actual `curl` commands with real API responses (NOT mocked fetch)
+- Real CLI output captures (NOT subprocess mocks)
+- Browser automation with Playwright (NOT JSDOM)
+
+**FORBIDDEN** (per testing-anti-patterns skill):
+- `npm test` alone - runs mocked Jest tests
+- `uv run pytest` alone - runs mocked unit tests
+- Checking file existence without checking content
+- Using stale evidence from previous runs
+
+### Phase-by-Phase Acceptance Criteria
+
+| Phase | Goal | Validation Method | Evidence |
+|-------|------|-------------------|----------|
+| 00 | TUI launches | `ralph tui & screencapture` | screenshot + output |
+| 01 | 2 instances parallel | CLI with 2 processes | parallel-instances.txt |
+| 02 | Daemon mode | `ralph daemon start/status/stop` | daemon-*.txt |
+| 03 | REST API | `curl` commands to real server | api-*.json |
+| 04 | Mobile foundation | `npx expo run:ios` + simulator screenshot | simulator-app.png |
+| 05 | Mobile dashboard | Screenshot with orchestrator card | dashboard-with-orchestrator.png |
+| 06 | Mobile control | Control API responses | control-api.txt |
+
+### Evidence Checkpoint Rule
+
+Before marking ANY phase complete:
+```bash
+ls -la validation-evidence/phase-XX/
+# Must show files with timestamps AFTER run start
+# Must NOT contain "Connection refused" or error patterns
+```
+
+### Global Success Criteria
+- [ ] Process isolation: 2+ instances run without conflicts
+- [ ] Daemon mode: `ralph daemon start` returns < 3s
+- [ ] REST API: All endpoints respond with valid JSON
+- [ ] Mobile app: iOS Simulator shows dashboard with live data
+
+---
+
+**Do you approve this REAL EXECUTION validation plan?**
+- **[A]pprove** - Proceed with functional validation (no mocks)
+- **[M]odify** - I want to change something
+- **[S]kip** - Skip validation, proceed without criteria
+
+---
+
 ## Phase 00: TUI Verification & Testing | ⏳ NEEDS_VALIDATION
 
 ### What To Build
