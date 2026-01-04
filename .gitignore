@@ -44,8 +44,10 @@ env/
 .sop/
 .agent/
 .logs/
-prompts/
+# Keep prompts tracked, but ignore archive and logs within
 prompts/archive/
+prompts/.logs/
+prompts/*/validation-evidence/  # Ignore per-prompt validation evidence (generated)
 ralph_*.log
 ralph_metrics_*.json
 docs-plans-prompts-specs/

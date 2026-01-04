@@ -1,0 +1,68 @@
+# RALPH Self-Improvement Configuration
+# Use this configuration for platform feature development (TUI, Process, Daemon, API, Mobile)
+#
+# Usage (from project root):
+#   ralph run -c examples/self-improvement.yml
+#   ralph tui -c examples/self-improvement.yml
+#
+# Prompt location: prompts/self-improvement/PROMPT.md
+# Evidence location: prompts/self-improvement/validation-evidence/
+# Acceptance criteria: prompts/self-improvement/ACCEPTANCE_CRITERIA.yaml
+
+# Core orchestrator settings
+agent: claude
+prompt_file: prompts/self-improvement/PROMPT.md
+
+# Resource limits - generous for complex development tasks
+max_iterations: 300
+max_runtime: 24400  # 4 hours
+max_tokens: 20000000   # 20M tokens for long sessions
+max_cost: 100.0        # $100 budget
+context_window: 200000
+context_threshold: 0.95
+
+# Checkpointing and recovery
+checkpoint_interval: 3
+retry_delay: 2
+archive_prompts: true
+git_checkpoint: true
+
+# Features
+enable_metrics: true
+verbose: true
+enable_validation: true
+validation_interactive: false  # Non-interactive for autonomous runs
+
+# Web UI (auto-start with no auth)
+enable_web: true
+web_port: 0        # 0 = auto-find available port
+web_host: 127.0.0.1
+web_no_auth: true  # Disable auth for local development
+web_open_browser: true
+
+# TUI configuration
+enable_tui: false
+tui_theme: default
+
+# Telemetry
+iteration_telemetry: true
+output_preview_length: 2000
+
+# Output formatting
+output_format: rich
+output_verbosity: verbose
+show_token_usage: true
+show_timestamps: true
+
+# Safety settings
+max_prompt_size: 10485760  # 10MB
+allow_unsafe_paths: true
+
+# Adapter configurations
+adapters:
+  claude:
+    enabled: true
+    timeout: 600  # 10 minute timeout for complex operations
+    max_retries: 5
+    tool_permissions:
+      allow_all: true

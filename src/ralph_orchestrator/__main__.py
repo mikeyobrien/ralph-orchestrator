@@ -9,10 +9,13 @@ import sys
 import os
 import json
 import shutil
+import socket
+import threading
+import webbrowser
 from pathlib import Path
 import logging
 import subprocess
-from typing import List
+from typing import List, Optional
 
 # Import the proper orchestrator with adapter support
 from .orchestrator import RalphOrchestrator
@@ -27,6 +30,94 @@ from .output import RalphConsole
 
 # Global console instance for CLI output
 _console = RalphConsole()
+
+
+def find_available_port(start_port: int = 8080, max_attempts: int = 100) -> int:
+    """Find an available port starting from start_port.
+
+    Args:
+        start_port: Port to start searching from
+        max_attempts: Maximum number of ports to try
+
+    Returns:
+        Available port number
+
+    Raises:
+        RuntimeError: If no available port found
+    """
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No available port found in range {start_port}-{start_port + max_attempts}")
+
+
+def start_web_monitor(
+    config: 'RalphConfig',
+    orchestrator: Optional['RalphOrchestrator'] = None
+) -> Optional[tuple]:
+    """Start the web monitoring server if enabled in config.
+
+    Args:
+        config: Ralph configuration with web settings
+        orchestrator: Optional orchestrator to monitor
+
+    Returns:
+        Tuple of (monitor, thread, port) if started, None otherwise
+    """
+    if not config.enable_web:
+        return None
+
+    try:
+        from .web.server import WebMonitor
+    except ImportError as e:
+        _console.print_warning(f"Web monitoring not available: {e}")
+        return None
+
+    # Find available port if auto-discover requested
+    port = config.web_port
+    if port == 0:
+        port = find_available_port()
+        _console.print_info(f"Auto-selected port: {port}")
+
+    # Create and start web monitor
+    monitor = WebMonitor(
+        port=port,
+        host=config.web_host,
+        enable_auth=not config.web_no_auth
+    )
+
+    # Start in background thread
+    import asyncio
+
+    def run_monitor():
+        try:
+            asyncio.run(monitor.run())
+        except Exception as e:
+            _console.print_error(f"Web monitor error: {e}")
+
+    thread = threading.Thread(target=run_monitor, daemon=True)
+    thread.start()
+
+    _console.print_success(f"Web monitoring dashboard started at http://{config.web_host}:{port}")
+    if config.web_no_auth:
+        _console.print_warning("Authentication disabled (--no-auth mode)")
+    else:
+        _console.print_info("Credentials: admin / ralph-admin-2024")
+
+    # Open browser if requested
+    if config.web_open_browser:
+        url = f"http://{config.web_host}:{port}"
+        try:
+            webbrowser.open(url)
+            _console.print_info(f"Opened browser to {url}")
+        except Exception as e:
+            _console.print_warning(f"Could not open browser: {e}")
+
+    return (monitor, thread, port)
 
 
 def init_project():
@@ -1415,6 +1506,12 @@ Examples:
             claude_adapter.configure(enable_all_tools=True, enable_web_search=True)
             if config.verbose:
                 _console.print_success("Claude configured with all native tools including WebSearch")
+
+        # Start web monitoring if enabled
+        web_result = start_web_monitor(config, orchestrator)
+        if web_result:
+            monitor, web_thread, web_port = web_result
+            _console.print_separator()
 
         orchestrator.run()
 
