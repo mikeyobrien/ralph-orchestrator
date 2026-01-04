@@ -1,0 +1,35 @@
+{
+  "name": "ralph-mobile",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.16",
+    "expo": "~54.0.30",
+    "expo-router": "^6.0.21",
+    "expo-secure-store": "^15.0.8",
+    "expo-status-bar": "~3.0.9",
+    "nativewind": "^4.2.1",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "tailwindcss": "3.3.2"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^30.0.0",
+    "@types/react": "~19.1.0",
+    "babel-preset-expo": "^54.0.9",
+    "jest": "^30.2.0",
+    "jest-expo": "^54.0.16",
+    "react-test-renderer": "^19.1.0",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}
