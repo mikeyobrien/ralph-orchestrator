@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -21,6 +21,7 @@ import uvicorn
 import psutil
 
 from ..orchestrator import RalphOrchestrator
+from ..instance import InstanceManager
 from .auth import (
     auth_manager, LoginRequest, TokenResponse,
     get_current_user, require_admin
@@ -34,6 +35,19 @@ logger = logging.getLogger(__name__)
 class PromptUpdateRequest(BaseModel):
     """Request model for updating orchestrator prompt."""
     content: str
+
+
+class StartOrchestrationRequest(BaseModel):
+    """Request model for starting a new orchestration."""
+    prompt_file: str
+    max_iterations: int = 50
+    max_runtime: int = 3600
+
+
+class ConfigUpdateRequest(BaseModel):
+    """Request model for updating orchestrator configuration."""
+    max_iterations: Optional[int] = None
+    max_runtime: Optional[int] = None
 
 
 class OrchestratorMonitor:
@@ -433,7 +447,38 @@ class WebMonitor:
                 "orchestrators": self.monitor.get_all_orchestrators_status(),
                 "count": len(self.monitor.active_orchestrators)
             }
-        
+
+        @self.app.post("/api/orchestrators", dependencies=[auth_dependency] if self.enable_auth else [], status_code=201)
+        async def start_orchestration(request: StartOrchestrationRequest):
+            """Start a new orchestration.
+
+            Creates a new orchestrator instance and starts it in the background.
+            Returns immediately with instance information.
+            """
+            # Validate prompt file exists
+            prompt_path = Path(request.prompt_file)
+            if not prompt_path.exists():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Prompt file not found: {request.prompt_file}"
+                )
+
+            # Create instance using InstanceManager
+            instance_manager = InstanceManager()
+            instance_info = instance_manager.create_instance(request.prompt_file)
+
+            # Return immediately with instance info
+            # The actual orchestrator will be started by the daemon or background task
+            return {
+                "instance_id": instance_info.id,
+                "status": "started",
+                "config": {
+                    "prompt_file": request.prompt_file,
+                    "max_iterations": request.max_iterations,
+                    "max_runtime": request.max_runtime
+                }
+            }
+
         @self.app.get("/api/orchestrators/{orchestrator_id}", dependencies=[auth_dependency] if self.enable_auth else [])
         async def get_orchestrator(orchestrator_id: str):
             """Get specific orchestrator status."""
@@ -472,12 +517,112 @@ class WebMonitor:
             """Resume an orchestrator."""
             if orchestrator_id not in self.monitor.active_orchestrators:
                 raise HTTPException(status_code=404, detail="Orchestrator not found")
-            
+
             orchestrator = self.monitor.active_orchestrators[orchestrator_id]
             orchestrator.stop_requested = False
-            
+
             return {"status": "resumed", "orchestrator_id": orchestrator_id}
-        
+
+        @self.app.post("/api/orchestrators/{orchestrator_id}/stop", dependencies=[auth_dependency] if self.enable_auth else [])
+        async def stop_orchestrator(orchestrator_id: str):
+            """Stop an orchestrator completely.
+
+            Unlike pause, this terminates the orchestrator and removes it from active list.
+            """
+            if orchestrator_id not in self.monitor.active_orchestrators:
+                raise HTTPException(status_code=404, detail="Orchestrator not found")
+
+            orchestrator = self.monitor.active_orchestrators[orchestrator_id]
+            orchestrator.stop_requested = True
+
+            # Unregister the orchestrator
+            self.monitor.unregister_orchestrator(orchestrator_id)
+
+            return {"status": "stopped", "orchestrator_id": orchestrator_id}
+
+        @self.app.patch("/api/orchestrators/{orchestrator_id}/config", dependencies=[auth_dependency] if self.enable_auth else [])
+        async def update_orchestrator_config(orchestrator_id: str, request: ConfigUpdateRequest):
+            """Update configuration of a running orchestrator.
+
+            Allows updating max_iterations and max_runtime on-the-fly.
+            """
+            if orchestrator_id not in self.monitor.active_orchestrators:
+                raise HTTPException(status_code=404, detail="Orchestrator not found")
+
+            orchestrator = self.monitor.active_orchestrators[orchestrator_id]
+
+            # Update configuration
+            if request.max_iterations is not None:
+                orchestrator.max_iterations = request.max_iterations
+            if request.max_runtime is not None:
+                orchestrator.max_runtime = request.max_runtime
+
+            return {
+                "status": "updated",
+                "orchestrator_id": orchestrator_id,
+                "config": {
+                    "max_iterations": orchestrator.max_iterations,
+                    "max_runtime": orchestrator.max_runtime
+                }
+            }
+
+        @self.app.get("/api/orchestrators/{orchestrator_id}/events", dependencies=[auth_dependency] if self.enable_auth else [])
+        async def orchestrator_events(orchestrator_id: str):
+            """Stream real-time events for an orchestrator via Server-Sent Events (SSE).
+
+            Returns a stream of events including:
+            - initial_state: Current orchestrator state
+            - iteration: Iteration progress updates
+            - metrics: Periodic metrics updates
+            - task_update: Task queue changes
+            - completed: Orchestration completed
+            """
+            if orchestrator_id not in self.monitor.active_orchestrators:
+                raise HTTPException(status_code=404, detail="Orchestrator not found")
+
+            async def event_generator():
+                """Generate SSE events."""
+                orchestrator = self.monitor.active_orchestrators.get(orchestrator_id)
+                if not orchestrator:
+                    return
+
+                # Send initial state
+                initial_state = self.monitor.get_orchestrator_status(orchestrator_id)
+                yield f"event: initial_state\ndata: {json.dumps(initial_state)}\n\n"
+
+                # Stream updates periodically
+                last_iteration = 0
+                while orchestrator_id in self.monitor.active_orchestrators:
+                    orchestrator = self.monitor.active_orchestrators.get(orchestrator_id)
+                    if not orchestrator:
+                        break
+
+                    # Check for iteration changes
+                    current_iteration = orchestrator.metrics.total_iterations if hasattr(orchestrator, 'metrics') else 0
+                    if current_iteration > last_iteration:
+                        yield f"event: iteration\ndata: {json.dumps({'iteration': current_iteration})}\n\n"
+                        last_iteration = current_iteration
+
+                    # Send periodic metrics update
+                    status = self.monitor.get_orchestrator_status(orchestrator_id)
+                    if status:
+                        yield f"event: metrics\ndata: {json.dumps(status.get('metrics', {}))}\n\n"
+
+                    await asyncio.sleep(2)  # Update every 2 seconds
+
+                # Send completion event
+                yield f"event: completed\ndata: {json.dumps({'orchestrator_id': orchestrator_id})}\n\n"
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"  # Disable nginx buffering
+                }
+            )
+
         @self.app.get("/api/orchestrators/{orchestrator_id}/prompt", dependencies=[auth_dependency] if self.enable_auth else [])
         async def get_orchestrator_prompt(orchestrator_id: str):
             """Get the current prompt for an orchestrator."""
