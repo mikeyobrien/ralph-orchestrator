@@ -718,19 +718,34 @@ Python 3.10+
 - Total onboarding tests: 76 (13 SettingsLoader + 21 ProjectScanner + 20 AgentAnalyzer + 22 HistoryAnalyzer)
 - Commit: `e8e57d5`
 
-### Phase 5: Pattern Extraction (Priority: MEDIUM)
-- [ ] Implement `PatternExtractor` class
-- [ ] Identify common workflow patterns
-- [ ] Extract successful tool combinations
-- [ ] Generate system prompt additions
-- [ ] Works with both agent and static analysis results
+### Phase 5: Pattern Extraction (Priority: MEDIUM) ✅ COMPLETE
+- [x] Implement `PatternExtractor` class
+- [x] Identify common workflow patterns
+- [x] Extract successful tool combinations
+- [x] Generate system prompt additions
+- [x] Works with both agent and static analysis results
 
-### Phase 6: Config Generation (Priority: HIGH)
-- [ ] Implement `ConfigGenerator` class
-- [ ] Generate ralph.yml with inherited MCP servers
-- [ ] Generate RALPH_INSTRUCTIONS.md from patterns
-- [ ] Generate PROMPT.md template
-- [ ] Include user's proven tool permissions
+**Completed**: Iteration 5 (Jan 3, 2026)
+- Created `src/ralph_orchestrator/onboarding/pattern_extractor.py`
+- Data models: `Workflow`, `ProjectPatterns`
+- Key methods: `identify_workflows()`, `identify_successful_tools()`, `identify_project_patterns()`, `generate_system_prompt_additions()`
+- 27 tests in `tests/test_onboarding_pattern_extractor.py` - all passing
+- Total onboarding tests: 103 (13 SettingsLoader + 21 ProjectScanner + 20 AgentAnalyzer + 22 HistoryAnalyzer + 27 PatternExtractor)
+- Commit: `58b540c`
+
+### Phase 6: Config Generation (Priority: HIGH) ✅ COMPLETE
+- [x] Implement `ConfigGenerator` class
+- [x] Generate ralph.yml with inherited MCP servers
+- [x] Generate RALPH_INSTRUCTIONS.md from patterns
+- [x] Generate PROMPT.md template
+- [x] Include user's proven tool permissions
+
+**Completed**: Iteration 6 (Jan 3, 2026)
+- Created `src/ralph_orchestrator/onboarding/config_generator.py`
+- Key methods: `generate_ralph_yml()`, `generate_instructions()`, `generate_prompt_md()`, `write_all()`
+- 31 tests in `tests/test_onboarding_config_generator.py` - all passing
+- Total onboarding tests: 134 (13 SettingsLoader + 21 ProjectScanner + 20 AgentAnalyzer + 22 HistoryAnalyzer + 27 PatternExtractor + 31 ConfigGenerator)
+- Commit: `731cf17`
 
 ### Phase 7: CLI Integration (Priority: HIGH)
 - [ ] Add `onboard` subcommand to CLI
