@@ -745,7 +745,7 @@ Python 3.10+
 - Key methods: `generate_ralph_yml()`, `generate_instructions()`, `generate_prompt_md()`, `write_all()`
 - 31 tests in `tests/test_onboarding_config_generator.py` - all passing
 - Total onboarding tests: 134 (13 SettingsLoader + 21 ProjectScanner + 20 AgentAnalyzer + 22 HistoryAnalyzer + 27 PatternExtractor + 31 ConfigGenerator)
-- Commit: `731cf17`
+- Commit: `d4fa12b`
 
 ### Phase 7: CLI Integration (Priority: HIGH)
 - [ ] Add `onboard` subcommand to CLI
