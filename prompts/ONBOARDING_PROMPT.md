@@ -777,13 +777,13 @@ Python 3.10+
 - Total onboarding tests: 134 - all passing
 - Commit: `da93511`
 
-### Phase 8: Testing & Documentation (Priority: MEDIUM) 🔄 IN PROGRESS
+### Phase 8: Testing & Documentation (Priority: MEDIUM) ✅ COMPLETE
 - [x] Unit tests for all modules (134 tests across 6 test files)
 - [x] CLI integration tests for ralph onboard command (23 tests)
 - [x] Integration tests for both analysis modes (static & agent)
 - [x] Mock MCP servers for testing
-- [ ] Usage documentation with examples
-- [ ] Document supported analysis plugins
+- [x] Usage documentation with examples
+- [x] Document supported analysis plugins
 
 **Progress (Iteration 8)**: Jan 3, 2026
 - Created `tests/test_onboarding_cli.py` with 23 comprehensive CLI integration tests
@@ -808,6 +808,21 @@ Python 3.10+
   - MCP server detection (all analysis plugins)
   - Project MCP overrides user MCP
 - Total onboarding tests: 171 (157 previous + 14 integration) - all passing
+
+**Completed (Iteration 10)**: Jan 3, 2026
+- Created comprehensive onboarding documentation at `docs/guide/onboarding.md`
+- Documentation includes:
+  - Quick start guide with common usage examples
+  - Detailed command reference with all options
+  - Analysis modes explained (agent vs static)
+  - Generated files documentation (ralph.yml, RALPH_INSTRUCTIONS.md, PROMPT.md)
+  - Data sources section explaining what is analyzed
+  - Supported project types table
+  - Supported analysis plugins table (mcp-memory, fogmap, graphiti-mcp, etc.)
+  - Multiple real-world examples with expected output
+  - Graceful degradation explanation
+  - Privacy & security considerations
+  - Troubleshooting section
 
 ---
 
@@ -902,9 +917,9 @@ $ ralph onboard ~/projects/fastapi-backend
 
 ---
 
-**Status**: 🚧 IN PROGRESS
+**Status**: ✅ COMPLETE
 **Priority**: HIGH
-**Estimated Effort**: 4-6 development iterations
+**Completed**: 10 iterations (Jan 3, 2026)
 
 ---
 
