@@ -36,20 +36,72 @@ Improve Ralph's orchestration architecture to enable:
 4. **Coordination protocol** - Shared files for subagent communication
 5. **Context optimization** - Maximize effectiveness, not minimize tokens
 
-**Total: 5 phases**
+**Total: 6 phases (O0-O5)**
 
 ---
 
 ## EVIDENCE DIRECTORY STRUCTURE
 
+Evidence is stored in `.agent/` for run isolation:
+
 ```
-validation-evidence/
-├── orchestration-01/    # Subagent types and profiles
-├── orchestration-02/    # Skill discovery
-├── orchestration-03/    # MCP tool discovery
-├── orchestration-04/    # Coordination protocol
-└── orchestration-05/    # Integration tests
+.agent/
+├── runs/
+│   └── {run-id}/                    # Unique per run
+│       ├── manifest.json            # Prompt, criteria, status
+│       ├── validation-evidence/
+│       │   └── orchestration-XX/
+│       ├── coordination/
+│       └── metrics/
+└── prompts/
+    └── ORCHESTRATION_IMPROVEMENT/   # Per-prompt state
+        └── latest-run-id            # Pointer to latest run
 ```
+
+**Total: 6 phases (O0-O5)**
+
+---
+
+## Phase O0: Run Isolation & State Management | ⏳ NEEDS_VALIDATION
+
+### What To Build
+
+Create run isolation infrastructure so each prompt execution is:
+- **ID-based** - Unique run identifier
+- **Traceable** - Know what prompt/criteria was used
+- **Resumable** - Can start over or continue from any point
+- **Self-contained** - All state in `.agent/runs/{id}/`
+
+### Acceptance Criteria
+
+- [ ] RunManager class in src/ralph_orchestrator/run_manager.py
+- [ ] create_run(prompt_path) → returns run_id, creates directory structure
+- [ ] get_run(run_id) → returns RunInfo with manifest
+- [ ] get_latest_run(prompt_name) → returns most recent run for prompt
+- [ ] Manifest includes: prompt_path, started_at, criteria, status
+- [ ] Validation evidence stored in .agent/runs/{id}/validation-evidence/
+- [ ] Unit tests pass
+
+### Validation Gate
+
+```bash
+# Test run management
+uv run python -c "
+from ralph_orchestrator.run_manager import RunManager
+rm = RunManager()
+run_id = rm.create_run('prompts/ORCHESTRATION_IMPROVEMENT_PROMPT.md')
+print(f'Created run: {run_id}')
+run_info = rm.get_run(run_id)
+print(f'Manifest: {run_info.manifest}')
+print(f'Evidence dir: {run_info.evidence_dir}')
+" > .agent/runs/test/validation-evidence/orchestration-00/run-manager.txt 2>&1
+
+uv run pytest tests/test_run_manager.py -v > .agent/runs/test/validation-evidence/orchestration-00/tests.txt 2>&1
+```
+
+### Evidence Required
+- `.agent/runs/{id}/validation-evidence/orchestration-00/run-manager.txt` - Run creation output
+- `.agent/runs/{id}/validation-evidence/orchestration-00/tests.txt` - Test results (all pass)
 
 ---
 
