@@ -782,15 +782,34 @@
     </div>
 
     <script>
+        // Global auth state
+        window.authEnabled = true; // Default to true, will be updated by config check
+
         // Immediate authentication check - prevent any code execution if not authenticated
         (async function() {
+            // First check if auth is enabled
+            try {
+                const configResponse = await fetch('/api/config');
+                if (configResponse.ok) {
+                    const config = await configResponse.json();
+                    window.authEnabled = config.auth_enabled;
+                    if (!config.auth_enabled) {
+                        console.log('Authentication is disabled, skipping auth checks');
+                        return; // No auth needed, continue loading page
+                    }
+                }
+            } catch (error) {
+                console.warn('Could not fetch config, assuming auth is enabled:', error);
+            }
+
+            // Auth is enabled, check for token
             const token = localStorage.getItem('ralph_auth_token');
             if (!token) {
                 console.log('No auth token found, redirecting to login immediately');
                 window.location.href = '/login.html';
                 return;
             }
-            
+
             // Verify token validity immediately
             try {
                 const response = await fetch('/api/auth/verify', {
@@ -798,7 +817,7 @@
                         'Authorization': `Bearer ${token}`
                     }
                 });
-                
+
                 if (!response.ok) {
                     console.log('Token verification failed immediately, redirecting to login');
                     localStorage.removeItem('ralph_auth_token');
@@ -823,19 +842,24 @@
 
         // Check authentication status (simplified version for other uses)
         async function checkAuthentication() {
+            // If auth is disabled, always return true
+            if (!window.authEnabled) {
+                return true;
+            }
+
             const token = localStorage.getItem('ralph_auth_token');
-            
+
             if (!token) {
                 return false;
             }
-            
+
             try {
                 const response = await fetch('/api/auth/verify', {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
                 });
-                
+
                 return response.ok;
             } catch (error) {
                 console.error('Authentication check failed:', error);
@@ -845,8 +869,13 @@
 
         // Helper function for authenticated API calls
         async function authenticatedFetch(url, options = {}) {
+            // If auth is disabled, just do a regular fetch
+            if (!window.authEnabled) {
+                return await fetch(url, options);
+            }
+
             const token = localStorage.getItem('ralph_auth_token');
-            
+
             // Add authentication header if token exists
             if (token) {
                 options.headers = {
@@ -854,16 +883,16 @@
                     'Authorization': `Bearer ${token}`
                 };
             }
-            
+
             const response = await fetch(url, options);
-            
-            // If unauthorized, redirect to login
+
+            // If unauthorized, redirect to login (only if auth is enabled)
             if (response.status === 401 || response.status === 403) {
                 localStorage.removeItem('ralph_auth_token');
                 window.location.href = '/login.html';
                 return;
             }
-            
+
             return response;
         }
 
@@ -1578,40 +1607,45 @@
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async () => {
-            // Check authentication first - block all other operations until verified
-            const token = localStorage.getItem('ralph_auth_token');
-            
-            // If no token, redirect immediately
-            if (!token) {
-                console.log('No auth token found, redirecting to login');
-                window.location.href = '/login.html';
-                return;
-            }
-            
-            // Verify token with server
-            try {
-                const response = await fetch('/api/auth/verify', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
+            // Skip auth check if auth is disabled (already checked in immediate block)
+            if (window.authEnabled) {
+                // Check authentication first - block all other operations until verified
+                const token = localStorage.getItem('ralph_auth_token');
+
+                // If no token, redirect immediately
+                if (!token) {
+                    console.log('No auth token found, redirecting to login');
+                    window.location.href = '/login.html';
+                    return;
+                }
+
+                // Verify token with server
+                try {
+                    const response = await fetch('/api/auth/verify', {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+
+                    if (!response.ok) {
+                        console.log('Token verification failed, redirecting to login');
+                        localStorage.removeItem('ralph_auth_token');
+                        window.location.href = '/login.html';
+                        return;
                     }
-                });
-                
-                if (!response.ok) {
-                    console.log('Token verification failed, redirecting to login');
+
+                    console.log('Authentication successful, initializing dashboard');
+                } catch (error) {
+                    console.error('Authentication check failed:', error);
                     localStorage.removeItem('ralph_auth_token');
                     window.location.href = '/login.html';
                     return;
                 }
-                
-                console.log('Authentication successful, initializing dashboard');
-            } catch (error) {
-                console.error('Authentication check failed:', error);
-                localStorage.removeItem('ralph_auth_token');
-                window.location.href = '/login.html';
-                return;
+            } else {
+                console.log('Authentication disabled, initializing dashboard directly');
             }
-            
-            // Only proceed if authenticated
+
+            // Proceed with initialization
             initTheme();
             connectWebSocket();
             refreshOrchestrators();

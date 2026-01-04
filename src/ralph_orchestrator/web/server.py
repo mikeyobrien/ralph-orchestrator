@@ -428,6 +428,14 @@ class WebMonitor:
                 "status": "healthy",
                 "timestamp": datetime.now().isoformat()
             }
+
+        @self.app.get("/api/config")
+        async def get_config():
+            """Get public configuration (no auth required)."""
+            return {
+                "auth_enabled": self.enable_auth,
+                "version": "2.0.0"
+            }
         
         @self.app.get("/api/status", dependencies=[auth_dependency] if self.enable_auth else [])
         async def get_status():
