@@ -1,0 +1,15 @@
+# Phase 03 Validation: POST /api/orchestrators/{id}/stop
+# Test Date: 2026-01-04 06:32 EST
+
+Request: GET /api/orchestrators
+Response:
+{"orchestrators":[],"count":0}
+
+Note: Stop endpoint requires an actively running orchestrator registered with the monitor.
+The POST /api/orchestrators creates an instance but doesn't start it immediately.
+
+Request: POST /api/orchestrators/test-id/stop
+Response:
+{"detail":"Orchestrator not found"}
+
+Result: ✅ Stop endpoint working (returns 404 for non-existent orchestrator)

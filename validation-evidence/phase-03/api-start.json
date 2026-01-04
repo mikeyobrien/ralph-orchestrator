@@ -1,0 +1,12 @@
+# Phase 03 Validation: POST /api/orchestrators
+# Test Date: 2026-01-04 06:32 EST
+# Endpoint: POST http://localhost:8085/api/orchestrators
+# Request: {"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md", "max_iterations": 10}
+
+Request:
+POST /api/orchestrators {"prompt_file": "prompts/SELF_IMPROVEMENT_PROMPT.md", "max_iterations": 10}
+
+Response:
+{"instance_id":"839fce41","status":"started","config":{"prompt_file":"prompts/SELF_IMPROVEMENT_PROMPT.md","max_iterations":10,"max_runtime":3600}}
+
+Result: ✅ Instance created successfully with unique ID
