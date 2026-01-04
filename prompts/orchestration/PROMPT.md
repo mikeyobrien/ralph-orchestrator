@@ -50,7 +50,7 @@ All validation uses:
 ### Global Success Criteria
 
 - [x] All 6 phases show `| ✅ VALIDATED` status
-- [x] All unit tests pass (`uv run pytest tests/test_orchestration*.py tests/test_run_manager.py tests/test_discovery.py tests/test_coordinator.py -v`) - 166 tests pass
+- [x] All unit tests pass (`uv run pytest tests/test_orchestration*.py tests/test_run_manager.py tests/test_discovery.py tests/test_coordinator.py -v`) - 127 tests pass
 - [x] Orchestration package exists with all modules
 - [x] Integration test demonstrates subagent prompt generation
 - [x] Evidence files exist for all phases (12+ files total)
@@ -508,7 +508,7 @@ All 6 phases of the orchestration architecture improvement have been validated:
 | O4 | Coordination Protocol | ✅ VALIDATED | 22 tests |
 | O5 | Integration & Subagent Spawning | ✅ VALIDATED | 22 tests |
 
-**Total: 166 tests passing**
+**Total: 127 tests passing** (105 orchestration + 22 integration)
 
 The orchestration package is complete with:
 - `OrchestrationManager` - Main class for subagent orchestration
@@ -533,7 +533,7 @@ The orchestration package is complete with:
   - generate_subagent_prompt() creates prompt with skills/MCPs
   - aggregate_results() combines subagent outputs with verdict logic
 - Evidence captured in `validation-evidence/orchestration-05/`
-- All 166 orchestration tests pass
+- All 127 orchestration tests pass
 
 **All 6 phases (O0-O5) are now VALIDATED!**
 
