@@ -1,1 +1,2 @@
 ℹ Daemon is not running (no PID file)
+⚠ Daemon is not running

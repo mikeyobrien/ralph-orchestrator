@@ -1,0 +1,14 @@
+usage: ralph daemon [-h] {start,stop,status,logs} ...
+
+Start, stop, and manage the Ralph daemon for background orchestration.
+
+positional arguments:
+  {start,stop,status,logs}
+                        Daemon commands
+    start               Start the daemon
+    stop                Stop the daemon
+    status              Check daemon status
+    logs                View daemon logs
+
+options:
+  -h, --help            show this help message and exit
