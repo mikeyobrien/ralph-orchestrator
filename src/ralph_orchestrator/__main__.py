@@ -59,6 +59,12 @@ def init_project():
 - All requirements met
 - Tests pass
 - Code is clean
+
+## Completion
+When ALL requirements and success criteria are met, signal completion by writing on its own line:
+- [x] TASK_COMPLETE
+
+(Other accepted formats: `**TASK_COMPLETE**`, `Status: TASK_COMPLETE`, or standalone `TASK_COMPLETE`)
 """)
         _console.print_success("Created PROMPT.md template")
     
@@ -322,12 +328,19 @@ The file content should follow this EXACT format:
 - [Measurable success criterion 2]
 - [How to know when task is complete]
 
-IMPORTANT: 
+## Completion
+When ALL requirements and success criteria are met, signal completion by writing on its own line:
+- [x] TASK_COMPLETE
+
+(Other accepted formats: `**TASK_COMPLETE**`, `Status: TASK_COMPLETE`, or standalone `TASK_COMPLETE`)
+
+IMPORTANT:
 1. WRITE the content to {output_file} using your file writing tools
 2. Make requirements specific and actionable with checkboxes
 3. Include relevant technical specifications for the task type
 4. Make success criteria measurable and clear
-5. The file should contain ONLY the structured markdown"""
+5. Include the Completion section with clear instructions for signaling task completion
+6. The file should contain ONLY the structured markdown"""
 
     # Try to use the specified agent or auto-detect
     success = False

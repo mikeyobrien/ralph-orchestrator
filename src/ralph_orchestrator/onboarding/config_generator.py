@@ -345,7 +345,20 @@ class ConfigGenerator:
         lines.append("## Success Criteria")
         lines.append("- [ ] All requirements implemented")
         lines.append("- [ ] Tests pass")
-        lines.append("- [ ] TASK_COMPLETE when all requirements met")
+        lines.append("")
+
+        # Completion instructions
+        lines.append("## Completion")
+        lines.append(
+            "When ALL requirements and success criteria are met, "
+            "signal completion by writing on its own line:"
+        )
+        lines.append("- [x] TASK_COMPLETE")
+        lines.append("")
+        lines.append(
+            "(Other accepted formats: `**TASK_COMPLETE**`, "
+            "`Status: TASK_COMPLETE`, or standalone `TASK_COMPLETE`)"
+        )
         lines.append("")
 
         return "\n".join(lines)

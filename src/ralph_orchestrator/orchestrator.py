@@ -760,11 +760,17 @@ class RalphOrchestrator:
                 self.task_start_time = None
 
     def _check_completion_marker(self) -> bool:
-        """Check if prompt contains TASK_COMPLETE marker (checkbox style).
+        """Check if prompt contains TASK_COMPLETE marker.
 
-        Supports the following marker formats:
+        Supports multiple marker formats that agents commonly use:
         - `- [x] TASK_COMPLETE` (checkbox style, recommended)
         - `[x] TASK_COMPLETE` (checkbox without dash)
+        - `**TASK_COMPLETE**` (bold markdown, with optional trailing text)
+        - `TASK_COMPLETE` (standalone at line start)
+        - `Status: TASK_COMPLETE` (colon format)
+
+        Avoids false positives from mid-sentence mentions like
+        "Remember to mark TASK_COMPLETE when done."
 
         Returns:
             True if completion marker found, False otherwise.
@@ -776,8 +782,34 @@ class RalphOrchestrator:
             content = self.prompt_file.read_text()
             for line in content.split('\n'):
                 line_stripped = line.strip()
+
+                # Checkbox formats (original)
                 if line_stripped in ('- [x] TASK_COMPLETE', '[x] TASK_COMPLETE'):
                     return True
+
+                # Bold markdown: **TASK_COMPLETE** (with optional trailing text)
+                if line_stripped.startswith('**TASK_COMPLETE**'):
+                    return True
+
+                # Standalone at line start (exactly TASK_COMPLETE or TASK_COMPLETE -)
+                if line_stripped == 'TASK_COMPLETE':
+                    return True
+                if line_stripped.startswith('TASK_COMPLETE '):
+                    # Only if it's a completion signal, not a sentence fragment
+                    # Allow: "TASK_COMPLETE - description"
+                    # Reject: "TASK_COMPLETE when all items are done"
+                    rest = line_stripped[len('TASK_COMPLETE '):]
+                    if rest.startswith('-') or rest.startswith(':'):
+                        return True
+
+                # Colon format: "Status: TASK_COMPLETE" or "**Status**: TASK_COMPLETE"
+                if ': TASK_COMPLETE' in line_stripped:
+                    # Ensure it's at the end or followed by punctuation/space
+                    idx = line_stripped.find(': TASK_COMPLETE')
+                    after_marker = line_stripped[idx + len(': TASK_COMPLETE'):]
+                    if after_marker == '' or after_marker[0] in ' \t.,;':
+                        return True
+
             return False
         except Exception as e:
             logger.warning(f"Error checking completion marker: {e}")

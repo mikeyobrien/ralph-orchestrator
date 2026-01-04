@@ -141,5 +141,88 @@ Feature is ready for review.
         self.assertTrue(orchestrator._check_completion_marker())
 
 
+    # =========================================================================
+    # Flexible completion marker tests (Option C fix for root cause bug)
+    # The agent was writing **TASK_COMPLETE** but orchestrator only checked
+    # for checkbox format - [x] TASK_COMPLETE
+    # =========================================================================
+
+    def test_completion_marker_bold_markdown(self):
+        """Test detection of bold markdown completion marker.
+
+        This is what the agent actually wrote during the self-improvement run,
+        but the orchestrator didn't detect it, causing 27 wasted iterations.
+        """
+        prompt_content = """# Task
+
+## Status
+All work is done.
+
+**TASK_COMPLETE**
+"""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text(prompt_content)
+
+        orchestrator = RalphOrchestrator(str(prompt_file))
+        self.assertTrue(orchestrator._check_completion_marker())
+
+    def test_completion_marker_bold_with_description(self):
+        """Test bold marker with trailing description (common pattern)."""
+        prompt_content = """# Task
+
+**TASK_COMPLETE** - No outstanding work items. Feature is production-ready.
+"""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text(prompt_content)
+
+        orchestrator = RalphOrchestrator(str(prompt_file))
+        self.assertTrue(orchestrator._check_completion_marker())
+
+    def test_completion_marker_standalone_on_line(self):
+        """Test standalone TASK_COMPLETE on its own line."""
+        prompt_content = """# Task
+
+## Final Status
+
+TASK_COMPLETE
+
+End of document.
+"""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text(prompt_content)
+
+        orchestrator = RalphOrchestrator(str(prompt_file))
+        self.assertTrue(orchestrator._check_completion_marker())
+
+    def test_completion_marker_colon_format(self):
+        """Test 'Status: TASK_COMPLETE' format."""
+        prompt_content = """# Task
+
+**Status**: TASK_COMPLETE
+"""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text(prompt_content)
+
+        orchestrator = RalphOrchestrator(str(prompt_file))
+        self.assertTrue(orchestrator._check_completion_marker())
+
+    def test_completion_marker_in_sentence_still_rejected(self):
+        """Ensure TASK_COMPLETE mid-sentence is still rejected.
+
+        We want flexible detection but not false positives.
+        """
+        prompt_content = """# Task
+
+Remember to mark TASK_COMPLETE when all items are done.
+Don't forget to add the TASK_COMPLETE marker at the end.
+"""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text(prompt_content)
+
+        orchestrator = RalphOrchestrator(str(prompt_file))
+        # Should still reject - these are instructions, not completion signals
+        self.assertFalse(orchestrator._check_completion_marker())
+
+
 if __name__ == "__main__":
     unittest.main()
