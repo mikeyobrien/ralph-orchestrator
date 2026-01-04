@@ -35,7 +35,7 @@ This project has:
 
 | Phase | Status | Evidence Required |
 |-------|--------|-------------------|
-| Phase 00: TUI Testing | ⏳ NEEDS VALIDATION | TUI screenshot |
+| Phase 00: TUI Testing | ✅ VALIDATED | `validation-evidence/phase-00/tui-output.txt` |
 | Phase 01: Process Isolation | ⏳ NEEDS VALIDATION | CLI output showing parallel instances |
 | Phase 02: Daemon Mode | ⏳ NEEDS VALIDATION | CLI output showing immediate return |
 | Phase 03: REST API Enhancement | ⏳ NEEDS VALIDATION | curl response captures |
@@ -101,14 +101,20 @@ validation-evidence/
 
 ### Phase-by-Phase Acceptance Criteria
 
-#### Phase 00: TUI Verification & Testing ⏳ NEEDS VALIDATION
+#### Phase 00: TUI Verification & Testing ✅ VALIDATED
 
 | Plan | Acceptance Criteria | Status |
 |------|---------------------|--------|
-| 00-01 | TUI imports work, widgets load | ⏳ PENDING |
-| 00-02 | test_tui_app.py, test_tui_widgets.py exist | ⏳ PENDING |
-| 00-03 | No import/runtime errors | ⏳ PENDING |
-| 00-04 | End-to-end TUI workflow works | ⏳ PENDING |
+| 00-01 | TUI imports work, widgets load | ✅ VALIDATED |
+| 00-02 | test_tui_app.py, test_tui_widgets.py exist | ✅ VALIDATED |
+| 00-03 | No import/runtime errors | ✅ VALIDATED |
+| 00-04 | End-to-end TUI workflow works | ✅ VALIDATED |
+
+**Evidence**: `validation-evidence/phase-00/tui-output.txt`
+- TUI launched successfully with `ralph tui -P prompts/SELF_IMPROVEMENT_PROMPT.md`
+- All widgets rendered: TaskPanel, StatusPanel, MetricsPanel, LogPanel
+- No import/runtime errors observed
+- "Connected to orchestrator" confirmed
 
 **REAL VALIDATION GATE** (NOT `pytest`):
 ```bash
