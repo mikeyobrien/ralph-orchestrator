@@ -357,6 +357,7 @@ class RalphOrchestrator:
 
         start_time = time.time()
         self._start_time = start_time  # Store for state retrieval
+        self.run_start_time = start_time  # For validation evidence freshness check
 
         while not self.stop_requested:
             # Check safety limits
@@ -779,15 +780,21 @@ class RalphOrchestrator:
                 self.task_start_time = None
 
     def _check_validation_evidence(self) -> tuple[bool, str]:
-        """Check if validation evidence files exist.
+        """Check if validation evidence files exist, are fresh, and show success.
 
         When validation is enabled, this checks for evidence files in
         validation-evidence/ directory. Prevents false completion when
         only unit tests were run without functional validation.
 
+        Validates:
+        1. Evidence directory exists
+        2. Minimum 3 evidence files across types (.png, .txt, .json)
+        3. All evidence files are FRESH (created during this run)
+        4. TXT evidence files don't contain error patterns
+
         Returns:
-            Tuple of (has_evidence, message) - True if evidence exists or
-            validation is disabled, False if evidence is missing.
+            Tuple of (has_evidence, message) - True if evidence exists, is fresh,
+            and shows success; False if evidence is missing, stale, or shows errors.
         """
         if not self.enable_validation:
             return True, "Validation disabled, skipping evidence check"
@@ -800,8 +807,9 @@ class RalphOrchestrator:
         png_files = list(evidence_dir.rglob("*.png"))
         txt_files = list(evidence_dir.rglob("*.txt"))
         json_files = list(evidence_dir.rglob("*.json"))
+        all_files = png_files + txt_files + json_files
 
-        total_evidence = len(png_files) + len(txt_files) + len(json_files)
+        total_evidence = len(all_files)
 
         if total_evidence == 0:
             return False, "No evidence files found in validation-evidence/ (need screenshots, output captures)"
@@ -810,10 +818,47 @@ class RalphOrchestrator:
         if total_evidence < 3:
             return False, f"Insufficient evidence: only {total_evidence} files found (need at least 3)"
 
+        # Check evidence FRESHNESS - all files must be created during this run
+        run_start = getattr(self, 'run_start_time', None)
+        if run_start is not None:
+            stale_files = []
+            for f in all_files:
+                try:
+                    file_mtime = f.stat().st_mtime
+                    if file_mtime < run_start:
+                        stale_files.append(f.name)
+                except OSError:
+                    pass  # File disappeared, skip it
+
+            if stale_files:
+                return False, f"Stale evidence found ({len(stale_files)} files older than run start): {', '.join(stale_files[:3])}"
+
+        # Check TXT evidence CONTENT for error patterns
+        error_patterns = [
+            'network request failed',
+            'connection refused',
+            'connection failed',
+            'failed to connect',
+            'econnrefused',
+            'timeout',
+            'error:',
+            'fatal error',
+            'cannot connect',
+        ]
+
+        for txt_file in txt_files:
+            try:
+                content = txt_file.read_text(errors='ignore').lower()
+                for pattern in error_patterns:
+                    if pattern in content:
+                        return False, f"Evidence contains error in {txt_file.name}: '{pattern}' found"
+            except (OSError, IOError):
+                pass  # File unreadable, skip
+
         # Log what was found
         logger.info(f"Validation evidence found: {len(png_files)} screenshots, {len(txt_files)} outputs, {len(json_files)} API responses")
 
-        return True, f"Evidence found: {total_evidence} files"
+        return True, f"Evidence found: {total_evidence} files (all fresh, no errors)"
 
     def _check_completion_marker(self) -> bool:
         """Check if prompt contains TASK_COMPLETE marker.
