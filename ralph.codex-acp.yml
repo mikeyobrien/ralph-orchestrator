@@ -1,0 +1,33 @@
+# Ralph Orchestrator Configuration (Codex via ACP)
+#
+# Requires:
+# - `codex` installed (you already have it)
+# - `codex-acp` installed (e.g. `npm i -g @zed-industries/codex-acp`)
+# - Auth for Codex (either `codex login` or `OPENAI_API_KEY`/`CODEX_API_KEY`)
+
+agent: acp
+# Prefer Codex first, then fall back to Claude, then Gemini.
+agent_priority:
+  - acp
+  - claude
+  - gemini
+prompt_file: PROMPT.md
+max_iterations: 100
+max_runtime: 14400
+
+adapters:
+  q:
+    enabled: false
+  acp:
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: codex-acp
+      # Prefer configuring Codex here so you can run `ralph run` with no flags.
+      agent_args:
+        - -c
+        - model="gpt-5.2"
+        - -c
+        - model_reasoning_effort="high"
+      permission_mode: auto_approve
+      permission_allowlist: []

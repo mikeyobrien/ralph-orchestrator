@@ -29,6 +29,44 @@ from .output import RalphConsole
 _console = RalphConsole()
 
 
+def _apply_codex_shortcut(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Apply --codex shortcut flags to ACP CLI args.
+
+    --codex is a convenience flag equivalent to:
+      --agent acp --acp-agent codex-acp
+
+    It also defaults permission mode to interactive unless explicitly set.
+    """
+    if not getattr(args, "codex", False):
+        return
+
+    # --codex implies ACP mode; reject conflicting explicit agent selection.
+    if getattr(args, "agent", "auto") not in ("auto", "acp"):
+        parser.error("--codex requires --agent auto or acp (or omit -a/--agent)")
+
+    args.agent = "acp"
+
+    if getattr(args, "acp_agent", None) is None:
+        args.acp_agent = "codex-acp"
+
+    if getattr(args, "acp_permission_mode", None) is None:
+        args.acp_permission_mode = getattr(args, "codex_permission_mode", None) or "interactive"
+
+    # Optionally push Codex config overrides into the ACP agent args (codex-acp supports -c key=value).
+    # Ensure agent_args exists (argparse.REMAINDER yields list, but keep it defensive).
+    if not hasattr(args, "agent_args") or args.agent_args is None:
+        args.agent_args = []
+
+    codex_model = getattr(args, "codex_model", None)
+    if codex_model:
+        args.agent_args.extend(["-c", f"model=\"{codex_model}\""])
+
+    codex_reasoning = getattr(args, "codex_reasoning_effort", None)
+    if codex_reasoning:
+        # Codex config key is `model_reasoning_effort` (NOT the ACP session config option id).
+        args.agent_args.extend(["-c", f"model_reasoning_effort=\"{codex_reasoning}\""])
+
+
 def init_project():
     """Initialize a new Ralph project."""
     _console.print_status("Initializing Ralph project...")
@@ -67,6 +105,13 @@ def init_project():
         with open("ralph.yml", "w") as f:
             f.write("""# Ralph Orchestrator Configuration
 agent: auto
+# Agent selection + fallback ordering (used when agent=auto, and for fallback order)
+# Valid values: acp, claude, gemini, qchat (aliases: codex->acp, q->qchat)
+agent_priority:
+  - claude
+  - gemini
+  - qchat
+  - acp
 prompt_file: PROMPT.md
 max_iterations: 100
 max_runtime: 14400
@@ -486,6 +531,32 @@ Examples:
             default=None,
             help="ACP permission mode (default: auto_approve)"
         )
+
+        p.add_argument(
+            "--codex",
+            action="store_true",
+            help="Shortcut for --agent acp --acp-agent codex-acp (Codex via ACP)",
+        )
+
+        p.add_argument(
+            "--codex-permission-mode",
+            choices=["auto_approve", "deny_all", "allowlist", "interactive"],
+            default=None,
+            help="Permission mode shortcut for --codex (default: interactive)",
+        )
+
+        p.add_argument(
+            "--codex-model",
+            default=None,
+            help="Model to use with --codex (passed to codex-acp as -c model=...)",
+        )
+
+        p.add_argument(
+            "--codex-reasoning-effort",
+            choices=["low", "medium", "high", "xhigh"],
+            default=None,
+            help="Reasoning effort to use with --codex (passed to codex-acp as -c model_reasoning_effort=...)",
+        )
         
         p.add_argument(
             "-P", "--prompt-file",
@@ -618,6 +689,9 @@ Examples:
     
     # Parse arguments
     args = parser.parse_args()
+
+    # Apply convenience shortcuts (may adjust args.agent/acp settings)
+    _apply_codex_shortcut(args, parser)
     
     # Handle commands
     command = args.command if args.command else 'run'
@@ -660,10 +734,19 @@ Examples:
         "auto": AgentType.AUTO
     }
     
-    # Create config - load from YAML if provided, otherwise use CLI args
-    if args.config:
+    # Create config - load from YAML if provided, otherwise use CLI args.
+    # If no --config is provided, auto-load ./ralph.yml when present.
+    auto_config_path: str | None = None
+    if not getattr(args, "config", None) and Path("ralph.yml").exists():
+        auto_config_path = "ralph.yml"
+
+    config_path = getattr(args, "config", None) or auto_config_path
+
+    if config_path:
         try:
-            config = RalphConfig.from_yaml(args.config)
+            config = RalphConfig.from_yaml(config_path)
+            if auto_config_path and config_path == auto_config_path:
+                _console.print_info(f"Using config: {config_path}")
             # Override with any CLI arguments that were explicitly provided
             if hasattr(args, 'agent') and args.agent != 'auto':
                 config.agent = agent_map[args.agent]
@@ -766,6 +849,7 @@ Examples:
         # Pass ACP-specific CLI arguments if using ACP adapter
         acp_agent = getattr(args, 'acp_agent', None)
         acp_permission_mode = getattr(args, 'acp_permission_mode', None)
+        acp_agent_args = getattr(args, 'agent_args', None)
 
         # Pass full config to orchestrator so prompt_text is available
         orchestrator = RalphOrchestrator(
@@ -778,7 +862,8 @@ Examples:
             checkpoint_interval=config.checkpoint_interval,
             verbose=config.verbose,
             acp_agent=acp_agent,
-            acp_permission_mode=acp_permission_mode
+            acp_permission_mode=acp_permission_mode,
+            acp_agent_args=acp_agent_args,
         )
 
         # Enable all tools for Claude adapter (including WebSearch)

@@ -202,6 +202,9 @@ class RalphConfig:
 
     # Core configuration fields
     agent: AgentType = AgentType.AUTO
+    # Agent selection and fallback priority (used when agent=auto, and for fallback ordering)
+    # Valid values: "acp", "claude", "gemini", "qchat" (also accepts aliases: "codex"->"acp", "q"->"qchat")
+    agent_priority: List[str] = field(default_factory=lambda: ["claude", "qchat", "gemini", "acp"])
     prompt_file: str = DEFAULT_PROMPT_FILE
     prompt_text: Optional[str] = None  # Direct prompt text (overrides prompt_file)
     max_iterations: int = DEFAULT_MAX_ITERATIONS

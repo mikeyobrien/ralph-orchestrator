@@ -2,7 +2,14 @@
 # This file configures Ralph and its AI agent adapters
 
 # Core orchestrator settings
-agent: auto                    # Which agent to use: claude, q, gemini, auto
+agent: auto                    # Which agent to use: claude, q, gemini, acp, auto
+# Agent selection + fallback ordering (used when agent=auto, and for fallback order)
+# Valid values: acp, claude, gemini, qchat (aliases: codex->acp, q->qchat)
+agent_priority:                # Priority order (first available wins)
+  - claude
+  - gemini
+  - qchat
+  - acp
 prompt_file: PROMPT.md         # Path to prompt file
 max_iterations: 100            # Maximum iterations before stopping
 max_runtime: 14400             # Maximum runtime in seconds (4 hours)
@@ -52,3 +59,17 @@ adapters:
     max_retries: 3
     args: []
     env: {}
+
+  # Agent Client Protocol (ACP) adapter
+  # Works with any ACP-compliant agent, e.g. `codex-acp` (Codex), `gemini`, etc.
+  acp:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+    args: []
+    env: {}
+    tool_permissions:
+      agent_command: codex-acp          # ACP agent command to run
+      agent_args: []                   # Args passed to the ACP agent
+      permission_mode: interactive      # auto_approve | deny_all | allowlist | interactive
+      permission_allowlist: []         # Used when permission_mode=allowlist

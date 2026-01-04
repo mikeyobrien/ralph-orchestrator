@@ -17,6 +17,7 @@ from .adapters.claude import ClaudeAdapter
 from .adapters.qchat import QChatAdapter
 from .adapters.gemini import GeminiAdapter
 from .adapters.acp import ACPAdapter
+from .adapters.acp_models import ACPAdapterConfig
 from .metrics import Metrics, CostTracker, IterationStats, TriggerReason
 from .safety import SafetyGuard
 from .context import ContextManager
@@ -32,7 +33,9 @@ logger = logging.getLogger('ralph-orchestrator')
 
 class RalphOrchestrator:
     """Main orchestration loop for AI agents."""
-    
+
+    _KNOWN_ADAPTERS = ("acp", "claude", "gemini", "qchat")
+
     def __init__(
         self,
         prompt_file_or_config = None,
@@ -46,6 +49,7 @@ class RalphOrchestrator:
         verbose: bool = False,
         acp_agent: str = None,
         acp_permission_mode: str = None,
+        acp_agent_args: list[str] | None = None,
         iteration_telemetry: bool = True,
         output_preview_length: int = 500
     ):
@@ -69,13 +73,18 @@ class RalphOrchestrator:
         # Store ACP-specific settings
         self.acp_agent = acp_agent
         self.acp_permission_mode = acp_permission_mode
+        self.acp_agent_args = acp_agent_args or []
+        self._config = None
+        self.agent_priority: list[str] = []
         # Handle both config object and individual parameters
         if hasattr(prompt_file_or_config, 'prompt_file'):
             # It's a config object
             config = prompt_file_or_config
+            self._config = config
             self.prompt_file = Path(config.prompt_file)
             self.prompt_text = getattr(config, 'prompt_text', None)
             self.primary_tool = config.agent.value if hasattr(config.agent, 'value') else str(config.agent)
+            self.agent_priority = list(getattr(config, "agent_priority", []) or [])
             self.max_iterations = config.max_iterations
             self.max_runtime = config.max_runtime
             self.track_costs = hasattr(config, 'max_cost') and config.max_cost > 0
@@ -90,6 +99,7 @@ class RalphOrchestrator:
             self.prompt_file = Path(prompt_file_or_config if prompt_file_or_config else "PROMPT.md")
             self.prompt_text = None
             self.primary_tool = primary_tool
+            self.agent_priority = []
             self.max_iterations = max_iterations
             self.max_runtime = max_runtime
             self.track_costs = track_costs
@@ -112,7 +122,12 @@ class RalphOrchestrator:
         
         # Initialize adapters
         self.adapters = self._initialize_adapters()
-        self.current_adapter = self.adapters.get(self.primary_tool)
+        if self.primary_tool == "auto":
+            self.current_adapter = self._select_auto_adapter()
+            # Record resolved tool name for telemetry/cost tracking
+            self.primary_tool = self.current_adapter.name
+        else:
+            self.current_adapter = self.adapters.get(self.primary_tool)
         
         if not self.current_adapter:
             logger.error(f"DEBUG: primary_tool={self.primary_tool}, adapters={list(self.adapters.keys())}")
@@ -141,56 +156,158 @@ class RalphOrchestrator:
     
     def _initialize_adapters(self) -> Dict[str, ToolAdapter]:
         """Initialize available adapters."""
-        adapters = {}
+        adapters: Dict[str, ToolAdapter] = {}
 
-        # Try to initialize each adapter
-        try:
-            adapter = ClaudeAdapter(verbose=self.verbose)
-            if adapter.available:
-                adapters['claude'] = adapter
-                logger.info("Claude adapter initialized")
-            else:
-                logger.warning("Claude SDK not available")
-        except Exception as e:
-            logger.warning(f"Claude adapter error: {e}")
+        # Resolve configured adapter order (used for both selection and fallback ordering).
+        desired_order = self._resolve_agent_priority()
 
-        try:
-            adapter = QChatAdapter()
-            if adapter.available:
-                adapters['qchat'] = adapter
-                logger.info("Q Chat adapter initialized")
-            else:
-                logger.warning("Q Chat CLI not available")
-        except Exception as e:
-            logger.warning(f"Q Chat adapter error: {e}")
+        # Try to initialize each adapter (in priority order).
+        for name in desired_order:
+            if not self._adapter_enabled(name):
+                logger.info("Adapter disabled via config: %s", name)
+                continue
 
-        try:
-            adapter = GeminiAdapter()
-            if adapter.available:
-                adapters['gemini'] = adapter
-                logger.info("Gemini adapter initialized")
-            else:
-                logger.warning("Gemini CLI not available")
-        except Exception as e:
-            logger.warning(f"Gemini adapter error: {e}")
+            if name == "claude":
+                try:
+                    adapter = ClaudeAdapter(verbose=self.verbose)
+                    if adapter.available:
+                        adapters["claude"] = adapter
+                        logger.info("Claude adapter initialized")
+                    else:
+                        logger.warning("Claude SDK not available")
+                except Exception as e:
+                    logger.warning(f"Claude adapter error: {e}")
+                continue
 
-        # Initialize ACP adapter with CLI parameters
-        try:
-            acp_kwargs = {}
-            if self.acp_agent:
-                acp_kwargs['agent_command'] = self.acp_agent
-            if self.acp_permission_mode:
-                acp_kwargs['permission_mode'] = self.acp_permission_mode
-            adapter = ACPAdapter(**acp_kwargs)
-            if adapter.available:
-                adapters['acp'] = adapter
-                logger.info(f"ACP adapter initialized (agent: {adapter.agent_command})")
-            else:
-                logger.warning("ACP agent not available")
-        except Exception as e:
-            logger.warning(f"ACP adapter error: {e}")
+            if name == "qchat":
+                try:
+                    adapter = QChatAdapter()
+                    if adapter.available:
+                        adapters["qchat"] = adapter
+                        logger.info("Q Chat adapter initialized")
+                    else:
+                        logger.warning("Q Chat CLI not available")
+                except Exception as e:
+                    logger.warning(f"Q Chat adapter error: {e}")
+                continue
+
+            if name == "gemini":
+                try:
+                    adapter = GeminiAdapter()
+                    if adapter.available:
+                        adapters["gemini"] = adapter
+                        logger.info("Gemini adapter initialized")
+                    else:
+                        logger.warning("Gemini CLI not available")
+                except Exception as e:
+                    logger.warning(f"Gemini adapter error: {e}")
+                continue
+
+            if name == "acp":
+                try:
+                    adapter = self._init_acp_adapter()
+                    if adapter and adapter.available:
+                        adapters["acp"] = adapter
+                        logger.info("ACP adapter initialized (agent: %s)", getattr(adapter, "agent_command", "unknown"))
+                    else:
+                        logger.warning("ACP agent not available")
+                except Exception as e:
+                    logger.warning(f"ACP adapter error: {e}")
+                continue
 
         return adapters
+
+    def _normalize_agent_name(self, name: str) -> str:
+        """Normalize user-facing agent names to internal adapter keys."""
+        name = (name or "").strip().lower()
+        mapping = {
+            "codex": "acp",
+            "acp": "acp",
+            "claude": "claude",
+            "gemini": "gemini",
+            "q": "qchat",
+            "qchat": "qchat",
+        }
+        return mapping.get(name, name)
+
+    def _resolve_agent_priority(self) -> list[str]:
+        """Compute adapter initialization/fallback order."""
+        raw = self.agent_priority or []
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in raw:
+            n = self._normalize_agent_name(str(item))
+            if n in self._KNOWN_ADAPTERS and n not in seen:
+                normalized.append(n)
+                seen.add(n)
+
+        # Always include any remaining known adapters (stable default ordering)
+        for n in ("claude", "qchat", "gemini", "acp"):
+            if n not in seen:
+                normalized.append(n)
+                seen.add(n)
+
+        return normalized
+
+    def _adapter_enabled(self, name: str) -> bool:
+        """Return whether an adapter is enabled in config (defaults to True)."""
+        if not self._config or not hasattr(self._config, "get_adapter_config"):
+            return True
+
+        # Map internal key -> config key for adapter section
+        if name == "qchat":
+            # Support both "q" and "qchat" config keys
+            for key in ("qchat", "q"):
+                cfg = self._config.get_adapter_config(key)
+                if cfg and getattr(cfg, "enabled", True) is False:
+                    return False
+            return True
+
+        cfg = self._config.get_adapter_config(name)
+        return getattr(cfg, "enabled", True)
+
+    def _init_acp_adapter(self) -> ACPAdapter | None:
+        """Initialize ACP adapter using config defaults + CLI overrides."""
+        kwargs: dict[str, Any] = {}
+
+        # Pull defaults from config.adapters.acp.tool_permissions when available.
+        if self._config and hasattr(self._config, "get_adapter_config"):
+            adapter_cfg = self._config.get_adapter_config("acp")
+            try:
+                acp_cfg = ACPAdapterConfig.from_adapter_config(adapter_cfg)
+                kwargs.update(
+                    agent_command=acp_cfg.agent_command,
+                    agent_args=acp_cfg.agent_args,
+                    timeout=acp_cfg.timeout,
+                    permission_mode=acp_cfg.permission_mode,
+                    permission_allowlist=acp_cfg.permission_allowlist,
+                )
+            except Exception as e:
+                logger.debug("Failed to parse ACP adapter config from ralph.yml: %s", e)
+
+        # CLI overrides take precedence.
+        if self.acp_agent:
+            kwargs["agent_command"] = self.acp_agent
+        if self.acp_permission_mode:
+            kwargs["permission_mode"] = self.acp_permission_mode
+        if self.acp_agent_args:
+            kwargs["agent_args"] = self.acp_agent_args
+
+        # Propagate verbose mode to ACP adapter for streaming output.
+        kwargs["verbose"] = bool(self.verbose)
+
+        return ACPAdapter(**kwargs)
+
+    def _select_auto_adapter(self) -> ToolAdapter:
+        """Select an adapter when primary_tool is 'auto'."""
+        desired_order = self._resolve_agent_priority()
+        for name in desired_order:
+            adapter = self.adapters.get(name)
+            if adapter is not None:
+                return adapter
+
+        raise ValueError("No available adapters found for auto mode")
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals with subprocess-first cleanup.
