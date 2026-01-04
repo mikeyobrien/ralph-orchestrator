@@ -22,7 +22,7 @@ I have analyzed the complete prompt and identified:
 |-------|--------|-------|
 | Phase 00: TUI Testing | ✅ COMPLETE | 60 tests |
 | Phase 01: Process Isolation | ✅ COMPLETE | 60 tests |
-| Phase 02: Daemon Mode | 🔄 IN PROGRESS | 13 tests |
+| Phase 02: Daemon Mode | 🔄 IN PROGRESS | 29 tests |
 | Phase 03: REST API Enhancement | ⏳ PENDING | 0 tests |
 | Phase 04: Mobile Foundation | ⏳ PENDING | 0 tests |
 | Phase 05: Mobile Dashboard | ⏳ PENDING | 0 tests |
@@ -81,11 +81,11 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 | Plan | Acceptance Criteria | Tests | Status |
 |------|---------------------|-------|--------|
 | 02-01 | DaemonManager with double-fork, PID file | 13 | ✅ DONE |
-| 02-02 | CLI: ralph daemon start/stop/status/logs | ~10 | ⏳ PENDING |
+| 02-02 | CLI: ralph daemon start/stop/status/logs | 16 | ✅ DONE |
 | 02-03 | Unix socket IPC, HTTP fallback | ~10 | ⏳ PENDING |
 | 02-04 | Log forwarding, rotation, streaming | ~8 | ⏳ PENDING |
 
-**Status**: Plan 02-01 complete with 13 tests
+**Status**: Plans 02-01 and 02-02 complete with 29 tests
 
 **Validation Gate**: `ralph run -P test.md --daemon` returns immediately
 
