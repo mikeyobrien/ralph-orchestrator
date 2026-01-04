@@ -1,0 +1,29 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.1, pytest-8.4.2, pluggy-1.6.0 -- /Users/nick/Desktop/ralph-orchestrator/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/nick/Desktop/ralph-orchestrator
+configfile: pyproject.toml
+plugins: asyncio-1.1.0, anyio-4.10.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 18 items
+
+tests/test_run_manager.py::TestRunManager::test_import_run_manager PASSED [  5%]
+tests/test_run_manager.py::TestRunManager::test_import_run_info PASSED   [ 11%]
+tests/test_run_manager.py::TestRunManager::test_create_run_returns_run_id PASSED [ 16%]
+tests/test_run_manager.py::TestRunManager::test_create_run_creates_directory_structure PASSED [ 22%]
+tests/test_run_manager.py::TestRunManager::test_create_run_creates_manifest PASSED [ 27%]
+tests/test_run_manager.py::TestRunManager::test_create_run_creates_validation_evidence_dir PASSED [ 33%]
+tests/test_run_manager.py::TestRunManager::test_get_run_returns_run_info PASSED [ 38%]
+tests/test_run_manager.py::TestRunManager::test_run_info_has_manifest PASSED [ 44%]
+tests/test_run_manager.py::TestRunManager::test_run_info_has_evidence_dir PASSED [ 50%]
+tests/test_run_manager.py::TestRunManager::test_run_info_has_run_id PASSED [ 55%]
+tests/test_run_manager.py::TestRunManager::test_get_run_nonexistent_returns_none PASSED [ 61%]
+tests/test_run_manager.py::TestRunManager::test_get_latest_run_returns_most_recent PASSED [ 66%]
+tests/test_run_manager.py::TestRunManager::test_get_latest_run_nonexistent_prompt_returns_none PASSED [ 72%]
+tests/test_run_manager.py::TestRunManager::test_manifest_includes_started_at_iso_format PASSED [ 77%]
+tests/test_run_manager.py::TestRunManager::test_manifest_includes_status PASSED [ 83%]
+tests/test_run_manager.py::TestRunManager::test_unique_run_ids PASSED    [ 88%]
+tests/test_run_manager.py::TestRunManager::test_creates_prompt_latest_pointer PASSED [ 94%]
+tests/test_run_manager.py::TestRunManager::test_run_manager_custom_base_dir PASSED [100%]
+
+============================== 18 passed in 0.22s ==============================

@@ -28,7 +28,7 @@ evidence_policy:
 # ============================================================================
 phase_00:
   name: "Run Isolation & State Management"
-  status: "NEEDS_VALIDATION"
+  status: "VALIDATED"
   goal: |
     Create run isolation infrastructure so each prompt execution is ID-based,
     traceable, resumable, and self-contained in .agent/runs/{id}/

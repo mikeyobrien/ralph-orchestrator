@@ -165,7 +165,7 @@ Evidence is stored in `.agent/` for run isolation:
 
 ---
 
-## Phase O0: Run Isolation & State Management | ⏳ NEEDS_VALIDATION
+## Phase O0: Run Isolation & State Management | ✅ VALIDATED
 
 ### What To Build
 
@@ -177,13 +177,13 @@ Create run isolation infrastructure so each prompt execution is:
 
 ### Acceptance Criteria
 
-- [ ] RunManager class in src/ralph_orchestrator/run_manager.py
-- [ ] create_run(prompt_path) → returns run_id, creates directory structure
-- [ ] get_run(run_id) → returns RunInfo with manifest
-- [ ] get_latest_run(prompt_name) → returns most recent run for prompt
-- [ ] Manifest includes: prompt_path, started_at, criteria, status
-- [ ] Validation evidence stored in .agent/runs/{id}/validation-evidence/
-- [ ] Unit tests pass
+- [x] RunManager class in src/ralph_orchestrator/run_manager.py
+- [x] create_run(prompt_path) → returns run_id, creates directory structure
+- [x] get_run(run_id) → returns RunInfo with manifest
+- [x] get_latest_run(prompt_name) → returns most recent run for prompt
+- [x] Manifest includes: prompt_path, started_at, criteria, status
+- [x] Validation evidence stored in .agent/runs/{id}/validation-evidence/
+- [x] Unit tests pass (18 tests)
 
 ### Validation Gate
 
