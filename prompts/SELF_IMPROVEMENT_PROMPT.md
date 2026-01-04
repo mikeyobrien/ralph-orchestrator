@@ -21,7 +21,7 @@ I have analyzed the complete prompt and identified:
 | Phase | Status | Tests |
 |-------|--------|-------|
 | Phase 00: TUI Testing | ✅ COMPLETE | 60 tests |
-| Phase 01: Process Isolation | 🔄 IN PROGRESS (01-03 done) | 31 tests |
+| Phase 01: Process Isolation | ✅ COMPLETE | 60 tests |
 | Phase 02: Daemon Mode | ⏳ PENDING | 0 tests |
 | Phase 03: REST API Enhancement | ⏳ PENDING | 0 tests |
 | Phase 04: Mobile Foundation | ⏳ PENDING | 0 tests |
@@ -61,14 +61,16 @@ Phase 00 (TUI) ──► Phase 01 (Isolation) ──► Phase 02 (Daemon)
 
 ---
 
-#### Phase 01: Process Isolation Foundation 🔄 IN PROGRESS
+#### Phase 01: Process Isolation Foundation ✅ COMPLETE
 
 | Plan | Acceptance Criteria | Tests | Status |
 |------|---------------------|-------|--------|
 | 01-01 | InstanceManager with CRUD, state dirs | 17 | ✅ DONE |
 | 01-02 | Per-instance .agent-{id}/ directories | 8 | ✅ DONE |
 | 01-03 | Dynamic port allocation (8080-8180) | 6 | ✅ DONE |
-| 01-04 | Instance-aware git branches (ralph-{id}) | ~6 | ⏳ |
+| 01-04 | Instance-aware git branches (ralph-{id}) | 7 | ✅ DONE |
+
+**Status**: All 60 tests passing (30 instance + 30 orchestrator integration)
 
 **Validation Gate**: `uv run pytest tests/test_instance.py tests/test_orchestrator.py -v`
 

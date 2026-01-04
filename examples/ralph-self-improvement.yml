@@ -7,7 +7,7 @@
 
 # Core orchestrator settings
 agent: claude
-prompt_file: prompts/ONBOARDING_PROMPT.md  # Change for different features
+prompt_file: prompts/SELF_IMPROVEMENT_PROMPT.md
 max_iterations: 100
 max_runtime: 14400  # 4 hours
 checkpoint_interval: 3  # Frequent checkpoints for safety
