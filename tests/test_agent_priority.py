@@ -1,8 +1,6 @@
 # ABOUTME: Tests for agent_priority-driven adapter ordering and auto selection
 # ABOUTME: Ensures auto mode can prefer ACP/Codex and control fallback ordering
 
-import pytest
-
 from ralph_orchestrator.main import RalphConfig, AgentType, AdapterConfig
 from ralph_orchestrator.orchestrator import RalphOrchestrator
 
