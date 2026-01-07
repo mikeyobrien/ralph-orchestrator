@@ -1,12 +1,16 @@
-'use strict';
-const stripAnsi = require('strip-ansi');
-const isFullwidthCodePoint = require('is-fullwidth-code-point');
-const emojiRegex = require('emoji-regex');
+import stripAnsi from 'strip-ansi';
+import eastAsianWidth from 'eastasianwidth';
+import emojiRegex from 'emoji-regex';
 
-const stringWidth = string => {
+export default function stringWidth(string, options = {}) {
 	if (typeof string !== 'string' || string.length === 0) {
 		return 0;
 	}
+
+	options = {
+		ambiguousIsNarrow: true,
+		...options
+	};
 
 	string = stripAnsi(string);
 
@@ -16,32 +20,35 @@ const stringWidth = string => {
 
 	string = string.replace(emojiRegex(), '  ');
 
+	const ambiguousCharacterWidth = options.ambiguousIsNarrow ? 1 : 2;
 	let width = 0;
 
-	for (let i = 0; i < string.length; i++) {
-		const code = string.codePointAt(i);
+	for (const character of string) {
+		const codePoint = character.codePointAt(0);
 
 		// Ignore control characters
-		if (code <= 0x1F || (code >= 0x7F && code <= 0x9F)) {
+		if (codePoint <= 0x1F || (codePoint >= 0x7F && codePoint <= 0x9F)) {
 			continue;
 		}
 
 		// Ignore combining characters
-		if (code >= 0x300 && code <= 0x36F) {
+		if (codePoint >= 0x300 && codePoint <= 0x36F) {
 			continue;
 		}
 
-		// Surrogates
-		if (code > 0xFFFF) {
-			i++;
+		const code = eastAsianWidth.eastAsianWidth(character);
+		switch (code) {
+			case 'F':
+			case 'W':
+				width += 2;
+				break;
+			case 'A':
+				width += ambiguousCharacterWidth;
+				break;
+			default:
+				width += 1;
 		}
-
-		width += isFullwidthCodePoint(code) ? 2 : 1;
 	}
 
 	return width;
-};
-
-module.exports = stringWidth;
-// TODO: remove this in the next major version
-module.exports.default = stringWidth;
+}

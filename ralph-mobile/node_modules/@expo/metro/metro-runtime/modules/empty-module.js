@@ -1,1 +1,0 @@
-module.exports = require("metro-runtime/src/modules/empty-module.js");

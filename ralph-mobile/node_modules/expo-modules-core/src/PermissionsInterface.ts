@@ -21,7 +21,7 @@ export type PermissionExpiration = 'never' | number;
 /**
  * An object obtained by permissions get and request functions.
  */
-export type PermissionResponse = {
+export interface PermissionResponse {
   /**
    * Determines the status of the permission.
    */
@@ -40,4 +40,4 @@ export type PermissionResponse = {
    * in order to enable/disable the permission.
    */
   canAskAgain: boolean;
-};
+}

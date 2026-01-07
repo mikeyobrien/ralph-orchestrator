@@ -66,7 +66,6 @@
               forAppId:(nonnull NSString *)appId
                withUrl:(nonnull NSString *)appUrl;
 
-#if !TARGET_OS_OSX
 /**
  * Executes tasks that supports the provided launch reason.
  */
@@ -74,5 +73,4 @@
                   userInfo:(nullable NSDictionary *)userInfo
          completionHandler:(nullable void (^)(UIBackgroundFetchResult))completionHandler;
 
-#endif
 @end

@@ -6,18 +6,16 @@ Some Unicode characters are [fullwidth](https://en.wikipedia.org/wiki/Halfwidth_
 
 Useful to be able to measure the actual width of command-line output.
 
-
 ## Install
 
 ```
 $ npm install string-width
 ```
 
-
 ## Usage
 
 ```js
-const stringWidth = require('string-width');
+import stringWidth from 'string-width';
 
 stringWidth('a');
 //=> 1
@@ -29,13 +27,32 @@ stringWidth('\u001B[1m古\u001B[22m');
 //=> 2
 ```
 
+## API
+
+### stringWidth(string, options?)
+
+#### string
+
+Type: `string`
+
+The string to be counted.
+
+#### options
+
+Type: `object`
+
+##### ambiguousIsNarrow
+
+Type: `boolean`\
+Default: `false`
+
+Count [ambiguous width characters](https://www.unicode.org/reports/tr11/#Ambiguous) as having narrow width (count of 1) instead of wide width (count of 2).
 
 ## Related
 
 - [string-width-cli](https://github.com/sindresorhus/string-width-cli) - CLI for this module
 - [string-length](https://github.com/sindresorhus/string-length) - Get the real length of a string
 - [widest-line](https://github.com/sindresorhus/widest-line) - Get the visual width of the widest line in a string
-
 
 ---
 

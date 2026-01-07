@@ -1,1 +1,0 @@
-module.exports = require("metro-transform-plugins/private/inline-requires-plugin");

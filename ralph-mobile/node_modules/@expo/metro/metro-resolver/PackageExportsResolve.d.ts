@@ -1,2 +1,0 @@
-import type { ExportsField, FileResolution, ResolutionContext } from "./types";
-export declare function resolvePackageTargetFromExports(context: ResolutionContext, packagePath: string, modulePath: string, packageRelativePath: string, exportsField: ExportsField, platform: string | null): FileResolution;

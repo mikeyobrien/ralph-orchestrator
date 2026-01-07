@@ -7,10 +7,11 @@ export declare class NativeModule<
   TEventsMap extends EventsMap = Record<never, never>,
 > extends EventEmitter<TEventsMap> {
   /**
-   * Prototypes of the native components exported by the module.
+   * A prototype of the native component exported by the module.
+   * @deprecated It will be removed in favor of another API that supports multiple components per module.
    * @private
    */
-  ViewPrototypes?: { [viewName: string]: object };
+  ViewPrototype?: object;
 
   // Ideally if we don't have it, but not all modules have concrete types in `requireNativeModule`.
   [key: string]: any;

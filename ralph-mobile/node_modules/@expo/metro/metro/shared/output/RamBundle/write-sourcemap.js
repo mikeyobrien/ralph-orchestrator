@@ -1,1 +1,0 @@
-module.exports = require("metro/private/shared/output/RamBundle/write-sourcemap");

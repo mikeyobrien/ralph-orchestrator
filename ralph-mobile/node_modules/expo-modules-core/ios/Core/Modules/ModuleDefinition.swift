@@ -1,5 +1,3 @@
-let DEFAULT_MODULE_VIEW = "DEFAULT_MODULE_VIEW"
-
 /**
  The definition of the module. It is used to define some parameters
  of the module and what it exports to the JavaScript world.
@@ -18,7 +16,7 @@ public final class ModuleDefinition: ObjectDefinition {
 
   let eventListeners: [EventListener]
 
-  let views: [String: AnyViewDefinition]
+  let view: AnyViewDefinition?
 
   /**
    Names of the events that the module can send to JavaScript.
@@ -38,11 +36,10 @@ public final class ModuleDefinition: ObjectDefinition {
 
     self.eventListeners = definitions.compactMap { $0 as? EventListener }
 
-    let viewDefinitions: [AnyViewDefinition] = definitions
+    self.view = definitions
       .compactMap { $0 as? AnyViewDefinition }
-    var viewsDict = Dictionary(uniqueKeysWithValues: viewDefinitions.map { ($0.name, $0) })
-    viewsDict[DEFAULT_MODULE_VIEW] = viewDefinitions.first
-    self.views = viewsDict
+      .last
+
     self.eventNames = Array(
       definitions
         .compactMap { ($0 as? EventsDefinition)?.names }
@@ -75,11 +72,9 @@ public final class ModuleDefinition: ObjectDefinition {
 
     try super.decorate(object: object, appContext: appContext)
 
-    let viewPrototypesObject = try appContext.runtime.createObject()
-
-    try views.forEach { key, view in
-      let reactComponentPrototype = try view.createReactComponentPrototype(appContext: appContext)
-      viewPrototypesObject.setProperty(key == DEFAULT_MODULE_VIEW ? name : "\(name)_\(view.name)", value: reactComponentPrototype)
+    if let viewDefinition = view {
+      let reactComponentPrototype = try viewDefinition.createReactComponentPrototype(appContext: appContext)
+      object.setProperty("ViewPrototype", value: reactComponentPrototype)
     }
 
     if !eventObservers.isEmpty {
@@ -87,7 +82,6 @@ public final class ModuleDefinition: ObjectDefinition {
         .decorate(object: object, appContext: appContext)
     }
 
-    object.setProperty("ViewPrototypes", value: viewPrototypesObject)
     // Give the module object a name. It's used for compatibility reasons, see `EventEmitter.ts`.
     object.defineProperty("__expo_module_name__", value: name, options: [])
 

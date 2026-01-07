@@ -50,6 +50,13 @@ exports.parseFile = function (fileNameOrBuffer, callback) {
   });
 };
 
+exports.parseFileSync = function (fileNameOrBuffer) {
+  if (!Buffer.isBuffer(fileNameOrBuffer)) {
+    fileNameOrBuffer = fs.readFileSync(fileNameOrBuffer);
+  }
+  return parseBuffer(fileNameOrBuffer);
+};
+
 const parseBuffer = exports.parseBuffer = function (buffer) {
   // check header
   const header = buffer.slice(0, 'bplist'.length).toString('utf8');
@@ -174,9 +181,9 @@ const parseBuffer = exports.parseBuffer = function (buffer) {
           acc |= curr & 255;
           return acc;
         });
-      } else {
-        throw new Error("Too little heap space available! Wanted to read " + length + " bytes, but only " + exports.maxObjectSize + " are available.");
       }
+        throw new Error("Too little heap space available! Wanted to read " + length + " bytes, but only " + exports.maxObjectSize + " are available.");
+
     }
 
     function parseUID() {

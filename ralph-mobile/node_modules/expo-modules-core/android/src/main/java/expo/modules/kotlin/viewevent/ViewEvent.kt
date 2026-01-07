@@ -30,7 +30,7 @@ open class ViewEvent<T>(
         logger.warn("⚠️ Cannot get module holder for ${view::class.java}")
         return
       }
-      val callbacks = appContext.hostingRuntimeContext.registry.getViewDefinition(holder, view::class.java)?.callbacksDefinition.ifNull {
+      val callbacks = holder.definition.viewManagerDefinition?.callbacksDefinition.ifNull {
         logger.warn("⚠️ Cannot get callbacks for ${holder.module::class.java}")
         return
       }

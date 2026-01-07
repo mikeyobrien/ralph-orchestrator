@@ -19,7 +19,6 @@ namespace facebook::yoga {
 #if defined(__cpp_exceptions)
   throw std::logic_error(message);
 #else
-  static_cast<void>(message); // Unused
   std::terminate();
 #endif
 }

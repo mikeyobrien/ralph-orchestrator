@@ -1,1 +1,0 @@
-module.exports = require("metro-file-map/private/plugins/MockPlugin");

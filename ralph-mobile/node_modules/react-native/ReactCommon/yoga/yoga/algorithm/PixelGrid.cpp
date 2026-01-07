@@ -66,8 +66,7 @@ void roundLayoutResultsToPixelGrid(
     yoga::Node* const node,
     const double absoluteLeft,
     const double absoluteTop) {
-  const auto pointScaleFactor =
-      static_cast<double>(node->getConfig()->getPointScaleFactor());
+  const auto pointScaleFactor = node->getConfig()->getPointScaleFactor();
 
   const double nodeLeft = node->getLayout().position(PhysicalEdge::Left);
   const double nodeTop = node->getLayout().position(PhysicalEdge::Top);
@@ -81,7 +80,7 @@ void roundLayoutResultsToPixelGrid(
   const double absoluteNodeRight = absoluteNodeLeft + nodeWidth;
   const double absoluteNodeBottom = absoluteNodeTop + nodeHeight;
 
-  if (pointScaleFactor != 0.0) {
+  if (pointScaleFactor != 0.0f) {
     // If a node has a custom measure function we never want to round down its
     // size as this could lead to unwanted text truncation.
     const bool textRounding = node->getNodeType() == NodeType::Text;
@@ -97,34 +96,32 @@ void roundLayoutResultsToPixelGrid(
     // We multiply dimension by scale factor and if the result is close to the
     // whole number, we don't have any fraction To verify if the result is close
     // to whole number we want to check both floor and ceil numbers
-
-    const double scaledNodeWith = nodeWidth * pointScaleFactor;
     const bool hasFractionalWidth =
-        !yoga::inexactEquals(round(scaledNodeWith), scaledNodeWith);
-
-    const double scaledNodeHeight = nodeHeight * pointScaleFactor;
+        !yoga::inexactEquals(fmod(nodeWidth * pointScaleFactor, 1.0), 0) &&
+        !yoga::inexactEquals(fmod(nodeWidth * pointScaleFactor, 1.0), 1.0);
     const bool hasFractionalHeight =
-        !yoga::inexactEquals(round(scaledNodeHeight), scaledNodeHeight);
+        !yoga::inexactEquals(fmod(nodeHeight * pointScaleFactor, 1.0), 0) &&
+        !yoga::inexactEquals(fmod(nodeHeight * pointScaleFactor, 1.0), 1.0);
 
-    node->getLayout().setDimension(
-        Dimension::Width,
+    node->setLayoutDimension(
         roundValueToPixelGrid(
             absoluteNodeRight,
             pointScaleFactor,
             (textRounding && hasFractionalWidth),
             (textRounding && !hasFractionalWidth)) -
             roundValueToPixelGrid(
-                absoluteNodeLeft, pointScaleFactor, false, textRounding));
+                absoluteNodeLeft, pointScaleFactor, false, textRounding),
+        Dimension::Width);
 
-    node->getLayout().setDimension(
-        Dimension::Height,
+    node->setLayoutDimension(
         roundValueToPixelGrid(
             absoluteNodeBottom,
             pointScaleFactor,
             (textRounding && hasFractionalHeight),
             (textRounding && !hasFractionalHeight)) -
             roundValueToPixelGrid(
-                absoluteNodeTop, pointScaleFactor, false, textRounding));
+                absoluteNodeTop, pointScaleFactor, false, textRounding),
+        Dimension::Height);
   }
 
   for (yoga::Node* child : node->getChildren()) {

@@ -25,13 +25,13 @@ function Counter() {
 }
 
 const root = createRoot(document.getElementById('root'));
-root.render(<Counter />);
+root.render(<App />);
 ```
 
 ## Documentation
 
-See https://react.dev/
+See https://reactjs.org/
 
 ## API
 
-See https://react.dev/reference/react
+See https://reactjs.org/docs/react-api.html

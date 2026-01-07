@@ -1,1 +1,0 @@
-module.exports = require("metro-runtime/src/modules/vendor/eventemitter3.js");

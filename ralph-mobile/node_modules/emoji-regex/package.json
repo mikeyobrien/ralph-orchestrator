@@ -1,6 +1,6 @@
 {
   "name": "emoji-regex",
-  "version": "8.0.0",
+  "version": "9.2.2",
   "description": "A regular expression to match all Emoji-only symbols as per the Unicode Standard.",
   "homepage": "https://mths.be/emoji-regex",
   "main": "index.js",
@@ -29,22 +29,24 @@
     "LICENSE-MIT.txt",
     "index.js",
     "index.d.ts",
+    "RGI_Emoji.js",
+    "RGI_Emoji.d.ts",
     "text.js",
-    "es2015/index.js",
-    "es2015/text.js"
+    "text.d.ts",
+    "es2015"
   ],
   "scripts": {
-    "build": "rm -rf -- es2015; babel src -d .; NODE_ENV=es2015 babel src -d ./es2015; node script/inject-sequences.js",
+    "build": "rm -rf -- es2015; babel src -d .; NODE_ENV=es2015 babel src es2015_types -D -d ./es2015; node script/inject-sequences.js",
     "test": "mocha",
     "test:watch": "npm run test -- --watch"
   },
   "devDependencies": {
-    "@babel/cli": "^7.2.3",
-    "@babel/core": "^7.3.4",
-    "@babel/plugin-proposal-unicode-property-regex": "^7.2.0",
-    "@babel/preset-env": "^7.3.4",
-    "mocha": "^6.0.2",
-    "regexgen": "^1.3.0",
-    "unicode-12.0.0": "^0.7.9"
+    "@babel/cli": "^7.4.4",
+    "@babel/core": "^7.4.4",
+    "@babel/plugin-proposal-unicode-property-regex": "^7.4.4",
+    "@babel/preset-env": "^7.4.4",
+    "@unicode/unicode-13.0.0": "^1.0.3",
+    "mocha": "^6.1.4",
+    "regexgen": "^1.3.0"
   }
 }
