@@ -83,6 +83,7 @@ nav:
     - api/agents.md
     - api/metrics.md
     - api/cli.md
+    - api/security.md
   - Examples:
     - examples/index.md
     - examples/simple-task.md
