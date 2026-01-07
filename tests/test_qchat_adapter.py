@@ -327,7 +327,7 @@ class TestResourceManagement:
         mock_pipe = Mock()
         mock_pipe.fileno.return_value = 5
         
-        with patch('fcntl.fcntl') as mock_fcntl:
+        with patch('ralph_orchestrator.adapters.qchat.fcntl.fcntl') as mock_fcntl:
             adapter._make_non_blocking(mock_pipe)
             assert mock_fcntl.call_count == 2  # Get flags, then set flags
     

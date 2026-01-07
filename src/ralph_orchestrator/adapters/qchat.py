@@ -10,7 +10,10 @@ import signal
 import threading
 import asyncio
 import time
-import fcntl
+try:
+    import fcntl  # Unix-only
+except ModuleNotFoundError:
+    fcntl = None
 from .base import ToolAdapter, ToolResponse
 from ..logging_config import RalphLogger
 
@@ -358,16 +361,18 @@ class QChatAdapter(ToolAdapter):
 
     def _make_non_blocking(self, pipe):
         """Make a pipe non-blocking to prevent deadlock."""
-        if pipe:
-            try:
-                fd = pipe.fileno()
-                # Check if fd is a valid integer file descriptor
-                if isinstance(fd, int) and fd >= 0:
-                    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-                    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-            except (AttributeError, ValueError, OSError):
-                # In tests or when pipe doesn't support fileno()
-                pass
+        if not pipe or fcntl is None:
+            return
+
+        try:
+            fd = pipe.fileno()
+            if isinstance(fd, int) and fd >= 0:
+                flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except (AttributeError, ValueError, OSError):
+            # In tests or when pipe doesn't support fileno()
+            pass
+
     
     def _read_available(self, pipe):
         """Read available data from a non-blocking pipe."""
