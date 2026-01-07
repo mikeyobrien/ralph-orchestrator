@@ -311,6 +311,11 @@ class TestCleanupTask:
         with patch('asyncio.create_task') as mock_create_task:
             await setup_rate_limit_cleanup()
             mock_create_task.assert_called_once()
+            
+            # Retrieve the coroutine passed to create_task and close it to avoid RuntimeWarning
+            args, _ = mock_create_task.call_args
+            if args and asyncio.iscoroutine(args[0]):
+                args[0].close()
     
     @pytest.mark.asyncio
     async def test_cleanup_runs_periodically(self):

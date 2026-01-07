@@ -453,7 +453,7 @@ class TestWebMonitor:
         
         # Test invalid JSON
         response = client.post("/api/orchestrators/test/prompt", 
-                              data="invalid json",
+                              content="invalid json",
                               headers={"Content-Type": "application/json"})
         assert response.status_code == 422
     
