@@ -11,3 +11,6 @@ export {
 
 // Animation components
 export { AnimatedCard, FadeIn, BounceIn } from "./AnimatedCard";
+
+// Error handling components
+export { ErrorBoundary } from "./ErrorBoundary";
