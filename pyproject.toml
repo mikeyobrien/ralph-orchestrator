@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-  {name = "Mikey O'Brien", email = "mikeyobrien@users.noreply.github.com"}
+  {name = "Mikey O'Brien", email = "m@mobrienv.dev"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
