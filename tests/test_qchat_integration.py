@@ -11,6 +11,7 @@ import pytest
 import asyncio
 import signal
 import shutil
+import os
 from unittest.mock import patch, Mock
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
 
@@ -194,7 +195,7 @@ class TestQChatIntegration:
         mock_pipe = Mock()
         mock_pipe.fileno.return_value = 5
         
-        with patch('ralph_orchestrator.adapters.qchat.fcntl.fcntl') as mock_fcntls:
+        with patch('ralph_orchestrator.adapters.qchat.fcntl.fcntl') as mock_fcntl:
             adapter._make_non_blocking(mock_pipe)
             # Should call fcntl twice (get flags, set flags)
             assert mock_fcntl.call_count == 2
