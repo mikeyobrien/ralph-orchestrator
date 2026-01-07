@@ -32,6 +32,7 @@ DEFAULT_MAX_PROMPT_SIZE = 10485760  # 10MB max prompt file size
 TOKEN_COSTS = {
     "claude": {"input": 3.0, "output": 15.0},  # Claude 3.5 Sonnet
     "q": {"input": 0.5, "output": 1.5},  # Estimated
+    "kiro": {"input": 0.5, "output": 1.5},  # Estimated
     "gemini": {"input": 0.5, "output": 1.5}  # Gemini Pro
 }
 
@@ -49,6 +50,7 @@ class AgentType(Enum):
     """Supported AI agent types"""
     CLAUDE = "claude"
     Q = "q"
+    KIRO = "kiro"
     GEMINI = "gemini"
     ACP = "acp"
     AUTO = "auto"
@@ -204,7 +206,7 @@ class RalphConfig:
     agent: AgentType = AgentType.AUTO
     # Agent selection and fallback priority (used when agent=auto, and for fallback ordering)
     # Valid values: "acp", "claude", "gemini", "qchat" (also accepts aliases: "codex"->"acp", "q"->"qchat")
-    agent_priority: List[str] = field(default_factory=lambda: ["claude", "qchat", "gemini", "acp"])
+    agent_priority: List[str] = field(default_factory=lambda: ["claude", "kiro", "qchat", "gemini", "acp"])
     prompt_file: str = DEFAULT_PROMPT_FILE
     prompt_text: Optional[str] = None  # Direct prompt text (overrides prompt_file)
     max_iterations: int = DEFAULT_MAX_ITERATIONS
@@ -410,7 +412,7 @@ def main():
     parser.add_argument(
         "--agent", "-a",
         type=str,
-        choices=["claude", "q", "gemini", "acp", "auto"],
+        choices=["claude", "q", "kiro", "gemini", "acp", "auto"],
         default="auto",
         help="AI agent to use (default: auto-detect)"
     )

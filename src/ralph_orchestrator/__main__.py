@@ -109,6 +109,7 @@ agent: auto
 # Valid values: acp, claude, gemini, qchat (aliases: codex->acp, q->qchat)
 agent_priority:
   - claude
+  - kiro
   - gemini
   - qchat
   - acp
@@ -120,6 +121,9 @@ verbose: false
 # Adapter configurations
 adapters:
   claude:
+    enabled: true
+    timeout: 300
+  kiro:
     enabled: true
     timeout: 300
   q:
@@ -316,9 +320,11 @@ def generate_prompt_with_agent(rough_ideas: List[str], agent: str = "auto", outp
         "c": "claude",
         "g": "gemini", 
         "q": "qchat",
+        "k": "kiro",
         "claude": "claude",
         "gemini": "gemini",
         "qchat": "qchat",
+        "kiro": "kiro",
         "auto": "auto"
     }
     agent = agent_name_map.get(agent, agent)
@@ -376,6 +382,7 @@ IMPORTANT:
     try:
         from .adapters.claude import ClaudeAdapter
         from .adapters.qchat import QChatAdapter
+        from .adapters.kiro import KiroAdapter
         from .adapters.gemini import GeminiAdapter
     except ImportError:
         pass
@@ -412,6 +419,19 @@ IMPORTANT:
         except Exception as e:
             if agent != "auto":
                 _console.print_error(f"Gemini adapter failed: {e}")
+
+    if not success and (agent == "kiro" or agent == "auto"):
+        try:
+            adapter = KiroAdapter()
+            if adapter.available:
+                result = adapter.execute(generation_prompt)
+                if result.success:
+                    success = True
+                    # Check if the file was created
+                    return Path(output_file).exists()
+        except Exception as e:
+            if agent != "auto":
+                _console.print_error(f"Kiro adapter failed: {e}")
 
     if not success and (agent == "qchat" or agent == "auto"):
         try:
@@ -497,9 +517,9 @@ Examples:
     )
     prompt_parser.add_argument(
         '-a', '--agent',
-        choices=['claude', 'c', 'gemini', 'g', 'qchat', 'q', 'auto'],
+        choices=['claude', 'c', 'gemini', 'g', 'qchat', 'q', 'kiro', 'k', 'auto'],
         default='auto',
-        help='AI agent to use: claude/c, gemini/g, qchat/q, auto (default: auto)'
+        help='AI agent to use: claude/c, gemini/g, qchat/q, kiro/k, auto (default: auto)'
     )
     
     # Run command (default) - add all the run options
@@ -514,7 +534,7 @@ Examples:
         
         p.add_argument(
             "-a", "--agent",
-            choices=["claude", "q", "gemini", "acp", "auto"],
+            choices=["claude", "q", "gemini", "kiro", "acp", "auto"],
             default="auto",
             help="AI agent to use (default: auto)"
         )
@@ -728,6 +748,8 @@ Examples:
         "c": AgentType.CLAUDE,
         "q": AgentType.Q,
         "qchat": AgentType.Q,
+        "kiro": AgentType.KIRO,
+        "k": AgentType.KIRO,
         "gemini": AgentType.GEMINI,
         "g": AgentType.GEMINI,
         "acp": AgentType.ACP,
@@ -841,6 +863,7 @@ Examples:
             "q": "qchat",
             "claude": "claude",
             "gemini": "gemini",
+            "kiro": "kiro",
             "acp": "acp",
             "auto": "auto"
         }

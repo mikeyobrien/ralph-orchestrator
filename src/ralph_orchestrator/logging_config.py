@@ -18,6 +18,7 @@ class RalphLogger:
     ORCHESTRATOR = "ralph.orchestrator"
     ADAPTER_BASE = "ralph.adapter"
     ADAPTER_QCHAT = "ralph.adapter.qchat"
+    ADAPTER_KIRO = "ralph.adapter.kiro"
     ADAPTER_CLAUDE = "ralph.adapter.claude"
     ADAPTER_GEMINI = "ralph.adapter.gemini"
     SAFETY = "ralph.safety"

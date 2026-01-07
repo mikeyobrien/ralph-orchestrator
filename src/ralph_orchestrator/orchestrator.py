@@ -15,6 +15,7 @@ from datetime import datetime
 from .adapters.base import ToolAdapter
 from .adapters.claude import ClaudeAdapter
 from .adapters.qchat import QChatAdapter
+from .adapters.kiro import KiroAdapter
 from .adapters.gemini import GeminiAdapter
 from .adapters.acp import ACPAdapter
 from .adapters.acp_models import ACPAdapterConfig
@@ -34,7 +35,7 @@ logger = logging.getLogger('ralph-orchestrator')
 class RalphOrchestrator:
     """Main orchestration loop for AI agents."""
 
-    _KNOWN_ADAPTERS = ("acp", "claude", "gemini", "qchat")
+    _KNOWN_ADAPTERS = ("acp", "claude", "gemini", "qchat", "kiro")
 
     def __init__(
         self,
@@ -191,6 +192,18 @@ class RalphOrchestrator:
                     logger.warning(f"Q Chat adapter error: {e}")
                 continue
 
+            if name == "kiro":
+                try:
+                    adapter = KiroAdapter()
+                    if adapter.available:
+                        adapters["kiro"] = adapter
+                        logger.info("Kiro adapter initialized")
+                    else:
+                        logger.warning("Kiro CLI not available")
+                except Exception as e:
+                    logger.warning(f"Kiro adapter error: {e}")
+                continue
+
             if name == "gemini":
                 try:
                     adapter = GeminiAdapter()
@@ -227,6 +240,8 @@ class RalphOrchestrator:
             "gemini": "gemini",
             "q": "qchat",
             "qchat": "qchat",
+            "kiro": "kiro",
+            "kiro-cli": "kiro",
         }
         return mapping.get(name, name)
 
@@ -243,7 +258,7 @@ class RalphOrchestrator:
                 seen.add(n)
 
         # Always include any remaining known adapters (stable default ordering)
-        for n in ("claude", "qchat", "gemini", "acp"):
+        for n in ("claude", "kiro", "qchat", "gemini", "acp"):
             if n not in seen:
                 normalized.append(n)
                 seen.add(n)
