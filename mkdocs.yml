@@ -61,6 +61,7 @@ nav:
   - User Guide:
     - guide/overview.md
     - guide/configuration.md
+    - guide/kiro-migration.md
     - guide/agents.md
     - guide/prompts.md
     - guide/checkpointing.md
