@@ -4,6 +4,22 @@ version = "0.1.0"
 description = "Simple yet powerful AI agent orchestration using the Ralph Wiggum technique"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  {name = "Mikey O'Brien", email = "mikeyobrien@users.noreply.github.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "claude-agent-sdk>=0.1.10",
     "mkdocs>=1.6.1",
@@ -26,6 +42,12 @@ dependencies = [
     "python-multipart>=0.0.20",
     "rich>=13.0.0",
 ]
+
+[project.urls]
+Homepage = "https://mikeyobrien.github.io/ralph-orchestrator/"
+Repository = "https://github.com/mikeyobrien/ralph-orchestrator"
+Documentation = "https://mikeyobrien.github.io/ralph-orchestrator/"
+Issues = "https://github.com/mikeyobrien/ralph-orchestrator/issues"
 
 [project.scripts]
 ralph = "ralph_orchestrator.__main__:main"
