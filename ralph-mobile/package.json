@@ -8,7 +8,10 @@
     "android": "expo run:android",
     "web": "expo start --web",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.0.0",
@@ -26,8 +29,11 @@
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
+    "@types/jest": "^29.5.0",
     "@types/react": "~18.3.0",
     "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "jest-expo": "~52.0.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.0"
   },

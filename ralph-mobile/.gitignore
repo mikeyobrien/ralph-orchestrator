@@ -46,3 +46,7 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Override root .gitignore (which ignores lib/ for Python)
+!lib/
+!__tests__/
