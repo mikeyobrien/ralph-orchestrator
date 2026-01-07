@@ -9,8 +9,15 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, memo, useMemo } from "react";
 import { orchestratorApi } from "../../lib/api";
+import {
+  AnimatedCard,
+  FadeIn,
+  BounceIn,
+  IterationSkeleton,
+  MetricCardSkeleton,
+} from "../../components";
 
 // Types
 interface Iteration {
@@ -164,6 +171,119 @@ function formatDateTime(dateString: string): string {
   });
 }
 
+// Memoized iteration card for performance
+const IterationCard = memo(function IterationCard({
+  iteration,
+  index,
+}: {
+  iteration: Iteration;
+  index: number;
+}) {
+  const isRunning = iteration.status === "running";
+  const isCompleted = iteration.status === "completed";
+
+  return (
+    <AnimatedCard
+      index={index}
+      staggerDelay={60}
+      style={{
+        backgroundColor: "#1e293b",
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+      }}
+    >
+      {/* Iteration Header */}
+      <View className="flex-row items-center justify-between mb-2">
+        <View className="flex-row items-center">
+          {isCompleted ? (
+            <BounceIn delay={index * 60 + 200}>
+              <View
+                className={`w-8 h-8 rounded-full items-center justify-center ${getStatusColor(iteration.status)}`}
+              >
+                <Text className="text-white font-bold text-sm">
+                  {iteration.number}
+                </Text>
+              </View>
+            </BounceIn>
+          ) : (
+            <View
+              className={`w-8 h-8 rounded-full items-center justify-center ${getStatusColor(iteration.status)}`}
+            >
+              <Text className="text-white font-bold text-sm">
+                {iteration.number}
+              </Text>
+            </View>
+          )}
+          <Text className="text-white font-semibold ml-3">
+            Iteration {iteration.number}
+          </Text>
+        </View>
+        <View
+          className={`px-2 py-1 rounded-full ${getStatusColor(iteration.status)}`}
+        >
+          <Text className="text-white text-xs font-medium">
+            {getStatusText(iteration.status)}
+          </Text>
+        </View>
+      </View>
+
+      {/* Iteration Summary */}
+      {iteration.summary && (
+        <Text className="text-slate-300 text-sm mb-2">
+          {iteration.summary}
+        </Text>
+      )}
+
+      {/* Iteration Metrics */}
+      <View className="flex-row justify-between mt-2">
+        {iteration.duration && (
+          <Text className="text-slate-400 text-xs">
+            ⏱ {formatDuration(iteration.duration)}
+          </Text>
+        )}
+        {iteration.tokensUsed && (
+          <Text className="text-slate-400 text-xs">
+            📊 {formatTokens(iteration.tokensUsed)} tokens
+          </Text>
+        )}
+        {iteration.cost && (
+          <Text className="text-slate-400 text-xs">
+            💰 {formatCost(iteration.cost)}
+          </Text>
+        )}
+      </View>
+
+      {/* Running indicator */}
+      {isRunning && (
+        <View className="flex-row items-center mt-3 pt-3 border-t border-slate-700">
+          <ActivityIndicator size="small" color="#10b981" />
+          <Text className="text-emerald-400 text-sm ml-2">
+            In progress...
+          </Text>
+        </View>
+      )}
+    </AnimatedCard>
+  );
+});
+
+// Loading skeleton for session detail
+function SessionDetailSkeleton() {
+  return (
+    <View className="px-4 py-4">
+      <View className="flex-row gap-3 mb-4">
+        <MetricCardSkeleton />
+        <MetricCardSkeleton />
+      </View>
+      <View className="mt-4">
+        <IterationSkeleton />
+        <IterationSkeleton />
+        <IterationSkeleton />
+      </View>
+    </View>
+  );
+}
+
 export default function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -275,10 +395,18 @@ export default function SessionDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 bg-slate-900 items-center justify-center">
-        <ActivityIndicator size="large" color="#818cf8" />
-        <Text className="text-slate-400 mt-4">Loading session...</Text>
-      </SafeAreaView>
+      <>
+        <Stack.Screen
+          options={{
+            title: "Loading...",
+            headerStyle: { backgroundColor: "#0f172a" },
+            headerTintColor: "#fff",
+          }}
+        />
+        <SafeAreaView className="flex-1 bg-slate-900" edges={["bottom"]}>
+          <SessionDetailSkeleton />
+        </SafeAreaView>
+      </>
     );
   }
 
@@ -411,22 +539,40 @@ export default function SessionDetailScreen() {
 
           {/* Metrics Summary */}
           <View className="px-4 py-4 border-b border-slate-800">
-            <Text className="text-slate-400 text-sm font-medium mb-3">
-              METRICS
-            </Text>
+            <FadeIn delay={100}>
+              <Text className="text-slate-400 text-sm font-medium mb-3">
+                METRICS
+              </Text>
+            </FadeIn>
             <View className="flex-row gap-3">
-              <View className="flex-1 bg-slate-800 rounded-xl p-4">
+              <AnimatedCard
+                delay={150}
+                style={{
+                  flex: 1,
+                  backgroundColor: "#1e293b",
+                  borderRadius: 12,
+                  padding: 16,
+                }}
+              >
                 <Text className="text-slate-400 text-xs mb-1">Tokens Used</Text>
                 <Text className="text-white text-xl font-bold">
                   {formatTokens(session.totalTokens)}
                 </Text>
-              </View>
-              <View className="flex-1 bg-slate-800 rounded-xl p-4">
+              </AnimatedCard>
+              <AnimatedCard
+                delay={200}
+                style={{
+                  flex: 1,
+                  backgroundColor: "#1e293b",
+                  borderRadius: 12,
+                  padding: 16,
+                }}
+              >
                 <Text className="text-slate-400 text-xs mb-1">Total Cost</Text>
                 <Text className="text-white text-xl font-bold">
                   {formatCost(session.totalCost)}
                 </Text>
-              </View>
+              </AnimatedCard>
             </View>
           </View>
 
@@ -444,74 +590,18 @@ export default function SessionDetailScreen() {
 
           {/* Iterations List */}
           <View className="px-4 py-4">
-            <Text className="text-slate-400 text-sm font-medium mb-3">
-              ITERATIONS ({session.iterations.length})
-            </Text>
+            <FadeIn delay={200}>
+              <Text className="text-slate-400 text-sm font-medium mb-3">
+                ITERATIONS ({session.iterations.length})
+              </Text>
+            </FadeIn>
 
-            {session.iterations.map((iteration) => (
-              <View
+            {session.iterations.map((iteration, index) => (
+              <IterationCard
                 key={iteration.id}
-                className="bg-slate-800 rounded-xl p-4 mb-3"
-              >
-                {/* Iteration Header */}
-                <View className="flex-row items-center justify-between mb-2">
-                  <View className="flex-row items-center">
-                    <View
-                      className={`w-8 h-8 rounded-full items-center justify-center ${getStatusColor(iteration.status)}`}
-                    >
-                      <Text className="text-white font-bold text-sm">
-                        {iteration.number}
-                      </Text>
-                    </View>
-                    <Text className="text-white font-semibold ml-3">
-                      Iteration {iteration.number}
-                    </Text>
-                  </View>
-                  <View
-                    className={`px-2 py-1 rounded-full ${getStatusColor(iteration.status)}`}
-                  >
-                    <Text className="text-white text-xs font-medium">
-                      {getStatusText(iteration.status)}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Iteration Summary */}
-                {iteration.summary && (
-                  <Text className="text-slate-300 text-sm mb-2">
-                    {iteration.summary}
-                  </Text>
-                )}
-
-                {/* Iteration Metrics */}
-                <View className="flex-row justify-between mt-2">
-                  {iteration.duration && (
-                    <Text className="text-slate-400 text-xs">
-                      ⏱ {formatDuration(iteration.duration)}
-                    </Text>
-                  )}
-                  {iteration.tokensUsed && (
-                    <Text className="text-slate-400 text-xs">
-                      📊 {formatTokens(iteration.tokensUsed)} tokens
-                    </Text>
-                  )}
-                  {iteration.cost && (
-                    <Text className="text-slate-400 text-xs">
-                      💰 {formatCost(iteration.cost)}
-                    </Text>
-                  )}
-                </View>
-
-                {/* Running indicator */}
-                {iteration.status === "running" && (
-                  <View className="flex-row items-center mt-3 pt-3 border-t border-slate-700">
-                    <ActivityIndicator size="small" color="#10b981" />
-                    <Text className="text-emerald-400 text-sm ml-2">
-                      In progress...
-                    </Text>
-                  </View>
-                )}
-              </View>
+                iteration={iteration}
+                index={index}
+              />
             ))}
           </View>
         </ScrollView>

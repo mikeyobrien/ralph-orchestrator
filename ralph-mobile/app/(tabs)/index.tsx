@@ -1,7 +1,8 @@
-import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native";
+import { View, Text, ScrollView, RefreshControl } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
+import { AnimatedCard, SessionCardSkeleton, FadeIn } from "../../components";
 
 // Mock data for development
 const mockSessions = [
@@ -72,26 +73,127 @@ function formatTimeAgo(dateString: string): string {
   return `${diffDays}d ago`;
 }
 
+// Session type for memoized component
+type Session = {
+  id: string;
+  name: string;
+  status: string;
+  progress: number;
+  currentIteration: number;
+  totalIterations: number;
+  startedAt: string;
+};
+
+// Memoized session card component for performance
+const SessionCard = memo(function SessionCard({
+  session,
+  index,
+  onPress,
+}: {
+  session: Session;
+  index: number;
+  onPress: () => void;
+}) {
+  return (
+    <AnimatedCard
+      index={index}
+      staggerDelay={80}
+      pressable
+      onPress={onPress}
+      style={{
+        backgroundColor: "#1e293b",
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+      }}
+    >
+      {/* Session Header */}
+      <View className="flex-row items-center justify-between mb-3">
+        <Text className="text-white font-semibold text-lg flex-1">
+          {session.name}
+        </Text>
+        <View className={`px-2 py-1 rounded-full ${getStatusColor(session.status as SessionStatus)}`}>
+          <Text className="text-white text-xs font-medium">
+            {getStatusText(session.status as SessionStatus)}
+          </Text>
+        </View>
+      </View>
+
+      {/* Progress Bar */}
+      <View className="h-2 bg-slate-700 rounded-full mb-2">
+        <View
+          className={`h-2 rounded-full ${getStatusColor(session.status as SessionStatus)}`}
+          style={{ width: `${session.progress}%` }}
+        />
+      </View>
+
+      {/* Session Details */}
+      <View className="flex-row justify-between">
+        <Text className="text-slate-400 text-sm">
+          Iteration {session.currentIteration}/{session.totalIterations}
+        </Text>
+        <Text className="text-slate-400 text-sm">
+          {formatTimeAgo(session.startedAt)}
+        </Text>
+      </View>
+    </AnimatedCard>
+  );
+});
+
+// Loading skeleton for dashboard
+function DashboardSkeleton() {
+  return (
+    <View className="py-4">
+      <View className="mb-3 h-4 w-32 bg-slate-700 rounded" />
+      <SessionCardSkeleton />
+      <SessionCardSkeleton />
+      <SessionCardSkeleton />
+    </View>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
-  const [sessions] = useState(mockSessions);
+  const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState<Session[]>([]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    // Simulate API fetch
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
+  // Simulate initial data fetch
+  const fetchSessions = useCallback(async () => {
+    // In production: const response = await orchestratorApi.getSessions();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    setSessions(mockSessions);
+    setLoading(false);
   }, []);
+
+  // Initial load
+  useMemo(() => {
+    fetchSessions();
+  }, [fetchSessions]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchSessions();
+    setRefreshing(false);
+  }, [fetchSessions]);
+
+  // Memoize navigation callbacks to prevent re-renders
+  const handleSessionPress = useCallback(
+    (sessionId: string) => {
+      router.push(`/session/${sessionId}`);
+    },
+    [router]
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-slate-900">
       {/* Header */}
-      <View className="px-4 py-4 border-b border-slate-800">
-        <Text className="text-2xl font-bold text-white">Ralph Orchestrator</Text>
-        <Text className="text-slate-400 mt-1">Session Dashboard</Text>
-      </View>
+      <FadeIn>
+        <View className="px-4 py-4 border-b border-slate-800">
+          <Text className="text-2xl font-bold text-white">Ralph Orchestrator</Text>
+          <Text className="text-slate-400 mt-1">Session Dashboard</Text>
+        </View>
+      </FadeIn>
 
       {/* Session List */}
       <ScrollView
@@ -104,65 +206,68 @@ export default function Dashboard() {
           />
         }
       >
-        <View className="py-4">
-          <Text className="text-slate-400 text-sm font-medium mb-3">
-            ACTIVE SESSIONS ({sessions.length})
-          </Text>
+        {loading ? (
+          <DashboardSkeleton />
+        ) : (
+          <View className="py-4">
+            <FadeIn delay={100}>
+              <Text className="text-slate-400 text-sm font-medium mb-3">
+                ACTIVE SESSIONS ({sessions.length})
+              </Text>
+            </FadeIn>
 
-          {sessions.map((session) => (
-            <Pressable
-              key={session.id}
-              onPress={() => router.push(`/session/${session.id}`)}
-              className="bg-slate-800 rounded-xl p-4 mb-3 active:opacity-80"
-            >
-              {/* Session Header */}
-              <View className="flex-row items-center justify-between mb-3">
-                <Text className="text-white font-semibold text-lg flex-1">
-                  {session.name}
-                </Text>
-                <View className={`px-2 py-1 rounded-full ${getStatusColor(session.status as SessionStatus)}`}>
-                  <Text className="text-white text-xs font-medium">
-                    {getStatusText(session.status as SessionStatus)}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Progress Bar */}
-              <View className="h-2 bg-slate-700 rounded-full mb-2">
-                <View
-                  className={`h-2 rounded-full ${getStatusColor(session.status as SessionStatus)}`}
-                  style={{ width: `${session.progress}%` }}
-                />
-              </View>
-
-              {/* Session Details */}
-              <View className="flex-row justify-between">
-                <Text className="text-slate-400 text-sm">
-                  Iteration {session.currentIteration}/{session.totalIterations}
-                </Text>
-                <Text className="text-slate-400 text-sm">
-                  {formatTimeAgo(session.startedAt)}
-                </Text>
-              </View>
-            </Pressable>
-          ))}
-        </View>
+            {sessions.map((session, index) => (
+              <SessionCard
+                key={session.id}
+                session={session}
+                index={index}
+                onPress={() => handleSessionPress(session.id)}
+              />
+            ))}
+          </View>
+        )}
 
         {/* Quick Actions */}
-        <View className="py-4 border-t border-slate-800">
-          <Text className="text-slate-400 text-sm font-medium mb-3">
-            QUICK ACTIONS
-          </Text>
+        {!loading && (
+          <AnimatedCard
+            delay={sessions.length * 80 + 100}
+            style={{ paddingVertical: 16, borderTopWidth: 1, borderTopColor: "#1e293b" }}
+          >
+            <Text className="text-slate-400 text-sm font-medium mb-3">
+              QUICK ACTIONS
+            </Text>
 
-          <View className="flex-row gap-3">
-            <Pressable className="flex-1 bg-indigo-600 rounded-xl p-4 items-center active:bg-indigo-700">
-              <Text className="text-white font-semibold">New Session</Text>
-            </Pressable>
-            <Pressable className="flex-1 bg-slate-800 rounded-xl p-4 items-center active:bg-slate-700">
-              <Text className="text-white font-semibold">View Logs</Text>
-            </Pressable>
-          </View>
-        </View>
+            <View className="flex-row gap-3">
+              <AnimatedCard
+                delay={sessions.length * 80 + 150}
+                pressable
+                style={{
+                  flex: 1,
+                  backgroundColor: "#4f46e5",
+                  borderRadius: 12,
+                  padding: 16,
+                  alignItems: "center",
+                }}
+              >
+                <Text className="text-white font-semibold">New Session</Text>
+              </AnimatedCard>
+              <AnimatedCard
+                delay={sessions.length * 80 + 200}
+                pressable
+                onPress={() => router.push("/(tabs)/logs")}
+                style={{
+                  flex: 1,
+                  backgroundColor: "#1e293b",
+                  borderRadius: 12,
+                  padding: 16,
+                  alignItems: "center",
+                }}
+              >
+                <Text className="text-white font-semibold">View Logs</Text>
+              </AnimatedCard>
+            </View>
+          </AnimatedCard>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
