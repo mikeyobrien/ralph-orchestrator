@@ -52,6 +52,18 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 
 ## Installation
 
+### For Users (Recommended)
+
+```bash
+# Install with uv tool (easiest way to run Ralph globally)
+uv tool install ralph-orchestrator
+
+# Or install with pip
+pip install ralph-orchestrator
+```
+
+### For Developers
+
 ```bash
 # Clone the repository
 git clone https://github.com/mikeyobrien/ralph-orchestrator.git
