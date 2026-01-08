@@ -74,7 +74,25 @@ Migrate the existing QChatAdapter to support the Kiro CLI rebrand from Amazon Q 
 5. **Testing**
    - Full test suite in `tests/test_kiro_adapter.py` (32 tests)
    - All tests pass (28 passed, 4 skipped - same as QChat tests)
+   - Async test failure resolved - all tests now passing consistently
 
-### All Tasks Complete
+### All Tasks Complete ✅
 
-Migration documentation is available at `docs/guide/kiro-migration.md` and integrated into the mkdocs navigation.
+**Final Status: MIGRATION COMPLETE**
+
+All requirements have been successfully implemented and tested:
+
+1. **KiroAdapter Implementation** - Full adapter with `kiro-cli` primary command and `q` fallback
+2. **CLI Integration** - `ralph run -a kiro` works correctly, shows in help menu
+3. **Environment Variables** - All `RALPH_KIRO_*` variables implemented
+4. **Testing** - 28/32 tests pass (4 skipped as expected), async tests fixed
+5. **Configuration** - Complete Kiro section in `ralph.yml` template
+6. **Backwards Compatibility** - QChatAdapter remains with deprecation warnings
+7. **Documentation** - Migration guide available at `docs/guide/kiro-migration.md`
+
+**Verification Commands:**
+- `ralph run -a kiro --dry-run -p "test"` ✅ Works
+- `python -m pytest tests/test_kiro_adapter.py` ✅ 28 passed, 4 skipped
+- CLI help shows `{claude,q,gemini,kiro,acp,auto}` ✅ Confirmed
+
+The Kiro CLI migration is production-ready and fully functional.
