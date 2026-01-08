@@ -15,7 +15,7 @@ Migrate the existing QChatAdapter to support the Kiro CLI rebrand from Amazon Q 
 - [x] Update orchestrator to initialize KiroAdapter
 - [x] Add Kiro section to `ralph.yml` configuration template
 - [x] Maintain backwards compatibility with existing QChatAdapter (deprecation, not removal)
-- [ ] Add migration documentation noting configuration path changes
+- [x] Add migration documentation noting configuration path changes
 
 ## Technical Specifications
 
@@ -41,7 +41,7 @@ Migrate the existing QChatAdapter to support the Kiro CLI rebrand from Amazon Q 
 - [x] All existing QChatAdapter tests pass (adapted for KiroAdapter)
 - [x] New unit tests cover Kiro-specific functionality (command detection, env vars)
 - [x] `ralph init` generates config with Kiro adapter section
-- [ ] Documentation updated with Kiro CLI migration notes
+- [x] Documentation updated with Kiro CLI migration notes
 - [x] Backwards compatibility: `ralph run -a qchat` still works with deprecation warning
 
 ## Implementation Progress
@@ -75,5 +75,6 @@ Migrate the existing QChatAdapter to support the Kiro CLI rebrand from Amazon Q 
    - Full test suite in `tests/test_kiro_adapter.py` (32 tests)
    - All tests pass (28 passed, 4 skipped - same as QChat tests)
 
-### Remaining Task
-- [ ] Add migration documentation (docs/kiro-migration.md)
+### All Tasks Complete
+
+Migration documentation is available at `docs/guide/kiro-migration.md` and integrated into the mkdocs navigation.
