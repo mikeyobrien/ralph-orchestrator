@@ -535,7 +535,7 @@ Examples:
         p.add_argument(
             "-a", "--agent",
             choices=["claude", "q", "gemini", "kiro", "acp", "auto"],
-            default="auto",
+            default=None,
             help="AI agent to use (default: auto)"
         )
 
@@ -580,7 +580,7 @@ Examples:
         
         p.add_argument(
             "-P", "--prompt-file",
-            default=DEFAULT_PROMPT_FILE,
+            default=None,
             dest="prompt",
             help=f"Prompt file (default: {DEFAULT_PROMPT_FILE})"
         )
@@ -594,7 +594,7 @@ Examples:
         p.add_argument(
             "-i", "--iterations", "--max-iterations",
             type=int,
-            default=DEFAULT_MAX_ITERATIONS,
+            default=None,
             dest="max_iterations",
             help=f"Maximum iterations (default: {DEFAULT_MAX_ITERATIONS})"
         )
@@ -602,7 +602,7 @@ Examples:
         p.add_argument(
             "-t", "--time", "--max-runtime",
             type=int,
-            default=DEFAULT_MAX_RUNTIME,
+            default=None,
             dest="max_runtime",
             help=f"Maximum runtime in seconds (default: {DEFAULT_MAX_RUNTIME})"
         )
@@ -623,56 +623,56 @@ Examples:
         p.add_argument(
             "--max-tokens",
             type=int,
-            default=DEFAULT_MAX_TOKENS,
+            default=None,
             help=f"Maximum total tokens (default: {DEFAULT_MAX_TOKENS})"
         )
         
         p.add_argument(
             "--max-cost",
             type=float,
-            default=DEFAULT_MAX_COST,
+            default=None,
             help=f"Maximum cost in USD (default: {DEFAULT_MAX_COST})"
         )
         
         p.add_argument(
             "--context-window",
             type=int,
-            default=DEFAULT_CONTEXT_WINDOW,
+            default=None,
             help=f"Context window size (default: {DEFAULT_CONTEXT_WINDOW})"
         )
         
         p.add_argument(
             "--context-threshold",
             type=float,
-            default=DEFAULT_CONTEXT_THRESHOLD,
+            default=None,
             help=f"Context summarization threshold (default: {DEFAULT_CONTEXT_THRESHOLD})"
         )
         
         p.add_argument(
             "--checkpoint-interval",
             type=int,
-            default=DEFAULT_CHECKPOINT_INTERVAL,
+            default=None,
             help=f"Git checkpoint interval (default: {DEFAULT_CHECKPOINT_INTERVAL})"
         )
         
         p.add_argument(
             "--retry-delay",
             type=int,
-            default=DEFAULT_RETRY_DELAY,
+            default=None,
             help=f"Retry delay on errors (default: {DEFAULT_RETRY_DELAY})"
         )
         
         p.add_argument(
             "--metrics-interval",
             type=int,
-            default=DEFAULT_METRICS_INTERVAL,
+            default=None,
             help=f"Metrics logging interval (default: {DEFAULT_METRICS_INTERVAL})"
         )
         
         p.add_argument(
             "--max-prompt-size",
             type=int,
-            default=DEFAULT_MAX_PROMPT_SIZE,
+            default=None,
             help=f"Max prompt file size (default: {DEFAULT_MAX_PROMPT_SIZE})"
         )
         
@@ -769,40 +769,104 @@ Examples:
             config = RalphConfig.from_yaml(config_path)
             if auto_config_path and config_path == auto_config_path:
                 _console.print_info(f"Using config: {config_path}")
-            # Override with any CLI arguments that were explicitly provided
-            if hasattr(args, 'agent') and args.agent != 'auto':
+            
+            # Override with any CLI arguments that were explicitly provided (not None)
+            if hasattr(args, 'agent') and args.agent is not None:
                 config.agent = agent_map[args.agent]
-            if hasattr(args, 'verbose') and args.verbose:
-                config.verbose = args.verbose
-            if hasattr(args, 'dry_run') and args.dry_run:
-                config.dry_run = args.dry_run
+            
+            # Map simple value arguments
+            value_args = {
+                'prompt': 'prompt_file',
+                'prompt_text': 'prompt_text',
+                'max_iterations': 'max_iterations',
+                'max_runtime': 'max_runtime',
+                'checkpoint_interval': 'checkpoint_interval',
+                'retry_delay': 'retry_delay',
+                'max_tokens': 'max_tokens',
+                'max_cost': 'max_cost',
+                'context_window': 'context_window',
+                'context_threshold': 'context_threshold',
+                'metrics_interval': 'metrics_interval',
+                'max_prompt_size': 'max_prompt_size'
+            }
+            
+            for arg_name, config_name in value_args.items():
+                if hasattr(args, arg_name) and getattr(args, arg_name) is not None:
+                    setattr(config, config_name, getattr(args, arg_name))
+            
+            # Handle boolean flags (flags override config)
+            if args.verbose:
+                config.verbose = True
+            if args.dry_run:
+                config.dry_run = True
+            if args.allow_unsafe_paths:
+                config.allow_unsafe_paths = True
+                
+            # Handle "no-" flags (if flag is set, feature is disabled)
+            if args.no_git:
+                config.git_checkpoint = False
+            if args.no_archive:
+                config.archive_prompts = False
+            if args.no_metrics:
+                config.enable_metrics = False
+
+            # Merge agent args if provided
+            if hasattr(args, 'agent_args') and args.agent_args:
+                config.agent_args = args.agent_args
+
         except Exception as e:
             _console.print_error(f"Error loading config file: {e}")
             sys.exit(1)
     else:
-        # Create config from CLI arguments
-        config = RalphConfig(
-            agent=agent_map[args.agent],
-            prompt_file=args.prompt,
-            prompt_text=args.prompt_text,
-            max_iterations=args.max_iterations,
-            max_runtime=args.max_runtime,
-            checkpoint_interval=args.checkpoint_interval,
-            retry_delay=args.retry_delay,
-            archive_prompts=not args.no_archive,
-            git_checkpoint=not args.no_git,
-            verbose=args.verbose,
-            dry_run=args.dry_run,
-            max_tokens=args.max_tokens,
-            max_cost=args.max_cost,
-            context_window=args.context_window,
-            context_threshold=args.context_threshold,
-            metrics_interval=args.metrics_interval,
-            enable_metrics=not args.no_metrics,
-            max_prompt_size=args.max_prompt_size,
-            allow_unsafe_paths=args.allow_unsafe_paths,
-            agent_args=args.agent_args if hasattr(args, 'agent_args') else []
-        )
+        # Create config from CLI arguments, using defaults for None values
+        # We construct a dict of non-None arguments to pass to RalphConfig
+        # RalphConfig has defaults for all fields, so we only pass what we have
+        
+        config_kwargs = {}
+        
+        # Map arguments to config fields
+        if hasattr(args, 'agent') and args.agent is not None:
+            config_kwargs['agent'] = agent_map[args.agent]
+        
+        value_args = {
+            'prompt': 'prompt_file',
+            'prompt_text': 'prompt_text',
+            'max_iterations': 'max_iterations',
+            'max_runtime': 'max_runtime',
+            'checkpoint_interval': 'checkpoint_interval',
+            'retry_delay': 'retry_delay',
+            'max_tokens': 'max_tokens',
+            'max_cost': 'max_cost',
+            'context_window': 'context_window',
+            'context_threshold': 'context_threshold',
+            'metrics_interval': 'metrics_interval',
+            'max_prompt_size': 'max_prompt_size'
+        }
+        
+        for arg_name, config_name in value_args.items():
+            if hasattr(args, arg_name) and getattr(args, arg_name) is not None:
+                config_kwargs[config_name] = getattr(args, arg_name)
+        
+        # Handle booleans - RalphConfig defaults are mostly safe, but we should be explicit
+        if args.verbose:
+            config_kwargs['verbose'] = True
+        if args.dry_run:
+            config_kwargs['dry_run'] = True
+        if args.allow_unsafe_paths:
+            config_kwargs['allow_unsafe_paths'] = True
+            
+        if args.no_git:
+            config_kwargs['git_checkpoint'] = False
+        if args.no_archive:
+            config_kwargs['archive_prompts'] = False
+        if args.no_metrics:
+            config_kwargs['enable_metrics'] = False
+            
+        if hasattr(args, 'agent_args') and args.agent_args:
+            config_kwargs['agent_args'] = args.agent_args
+            
+        # Instantiate with gathered arguments
+        config = RalphConfig(**config_kwargs)
 
     # Validate prompt source exists and has content (before dry-run check)
     if config.prompt_text is not None:
