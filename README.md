@@ -1,7 +1,7 @@
 # Ralph Orchestrator
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://mikeyobrien.github.io/ralph-orchestrator/)
-[![Version](https://img.shields.io/badge/version-1.2.0-green)](https://github.com/mikeyobrien/ralph-orchestrator/releases)
+[![Version](https://img.shields.io/badge/version-1.2.2-green)](https://github.com/mikeyobrien/ralph-orchestrator/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](tests/)
 
@@ -21,7 +21,7 @@ Ralph Orchestrator implements a simple but effective pattern for autonomous task
 
 Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/ralph/), this implementation provides a robust, tested, and feature-complete orchestration system for AI-driven development.
 
-## ✅ Production Ready - v1.2.0
+## ✅ Production Ready - v1.2.2
 
 - **Claude Integration**: ✅ COMPLETE (with Agent SDK)
 - **Kiro CLI Integration**: ✅ COMPLETE (Successor to Q Chat)
@@ -609,7 +609,7 @@ MIT License - See LICENSE file for details
 
 ## Version History
 
-- **v1.2.0** (2025-12)
+- **v1.2.2** (2025-12)
   - **ACP (Agent Client Protocol) Support**: Full integration with ACP-compliant agents
     - JSON-RPC 2.0 message protocol
     - Permission handling (auto_approve, deny_all, allowlist, interactive)

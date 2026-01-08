@@ -274,7 +274,7 @@ class ACPAdapter(ToolAdapter):
                     "clientInfo": {
                         "name": "ralph-orchestrator",
                         "title": "Ralph Orchestrator",
-                        "version": "1.2.0",
+                        "version": "1.2.2",
                     },
                 },
             )
