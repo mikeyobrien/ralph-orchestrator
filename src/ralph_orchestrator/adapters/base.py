@@ -137,6 +137,21 @@ IMPORTANT INSTRUCTIONS:
 4. When you complete a subtask, document it in the prompt file so the next iteration knows what's done.
 5. For maximum efficiency, whenever you need to perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially.
 6. If you create any temporary new files, scripts, or helper files for iteration, clean up these files by removing them at the end of the task.
+
+## Agent Scratchpad
+Before starting your work, check if .agent/scratchpad.md exists in the current working directory.
+If it does, read it to understand what was accomplished in previous iterations and continue from there.
+
+At the end of your iteration, update .agent/scratchpad.md with:
+- What you accomplished this iteration
+- What remains to be done
+- Any important context or decisions made
+- Current blockers or issues (if any)
+
+Do NOT restart from scratch if the scratchpad shows previous progress. Continue where the previous iteration left off.
+
+Create the .agent/ directory if it doesn't exist.
+
 ---
 ORIGINAL PROMPT:
 

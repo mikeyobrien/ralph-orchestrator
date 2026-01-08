@@ -48,7 +48,7 @@ Based on the Ralph Wiggum technique by [Geoffrey Huntley](https://ghuntley.com/r
 - 🔒 **Security Features**: Automatic masking of API keys et sensitive data in logs
 - ⚡ **Async-First Design**: Non-blocking I/O throughout (logging, git operations)
 - 📝 **Inline Prompts**: Run with `-p "your task"` without needing a file
-- 🧠 **Agent Scratchpad**: ACP agents persist context across iterations via `.agent/scratchpad.md`
+- 🧠 **Agent Scratchpad**: All agents persist context across iterations via `.agent/scratchpad.md`
 
 ## Installation
 
@@ -288,7 +288,7 @@ adapters:
 
 ### Agent Scratchpad
 
-ACP agents maintain context across iterations via `.agent/scratchpad.md`. This file persists:
+All agents maintain context across iterations via `.agent/scratchpad.md`. This file persists:
 - Progress from previous iterations
 - Decisions and context
 - Current blockers or issues

@@ -680,51 +680,6 @@ class ACPAdapter(ToolAdapter):
                 error=str(e),
             )
 
-    def _enhance_prompt_with_instructions(self, prompt: str) -> str:
-        """Enhance prompt with ACP-specific orchestration and scratchpad instructions.
-
-        Adds scratchpad persistence mechanism to base orchestration instructions.
-
-        Args:
-            prompt: The original prompt
-
-        Returns:
-            Enhanced prompt with orchestration and scratchpad instructions
-        """
-        # Get base orchestration instructions
-        enhanced_prompt = super()._enhance_prompt_with_instructions(prompt)
-
-        # Check if scratchpad instructions already exist
-        if "Agent Scratchpad" in enhanced_prompt:
-            return enhanced_prompt
-
-        # Add scratchpad instructions before the "ORIGINAL PROMPT:" marker
-        scratchpad_instructions = """
-## Agent Scratchpad
-Before starting your work, check if .agent/scratchpad.md exists in the current working directory.
-If it does, read it to understand what was accomplished in previous iterations and continue from there.
-
-At the end of your iteration, update .agent/scratchpad.md with:
-- What you accomplished this iteration
-- What remains to be done
-- Any important context or decisions made
-- Current blockers or issues (if any)
-
-Do NOT restart from scratch if the scratchpad shows previous progress. Continue where the previous iteration left off.
-
-Create the .agent/ directory if it doesn't exist.
-
----
-"""
-
-        # Insert scratchpad instructions before "ORIGINAL PROMPT:"
-        if "ORIGINAL PROMPT:" in enhanced_prompt:
-            parts = enhanced_prompt.split("ORIGINAL PROMPT:")
-            return parts[0] + scratchpad_instructions + "ORIGINAL PROMPT:" + parts[1]
-        else:
-            # Fallback: append if marker not found
-            return enhanced_prompt + "\n" + scratchpad_instructions
-
     def estimate_cost(self, prompt: str) -> float:
         """Estimate execution cost.
 
