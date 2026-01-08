@@ -12,6 +12,7 @@ agent_priority:                # Priority order (first available wins)
   - qchat
   - acp
 prompt_file: PROMPT.md         # Path to prompt file
+completion_promise: "LOOP_COMPLETE"
 max_iterations: 100            # Maximum iterations before stopping
 max_runtime: 14400             # Maximum runtime in seconds (4 hours)
 checkpoint_interval: 5         # Git checkpoint every N iterations

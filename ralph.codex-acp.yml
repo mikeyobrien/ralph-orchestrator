@@ -12,6 +12,7 @@ agent_priority:
   - claude
   - gemini
 prompt_file: PROMPT.md
+completion_promise: "LOOP_COMPLETE"
 max_iterations: 100
 max_runtime: 14400
 

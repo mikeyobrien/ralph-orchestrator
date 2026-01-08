@@ -52,7 +52,8 @@ class RalphOrchestrator:
         acp_permission_mode: str = None,
         acp_agent_args: list[str] | None = None,
         iteration_telemetry: bool = True,
-        output_preview_length: int = 500
+        output_preview_length: int = 500,
+        completion_promise: str | None = "LOOP_COMPLETE",
     ):
         """Initialize the orchestrator.
 
@@ -70,6 +71,7 @@ class RalphOrchestrator:
             acp_permission_mode: ACP permission handling mode
             iteration_telemetry: Enable per-iteration telemetry capture
             output_preview_length: Max chars for output preview in telemetry
+            completion_promise: String to match in agent output to stop early
         """
         # Store ACP-specific settings
         self.acp_agent = acp_agent
@@ -95,6 +97,7 @@ class RalphOrchestrator:
             self.verbose = config.verbose if hasattr(config, 'verbose') else False
             self.iteration_telemetry = getattr(config, 'iteration_telemetry', True)
             self.output_preview_length = getattr(config, 'output_preview_length', 500)
+            self.completion_promise = getattr(config, "completion_promise", None)
         else:
             # Individual parameters
             self.prompt_file = Path(prompt_file_or_config if prompt_file_or_config else "PROMPT.md")
@@ -110,6 +113,7 @@ class RalphOrchestrator:
             self.verbose = verbose
             self.iteration_telemetry = iteration_telemetry
             self.output_preview_length = output_preview_length
+            self.completion_promise = completion_promise
 
         # Initialize components
         self.metrics = Metrics()
@@ -545,6 +549,11 @@ class RalphOrchestrator:
                     cost=iteration_cost,
                 )
 
+            if iteration_success and self._check_completion_promise(self.last_response_output):
+                logger.info("Completion promise matched - task marked complete")
+                self.console.print_success("Completion promise matched - stopping orchestration")
+                break
+
             # Break loop if detected (after recording telemetry)
             if loop_detected:
                 break
@@ -881,6 +890,17 @@ class RalphOrchestrator:
         except Exception as e:
             logger.warning(f"Error checking completion marker: {e}")
             return False
+
+    def _check_completion_promise(self, output: str | None) -> bool:
+        """Check if agent output contains the completion promise string.
+
+        Returns:
+            True if the completion promise is present, False otherwise.
+        """
+        if not self.completion_promise or not output:
+            return False
+
+        return self.completion_promise in output
 
     def _determine_trigger_reason(self) -> str:
         """Determine why this iteration is being triggered.

@@ -60,6 +60,7 @@ python ralph_orchestrator.py --agent acp --acp-agent gemini --acp-permission-mod
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--prompt` | `PROMPT.md` | Path to the prompt file |
+| `--completion-promise` | `LOOP_COMPLETE` | Stop when agent output contains this exact string |
 | `--max-prompt-size` | 10MB | Maximum allowed prompt file size |
 
 **Example:**

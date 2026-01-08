@@ -21,7 +21,8 @@ from .main import (
     DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_RUNTIME, DEFAULT_PROMPT_FILE,
     DEFAULT_CHECKPOINT_INTERVAL, DEFAULT_RETRY_DELAY, DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_COST, DEFAULT_CONTEXT_WINDOW, DEFAULT_CONTEXT_THRESHOLD,
-    DEFAULT_METRICS_INTERVAL, DEFAULT_MAX_PROMPT_SIZE
+    DEFAULT_METRICS_INTERVAL, DEFAULT_MAX_PROMPT_SIZE,
+    DEFAULT_COMPLETION_PROMISE
 )
 from .output import RalphConsole
 
@@ -97,6 +98,10 @@ def init_project():
 - All requirements met
 - Tests pass
 - Code is clean
+
+## Completion Promise
+- When all success criteria are met, output this exact line:
+  LOOP_COMPLETE
 """)
         _console.print_success("Created PROMPT.md template")
     
@@ -114,6 +119,7 @@ agent_priority:
   - qchat
   - acp
 prompt_file: PROMPT.md
+completion_promise: "LOOP_COMPLETE"
 max_iterations: 100
 max_runtime: 14400
 verbose: false
@@ -368,6 +374,11 @@ The file content should follow this EXACT format:
 - [Measurable success criterion 2]
 - [How to know when task is complete]
 
+## Completion Promise
+
+- When all success criteria are met, output this exact line:
+  {DEFAULT_COMPLETION_PROMISE}
+
 IMPORTANT: 
 1. WRITE the content to {output_file} using your file writing tools
 2. Make requirements specific and actionable with checkboxes
@@ -590,6 +601,12 @@ Examples:
             default=None,
             help="Direct prompt text (overrides --prompt-file)"
         )
+
+        p.add_argument(
+            "--completion-promise",
+            default=None,
+            help=f"Stop when agent output contains this exact string (default: {DEFAULT_COMPLETION_PROMISE})"
+        )
         
         p.add_argument(
             "-i", "--iterations", "--max-iterations",
@@ -778,6 +795,7 @@ Examples:
             value_args = {
                 'prompt': 'prompt_file',
                 'prompt_text': 'prompt_text',
+                'completion_promise': 'completion_promise',
                 'max_iterations': 'max_iterations',
                 'max_runtime': 'max_runtime',
                 'checkpoint_interval': 'checkpoint_interval',
@@ -831,6 +849,7 @@ Examples:
         value_args = {
             'prompt': 'prompt_file',
             'prompt_text': 'prompt_text',
+            'completion_promise': 'completion_promise',
             'max_iterations': 'max_iterations',
             'max_runtime': 'max_runtime',
             'checkpoint_interval': 'checkpoint_interval',

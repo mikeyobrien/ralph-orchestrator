@@ -27,6 +27,7 @@ DEFAULT_CONTEXT_WINDOW = 200000  # 200K token context window
 DEFAULT_CONTEXT_THRESHOLD = 0.8  # Trigger summarization at 80% of context
 DEFAULT_METRICS_INTERVAL = 10  # Log metrics every 10 iterations
 DEFAULT_MAX_PROMPT_SIZE = 10485760  # 10MB max prompt file size
+DEFAULT_COMPLETION_PROMISE = "LOOP_COMPLETE"
 
 # Token costs per million (approximate)
 TOKEN_COSTS = {
@@ -209,6 +210,7 @@ class RalphConfig:
     agent_priority: List[str] = field(default_factory=lambda: ["claude", "kiro", "qchat", "gemini", "acp"])
     prompt_file: str = DEFAULT_PROMPT_FILE
     prompt_text: Optional[str] = None  # Direct prompt text (overrides prompt_file)
+    completion_promise: Optional[str] = DEFAULT_COMPLETION_PROMISE  # String to match in agent output to stop
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     max_runtime: int = DEFAULT_MAX_RUNTIME
     checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL

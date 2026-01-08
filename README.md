@@ -223,6 +223,7 @@ Core Options:
   -a, --agent {claude,kiro,q,gemini,acp,auto}  AI agent to use (default: auto)
   -P, --prompt-file FILE          Prompt file path (default: PROMPT.md)
   -p, --prompt-text TEXT          Inline prompt text (overrides file)
+  --completion-promise TEXT       Stop when agent output contains this exact string (default: LOOP_COMPLETE)
   -i, --max-iterations N          Maximum iterations (default: 100)
   -t, --max-runtime SECONDS      Maximum runtime (default: 14400)
   -v, --verbose                   Enable verbose output
@@ -350,6 +351,7 @@ The ACP adapter handles these agent requests:
    - Max runtime exceeded
    - Cost limits reached
    - Too many consecutive errors
+   - Completion promise matched (default: LOOP_COMPLETE)
 
 ## Project Structure
 
