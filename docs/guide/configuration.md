@@ -32,7 +32,7 @@ Configuration file support is planned for future releases.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--agent` | `auto` | AI agent to use: `claude`, `q`, `gemini`, `acp`, or `auto` |
+| `--agent` | `auto` | AI agent to use: `claude`, `kiro`, `q`, `gemini`, `acp`, or `auto` |
 | `--agent-args` | None | Additional arguments to pass to the agent |
 | `--acp-agent` | `gemini` | ACP agent command (for `-a acp`) |
 | `--acp-permission-mode` | `auto_approve` | Permission handling: `auto_approve`, `deny_all`, `allowlist`, `interactive` |

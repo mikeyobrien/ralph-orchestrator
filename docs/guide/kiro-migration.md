@@ -70,6 +70,7 @@ The Kiro CLI uses new directory paths for configuration and data. Ralph's adapte
 | **Prompts** | `~/.aws/amazonq/prompts` | `~/.kiro/prompts` |
 | **Project Config** | `.amazonq/` | `.kiro/` |
 | **Global Config** | `~/.aws/amazonq/` | `~/.kiro/` |
+| **Logs** | `$TMPDIR/qchat-log` | `$TMPDIR/kiro-log` |
 
 ## Migration Steps
 

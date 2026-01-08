@@ -1,5 +1,9 @@
 # Q Chat Adapter Production Deployment Guide
 
+!!! warning "Deprecated"
+    The Q Chat CLI has been rebranded to **Kiro CLI**. This guide references the legacy Q Chat adapter.
+    Please refer to the [Kiro Migration Guide](../guide/kiro-migration.md) for information on migrating to the new `kiro` adapter.
+
 This guide provides comprehensive instructions for deploying the Q Chat adapter in production environments with Ralph Orchestrator.
 
 ## Overview
