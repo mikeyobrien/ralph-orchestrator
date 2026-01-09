@@ -225,6 +225,163 @@ def clean_workspace():
             _console.print_success("Reset to last checkpoint")
 
 
+def run_diagnostics():
+    """Run diagnostic checks for common Ralph Orchestrator issues."""
+    _console.print_header("RALPH DIAGNOSTICS")
+    _console.print_info("Running diagnostic checks for common issues...")
+    _console.print_info("This helps diagnose GitHub issue #39 and similar problems.")
+    
+    # System info
+    _console.print_separator()
+    _console.print_status("System Information")
+    _console.print_info(f"Python: {sys.version.split()[0]}")
+    _console.print_info(f"Platform: {sys.platform}")
+    _console.print_info(f"Working Directory: {os.getcwd()}")
+    
+    # Check CLI tools
+    _console.print_separator()
+    _console.print_status("CLI Tools")
+    
+    cli_tools = [
+        ('claude', 'Claude CLI'),
+        ('gemini', 'Gemini CLI'),
+        ('kiro-cli', 'Kiro CLI'),
+        ('q', 'Q Chat CLI'),
+    ]
+    
+    cli_results = {}
+    for cmd, name in cli_tools:
+        try:
+            result = subprocess.run([cmd, '--version'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                version = result.stdout.strip().split('\n')[0]  # First line only
+                _console.print_success(f"{name}: {version}")
+                cli_results[cmd] = True
+            else:
+                _console.print_error(f"{name}: Failed ({result.stderr.strip()})")
+                cli_results[cmd] = False
+        except FileNotFoundError:
+            _console.print_warning(f"{name}: Not found in PATH")
+            cli_results[cmd] = False
+        except subprocess.TimeoutExpired:
+            _console.print_warning(f"{name}: Timed out")
+            cli_results[cmd] = False
+        except Exception as e:
+            _console.print_error(f"{name}: Error - {e}")
+            cli_results[cmd] = False
+    
+    # Check Python packages
+    _console.print_separator()
+    _console.print_status("Python Packages")
+    
+    packages = [
+        ('ralph_orchestrator', 'Ralph Orchestrator'),
+        ('claude_agent_sdk', 'Claude Agent SDK'),
+    ]
+    
+    package_results = {}
+    for package, name in packages:
+        try:
+            __import__(package)
+            _console.print_success(f"{name}: Available")
+            package_results[package] = True
+        except ImportError:
+            _console.print_error(f"{name}: Not available")
+            package_results[package] = False
+    
+    # Check environment
+    _console.print_separator()
+    _console.print_status("Environment Variables")
+    
+    api_keys = [
+        ('ANTHROPIC_API_KEY', 'Claude API Key'),
+        ('GOOGLE_API_KEY', 'Google API Key'),
+        ('GEMINI_API_KEY', 'Gemini API Key'),
+    ]
+    
+    for env_var, name in api_keys:
+        value = os.getenv(env_var)
+        if value:
+            _console.print_success(f"{name}: Set (length: {len(value)})")
+        else:
+            _console.print_warning(f"{name}: Not set")
+    
+    # Check Ralph project files
+    _console.print_separator()
+    _console.print_status("Ralph Project Files")
+    
+    cwd = Path.cwd()
+    ralph_files = [
+        ('PROMPT.md', 'Prompt file'),
+        ('ralph.yml', 'Configuration file'),
+        ('.agent/', 'Agent workspace'),
+    ]
+    
+    for file, desc in ralph_files:
+        path = cwd / file
+        if path.exists():
+            _console.print_success(f"{desc}: Found")
+        else:
+            _console.print_warning(f"{desc}: Not found")
+    
+    # Test adapters
+    _console.print_separator()
+    _console.print_status("Adapter Tests")
+    
+    try:
+        from .adapters.claude import ClaudeAdapter
+        claude = ClaudeAdapter()
+        if claude.check_availability():
+            _console.print_success("Claude adapter: Available")
+        else:
+            _console.print_error("Claude adapter: Not available")
+    except Exception as e:
+        _console.print_error(f"Claude adapter: Error - {e}")
+    
+    try:
+        from .adapters.gemini import GeminiAdapter
+        gemini = GeminiAdapter()
+        if gemini.check_availability():
+            _console.print_success("Gemini adapter: Available")
+        else:
+            _console.print_error("Gemini adapter: Not available")
+    except Exception as e:
+        _console.print_error(f"Gemini adapter: Error - {e}")
+    
+    # Summary and recommendations
+    _console.print_separator()
+    _console.print_status("Summary & Recommendations")
+    
+    claude_ok = cli_results.get('claude', False)
+    gemini_ok = cli_results.get('gemini', False)
+    packages_ok = all(package_results.values())
+    
+    if not claude_ok and not gemini_ok:
+        _console.print_error("Both Claude and Gemini CLI tools have issues")
+        _console.print_info("This matches the symptoms of GitHub issue #39")
+        _console.print_info("Recommendations:")
+        _console.print_info("  1. Install Claude CLI: Follow https://github.com/anthropics/claude-code")
+        _console.print_info("  2. Install Gemini CLI: npm install -g @google/gemini-cli")
+        _console.print_info("  3. Verify API keys are set correctly")
+        _console.print_info("  4. Try running CLI tools directly to test them")
+    elif not claude_ok:
+        _console.print_warning("Claude CLI has issues")
+        _console.print_info("Try: Install Claude CLI or check authentication")
+    elif not gemini_ok:
+        _console.print_warning("Gemini CLI has issues")
+        _console.print_info("Try: Install Gemini CLI with npm install -g @google/gemini-cli")
+    else:
+        _console.print_success("All CLI tools appear to be working")
+        _console.print_info("If you're still having issues, try running Ralph with --verbose")
+    
+    if not packages_ok:
+        _console.print_error("Some Python packages are missing")
+        _console.print_info("Try: pip install ralph-orchestrator")
+    
+    _console.print_separator()
+    _console.print_info("For more help, visit: https://github.com/mikeyobrien/ralph-orchestrator/issues")
+
+
 def generate_prompt(rough_ideas: List[str], output_file: str = "PROMPT.md", interactive: bool = False, agent: str = "auto"):
     """Generate a structured prompt from rough ideas using AI agent."""
 
@@ -509,6 +666,9 @@ Examples:
     # Clean command
     subparsers.add_parser('clean', help='Clean up agent workspace')
     
+    # Doctor command (diagnostic tool for issue #39)
+    subparsers.add_parser('doctor', help='Run diagnostic checks for common issues')
+    
     # Prompt command
     prompt_parser = subparsers.add_parser('prompt', help='Generate structured prompt from rough ideas')
     prompt_parser.add_argument(
@@ -743,6 +903,10 @@ Examples:
     
     if command == 'clean':
         clean_workspace()
+        sys.exit(0)
+    
+    if command == 'doctor':
+        run_diagnostics()
         sys.exit(0)
     
     if command == 'prompt':

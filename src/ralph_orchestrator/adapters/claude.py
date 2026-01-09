@@ -485,6 +485,27 @@ class ClaudeAdapter(ToolAdapter):
                 iteration=kwargs.get('iteration', 0),
                 exception=e
             )
+            
+            # Log additional debugging information for "Command failed" errors
+            if "Command failed with exit code 1" in error_str:
+                logger.error(f"Claude CLI command failed - this may indicate:")
+                logger.error("  1. Claude CLI not properly installed or configured")
+                logger.error("  2. Missing API key or authentication issues")
+                logger.error("  3. Network connectivity problems")
+                logger.error("  4. Insufficient permissions")
+                logger.error(f"  Full error: {error_str}")
+                
+                # Try to provide more specific guidance
+                try:
+                    import subprocess
+                    result = subprocess.run(['claude', '--version'], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        logger.error(f"  Claude CLI version: {result.stdout.strip()}")
+                    else:
+                        logger.error(f"  Claude CLI check failed: {result.stderr}")
+                except Exception as check_e:
+                    logger.error(f"  Could not check Claude CLI: {check_e}")
+            
             logger.error(f"Claude SDK error: {error_msg.message}", exc_info=True)
             return ToolResponse(
                 success=False,

@@ -327,6 +327,17 @@ class RalphOrchestrator:
                 return adapter
 
         raise ValueError("No available adapters found for auto mode")
+
+    def _describe_active_agent(self) -> str:
+        """Return a human-friendly description of the active agent."""
+        adapter = self.current_adapter
+        adapter_name = adapter.name if adapter else self.primary_tool
+        if isinstance(adapter, ACPAdapter):
+            command = adapter.agent_command
+            if adapter.agent_args:
+                command = " ".join([command, *adapter.agent_args])
+            return f"{adapter_name} (ACP: {command})"
+        return adapter_name
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals with subprocess-first cleanup.
@@ -438,6 +449,11 @@ class RalphOrchestrator:
 
         # Set up async signal handlers now that we have a running loop
         self._setup_async_signal_handlers()
+
+        agent_details = self._describe_active_agent()
+        logger.debug("Using agent: %s", agent_details)
+        if self.verbose:
+            self.console.print_info(f"Using agent: {agent_details}")
 
         start_time = time.time()
         self._start_time = start_time  # Store for state retrieval

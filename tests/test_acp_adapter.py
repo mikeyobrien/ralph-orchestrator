@@ -628,6 +628,48 @@ class TestACPAdapterPromptExecution:
         assert adapter._session.tool_calls[0].tool_call_id == "tc-123"
 
     @pytest.mark.asyncio
+    async def test_execute_prompt_tracks_tool_calls_nested_update(self):
+        """Test _execute_prompt tracks tool_call notifications in nested updates."""
+        adapter = ACPAdapter()
+        adapter.available = True
+        adapter._initialized = True
+        adapter._session_id = "test-session"
+
+        mock_client = MagicMock()
+        mock_client.is_running = True
+
+        from ralph_orchestrator.adapters.acp_models import ACPSession
+        adapter._session = ACPSession(session_id="test-session")
+        adapter._client = mock_client
+
+        # Simulate nested tool call during execution
+        async def simulate_tool_call():
+            adapter._handle_notification(
+                "session/update",
+                {
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "content": {
+                            "toolName": "fs/read_text_file",
+                            "toolCallId": "tc-123",
+                            "arguments": {"path": "/test/file.txt"},
+                        },
+                    }
+                },
+            )
+            return {"stopReason": "end_turn"}
+
+        mock_client.send_request = MagicMock(
+            return_value=asyncio.ensure_future(simulate_tool_call())
+        )
+
+        await adapter._execute_prompt("Test prompt")
+
+        assert len(adapter._session.tool_calls) == 1
+        assert adapter._session.tool_calls[0].tool_name == "fs/read_text_file"
+        assert adapter._session.tool_calls[0].tool_call_id == "tc-123"
+
+    @pytest.mark.asyncio
     async def test_execute_prompt_tracks_tool_call_updates(self):
         """Test _execute_prompt tracks tool_call_update notifications."""
         adapter = ACPAdapter()

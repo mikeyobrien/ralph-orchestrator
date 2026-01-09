@@ -42,6 +42,15 @@ class ACPAdapter(ToolAdapter):
         permission_mode: How to handle permission requests.
     """
 
+    _TOOL_FIELD_ALIASES = {
+        "toolName": ("toolName", "tool_name", "name", "tool"),
+        "toolCallId": ("toolCallId", "tool_call_id", "id"),
+        "arguments": ("arguments", "args", "parameters", "params", "input"),
+        "status": ("status",),
+        "result": ("result",),
+        "error": ("error",),
+    }
+
     def __init__(
         self,
         agent_command: str = "gemini",
@@ -326,33 +335,203 @@ class ACPAdapter(ToolAdapter):
                 # Nested format (Gemini)
                 update = params["update"]
                 kind = update.get("sessionUpdate", "")
-                content_obj = update.get("content", {})
+                content_obj = update.get("content")
+                content = None
+                flat_params = {"kind": kind, "content": content}
+                allow_name_id = kind in ("tool_call", "tool_call_update")
                 # Extract text content if it's an object
                 if isinstance(content_obj, dict):
-                    content = content_obj.get("text", "")
+                    if "text" in content_obj:
+                        content = content_obj.get("text", "")
+                        flat_params["content"] = content
+                elif isinstance(content_obj, list):
+                    for entry in content_obj:
+                        if not isinstance(entry, dict):
+                            continue
+                        self._merge_tool_fields(flat_params, entry, allow_name_id=allow_name_id)
+                        nested_tool_call = entry.get("toolCall") or entry.get("tool_call")
+                        if isinstance(nested_tool_call, dict):
+                            self._merge_tool_fields(
+                                flat_params,
+                                nested_tool_call,
+                                allow_name_id=allow_name_id,
+                            )
+                        nested_tool = entry.get("tool")
+                        if isinstance(nested_tool, dict):
+                            self._merge_tool_fields(
+                                flat_params,
+                                nested_tool,
+                                allow_name_id=allow_name_id,
+                            )
                 else:
                     content = str(content_obj) if content_obj else ""
-                flat_params = {"kind": kind, "content": content}
-                # Copy other fields if present
-                for key in ["toolName", "toolCallId", "arguments", "status", "result", "error"]:
-                    if key in update:
-                        flat_params[key] = update[key]
+                    flat_params["content"] = content
+                self._merge_tool_fields(flat_params, update, allow_name_id=allow_name_id)
+                if isinstance(content_obj, dict):
+                    self._merge_tool_fields(flat_params, content_obj, allow_name_id=allow_name_id)
+                    nested_tool_call = content_obj.get("toolCall") or content_obj.get("tool_call")
+                    if isinstance(nested_tool_call, dict):
+                        self._merge_tool_fields(
+                            flat_params,
+                            nested_tool_call,
+                            allow_name_id=allow_name_id,
+                        )
+                    nested_tool = content_obj.get("tool")
+                    if isinstance(nested_tool, dict):
+                        self._merge_tool_fields(
+                            flat_params,
+                            nested_tool,
+                            allow_name_id=allow_name_id,
+                        )
+                nested_tool_call = update.get("toolCall") or update.get("tool_call")
+                if isinstance(nested_tool_call, dict):
+                    self._merge_tool_fields(
+                        flat_params,
+                        nested_tool_call,
+                        allow_name_id=allow_name_id,
+                    )
+                nested_tool = update.get("tool")
+                if isinstance(nested_tool, dict):
+                    self._merge_tool_fields(
+                        flat_params,
+                        nested_tool,
+                        allow_name_id=allow_name_id,
+                    )
                 payload = UpdatePayload.from_dict(flat_params)
+                payload._raw = update
+                payload._raw_flat = flat_params
             else:
                 # Flat format
                 payload = UpdatePayload.from_dict(params)
+                payload._raw = params
 
-            # Stream to console if verbose (use per-request flag)
+            # Stream to console if verbose; always show tool calls
             if self._current_verbose:
-                self._stream_update(payload)
+                self._stream_update(payload, show_details=True)
+            elif payload.kind == "tool_call":
+                self._stream_update(payload, show_details=False)
 
             self._session.process_update(payload)
 
-    def _stream_update(self, payload: UpdatePayload) -> None:
+    def _merge_tool_fields(
+        self,
+        target: dict,
+        source: dict,
+        *,
+        allow_name_id: bool = False,
+    ) -> None:
+        """Merge tool call fields from source into target with alias support."""
+        for canonical, aliases in self._TOOL_FIELD_ALIASES.items():
+            if not allow_name_id and canonical in ("toolName", "toolCallId"):
+                aliases = tuple(
+                    alias for alias in aliases if alias not in ("name", "id")
+                )
+            if canonical in target and target[canonical] not in (None, ""):
+                continue
+            for key in aliases:
+                if key in source:
+                    value = source[key]
+                    if key == "tool" and canonical == "toolName":
+                        if isinstance(value, dict):
+                            value = value.get("name") or value.get("toolName") or value.get("tool_name")
+                        elif not isinstance(value, str):
+                            value = None
+                    if value is None or value == "":
+                        continue
+                    target[canonical] = value
+                    break
+
+    def _format_agent_label(self) -> str:
+        """Return the ACP agent command with arguments for display."""
+        if not self.agent_args:
+            return self.agent_command
+        return " ".join([self.agent_command, *self.agent_args])
+
+    def _format_payload_value(self, value: object, limit: int = 200) -> str:
+        """Format payload values for console output."""
+        if value is None:
+            return ""
+        value_str = str(value)
+        if len(value_str) > limit:
+            return value_str[: limit - 3] + "..."
+        return value_str
+
+    def _format_payload_error(self, error: object) -> str:
+        """Extract a readable error string from ACP error payloads."""
+        if error is None:
+            return ""
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("error") or error.get("detail")
+            code = error.get("code")
+            data = error.get("data")
+            parts = []
+            if message:
+                parts.append(message)
+            if code is not None:
+                parts.append(f"code={code}")
+            if data and not message:
+                parts.append(str(data))
+            if parts:
+                return self._format_payload_value(" ".join(parts), limit=200)
+        return self._format_payload_value(error, limit=200)
+
+    def _get_raw_payload(self, payload: UpdatePayload) -> dict | None:
+        raw = getattr(payload, "_raw", None)
+        return raw if isinstance(raw, dict) else None
+
+    def _extract_tool_field(self, raw: dict | None, key: str) -> object:
+        if not isinstance(raw, dict):
+            return None
+        value = raw.get(key)
+        if value not in (None, ""):
+            return value
+        for nested_key in ("toolCall", "tool_call", "tool"):
+            nested = raw.get(nested_key)
+            if isinstance(nested, dict) and key in nested:
+                nested_value = nested.get(key)
+                if nested_value not in (None, ""):
+                    return nested_value
+        return None
+
+    def _extract_tool_name_from_meta(self, raw: dict | None) -> str | None:
+        if not isinstance(raw, dict):
+            return None
+        meta = raw.get("_meta")
+        if not isinstance(meta, dict):
+            return None
+        for key in ("codex", "claudeCode", "agent", "acp"):
+            entry = meta.get(key)
+            if isinstance(entry, dict):
+                for name_key in ("toolName", "tool_name", "name", "tool"):
+                    value = entry.get(name_key)
+                    if isinstance(value, str) and value:
+                        return value
+        for name_key in ("toolName", "tool_name", "name", "tool"):
+            value = meta.get(name_key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    def _extract_tool_response(self, raw: dict | None) -> object:
+        if not isinstance(raw, dict):
+            return None
+        meta = raw.get("_meta")
+        if not isinstance(meta, dict):
+            return None
+        for key in ("codex", "claudeCode", "agent", "acp"):
+            entry = meta.get(key)
+            if isinstance(entry, dict) and "toolResponse" in entry:
+                return entry.get("toolResponse")
+        if "toolResponse" in meta:
+            return meta.get("toolResponse")
+        return None
+
+    def _stream_update(self, payload: UpdatePayload, show_details: bool = True) -> None:
         """Stream session update to console.
 
         Args:
             payload: The update payload to stream.
+            show_details: Include detailed info (arguments, results, progress).
         """
         kind = payload.kind
 
@@ -374,37 +553,137 @@ class ACPAdapter(ToolAdapter):
 
         elif kind == "tool_call":
             # Show tool call start
-            tool_name = payload.tool_name or "unknown"
+            tool_name = payload.tool_name
+            raw_update = self._get_raw_payload(payload)
+            meta_tool_name = self._extract_tool_name_from_meta(raw_update)
+            title = self._extract_tool_field(raw_update, "title")
+            kind = self._extract_tool_field(raw_update, "kind")
+            raw_input = self._extract_tool_field(raw_update, "rawInput")
+            if raw_input is None:
+                raw_input = self._extract_tool_field(raw_update, "input")
+            tool_name = tool_name or meta_tool_name or title or kind or "unknown"
             tool_id = payload.tool_call_id or "unknown"
             self._console.print_separator()
             self._console.print_status(f"TOOL CALL: {tool_name}", style="cyan bold")
             self._console.print_info(f"ID: {tool_id[:12]}...")
-            if payload.arguments:
-                self._console.print_info("Arguments:")
-                for key, value in payload.arguments.items():
-                    value_str = str(value)
-                    if len(value_str) > 100:
-                        value_str = value_str[:97] + "..."
-                    self._console.print_info(f"  - {key}: {value_str}")
+            self._console.print_info(f"Agent: {self._format_agent_label()}")
+            if show_details:
+                if title and title != tool_name:
+                    self._console.print_info(f"Title: {title}")
+                if kind:
+                    self._console.print_info(f"Kind: {kind}")
+                if tool_name == "unknown":
+                    raw_str = self._format_payload_value(raw_update, limit=300)
+                    if raw_str:
+                        self._console.print_info(f"Update: {raw_str}")
+                if payload.arguments or raw_input:
+                    input_value = payload.arguments or raw_input
+                    if isinstance(input_value, dict):
+                        self._console.print_info("Arguments:")
+                        for key, value in input_value.items():
+                            value_str = str(value)
+                            if len(value_str) > 100:
+                                value_str = value_str[:97] + "..."
+                            self._console.print_info(f"  - {key}: {value_str}")
+                    else:
+                        input_str = self._format_payload_value(input_value, limit=300)
+                        if input_str:
+                            self._console.print_info(f"Input: {input_str}")
 
         elif kind == "tool_call_update":
+            if not show_details:
+                return
             # Show tool call status update
             tool_id = payload.tool_call_id or "unknown"
             status = payload.status or "unknown"
+            tool_name = payload.tool_name
+            tool_args = None
+            tool_call = None
+            if self._session and payload.tool_call_id:
+                tool_call = self._session.get_tool_call(payload.tool_call_id)
+            if tool_call:
+                tool_name = tool_name or tool_call.tool_name
+                tool_args = tool_call.arguments or None
+            raw_update = self._get_raw_payload(payload)
+            meta_tool_name = self._extract_tool_name_from_meta(raw_update)
+            title = self._extract_tool_field(raw_update, "title")
+            kind = self._extract_tool_field(raw_update, "kind")
+            raw_input = self._extract_tool_field(raw_update, "rawInput")
+            raw_output = self._extract_tool_field(raw_update, "rawOutput")
+            tool_name = tool_name or meta_tool_name or title
+            display_name = tool_name or kind or "unknown"
+            if display_name == "unknown":
+                status_label = f"Tool call {tool_id[:12]}..."
+            else:
+                status_label = f"Tool {display_name} ({tool_id[:12]}...)"
 
             if status == "completed":
-                self._console.print_success(f"Tool {tool_id[:12]}... completed")
-                if payload.result:
-                    result_str = str(payload.result)
-                    if len(result_str) > 200:
-                        result_str = result_str[:197] + "..."
+                self._console.print_success(
+                    f"{status_label} completed"
+                )
+                result_value = payload.result
+                if result_value is None and tool_call:
+                    result_value = tool_call.result
+                if result_value is None:
+                    result_value = raw_output
+                if result_value is None:
+                    result_value = self._extract_tool_response(raw_update)
+                result_str = self._format_payload_value(result_value)
+                if result_str:
                     self._console.print_info(f"Result: {result_str}")
             elif status == "failed":
-                self._console.print_error(f"Tool {tool_id[:12]}... failed")
-                if payload.error:
-                    self._console.print_error(f"Error: {payload.error}")
+                self._console.print_error(
+                    f"{status_label} failed"
+                )
+                if display_name == "unknown":
+                    raw_str = self._format_payload_value(raw_update, limit=300)
+                    if raw_str:
+                        self._console.print_info(f"Update: {raw_str}")
+                error_str = self._format_payload_error(payload.error)
+                if not error_str and payload.result is not None:
+                    error_str = self._format_payload_value(payload.result)
+                if not error_str and raw_output is not None:
+                    error_str = self._format_payload_value(raw_output)
+                if not error_str:
+                    error_str = self._format_payload_value(
+                        self._extract_tool_response(raw_update)
+                    )
+                if error_str:
+                    self._console.print_error(f"Error: {error_str}")
+                if tool_args or raw_input:
+                    if tool_args is None:
+                        tool_args = raw_input
+                    self._console.print_info("Arguments:")
+                    if isinstance(tool_args, dict):
+                        for key, value in tool_args.items():
+                            value_str = str(value)
+                            if len(value_str) > 100:
+                                value_str = value_str[:97] + "..."
+                            self._console.print_info(f"  - {key}: {value_str}")
+                    else:
+                        arg_str = self._format_payload_value(tool_args, limit=300)
+                        if arg_str:
+                            self._console.print_info(f"  - {arg_str}")
             elif status == "running":
-                self._console.print_status(f"Tool {tool_id[:12]}... running", style="yellow")
+                self._console.print_status(
+                    f"{status_label} running",
+                    style="yellow",
+                )
+                progress_value = payload.result or payload.content
+                if progress_value is None:
+                    progress_value = raw_output
+                progress_str = self._format_payload_value(progress_value, limit=200)
+                if progress_str:
+                    self._console.print_info(f"Progress: {progress_str}")
+            else:
+                self._console.print_status(
+                    f"{status_label} {status}",
+                    style="yellow",
+                )
+            if title and title != display_name:
+                self._console.print_info(f"Title: {title}")
+            if kind:
+                self._console.print_info(f"Kind: {kind}")
 
     def _handle_request(self, method: str, params: dict) -> dict:
         """Handle requests from agent.
