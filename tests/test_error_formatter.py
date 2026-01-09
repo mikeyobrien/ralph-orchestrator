@@ -195,6 +195,37 @@ class TestClaudeErrorFormatterFromException:
 
         assert "interrupt" in error.message.lower() or "sigterm" in error.message.lower()
 
+    def test_format_from_exit_code_1_exception(self):
+        """Test formatting from exit code 1 exception."""
+        exception = Exception(
+            "Command failed with exit code 1 (exit code: 1)\n"
+            "Error output: Check stderr output for details"
+        )
+        error = ClaudeErrorFormatter.format_error_from_exception(iteration=1, exception=exception)
+
+        assert "Claude CLI command failed" in error.message
+        assert "claude --version" in error.suggestion
+        assert "claude login" in error.suggestion
+
+    def test_format_from_exit_code_2_exception(self):
+        """Test generic command failed errors."""
+        exception = Exception("Command failed with exit code 2")
+        error = ClaudeErrorFormatter.format_error_from_exception(iteration=1, exception=exception)
+
+        assert "Exception" in error.message
+        assert "Command failed with exit code 2" in error.message
+
+    def test_format_from_exception_message_structure(self):
+        """Test that error messages have proper structure."""
+        exception = Exception("Command failed with exit code 1")
+        error = ClaudeErrorFormatter.format_error_from_exception(iteration=5, exception=exception)
+
+        assert isinstance(error.message, str)
+        assert isinstance(error.suggestion, str)
+        assert len(error.message) > 0
+        assert len(error.suggestion) > 0
+        assert "Iteration 5" in error.message
+
     def test_format_from_timeout_exception(self):
         """Test formatting from timeout exception."""
         import asyncio
