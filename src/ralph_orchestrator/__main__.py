@@ -42,7 +42,11 @@ def _apply_codex_shortcut(args: argparse.Namespace, parser: argparse.ArgumentPar
         return
 
     # --codex implies ACP mode; reject conflicting explicit agent selection.
-    if getattr(args, "agent", "auto") not in ("auto", "acp"):
+    # Note: We must check for None explicitly because getattr returns the actual
+    # attribute value (None) when the attribute exists, not the default value.
+    # The --agent argument defaults to None in argparse, so we treat None as "auto".
+    agent_value = getattr(args, "agent", None)
+    if agent_value is not None and agent_value not in ("auto", "acp"):
         parser.error("--codex requires --agent auto or acp (or omit -a/--agent)")
 
     args.agent = "acp"
