@@ -50,10 +50,25 @@ cd ralph-orchestrator-1.0.0
 chmod +x ralph_orchestrator.py
 ```
 
-### Method 3: pip Install (Coming Soon)
+### Method 3: uv tool (Recommended for Users)
+
+If you just want to run Ralph without setting up a development environment:
 
 ```bash
-# Future installation via pip
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install Ralph globally
+uv tool install ralph-orchestrator
+
+# Verify installation
+ralph --help
+```
+
+### Method 4: pip Install
+
+```bash
+# Install via pip
 pip install ralph-orchestrator
 ```
 

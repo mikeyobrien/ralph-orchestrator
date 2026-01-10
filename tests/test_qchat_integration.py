@@ -11,6 +11,7 @@ import pytest
 import asyncio
 import signal
 import shutil
+import os
 from unittest.mock import patch, Mock
 from src.ralph_orchestrator.adapters.qchat import QChatAdapter
 
@@ -184,7 +185,8 @@ class TestQChatIntegration:
         # Test idempotency - shouldn't enhance twice
         double_enhanced = adapter._enhance_prompt_with_instructions(enhanced)
         assert double_enhanced == enhanced
-    
+
+    @pytest.mark.skipif(os.name == "nt", reason="fcntl is Unix-only")
     def test_file_descriptor_management(self):
         """Test proper file descriptor management."""
         adapter = QChatAdapter()
@@ -193,7 +195,7 @@ class TestQChatIntegration:
         mock_pipe = Mock()
         mock_pipe.fileno.return_value = 5
         
-        with patch('fcntl.fcntl') as mock_fcntl:
+        with patch('ralph_orchestrator.adapters.qchat.fcntl.fcntl') as mock_fcntl:
             adapter._make_non_blocking(mock_pipe)
             # Should call fcntl twice (get flags, set flags)
             assert mock_fcntl.call_count == 2

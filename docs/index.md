@@ -6,7 +6,7 @@
 
 *Put your AI agent in a loop until the task is done*
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/mikeyobrien/ralph-orchestrator/releases)
+[![Version](https://img.shields.io/badge/version-1.2.2-blue)](https://github.com/mikeyobrien/ralph-orchestrator/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-920%2B%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)

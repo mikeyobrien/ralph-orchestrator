@@ -138,6 +138,7 @@ graph { label: "🛡️ Five Safety Mechanisms"; flow: south; }
 - **Input validation**: Sanitizes prompts to prevent injection attacks
 - **Resource limits**: Enforces iteration, runtime, and cost boundaries
 - **Completion markers**: Early exit when `- [x] TASK_COMPLETE` detected in prompt file
+- **Completion promises**: Early exit when agent output contains a configured string (default: `LOOP_COMPLETE`)
 - **Loop detection**: Stops when agent outputs are ≥90% similar to recent history
 - **Consecutive failure limit**: Stops after repeated failures (default: 5)
 - **Context overflow**: Automatically summarizes when approaching limits

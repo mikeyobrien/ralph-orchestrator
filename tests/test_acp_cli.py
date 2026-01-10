@@ -192,10 +192,10 @@ class TestOrchestratorACPAdapter:
             )
 
             # Verify ACPAdapter was called with correct parameters
-            mock_acp.assert_called_once_with(
-                agent_command="claude-code-acp",
-                permission_mode="auto_approve"
-            )
+            mock_acp.assert_called_once()
+            kwargs = mock_acp.call_args.kwargs
+            assert kwargs["agent_command"] == "claude-code-acp"
+            assert kwargs["permission_mode"] == "auto_approve"
 
 
 class TestACPAutoDetection:

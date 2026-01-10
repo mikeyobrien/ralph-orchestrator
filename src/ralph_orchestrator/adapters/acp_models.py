@@ -238,12 +238,26 @@ class UpdatePayload:
         Returns:
             UpdatePayload instance.
         """
+        kind = data["kind"]
+        tool_name = data.get("toolName")
+        tool_call_id = data.get("toolCallId")
+        arguments = data.get("arguments")
+        if kind in (UpdateKind.TOOL_CALL, UpdateKind.TOOL_CALL_UPDATE):
+            if tool_name is None:
+                tool_name = data.get("tool_name") or data.get("name")
+                if tool_name is None and isinstance(data.get("tool"), str):
+                    tool_name = data.get("tool")
+            if tool_call_id is None:
+                tool_call_id = data.get("tool_call_id") or data.get("id")
+        if kind == UpdateKind.TOOL_CALL and arguments is None:
+            arguments = data.get("args") or data.get("parameters") or data.get("params")
+
         return cls(
-            kind=data["kind"],
+            kind=kind,
             content=data.get("content"),
-            tool_name=data.get("toolName"),
-            tool_call_id=data.get("toolCallId"),
-            arguments=data.get("arguments"),
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            arguments=arguments,
             status=data.get("status"),
             result=data.get("result"),
             error=data.get("error"),

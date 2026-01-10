@@ -2,8 +2,17 @@
 # This file configures Ralph and its AI agent adapters
 
 # Core orchestrator settings
-agent: auto                    # Which agent to use: claude, q, gemini, auto
+agent: auto                    # Which agent to use: claude, kiro, q, gemini, acp, auto
+# Agent selection + fallback ordering (used when agent=auto, and for fallback order)
+# Valid values: acp, claude, gemini, kiro, qchat (aliases: codex->acp, q->qchat, kiro-cli->kiro)
+agent_priority:                # Priority order (first available wins)
+  - claude
+  - kiro
+  - gemini
+  - qchat
+  - acp
 prompt_file: PROMPT.md         # Path to prompt file
+completion_promise: "LOOP_COMPLETE"
 max_iterations: 100            # Maximum iterations before stopping
 max_runtime: 14400             # Maximum runtime in seconds (4 hours)
 checkpoint_interval: 5         # Git checkpoint every N iterations
@@ -39,6 +48,24 @@ adapters:
     tool_permissions:         # Tool permissions for Claude
       allow_all: true         # Allow all tools without approval
   
+  # Kiro CLI adapter (successor to Amazon Q Developer CLI)
+  # Primary command: kiro-cli, falls back to 'q' for compatibility
+  # Config paths: ~/.kiro/settings/mcp.json, ~/.kiro/prompts, .kiro/
+  kiro:
+    enabled: true
+    timeout: 600              # Timeout in seconds (default: 600)
+    max_retries: 3            # Max retry attempts
+    args: []
+    env: {}
+    # Environment overrides (optional):
+    # RALPH_KIRO_COMMAND      - Primary command (default: kiro-cli)
+    # RALPH_KIRO_TIMEOUT      - Timeout in seconds (default: 600)
+    # RALPH_KIRO_TRUST_TOOLS  - Trust all tools (default: true)
+    # RALPH_KIRO_NO_INTERACTIVE - Disable interactive mode (default: true)
+  
+  # Q Chat adapter (legacy - deprecated in favor of kiro)
+  # NOTE: Amazon Q Developer CLI has been rebranded to Kiro CLI
+  # Consider migrating to the 'kiro' adapter for new projects
   q:
     enabled: true
     timeout: 300
@@ -52,3 +79,17 @@ adapters:
     max_retries: 3
     args: []
     env: {}
+
+  # Agent Client Protocol (ACP) adapter
+  # Works with any ACP-compliant agent, e.g. `codex-acp` (Codex), `gemini`, etc.
+  acp:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+    args: []
+    env: {}
+    tool_permissions:
+      agent_command: codex-acp          # ACP agent command to run
+      agent_args: []                   # Args passed to the ACP agent
+      permission_mode: interactive      # auto_approve | deny_all | allowlist | interactive
+      permission_allowlist: []         # Used when permission_mode=allowlist

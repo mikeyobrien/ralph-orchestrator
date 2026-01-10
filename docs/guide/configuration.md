@@ -32,7 +32,7 @@ Configuration file support is planned for future releases.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--agent` | `auto` | AI agent to use: `claude`, `q`, `gemini`, `acp`, or `auto` |
+| `--agent` | `auto` | AI agent to use: `claude`, `kiro`, `q`, `gemini`, `acp`, or `auto` |
 | `--agent-args` | None | Additional arguments to pass to the agent |
 | `--acp-agent` | `gemini` | ACP agent command (for `-a acp`) |
 | `--acp-permission-mode` | `auto_approve` | Permission handling: `auto_approve`, `deny_all`, `allowlist`, `interactive` |
@@ -60,6 +60,7 @@ python ralph_orchestrator.py --agent acp --acp-agent gemini --acp-permission-mod
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--prompt` | `PROMPT.md` | Path to the prompt file |
+| `--completion-promise` | `LOOP_COMPLETE` | Stop when agent output contains this exact string |
 | `--max-prompt-size` | 10MB | Maximum allowed prompt file size |
 
 **Example:**

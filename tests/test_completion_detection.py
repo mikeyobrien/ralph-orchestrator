@@ -141,5 +141,73 @@ Feature is ready for review.
         self.assertTrue(orchestrator._check_completion_marker())
 
 
+class TestCompletionPromiseDetection(unittest.TestCase):
+    """Test completion promise detection functionality."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+
+    def test_completion_promise_matches_output(self):
+        """Test detection when output contains the completion promise."""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text("# Task\n")
+
+        orchestrator = RalphOrchestrator(
+            str(prompt_file),
+            completion_promise="ALL TESTS PASSING",
+        )
+        self.assertTrue(
+            orchestrator._check_completion_promise(
+                "Status: ALL TESTS PASSING"
+            )
+        )
+
+    def test_completion_promise_no_match(self):
+        """Test that unrelated output does not trigger completion."""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text("# Task\n")
+
+        orchestrator = RalphOrchestrator(
+            str(prompt_file),
+            completion_promise="ALL TESTS PASSING",
+        )
+        self.assertFalse(
+            orchestrator._check_completion_promise(
+                "Status: some tests still failing"
+            )
+        )
+
+    def test_completion_promise_case_sensitive(self):
+        """Test that completion promise matching is case-sensitive."""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text("# Task\n")
+
+        orchestrator = RalphOrchestrator(
+            str(prompt_file),
+            completion_promise="ALL TESTS PASSING",
+        )
+        self.assertFalse(
+            orchestrator._check_completion_promise(
+                "Status: all tests passing"
+            )
+        )
+
+    def test_completion_promise_empty(self):
+        """Test that empty completion promise does not match anything."""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text("# Task\n")
+
+        orchestrator = RalphOrchestrator(
+            str(prompt_file),
+            completion_promise="",
+        )
+        self.assertFalse(
+            orchestrator._check_completion_promise(
+                "Status: ALL TESTS PASSING"
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

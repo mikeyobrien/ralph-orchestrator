@@ -5,11 +5,17 @@
 
 import asyncio
 import logging
+import os
 from typing import Any, Callable, Optional
 
 from .acp_protocol import ACPProtocol, MessageType
 
 logger = logging.getLogger(__name__)
+
+# Default asyncio StreamReader line limit (in bytes) for ACP agent stdout/stderr.
+# Some ACP agents can emit large single-line JSON-RPC frames (e.g., big tool payloads).
+# The asyncio default (~64KiB) can raise LimitOverrunError and break the ACP session.
+DEFAULT_ACP_STREAM_LIMIT = 8 * 1024 * 1024  # 8 MiB
 
 
 class ACPClientError(Exception):
@@ -36,6 +42,7 @@ class ACPClient:
         command: str,
         args: Optional[list[str]] = None,
         timeout: int = 300,
+        stream_limit: Optional[int] = None,
     ) -> None:
         """Initialize ACPClient.
 
@@ -47,6 +54,22 @@ class ACPClient:
         self.command = command
         self.args = args or []
         self.timeout = timeout
+        # Limit used by asyncio for readline()/readuntil(); must be > max ACP frame line length.
+        env_limit = os.environ.get("RALPH_ACP_STREAM_LIMIT")
+        if stream_limit is not None:
+            self.stream_limit = stream_limit
+        elif env_limit:
+            try:
+                self.stream_limit = int(env_limit)
+            except ValueError:
+                logger.warning(
+                    "Invalid RALPH_ACP_STREAM_LIMIT=%r; using default %d",
+                    env_limit,
+                    DEFAULT_ACP_STREAM_LIMIT,
+                )
+                self.stream_limit = DEFAULT_ACP_STREAM_LIMIT
+        else:
+            self.stream_limit = DEFAULT_ACP_STREAM_LIMIT
 
         self._protocol = ACPProtocol()
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -91,6 +114,7 @@ class ACPClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=self.stream_limit,
         )
 
         # Start the read loop

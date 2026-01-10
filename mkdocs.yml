@@ -61,6 +61,7 @@ nav:
   - User Guide:
     - guide/overview.md
     - guide/configuration.md
+    - guide/kiro-migration.md
     - guide/agents.md
     - guide/prompts.md
     - guide/checkpointing.md
@@ -83,6 +84,7 @@ nav:
     - api/agents.md
     - api/metrics.md
     - api/cli.md
+    - api/security.md
   - Examples:
     - examples/index.md
     - examples/simple-task.md

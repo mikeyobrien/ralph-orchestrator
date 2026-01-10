@@ -511,7 +511,7 @@ adapters:
 ```
 
 **Agent Scratchpad:**
-ACP agents maintain context across iterations via `.agent/scratchpad.md`:
+All agents maintain context across iterations via `.agent/scratchpad.md`:
 - Persists progress from previous iterations
 - Records decisions and context
 - Tracks current blockers or issues

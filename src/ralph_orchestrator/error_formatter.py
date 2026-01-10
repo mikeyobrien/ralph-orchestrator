@@ -89,6 +89,21 @@ class ClaudeErrorFormatter:
         )
 
     @staticmethod
+    def format_command_failed_error(iteration: int) -> ErrorMessage:
+        """Format command failed error message (exit code 1).
+
+        Args:
+            iteration: Current iteration number
+
+        Returns:
+            Formatted error message with suggestion
+        """
+        return ErrorMessage(
+            message=f"Iteration {iteration} failed: Claude CLI command failed",
+            suggestion="Try: Check Claude CLI installation with 'claude --version' or verify API key with 'claude login'"
+        )
+
+    @staticmethod
     def format_connection_error(iteration: int) -> ErrorMessage:
         """Format connection error message.
 
@@ -210,6 +225,10 @@ class ClaudeErrorFormatter:
         # SIGTERM interruption (exit code 143 = 128 + 15)
         if "Command failed with exit code 143" in error_str:
             return ClaudeErrorFormatter.format_interrupted_error(iteration)
+
+        # General command failure (exit code 1)
+        if "Command failed with exit code 1" in error_str:
+            return ClaudeErrorFormatter.format_command_failed_error(iteration)
 
         # Connection errors
         if error_type == "CLIConnectionError" or "connection" in error_str.lower():

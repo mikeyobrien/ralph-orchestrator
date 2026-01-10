@@ -1,19 +1,7 @@
-# ABOUTME: Q Chat adapter implementation for q CLI tool (DEPRECATED)
-# ABOUTME: Provides integration with q chat command for AI interactions
-# ABOUTME: NOTE: Consider using KiroAdapter instead - Q CLI rebranded to Kiro CLI
+# ABOUTME: Kiro CLI adapter implementation
+# ABOUTME: Provides integration with kiro-cli chat command for AI interactions
 
-"""Q Chat adapter for Ralph Orchestrator.
-
-.. deprecated::
-    The QChatAdapter is deprecated in favor of KiroAdapter.
-    Amazon Q Developer CLI has been rebranded to Kiro CLI (v1.20+).
-    Use `-a kiro` instead of `-a qchat` or `-a q` for new projects.
-
-    Migration guide:
-    - Config paths changed: ~/.aws/amazonq/ -> ~/.kiro/
-    - MCP servers: ~/.kiro/settings/mcp.json
-    - Project files: .kiro/ folder
-"""
+"""Kiro CLI adapter for Ralph Orchestrator."""
 
 import subprocess
 import os
@@ -22,7 +10,6 @@ import signal
 import threading
 import asyncio
 import time
-import warnings
 try:
     import fcntl  # Unix-only
 except ModuleNotFoundError:
@@ -31,39 +18,25 @@ from .base import ToolAdapter, ToolResponse
 from ..logging_config import RalphLogger
 
 # Get logger for this module
-logger = RalphLogger.get_logger(RalphLogger.ADAPTER_QCHAT)
+logger = RalphLogger.get_logger(RalphLogger.ADAPTER_KIRO)
 
 
-class QChatAdapter(ToolAdapter):
-    """Adapter for Q Chat CLI tool.
-
-    .. deprecated::
-        Use :class:`KiroAdapter` instead. The Amazon Q Developer CLI has been
-        rebranded to Kiro CLI. This adapter is maintained for backwards
-        compatibility only.
-    """
-
+class KiroAdapter(ToolAdapter):
+    """Adapter for Kiro CLI tool."""
+    
     def __init__(self):
-        # Emit deprecation warning
-        warnings.warn(
-            "QChatAdapter is deprecated. Use KiroAdapter instead. "
-            "Amazon Q Developer CLI has been rebranded to Kiro CLI (v1.20+). "
-            "Run with '-a kiro' instead of '-a qchat'.",
-            DeprecationWarning,
-            stacklevel=2
-        )
         # Get configuration from environment variables
-        self.command = os.getenv("RALPH_QCHAT_COMMAND", "q")
-        self.default_timeout = int(os.getenv("RALPH_QCHAT_TIMEOUT", "600"))
-        self.default_prompt_file = os.getenv("RALPH_QCHAT_PROMPT_FILE", "PROMPT.md")
-        self.trust_all_tools = os.getenv("RALPH_QCHAT_TRUST_TOOLS", "true").lower() == "true"
-        self.no_interactive = os.getenv("RALPH_QCHAT_NO_INTERACTIVE", "true").lower() == "true"
+        self.command = os.getenv("RALPH_KIRO_COMMAND", "kiro-cli")
+        self.default_timeout = int(os.getenv("RALPH_KIRO_TIMEOUT", "600"))
+        self.default_prompt_file = os.getenv("RALPH_KIRO_PROMPT_FILE", "PROMPT.md")
+        self.trust_all_tools = os.getenv("RALPH_KIRO_TRUST_TOOLS", "true").lower() == "true"
+        self.no_interactive = os.getenv("RALPH_KIRO_NO_INTERACTIVE", "true").lower() == "true"
         
         # Initialize signal handler attributes before calling super()
         self._original_sigint = None
         self._original_sigterm = None
         
-        super().__init__("qchat")
+        super().__init__("kiro")
         self.current_process = None
         self.shutdown_requested = False
         
@@ -73,10 +46,10 @@ class QChatAdapter(ToolAdapter):
         # Register signal handlers to propagate shutdown to subprocess
         self._register_signal_handlers()
         
-        logger.info(f"Q Chat adapter initialized - Command: {self.command}, "
+        logger.info(f"Kiro adapter initialized - Command: {self.command}, "
                    f"Default timeout: {self.default_timeout}s, "
                    f"Trust tools: {self.trust_all_tools}")
-    
+
     def _register_signal_handlers(self):
         """Register signal handlers and store originals."""
         self._original_sigint = signal.signal(signal.SIGINT, self._signal_handler)
@@ -85,9 +58,9 @@ class QChatAdapter(ToolAdapter):
     
     def _restore_signal_handlers(self):
         """Restore original signal handlers."""
-        if hasattr(self, '_original_sigint') and self._original_sigint is not None:
+        if hasattr(self, "_original_sigint") and self._original_sigint is not None:
             signal.signal(signal.SIGINT, self._original_sigint)
-        if hasattr(self, '_original_sigterm') and self._original_sigterm is not None:
+        if hasattr(self, "_original_sigterm") and self._original_sigterm is not None:
             signal.signal(signal.SIGTERM, self._original_sigterm)
     
     def _signal_handler(self, signum, frame):
@@ -97,13 +70,13 @@ class QChatAdapter(ToolAdapter):
             process = self.current_process
         
         if process and process.poll() is None:
-            logger.warning(f"Received signal {signum}, terminating q chat process...")
+            logger.warning(f"Received signal {signum}, terminating Kiro process...")
             try:
                 process.terminate()
                 process.wait(timeout=3)
                 logger.debug("Process terminated gracefully")
             except subprocess.TimeoutExpired:
-                logger.warning("Force killing q chat process...")
+                logger.warning("Force killing Kiro process...")
                 process.kill()
                 try:
                     process.wait(timeout=2)
@@ -111,44 +84,57 @@ class QChatAdapter(ToolAdapter):
                     logger.warning("Process may still be running after force kill")
     
     def check_availability(self) -> bool:
-        """Check if q CLI is available."""
+        """Check if kiro-cli (or q) is available."""
+        # First check for configured command (defaults to kiro-cli)
+        if self._check_command(self.command):
+            logger.debug(f"Kiro command '{self.command}' available")
+            return True
+            
+        # If kiro-cli not found, try fallback to 'q'
+        if self.command == "kiro-cli":
+            if self._check_command("q"):
+                logger.info("kiro-cli not found, falling back to 'q'")
+                self.command = "q"
+                return True
+                
+        logger.warning(f"Kiro command '{self.command}' (and fallback) not found")
+        return False
+        
+    def _check_command(self, cmd: str) -> bool:
+        """Check if a specific command exists."""
         try:
-            # Try to check if q command exists
             result = subprocess.run(
-                ["which", self.command],
+                ["which", cmd],
                 capture_output=True,
                 timeout=5,
                 text=True
             )
-            available = result.returncode == 0
-            logger.debug(f"Q command '{self.command}' availability check: {available}")
-            return available
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logger.warning(f"Q command availability check failed: {e}")
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
-    
+
     def execute(self, prompt: str, **kwargs) -> ToolResponse:
-        """Execute q chat with the given prompt."""
+        """Execute kiro-cli chat with the given prompt."""
         if not self.available:
             return ToolResponse(
                 success=False,
                 output="",
-                error="q CLI is not available"
+                error="Kiro CLI is not available"
             )
         
         try:
             # Get verbose flag from kwargs
-            verbose = kwargs.get('verbose', True)
+            verbose = kwargs.get("verbose", True)
             
             # Get the prompt file path from kwargs if available
-            prompt_file = kwargs.get('prompt_file', self.default_prompt_file)
+            prompt_file = kwargs.get("prompt_file", self.default_prompt_file)
             
-            logger.info(f"Executing Q chat - Prompt file: {prompt_file}, Verbose: {verbose}")
+            logger.info(f"Executing Kiro chat - Prompt file: {prompt_file}, Verbose: {verbose}")
             
             # Enhance prompt with orchestration instructions
             enhanced_prompt = self._enhance_prompt_with_instructions(prompt)
             
-            # Construct a more effective prompt for q chat
+            # Construct a more effective prompt
             # Tell it explicitly to edit the prompt file
             effective_prompt = (
                 f"Please read and complete the task described in the file '{prompt_file}'. "
@@ -156,8 +142,7 @@ class QChatAdapter(ToolAdapter):
                 f"Edit the file '{prompt_file}' directly to add your solution and progress updates."
             )
             
-            # Build command - q chat works with files by adding them to context
-            # We pass the prompt through stdin and tell it to trust file operations
+            # Build command
             cmd = [self.command, "chat"]
             
             if self.no_interactive:
@@ -173,7 +158,7 @@ class QChatAdapter(ToolAdapter):
             timeout = kwargs.get("timeout", self.default_timeout)
             
             if verbose:
-                logger.info("Starting q chat command...")
+                logger.info(f"Starting {self.command} chat command...")
                 logger.info(f"Command: {' '.join(cmd)}")
                 logger.info(f"Working directory: {os.getcwd()}")
                 logger.info(f"Timeout: {timeout} seconds")
@@ -197,7 +182,7 @@ class QChatAdapter(ToolAdapter):
             # Make pipes non-blocking to prevent deadlock
             self._make_non_blocking(process.stdout)
             self._make_non_blocking(process.stderr)
-            
+
             # Collect output while streaming
             stdout_lines = []
             stderr_lines = []
@@ -212,7 +197,7 @@ class QChatAdapter(ToolAdapter):
                 
                 if shutdown:
                     if verbose:
-                        print("Shutdown requested, terminating q chat process...", file=sys.stderr)
+                        print("Shutdown requested, terminating process...", file=sys.stderr)
                     process.terminate()
                     try:
                         process.wait(timeout=3)
@@ -229,21 +214,21 @@ class QChatAdapter(ToolAdapter):
                         output="".join(stdout_lines),
                         error="Process terminated due to shutdown signal"
                     )
-                
+
                 # Check for timeout
                 elapsed_time = time.time() - start_time
                 
                 # Log progress every 30 seconds
                 if int(elapsed_time) % 30 == 0 and int(elapsed_time) > 0:
-                    logger.debug(f"Q chat still running... elapsed: {elapsed_time:.1f}s / {timeout}s")
+                    logger.debug(f"Kiro still running... elapsed: {elapsed_time:.1f}s / {timeout}s")
                     
                     # Check if the process seems stuck (no output for a while)
                     time_since_output = time.time() - last_output_time
                     if time_since_output > 60:
-                        logger.info(f"No output received for {time_since_output:.1f}s, Q might be stuck")
+                        logger.info(f"No output received for {time_since_output:.1f}s, Kiro might be stuck")
                     
                     if verbose:
-                        print(f"Q chat still running... elapsed: {elapsed_time:.1f}s / {timeout}s", file=sys.stderr)
+                        print(f"Kiro still running... elapsed: {elapsed_time:.1f}s / {timeout}s", file=sys.stderr)
                 
                 if elapsed_time > timeout:
                     logger.warning(f"Command timed out after {elapsed_time:.2f} seconds")
@@ -267,7 +252,7 @@ class QChatAdapter(ToolAdapter):
                             logger.warning("Process may still be running after kill")
                             if verbose:
                                 print("Warning: Process may still be running after kill", file=sys.stderr)
-                    
+
                     # Try to capture any remaining output after termination
                     try:
                         remaining_stdout = process.stdout.read()
@@ -288,7 +273,7 @@ class QChatAdapter(ToolAdapter):
                     return ToolResponse(
                         success=False,
                         output="".join(stdout_lines),
-                        error=f"q chat command timed out after {elapsed_time:.2f} seconds"
+                        error=f"Kiro command timed out after {elapsed_time:.2f} seconds"
                     )
                 
                 # Check if process is still running
@@ -300,12 +285,12 @@ class QChatAdapter(ToolAdapter):
                     if remaining_stdout:
                         stdout_lines.append(remaining_stdout)
                         if verbose:
-                            print(f"{remaining_stdout}", end='', file=sys.stderr)
+                            print(f"{remaining_stdout}", end="", file=sys.stderr)
                     
                     if remaining_stderr:
                         stderr_lines.append(remaining_stderr)
                         if verbose:
-                            print(f"{remaining_stderr}", end='', file=sys.stderr)
+                            print(f"{remaining_stderr}", end="", file=sys.stderr)
                     
                     break
                 
@@ -317,7 +302,7 @@ class QChatAdapter(ToolAdapter):
                         stdout_lines.append(stdout_data)
                         last_output_time = time.time()
                         if verbose:
-                            print(stdout_data, end='', file=sys.stderr)
+                            print(stdout_data, end="", file=sys.stderr)
                     
                     # Read stderr
                     stderr_data = self._read_available(process.stderr)
@@ -325,7 +310,7 @@ class QChatAdapter(ToolAdapter):
                         stderr_lines.append(stderr_data)
                         last_output_time = time.time()
                         if verbose:
-                            print(stderr_data, end='', file=sys.stderr)
+                            print(stderr_data, end="", file=sys.stderr)
                     
                     # Small sleep to prevent busy waiting
                     time.sleep(0.01)
@@ -333,7 +318,7 @@ class QChatAdapter(ToolAdapter):
                 except BlockingIOError:
                     # Non-blocking read returns BlockingIOError when no data available
                     pass
-            
+
             # Get final return code
             returncode = process.poll()
             
@@ -354,30 +339,30 @@ class QChatAdapter(ToolAdapter):
             full_stderr = "".join(stderr_lines)
             
             if returncode == 0:
-                logger.debug(f"Q chat succeeded - Output length: {len(full_stdout)} chars")
+                logger.debug(f"Kiro chat succeeded - Output length: {len(full_stdout)} chars")
                 return ToolResponse(
                     success=True,
                     output=full_stdout,
                     metadata={
-                        "tool": "q chat",
+                        "tool": "kiro chat",
                         "execution_time": execution_time,
                         "verbose": verbose,
                         "return_code": returncode
                     }
                 )
             else:
-                logger.warning(f"Q chat failed - Return code: {returncode}, Error: {full_stderr[:200]}")
+                logger.warning(f"Kiro chat failed - Return code: {returncode}, Error: {full_stderr[:200]}")
                 return ToolResponse(
                     success=False,
                     output=full_stdout,
-                    error=full_stderr or f"q chat command failed with code {returncode}"
+                    error=full_stderr or f"Kiro command failed with code {returncode}"
                 )
                 
         except Exception as e:
-            logger.exception(f"Exception during Q chat execution: {str(e)}")
+            logger.exception(f"Exception during Kiro chat execution: {str(e)}")
             if verbose:
                 print(f"Exception occurred: {str(e)}", file=sys.stderr)
-            # Clean up process reference on exception (matches async version's finally block)
+            # Clean up process reference on exception
             with self._lock:
                 self.current_process = None
             return ToolResponse(
@@ -416,22 +401,22 @@ class QChatAdapter(ToolAdapter):
         except (IOError, OSError):
             # Would block or no data available
             return ""
-    
+
     async def aexecute(self, prompt: str, **kwargs) -> ToolResponse:
         """Native async execution using asyncio subprocess."""
         if not self.available:
             return ToolResponse(
                 success=False,
                 output="",
-                error="q CLI is not available"
+                error="Kiro CLI is not available"
             )
         
         try:
-            verbose = kwargs.get('verbose', True)
-            prompt_file = kwargs.get('prompt_file', self.default_prompt_file)
-            timeout = kwargs.get('timeout', self.default_timeout)
+            verbose = kwargs.get("verbose", True)
+            prompt_file = kwargs.get("prompt_file", self.default_prompt_file)
+            timeout = kwargs.get("timeout", self.default_timeout)
             
-            logger.info(f"Executing Q chat async - Prompt file: {prompt_file}, Timeout: {timeout}s")
+            logger.info(f"Executing Kiro chat async - Prompt file: {prompt_file}, Timeout: {timeout}s")
             
             # Enhance prompt with orchestration instructions
             enhanced_prompt = self._enhance_prompt_with_instructions(prompt)
@@ -452,9 +437,9 @@ class QChatAdapter(ToolAdapter):
                 effective_prompt
             ]
             
-            logger.debug(f"Starting async Q chat command: {' '.join(cmd)}")
+            logger.debug(f"Starting async Kiro chat command: {' '.join(cmd)}")
             if verbose:
-                print("Starting q chat command (async)...", file=sys.stderr)
+                print(f"Starting {self.command} chat command (async)...", file=sys.stderr)
                 print(f"Command: {' '.join(cmd)}", file=sys.stderr)
                 print("-" * 60, file=sys.stderr)
             
@@ -469,7 +454,7 @@ class QChatAdapter(ToolAdapter):
             # Set process reference with lock
             with self._lock:
                 self.current_process = process
-            
+
             try:
                 # Wait for completion with timeout
                 stdout_data, stderr_data = await asyncio.wait_for(
@@ -478,8 +463,8 @@ class QChatAdapter(ToolAdapter):
                 )
                 
                 # Decode output
-                stdout = stdout_data.decode('utf-8') if stdout_data else ""
-                stderr = stderr_data.decode('utf-8') if stderr_data else ""
+                stdout = stdout_data.decode("utf-8") if stdout_data else ""
+                stderr = stderr_data.decode("utf-8") if stderr_data else ""
                 
                 if verbose and stdout:
                     print(stdout, file=sys.stderr)
@@ -488,30 +473,30 @@ class QChatAdapter(ToolAdapter):
                 
                 # Check return code
                 if process.returncode == 0:
-                    logger.debug(f"Async Q chat succeeded - Output length: {len(stdout)} chars")
+                    logger.debug(f"Async Kiro chat succeeded - Output length: {len(stdout)} chars")
                     return ToolResponse(
                         success=True,
                         output=stdout,
                         metadata={
-                            "tool": "q chat",
+                            "tool": "kiro chat",
                             "verbose": verbose,
                             "async": True,
                             "return_code": process.returncode
                         }
                     )
                 else:
-                    logger.warning(f"Async Q chat failed - Return code: {process.returncode}")
+                    logger.warning(f"Async Kiro chat failed - Return code: {process.returncode}")
                     return ToolResponse(
                         success=False,
                         output=stdout,
-                        error=stderr or f"q chat failed with code {process.returncode}"
+                        error=stderr or f"Kiro chat failed with code {process.returncode}"
                     )
                 
             except asyncio.TimeoutError:
                 # Timeout occurred
-                logger.warning(f"Async q chat timed out after {timeout} seconds")
+                logger.warning(f"Async Kiro chat timed out after {timeout} seconds")
                 if verbose:
-                    print(f"Async q chat timed out after {timeout} seconds", file=sys.stderr)
+                    print(f"Async Kiro chat timed out after {timeout} seconds", file=sys.stderr)
                 
                 # Try to terminate process
                 try:
@@ -527,7 +512,7 @@ class QChatAdapter(ToolAdapter):
                 return ToolResponse(
                     success=False,
                     output="",
-                    error=f"q chat command timed out after {timeout} seconds"
+                    error=f"Kiro command timed out after {timeout} seconds"
                 )
             
             finally:
@@ -537,7 +522,7 @@ class QChatAdapter(ToolAdapter):
                     
         except Exception as e:
             logger.exception(f"Async execution error: {str(e)}")
-            if kwargs.get('verbose'):
+            if kwargs.get("verbose"):
                 print(f"Async execution error: {str(e)}", file=sys.stderr)
             return ToolResponse(
                 success=False,
@@ -546,9 +531,8 @@ class QChatAdapter(ToolAdapter):
             )
     
     def estimate_cost(self, prompt: str) -> float:
-        """Q chat cost estimation (if applicable)."""
-        # Q chat might be free or have different pricing
-        # Return 0 for now, can be updated based on actual pricing
+        """Kiro chat cost estimation (if applicable)."""
+        # Return 0 for now
         return 0.0
     
     def __del__(self):
@@ -557,15 +541,15 @@ class QChatAdapter(ToolAdapter):
         self._restore_signal_handlers()
         
         # Ensure any running process is terminated
-        if hasattr(self, '_lock'):
+        if hasattr(self, "_lock"):
             with self._lock:
-                process = self.current_process if hasattr(self, 'current_process') else None
+                process = self.current_process if hasattr(self, "current_process") else None
         else:
-            process = getattr(self, 'current_process', None)
+            process = getattr(self, "current_process", None)
         
         if process:
             try:
-                if hasattr(process, 'poll'):
+                if hasattr(process, "poll"):
                     # Sync process
                     if process.poll() is None:
                         process.terminate()
@@ -575,5 +559,4 @@ class QChatAdapter(ToolAdapter):
                     pass
             except Exception as e:
                 # Best-effort cleanup during interpreter shutdown
-                # Log at debug level since __del__ is unreliable
                 logger.debug(f"Cleanup warning in __del__: {type(e).__name__}: {e}")

@@ -1,7 +1,7 @@
-# ABOUTME: Comprehensive test suite for Q Chat adapter
+# ABOUTME: Comprehensive test suite for Kiro adapter
 # ABOUTME: Tests concurrency, error handling, timeouts, and resource management
 
-"""Comprehensive test suite for Q Chat adapter."""
+"""Comprehensive test suite for Kiro adapter."""
 
 import pytest
 import asyncio
@@ -9,18 +9,19 @@ import threading
 import time
 import signal
 import subprocess
+import os
 from unittest.mock import Mock, patch, AsyncMock
-from src.ralph_orchestrator.adapters.qchat import QChatAdapter
+from src.ralph_orchestrator.adapters.kiro import KiroAdapter
 
 
-class TestQChatAdapterInit:
-    """Test QChatAdapter initialization and setup."""
+class TestKiroAdapterInit:
+    """Test KiroAdapter initialization and setup."""
     
     def test_init_creates_adapter(self):
         """Test adapter initialization."""
-        adapter = QChatAdapter()
-        assert adapter.command == "q"
-        assert adapter.name == "qchat"
+        adapter = KiroAdapter()
+        assert adapter.command == "kiro-cli"
+        assert adapter.name == "kiro"
         assert adapter.current_process is None
         assert adapter.shutdown_requested is False
         assert adapter._lock is not None
@@ -29,7 +30,7 @@ class TestQChatAdapterInit:
     def test_signal_handlers_registered(self):
         """Test signal handlers are properly registered."""
         with patch('signal.signal') as mock_signal:
-            QChatAdapter()
+            KiroAdapter()
             # Should register SIGINT and SIGTERM handlers
             assert mock_signal.call_count >= 2
             calls = mock_signal.call_args_list
@@ -43,50 +44,65 @@ class TestAvailabilityCheck:
     
     def test_check_availability_success(self):
         """Test successful availability check."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = Mock(returncode=0)
             assert adapter.check_availability() is True
             mock_run.assert_called_once_with(
-                ["which", "q"],
+                ["which", "kiro-cli"],
                 capture_output=True,
                 timeout=5,
                 text=True
             )
-    
+
+    def test_check_availability_fallback_success(self):
+        """Test fallback to 'q' when 'kiro-cli' is missing."""
+        adapter = KiroAdapter()
+        with patch('subprocess.run') as mock_run:
+            # First call (kiro-cli) fails, second call (q) succeeds
+            mock_run.side_effect = [
+                Mock(returncode=1),
+                Mock(returncode=0)
+            ]
+            assert adapter.check_availability() is True
+            assert mock_run.call_count == 2
+            mock_run.assert_any_call(["which", "kiro-cli"], capture_output=True, timeout=5, text=True)
+            mock_run.assert_any_call(["which", "q"], capture_output=True, timeout=5, text=True)
+            assert adapter.command == "q"
+
     def test_check_availability_not_found(self):
-        """Test availability check when q is not found."""
-        adapter = QChatAdapter()
+        """Test availability check when neither kiro-cli nor q is found."""
+        adapter = KiroAdapter()
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = Mock(returncode=1)
             assert adapter.check_availability() is False
     
     def test_check_availability_timeout(self):
         """Test availability check timeout handling."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired("which q", 5)
+            mock_run.side_effect = subprocess.TimeoutExpired("which kiro-cli", 5)
             assert adapter.check_availability() is False
     
     def test_check_availability_file_not_found(self):
         """Test availability check when which command is not available."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         with patch('subprocess.run') as mock_run:
             mock_run.side_effect = FileNotFoundError()
             assert adapter.check_availability() is False
 
 
 class TestSyncExecution:
-    """Test synchronous execution of Q Chat adapter."""
+    """Test synchronous execution of Kiro adapter."""
     
     def test_execute_when_not_available(self):
-        """Test execution when q is not available."""
-        adapter = QChatAdapter()
+        """Test execution when kiro-cli is not available."""
+        adapter = KiroAdapter()
         adapter.available = False
         
         response = adapter.execute("test prompt")
         assert response.success is False
-        assert response.error == "q CLI is not available"
+        assert response.error == "Kiro CLI is not available"
         assert response.output == ""
     
     @pytest.mark.skip(reason="Complex mocking - poll() called more times than expected due to loop structure")
@@ -124,7 +140,7 @@ class TestSyncExecution:
     
     def test_execute_exception_handling(self):
         """Test exception handling during execution."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
 
         with patch('subprocess.Popen') as mock_popen:
@@ -141,7 +157,7 @@ class TestSyncExecution:
         This mirrors test_async_process_cleanup_on_exception for the sync version.
         Bug: The sync execute() method was missing process cleanup in exception handler.
         """
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
 
         # Mock Popen to create a process, then raise exception during pipe setup
@@ -166,22 +182,22 @@ class TestSyncExecution:
 
 
 class TestAsyncExecution:
-    """Test asynchronous execution of Q Chat adapter."""
+    """Test asynchronous execution of Kiro adapter."""
     
     @pytest.mark.asyncio
     async def test_aexecute_when_not_available(self):
-        """Test async execution when q is not available."""
-        adapter = QChatAdapter()
+        """Test async execution when kiro-cli is not available."""
+        adapter = KiroAdapter()
         adapter.available = False
         
         response = await adapter.aexecute("test prompt")
         assert response.success is False
-        assert response.error == "q CLI is not available"
+        assert response.error == "Kiro CLI is not available"
     
     @pytest.mark.asyncio
     async def test_aexecute_successful(self):
         """Test successful async execution."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
         
         with patch('asyncio.create_subprocess_exec') as mock_create:
@@ -199,7 +215,7 @@ class TestAsyncExecution:
     @pytest.mark.asyncio
     async def test_aexecute_with_error(self):
         """Test async execution with error."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
         
         with patch('asyncio.create_subprocess_exec') as mock_create:
@@ -216,7 +232,7 @@ class TestAsyncExecution:
     @pytest.mark.asyncio
     async def test_aexecute_timeout(self):
         """Test async execution timeout."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
         
         with patch('asyncio.create_subprocess_exec') as mock_create:
@@ -239,7 +255,7 @@ class TestConcurrencyAndThreadSafety:
     
     def test_signal_handler_thread_safety(self):
         """Test signal handler is thread-safe."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         # Create a mock process
         mock_process = Mock()
@@ -259,7 +275,7 @@ class TestConcurrencyAndThreadSafety:
     
     def test_concurrent_process_management(self):
         """Test concurrent access to process management."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         results = []
         
         def set_process(process_id):
@@ -284,7 +300,7 @@ class TestConcurrencyAndThreadSafety:
     
     def test_shutdown_during_execution(self):
         """Test shutdown request during execution."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
         
         with patch('subprocess.Popen') as mock_popen:
@@ -321,19 +337,24 @@ class TestResourceManagement:
     
     def test_pipe_non_blocking_setup(self):
         """Test non-blocking pipe setup."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         # Test with valid pipe
         mock_pipe = Mock()
         mock_pipe.fileno.return_value = 5
         
-        with patch('ralph_orchestrator.adapters.qchat.fcntl.fcntl') as mock_fcntl:
+        with patch('src.ralph_orchestrator.adapters.kiro.fcntl') as mock_fcntl:
+            mock_fcntl.fcntl = Mock()
+            # Return integer 0 for F_GETFL call to allow bitwise OR
+            mock_fcntl.fcntl.return_value = 0
+            
             adapter._make_non_blocking(mock_pipe)
-            assert mock_fcntl.call_count == 2  # Get flags, then set flags
+            # Should call fcntl twice (get flags, set flags)
+            assert mock_fcntl.fcntl.call_count == 2
     
     def test_pipe_non_blocking_invalid_fd(self):
         """Test non-blocking setup with invalid file descriptor."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         # Test with invalid pipe
         mock_pipe = Mock()
@@ -344,7 +365,7 @@ class TestResourceManagement:
     
     def test_read_available_empty_pipe(self):
         """Test reading from empty pipe."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         mock_pipe = Mock()
         mock_pipe.read.return_value = None
@@ -354,7 +375,7 @@ class TestResourceManagement:
     
     def test_read_available_with_data(self):
         """Test reading available data from pipe."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         mock_pipe = Mock()
         mock_pipe.read.return_value = "Test data"
@@ -364,7 +385,7 @@ class TestResourceManagement:
     
     def test_read_available_io_error(self):
         """Test reading when pipe would block."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         mock_pipe = Mock()
         mock_pipe.read.side_effect = IOError("Would block")
@@ -374,7 +395,7 @@ class TestResourceManagement:
     
     def test_cleanup_on_deletion(self):
         """Test cleanup when adapter is deleted."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         # Mock a running process
         mock_process = Mock()
@@ -397,7 +418,7 @@ class TestPromptEnhancement:
     
     def test_enhance_prompt_with_instructions(self):
         """Test that prompts are properly enhanced with orchestration instructions."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         original_prompt = "Test task"
         enhanced = adapter._enhance_prompt_with_instructions(original_prompt)
@@ -409,8 +430,8 @@ class TestPromptEnhancement:
         # TASK_COMPLETE instruction removed from base adapter
     
     def test_execute_constructs_effective_prompt(self):
-        """Test that execute constructs an effective prompt for q chat."""
-        adapter = QChatAdapter()
+        """Test that execute constructs an effective prompt for kiro-cli."""
+        adapter = KiroAdapter()
         adapter.available = True
         
         with patch('subprocess.Popen') as mock_popen:
@@ -428,7 +449,7 @@ class TestPromptEnhancement:
             
             # Check command construction
             call_args = mock_popen.call_args[0][0]
-            assert "q" in call_args
+            assert "kiro-cli" in call_args or "q" in call_args
             assert "chat" in call_args
             assert "--no-interactive" in call_args
             assert "--trust-all-tools" in call_args
@@ -440,8 +461,8 @@ class TestCostEstimation:
     """Test cost estimation functionality."""
     
     def test_estimate_cost_returns_zero(self):
-        """Test that cost estimation returns 0 for Q chat."""
-        adapter = QChatAdapter()
+        """Test that cost estimation returns 0 for Kiro."""
+        adapter = KiroAdapter()
         cost = adapter.estimate_cost("Any prompt")
         assert cost == 0.0
 
@@ -462,7 +483,7 @@ class TestEdgeCases:
     
     def test_none_pipe_handling(self):
         """Test handling of None pipes."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         
         # Should handle None gracefully
         adapter._make_non_blocking(None)
@@ -472,7 +493,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_async_process_cleanup_on_exception(self):
         """Test async process cleanup when exception occurs."""
-        adapter = QChatAdapter()
+        adapter = KiroAdapter()
         adapter.available = True
         
         with patch('asyncio.create_subprocess_exec') as mock_create:

@@ -6,6 +6,7 @@
 from .base import ToolAdapter, ToolResponse
 from .claude import ClaudeAdapter
 from .qchat import QChatAdapter
+from .kiro import KiroAdapter
 from .gemini import GeminiAdapter
 from .acp import ACPAdapter
 from .acp_handlers import ACPHandlers, PermissionRequest, PermissionResult, Terminal
@@ -15,6 +16,7 @@ __all__ = [
     "ToolResponse",
     "ClaudeAdapter",
     "QChatAdapter",
+    "KiroAdapter",
     "GeminiAdapter",
     "ACPAdapter",
     "ACPHandlers",

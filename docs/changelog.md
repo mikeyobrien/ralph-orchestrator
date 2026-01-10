@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-01-08
+
 ### Added
 
+- **Kiro CLI Integration**: Successor to Q Chat CLI support
+  - Full support for `kiro-cli chat` command
+  - Automatic fallback to legacy `q` command if Kiro is not found
+  - Configurable via `kiro` adapter settings
+  - Preserves all Q Chat functionality with new branding
 - **Completion Marker Detection**: Task can now signal completion via `- [x] TASK_COMPLETE` checkbox marker in prompt file
   - Orchestrator checks for marker before each iteration
   - Immediately exits loop when marker is found
