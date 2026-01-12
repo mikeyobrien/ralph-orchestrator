@@ -1,6 +1,6 @@
 [project]
 name = "ralph-orchestrator"
-version = "1.2.2"
+version = "1.2.3"
 description = "Simple yet powerful AI agent orchestration using the Ralph Wiggum technique"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -3,7 +3,7 @@
 
 """Ralph Orchestrator - Simple AI agent orchestration."""
 
-__version__ = "0.1.0"
+__version__ = "1.2.3"
 
 from .orchestrator import RalphOrchestrator
 from .metrics import Metrics, CostTracker, IterationStats
