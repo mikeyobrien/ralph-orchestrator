@@ -26,6 +26,8 @@ except ImportError:
         CLAUDE_SDK_AVAILABLE = True
     except ImportError:
         CLAUDE_SDK_AVAILABLE = False
+        query = None
+        ClaudeAgentOptions = None
 
 
 class ClaudeAdapter(ToolAdapter):

@@ -435,6 +435,13 @@ def main():
     )
     
     parser.add_argument(
+        "--completion-promise",
+        type=str,
+        default=DEFAULT_COMPLETION_PROMISE,
+        help=f"Stop when agent output contains this exact string (default: {DEFAULT_COMPLETION_PROMISE})"
+    )
+
+    parser.add_argument(
         "--max-iterations", "-i",
         type=int,
         default=DEFAULT_MAX_ITERATIONS,
@@ -603,6 +610,7 @@ def main():
         max_prompt_size=args.max_prompt_size,
         allow_unsafe_paths=args.allow_unsafe_paths,
         agent_args=args.agent_args,
+        completion_promise=args.completion_promise,
         # Output formatting options
         output_format=args.output_format,
         output_verbosity=args.output_verbosity,

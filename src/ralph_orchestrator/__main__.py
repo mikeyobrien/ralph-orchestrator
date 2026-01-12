@@ -1138,6 +1138,7 @@ Examples:
             acp_agent=acp_agent,
             acp_permission_mode=acp_permission_mode,
             acp_agent_args=acp_agent_args,
+            completion_promise=config.completion_promise,
         )
 
         # Enable all tools for Claude adapter (including WebSearch)

@@ -97,7 +97,7 @@ class RalphOrchestrator:
             self.verbose = config.verbose if hasattr(config, 'verbose') else False
             self.iteration_telemetry = getattr(config, 'iteration_telemetry', True)
             self.output_preview_length = getattr(config, 'output_preview_length', 500)
-            self.completion_promise = getattr(config, "completion_promise", None)
+            self.completion_promise = getattr(config, "completion_promise", None) or completion_promise
         else:
             # Individual parameters
             self.prompt_file = Path(prompt_file_or_config if prompt_file_or_config else "PROMPT.md")
@@ -127,6 +127,13 @@ class RalphOrchestrator:
         
         # Initialize adapters
         self.adapters = self._initialize_adapters()
+        
+        # Configure adapters with global settings (completion promise)
+        if self.completion_promise:
+            for adapter in self.adapters.values():
+                if hasattr(adapter, 'completion_promise'):
+                    adapter.completion_promise = self.completion_promise
+
         if self.primary_tool == "auto":
             self.current_adapter = self._select_auto_adapter()
             # Record resolved tool name for telemetry/cost tracking
@@ -884,24 +891,35 @@ class RalphOrchestrator:
                 self.task_start_time = None
 
     def _check_completion_marker(self) -> bool:
-        """Check if prompt contains TASK_COMPLETE marker (checkbox style).
+        """Check if prompt contains completion markers or promises.
 
-        Supports the following marker formats:
+        Supports the following formats:
         - `- [x] TASK_COMPLETE` (checkbox style, recommended)
         - `[x] TASK_COMPLETE` (checkbox without dash)
+        - Custom completion promise string (if configured)
 
         Returns:
-            True if completion marker found, False otherwise.
+            True if completion marker or promise found, False otherwise.
         """
         if not self.prompt_file.exists():
             return False
 
         try:
             content = self.prompt_file.read_text()
+            
+            # 1. Check for standard checkbox markers
             for line in content.split('\n'):
                 line_stripped = line.strip()
                 if line_stripped in ('- [x] TASK_COMPLETE', '[x] TASK_COMPLETE'):
                     return True
+            
+            # 2. Check for custom completion promise in the prompt itself
+            if self.completion_promise:
+                promise = self.completion_promise.strip()
+                if promise and promise in content:
+                    logger.info(f"Completion promise '{promise}' found in prompt file")
+                    return True
+                
             return False
         except Exception as e:
             logger.warning(f"Error checking completion marker: {e}")
@@ -916,7 +934,26 @@ class RalphOrchestrator:
         if not self.completion_promise or not output:
             return False
 
-        return self.completion_promise in output
+        # Use case-sensitive matching by default but strip whitespace for robustness
+        promise = self.completion_promise.strip()
+        if not promise:
+            return False
+            
+        found = promise in output
+        
+        if found:
+            logger.info(f"Completion promise matched: '{promise}'")
+            if self.verbose:
+                self.console.print_success(f"Matched completion promise: {promise}")
+        else:
+            # Check for common variants if exact match fails
+            if promise.lower() in output.lower():
+                logger.info(f"Completion promise matched (case-insensitive): '{promise}'")
+                if self.verbose:
+                    self.console.print_success(f"Matched completion promise (case-insensitive): {promise}")
+                return True
+                
+        return found
 
     def _determine_trigger_reason(self) -> str:
         """Determine why this iteration is being triggered.

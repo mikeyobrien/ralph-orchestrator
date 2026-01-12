@@ -35,6 +35,7 @@ class ToolAdapter(ABC):
             'enabled': True, 'timeout': 300, 'max_retries': 3, 
             'args': [], 'env': {}
         })()
+        self.completion_promise: Optional[str] = None
         self.available = self.check_availability()
     
     @abstractmethod
@@ -92,15 +93,20 @@ class ToolAdapter(ABC):
         # Default implementation - subclasses can override
         return 0.0
     
-    def _enhance_prompt_with_instructions(self, prompt: str) -> str:
+    def _enhance_prompt_with_instructions(self, prompt: str, completion_promise: Optional[str] = None) -> str:
         """Enhance prompt with orchestration context and instructions.
         
         Args:
             prompt: The original prompt
+            completion_promise: Optional string that signals task completion.
+                              If not provided, uses self.completion_promise.
             
         Returns:
             Enhanced prompt with orchestration instructions
         """
+        # Resolve completion promise: argument takes precedence, then instance state
+        promise = completion_promise or self.completion_promise
+
         # Check if instructions already exist in the prompt
         instruction_markers = [
             "ORCHESTRATION CONTEXT:",
@@ -109,12 +115,17 @@ class ToolAdapter(ABC):
         ]
         
         # If any marker exists, assume instructions are already present
+        instructions_present = False
         for marker in instruction_markers:
             if marker in prompt:
-                return prompt
+                instructions_present = True
+                break
         
-        # Add orchestration context and instructions
-        orchestration_instructions = """
+        enhanced_prompt = prompt
+        
+        if not instructions_present:
+            # Add orchestration context and instructions
+            orchestration_instructions = """
 ORCHESTRATION CONTEXT:
 You are running within the Ralph Orchestrator loop. This system will call you repeatedly 
 for multiple iterations until the overall task is complete. Each iteration is a separate 
@@ -156,8 +167,23 @@ Create the .agent/ directory if it doesn't exist.
 ORIGINAL PROMPT:
 
 """
-        
-        return orchestration_instructions + prompt
+            enhanced_prompt = orchestration_instructions + prompt
+
+        # Inject completion promise if requested and not present
+        if promise:
+            # Check if promise is already in the text (simple check)
+            # We check both the raw promise and the section header to be safe,
+            # but mainly we want to avoid duplicating the specific instruction.
+            if promise not in enhanced_prompt:
+                promise_section = f"""
+
+## Completion Promise
+When you have completed the task, output this exact line:
+{promise}
+"""
+                enhanced_prompt += promise_section
+
+        return enhanced_prompt
     
     def __str__(self) -> str:
         return f"{self.name} (available: {self.available})"

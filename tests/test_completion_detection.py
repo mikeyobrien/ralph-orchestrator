@@ -1,11 +1,12 @@
 # ABOUTME: Tests for completion marker detection feature
-# ABOUTME: Validates checkbox-style TASK_COMPLETE marker parsing
+# ABOUTME: Validates checkbox-style TASK_COMPLETE marker parsing and completion promises
 
 """Tests for completion marker detection in Ralph Orchestrator."""
 
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 from ralph_orchestrator.orchestrator import RalphOrchestrator
 
@@ -16,6 +17,13 @@ class TestCompletionMarkerDetection(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
+        # Patch _initialize_adapters globally for all RalphOrchestrator instances in tests
+        self.patcher = patch("ralph_orchestrator.orchestrator.RalphOrchestrator._initialize_adapters")
+        self.mock_init = self.patcher.start()
+        self.mock_init.return_value = {"claude": MagicMock()}
+
+    def tearDown(self):
+        self.patcher.stop()
 
     def test_completion_marker_checkbox_with_dash(self):
         """Test detection of checkbox-style completion marker with dash."""
@@ -140,6 +148,20 @@ Feature is ready for review.
         orchestrator = RalphOrchestrator(str(prompt_file))
         self.assertTrue(orchestrator._check_completion_marker())
 
+    def test_completion_promise_in_prompt(self):
+        """Test that completion promise is detected in prompt file."""
+        prompt_content = """# Task
+Status: LOOP_COMPLETE
+"""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text(prompt_content)
+
+        orchestrator = RalphOrchestrator(
+            str(prompt_file),
+            completion_promise="LOOP_COMPLETE"
+        )
+        self.assertTrue(orchestrator._check_completion_marker())
+
 
 class TestCompletionPromiseDetection(unittest.TestCase):
     """Test completion promise detection functionality."""
@@ -147,6 +169,12 @@ class TestCompletionPromiseDetection(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
+        self.patcher = patch("ralph_orchestrator.orchestrator.RalphOrchestrator._initialize_adapters")
+        self.mock_init = self.patcher.start()
+        self.mock_init.return_value = {"claude": MagicMock()}
+
+    def tearDown(self):
+        self.patcher.stop()
 
     def test_completion_promise_matches_output(self):
         """Test detection when output contains the completion promise."""
@@ -178,8 +206,8 @@ class TestCompletionPromiseDetection(unittest.TestCase):
             )
         )
 
-    def test_completion_promise_case_sensitive(self):
-        """Test that completion promise matching is case-sensitive."""
+    def test_completion_promise_case_insensitive(self):
+        """Test that completion promise matching can be case-insensitive."""
         prompt_file = Path(self.temp_dir) / "PROMPT.md"
         prompt_file.write_text("# Task\n")
 
@@ -187,9 +215,25 @@ class TestCompletionPromiseDetection(unittest.TestCase):
             str(prompt_file),
             completion_promise="ALL TESTS PASSING",
         )
-        self.assertFalse(
+        # Should now match even with different case
+        self.assertTrue(
             orchestrator._check_completion_promise(
                 "Status: all tests passing"
+            )
+        )
+
+    def test_completion_promise_with_whitespace(self):
+        """Test that completion promise matching handles whitespace."""
+        prompt_file = Path(self.temp_dir) / "PROMPT.md"
+        prompt_file.write_text("# Task\n")
+
+        orchestrator = RalphOrchestrator(
+            str(prompt_file),
+            completion_promise="  LOOP_COMPLETE  ",
+        )
+        self.assertTrue(
+            orchestrator._check_completion_promise(
+                "Task status: LOOP_COMPLETE"
             )
         )
 
