@@ -23,6 +23,12 @@ class _DummyQChatAdapter:
         self.available = True
 
 
+class _DummyKiroAdapter:
+    def __init__(self) -> None:
+        self.name = "kiro"
+        self.available = True
+
+
 class _DummyACPAdapter:
     def __init__(
         self,
@@ -50,6 +56,7 @@ def test_agent_priority_orders_adapters_and_auto_selects_first(tmp_path, monkeyp
     monkeypatch.setattr(orch_mod, "ClaudeAdapter", _DummyClaudeAdapter)
     monkeypatch.setattr(orch_mod, "GeminiAdapter", _DummyGeminiAdapter)
     monkeypatch.setattr(orch_mod, "QChatAdapter", _DummyQChatAdapter)
+    monkeypatch.setattr(orch_mod, "KiroAdapter", _DummyKiroAdapter)
     monkeypatch.setattr(orch_mod, "ACPAdapter", _DummyACPAdapter)
 
     prompt_file = tmp_path / "PROMPT.md"
@@ -84,7 +91,7 @@ def test_agent_priority_orders_adapters_and_auto_selects_first(tmp_path, monkeyp
     assert orchestrator.current_adapter is orchestrator.adapters["acp"]
 
     # Adapter dict insertion order drives fallback order.
-    assert list(orchestrator.adapters.keys()) == ["acp", "claude", "gemini"]
+    assert list(orchestrator.adapters.keys()) == ["acp", "claude", "gemini", "kiro"]
 
     # ACP adapter should be configured from config.tool_permissions.
     acp = orchestrator.adapters["acp"]
