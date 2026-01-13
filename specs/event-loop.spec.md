@@ -93,7 +93,7 @@ Ralph puts on the planner hat to figure out what needs doing.
 | Property | Value |
 |----------|-------|
 | ID | `planner` |
-| Triggers | `task.start`, `build.done`, `build.blocked` |
+| Triggers | `task.start`, `task.resume`, `build.done`, `build.blocked` |
 | Publishes | `build.task` |
 
 **Instructions added:**
@@ -360,7 +360,7 @@ core:
 # Default hats (created automatically if not specified):
 # hats:
 #   planner:
-#     triggers: ["task.start", "build.done", "build.blocked"]
+#     triggers: ["task.start", "task.resume", "build.done", "build.blocked"]
 #     publishes: ["build.task"]
 #   builder:
 #     triggers: ["build.task"]
