@@ -89,6 +89,13 @@ When ALL tasks are `[x]` or `[~]` and ALL specs are satisfied, output: {promise}
 
 Mark your task `[x]` in the scratchpad. Exit. Coordinator will verify.
 
+## STUCK?
+
+Can't finish? Publish `<event topic="build.blocked">` with:
+- What you tried
+- Why it failed
+- What would unblock you
+
 ---
 {prompt}"#,
             prompt = prompt_content
@@ -199,6 +206,10 @@ mod tests {
         assert!(instructions.contains("❌ Create the scratchpad"));
         assert!(instructions.contains("❌ Decide what tasks"));
         assert!(instructions.contains("❌ Output the completion promise"));
+
+        // STUCK section for build.blocked events
+        assert!(instructions.contains("## STUCK?"));
+        assert!(instructions.contains("build.blocked"));
 
         // Should NOT contain completion promise in output
         assert!(!instructions.contains("LOOP_COMPLETE"));
