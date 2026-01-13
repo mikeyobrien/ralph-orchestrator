@@ -283,8 +283,11 @@ impl EventLoop {
             self.state.consecutive_failures += 1;
         }
 
-        // Check for completion promise
-        if EventParser::contains_promise(output, &self.config.event_loop.completion_promise) {
+        // Check for completion promise - only valid from planner hat
+        // Per spec: "Builder hat outputs LOOP_COMPLETE → completion promise is ignored (only Planner can terminate)"
+        if hat_id.as_str() == "planner"
+            && EventParser::contains_promise(output, &self.config.event_loop.completion_promise)
+        {
             return Some(TerminationReason::CompletionPromise);
         }
 
@@ -444,6 +447,21 @@ event_loop:
         let reason = event_loop.process_output(&hat_id, "Done! LOOP_COMPLETE", true);
 
         assert_eq!(reason, Some(TerminationReason::CompletionPromise));
+    }
+
+    #[test]
+    fn test_builder_cannot_terminate_loop() {
+        // Per spec: "Builder hat outputs LOOP_COMPLETE → completion promise is ignored (only Planner can terminate)"
+        let config = RalphConfig::default();
+        let mut event_loop = EventLoop::new(config);
+        event_loop.initialize("Test");
+
+        // Builder hat outputs completion promise - should be IGNORED
+        let hat_id = HatId::new("builder");
+        let reason = event_loop.process_output(&hat_id, "Done! LOOP_COMPLETE", true);
+
+        // Builder cannot terminate, so no termination reason
+        assert_eq!(reason, None);
     }
 
     #[test]
