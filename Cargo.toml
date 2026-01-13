@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ralph-proto",
+    "crates/ralph-core",
+    "crates/ralph-adapters",
+    "crates/ralph-tui",
+    "crates/ralph-cli",
+]
+
+[workspace.package]
+# NOTE: Spec specifies 2024 edition, using 2021 for rustc 1.87.0 compatibility
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/hesreallyhim/ralph-orchestrator"
+description = "Ralph Orchestrator - Multi-agent orchestration framework"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Allow common patterns that clippy::pedantic complains about
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# TUI (pinned for rustc 1.87.0 compatibility)
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# CLI parsing
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging/tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Internal crates
+ralph-proto = { path = "crates/ralph-proto" }
+ralph-core = { path = "crates/ralph-core" }
+ralph-adapters = { path = "crates/ralph-adapters" }
+ralph-tui = { path = "crates/ralph-tui" }
+ralph-cli = { path = "crates/ralph-cli" }

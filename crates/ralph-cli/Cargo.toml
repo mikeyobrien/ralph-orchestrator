@@ -1,0 +1,22 @@
+[package]
+name = "ralph-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Command-line interface for Ralph Orchestrator"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ralph"
+path = "src/main.rs"
+
+[dependencies]
+ralph-tui.workspace = true
+
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

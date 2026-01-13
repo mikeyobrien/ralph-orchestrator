@@ -1,0 +1,14 @@
+[package]
+name = "ralph-proto"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Shared types, error definitions, and traits for Ralph Orchestrator"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+async-trait.workspace = true

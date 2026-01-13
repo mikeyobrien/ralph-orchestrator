@@ -1,0 +1,21 @@
+[package]
+name = "ralph-adapters"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Agent adapters for Ralph Orchestrator (Claude, Kiro, Gemini, ACP)"
+
+[lints]
+workspace = true
+
+[dependencies]
+ralph-proto.workspace = true
+ralph-core.workspace = true
+
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

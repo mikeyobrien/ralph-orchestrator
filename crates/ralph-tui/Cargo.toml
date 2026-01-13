@@ -1,0 +1,18 @@
+[package]
+name = "ralph-tui"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Terminal UI for Ralph Orchestrator using ratatui"
+
+[lints]
+workspace = true
+
+[dependencies]
+ralph-core.workspace = true
+
+tokio.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
