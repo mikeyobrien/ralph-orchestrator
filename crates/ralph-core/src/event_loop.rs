@@ -674,4 +674,148 @@ hats:
         assert_eq!(event_loop.state.consecutive_blocked, 0);
         assert_eq!(event_loop.state.last_blocked_hat, None);
     }
+
+    #[test]
+    fn test_custom_hat_with_instructions_uses_build_custom_hat() {
+        // Per spec: Custom hats with instructions should use build_custom_hat() method
+        let yaml = r#"
+hats:
+  reviewer:
+    name: "Code Reviewer"
+    triggers: ["review.request"]
+    instructions: "Review code for quality and security issues."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut event_loop = EventLoop::new(config);
+
+        // Trigger the custom hat
+        event_loop.bus.publish(Event::new("review.request", "Review PR #123"));
+
+        let reviewer_id = HatId::new("reviewer");
+        let prompt = event_loop.build_prompt(&reviewer_id).unwrap();
+
+        // Should use build_custom_hat() - verify by checking for custom hat structure
+        assert!(prompt.contains("Code Reviewer"), "Should include custom hat name");
+        assert!(prompt.contains("Review code for quality and security issues"), "Should include custom instructions");
+        assert!(prompt.contains("CORE BEHAVIORS"), "Should include core behaviors from build_custom_hat");
+        assert!(prompt.contains("YOUR ROLE"), "Should use custom hat template");
+        
+        // Should NOT use default planner/builder templates
+        assert!(!prompt.contains("PLANNER MODE"), "Should not use planner template");
+        assert!(!prompt.contains("BUILDER MODE"), "Should not use builder template");
+    }
+
+    #[test]
+    fn test_custom_hat_instructions_included_in_prompt() {
+        // Test that custom instructions are properly included in the generated prompt
+        let yaml = r#"
+hats:
+  tester:
+    name: "Test Engineer"
+    triggers: ["test.request"]
+    instructions: |
+      Run comprehensive tests including:
+      - Unit tests
+      - Integration tests
+      - Security scans
+      Report results with detailed coverage metrics.
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut event_loop = EventLoop::new(config);
+
+        // Trigger the custom hat
+        event_loop.bus.publish(Event::new("test.request", "Test the auth module"));
+
+        let tester_id = HatId::new("tester");
+        let prompt = event_loop.build_prompt(&tester_id).unwrap();
+
+        // Verify all custom instructions are included
+        assert!(prompt.contains("Run comprehensive tests including"));
+        assert!(prompt.contains("Unit tests"));
+        assert!(prompt.contains("Integration tests"));
+        assert!(prompt.contains("Security scans"));
+        assert!(prompt.contains("detailed coverage metrics"));
+        
+        // Verify event context is included
+        assert!(prompt.contains("Test the auth module"));
+    }
+
+    #[test]
+    fn test_custom_hat_triggers_work_correctly() {
+        // Test that custom hat triggers are properly registered and work
+        let yaml = r#"
+hats:
+  deployer:
+    name: "Deployment Manager"
+    triggers: ["deploy.request", "deploy.rollback"]
+    publishes: ["deploy.done", "deploy.failed"]
+    instructions: "Handle deployment operations safely."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut event_loop = EventLoop::new(config);
+
+        // Test first trigger
+        event_loop.bus.publish(Event::new("deploy.request", "Deploy to staging"));
+        let next_hat = event_loop.next_hat();
+        assert_eq!(next_hat.unwrap().as_str(), "deployer");
+
+        // Clear the event and test second trigger
+        let deployer_id = HatId::new("deployer");
+        event_loop.build_prompt(&deployer_id); // This consumes pending events
+
+        event_loop.bus.publish(Event::new("deploy.rollback", "Rollback v1.2.3"));
+        let next_hat = event_loop.next_hat();
+        assert_eq!(next_hat.unwrap().as_str(), "deployer");
+    }
+
+    #[test]
+    fn test_default_hat_with_custom_instructions_uses_build_custom_hat() {
+        // Test that even default hats (planner/builder) use build_custom_hat when they have custom instructions
+        let yaml = r#"
+hats:
+  planner:
+    name: "Custom Planner"
+    triggers: ["task.start", "build.done"]
+    instructions: "Custom planning instructions with special focus on security."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut event_loop = EventLoop::new(config);
+
+        event_loop.initialize("Test task");
+
+        let planner_id = HatId::new("planner");
+        let prompt = event_loop.build_prompt(&planner_id).unwrap();
+
+        // Should use build_custom_hat because it has custom instructions
+        assert!(prompt.contains("Custom Planner"), "Should use custom name");
+        assert!(prompt.contains("Custom planning instructions with special focus on security"), "Should include custom instructions");
+        assert!(prompt.contains("YOUR ROLE"), "Should use custom hat template");
+        
+        // Should NOT use the default planner template
+        assert!(!prompt.contains("PLANNER MODE"), "Should not use default planner template when custom instructions provided");
+    }
+
+    #[test]
+    fn test_custom_hat_without_instructions_gets_default_behavior() {
+        // Test that custom hats without instructions still work with build_custom_hat
+        let yaml = r#"
+hats:
+  monitor:
+    name: "System Monitor"
+    triggers: ["monitor.request"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut event_loop = EventLoop::new(config);
+
+        event_loop.bus.publish(Event::new("monitor.request", "Check system health"));
+
+        let monitor_id = HatId::new("monitor");
+        let prompt = event_loop.build_prompt(&monitor_id).unwrap();
+
+        // Should still use build_custom_hat with default instructions
+        assert!(prompt.contains("System Monitor"), "Should include custom hat name");
+        assert!(prompt.contains("Follow the incoming event instructions"), "Should have default instructions when none provided");
+        assert!(prompt.contains("CORE BEHAVIORS"), "Should include core behaviors");
+        assert!(prompt.contains("Check system health"), "Should include event context");
+    }
 }
