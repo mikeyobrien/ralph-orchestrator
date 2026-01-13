@@ -77,15 +77,21 @@ impl InstructionBuilder {
 
 1. **Gap analysis.** Study `{specs_dir}` and compare against the codebase. What's missing? What's broken?
 
-2. **Own the scratchpad.** Create or update `{scratchpad}` with prioritized tasks. Mark `[x]` done, `[~]` cancelled.
+2. **Own the scratchpad.** Create or update `{scratchpad}` with prioritized tasks.
+   - `[ ]` pending
+   - `[x]` done
+   - `[~]` cancelled (with reason)
 
-3. **Validate completion claims.** When Ralph reports done, verify the work actually satisfies the spec.
+3. **Dispatch work.** Publish `<event topic=\"build.task\">` ONE AT A TIME with clear acceptance criteria.
+
+4. **Validate completion.** When Ralph reports `build.done`, verify the work actually satisfies the spec.
 
 ## WHAT YOU DON'T DO
 
 - ❌ Write implementation code
 - ❌ Run tests (Ralph does that)
 - ❌ Make commits (Ralph does that)
+- ❌ Pick tasks to implement yourself
 
 ## COMPLETION
 
@@ -118,7 +124,9 @@ When ALL tasks are `[x]` or `[~]` and ALL specs are satisfied, output: {promise}
 
 2. **Implement it.** Write the code. Follow existing patterns.
 
-3. **Commit and exit.** One task, one commit, then you're done. The loop continues.
+3. **Validate.** Run backpressure. Tests, typecheck, lint must pass.
+
+4. **Commit and exit.** One task, one commit. Mark `[x]` in scratchpad. Publish `<event topic="build.done">` with changes summary.
 
 ## WHAT YOU DON'T DO
 
@@ -128,7 +136,7 @@ When ALL tasks are `[x]` or `[~]` and ALL specs are satisfied, output: {promise}
 
 ## WHEN DONE
 
-Mark your task `[x]` in the scratchpad. Exit. Coordinator will verify.
+Mark your task `[x]` in the scratchpad. Publish `<event topic="build.done">`. Exit. Coordinator will verify.
 
 ## STUCK?
 
@@ -222,11 +230,19 @@ mod tests {
         assert!(instructions.contains("Coordinator Ralph"));
         assert!(instructions.contains("Build a CLI tool"));
 
-        // Coordinator's job
+        // Coordinator's job (per spec lines 236-263)
         assert!(instructions.contains("Gap analysis"));
         assert!(instructions.contains("Own the scratchpad"));
+        assert!(instructions.contains("Dispatch work")); // New: dispatches build.task events
+        assert!(instructions.contains("build.task")); // New: publishes build.task
+        assert!(instructions.contains("ONE AT A TIME")); // New: per spec
         assert!(instructions.contains("Validate completion"));
         assert!(instructions.contains("./specs/"));
+
+        // Task markers per spec
+        assert!(instructions.contains("[ ]")); // pending
+        assert!(instructions.contains("[x]")); // done
+        assert!(instructions.contains("[~]")); // cancelled
 
         // Completion promise (Coordinator outputs it)
         assert!(instructions.contains("LOOP_COMPLETE"));
@@ -235,6 +251,7 @@ mod tests {
         assert!(instructions.contains("❌ Write implementation code"));
         assert!(instructions.contains("❌ Run tests"));
         assert!(instructions.contains("❌ Make commits"));
+        assert!(instructions.contains("❌ Pick tasks to implement yourself")); // New
     }
 
     #[test]
@@ -246,10 +263,13 @@ mod tests {
         assert!(instructions.contains("You are Ralph."));
         assert!(instructions.contains("Build a CLI tool"));
 
-        // Ralph's job
+        // Ralph's job (per spec lines 266-294)
         assert!(instructions.contains("Pick ONE task"));
         assert!(instructions.contains("Implement it"));
+        assert!(instructions.contains("Validate")); // New: step 3 per spec
+        assert!(instructions.contains("backpressure")); // New: must run backpressure
         assert!(instructions.contains("Commit and exit"));
+        assert!(instructions.contains("build.done")); // New: publishes build.done
 
         // What Ralph doesn't do
         assert!(instructions.contains("❌ Create the scratchpad"));
