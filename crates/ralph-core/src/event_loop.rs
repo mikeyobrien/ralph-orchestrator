@@ -143,10 +143,15 @@ impl EventLoop {
 
     /// Initializes the loop by publishing the start event.
     pub fn initialize(&mut self, prompt_content: &str) {
+        // Per spec: Log hat list, not "mode" terminology
+        // ✅ "Ralph ready with hats: planner, builder"
+        // ❌ "Starting in multi-hat mode"
+        let hat_names: Vec<_> = self.registry.all().map(|h| h.id.as_str()).collect();
         info!(
-            mode = %if self.config.is_single_mode() { "single-hat" } else { "multi-hat" },
+            hats = ?hat_names,
             max_iterations = %self.config.event_loop.max_iterations,
-            "Initializing event loop"
+            "I'm Ralph. Got my hats ready: {}. Let's do this.",
+            hat_names.join(", ")
         );
 
         let start_event = Event::new("task.start", prompt_content);

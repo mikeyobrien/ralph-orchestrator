@@ -10,13 +10,13 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_adapters::{detect_backend, CliBackend, CliExecutor};
+use ralph_adapters::{detect_backend, CliBackend, CliExecutor, PtyConfig, PtyExecutor};
 use ralph_core::{EventHistory, EventLogger, EventLoop, EventParser, EventRecord, RalphConfig, TerminationReason};
 use ralph_proto::{Event, HatId};
 use std::io::{stdout, IsTerminal};
 use std::path::PathBuf;
 use std::process::Command;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Color output mode for terminal display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -115,6 +115,31 @@ struct RunArgs {
     /// Dry run - show what would be executed without running
     #[arg(long)]
     dry_run: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PTY Mode Options
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Enable PTY mode for rich terminal UI display.
+    /// Claude runs in a pseudo-terminal, preserving colors, spinners, and animations.
+    #[arg(long)]
+    pty: bool,
+
+    /// PTY observation mode (no user input forwarding).
+    /// Implies --pty. User keystrokes are ignored; useful for demos and recording.
+    #[arg(long)]
+    observe: bool,
+
+    /// Idle timeout in seconds for PTY mode (default: 30).
+    /// Process is terminated after this many seconds of inactivity.
+    /// Set to 0 to disable idle timeout.
+    #[arg(long)]
+    idle_timeout: Option<u32>,
+
+    /// Disable PTY mode even if enabled in config.
+    /// Runs Claude in headless mode without terminal UI features.
+    #[arg(long)]
+    no_pty: bool,
 }
 
 /// Arguments for the events subcommand.
@@ -165,6 +190,10 @@ async fn main() -> Result<()> {
                 max_iterations: None,
                 completion_promise: None,
                 dry_run: false,
+                pty: false,
+                observe: false,
+                idle_timeout: None,
+                no_pty: false,
             };
             run_command(cli.config, cli.verbose, cli.color, args).await
         }
@@ -205,6 +234,24 @@ async fn run_command(
         config.verbose = true;
     }
 
+    // Apply PTY mode overrides per spec mode selection table
+    // --no-pty takes precedence over everything
+    if args.no_pty {
+        config.cli.pty_mode = false;
+    } else if args.observe {
+        // --observe implies --pty
+        config.cli.pty_mode = true;
+        config.cli.pty_interactive = false;
+    } else if args.pty {
+        config.cli.pty_mode = true;
+        config.cli.pty_interactive = true;
+    }
+
+    // Override idle timeout if specified
+    if let Some(timeout) = args.idle_timeout {
+        config.cli.idle_timeout_secs = timeout;
+    }
+
     // Validate configuration and emit warnings
     let warnings = config.validate().context("Configuration validation failed")?;
     for warning in &warnings {
@@ -240,6 +287,20 @@ async fn run_command(
         println!("  Backend: {}", config.cli.backend);
         println!("  Git checkpoint: {}", config.git_checkpoint);
         println!("  Verbose: {}", config.verbose);
+        // PTY mode info
+        let pty_mode_str = if config.cli.pty_mode {
+            if config.cli.pty_interactive {
+                "interactive"
+            } else {
+                "observe"
+            }
+        } else {
+            "headless"
+        };
+        println!("  PTY mode: {}", pty_mode_str);
+        if config.cli.pty_mode {
+            println!("  Idle timeout: {}s", config.cli.idle_timeout_secs);
+        }
         if !warnings.is_empty() {
             println!("  Warnings: {}", warnings.len());
         }
@@ -416,6 +477,18 @@ fn truncate(s: &str, max_len: usize) -> String {
 async fn run_loop(config: RalphConfig, color_mode: ColorMode) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
 
+    // Determine effective PTY mode (with fallback logic)
+    let use_pty = if config.cli.pty_mode {
+        if stdout().is_terminal() {
+            true
+        } else {
+            warn!("PTY mode requested but stdout is not a TTY, falling back to headless");
+            false
+        }
+    } else {
+        false
+    };
+
     // Read prompt file
     let prompt_content = std::fs::read_to_string(&config.event_loop.prompt_file)
         .with_context(|| format!("Failed to read prompt file: {}", config.event_loop.prompt_file))?;
@@ -434,15 +507,16 @@ async fn run_loop(config: RalphConfig, color_mode: ColorMode) -> Result<()> {
         warn!("Failed to log start event: {}", e);
     }
 
-    // Create CLI executor
+    // Create backend
     let backend = CliBackend::from_config(&config.cli);
-    let executor = CliExecutor::new(backend);
 
-    info!(
-        "Starting {} mode with {} iterations max",
-        if config.is_single_mode() { "single-hat" } else { "multi-hat" },
-        config.event_loop.max_iterations
-    );
+    // Log execution mode (PTY vs headless) - hat info already logged by initialize()
+    let exec_mode = if use_pty {
+        if config.cli.pty_interactive { "PTY interactive" } else { "PTY observe" }
+    } else {
+        "headless"
+    };
+    debug!(execution_mode = %exec_mode, "Execution mode configured");
 
     // Main orchestration loop
     loop {
@@ -477,14 +551,20 @@ async fn run_loop(config: RalphConfig, color_mode: ColorMode) -> Result<()> {
             }
         };
 
-        // Execute the prompt
-        let result = executor.execute(&prompt, stdout()).await?;
+        // Execute the prompt (PTY or headless mode)
+        let (output, success) = if use_pty {
+            execute_pty(&backend, &config, &prompt)?
+        } else {
+            let executor = CliExecutor::new(backend.clone());
+            let result = executor.execute(&prompt, stdout()).await?;
+            (result.output, result.success)
+        };
 
         // Log events from output before processing
-        log_events_from_output(&mut event_logger, iteration, &hat_id, &result.output, event_loop.registry());
+        log_events_from_output(&mut event_logger, iteration, &hat_id, &output, event_loop.registry());
 
         // Process output
-        if let Some(reason) = event_loop.process_output(&hat_id, &result.output, result.success) {
+        if let Some(reason) = event_loop.process_output(&hat_id, &output, success) {
             print_termination(&reason, event_loop.state(), use_colors);
             break;
         }
@@ -498,6 +578,55 @@ async fn run_loop(config: RalphConfig, color_mode: ColorMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Executes a prompt in PTY mode with raw terminal handling.
+fn execute_pty(
+    backend: &CliBackend,
+    config: &RalphConfig,
+    prompt: &str,
+) -> Result<(String, bool)> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    // Create PTY config from ralph config
+    let pty_config = PtyConfig {
+        interactive: config.cli.pty_interactive,
+        idle_timeout_secs: config.cli.idle_timeout_secs,
+        ..PtyConfig::from_env()
+    };
+
+    let executor = PtyExecutor::new(backend.clone(), pty_config);
+
+    // Enter raw mode for interactive PTY to capture keystrokes
+    if config.cli.pty_interactive {
+        enable_raw_mode().context("Failed to enable raw mode")?;
+    }
+
+    // Use scopeguard to ensure raw mode is restored on any exit path
+    let _guard = scopeguard::guard(config.cli.pty_interactive, |interactive| {
+        if interactive {
+            let _ = disable_raw_mode();
+        }
+    });
+
+    // Run PTY executor
+    let result = if config.cli.pty_interactive {
+        executor.run_interactive(prompt)
+    } else {
+        executor.run_observe(prompt)
+    };
+
+    match result {
+        Ok(pty_result) => {
+            // Use stripped output for event parsing (ANSI sequences removed)
+            Ok((pty_result.stripped_output, pty_result.success))
+        }
+        Err(e) => {
+            // PTY allocation may have failed - log and continue with error
+            warn!("PTY execution failed: {}, continuing with error status", e);
+            Err(anyhow::Error::new(e))
+        }
+    }
 }
 
 /// Logs events parsed from output to the event history file.
