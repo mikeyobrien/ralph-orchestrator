@@ -996,6 +996,10 @@ The orchestrator owns all spawned CLI processes and must ensure no orphaned proc
 - **When** orchestrator parses output
 - **Then** completion promise is not detected (must be in final output, not event content)
 
+- **Given** `LOOP_COMPLETE` appears inside an event payload AND in the final output
+- **When** orchestrator parses output
+- **Then** completion is BLOCKED (event tag presence taints the output)
+
 - **Given** loop terminates for any reason
 - **When** termination flow executes
 - **Then** `.agent/summary.md` is written with status, iterations, cost, and task summary
@@ -1243,6 +1247,22 @@ Completion promise detection:
 - Only valid when Planner hat is active (Builder cannot terminate the loop)
 - **Requires task state verification** — rejected if pending `[ ]` tasks exist
 - **Requires consecutive confirmation** — must pass verification on 2 consecutive iterations
+
+**⚠️ CRITICAL: Event Tag Blocking Rule**
+
+If the completion promise appears inside **any** event tag payload, completion is **blocked entirely** — even if the promise also appears in the final output.
+
+```
+❌ WILL NOT COMPLETE (promise in event tag blocks):
+<event topic="build.task">Fix LOOP_COMPLETE detection bug</event>
+All done! LOOP_COMPLETE
+
+✅ WILL COMPLETE (promise only in final output):
+<event topic="build.done">Task finished</event>
+All done! LOOP_COMPLETE
+```
+
+**Rationale:** Agents may reference the completion promise when describing tasks (e.g., "Fix LOOP_COMPLETE detection"). Without this safeguard, if the agent also happened to output `LOOP_COMPLETE` in their final text, the loop could terminate unexpectedly. The blocking rule ensures explicit, intentional completion.
 
 #### Why Consecutive Confirmation?
 

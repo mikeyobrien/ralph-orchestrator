@@ -560,6 +560,33 @@ impl EventLoop {
         );
     }
 
+    /// Verifies all tasks in scratchpad are complete or cancelled.
+    ///
+    /// Returns:
+    /// - `Ok(true)` if all tasks are `[x]` or `[~]`
+    /// - `Ok(false)` if any tasks are `[ ]` (pending)
+    /// - `Err(...)` if scratchpad doesn't exist or can't be read
+    fn verify_scratchpad_complete(&self) -> Result<bool, std::io::Error> {
+        use std::path::Path;
+
+        let scratchpad_path = Path::new(&self.config.core.scratchpad);
+
+        if !scratchpad_path.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Scratchpad does not exist",
+            ));
+        }
+
+        let content = std::fs::read_to_string(scratchpad_path)?;
+
+        let has_pending = content
+            .lines()
+            .any(|line| line.trim_start().starts_with("- [ ]"));
+
+        Ok(!has_pending)
+    }
+
     /// Publishes the loop.terminate system event to observers.
     ///
     /// Per spec: "Published by the orchestrator (not agents) when the loop exits."
