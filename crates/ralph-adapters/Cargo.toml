@@ -19,6 +19,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+tempfile.workspace = true
 
 # PTY support
 portable-pty.workspace = true

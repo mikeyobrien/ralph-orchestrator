@@ -42,7 +42,7 @@ impl CliExecutor {
         prompt: &str,
         mut output_writer: W,
     ) -> std::io::Result<ExecutionResult> {
-        let (cmd, args, stdin_input) = self.backend.build_command(prompt, false);
+        let (cmd, args, stdin_input, _temp_file) = self.backend.build_command(prompt, false);
 
         let mut command = Command::new(&cmd);
         command.args(&args);

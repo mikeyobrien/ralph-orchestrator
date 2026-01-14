@@ -176,7 +176,7 @@ impl PtyExecutor {
             })
             .map_err(|e| io::Error::other(e.to_string()))?;
 
-        let (cmd, args, stdin_input) = self.backend.build_command(prompt, self.config.interactive);
+        let (cmd, args, stdin_input, _temp_file) = self.backend.build_command(prompt, self.config.interactive);
 
         let mut cmd_builder = CommandBuilder::new(&cmd);
         cmd_builder.args(&args);

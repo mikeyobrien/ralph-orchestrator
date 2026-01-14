@@ -1,6 +1,8 @@
 //! CLI backend definitions for different AI tools.
 
 use ralph_core::CliConfig;
+use std::io::Write;
+use tempfile::NamedTempFile;
 
 /// How to pass prompts to the CLI tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +118,7 @@ impl CliBackend {
     /// # Arguments
     /// * `prompt` - The prompt text to pass to the agent
     /// * `interactive` - Whether to run in interactive mode (affects agent flags)
-    pub fn build_command(&self, prompt: &str, interactive: bool) -> (String, Vec<String>, Option<String>) {
+    pub fn build_command(&self, prompt: &str, interactive: bool) -> (String, Vec<String>, Option<String>, Option<NamedTempFile>) {
         let mut args = self.args.clone();
 
         // Filter args based on execution mode per interactive-mode.spec.md
@@ -124,18 +126,40 @@ impl CliBackend {
             args = self.filter_args_for_interactive(args);
         }
 
-        let stdin_input = match self.prompt_mode {
+        // Handle large prompts for Claude (>7000 chars)
+        let (stdin_input, temp_file) = match self.prompt_mode {
             PromptMode::Arg => {
+                let (prompt_text, temp_file) = if self.command == "claude" && prompt.len() > 7000 {
+                    // Write to temp file and instruct Claude to read it
+                    match NamedTempFile::new() {
+                        Ok(mut file) => {
+                            if let Err(e) = file.write_all(prompt.as_bytes()) {
+                                tracing::warn!("Failed to write prompt to temp file: {}", e);
+                                (prompt.to_string(), None)
+                            } else {
+                                let path = file.path().display().to_string();
+                                (format!("Please read and execute the task in {}", path), Some(file))
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to create temp file: {}", e);
+                            (prompt.to_string(), None)
+                        }
+                    }
+                } else {
+                    (prompt.to_string(), None)
+                };
+
                 if let Some(ref flag) = self.prompt_flag {
                     args.push(flag.clone());
                 }
-                args.push(prompt.to_string());
-                None
+                args.push(prompt_text);
+                (None, temp_file)
             }
-            PromptMode::Stdin => Some(prompt.to_string()),
+            PromptMode::Stdin => (Some(prompt.to_string()), None),
         };
 
-        (self.command.clone(), args, stdin_input)
+        (self.command.clone(), args, stdin_input, temp_file)
     }
 
     /// Filters args for interactive mode per spec table.
@@ -156,7 +180,7 @@ mod tests {
     #[test]
     fn test_claude_backend() {
         let backend = CliBackend::claude();
-        let (cmd, args, stdin) = backend.build_command("test prompt", false);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "claude");
         assert_eq!(
@@ -167,9 +191,47 @@ mod tests {
     }
 
     #[test]
+    fn test_claude_large_prompt() {
+        let backend = CliBackend::claude();
+        let large_prompt = "x".repeat(7001);
+        let (cmd, args, stdin, temp) = backend.build_command(&large_prompt, false);
+
+        assert_eq!(cmd, "claude");
+        assert_eq!(args[0], "--dangerously-skip-permissions");
+        assert_eq!(args[1], "-p");
+        assert!(args[2].starts_with("Please read and execute the task in"));
+        assert!(stdin.is_none());
+        assert!(temp.is_some());
+    }
+
+    #[test]
+    fn test_claude_small_prompt() {
+        let backend = CliBackend::claude();
+        let small_prompt = "x".repeat(7000);
+        let (cmd, args, stdin, temp) = backend.build_command(&small_prompt, false);
+
+        assert_eq!(cmd, "claude");
+        assert_eq!(args[2], small_prompt);
+        assert!(stdin.is_none());
+        assert!(temp.is_none());
+    }
+
+    #[test]
+    fn test_non_claude_large_prompt() {
+        let backend = CliBackend::kiro();
+        let large_prompt = "x".repeat(7001);
+        let (cmd, args, stdin, temp) = backend.build_command(&large_prompt, false);
+
+        assert_eq!(cmd, "kiro-cli");
+        assert_eq!(args[3], large_prompt);
+        assert!(stdin.is_none());
+        assert!(temp.is_none());
+    }
+
+    #[test]
     fn test_kiro_backend() {
         let backend = CliBackend::kiro();
-        let (cmd, args, stdin) = backend.build_command("test prompt", false);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "kiro-cli");
         assert_eq!(
@@ -182,7 +244,7 @@ mod tests {
     #[test]
     fn test_gemini_backend() {
         let backend = CliBackend::gemini();
-        let (cmd, args, stdin) = backend.build_command("test prompt", false);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "gemini");
         assert!(args.is_empty());
@@ -192,7 +254,7 @@ mod tests {
     #[test]
     fn test_codex_backend() {
         let backend = CliBackend::codex();
-        let (cmd, args, stdin) = backend.build_command("test prompt", false);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "codex");
         assert_eq!(args, vec!["exec", "--full-auto", "test prompt"]);
@@ -202,7 +264,7 @@ mod tests {
     #[test]
     fn test_amp_backend() {
         let backend = CliBackend::amp();
-        let (cmd, args, stdin) = backend.build_command("test prompt", false);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "amp");
         assert_eq!(args, vec!["--dangerously-allow-all", "-x", "test prompt"]);
@@ -226,7 +288,7 @@ mod tests {
     #[test]
     fn test_kiro_interactive_mode_omits_no_interactive_flag() {
         let backend = CliBackend::kiro();
-        let (cmd, args, stdin) = backend.build_command("test prompt", true);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "kiro-cli");
         assert_eq!(args, vec!["chat", "--trust-all-tools", "test prompt"]);
@@ -237,7 +299,7 @@ mod tests {
     #[test]
     fn test_codex_interactive_mode_omits_full_auto() {
         let backend = CliBackend::codex();
-        let (cmd, args, stdin) = backend.build_command("test prompt", true);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "codex");
         assert_eq!(args, vec!["exec", "test prompt"]);
@@ -248,7 +310,7 @@ mod tests {
     #[test]
     fn test_amp_interactive_mode_no_flags() {
         let backend = CliBackend::amp();
-        let (cmd, args, stdin) = backend.build_command("test prompt", true);
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "amp");
         assert_eq!(args, vec!["-x", "test prompt"]);
@@ -259,8 +321,8 @@ mod tests {
     #[test]
     fn test_claude_interactive_mode_unchanged() {
         let backend = CliBackend::claude();
-        let (cmd, args_auto, _) = backend.build_command("test prompt", false);
-        let (_, args_interactive, _) = backend.build_command("test prompt", true);
+        let (cmd, args_auto, _, _) = backend.build_command("test prompt", false);
+        let (_, args_interactive, _, _) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "claude");
         assert_eq!(args_auto, args_interactive);
@@ -270,8 +332,8 @@ mod tests {
     #[test]
     fn test_gemini_interactive_mode_unchanged() {
         let backend = CliBackend::gemini();
-        let (cmd, args_auto, stdin_auto) = backend.build_command("test prompt", false);
-        let (_, args_interactive, stdin_interactive) = backend.build_command("test prompt", true);
+        let (cmd, args_auto, stdin_auto, _) = backend.build_command("test prompt", false);
+        let (_, args_interactive, stdin_interactive, _) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "gemini");
         assert_eq!(args_auto, args_interactive);
