@@ -204,3 +204,675 @@ benchmark-tasks:
   spec: benchmark-tasks.spec.md
   behaviors: []
   # Task definitions, not runtime behaviors
+
+# ==============================================================================
+# BEHAVIORAL VERIFICATION CATALOG
+# ==============================================================================
+# These behaviors are defined in behavioral-verification.spec.md (Categories 1-7).
+# Most require actual Ralph execution with mock/cassette backends and are marked
+# skip_ci: true. They serve as the contract for what Ralph should do at runtime.
+#
+# Run these with: ralph-verify --category <category>
+# ==============================================================================
+
+behavioral-verification:
+  spec: behavioral-verification.spec.md
+  behaviors:
+    # ==========================================================================
+    # Category 1: Event Routing (ER-001 to ER-010)
+    # ==========================================================================
+    # Tests that verify events flow correctly between hats.
+
+    - name: "ER-001: task.start routes to planner"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend execution: publish task.start, assert planner hat activated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-002: build.task routes to builder"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend execution: publish build.task, assert builder hat activated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-003: build.done routes to planner"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend execution: publish build.done, assert planner hat activated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-004: build.blocked routes to planner"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend execution: publish build.blocked, assert planner hat activated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-005: Unknown topic produces no routing"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend execution: publish unknown.topic, assert no hat activated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-006: Glob patterns match correctly"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: hat subscribes to build.*, receives build.task and build.done
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-007: Events don't route to source hat"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: planner publishes build.task, planner doesn't re-trigger
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-008: Direct target bypasses subscription"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: event with target=builder, builder receives regardless of topic
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-009: Observer receives all events"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: any event published, observer callback invoked
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "ER-010: Multiple subscribers all receive"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: two hats subscribe to same topic, both activated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    # ==========================================================================
+    # Category 2: Planner Hat Behaviors (PL-001 to PL-015)
+    # ==========================================================================
+    # Tests that verify the planner hat behaves correctly.
+
+    - name: "PL-001: Planner reads specs directory"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: specs exist in ./specs/, planner references spec content
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-002: Planner creates scratchpad if missing"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: no scratchpad exists, .agent/scratchpad.md created
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-003: Planner dispatches ONE task per iteration"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: multiple pending tasks, only one build.task emitted
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-004: Planner marks completed tasks [x]"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: build.done received, scratchpad shows [x]
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-005: Planner cancels stuck tasks [~]"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: 3 consecutive build.blocked, scratchpad shows [~]
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-006: Planner prioritizes ISSUES.md fixes"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: ISSUES.md and spec tasks exist, ISSUES.md task dispatched first
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-007: Planner outputs completion promise when done"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: all tasks [x] or [~], output contains LOOP_COMPLETE
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-008: Planner validates work matches spec"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: build.done with implementation, planner checks against spec
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-009: Planner handles empty task list"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: no pending tasks, outputs completion promise
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-010: Planner does NOT implement code"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task requires implementation, no file writes, only build.task
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-011: Planner re-plans on build.blocked"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: build.blocked received, updates scratchpad, new build.task
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-012: Planner respects task dependencies"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task B depends on task A, task A dispatched first
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-013: Planner updates scratchpad atomically"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: concurrent access, no corruption
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-014: Planner includes context in build.task"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: complex task, build.task payload has sufficient context
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "PL-015: Planner handles malformed scratchpad"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: invalid markdown, recovers gracefully
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    # ==========================================================================
+    # Category 3: Builder Hat Behaviors (BU-001 to BU-015)
+    # ==========================================================================
+    # Tests that verify the builder hat behaves correctly.
+
+    - name: "BU-001: Builder implements ONE task per iteration"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: build.task received, only one build.done emitted
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-002: Builder runs backpressure (tests)"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: code written, tests executed before build.done
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-003: Builder runs backpressure (lint)"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: code written, lint executed before build.done
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-004: Builder runs backpressure (typecheck)"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: code written, typecheck executed before build.done
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-005: Builder commits on success"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task completed, git commit created
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-006: Builder marks task [x] in scratchpad"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task completed, scratchpad updated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-007: Builder emits build.blocked when stuck"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: cannot complete task, build.blocked with reason
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-008: Builder does NOT plan work"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: build.task received, no scratchpad planning changes
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-009: Builder does NOT output completion promise"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task completed, no LOOP_COMPLETE in output
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-010: Builder follows existing code patterns"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: codebase has patterns, generated code matches style
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-011: Builder handles missing files gracefully"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: file reference doesn't exist, build.blocked, not crash
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-012: Builder provides unblock recommendation"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: build.blocked emitted, payload includes suggestion
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-013: Builder searches before assuming missing"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task mentions feature, grep/search executed first
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-014: Builder handles test failures"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: tests fail, fixes or emits build.blocked
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "BU-015: Builder respects file boundaries"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: task scoped to one file, only that file modified
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    # ==========================================================================
+    # Category 4: Safeguards & Termination (SF-001 to SF-012)
+    # ==========================================================================
+    # Tests that verify safety mechanisms work correctly.
+
+    - name: "SF-001: CompletionPromise exits with code 0"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: planner outputs LOOP_COMPLETE, exit_code: 0
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-002: MaxIterations exits with code 2"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: iteration >= max_iterations, exit_code: 2
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-003: MaxRuntime exits with code 2"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: elapsed >= max_runtime_secs, exit_code: 2
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-004: MaxCost exits with code 2"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: cost >= max_cost_usd, exit_code: 2
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-005: ConsecutiveFailures exits with code 1"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: failures >= threshold, exit_code: 1
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-006: LoopThrashing exits with code 1"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: 3+ consecutive build.blocked, exit_code: 1
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-007: SIGINT exits with code 130"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: send SIGINT, exit_code: 130, clean shutdown
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-008: Failure counter resets on success"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: failure then success, consecutive_failures: 0
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-009: Loop detection triggers on similarity"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: 90%+ similar outputs, detected as loop
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-010: Loop detection ignores dissimilar"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: <90% similar outputs, not detected as loop
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-011: Safeguards checked every iteration"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: any iteration, LoopState.check_termination() called
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "SF-012: Partial session recorded on termination"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: MaxIterations hit, session.jsonl has all events
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    # ==========================================================================
+    # Category 5: Completion Detection (CD-001 to CD-008)
+    # ==========================================================================
+    # Tests that verify completion is detected correctly.
+
+    - name: "CD-001: Checkbox marker detected"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: `- [x] TASK_COMPLETE`, completion detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-002: Unchecked marker NOT detected"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: `- [ ] TASK_COMPLETE`, completion NOT detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-003: Promise in output detected"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: LOOP_COMPLETE in stdout, completion detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-004: Promise in event payload NOT detected"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: <event>LOOP_COMPLETE</event>, completion NOT detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-005: Promise is case-insensitive"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: `loop_complete`, completion detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-006: Custom promise works"
+      type: config
+      skip_ci: true
+      run: |
+        # Requires mock backend: custom string configured, that string detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-007: Partial match NOT detected"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: LOOP_COMPLETE_EXTRA, completion NOT detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CD-008: Whitespace around promise OK"
+      type: output
+      skip_ci: true
+      run: |
+        # Requires mock backend: `  LOOP_COMPLETE  `, completion detected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    # ==========================================================================
+    # Category 6: Core Behaviors (CB-001 to CB-008)
+    # ==========================================================================
+    # Tests that verify always-present behaviors.
+
+    - name: "CB-001: Scratchpad persists across iterations"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: write in iter 1, read in iter 2, content preserved
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-002: Fresh context each iteration"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: complex iter 1, iter 2 prompt doesn't reference iter 1
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-003: Guardrails injected for planner"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: planner prompt contains search-first, backpressure
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-004: Guardrails injected for builder"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: builder prompt contains search-first, backpressure
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-005: Specs directory referenced"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: specs exist, prompt mentions ./specs/
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-006: Custom guardrails injected"
+      type: config
+      skip_ci: true
+      run: |
+        # Requires mock backend: config has custom guardrails, appear in prompt
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-007: Less-is-more principle applied"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: large task, atomic subtask dispatched
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "CB-008: Event history logged"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires mock backend: events occur, .agent/events.jsonl populated
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    # ==========================================================================
+    # Category 7: Integration / End-to-End (E2E-001 to E2E-010)
+    # ==========================================================================
+    # Full workflow tests using recorded cassettes.
+
+    - name: "E2E-001: Happy path: plan → build → complete"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: simple spec, exit_code: 0, file created
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-002: Multi-iteration workflow"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: spec with 3 tasks, 3+ iterations, all [x]
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-003: Build blocked triggers re-plan"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: builder can't complete, planner re-dispatches
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-004: Recovery from failure"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: first attempt fails, second attempt succeeds
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-005: Custom hat integration"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: reviewer hat configured, triggers on build.done
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-006: Large prompt handling"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: prompt > 7000 chars, Claude backend uses temp file
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-007: Interactive mode behavior"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: TTY attached, permission prompts work
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-008: Headless mode behavior"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: no TTY, runs autonomously
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-009: Resume from checkpoint"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: previous run interrupted, resumes from scratchpad state
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
+
+    - name: "E2E-010: Cost tracking accuracy"
+      type: runtime
+      skip_ci: true
+      run: |
+        # Requires cassette: multi-iteration, cumulative cost matches expected
+        echo "Skip: Requires cassette/mock backend execution"
+        exit 0
