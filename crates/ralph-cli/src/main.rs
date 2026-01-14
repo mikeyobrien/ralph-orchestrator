@@ -923,7 +923,8 @@ async fn run_loop_impl(config: RalphConfig, color_mode: ColorMode, resume: bool,
     }
 
     // Create backend
-    let backend = CliBackend::from_config(&config.cli);
+    let backend = CliBackend::from_config(&config.cli)
+        .map_err(|e| anyhow::Error::new(e))?;
 
     // Log execution mode - hat info already logged by initialize()
     let exec_mode = if use_interactive { "interactive" } else { "autonomous" };

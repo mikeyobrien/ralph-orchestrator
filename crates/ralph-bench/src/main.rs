@@ -377,7 +377,8 @@ async fn run_task_loop(
     event_loop.initialize(&prompt_content);
 
     // Create CLI executor
-    let backend = CliBackend::from_config(&config.cli);
+    let backend = CliBackend::from_config(&config.cli)
+        .map_err(|e| anyhow::Error::new(e))?;
     let executor = CliExecutor::new(backend);
 
     // Setup session recording if requested

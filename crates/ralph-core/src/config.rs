@@ -579,6 +579,7 @@ impl RalphConfig {
         match backend {
             "claude" => &self.adapters.claude,
             "gemini" => &self.adapters.gemini,
+            "kiro" => &self.adapters.kiro,
             "codex" => &self.adapters.codex,
             "amp" => &self.adapters.amp,
             _ => &self.adapters.claude, // Default fallback

@@ -1,8 +1,21 @@
 //! CLI backend definitions for different AI tools.
 
 use ralph_core::CliConfig;
+use std::fmt;
 use std::io::Write;
 use tempfile::NamedTempFile;
+
+/// Error when creating a custom backend without a command.
+#[derive(Debug, Clone)]
+pub struct CustomBackendError;
+
+impl fmt::Display for CustomBackendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "custom backend requires a command to be specified")
+    }
+}
+
+impl std::error::Error for CustomBackendError {}
 
 /// How to pass prompts to the CLI tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,15 +41,18 @@ pub struct CliBackend {
 
 impl CliBackend {
     /// Creates a backend from configuration.
-    pub fn from_config(config: &CliConfig) -> Self {
+    ///
+    /// # Errors
+    /// Returns `CustomBackendError` if backend is "custom" but no command is specified.
+    pub fn from_config(config: &CliConfig) -> Result<Self, CustomBackendError> {
         match config.backend.as_str() {
-            "claude" => Self::claude(),
-            "kiro" => Self::kiro(),
-            "gemini" => Self::gemini(),
-            "codex" => Self::codex(),
-            "amp" => Self::amp(),
+            "claude" => Ok(Self::claude()),
+            "kiro" => Ok(Self::kiro()),
+            "gemini" => Ok(Self::gemini()),
+            "codex" => Ok(Self::codex()),
+            "amp" => Ok(Self::amp()),
             "custom" => Self::custom(config),
-            _ => Self::claude(), // Default to claude
+            _ => Ok(Self::claude()), // Default to claude
         }
     }
 
@@ -97,20 +113,23 @@ impl CliBackend {
     }
 
     /// Creates a custom backend from configuration.
-    pub fn custom(config: &CliConfig) -> Self {
-        let command = config.command.clone().unwrap_or_else(|| "echo".to_string());
+    ///
+    /// # Errors
+    /// Returns `CustomBackendError` if no command is specified.
+    pub fn custom(config: &CliConfig) -> Result<Self, CustomBackendError> {
+        let command = config.command.clone().ok_or(CustomBackendError)?;
         let prompt_mode = if config.prompt_mode == "stdin" {
             PromptMode::Stdin
         } else {
             PromptMode::Arg
         };
 
-        Self {
+        Ok(Self {
             command,
             args: config.args.clone(),
             prompt_mode,
             prompt_flag: config.prompt_flag.clone(),
-        }
+        })
     }
 
     /// Builds the full command with arguments for execution.
@@ -279,7 +298,7 @@ mod tests {
             prompt_mode: "arg".to_string(),
             ..Default::default()
         };
-        let backend = CliBackend::from_config(&config);
+        let backend = CliBackend::from_config(&config).unwrap();
 
         assert_eq!(backend.command, "claude");
         assert_eq!(backend.prompt_mode, PromptMode::Arg);
@@ -351,7 +370,7 @@ mod tests {
             prompt_flag: Some("-p".to_string()),
             ..Default::default()
         };
-        let backend = CliBackend::from_config(&config);
+        let backend = CliBackend::from_config(&config).unwrap();
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "my-agent");
@@ -368,7 +387,7 @@ mod tests {
             prompt_flag: Some("--prompt".to_string()),
             ..Default::default()
         };
-        let backend = CliBackend::from_config(&config);
+        let backend = CliBackend::from_config(&config).unwrap();
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "my-agent");
@@ -385,11 +404,29 @@ mod tests {
             prompt_flag: None,
             ..Default::default()
         };
-        let backend = CliBackend::from_config(&config);
+        let backend = CliBackend::from_config(&config).unwrap();
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "my-agent");
         assert_eq!(args, vec!["test prompt"]);
         assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn test_custom_backend_without_command_returns_error() {
+        let config = CliConfig {
+            backend: "custom".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            ..Default::default()
+        };
+        let result = CliBackend::from_config(&config);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "custom backend requires a command to be specified"
+        );
     }
 }
