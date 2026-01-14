@@ -95,22 +95,24 @@ hats:
       - ❌ Flag things that are fine
       - ❌ Miss security issues
 
----
+# ─────────────────────────────────────────────────────────────────────────────
 # Review Categories Reference
-
-## Critical (Blocks Merge)
-- Bugs that will cause failures
-- Security vulnerabilities
-- Data loss risks
-- Breaking API changes without version bump
-
-## Suggestions (Should Address)
-- Missing error handling
-- Unclear logic
-- Missing tests for new code
-- Performance issues
-
-## Nitpicks (Optional)
-- Naming improvements
-- Minor refactoring opportunities
-- Documentation additions
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Critical (Blocks Merge):
+#   - Bugs that will cause failures
+#   - Security vulnerabilities
+#   - Data loss risks
+#   - Breaking API changes without version bump
+#
+# Suggestions (Should Address):
+#   - Missing error handling
+#   - Unclear logic
+#   - Missing tests for new code
+#   - Performance issues
+#
+# Nitpicks (Optional):
+#   - Naming improvements
+#   - Minor refactoring opportunities
+#   - Documentation additions
+# ─────────────────────────────────────────────────────────────────────────────

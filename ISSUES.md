@@ -3,7 +3,7 @@
 > **Note:** When a known issue is fixed, remove it from this file. An empty file means no known issues.
 >
 > Generated from behavioral gap analysis on 2026-01-13
-> **Validated against codebase:** 2026-01-13 (gap analysis iteration)
+> **Validated against codebase:** 2026-01-14 (gap analysis iteration)
 
 ## Summary
 
@@ -11,12 +11,8 @@
 |----------|-------|--------|--------|
 | 🟡 P1 | Planner behaviors instruction-only | No verification of compliance | ✅ Confirmed |
 | 🟡 P1 | Builder behaviors instruction-only | No verification of compliance | ✅ Confirmed |
-| 🟡 P1 | Broken preset: gap-analysis.yml | Multi-document YAML parse error | ✅ Confirmed |
-| 🟡 P1 | Broken preset: review.yml | Multi-document YAML parse error | ✅ Confirmed |
-| 🟡 P1 | Broken preset: refactor.yml | Ambiguous routing (refactor.done) | ✅ Confirmed |
 | 🟢 P2 | Scratchpad persistence not verified | State could be lost | ✅ Confirmed |
 | 🟢 P2 | Hat display order is random | Minor UX confusion | ✅ Confirmed |
-| 🟡 P1 | Broken ralph.yml in repo root | Default config causes parse error | ✅ Confirmed |
 
 ---
 

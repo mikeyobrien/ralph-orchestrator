@@ -23,7 +23,7 @@ core:
 hats:
   planner:
     name: "Refactor Planner"
-    triggers: ["task.start", "task.resume", "refactor.done", "refactor.blocked", "verify.failed"]
+    triggers: ["task.start", "task.resume", "verify.passed", "refactor.blocked", "verify.failed"]
     publishes: ["refactor.task"]
     instructions: |
       ## REFACTOR PLANNER MODE

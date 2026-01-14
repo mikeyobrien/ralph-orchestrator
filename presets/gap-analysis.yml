@@ -183,23 +183,23 @@ hats:
       ### Output
       Write findings to ISSUES.md. Publish `report.complete` when done.
 
----
+# ─────────────────────────────────────────────────────────────────────────────
 # Gap Analysis Reference
-
-## What Makes a Good Gap Analysis
-
-1. **Exhaustive** — Every spec, every acceptance criterion
-2. **Specific** — File:line references, not vague descriptions
-3. **Objective** — Document facts, not opinions
-4. **Actionable** — Each finding can be addressed
-
-## Common Gap Types
-
-| Type | Example |
-|------|---------|
-| Missing implementation | Spec says X, code doesn't do X |
-| Wrong implementation | Spec says X, code does Y |
-| Missing error handling | Spec says "error if X", no error thrown |
-| Missing config | Spec mentions option, not in schema |
-| Outdated spec | Code changed, spec not updated |
-| Missing spec | Code does something undocumented |
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# What Makes a Good Gap Analysis:
+#
+#   1. Exhaustive — Every spec, every acceptance criterion
+#   2. Specific — File:line references, not vague descriptions
+#   3. Objective — Document facts, not opinions
+#   4. Actionable — Each finding can be addressed
+#
+# Common Gap Types:
+#
+#   - Missing implementation: Spec says X, code doesn't do X
+#   - Wrong implementation: Spec says X, code does Y
+#   - Missing error handling: Spec says "error if X", no error thrown
+#   - Missing config: Spec mentions option, not in schema
+#   - Outdated spec: Code changed, spec not updated
+#   - Missing spec: Code does something undocumented
+# ─────────────────────────────────────────────────────────────────────────────

@@ -45,8 +45,6 @@ adapters:
     enabled: true
     timeout: 300              # Timeout in seconds
     max_retries: 3            # Max retry attempts
-    tool_permissions:         # Tool permissions for Claude
-      allow_all: true         # Allow all tools without approval
   
   # Kiro CLI adapter (successor to Amazon Q Developer CLI)
   # Primary command: kiro-cli, falls back to 'q' for compatibility
@@ -88,8 +86,3 @@ adapters:
     max_retries: 3
     args: []
     env: {}
-    tool_permissions:
-      agent_command: codex-acp          # ACP agent command to run
-      agent_args: []                   # Args passed to the ACP agent
-      permission_mode: interactive      # auto_approve | deny_all | allowlist | interactive
-      permission_allowlist: []         # Used when permission_mode=allowlist
