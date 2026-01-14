@@ -823,7 +823,8 @@ async fn run_loop_impl(config: RalphConfig, color_mode: ColorMode, resume: bool,
 
     // Determine effective execution mode (with fallback logic)
     // Per spec: Claude backend requires PTY mode to avoid hangs
-    let user_interactive = if config.cli.default_mode == "interactive" {
+    let interactive_requested = config.cli.default_mode == "interactive" || enable_tui;
+    let user_interactive = if interactive_requested {
         if stdout().is_terminal() {
             true
         } else {
@@ -1392,7 +1393,9 @@ mod tests {
         config.cli.default_mode = "autonomous".to_string();
 
         let stdout_is_tty = true;
-        let user_interactive = config.cli.default_mode == "interactive" && stdout_is_tty;
+        let enable_tui = false;
+        let interactive_requested = config.cli.default_mode == "interactive" || enable_tui;
+        let user_interactive = interactive_requested && stdout_is_tty;
         let use_pty = config.cli.backend == "claude" || user_interactive;
 
         // Then: PTY mode should be enabled
@@ -1408,7 +1411,9 @@ mod tests {
         config.cli.default_mode = "autonomous".to_string();
 
         let stdout_is_tty = true;
-        let user_interactive = config.cli.default_mode == "interactive" && stdout_is_tty;
+        let enable_tui = false;
+        let interactive_requested = config.cli.default_mode == "interactive" || enable_tui;
+        let user_interactive = interactive_requested && stdout_is_tty;
         let use_pty = config.cli.backend == "claude" || user_interactive;
 
         // Then: PTY mode should NOT be enabled (respects autonomous mode)
@@ -1424,7 +1429,9 @@ mod tests {
         config.cli.default_mode = "interactive".to_string();
 
         let stdout_is_tty = true;
-        let user_interactive = config.cli.default_mode == "interactive" && stdout_is_tty;
+        let enable_tui = false;
+        let interactive_requested = config.cli.default_mode == "interactive" || enable_tui;
+        let user_interactive = interactive_requested && stdout_is_tty;
         let use_pty = config.cli.backend == "claude" || user_interactive;
 
         // Then: PTY mode should be enabled (would be true anyway, but Claude forces it)
@@ -1443,7 +1450,9 @@ mod tests {
             config.cli.default_mode = "autonomous".to_string();
 
             let stdout_is_tty = true;
-            let user_interactive = config.cli.default_mode == "interactive" && stdout_is_tty;
+            let enable_tui = false;
+            let interactive_requested = config.cli.default_mode == "interactive" || enable_tui;
+            let user_interactive = interactive_requested && stdout_is_tty;
             let use_pty = config.cli.backend == "claude" || user_interactive;
 
             // Then: PTY mode should NOT be enabled

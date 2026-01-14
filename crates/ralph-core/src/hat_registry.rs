@@ -18,24 +18,14 @@ impl HatRegistry {
 
     /// Creates a registry from configuration.
     ///
-    /// Per spec: "Given default config (no custom hats), When the loop initializes,
-    /// Then planner and builder hats are registered with their triggers."
-    ///
-    /// Per spec: "There is only one Ralph who wears one or more hats."
-    /// What varies is which hats are registered, not a "mode".
+    /// Empty config → empty registry (no hats).
+    /// HatlessRalph is the fallback coordinator when no hats are configured.
     pub fn from_config(config: &RalphConfig) -> Self {
         let mut registry = Self::new();
 
-        if config.hats.is_empty() {
-            // No custom hats defined: register default planner and builder hats per spec
-            registry.register(Hat::default_planner());
-            registry.register(Hat::default_builder());
-        } else {
-            // Custom hats defined: create hats from config
-            for (id, hat_config) in &config.hats {
-                let hat = Self::hat_from_config(id, hat_config);
-                registry.register(hat);
-            }
+        for (id, hat_config) in &config.hats {
+            let hat = Self::hat_from_config(id, hat_config);
+            registry.register(hat);
         }
 
         registry
@@ -97,6 +87,18 @@ impl HatRegistry {
             .find(|hat| hat.is_subscribed(&topic))
             .map(|hat| &hat.id)
     }
+
+    /// Returns true if any hat is subscribed to the given topic.
+    pub fn has_subscriber(&self, topic: &str) -> bool {
+        let topic = Topic::new(topic);
+        self.hats.values().any(|hat| hat.is_subscribed(&topic))
+    }
+
+    /// Returns the first hat subscribed to the given topic.
+    pub fn get_for_topic(&self, topic: &str) -> Option<&Hat> {
+        let topic = Topic::new(topic);
+        self.hats.values().find(|hat| hat.is_subscribed(&topic))
+    }
 }
 
 #[cfg(test)]
@@ -104,25 +106,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_config_creates_planner_and_builder() {
+    fn test_empty_config_creates_empty_registry() {
         let config = RalphConfig::default();
         let registry = HatRegistry::from_config(&config);
 
-        // Per spec: default config registers planner and builder hats
-        assert_eq!(registry.len(), 2);
-
-        let planner = registry.get(&HatId::new("planner")).unwrap();
-        assert!(planner.is_subscribed(&Topic::new("task.start")));
-        assert!(planner.is_subscribed(&Topic::new("build.done")));
-        assert!(planner.is_subscribed(&Topic::new("build.blocked")));
-
-        let builder = registry.get(&HatId::new("builder")).unwrap();
-        assert!(builder.is_subscribed(&Topic::new("build.task")));
+        // Empty config → empty registry (HatlessRalph is the fallback)
+        assert_eq!(registry.len(), 0);
+        assert!(registry.is_empty());
     }
 
     #[test]
-    fn test_custom_hats_override_defaults() {
-        // Per spec: When custom hats are defined, they replace the defaults
+    fn test_custom_hats_from_config() {
         let yaml = r#"
 hats:
   implementer:
@@ -143,6 +137,49 @@ hats:
 
         let review_hat = registry.get(&HatId::new("reviewer")).unwrap();
         assert!(review_hat.is_subscribed(&Topic::new("impl.done")));
+    }
+
+    #[test]
+    fn test_has_subscriber() {
+        let yaml = r#"
+hats:
+  impl:
+    name: "Implementer"
+    triggers: ["task.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        assert!(registry.has_subscriber("task.start"));
+        assert!(!registry.has_subscriber("build.task"));
+    }
+
+    #[test]
+    fn test_get_for_topic() {
+        let yaml = r#"
+hats:
+  impl:
+    name: "Implementer"
+    triggers: ["task.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        let hat = registry.get_for_topic("task.start");
+        assert!(hat.is_some());
+        assert_eq!(hat.unwrap().id.as_str(), "impl");
+
+        let no_hat = registry.get_for_topic("build.task");
+        assert!(no_hat.is_none());
+    }
+
+    #[test]
+    fn test_empty_registry_has_no_subscribers() {
+        let config = RalphConfig::default();
+        let registry = HatRegistry::from_config(&config);
+
+        assert!(!registry.has_subscriber("build.task"));
+        assert!(registry.get_for_topic("build.task").is_none());
     }
 
     #[test]

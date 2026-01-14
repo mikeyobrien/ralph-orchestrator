@@ -185,8 +185,19 @@ mod tests {
 
     #[test]
     fn test_multi_hat_mode_prompt() {
-        let config = RalphConfig::default();
-        let registry = HatRegistry::from_config(&config); // Has default planner/builder
+        let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "build.done", "build.blocked"]
+    publishes: ["build.task"]
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    publishes: ["build.done", "build.blocked"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry);
 
         let prompt = ralph.build_prompt("");

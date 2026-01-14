@@ -668,7 +668,14 @@ mod tests {
 
     #[test]
     fn test_initialization_triggers_planner() {
-        let config = RalphConfig::default();
+        let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "build.done", "build.blocked"]
+    publishes: ["build.task"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let mut event_loop = EventLoop::new(config);
 
         event_loop.initialize("Test prompt");
@@ -742,7 +749,18 @@ event_loop:
     #[test]
     fn test_build_prompt_uses_specialized_prompts_for_default_hats() {
         // Per spec: Default planner and builder hats use specialized rich prompts
-        let config = RalphConfig::default();
+        let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "build.done", "build.blocked"]
+    publishes: ["build.task"]
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    publishes: ["build.done", "build.blocked"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let mut event_loop = EventLoop::new(config);
         event_loop.initialize("Test task");
 
@@ -1081,7 +1099,14 @@ hats:
         use std::path::Path;
 
         // Test that cancelled tasks don't block completion when all other tasks are done
-        let config = RalphConfig::default();
+        let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "build.done", "build.blocked"]
+    publishes: ["build.task"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let mut event_loop = EventLoop::new(config);
         event_loop.initialize("Test task");
 
