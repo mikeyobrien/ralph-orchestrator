@@ -379,11 +379,47 @@ impl EventLoop {
         }
 
         // Check for completion promise - only valid from planner hat
-        // Per spec: "Builder hat outputs LOOP_COMPLETE → completion promise is ignored (only Planner can terminate)"
+        // Per spec: Requires dual condition (task state + consecutive confirmation)
         if hat_id.as_str() == "planner"
             && EventParser::contains_promise(output, &self.config.event_loop.completion_promise)
         {
-            return Some(TerminationReason::CompletionPromise);
+            // Verify scratchpad task state
+            match self.verify_scratchpad_complete() {
+                Ok(true) => {
+                    // All tasks complete - increment confirmation counter
+                    self.state.completion_confirmations += 1;
+                    
+                    if self.state.completion_confirmations >= 2 {
+                        // Second consecutive confirmation - terminate
+                        info!(
+                            confirmations = self.state.completion_confirmations,
+                            "Completion confirmed on consecutive iterations - terminating"
+                        );
+                        return Some(TerminationReason::CompletionPromise);
+                    } else {
+                        // First confirmation - continue to next iteration
+                        info!(
+                            confirmations = self.state.completion_confirmations,
+                            "Completion detected but requires consecutive confirmation - continuing"
+                        );
+                    }
+                }
+                Ok(false) => {
+                    // Pending tasks exist - reject completion
+                    warn!(
+                        "Completion promise detected but scratchpad has pending [ ] tasks - rejected"
+                    );
+                    self.state.completion_confirmations = 0;
+                }
+                Err(e) => {
+                    // Scratchpad doesn't exist or can't be read - reject completion
+                    warn!(
+                        error = %e,
+                        "Completion promise detected but scratchpad verification failed - rejected"
+                    );
+                    self.state.completion_confirmations = 0;
+                }
+            }
         }
 
         // Parse and publish events from output
