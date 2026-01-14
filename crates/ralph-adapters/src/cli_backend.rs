@@ -1,6 +1,6 @@
 //! CLI backend definitions for different AI tools.
 
-use ralph_core::CliConfig;
+use ralph_core::{CliConfig, HatBackend};
 use std::fmt;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -83,6 +83,56 @@ impl CliBackend {
             ],
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
+        }
+    }
+
+    /// Creates the Kiro backend with a specific agent.
+    ///
+    /// Uses kiro-cli with --agent flag to select a specific agent.
+    pub fn kiro_with_agent(agent: String) -> Self {
+        Self {
+            command: "kiro-cli".to_string(),
+            args: vec![
+                "chat".to_string(),
+                "--no-interactive".to_string(),
+                "--trust-all-tools".to_string(),
+                "--agent".to_string(),
+                agent,
+            ],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+        }
+    }
+
+    /// Creates a backend from a named backend string.
+    ///
+    /// # Errors
+    /// Returns error if the backend name is invalid.
+    pub fn from_name(name: &str) -> Result<Self, CustomBackendError> {
+        match name {
+            "claude" => Ok(Self::claude()),
+            "kiro" => Ok(Self::kiro()),
+            "gemini" => Ok(Self::gemini()),
+            "codex" => Ok(Self::codex()),
+            "amp" => Ok(Self::amp()),
+            _ => Err(CustomBackendError),
+        }
+    }
+
+    /// Creates a backend from a HatBackend configuration.
+    ///
+    /// # Errors
+    /// Returns error if the backend configuration is invalid.
+    pub fn from_hat_backend(hat_backend: &HatBackend) -> Result<Self, CustomBackendError> {
+        match hat_backend {
+            HatBackend::Named(name) => Self::from_name(name),
+            HatBackend::KiroAgent { agent, .. } => Ok(Self::kiro_with_agent(agent.clone())),
+            HatBackend::Custom { command, args } => Ok(Self {
+                command: command.clone(),
+                args: args.clone(),
+                prompt_mode: PromptMode::Arg,
+                prompt_flag: None,
+            }),
         }
     }
 
@@ -422,5 +472,86 @@ mod tests {
             err.to_string(),
             "custom backend requires a command to be specified"
         );
+    }
+
+    #[test]
+    fn test_kiro_with_agent() {
+        let backend = CliBackend::kiro_with_agent("my-agent".to_string());
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "kiro-cli");
+        assert_eq!(
+            args,
+            vec!["chat", "--no-interactive", "--trust-all-tools", "--agent", "my-agent", "test prompt"]
+        );
+        assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn test_from_name_claude() {
+        let backend = CliBackend::from_name("claude").unwrap();
+        assert_eq!(backend.command, "claude");
+        assert_eq!(backend.prompt_flag, Some("-p".to_string()));
+    }
+
+    #[test]
+    fn test_from_name_kiro() {
+        let backend = CliBackend::from_name("kiro").unwrap();
+        assert_eq!(backend.command, "kiro-cli");
+    }
+
+    #[test]
+    fn test_from_name_gemini() {
+        let backend = CliBackend::from_name("gemini").unwrap();
+        assert_eq!(backend.command, "gemini");
+    }
+
+    #[test]
+    fn test_from_name_codex() {
+        let backend = CliBackend::from_name("codex").unwrap();
+        assert_eq!(backend.command, "codex");
+    }
+
+    #[test]
+    fn test_from_name_amp() {
+        let backend = CliBackend::from_name("amp").unwrap();
+        assert_eq!(backend.command, "amp");
+    }
+
+    #[test]
+    fn test_from_name_invalid() {
+        let result = CliBackend::from_name("invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_hat_backend_named() {
+        let hat_backend = HatBackend::Named("claude".to_string());
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        assert_eq!(backend.command, "claude");
+    }
+
+    #[test]
+    fn test_from_hat_backend_kiro_agent() {
+        let hat_backend = HatBackend::KiroAgent {
+            backend_type: "kiro".to_string(),
+            agent: "my-agent".to_string(),
+        };
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        let (cmd, args, _, _) = backend.build_command("test", false);
+        assert_eq!(cmd, "kiro-cli");
+        assert!(args.contains(&"--agent".to_string()));
+        assert!(args.contains(&"my-agent".to_string()));
+    }
+
+    #[test]
+    fn test_from_hat_backend_custom() {
+        let hat_backend = HatBackend::Custom {
+            command: "my-cli".to_string(),
+            args: vec!["--flag".to_string()],
+        };
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        assert_eq!(backend.command, "my-cli");
+        assert_eq!(backend.args, vec!["--flag"]);
     }
 }

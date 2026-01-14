@@ -26,7 +26,7 @@ pub mod task_definition;
 pub mod workspace;
 
 pub use cli_capture::{CliCapture, CliCapturePair};
-pub use config::{CliConfig, CoreConfig, EventLoopConfig, EventMetadata, HatConfig, PreflightError, PreflightWarning, RalphConfig};
+pub use config::{CliConfig, CoreConfig, EventLoopConfig, EventMetadata, HatBackend, HatConfig, PreflightError, PreflightWarning, RalphConfig};
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
 pub use event_loop::{EventLoop, LoopState, TerminationReason};
 pub use event_parser::EventParser;

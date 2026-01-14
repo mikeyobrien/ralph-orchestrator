@@ -2,7 +2,7 @@
 //!
 //! The event loop coordinates the execution of hats via pub/sub messaging.
 
-use crate::config::RalphConfig;
+use crate::config::{HatBackend, RalphConfig};
 use crate::event_parser::EventParser;
 use crate::event_reader::EventReader;
 use crate::hat_registry::HatRegistry;
@@ -188,6 +188,16 @@ impl EventLoop {
     /// Returns the hat registry.
     pub fn registry(&self) -> &HatRegistry {
         &self.registry
+    }
+
+    /// Gets the backend configuration for a hat.
+    ///
+    /// If the hat has a backend configured, returns that.
+    /// Otherwise, returns None (caller should use global backend).
+    pub fn get_hat_backend(&self, hat_id: &HatId) -> Option<&HatBackend> {
+        self.registry
+            .get_config(hat_id)
+            .and_then(|config| config.backend.as_ref())
     }
 
     /// Sets an observer that receives all published events.
@@ -1397,5 +1407,71 @@ hats:
         
         // No default should be injected since not configured
         assert!(!event_loop.has_pending_events(), "No default should be injected");
+    }
+
+    #[test]
+    fn test_get_hat_backend_with_named_backend() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    backend: "claude"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let event_loop = EventLoop::new(config);
+        
+        let hat_id = HatId::new("builder");
+        let backend = event_loop.get_hat_backend(&hat_id);
+        
+        assert!(backend.is_some());
+        match backend.unwrap() {
+            HatBackend::Named(name) => assert_eq!(name, "claude"),
+            _ => panic!("Expected Named backend"),
+        }
+    }
+
+    #[test]
+    fn test_get_hat_backend_with_kiro_agent() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    backend:
+      type: "kiro"
+      agent: "my-agent"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let event_loop = EventLoop::new(config);
+        
+        let hat_id = HatId::new("builder");
+        let backend = event_loop.get_hat_backend(&hat_id);
+        
+        assert!(backend.is_some());
+        match backend.unwrap() {
+            HatBackend::KiroAgent { agent, .. } => assert_eq!(agent, "my-agent"),
+            _ => panic!("Expected KiroAgent backend"),
+        }
+    }
+
+    #[test]
+    fn test_get_hat_backend_inherits_global() {
+        let yaml = r#"
+cli:
+  backend: "gemini"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let event_loop = EventLoop::new(config);
+        
+        let hat_id = HatId::new("builder");
+        let backend = event_loop.get_hat_backend(&hat_id);
+        
+        // Hat has no backend configured, should return None (inherit global)
+        assert!(backend.is_none());
     }
 }
