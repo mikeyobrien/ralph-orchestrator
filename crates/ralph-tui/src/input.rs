@@ -8,6 +8,7 @@ pub enum InputMode {
     Normal,
     AwaitingCommand,
     Scroll,
+    Search,
 }
 
 /// Prefix commands.
@@ -29,6 +30,10 @@ pub enum RouteResult {
     Command(Command),
     ScrollKey(KeyEvent),
     ExitScroll,
+    EnterSearch { forward: bool },
+    SearchInput(KeyEvent),
+    ExecuteSearch,
+    CancelSearch,
     Consumed,
 }
 
@@ -72,12 +77,41 @@ impl InputRouter {
                 }
             }
             InputMode::Scroll => {
+                // Handle search initiation
+                if matches!(key.code, KeyCode::Char('/')) {
+                    self.mode = InputMode::Search;
+                    return RouteResult::EnterSearch { forward: true };
+                }
+                if matches!(key.code, KeyCode::Char('?')) {
+                    self.mode = InputMode::Search;
+                    return RouteResult::EnterSearch { forward: false };
+                }
+                // Handle search navigation
+                if matches!(key.code, KeyCode::Char('n')) {
+                    return RouteResult::ScrollKey(key);
+                }
+                if matches!(key.code, KeyCode::Char('N')) {
+                    return RouteResult::ScrollKey(key);
+                }
                 // Exit scroll mode on q, Escape, or Enter
                 if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter) {
                     self.mode = InputMode::Normal;
                     RouteResult::ExitScroll
                 } else {
                     RouteResult::ScrollKey(key)
+                }
+            }
+            InputMode::Search => {
+                match key.code {
+                    KeyCode::Enter => {
+                        self.mode = InputMode::Scroll;
+                        RouteResult::ExecuteSearch
+                    }
+                    KeyCode::Esc => {
+                        self.mode = InputMode::Scroll;
+                        RouteResult::CancelSearch
+                    }
+                    _ => RouteResult::SearchInput(key),
                 }
             }
         }
@@ -258,5 +292,71 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(router.route_key(key), RouteResult::ExitScroll);
+    }
+
+    #[test]
+    fn scroll_mode_enters_forward_search() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert_eq!(router.route_key(key), RouteResult::EnterSearch { forward: true });
+    }
+
+    #[test]
+    fn scroll_mode_enters_backward_search() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+
+        let key = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(router.route_key(key), RouteResult::EnterSearch { forward: false });
+    }
+
+    #[test]
+    fn search_mode_captures_input() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+        router.route_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+
+        let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
+        assert_eq!(router.route_key(key), RouteResult::SearchInput(key));
+    }
+
+    #[test]
+    fn search_mode_executes_on_enter() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+        router.route_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(router.route_key(key), RouteResult::ExecuteSearch);
+    }
+
+    #[test]
+    fn search_mode_cancels_on_escape() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+        router.route_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(router.route_key(key), RouteResult::CancelSearch);
+    }
+
+    #[test]
+    fn scroll_mode_handles_n_for_next_match() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        assert_eq!(router.route_key(key), RouteResult::ScrollKey(key));
+    }
+
+    #[test]
+    fn scroll_mode_handles_shift_n_for_prev_match() {
+        let mut router = InputRouter::new();
+        router.enter_scroll_mode();
+
+        let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT);
+        assert_eq!(router.route_key(key), RouteResult::ScrollKey(key));
     }
 }

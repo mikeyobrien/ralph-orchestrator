@@ -30,6 +30,10 @@ pub struct TuiState {
     pub loop_mode: LoopMode,
     /// Whether in scroll mode.
     pub in_scroll_mode: bool,
+    /// Current search query (if in search input mode).
+    pub search_query: String,
+    /// Search direction (true = forward, false = backward).
+    pub search_forward: bool,
 }
 
 impl TuiState {
@@ -45,6 +49,8 @@ impl TuiState {
             show_help: false,
             loop_mode: LoopMode::Auto,
             in_scroll_mode: false,
+            search_query: String::new(),
+            search_forward: true,
         }
     }
 

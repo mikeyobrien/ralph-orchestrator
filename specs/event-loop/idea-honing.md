@@ -280,7 +280,153 @@ Hat completes iteration
 
 **Bonus:** This unifies event publishing with event history — same file, same format, single source of truth.
 
+**Additional resilience: `default_publishes`**
+
+Each hat can specify a default event to publish if no explicit event is written:
+
+```yaml
+hats:
+  builder:
+    triggers: ["build.task"]
+    publishes: ["build.done", "build.blocked"]
+    default_publishes: "build.done"  # ← If no event written, assume this
+```
+
+**Routing flow with default:**
+```
+Hat completes iteration
+    │
+    ├─► Explicit event in .agent/events.jsonl? → Route it
+    │
+    ├─► No explicit event + hat has default_publishes? → Route default
+    │
+    └─► No explicit event + no default? → Falls through to Ralph
+```
+
+This means a well-configured hat can never accidentally stall the loop — worst case, the default event fires.
+
 ---
 
 ## Q9: How do presets change under this model?
+
+**Answer:**
+
+Break cleanly from the old `planner` pattern. Ralph is implicit.
+
+**New preset structure:**
+```yaml
+# Ralph is implicit — always present, can't be configured away
+
+hats:
+  builder:
+    triggers: ["build.task"]
+    publishes: ["build.done", "build.blocked"]
+    default_publishes: "build.done"
+    instructions: "..."
+```
+
+**Suggestions for other preset improvements:**
+
+| Current Pattern | Problem | Proposed Change |
+|-----------------|---------|-----------------|
+| **Per-preset completion promises** (`RESEARCH_COMPLETE`, `DEBUG_COMPLETE`, etc.) | Inconsistent, confusing | Standardize on `LOOP_COMPLETE` — Ralph always uses the same signal |
+| **Event naming inconsistency** (`build.task` vs `hypothesis.test` vs `research.finding`) | Hard to remember conventions | Standardize: `<domain>.<action>` (e.g., `build.start`, `review.request`) |
+| **Duplicated hat instructions** | Builder instructions copy-pasted across presets | Base hats library — presets reference, don't redefine |
+| **Hardcoded backpressure** (`cargo check && cargo test`) | Rust-specific, not portable | Configurable `backpressure_commands` in config |
+| **Varying scratchpad formats** | Each preset invents its own | Ralph owns scratchpad format — hats read/update, don't reinvent |
+
+**Base hats library concept:**
+```yaml
+# presets/feature.yml
+hats:
+  builder: "@base/builder"      # ← Reference base definition
+  reviewer: "@base/reviewer"    # ← Reference base definition
+
+  custom_hat:                   # ← Preset-specific hat
+    triggers: ["custom.event"]
+    ...
+```
+
+---
+
+## Q10: What other improvements should we consider?
+
+**Answer: KISS**
+
+| Question | Answer |
+|----------|--------|
+| Iteration model | One iteration = one agent invocation. No change. |
+| Cost/context for Ralph | Doesn't matter for now. Keep it simple. |
+| Parallel hats | Sequential. KISS. |
+| Hat lifecycle | Fixed at startup. KISS. |
+
+**Philosophy check:** ✅ Aligned with Ralph Wiggum — don't over-engineer, trust iteration.
+
+---
+
+## Summary of Requirements
+
+### Core Architecture Change
+
+**From:** Ralph wears different hats (planner, builder can be overwritten)
+**To:** Hatless Ralph is the constant sovereign; hats are his delegatable team
+
+### Hatless Ralph (The Ruler)
+
+| Property | Value |
+|----------|-------|
+| Always present | ✅ Can never be replaced or configured away |
+| Owns scratchpad | ✅ Creates, maintains `.agent/scratchpad.md` |
+| Owns completion | ✅ Only Ralph outputs `LOOP_COMPLETE` |
+| Universal fallback | ✅ Catches all unhandled events |
+| Runs when | No hat claims the event (chain ends) |
+| No veto power | ❌ Direct hat-to-hat pub/sub bypasses Ralph |
+
+### Event System Changes
+
+| Change | Details |
+|--------|---------|
+| Publishing mechanism | JSONL on disk (`.agent/events.jsonl`) instead of XML parsing |
+| Default events | `default_publishes` per hat — fallback if no explicit event |
+| Routing priority | 1) Explicit event → 2) Default event → 3) Ralph fallback |
+
+### Preset Changes
+
+| Change | Details |
+|--------|---------|
+| No more `planner` hat | Ralph IS the planner; break cleanly |
+| Base hats library | `"@base/builder"` references instead of duplication |
+| Single completion promise | Always `LOOP_COMPLETE` |
+| Standardized event naming | `<domain>.<action>` convention |
+
+### KISS Constraints
+
+- One iteration = one agent invocation
+- Sequential hats only (no parallel delegation)
+- Hats fixed at startup
+- Don't optimize Ralph's model/cost yet
+
+---
+
+## Research Complete ✅
+
+See `research/current-implementation.md` for detailed findings.
+
+**Key Implementation Insights:**
+
+| Component | Current State | Change Needed |
+|-----------|---------------|---------------|
+| **Event Loop** | Routes to hats, fallback to planner hat | Fallback to hatless Ralph instead |
+| **Hat Registry** | Custom hats replace defaults entirely | Ralph is separate, always present |
+| **Event Parser** | Parses XML from output text | Replace with JSONL file reading |
+| **Instructions** | `build_coordinator()` for planner hat | New `build_hatless_ralph()` method |
+| **Config** | `HatConfig` has triggers/publishes | Add `default_publishes` field |
+
+**Existing Infrastructure We Can Reuse:**
+- Preflight validation (`preflight_check()`)
+- Event routing logic (just change fallback)
+- Core behaviors injection
+- Topic pattern matching
+
+---
 

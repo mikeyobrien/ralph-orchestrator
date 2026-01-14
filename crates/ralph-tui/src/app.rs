@@ -89,7 +89,7 @@ impl App {
 
                         f.render_widget(header::render(&state), chunks[0]);
                         f.render_widget(tui_term::widget::PseudoTerminal::new(widget.parser().screen()), chunks[1]);
-                        f.render_widget(footer::render(&state), chunks[2]);
+                        f.render_widget(footer::render(&state, &self.scroll_manager), chunks[2]);
 
                         if state.show_help {
                             help::render(f, f.area());
@@ -149,11 +149,51 @@ impl App {
                                         }
                                     }
                                     RouteResult::ScrollKey(key) => {
-                                        self.scroll_manager.handle_key(key);
+                                        // Handle n/N for search navigation
+                                        match key.code {
+                                            KeyCode::Char('n') => self.scroll_manager.next_match(),
+                                            KeyCode::Char('N') => self.scroll_manager.prev_match(),
+                                            _ => self.scroll_manager.handle_key(key),
+                                        }
                                     }
                                     RouteResult::ExitScroll => {
                                         self.scroll_manager.reset();
+                                        self.scroll_manager.clear_search();
                                         self.state.lock().unwrap().in_scroll_mode = false;
+                                    }
+                                    RouteResult::EnterSearch { forward } => {
+                                        let mut state = self.state.lock().unwrap();
+                                        state.search_query.clear();
+                                        state.search_forward = forward;
+                                    }
+                                    RouteResult::SearchInput(key) => {
+                                        if let KeyCode::Char(c) = key.code {
+                                            self.state.lock().unwrap().search_query.push(c);
+                                        } else if matches!(key.code, KeyCode::Backspace) {
+                                            self.state.lock().unwrap().search_query.pop();
+                                        }
+                                    }
+                                    RouteResult::ExecuteSearch => {
+                                        let state = self.state.lock().unwrap();
+                                        let query = state.search_query.clone();
+                                        let direction = if state.search_forward {
+                                            crate::scroll::SearchDirection::Forward
+                                        } else {
+                                            crate::scroll::SearchDirection::Backward
+                                        };
+                                        drop(state);
+
+                                        // Get terminal contents
+                                        let widget = self.terminal_widget.lock().unwrap();
+                                        let screen = widget.parser().screen();
+                                        let (_rows, cols) = screen.size();
+                                        let lines: Vec<String> = screen.rows(0, cols).collect();
+                                        drop(widget);
+
+                                        self.scroll_manager.start_search(query, direction, &lines);
+                                    }
+                                    RouteResult::CancelSearch => {
+                                        self.state.lock().unwrap().search_query.clear();
                                     }
                                     RouteResult::Consumed => {
                                         // Prefix consumed, wait for command
