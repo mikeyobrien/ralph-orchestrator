@@ -125,6 +125,16 @@ Executes Ralph Orchestrator in the test workspace and records the session.
 | `env` | object | no | Environment variables to inject |
 | `mock_responses` | array | no | Scripted responses for mock backend (required if backend=mock) |
 
+**Mock Response Object** (for `mock_responses` array):
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `hat` | string | no | Only respond when this hat is active |
+| `trigger_pattern` | string | no | Only respond when prompt matches regex |
+| `output` | string | yes | The mock agent output |
+| `exit_code` | int | no | Process exit code (default: 0) |
+| `delay_ms` | int | no | Artificial delay before response |
+
 **Returns:**
 
 ```json
@@ -134,15 +144,27 @@ Executes Ralph Orchestrator in the test workspace and records the session.
   "iterations": 3,
   "elapsed_secs": 45.2,
   "session_file": "/tmp/ralph-test-abc123/session.jsonl",
-  "events_count": 12
+  "events_count": 12,
+  "stdout": "Ralph completed successfully...",
+  "stderr": "",
+  "mock_responses_consumed": 3,
+  "mock_responses_remaining": 0
 }
 ```
 
 **Behavior:**
 - Runs `ralph` binary with workspace as cwd
 - Records session to `session.jsonl` in workspace
-- Captures stdout/stderr
+- Captures stdout/stderr (returned in result)
+- For mock backend: responses consumed in order (first match wins if trigger patterns used)
 - Returns structured result for assertions
+
+**Mock Backend Behavior:**
+1. **Sequential Consumption:** Responses consumed in order per invocation
+2. **Hat Awareness:** If `hat` specified, response only used when that hat is active
+3. **Pattern Matching:** If `trigger_pattern` specified, response only used when prompt matches
+4. **Exhaustion Handling:** If responses exhausted, returns error with consumed count
+5. **Timing Simulation:** `delay_ms` enables testing timeout behavior
 
 ---
 
@@ -173,12 +195,12 @@ Validates conditions against the test run results and recorded session.
 | `scratchpad_contains` | `pattern: string` | Assert scratchpad final state contains pattern |
 | `no_event` | `topic: string` | Assert event topic never occurred |
 | `duration` | `max_secs: int` | Assert total runtime within limit |
-| `trace_span_exists` | `name: string, attributes?: object` | Assert trace contains span with attributes |
-| `trace_span_sequence` | `names: string[]` | Assert spans occurred in order (trace-based testing) |
+| `hat_sequence` | `hats: string[]` | Assert hats were activated in order (from `_meta.iteration` events) |
 | `hat_transition` | `from: string, to: string` | Assert hat changed from one to another |
-| `tool_called` | `tool: string, args_pattern?: string` | Assert agent called specific tool |
-| `snapshot_matches` | `snapshot_id: string, redactions?: object` | Assert current state matches snapshot (with redactions) |
-| `cost_within` | `max_dollars: float` | Assert cumulative cost within budget |
+| `iteration_count` | `hat: string, min?: int, max?: int` | Assert how many times a specific hat ran |
+| `stdout_contains` | `pattern: string` | Assert stdout contains regex pattern |
+| `stderr_contains` | `pattern: string` | Assert stderr contains regex pattern |
+| `cost_within` | `max_dollars: float` | Assert cumulative cost within budget (live tests only) |
 
 **Returns:**
 
@@ -284,44 +306,11 @@ Removes test workspace and associated resources.
 
 ---
 
-### 6. `test_mock_backend`
+### 6. `test_snapshot` *(Optional - defer to v2)*
 
-Configures a mock backend for deterministic testing without real LLM calls.
+> **Note:** Snapshot functionality can be achieved with `git diff` in the workspace. This tool is specified for convenience but may be deferred.
 
-**Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `workspace_id` | string | yes | Target workspace |
-| `responses` | array | yes | Ordered list of mock response objects |
-
-**Response Object:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `hat` | string | no | Only respond when this hat is active |
-| `trigger_pattern` | string | no | Only respond when prompt matches pattern |
-| `output` | string | yes | The mock agent output |
-| `exit_code` | int | no | Process exit code (default: 0) |
-| `delay_ms` | int | no | Artificial delay before response |
-
-**Returns:**
-
-```json
-{
-  "configured": true,
-  "response_count": 5
-}
-```
-
-**Behavior:**
-- Responses are consumed in order (first match wins if trigger patterns used)
-- Unconsumed responses after run indicate test may need adjustment
-- Supports simulating failures via exit_code
-
----
-
-### 7. `test_snapshot`
 
 Captures current workspace state for comparison or archival.
 
@@ -454,7 +443,9 @@ Replays a recorded cassette for deterministic test execution.
 
 ### 11. `test_evaluate`
 
-Uses LLM-as-judge to evaluate subjective criteria with rubrics.
+Uses LLM-as-judge to evaluate subjective criteria with rubrics. **Implemented via meta preset** - runs Ralph with a "judge" hat that evaluates the test artifacts.
+
+**Implementation:** This tool spawns a Ralph run with a judge-specific preset/hat. The judge agent reads the target artifact (scratchpad, file, session) and scores against the rubric. This reuses existing backend infrastructure - no separate LLM API setup required.
 
 **Parameters:**
 
@@ -462,7 +453,8 @@ Uses LLM-as-judge to evaluate subjective criteria with rubrics.
 |------|------|----------|-------------|
 | `workspace_id` | string | yes | Target workspace |
 | `evaluations` | array | yes | List of evaluation criteria (see below) |
-| `judge_model` | string | no | Model to use as judge (default: different from test backend) |
+| `judge_preset` | string | no | Meta preset to use for judging (default: `judge`) |
+| `judge_backend` | string | no | Backend for judge runs (default: same as test, or `haiku` for cost efficiency) |
 | `chain_of_thought` | boolean | no | Require reasoning before score (default: true) |
 
 **Evaluation Object:**

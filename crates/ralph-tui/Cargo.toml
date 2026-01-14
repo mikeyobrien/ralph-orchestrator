@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 ralph-core.workspace = true
+ralph-proto.workspace = true
 
 tokio.workspace = true
 ratatui.workspace = true

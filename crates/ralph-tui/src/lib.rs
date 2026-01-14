@@ -6,3 +6,7 @@
 //! - Interactive terminal UI for monitoring agent orchestration
 //! - Real-time display of agent messages and state
 //! - Keyboard navigation and input handling
+
+mod state;
+
+pub use state::TuiState;

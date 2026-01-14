@@ -829,6 +829,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "ralph-core",
+ "ralph-proto",
  "ratatui",
  "tokio",
  "tracing",
