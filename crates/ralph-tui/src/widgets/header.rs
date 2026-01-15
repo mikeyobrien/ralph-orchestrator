@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn header_shows_hat() {
         let mut state = TuiState::new();
-        state.pending_hat = Some((HatId::new("builder"), "🔨 Builder".to_string()));
+        state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
 
         let text = render_to_string(&state);
         assert!(text.contains("Builder"), "should show hat, got: {}", text);
@@ -173,7 +173,7 @@ mod tests {
         state.iteration = 2;
         state.max_iterations = Some(10);
         state.loop_started = Some(std::time::Instant::now() - Duration::from_secs(272));
-        state.pending_hat = Some((HatId::new("builder"), "🔨 Builder".to_string()));
+        state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
         state.idle_timeout_remaining = Some(Duration::from_secs(25));
         state.loop_mode = LoopMode::Auto;
         state.in_scroll_mode = true;

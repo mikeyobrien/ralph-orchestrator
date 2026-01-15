@@ -75,25 +75,25 @@ impl TuiState {
             "task.start" => {
                 *self = Self::new();
                 self.loop_started = Some(now);
-                self.pending_hat = Some((HatId::new("planner"), "📋 Planner".to_string()));
+                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
                 self.last_event = Some(topic.to_string());
                 self.last_event_at = Some(now);
             }
             "task.resume" => {
                 self.loop_started = Some(now);
-                self.pending_hat = Some((HatId::new("planner"), "📋 Planner".to_string()));
+                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
             }
             "build.task" => {
-                self.pending_hat = Some((HatId::new("builder"), "🔨 Builder".to_string()));
+                self.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
                 self.iteration_started = Some(now);
             }
             "build.done" => {
-                self.pending_hat = Some((HatId::new("planner"), "📋 Planner".to_string()));
+                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
                 self.prev_iteration = self.iteration;
                 self.iteration += 1;
             }
             "build.blocked" => {
-                self.pending_hat = Some((HatId::new("planner"), "📋 Planner".to_string()));
+                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
             }
             "loop.terminate" => {
                 self.pending_hat = None;
