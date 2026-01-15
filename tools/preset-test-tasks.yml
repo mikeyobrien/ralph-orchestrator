@@ -2,6 +2,16 @@
 # Maps each preset to a canonical test task for benchmarking
 
 test_tasks:
+  hatless-baseline: |
+    Build a mini CLI calculator in Rust with the following requirements:
+    1. Create the module at `.eval-sandbox/baseline/calculator.rs`
+    2. Implement: add, subtract, multiply, divide operations
+    3. Handle division by zero gracefully (return Result type)
+    4. Write comprehensive tests for all operations including edge cases
+    5. Verify all tests pass before completing
+
+    Work iteratively: plan, implement core ops, add error handling, write tests, verify.
+
   tdd-red-green: |
     Using TDD, implement an `is_palindrome(s: &str) -> bool` function.
     Create the test file at `.eval-sandbox/tdd/palindrome_test.rs`.
@@ -78,6 +88,7 @@ test_tasks:
 
 # Complexity ratings for time budgeting
 complexity:
+  hatless-baseline: medium
   tdd-red-green: simple
   adversarial-review: medium
   socratic-learning: simple
@@ -93,6 +104,7 @@ complexity:
 
 # Expected iteration ranges
 expected_iterations:
+  hatless-baseline: [3, 5]
   tdd-red-green: [3, 6]
   adversarial-review: [3, 5]
   socratic-learning: [3, 9]
@@ -107,7 +119,11 @@ expected_iterations:
   migration-safety: [4, 5]
 
 # Timeout per preset (seconds)
+# Based on ~45-60s per iteration:
+#   simple (3-6 iters): 6 × 60s = 360s → use 300s
+#   medium (4-8 iters): 8 × 60s = 480s → use 600s
+#   complex (4-8 iters): 8 × 75s = 600s → use 900s
 timeouts:
-  simple: 120
-  medium: 300
-  complex: 600
+  simple: 300
+  medium: 600
+  complex: 900

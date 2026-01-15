@@ -9,7 +9,12 @@
 
 set -euo pipefail
 
-# Colors
+# Resolve project root from script location (works regardless of cwd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Colors (defined early for use in trap)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -17,15 +22,24 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Handle Ctrl+C gracefully - kill child processes and exit
+cleanup() {
+    echo -e "\n${YELLOW}Interrupted - cleaning up...${NC}"
+    # Kill entire process group
+    kill 0 2>/dev/null || true
+    exit 130
+}
+trap cleanup SIGINT SIGTERM
+
 BACKEND=${1:-claude}
 SUITE_ID=$(date +%Y%m%d_%H%M%S)
 RESULTS_DIR=".eval/results/${SUITE_ID}"
 mkdir -p "$RESULTS_DIR"
 
-# All presets to evaluate
-PRESETS="tdd-red-green adversarial-review socratic-learning spec-driven mob-programming scientific-method code-archaeology performance-optimization api-design documentation-first incident-response migration-safety"
+# All presets to evaluate (hatless-baseline runs first as control)
+PRESETS="hatless-baseline tdd-red-green adversarial-review socratic-learning spec-driven mob-programming scientific-method code-archaeology performance-optimization api-design documentation-first incident-response migration-safety"
 
-TOTAL=12
+TOTAL=13
 PASSED=0
 FAILED=0
 PARTIAL=0

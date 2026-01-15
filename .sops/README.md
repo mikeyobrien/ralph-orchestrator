@@ -32,6 +32,10 @@ Use for breaking down requirements into structured tasks:
 - Generates `.code-task.md` files with acceptance criteria
 - Supports both single tasks and multi-step PDD workflows
 
+## Acknowledgements
+
+These SOPs are adapted from the excellent [strands-agents/agent-sop](https://github.com/strands-agents/agent-sop) repository. Thank you to the Strands Agents team for open-sourcing these workflow definitions.
+
 ## License
 
 See the [original repository](https://github.com/strands-agents/agent-sop) for license information.

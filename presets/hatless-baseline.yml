@@ -1,0 +1,27 @@
+# Hatless Baseline Preset
+#
+# A control preset with NO hats - tests core Ralph loop without hat delegation.
+# Use this as a baseline to distinguish core loop issues from hat-specific bugs.
+#
+# Behavior: Ralph works directly without delegating to specialized hats.
+# This validates: event loop, scratchpad, completion detection, basic tool use.
+#
+# Usage:
+#   ralph start --config presets/hatless-baseline.yml --prompt "Implement a fibonacci function"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 20
+  max_runtime_seconds: 900
+  starting_event: "task.start"
+
+cli:
+  backend: "claude"
+
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+
+# NO HATS - Ralph works directly without delegation
+# This is intentional for baseline testing

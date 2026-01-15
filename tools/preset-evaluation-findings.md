@@ -556,10 +556,10 @@ Clean preset with proper `task.start` entry point.
 | BUG-001 | tools/evaluate-preset.sh | CLI argument mismatch | BLOCKER | ✅ FIXED |
 | BUG-002 | presets/*.yml | default_publishes array vs string | HIGH | ✅ FIXED |
 | BUG-003 | tools/evaluate-preset.sh | Idle timeout during evaluation | MEDIUM | ✅ RESOLVED |
-| BUG-004 | presets/docs.yml | Duplicate `hats:` key on line 23 | BLOCKER | NEW |
-| BUG-005 | presets/spec-driven.yml | `spec.violated` orphaned event | MEDIUM | NEW |
-| BUG-006 | presets/incident-response.yml | `mitigation.failed` orphaned event | MEDIUM | NEW |
-| BUG-007 | presets/debug.yml | `hypothesis.confirmed` and `fix.failed` orphaned | MEDIUM | NEW |
+| BUG-004 | presets/docs.yml | Duplicate `hats:` key on line 23 | BLOCKER | ✅ FIXED (dbf3c3f1) |
+| BUG-005 | presets/spec-driven.yml | `spec.violated` orphaned event | MEDIUM | ✅ FIXED (dbf3c3f1) |
+| BUG-006 | presets/incident-response.yml | `mitigation.failed` orphaned event | MEDIUM | ✅ FIXED (dbf3c3f1) |
+| BUG-007 | presets/debug.yml | `hypothesis.confirmed` and `fix.failed` orphaned | MEDIUM | ✅ FIXED (dbf3c3f1) |
 
 ---
 

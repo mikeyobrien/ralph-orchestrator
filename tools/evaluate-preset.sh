@@ -9,12 +9,33 @@
 
 set -euo pipefail
 
-# Colors for output
+# Resolve project root from script location (works regardless of cwd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Colors for output (defined early for use in trap)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Handle Ctrl+C gracefully - kill child processes and exit
+cleanup() {
+    echo -e "\n${YELLOW}Interrupted - cleaning up...${NC}"
+    # Restore original agent state if backup exists
+    if [[ -n "${AGENT_BACKUP_DIR:-}" && -d "$AGENT_BACKUP_DIR" ]]; then
+        echo -e "${BLUE}Restoring original .agent/ directory...${NC}"
+        rm -rf .agent
+        cp -r "$AGENT_BACKUP_DIR" .agent
+        echo -e "${GREEN}Original .agent/ state restored (backup preserved in $AGENT_BACKUP_DIR)${NC}"
+    fi
+    # Kill entire process group
+    kill 0 2>/dev/null || true
+    exit 130
+}
+trap cleanup SIGINT SIGTERM
 
 PRESET=${1:-}
 BACKEND=${2:-claude}
@@ -38,7 +59,11 @@ fi
 # Setup directories
 LOG_DIR=".eval/logs/${PRESET}/${TIMESTAMP}"
 SANDBOX_DIR=".eval-sandbox/${PRESET}"
-mkdir -p "$LOG_DIR" "$SANDBOX_DIR"
+mkdir -p "$LOG_DIR"
+
+# Clean sandbox for fresh evaluation (prevents stale state from previous runs)
+rm -rf "$SANDBOX_DIR"
+mkdir -p "$SANDBOX_DIR"
 
 # Create 'latest' symlink
 ln -sfn "$TIMESTAMP" ".eval/logs/${PRESET}/latest"
@@ -82,6 +107,32 @@ cat > "$LOG_DIR/environment.json" << EOF
   "hostname": "$(hostname)"
 }
 EOF
+
+# Backup and reset agent state for clean evaluation
+AGENT_BACKUP_DIR="$LOG_DIR/agent-backup"
+if [[ -d ".agent" ]]; then
+    echo -e "${BLUE}Backing up existing .agent/ directory...${NC}"
+    cp -r .agent "$AGENT_BACKUP_DIR"
+fi
+
+# Create fresh agent state for evaluation
+rm -rf .agent
+mkdir -p .agent
+cat > .agent/scratchpad.md << 'SCRATCHPAD_EOF'
+# Scratchpad — Preset Evaluation
+
+## Current Status
+**Mode**: Preset Evaluation
+**Task**: See prompt below
+
+## Active Task
+Follow the instructions in the prompt. This is a fresh evaluation context.
+SCRATCHPAD_EOF
+
+# Create empty JSONL file (EventReader expects line-by-line JSON, not array)
+touch .agent/events.jsonl
+echo -e "${GREEN}Created fresh .agent/ state for evaluation${NC}"
+echo ""
 
 # Run evaluation
 echo -e "${BLUE}Starting evaluation...${NC}"
@@ -136,7 +187,8 @@ fi
 
 # Run ralph with the merged config
 set +e  # Don't exit on error - we want to capture failures
-timeout "$TIMEOUT" \
+# Use --foreground to allow Ctrl+C to propagate to child processes
+timeout --foreground "$TIMEOUT" \
     cargo run --release --bin ralph -- run \
         -c "$TEMP_CONFIG" \
         -p "$TEST_TASK" \
@@ -212,6 +264,14 @@ EOF
     echo -e "  Hats:       ${HATS}"
     echo -e "  Events:     ${EVENTS}"
     echo -e "  Completed:  ${COMPLETED}"
+fi
+
+# Restore original agent state if backup exists
+if [[ -d "$AGENT_BACKUP_DIR" ]]; then
+    echo -e "${BLUE}Restoring original .agent/ directory...${NC}"
+    rm -rf .agent
+    cp -r "$AGENT_BACKUP_DIR" .agent
+    echo -e "${GREEN}Original .agent/ state restored (backup preserved in $AGENT_BACKUP_DIR)${NC}"
 fi
 
 echo ""

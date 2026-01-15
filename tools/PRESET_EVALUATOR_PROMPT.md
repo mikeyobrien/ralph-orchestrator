@@ -116,6 +116,8 @@ You are done when:
 
 Output `EVALUATION_COMPLETE` when finished.
 
+IMPORTANT: Fix any blocking issues to complete the evaluation
+
 ## Tips
 
 - If a preset hangs, note the last event published
