@@ -995,9 +995,15 @@ async fn run_loop_impl(config: RalphConfig, color_mode: ColorMode, resume: bool,
         warn!("Failed to log start event: {}", e);
     }
 
-    // Create backend
-    let backend = CliBackend::from_config(&config.cli)
-        .map_err(|e| anyhow::Error::new(e))?;
+    // Create backend - use TUI mode for Claude when TUI is enabled
+    // This switches from `-p` with stream-json to positional arg without stream-json,
+    // allowing Claude's native TUI to render properly.
+    let backend = if enable_tui && config.cli.backend == "claude" {
+        CliBackend::claude_tui()
+    } else {
+        CliBackend::from_config(&config.cli)
+            .map_err(|e| anyhow::Error::new(e))?
+    };
 
     // Create PTY executor if using interactive mode
     let mut pty_executor = if use_pty {

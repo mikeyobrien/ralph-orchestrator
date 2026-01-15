@@ -89,6 +89,9 @@ impl App {
 
         let mut tick = interval(Duration::from_millis(100));
 
+        // Track previous terminal size to detect changes
+        let mut last_terminal_size: Option<(u16, u16)> = None;
+
         loop {
             tokio::select! {
                 _ = tick.tick() => {
@@ -104,18 +107,35 @@ impl App {
                         }
                     }
 
+                    // Compute layout to get terminal area dimensions
+                    let frame_size = terminal.size()?;
+                    let frame_area = ratatui::layout::Rect::new(0, 0, frame_size.width, frame_size.height);
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(0),
+                            Constraint::Length(3),
+                        ])
+                        .split(frame_area);
+
+                    let terminal_area = chunks[1];
+                    let new_size = (terminal_area.height, terminal_area.width);
+
+                    // Resize terminal widget and notify PTY if size changed
+                    if last_terminal_size != Some(new_size) {
+                        last_terminal_size = Some(new_size);
+                        {
+                            let mut widget = self.terminal_widget.lock().unwrap();
+                            widget.resize(new_size.0, new_size.1);
+                        }
+                        // Notify PTY of resize (cols, rows order per ControlCommand::Resize)
+                        let _ = self.control_tx.send(ralph_adapters::pty_handle::ControlCommand::Resize(new_size.1, new_size.0));
+                    }
+
                     let state = self.state.lock().unwrap();
                     let widget = self.terminal_widget.lock().unwrap();
                     terminal.draw(|f| {
-                        let chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([
-                                Constraint::Length(3),
-                                Constraint::Min(0),
-                                Constraint::Length(3),
-                            ])
-                            .split(f.area());
-
                         f.render_widget(header::render(&state), chunks[0]);
                         f.render_widget(tui_term::widget::PseudoTerminal::new(widget.parser().screen()), chunks[1]);
                         f.render_widget(footer::render(&state, &self.scroll_manager), chunks[2]);

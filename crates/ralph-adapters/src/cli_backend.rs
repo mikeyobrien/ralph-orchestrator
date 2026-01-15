@@ -94,6 +94,26 @@ impl CliBackend {
         }
     }
 
+    /// Creates the Claude TUI backend for interactive mode.
+    ///
+    /// Runs Claude in full interactive mode (no -p flag), allowing
+    /// Claude's native TUI to render. The prompt is passed as a
+    /// positional argument.
+    ///
+    /// Unlike the standard `claude()` backend:
+    /// - No `-p` flag (enters interactive TUI mode)
+    /// - No `--output-format stream-json` (raw terminal output)
+    /// - Prompt is a positional argument, not a flag value
+    pub fn claude_tui() -> Self {
+        Self {
+            command: "claude".to_string(),
+            args: vec!["--dangerously-skip-permissions".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // No -p flag - prompt is positional
+            output_format: OutputFormat::Text, // Not stream-json
+        }
+    }
+
     /// Creates the Kiro backend.
     ///
     /// Uses kiro-cli in headless mode with all tools trusted.
@@ -310,6 +330,20 @@ mod tests {
         ]);
         assert!(stdin.is_none()); // Uses -p flag, not stdin
         assert_eq!(backend.output_format, OutputFormat::StreamJson);
+    }
+
+    #[test]
+    fn test_claude_tui_backend() {
+        let backend = CliBackend::claude_tui();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "claude");
+        // Should have --dangerously-skip-permissions and prompt as positional arg
+        // No -p flag, no --output-format, no --verbose
+        assert_eq!(args, vec!["--dangerously-skip-permissions", "test prompt"]);
+        assert!(stdin.is_none()); // Uses positional arg, not stdin
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
     }
 
     #[test]

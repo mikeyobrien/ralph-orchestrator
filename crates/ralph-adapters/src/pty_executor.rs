@@ -740,6 +740,9 @@ impl PtyExecutor {
         let mut writer = pair.master.take_writer()
             .map_err(|e| io::Error::other(e.to_string()))?;
 
+        // Keep master for resize operations
+        let master = pair.master;
+
         // Drop the slave to signal EOF when master closes
         drop(pair.slave);
 
@@ -1024,7 +1027,15 @@ impl PtyExecutor {
                             }
                             ControlCommand::Resize(cols, rows) => {
                                 debug!(cols, rows, "Control command: Resize");
-                                // TODO: implement PTY resize
+                                // Resize the PTY to match TUI dimensions
+                                if let Err(e) = master.resize(PtySize {
+                                    rows,
+                                    cols,
+                                    pixel_width: 0,
+                                    pixel_height: 0,
+                                }) {
+                                    warn!("Failed to resize PTY: {}", e);
+                                }
                             }
                             ControlCommand::Skip | ControlCommand::Abort => {
                                 // These are handled at orchestrator level, not here
