@@ -1127,11 +1127,15 @@ async fn run_loop_impl(config: RalphConfig, color_mode: ColorMode, resume: bool,
 
     // Log startup message with registered hats
     let hat_names: Vec<String> = event_loop.registry().ids().map(|id| id.to_string()).collect();
-    info!(
-        hats = ?hat_names,
-        "I'm Ralph. Got my hats ready: {}. Let's do this.",
-        hat_names.join(", ")
-    );
+    if hat_names.is_empty() {
+        info!("I'm Ralph. Let's do this.");
+    } else {
+        info!(
+            hats = ?hat_names,
+            "I'm Ralph. Got my hats ready: {}. Let's do this.",
+            hat_names.join(", ")
+        );
+    }
 
     // Initialize event logger for debugging
     let mut event_logger = EventLogger::default_path();
@@ -1311,7 +1315,7 @@ async fn run_loop_impl(config: RalphConfig, color_mode: ColorMode, resume: bool,
         // Log hat changes with appropriate messaging
         if last_hat.as_ref() != Some(&hat_id) {
             if hat_id.as_str() == "ralph" {
-                info!("Ralph here. Assessing the situation.");
+                info!("I'm Ralph. Let's do this.");
             } else {
                 info!("Putting on my {} hat.", hat_id);
             }

@@ -1,0 +1,84 @@
+# Ralph Orchestrator Configuration - Default
+# v2 nested format - general purpose configuration
+#
+# Migrated from ralph.yml (v1 format)
+
+# Event loop settings
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 100
+  max_runtime_seconds: 14400           # 4 hours
+  idle_timeout_secs: 1800
+
+# CLI backend settings
+cli:
+  backend: "auto"                      # auto-detect available backend
+  prompt_mode: "arg"
+
+# Agent selection + fallback ordering (used when backend=auto)
+# Valid values: acp, claude, gemini, kiro, qchat
+agent_priority:
+  - claude
+  - kiro
+  - gemini
+  - qchat
+  - acp
+
+# Core behaviors (always injected into prompts)
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+  guardrails:
+    - "Fresh context each iteration - scratchpad is memory"
+    - "Don't assume 'not implemented' - search first"
+    - "Backpressure is law - tests/typecheck/lint must pass"
+
+# Resource limits
+resources:
+  max_tokens: 1000000                  # Maximum total tokens (1M)
+  max_cost: 50.0                       # Maximum cost in USD
+  context_window: 200000               # Context window size in tokens
+  context_threshold: 0.8               # Trigger summarization at 80%
+
+# Features
+archive_prompts: true
+enable_metrics: true
+
+# Telemetry settings
+telemetry:
+  enabled: true
+  output_preview_length: 500           # Max chars for output preview
+
+# Safety settings
+safety:
+  max_prompt_size: 10485760            # Max prompt file size (10MB)
+  allow_unsafe_paths: false
+
+# Adapter-specific configurations
+adapters:
+  claude:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+
+  kiro:
+    enabled: true
+    timeout: 600
+    max_retries: 3
+
+  q:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+
+  gemini:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+
+  acp:
+    enabled: true
+    timeout: 300
+    max_retries: 3
+
+verbose: false

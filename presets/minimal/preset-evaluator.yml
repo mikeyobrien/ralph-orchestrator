@@ -12,7 +12,7 @@ event_loop:
 
 # Use Kiro CLI as the backend
 cli:
-  backend: "claude"
+  backend: "kiro"
   prompt_mode: "arg"
   pty_mode: false
   pty_interactive: false           # Non-interactive for batch evaluation
@@ -50,7 +50,7 @@ hats:
 # Adapter settings
 adapters:
   kiro:
-    timeout: 600                   # 10 min per CLI call
+    timeout: 900                   # 10 min per CLI call
     enabled: true
 
 # Verbose for debugging

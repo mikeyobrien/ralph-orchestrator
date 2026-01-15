@@ -1,4 +1,0 @@
-agent: auto
-max_iterations: 10
-max_runtime: 600
-verbose: false

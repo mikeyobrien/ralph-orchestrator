@@ -1,0 +1,40 @@
+# Builder Preset (Single Hat)
+#
+# Minimal configuration with a single builder hat.
+# No planning phase - just build directly from the prompt.
+#
+# Best for:
+#   - Small, well-defined tasks
+#   - Quick iterations
+#   - Tasks where planning overhead isn't needed
+#
+# Usage:
+#   ralph run -c presets/minimal/builder.yml -p "Fix the login bug"
+
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 50
+  max_runtime_seconds: 7200            # 2 hours
+  idle_timeout_secs: 900
+
+cli:
+  backend: "claude"
+  prompt_mode: "arg"
+
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+  guardrails:
+    - "Fresh context each iteration - scratchpad is memory"
+    - "Don't assume 'not implemented' - search first"
+    - "Backpressure is law - tests/typecheck/lint must pass"
+
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["task.start"]
+    publishes: ["build.done", "build.blocked"]
+    default_publishes: "build.done"
+    # No instructions - derived from pub/sub contract
+
+verbose: false

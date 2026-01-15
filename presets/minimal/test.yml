@@ -1,0 +1,25 @@
+# Ralph Orchestrator Configuration - Test
+# v2 nested format - minimal config for testing
+#
+# Migrated from test_ralph.yml (v1 format)
+
+# Event loop settings
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 10
+  max_runtime_seconds: 600             # 10 minutes
+  idle_timeout_secs: 60
+
+# CLI backend settings
+cli:
+  backend: "auto"
+  prompt_mode: "arg"
+
+# Core behaviors
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+  guardrails:
+    - "Fresh context each iteration - scratchpad is memory"
+
+verbose: false

@@ -1,0 +1,56 @@
+# Ralph Orchestrator Configuration - Codex via ACP
+# v2 nested format
+#
+# Requires:
+# - `codex` installed
+# - `codex-acp` installed (e.g. `npm i -g @zed-industries/codex-acp`)
+# - Auth for Codex (either `codex login` or `OPENAI_API_KEY`/`CODEX_API_KEY`)
+#
+# Migrated from ralph.codex-acp.yml (v1 format)
+
+# Event loop settings
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 100
+  max_runtime_seconds: 14400           # 4 hours
+  idle_timeout_secs: 1800
+
+# CLI backend settings
+cli:
+  backend: "acp"
+  prompt_mode: "arg"
+
+# Agent priority - Prefer Codex first, then fall back
+agent_priority:
+  - acp
+  - claude
+  - gemini
+
+# Core behaviors (always injected into prompts)
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+  guardrails:
+    - "Fresh context each iteration - scratchpad is memory"
+    - "Don't assume 'not implemented' - search first"
+    - "Backpressure is law - tests/typecheck/lint must pass"
+
+# Adapter-specific configurations
+adapters:
+  q:
+    enabled: false
+
+  acp:
+    enabled: true
+    timeout: 300
+    tool_permissions:
+      agent_command: codex-acp
+      agent_args:
+        - -c
+        - model="gpt-5.2"
+        - -c
+        - model_reasoning_effort="high"
+      permission_mode: auto_approve
+      permission_allowlist: []
+
+verbose: false
