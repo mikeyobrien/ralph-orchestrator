@@ -12,7 +12,7 @@ from typing import Dict, Any
 import json
 from datetime import datetime
 
-from .adapters.base import ToolAdapter
+from .adapters.base import ToolAdapter, ToolResponse
 from .adapters.claude import ClaudeAdapter
 from .adapters.qchat import QChatAdapter
 from .adapters.kiro import KiroAdapter
@@ -498,7 +498,8 @@ class RalphOrchestrator:
             loop_detected = False
 
             try:
-                success = await self._aexecute_iteration()
+                response = await self._aexecute_iteration()
+                success = response.success
 
                 if success:
                     iteration_success = True
@@ -520,9 +521,9 @@ class RalphOrchestrator:
                             logger.warning("Breaking loop due to repetitive agent outputs")
                 else:
                     self.metrics.failed_iterations += 1
-                    iteration_error = "Iteration failed"
+                    iteration_error = response.error or "Iteration failed"
                     self.console.print_warning(
-                        f"Iteration {self.metrics.iterations} failed"
+                        f"Iteration {self.metrics.iterations} failed: {iteration_error}"
                     )
                     await self._handle_failure()
 
@@ -588,7 +589,7 @@ class RalphOrchestrator:
         self._print_summary()
     
     
-    def _execute_iteration(self) -> bool:
+    def _execute_iteration(self) -> ToolResponse:
         """Execute a single iteration (sync wrapper)."""
         try:
             loop = asyncio.get_event_loop()
@@ -597,7 +598,7 @@ class RalphOrchestrator:
             # Create new event loop if needed
             return asyncio.run(self._aexecute_iteration())
     
-    async def _aexecute_iteration(self) -> bool:
+    async def _aexecute_iteration(self) -> ToolResponse:
         """Execute a single iteration asynchronously."""
         # Get the current prompt
         prompt = self.context_manager.get_prompt()
@@ -665,7 +666,7 @@ class RalphOrchestrator:
             if any(word in output_lower for word in ['completed', 'finished', 'done', 'committed']):
                 self._update_current_task('completed')
         
-        return response.success
+        return response
     
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count from text."""
