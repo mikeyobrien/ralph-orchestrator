@@ -13,13 +13,16 @@ use std::process::{Command, Stdio};
 use thiserror::Error;
 
 /// Bundled SOP content - embedded at compile time for self-contained binary.
+///
+/// Note: SOPs are copied into crates/ralph-cli/sops/ for crates.io packaging.
+/// The source files live in .claude/skills/ but must be duplicated here because
+/// `include_str!` paths outside the crate directory aren't included when publishing.
 pub mod sops {
     /// PDD (Prompt-Driven Development) SOP for planning sessions.
-    pub const PDD: &str = include_str!("../../../.claude/skills/pdd/SKILL.md");
+    pub const PDD: &str = include_str!("../sops/pdd.md");
 
     /// Code Task Generator SOP for creating code task files.
-    pub const CODE_TASK_GENERATOR: &str =
-        include_str!("../../../.claude/skills/code-task-generator/SKILL.md");
+    pub const CODE_TASK_GENERATOR: &str = include_str!("../sops/code-task-generator.md");
 }
 
 /// Which SOP to run.

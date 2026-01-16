@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Check that embedded files are in sync before other jobs
+  # This catches packaging issues early (before they break cargo install)
+  check-embedded-files:
+    name: Check embedded files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check embedded files are in sync
+        run: ./scripts/sync-embedded-files.sh check
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: check-embedded-files
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    needs: check-embedded-files
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # Verify the crate can be packaged (catches include_str! issues)
+  package-check:
+    name: Package check
+    runs-on: ubuntu-latest
+    needs: [check-embedded-files, test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Check ralph-cli packages correctly
+        run: |
+          # This will fail if include_str! references files outside the crate
+          cargo package -p ralph-cli --allow-dirty --no-verify
+          echo "Package check passed - all embedded files are included"
