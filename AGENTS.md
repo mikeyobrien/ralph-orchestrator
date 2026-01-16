@@ -44,6 +44,16 @@ cargo build
 cargo test
 ```
 
+### Git Hooks Setup
+
+Run this once after cloning to install pre-commit hooks:
+
+```bash
+./scripts/setup-hooks.sh
+```
+
+The pre-commit hook runs `cargo fmt --check` and `cargo clippy` before each commit, catching CI failures early.
+
 ### Smoke Tests (Replay-Based)
 
 Smoke tests use recorded JSONL fixtures instead of live API calls — fast, free, deterministic:
@@ -134,6 +144,39 @@ brew install tmux                       # For live TUI capture
 - ✅ Creating documentation screenshots
 
 See `.claude/skills/tui-validate/SKILL.md` for full documentation.
+
+## PR Demos
+
+Use the `/pr-demo` skill to create animated GIF demos for pull requests. This helps reviewers understand new features without reading code.
+
+### Quick Start
+
+```bash
+# 1. Script your demo (20-30 seconds, show ONE thing)
+# 2. Record with asciinema
+asciinema rec demo.cast --cols 100 --rows 24
+
+# 3. Convert to GIF
+agg demo.cast demo.gif
+
+# 4. Embed in PR
+# ![feature demo](./docs/demos/feature-demo.gif)
+```
+
+### Prerequisites
+
+```bash
+brew install asciinema
+cargo install --git https://github.com/asciinema/agg
+```
+
+### When to Use
+
+- ✅ Adding user-facing CLI features
+- ✅ Demonstrating new commands like `ralph plan`, `ralph task`
+- ✅ Showing workflow improvements
+
+See `.claude/skills/pr-demo/SKILL.md` for full documentation.
 
 ## IMPORTANT
 

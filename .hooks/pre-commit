@@ -1,0 +1,27 @@
+#!/bin/bash
+# Pre-commit hook: Enforce formatting and zero clippy warnings
+# Runs the same checks as CI to catch issues early
+
+set -e
+
+echo "🔍 Checking formatting..."
+if ! cargo fmt --check; then
+    echo ""
+    echo "❌ Formatting check failed!"
+    echo "   Run 'cargo fmt' to fix formatting issues."
+    exit 1
+fi
+echo "✅ Formatting OK"
+
+echo ""
+echo "🔍 Running clippy (warnings = errors)..."
+if ! cargo clippy --all-targets --all-features -- -D warnings 2>&1; then
+    echo ""
+    echo "❌ Clippy check failed!"
+    echo "   Fix the warnings above before committing."
+    exit 1
+fi
+echo "✅ Clippy passed with no warnings!"
+
+echo ""
+echo "🎉 All pre-commit checks passed!"
