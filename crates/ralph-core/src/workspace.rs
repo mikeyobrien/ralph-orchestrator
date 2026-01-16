@@ -480,15 +480,17 @@ impl WorkspaceManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("ralph-bench-") {
-                        // Extract timestamp from directory name
-                        if let Some(ts) = extract_timestamp(name) {
-                            workspaces.push((path, ts));
-                        }
-                    }
-                }
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("ralph-bench-") {
+                continue;
+            }
+            if let Some(ts) = extract_timestamp(name) {
+                workspaces.push((path, ts));
             }
         }
 
@@ -516,19 +518,22 @@ impl WorkspaceManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("ralph-bench-") {
-                        let timestamp = extract_timestamp(name);
-                        let task_name = extract_task_name(name);
-                        workspaces.push(WorkspaceInfo {
-                            path,
-                            task_name,
-                            timestamp,
-                        });
-                    }
-                }
+            if !path.is_dir() {
+                continue;
             }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("ralph-bench-") {
+                continue;
+            }
+            let timestamp = extract_timestamp(name);
+            let task_name = extract_task_name(name);
+            workspaces.push(WorkspaceInfo {
+                path,
+                task_name,
+                timestamp,
+            });
         }
 
         // Sort by timestamp (newest first)
