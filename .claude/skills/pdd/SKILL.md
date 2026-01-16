@@ -209,6 +209,21 @@ Provide a summary of all artifacts created and next steps.
 - You SHOULD highlight any areas that may need further refinement
 - You MUST present this summary to the user in the conversation
 
+### 9. Offer Ralph Integration
+
+After completing the planning process, offer to create a PROMPT.md file for Ralph.
+
+**Constraints:**
+- You MUST ask the user: "Would you like me to create a PROMPT.md for Ralph to implement this?"
+- If the user agrees, You MUST create a minimal PROMPT.md file in the project root containing:
+  - A clear objective statement
+  - Key requirements (bulleted list)
+  - Acceptance criteria
+  - Reference to the detailed design document
+- The PROMPT.md should be concise (under 100 lines) - Ralph will read the detailed design
+- You MUST NOT include the full design content in PROMPT.md - just reference the design file path
+- If the user declines, You SHOULD acknowledge and conclude the session
+
 ## Examples
 
 ### Example Input

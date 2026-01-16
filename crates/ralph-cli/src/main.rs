@@ -8,9 +8,11 @@
 //! - Entry point to the headless orchestration loop
 //! - Event history viewing via `ralph events`
 //! - Project initialization via `ralph init`
+//! - SOP-based planning via `ralph plan` and `ralph task`
 
 mod init;
 mod presets;
+mod sop_runner;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -211,6 +213,12 @@ enum Commands {
 
     /// Emit an event to .agent/events.jsonl with proper JSON formatting
     Emit(EmitArgs),
+
+    /// Start a Prompt-Driven Development planning session
+    Plan(PlanArgs),
+
+    /// Generate code task files from descriptions or plans
+    Task(TaskArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -396,6 +404,38 @@ struct EmitArgs {
     pub file: PathBuf,
 }
 
+/// Arguments for the plan subcommand.
+///
+/// Starts an interactive PDD (Prompt-Driven Development) session.
+/// This is a thin wrapper that spawns the AI backend with the bundled
+/// PDD SOP, bypassing Ralph's event loop entirely.
+#[derive(Parser, Debug)]
+struct PlanArgs {
+    /// The rough idea to develop (optional - SOP will prompt if not provided)
+    #[arg(value_name = "IDEA")]
+    idea: Option<String>,
+
+    /// Backend to use (overrides config and auto-detection)
+    #[arg(short, long, value_name = "BACKEND")]
+    backend: Option<String>,
+}
+
+/// Arguments for the task subcommand.
+///
+/// Starts an interactive code-task-generator session.
+/// This is a thin wrapper that spawns the AI backend with the bundled
+/// code-task-generator SOP, bypassing Ralph's event loop entirely.
+#[derive(Parser, Debug)]
+struct TaskArgs {
+    /// Input: description text or path to PDD plan file
+    #[arg(value_name = "INPUT")]
+    input: Option<String>,
+
+    /// Backend to use (overrides config and auto-detection)
+    #[arg(short, long, value_name = "BACKEND")]
+    backend: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install panic hook to restore terminal state on crash
@@ -417,6 +457,8 @@ async fn main() -> Result<()> {
         Some(Commands::Init(args)) => init_command(cli.color, args),
         Some(Commands::Clean(args)) => clean_command(cli.config, cli.color, args),
         Some(Commands::Emit(args)) => emit_command(cli.color, args),
+        Some(Commands::Plan(args)) => plan_command(cli.config, cli.color, args),
+        Some(Commands::Task(args)) => task_command(cli.config, cli.color, args),
         None => {
             // Default to run with no overrides (backwards compatibility)
             let args = RunArgs {
@@ -960,6 +1002,76 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Starts a Prompt-Driven Development planning session.
+///
+/// This is a thin wrapper that bypasses Ralph's event loop entirely.
+/// It spawns the AI backend with the bundled PDD SOP for interactive planning.
+fn plan_command(config_path: PathBuf, color_mode: ColorMode, args: PlanArgs) -> Result<()> {
+    use sop_runner::{Sop, SopRunConfig, SopRunError};
+
+    let use_colors = color_mode.should_use_colors();
+
+    // Show what we're starting
+    if use_colors {
+        println!(
+            "{}🎯{} Starting {} session...",
+            colors::CYAN,
+            colors::RESET,
+            Sop::Pdd.name()
+        );
+    } else {
+        println!("Starting {} session...", Sop::Pdd.name());
+    }
+
+    let config = SopRunConfig {
+        sop: Sop::Pdd,
+        user_input: args.idea,
+        backend_override: args.backend,
+        config_path: Some(config_path),
+    };
+
+    sop_runner::run_sop(config).map_err(|e| match e {
+        SopRunError::NoBackend(no_backend) => anyhow::Error::new(no_backend),
+        SopRunError::UnknownBackend(name) => anyhow::anyhow!("Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp", name),
+        SopRunError::SpawnError(io_err) => anyhow::anyhow!("Failed to spawn backend: {}", io_err),
+    })
+}
+
+/// Starts a code-task-generator session.
+///
+/// This is a thin wrapper that bypasses Ralph's event loop entirely.
+/// It spawns the AI backend with the bundled code-task-generator SOP.
+fn task_command(config_path: PathBuf, color_mode: ColorMode, args: TaskArgs) -> Result<()> {
+    use sop_runner::{Sop, SopRunConfig, SopRunError};
+
+    let use_colors = color_mode.should_use_colors();
+
+    // Show what we're starting
+    if use_colors {
+        println!(
+            "{}📋{} Starting {} session...",
+            colors::CYAN,
+            colors::RESET,
+            Sop::CodeTaskGenerator.name()
+        );
+    } else {
+        println!("Starting {} session...", Sop::CodeTaskGenerator.name());
+    }
+
+    let config = SopRunConfig {
+        sop: Sop::CodeTaskGenerator,
+        user_input: args.input,
+        backend_override: args.backend,
+        config_path: Some(config_path),
+    };
+
+    sop_runner::run_sop(config).map_err(|e| match e {
+        SopRunError::NoBackend(no_backend) => anyhow::Error::new(no_backend),
+        SopRunError::UnknownBackend(name) => anyhow::anyhow!("Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp", name),
+        SopRunError::SpawnError(io_err) => anyhow::anyhow!("Failed to spawn backend: {}", io_err),
+    })
 }
 
 /// Lists directory contents recursively for dry-run mode.

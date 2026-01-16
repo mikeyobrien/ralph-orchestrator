@@ -112,6 +112,20 @@ Inform user about generated tasks and next steps.
 - For PDD mode: You MUST NOT create any additional log files or summary documents
 - For description mode: You MUST offer to create additional related tasks if the scope seems large
 
+### 7. Offer Ralph Integration
+
+After generating code tasks, offer to create a PROMPT.md file for Ralph.
+
+**Constraints:**
+- You MUST ask the user: "Would you like me to create a PROMPT.md for Ralph to implement these tasks?"
+- If the user agrees, You MUST create a minimal PROMPT.md file containing:
+  - A clear objective statement (what to implement)
+  - Reference to the generated code task files
+  - Suggested execution order
+  - Brief acceptance criteria
+- The PROMPT.md should be concise - Ralph will read the task files for details
+- If the user declines, You SHOULD acknowledge and conclude the session
+
 ## Code Task Format Specification
 
 Each code task file MUST follow this exact structure:
