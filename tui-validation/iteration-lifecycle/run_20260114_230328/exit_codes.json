@@ -1,6 +1,0 @@
-{
-  "0": "Completed - LOOP_COMPLETE detected",
-  "1": "Stopped - ConsecutiveFailures, LoopThrashing, or manual stop",
-  "2": "Limit - MaxIterations, MaxRuntime, or MaxCost exceeded",
-  "130": "Interrupted - SIGINT (128 + 2)"
-}

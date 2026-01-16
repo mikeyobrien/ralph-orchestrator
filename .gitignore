@@ -52,6 +52,7 @@ ralph_metrics_*.json
 htmlcov/
 .pytest_cache/
 .tox/
+tui-validation/
 
 # Documentation
 docs/_build/site/
