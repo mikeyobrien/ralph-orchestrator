@@ -11,7 +11,7 @@ A hat-based multi-agent orchestration framework that keeps AI agents in a loop u
 
 **Alpha Notice:** Ralph Orchestrator is under active development. It works today, but expect rough edges and breaking changes between releases.
 
-v1.0.0 was ralphed into existence with little oversight and guidance. v2.0.0 is a simpler, focused implementation. 
+v1.0.0 was ralphed into existence with little oversight and guidance. v2.0.0 is a simpler, more-structured implementation. Looking for the old version? See [v1.2.3](https://github.com/mikeyobrien/ralph-orchestrator/tree/v1.2.3). 
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ v1.0.0 was ralphed into existence with little oversight and guidance. v2.0.0 is 
 
 ## What is Ralph?
 
-Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — autonomous task completion through continuous AI agent iteration. Unlike simple loops, Ralph v2 introduces **hat-based orchestration**: specialized agent roles (planner, builder, reviewer) that coordinate through events.
+Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — autonomous task completion through continuous AI agent iteration. Unlike simple loops, Ralph v2 introduces **hat-based orchestration**: specialized agent roles that coordinate through events.
 
 > "The orchestrator is a thin coordination layer, not a platform. Agents are smart; let them do the work."
 
@@ -49,12 +49,12 @@ See [AGENTS.md](AGENTS.md) for the full philosophy.
 ## Features
 
 - **Multi-Backend Support** — Works with Claude Code, Kiro, Gemini CLI, Codex, and Amp
-- **Hat System** — Specialized agent personas (planner, builder, reviewer) with distinct behaviors
+- **Hat System** — Specialized agent personas with distinct behaviors
 - **Event-Driven Coordination** — Hats communicate through typed events with glob pattern matching
 - **Backpressure Enforcement** — Gates that reject incomplete work (tests, lint, typecheck)
 - **Presets Library** — 20+ pre-configured workflows for common development patterns
 - **Interactive TUI** — Real-time terminal UI for monitoring agent activity (experimental)
-- **Session Recording** — Record and replay sessions for debugging and testing
+- **Session Recording** — Record and replay sessions for debugging and testing (experimental)
 
 ## Installation
 
@@ -151,11 +151,6 @@ ralph resume
 ralph run --dry-run
 ```
 
-Ralph will iterate through hats (planner → builder → planner) until:
-- The completion promise (`LOOP_COMPLETE`) is detected
-- Max iterations reached (default: 100)
-- Max runtime exceeded (default: 4 hours)
-
 ## Configuration
 
 Ralph uses a YAML configuration file (`ralph.yml` by default).
@@ -236,6 +231,7 @@ Presets are pre-configured workflows for common development patterns.
 | Preset | Pattern | Description |
 |--------|---------|-------------|
 | `review` | Analyze-Critique-Suggest | Code review workflow |
+| `pr-review` | Multi-Perspective | PR review with specialized reviewers |
 | `adversarial-review` | Critic-Defender | Devil's advocate review style |
 
 ### Documentation
@@ -284,31 +280,6 @@ Hats are specialized agent personas. Each hat has:
 - **Publishes**: Events this hat can emit
 - **Instructions**: Prompt injected when hat is active
 
-Default hats:
-- **Planner**: Breaks down tasks, creates implementation plans
-- **Builder**: Executes tasks, writes code, runs tests
-
-### Events
-
-Hats communicate through events:
-
-```xml
-<event topic="build.task">Implement user authentication</event>
-<event topic="build.done" payload="tests: pass, lint: pass">Feature complete</event>
-<event topic="build.blocked">Need database schema clarification</event>
-```
-
-Event patterns support glob matching:
-- `build.*` matches `build.task`, `build.done`, `build.blocked`
-- `*.done` matches `build.done`, `test.done`, `review.done`
-
-Use `ralph emit` to publish events programmatically:
-
-```bash
-ralph emit "build.done" "tests: pass, lint: pass"
-ralph emit "review.done" --json '{"status": "approved"}'
-```
-
 View event history:
 
 ```bash
@@ -331,8 +302,6 @@ Ralph enforces quality gates through backpressure. When a builder publishes `bui
 ```
 tests: pass, lint: pass, typecheck: pass
 ```
-
-If evidence is missing or checks failed, Ralph synthesizes `build.blocked` instead, forcing the agent to fix issues before proceeding.
 
 ## CLI Reference
 
@@ -382,29 +351,6 @@ If evidence is missing or checks failed, Ralph synthesizes `build.blocked` inste
 ## Architecture
 
 Ralph is organized as a Cargo workspace with six crates:
-
-```
-                    ┌──────────────┐
-                    │  ralph-cli   │ (binary entry point)
-                    └──────┬───────┘
-                           │
-              ┌────────────┼───────────┐
-              ▼            ▼           ▼
-       ┌──────────┐  ┌──────────┐  ┌──────────┐
-       │ralph-core│  │ralph-tui │  │ralph-bench│
-       └────┬─────┘  └────┬─────┘  └────┬─────┘
-            │             │             │
-            ▼             │             │
-    ┌───────────────┐     │             │
-    │ralph-adapters │◄────┘             │
-    └───────┬───────┘                   │
-            │                           │
-            └───────────┬───────────────┘
-                        ▼
-                ┌──────────────┐
-                │ ralph-proto  │ (zero-dependency types)
-                └──────────────┘
-```
 
 | Crate | Purpose |
 |-------|---------|
@@ -485,6 +431,7 @@ MIT License — See [LICENSE](LICENSE) for details.
 
 - **[Geoffrey Huntley](https://ghuntley.com/ralph/)** — Creator of the Ralph Wiggum technique
 - **[Harper Reed](https://harper.blog/)** — Spec-driven development methodology
+- **[Strands Agent SOPs](https://github.com/strands-agents/agent-sop)** — Natural language workflows that enable AI agents to perform complex, multi-step tasks with consistency and reliability. 
 - **[ratatui](https://ratatui.rs/)** — Terminal UI framework
 - **[portable-pty](https://crates.io/crates/portable-pty)** — Cross-platform PTY support
 

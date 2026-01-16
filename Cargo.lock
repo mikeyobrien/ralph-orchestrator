@@ -1125,7 +1125,7 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "ralph-adapters"
-version = "0.1.0"
+version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-bench"
-version = "0.1.0"
+version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-cli"
-version = "0.1.0"
+version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-core"
-version = "0.1.0"
+version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-proto"
-version = "0.1.0"
+version = "2.0.0-alpha"
 dependencies = [
  "async-trait",
  "base64",
@@ -1215,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-tui"
-version = "0.1.0"
+version = "2.0.0-alpha"
 dependencies = [
  "anyhow",
  "crossterm 0.28.1",

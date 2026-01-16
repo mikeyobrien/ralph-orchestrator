@@ -93,6 +93,11 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../../../presets/performance-optimization.yml"),
     },
     EmbeddedPreset {
+        name: "pr-review",
+        description: "Multi-perspective PR code review",
+        content: include_str!("../../../presets/pr-review.yml"),
+    },
+    EmbeddedPreset {
         name: "refactor",
         description: "Code Refactoring Workflow",
         content: include_str!("../../../presets/refactor.yml"),
@@ -153,7 +158,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 22, "Expected 22 presets");
+        assert_eq!(presets.len(), 23, "Expected 23 presets");
     }
 
     #[test]
@@ -210,7 +215,7 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
         assert!(names.contains(&"tdd-red-green"));
         assert!(names.contains(&"debug"));
     }
