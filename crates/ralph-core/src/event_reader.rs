@@ -146,11 +146,9 @@ impl EventReader {
                 Ok(event) => result.events.push(event),
                 Err(e) => {
                     warn!(error = %e, line_number = line_number, "Malformed JSON line");
-                    result.malformed.push(MalformedLine::new(
-                        line_number,
-                        &line,
-                        e.to_string(),
-                    ));
+                    result
+                        .malformed
+                        .push(MalformedLine::new(line_number, &line, e.to_string()));
                 }
             }
 
@@ -213,11 +211,7 @@ mod tests {
             r#"{{"topic":"test","payload":"hello","ts":"2024-01-01T00:00:00Z"}}"#
         )
         .unwrap();
-        writeln!(
-            file,
-            r#"{{"topic":"test2","ts":"2024-01-01T00:00:01Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"test2","ts":"2024-01-01T00:00:01Z"}}"#).unwrap();
         file.flush().unwrap();
 
         let mut reader = EventReader::new(file.path());
@@ -234,11 +228,7 @@ mod tests {
     #[test]
     fn test_tracks_position() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(
-            file,
-            r#"{{"topic":"first","ts":"2024-01-01T00:00:00Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"first","ts":"2024-01-01T00:00:00Z"}}"#).unwrap();
         file.flush().unwrap();
 
         let mut reader = EventReader::new(file.path());
@@ -246,11 +236,7 @@ mod tests {
         assert_eq!(result.events.len(), 1);
 
         // Add more events
-        writeln!(
-            file,
-            r#"{{"topic":"second","ts":"2024-01-01T00:00:01Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"second","ts":"2024-01-01T00:00:01Z"}}"#).unwrap();
         file.flush().unwrap();
 
         // Should only read new events
@@ -270,11 +256,7 @@ mod tests {
     #[test]
     fn test_captures_malformed_lines() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(
-            file,
-            r#"{{"topic":"good","ts":"2024-01-01T00:00:00Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"good","ts":"2024-01-01T00:00:00Z"}}"#).unwrap();
         writeln!(file, r"{{corrupt json}}").unwrap();
         writeln!(
             file,
@@ -310,11 +292,7 @@ mod tests {
     #[test]
     fn test_reset_position() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(
-            file,
-            r#"{{"topic":"test","ts":"2024-01-01T00:00:00Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"test","ts":"2024-01-01T00:00:00Z"}}"#).unwrap();
         file.flush().unwrap();
 
         let mut reader = EventReader::new(file.path());
@@ -428,17 +406,9 @@ mod tests {
     fn test_mixed_valid_invalid_handling() {
         // Test that valid events are captured alongside malformed ones
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(
-            file,
-            r#"{{"topic":"valid1","ts":"2024-01-01T00:00:00Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"valid1","ts":"2024-01-01T00:00:00Z"}}"#).unwrap();
         writeln!(file, "not valid json at all").unwrap();
-        writeln!(
-            file,
-            r#"{{"topic":"valid2","ts":"2024-01-01T00:00:01Z"}}"#
-        )
-        .unwrap();
+        writeln!(file, r#"{{"topic":"valid2","ts":"2024-01-01T00:00:01Z"}}"#).unwrap();
         file.flush().unwrap();
 
         let mut reader = EventReader::new(file.path());

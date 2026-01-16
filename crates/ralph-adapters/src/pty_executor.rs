@@ -18,15 +18,15 @@
 // Exit codes and PIDs are always within i32 range in practice
 #![allow(clippy::cast_possible_wrap)]
 
-use crate::cli_backend::{CliBackend, OutputFormat};
 use crate::claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock};
+use crate::cli_backend::{CliBackend, OutputFormat};
 use crate::stream_handler::{SessionResult, StreamHandler};
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
-use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
+use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
@@ -217,7 +217,15 @@ impl PtyExecutor {
     ///
     /// The stdin_input is returned so callers can write it to the PTY after taking the writer.
     /// This is necessary because `take_writer()` can only be called once per PTY.
-    fn spawn_pty(&self, prompt: &str) -> io::Result<(PtyPair, Box<dyn portable_pty::Child + Send>, Option<String>, Option<tempfile::NamedTempFile>)> {
+    fn spawn_pty(
+        &self,
+        prompt: &str,
+    ) -> io::Result<(
+        PtyPair,
+        Box<dyn portable_pty::Child + Send>,
+        Option<String>,
+        Option<tempfile::NamedTempFile>,
+    )> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -229,7 +237,8 @@ impl PtyExecutor {
             })
             .map_err(|e| io::Error::other(e.to_string()))?;
 
-        let (cmd, args, stdin_input, temp_file) = self.backend.build_command(prompt, self.config.interactive);
+        let (cmd, args, stdin_input, temp_file) =
+            self.backend.build_command(prompt, self.config.interactive);
 
         let mut cmd_builder = CommandBuilder::new(&cmd);
         cmd_builder.args(&args);
@@ -274,14 +283,18 @@ impl PtyExecutor {
         // Keep temp_file alive for the duration of execution (large prompts use temp files)
         let (pair, mut child, stdin_input, _temp_file) = self.spawn_pty(prompt)?;
 
-        let reader = pair.master.try_clone_reader()
+        let reader = pair
+            .master
+            .try_clone_reader()
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Write stdin input if present (for stdin prompt mode)
         if let Some(ref input) = stdin_input {
             // Small delay to let process initialize
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let mut writer = pair.master.take_writer()
+            let mut writer = pair
+                .master
+                .take_writer()
                 .map_err(|e| io::Error::other(e.to_string()))?;
             writer.write_all(input.as_bytes())?;
             writer.write_all(b"\n")?;
@@ -295,7 +308,9 @@ impl PtyExecutor {
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
             None
         } else {
-            Some(Duration::from_secs(u64::from(self.config.idle_timeout_secs)))
+            Some(Duration::from_secs(u64::from(
+                self.config.idle_timeout_secs,
+            )))
         };
 
         let mut termination = TerminationType::Natural;
@@ -424,7 +439,10 @@ impl PtyExecutor {
             }
 
             // Check if child has exited
-            if let Some(status) = child.try_wait().map_err(|e| io::Error::other(e.to_string()))? {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| io::Error::other(e.to_string()))?
+            {
                 let exit_code = status.exit_code() as i32;
                 debug!(exit_status = ?status, exit_code, "Child process exited");
 
@@ -441,7 +459,13 @@ impl PtyExecutor {
 
                 let final_termination = resolve_termination_type(exit_code, termination);
                 // run_observe doesn't parse JSON, so extracted_text is empty
-                return Ok(build_result(&output, status.success(), Some(exit_code), final_termination, String::new()));
+                return Ok(build_result(
+                    &output,
+                    status.success(),
+                    Some(exit_code),
+                    final_termination,
+                    String::new(),
+                ));
             }
         }
 
@@ -456,7 +480,11 @@ impl PtyExecutor {
         let (success, exit_code, final_termination) = match status {
             Some(s) => {
                 let code = s.exit_code() as i32;
-                (s.success(), Some(code), resolve_termination_type(code, termination))
+                (
+                    s.success(),
+                    Some(code),
+                    resolve_termination_type(code, termination),
+                )
             }
             None => {
                 warn!("Timed out waiting for child to exit after termination");
@@ -465,7 +493,13 @@ impl PtyExecutor {
         };
 
         // run_observe doesn't parse JSON, so extracted_text is empty
-        Ok(build_result(&output, success, exit_code, final_termination, String::new()))
+        Ok(build_result(
+            &output,
+            success,
+            exit_code,
+            final_termination,
+            String::new(),
+        ))
     }
 
     /// Runs in observe mode with streaming event handling for JSON output.
@@ -500,13 +534,17 @@ impl PtyExecutor {
         // Keep temp_file alive for the duration of execution
         let (pair, mut child, stdin_input, _temp_file) = self.spawn_pty(prompt)?;
 
-        let reader = pair.master.try_clone_reader()
+        let reader = pair
+            .master
+            .try_clone_reader()
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Write stdin input if present (for stdin prompt mode)
         if let Some(ref input) = stdin_input {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let mut writer = pair.master.take_writer()
+            let mut writer = pair
+                .master
+                .take_writer()
                 .map_err(|e| io::Error::other(e.to_string()))?;
             writer.write_all(input.as_bytes())?;
             writer.write_all(b"\n")?;
@@ -522,7 +560,9 @@ impl PtyExecutor {
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
             None
         } else {
-            Some(Duration::from_secs(u64::from(self.config.idle_timeout_secs)))
+            Some(Duration::from_secs(u64::from(
+                self.config.idle_timeout_secs,
+            )))
         };
 
         let mut termination = TerminationType::Natural;
@@ -659,7 +699,10 @@ impl PtyExecutor {
             }
 
             // Check if child has exited
-            if let Some(status) = child.try_wait().map_err(|e| io::Error::other(e.to_string()))? {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| io::Error::other(e.to_string()))?
+            {
                 let exit_code = status.exit_code() as i32;
                 debug!(exit_status = ?status, exit_code, "Child process exited");
 
@@ -689,7 +732,13 @@ impl PtyExecutor {
 
                 let final_termination = resolve_termination_type(exit_code, termination);
                 // Pass extracted_text for event parsing from NDJSON
-                return Ok(build_result(&output, status.success(), Some(exit_code), final_termination, extracted_text));
+                return Ok(build_result(
+                    &output,
+                    status.success(),
+                    Some(exit_code),
+                    final_termination,
+                    extracted_text,
+                ));
             }
         }
 
@@ -702,7 +751,11 @@ impl PtyExecutor {
         let (success, exit_code, final_termination) = match status {
             Some(s) => {
                 let code = s.exit_code() as i32;
-                (s.success(), Some(code), resolve_termination_type(code, termination))
+                (
+                    s.success(),
+                    Some(code),
+                    resolve_termination_type(code, termination),
+                )
             }
             None => {
                 warn!("Timed out waiting for child to exit after termination");
@@ -711,7 +764,13 @@ impl PtyExecutor {
         };
 
         // Pass extracted_text for event parsing from NDJSON
-        Ok(build_result(&output, success, exit_code, final_termination, extracted_text))
+        Ok(build_result(
+            &output,
+            success,
+            exit_code,
+            final_termination,
+            extracted_text,
+        ))
     }
 
     /// Runs in interactive mode (bidirectional I/O).
@@ -742,9 +801,13 @@ impl PtyExecutor {
         // Keep temp_file alive for the duration of execution (large prompts use temp files)
         let (pair, mut child, stdin_input, _temp_file) = self.spawn_pty(prompt)?;
 
-        let reader = pair.master.try_clone_reader()
+        let reader = pair
+            .master
+            .try_clone_reader()
             .map_err(|e| io::Error::other(e.to_string()))?;
-        let mut writer = pair.master.take_writer()
+        let mut writer = pair
+            .master
+            .take_writer()
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Keep master for resize operations
@@ -758,7 +821,9 @@ impl PtyExecutor {
 
         let mut output = Vec::new();
         let timeout_duration = if self.config.idle_timeout_secs > 0 {
-            Some(Duration::from_secs(u64::from(self.config.idle_timeout_secs)))
+            Some(Duration::from_secs(u64::from(
+                self.config.idle_timeout_secs,
+            )))
         } else {
             None
         };
@@ -847,8 +912,8 @@ impl PtyExecutor {
                     Ok(1) => {
                         let byte = buf[0];
                         let event = match byte {
-                            3 => InputEvent::CtrlC,           // Ctrl+C
-                            28 => InputEvent::CtrlBackslash,  // Ctrl+\
+                            3 => InputEvent::CtrlC,          // Ctrl+C
+                            28 => InputEvent::CtrlBackslash, // Ctrl+\
                             _ => InputEvent::Data(vec![byte]),
                         };
                         if input_tx.send(event).is_err() {
@@ -876,7 +941,8 @@ impl PtyExecutor {
         // We use tokio::select! to multiplex between output, input, and timeout
         loop {
             // Check if child has exited (non-blocking check before select)
-            if let Some(status) = child.try_wait()
+            if let Some(status) = child
+                .try_wait()
                 .map_err(|e| io::Error::other(e.to_string()))?
             {
                 let exit_code = status.exit_code() as i32;
@@ -899,7 +965,13 @@ impl PtyExecutor {
 
                 let final_termination = resolve_termination_type(exit_code, termination);
                 // run_interactive doesn't parse JSON, so extracted_text is empty
-                return Ok(build_result(&output, status.success(), Some(exit_code), final_termination, String::new()));
+                return Ok(build_result(
+                    &output,
+                    status.success(),
+                    Some(exit_code),
+                    final_termination,
+                    String::new(),
+                ));
             }
 
             // Build the timeout future (or a never-completing one if disabled)
@@ -1093,7 +1165,11 @@ impl PtyExecutor {
         let (success, exit_code, final_termination) = match status {
             Some(s) => {
                 let code = s.exit_code() as i32;
-                (s.success(), Some(code), resolve_termination_type(code, termination))
+                (
+                    s.success(),
+                    Some(code),
+                    resolve_termination_type(code, termination),
+                )
             }
             None => {
                 warn!("Timed out waiting for child to exit after termination");
@@ -1102,7 +1178,13 @@ impl PtyExecutor {
         };
 
         // run_interactive doesn't parse JSON, so extracted_text is empty
-        Ok(build_result(&output, success, exit_code, final_termination, String::new()))
+        Ok(build_result(
+            &output,
+            success,
+            exit_code,
+            final_termination,
+            String::new(),
+        ))
     }
 
     /// Terminates the child process.
@@ -1114,7 +1196,11 @@ impl PtyExecutor {
     /// grace period wait. Previously used `std::thread::sleep` which blocked the
     /// worker thread for up to 5 seconds, making the TUI appear frozen.
     #[allow(clippy::unused_self)] // Self is conceptually the right receiver for this method
-    async fn terminate_child(&self, child: &mut Box<dyn portable_pty::Child + Send>, graceful: bool) -> io::Result<()> {
+    async fn terminate_child(
+        &self,
+        child: &mut Box<dyn portable_pty::Child + Send>,
+        graceful: bool,
+    ) -> io::Result<()> {
         let pid = match child.process_id() {
             Some(id) => Pid::from_raw(id as i32),
             None => return Ok(()), // Already exited
@@ -1129,7 +1215,8 @@ impl PtyExecutor {
             let start = Instant::now();
 
             while start.elapsed() < grace_period {
-                if child.try_wait()
+                if child
+                    .try_wait()
                     .map_err(|e| io::Error::other(e.to_string()))?
                     .is_some()
                 {
@@ -1274,13 +1361,21 @@ fn dispatch_stream_event<H: StreamHandler>(
         ClaudeStreamEvent::User { message } => {
             for block in message.content {
                 match block {
-                    UserContentBlock::ToolResult { tool_use_id, content } => {
+                    UserContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                    } => {
                         handler.on_tool_result(&tool_use_id, &content);
                     }
                 }
             }
         }
-        ClaudeStreamEvent::Result { duration_ms, total_cost_usd, num_turns, is_error } => {
+        ClaudeStreamEvent::Result {
+            duration_ms,
+            total_cost_usd,
+            num_turns,
+            is_error,
+        } => {
             if is_error {
                 handler.on_error("Session ended with error");
             }
@@ -1466,7 +1561,11 @@ mod tests {
             termination: TerminationType::Natural,
         };
 
-        assert!(result.extracted_text.contains("<event topic=\"build.done\">"));
+        assert!(
+            result
+                .extracted_text
+                .contains("<event topic=\"build.done\">")
+        );
     }
 
     #[test]
@@ -1474,7 +1573,13 @@ mod tests {
         // Test that build_result properly handles extracted_text
         let output = b"raw output";
         let extracted = "extracted text with <event topic=\"test\">payload</event>";
-        let result = build_result(output, true, Some(0), TerminationType::Natural, extracted.to_string());
+        let result = build_result(
+            output,
+            true,
+            Some(0),
+            TerminationType::Natural,
+            extracted.to_string(),
+        );
 
         assert_eq!(result.extracted_text, extracted);
         assert!(result.stripped_output.contains("raw output"));

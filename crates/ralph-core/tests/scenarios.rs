@@ -7,8 +7,8 @@
 //! - Default publishes fallback
 //! - Mixed backends
 
-use ralph_core::testing::{MockBackend, Scenario, ScenarioRunner};
 use ralph_core::RalphConfig;
+use ralph_core::testing::{MockBackend, Scenario, ScenarioRunner};
 use serde::Deserialize;
 use std::fs;
 
@@ -45,10 +45,9 @@ struct EventYaml {
 }
 
 fn load_scenario(path: &str) -> ScenarioYaml {
-    let content = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e));
-    serde_yaml::from_str(&content)
-        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", path, e))
+    let content =
+        fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e));
+    serde_yaml::from_str(&content).unwrap_or_else(|e| panic!("Failed to parse {}: {}", path, e))
 }
 
 fn run_scenario(yaml: ScenarioYaml) {
@@ -59,8 +58,8 @@ fn run_scenario(yaml: ScenarioYaml) {
     config.max_iterations = Some(yaml.config.max_iterations);
     config.prompt_file = Some(yaml.config.prompt_file);
 
-    let scenario = Scenario::new(yaml.name.clone(), config)
-        .with_iterations(yaml.expected.iterations);
+    let scenario =
+        Scenario::new(yaml.name.clone(), config).with_iterations(yaml.expected.iterations);
 
     let trace = runner.run(&scenario);
 

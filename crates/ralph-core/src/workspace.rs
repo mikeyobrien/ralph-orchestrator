@@ -207,7 +207,9 @@ impl TaskWorkspace {
                     fs::copy(&src, &dst)?;
                 }
             } else {
-                return Err(WorkspaceError::MissingFile(src.to_string_lossy().to_string()));
+                return Err(WorkspaceError::MissingFile(
+                    src.to_string_lossy().to_string(),
+                ));
             }
         }
 
@@ -344,7 +346,10 @@ impl TaskWorkspace {
     ///
     /// Returns `WorkspaceError::Verification` if the command fails to execute
     /// (not the same as the command returning a non-zero exit code).
-    pub fn run_verification(&self, verification: &Verification) -> Result<VerificationResult, WorkspaceError> {
+    pub fn run_verification(
+        &self,
+        verification: &Verification,
+    ) -> Result<VerificationResult, WorkspaceError> {
         if verification.command.is_empty() {
             // No verification command - consider it passed
             return Ok(VerificationResult {
@@ -670,7 +675,11 @@ mod tests {
         // Create prompt file
         let prompt_dir = tasks_dir.path().join("tasks/test");
         fs::create_dir_all(&prompt_dir).unwrap();
-        fs::write(prompt_dir.join("PROMPT.md"), "# Test Prompt\n\nDo something.").unwrap();
+        fs::write(
+            prompt_dir.join("PROMPT.md"),
+            "# Test Prompt\n\nDo something.",
+        )
+        .unwrap();
 
         let task = make_test_task("setup-test");
         let workspace = TaskWorkspace::create(&task, temp_dir.path()).unwrap();
@@ -680,7 +689,11 @@ mod tests {
         // Prompt should be copied
         let prompt_dst = workspace.path().join("PROMPT.md");
         assert!(prompt_dst.exists());
-        assert!(fs::read_to_string(&prompt_dst).unwrap().contains("Test Prompt"));
+        assert!(
+            fs::read_to_string(&prompt_dst)
+                .unwrap()
+                .contains("Test Prompt")
+        );
     }
 
     #[test]
@@ -736,10 +749,7 @@ mod tests {
             CleanupPolicy::from_str("always", None),
             CleanupPolicy::Always
         );
-        assert_eq!(
-            CleanupPolicy::from_str("never", None),
-            CleanupPolicy::Never
-        );
+        assert_eq!(CleanupPolicy::from_str("never", None), CleanupPolicy::Never);
         assert_eq!(
             CleanupPolicy::from_str("ROTATE", Some(3)),
             CleanupPolicy::Rotate(3)
@@ -878,7 +888,10 @@ mod tests {
         // Verify
         assert!(dst.join("file1.txt").exists());
         assert!(dst.join("subdir/file2.txt").exists());
-        assert_eq!(fs::read_to_string(dst.join("file1.txt")).unwrap(), "content1");
+        assert_eq!(
+            fs::read_to_string(dst.join("file1.txt")).unwrap(),
+            "content1"
+        );
         assert_eq!(
             fs::read_to_string(dst.join("subdir/file2.txt")).unwrap(),
             "content2"

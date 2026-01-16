@@ -6,7 +6,7 @@
 use crate::cli_backend::CliBackend;
 #[cfg(test)]
 use crate::cli_backend::{OutputFormat, PromptMode};
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::io::Write;
 use std::process::Stdio;
@@ -173,9 +173,7 @@ impl CliExecutor {
                     }
                 }
             }
-            None => {
-                stream_result.await?
-            }
+            None => stream_result.await?,
         };
 
         let status = child.wait().await?;
@@ -237,7 +235,10 @@ mod tests {
         let executor = CliExecutor::new(backend);
         let mut output = Vec::new();
 
-        let result = executor.execute("hello world", &mut output, None, true).await.unwrap();
+        let result = executor
+            .execute("hello world", &mut output, None, true)
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(!result.timed_out);
@@ -287,7 +288,7 @@ mod tests {
         // to avoid appending the prompt as an argument
         let backend = CliBackend {
             command: "sleep".to_string(),
-            args: vec!["10".to_string()], // Sleep for 10 seconds
+            args: vec!["10".to_string()],   // Sleep for 10 seconds
             prompt_mode: PromptMode::Stdin, // Use stdin mode so prompt doesn't interfere
             prompt_flag: None,
             output_format: OutputFormat::Text,
@@ -297,10 +298,16 @@ mod tests {
 
         // Execute with a 100ms timeout - should trigger timeout
         let timeout = Some(Duration::from_millis(100));
-        let result = executor.execute_capture_with_timeout("", timeout).await.unwrap();
+        let result = executor
+            .execute_capture_with_timeout("", timeout)
+            .await
+            .unwrap();
 
         assert!(result.timed_out, "Expected execution to time out");
-        assert!(!result.success, "Timed out execution should not be successful");
+        assert!(
+            !result.success,
+            "Timed out execution should not be successful"
+        );
     }
 
     #[tokio::test]
@@ -318,7 +325,10 @@ mod tests {
 
         // Execute with a generous timeout - should complete before timeout
         let timeout = Some(Duration::from_secs(10));
-        let result = executor.execute_capture_with_timeout("fast", timeout).await.unwrap();
+        let result = executor
+            .execute_capture_with_timeout("fast", timeout)
+            .await
+            .unwrap();
 
         assert!(!result.timed_out, "Fast command should not time out");
         assert!(result.success);

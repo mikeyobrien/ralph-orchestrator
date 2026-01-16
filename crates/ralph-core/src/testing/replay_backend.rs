@@ -294,7 +294,11 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should complete in well under 1 second (the recorded delay)
-        assert!(elapsed.as_millis() < 100, "Should be instant, took {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 100,
+            "Should be instant, took {:?}",
+            elapsed
+        );
     }
 
     #[test]

@@ -38,8 +38,16 @@ impl HatTopology {
             .map(|hat| HatInfo {
                 name: hat.name.clone(),
                 description: hat.description.clone(),
-                subscribes_to: hat.subscriptions.iter().map(|t| t.as_str().to_string()).collect(),
-                publishes: hat.publishes.iter().map(|t| t.as_str().to_string()).collect(),
+                subscribes_to: hat
+                    .subscriptions
+                    .iter()
+                    .map(|t| t.as_str().to_string())
+                    .collect(),
+                publishes: hat
+                    .publishes
+                    .iter()
+                    .map(|t| t.as_str().to_string())
+                    .collect(),
                 instructions: hat.instructions.clone(),
             })
             .collect();
@@ -83,11 +91,7 @@ impl HatlessRalph {
     /// full hat topology table for context.
     ///
     /// For solo mode (no hats), pass an empty slice: `&[]`
-    pub fn build_prompt(
-        &self,
-        context: &str,
-        active_hats: &[&ralph_proto::Hat],
-    ) -> String {
+    pub fn build_prompt(&self, context: &str, active_hats: &[&ralph_proto::Hat]) -> String {
         let mut prompt = self.core_prompt();
 
         // Include pending events BEFORE workflow so Ralph sees the task first
@@ -317,7 +321,11 @@ Until all tasks `[x]` or `[~]`.
             for trigger in &hat.subscribes_to {
                 if ralph_publishes.contains(&trigger.as_str()) {
                     // Sanitize hat name for Mermaid (remove emojis and special chars for node ID)
-                    let node_id = hat.name.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+                    let node_id = hat
+                        .name
+                        .chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .collect::<String>();
                     if node_id == hat.name {
                         diagram.push_str(&format!("    Ralph -->|{}| {}\n", trigger, hat.name));
                     } else {
@@ -333,7 +341,11 @@ Until all tasks `[x]` or `[~]`.
 
         // Hats -> Ralph (via hat publishes)
         for hat in &topology.hats {
-            let node_id = hat.name.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+            let node_id = hat
+                .name
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>();
             for pub_event in &hat.publishes {
                 diagram.push_str(&format!("    {} -->|{}| Ralph\n", node_id, pub_event));
             }
@@ -341,11 +353,21 @@ Until all tasks `[x]` or `[~]`.
 
         // Hat -> Hat connections (when one hat publishes what another triggers on)
         for source_hat in &topology.hats {
-            let source_id = source_hat.name.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+            let source_id = source_hat
+                .name
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>();
             for pub_event in &source_hat.publishes {
                 for target_hat in &topology.hats {
-                    if target_hat.name != source_hat.name && target_hat.subscribes_to.contains(pub_event) {
-                        let target_id = target_hat.name.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+                    if target_hat.name != source_hat.name
+                        && target_hat.subscribes_to.contains(pub_event)
+                    {
+                        let target_id = target_hat
+                            .name
+                            .chars()
+                            .filter(|c| c.is_alphanumeric())
+                            .collect::<String>();
                         diagram.push_str(&format!(
                             "    {} -->|{}| {}\n",
                             source_id, pub_event, target_id
@@ -385,7 +407,10 @@ Until all tasks `[x]` or `[~]`.
 
         // Check each hat's triggers - warn if none of them are reachable
         for hat in &topology.hats {
-            let hat_reachable = hat.subscribes_to.iter().any(|t| reachable_events.contains(t.as_str()));
+            let hat_reachable = hat
+                .subscribes_to
+                .iter()
+                .any(|t| reachable_events.contains(t.as_str()));
             if !hat_reachable {
                 warn!(
                     hat = %hat.name,
@@ -513,7 +538,10 @@ hats:
         // Multi-hat workflow: PLAN + DELEGATE, not IMPLEMENT
         assert!(prompt.contains("## WORKFLOW"));
         assert!(prompt.contains("### 1. PLAN"));
-        assert!(prompt.contains("### 2. DELEGATE"), "Multi-hat mode should have DELEGATE step");
+        assert!(
+            prompt.contains("### 2. DELEGATE"),
+            "Multi-hat mode should have DELEGATE step"
+        );
         assert!(
             !prompt.contains("### 3. IMPLEMENT"),
             "Multi-hat mode should NOT tell Ralph to implement"
@@ -572,8 +600,14 @@ hats:
         );
 
         // Numbered guardrails (999+)
-        assert!(prompt.contains("### GUARDRAILS"), "Should have guardrails section");
-        assert!(prompt.contains("999."), "Guardrails should use high numbers");
+        assert!(
+            prompt.contains("### GUARDRAILS"),
+            "Should have guardrails section"
+        );
+        assert!(
+            prompt.contains("999."),
+            "Guardrails should use high numbers"
+        );
     }
 
     #[test]
@@ -665,7 +699,9 @@ hats:
         );
 
         // Get the tdd_writer hat as active to see its instructions
-        let tdd_writer = registry.get(&ralph_proto::HatId::new("tdd_writer")).unwrap();
+        let tdd_writer = registry
+            .get(&ralph_proto::HatId::new("tdd_writer"))
+            .unwrap();
         let prompt = ralph.build_prompt("", &[tdd_writer]);
 
         // Instructions should appear in the prompt
@@ -695,12 +731,7 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let registry = HatRegistry::from_config(&config);
-        let ralph = HatlessRalph::new(
-            "LOOP_COMPLETE",
-            config.core.clone(),
-            &registry,
-            None,
-        );
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
         let prompt = ralph.build_prompt("", &[]);
 
@@ -729,12 +760,7 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let registry = HatRegistry::from_config(&config);
-        let ralph = HatlessRalph::new(
-            "LOOP_COMPLETE",
-            config.core.clone(),
-            &registry,
-            None,
-        );
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
         // Get both hats as active to see their instructions
         let planner = registry.get(&ralph_proto::HatId::new("planner")).unwrap();
@@ -873,7 +899,9 @@ hats:
         let events_context = "[task.start] Implement feature X";
         let prompt = ralph.build_prompt(events_context, &[]);
 
-        let events_pos = prompt.find("## PENDING EVENTS").expect("Should have PENDING EVENTS");
+        let events_pos = prompt
+            .find("## PENDING EVENTS")
+            .expect("Should have PENDING EVENTS");
         let workflow_pos = prompt.find("## WORKFLOW").expect("Should have WORKFLOW");
 
         assert!(
@@ -909,7 +937,9 @@ hats:
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
         // Get active hats - only security_reviewer is active
-        let security_hat = registry.get(&ralph_proto::HatId::new("security_reviewer")).unwrap();
+        let security_hat = registry
+            .get(&ralph_proto::HatId::new("security_reviewer"))
+            .unwrap();
         let active_hats = vec![security_hat];
 
         let prompt = ralph.build_prompt("Event: review.security - Check auth", &active_hats);
@@ -962,8 +992,12 @@ hats:
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
         // Get active hats - both security_reviewer and architecture_reviewer are active
-        let security_hat = registry.get(&ralph_proto::HatId::new("security_reviewer")).unwrap();
-        let arch_hat = registry.get(&ralph_proto::HatId::new("architecture_reviewer")).unwrap();
+        let security_hat = registry
+            .get(&ralph_proto::HatId::new("security_reviewer"))
+            .unwrap();
+        let arch_hat = registry
+            .get(&ralph_proto::HatId::new("architecture_reviewer"))
+            .unwrap();
         let active_hats = vec![security_hat, arch_hat];
 
         let prompt = ralph.build_prompt("Events", &active_hats);
@@ -1023,10 +1057,7 @@ hats:
         );
 
         // But topology table should still be present
-        assert!(
-            prompt.contains("## HATS"),
-            "Should still have HATS section"
-        );
+        assert!(prompt.contains("## HATS"), "Should still have HATS section");
         assert!(
             prompt.contains("| Hat | Triggers On | Publishes |"),
             "Should still have topology table"
@@ -1052,7 +1083,9 @@ hats:
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
         // Only security_reviewer is active
-        let security_hat = registry.get(&ralph_proto::HatId::new("security_reviewer")).unwrap();
+        let security_hat = registry
+            .get(&ralph_proto::HatId::new("security_reviewer"))
+            .unwrap();
         let active_hats = vec![security_hat];
 
         let prompt = ralph.build_prompt("Events", &active_hats);

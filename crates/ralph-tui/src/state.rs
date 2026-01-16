@@ -172,7 +172,6 @@ impl TuiState {
     pub fn iteration_changed(&self) -> bool {
         self.iteration != self.prev_iteration
     }
-
 }
 
 impl Default for TuiState {
@@ -234,11 +233,17 @@ mod tests {
         let mut hat_map = HashMap::new();
         hat_map.insert(
             "review.security".to_string(),
-            (HatId::new("security_reviewer"), "🔒 Security Reviewer".to_string())
+            (
+                HatId::new("security_reviewer"),
+                "🔒 Security Reviewer".to_string(),
+            ),
         );
         hat_map.insert(
             "review.correctness".to_string(),
-            (HatId::new("correctness_reviewer"), "🎯 Correctness Reviewer".to_string())
+            (
+                HatId::new("correctness_reviewer"),
+                "🎯 Correctness Reviewer".to_string(),
+            ),
         );
 
         let mut state = TuiState::with_hat_map(hat_map);

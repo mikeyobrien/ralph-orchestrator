@@ -1,8 +1,8 @@
 //! Test scenario definitions and execution.
 
+use super::mock_backend::MockBackend;
 use crate::config::RalphConfig;
 use crate::event_reader::Event;
-use super::mock_backend::MockBackend;
 
 /// A test scenario definition.
 #[derive(Debug)]
@@ -84,8 +84,7 @@ mod tests {
     #[test]
     fn test_scenario_creation() {
         let config = RalphConfig::default();
-        let scenario = Scenario::new("test", config)
-            .with_iterations(3);
+        let scenario = Scenario::new("test", config).with_iterations(3);
 
         assert_eq!(scenario.name, "test");
         assert_eq!(scenario.expected_iterations, 3);
@@ -112,21 +111,25 @@ mod tests {
 tests: pass
 lint: pass
 typecheck: pass
-</event>"#.to_string(),
+</event>"#
+                .to_string(),
         ];
 
         let backend = MockBackend::new(responses);
-        
+
         // Execute once
         let output = backend.execute("You are the builder hat. Build feature X.");
-        
+
         // Verify response
         assert!(output.contains("build.done"));
         assert!(output.contains("tests: pass"));
-        
+
         // Verify execution was tracked
         assert_eq!(backend.execution_count(), 1);
         let executions = backend.executions();
-        assert_eq!(executions[0].prompt, "You are the builder hat. Build feature X.");
+        assert_eq!(
+            executions[0].prompt,
+            "You are the builder hat. Build feature X."
+        );
     }
 }

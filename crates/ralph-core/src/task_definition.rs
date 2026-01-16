@@ -112,7 +112,6 @@ pub struct TaskDefinition {
     // ─────────────────────────────────────────────────────────────────────────
     // REQUIRED FIELDS
     // ─────────────────────────────────────────────────────────────────────────
-
     /// Unique task identifier (alphanumeric + hyphens).
     ///
     /// Used for recording filenames and result reporting.
@@ -134,7 +133,6 @@ pub struct TaskDefinition {
     // ─────────────────────────────────────────────────────────────────────────
     // OPTIONAL FIELDS
     // ─────────────────────────────────────────────────────────────────────────
-
     /// Human-readable description of the task.
     #[serde(default)]
     pub description: Option<String>,
@@ -622,7 +620,10 @@ mod tests {
         assert_eq!(fizzbuzz.setup.files.len(), 1);
         assert!(fizzbuzz.tags.contains(&"tdd".to_string()));
 
-        assert_eq!(suite.metadata.name, Some("Ralph Benchmark Suite".to_string()));
+        assert_eq!(
+            suite.metadata.name,
+            Some("Ralph Benchmark Suite".to_string())
+        );
     }
 
     #[test]

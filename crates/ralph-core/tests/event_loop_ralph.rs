@@ -107,13 +107,34 @@ event_loop:
     let prompt = event_loop.build_ralph_prompt("Test context");
 
     // Verify prompt includes ghuntley-style structure
-    assert!(prompt.contains("I'm Ralph"), "Prompt should identify Ralph with ghuntley style");
-    assert!(prompt.contains("Fresh context each iteration"), "Prompt should include ghuntley identity");
-    assert!(prompt.contains("### 0a. ORIENTATION"), "Prompt should include orientation phase");
-    assert!(prompt.contains("### 0b. SCRATCHPAD"), "Prompt should include scratchpad section");
-    assert!(prompt.contains("## WORKFLOW"), "Prompt should include workflow section");
-    assert!(prompt.contains("### GUARDRAILS"), "Prompt should include guardrails section");
-    assert!(prompt.contains("LOOP_COMPLETE"), "Prompt should include completion promise");
+    assert!(
+        prompt.contains("I'm Ralph"),
+        "Prompt should identify Ralph with ghuntley style"
+    );
+    assert!(
+        prompt.contains("Fresh context each iteration"),
+        "Prompt should include ghuntley identity"
+    );
+    assert!(
+        prompt.contains("### 0a. ORIENTATION"),
+        "Prompt should include orientation phase"
+    );
+    assert!(
+        prompt.contains("### 0b. SCRATCHPAD"),
+        "Prompt should include scratchpad section"
+    );
+    assert!(
+        prompt.contains("## WORKFLOW"),
+        "Prompt should include workflow section"
+    );
+    assert!(
+        prompt.contains("### GUARDRAILS"),
+        "Prompt should include guardrails section"
+    );
+    assert!(
+        prompt.contains("LOOP_COMPLETE"),
+        "Prompt should include completion promise"
+    );
 }
 
 #[test]
@@ -133,8 +154,14 @@ event_loop:
 
     // In solo mode (no hats), Ralph should NOT have HATS section
     assert!(prompt.contains("## WORKFLOW"), "Workflow should be present");
-    assert!(prompt.contains("## EVENT WRITING"), "Event writing section should be present");
-    assert!(!prompt.contains("## HATS"), "HATS section should not be present in solo mode");
+    assert!(
+        prompt.contains("## EVENT WRITING"),
+        "Event writing section should be present"
+    );
+    assert!(
+        !prompt.contains("## HATS"),
+        "HATS section should not be present in solo mode"
+    );
 }
 
 #[test]
@@ -162,11 +189,20 @@ event_loop:
     let prompt = event_loop.build_ralph_prompt("");
 
     // In multi-hat mode, Ralph should see hat topology
-    assert!(prompt.contains("## HATS"), "HATS section should be present in multi-hat mode");
-    assert!(prompt.contains("Delegate via events"), "Delegation instruction should be present");
+    assert!(
+        prompt.contains("## HATS"),
+        "HATS section should be present in multi-hat mode"
+    );
+    assert!(
+        prompt.contains("Delegate via events"),
+        "Delegation instruction should be present"
+    );
     assert!(prompt.contains("Planner"), "Planner hat should be listed");
     assert!(prompt.contains("Builder"), "Builder hat should be listed");
-    assert!(prompt.contains("| Hat | Triggers On | Publishes |"), "Hat table header should be present");
+    assert!(
+        prompt.contains("| Hat | Triggers On | Publishes |"),
+        "Hat table header should be present"
+    );
 }
 
 #[test]
@@ -174,29 +210,42 @@ fn test_reads_actual_events_jsonl_with_object_payloads() {
     // This test verifies the fix for "invalid type: map, expected a string" errors
     // when reading events.jsonl containing object payloads from `ralph emit --json`
     use ralph_core::EventHistory;
-    
+
     let history = EventHistory::new(".agent/events.jsonl");
     if !history.exists() {
         // Skip if no events file (CI environment)
         return;
     }
-    
+
     // This should NOT produce any warnings about failed parsing
     let records = history.read_all().expect("Should read events.jsonl");
-    
+
     // We expect at least some records
     assert!(!records.is_empty(), "events.jsonl should have records");
-    
+
     // Verify all records were parsed (no silently dropped records)
-    println!("\n✓ Successfully parsed {} records from .agent/events.jsonl:\n", records.len());
+    println!(
+        "\n✓ Successfully parsed {} records from .agent/events.jsonl:\n",
+        records.len()
+    );
     for (i, record) in records.iter().enumerate() {
         let payload_preview = if record.payload.len() > 50 {
             format!("{}...", &record.payload[..50])
         } else {
             record.payload.clone()
         };
-        let payload_type = if record.payload.starts_with('{') { "object→string" } else { "string" };
-        println!("  [{}] topic={:<25} type={:<14} payload={}", i + 1, record.topic, payload_type, payload_preview);
+        let payload_type = if record.payload.starts_with('{') {
+            "object→string"
+        } else {
+            "string"
+        };
+        println!(
+            "  [{}] topic={:<25} type={:<14} payload={}",
+            i + 1,
+            record.topic,
+            payload_type,
+            payload_preview
+        );
 
         // Object payloads should be converted to JSON strings
         if record.payload.starts_with('{') {

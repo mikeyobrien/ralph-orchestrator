@@ -27,7 +27,9 @@ pub mod testing;
 pub mod workspace;
 
 pub use cli_capture::{CliCapture, CliCapturePair};
-pub use config::{CliConfig, CoreConfig, EventLoopConfig, EventMetadata, HatBackend, HatConfig, RalphConfig};
+pub use config::{
+    CliConfig, CoreConfig, EventLoopConfig, EventMetadata, HatBackend, HatConfig, RalphConfig,
+};
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
 pub use event_loop::{EventLoop, LoopState, TerminationReason};
 pub use event_parser::EventParser;
@@ -38,5 +40,10 @@ pub use instructions::InstructionBuilder;
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};
 pub use session_recorder::{Record, SessionRecorder};
 pub use summary_writer::SummaryWriter;
-pub use task_definition::{TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification};
-pub use workspace::{CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo, WorkspaceManager};
+pub use task_definition::{
+    TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
+};
+pub use workspace::{
+    CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,
+    WorkspaceManager,
+};

@@ -125,10 +125,7 @@ impl Hat {
             name: "Builder".to_string(),
             description: "Implements code changes, runs backpressure".to_string(),
             subscriptions: vec![Topic::new("build.task")],
-            publishes: vec![
-                Topic::new("build.done"),
-                Topic::new("build.blocked"),
-            ],
+            publishes: vec![Topic::new("build.done"), Topic::new("build.blocked")],
             instructions: String::new(),
         }
     }
@@ -181,8 +178,7 @@ impl Hat {
     ///
     /// Used to identify fallback handlers like Ralph.
     pub fn is_fallback_only(&self) -> bool {
-        !self.subscriptions.is_empty()
-            && self.subscriptions.iter().all(Topic::is_global_wildcard)
+        !self.subscriptions.is_empty() && self.subscriptions.iter().all(Topic::is_global_wildcard)
     }
 }
 
@@ -192,7 +188,9 @@ mod tests {
 
     #[test]
     fn test_subscription_matching() {
-        let hat = Hat::new("impl", "Implementer").subscribe("impl.*").subscribe("task.start");
+        let hat = Hat::new("impl", "Implementer")
+            .subscribe("impl.*")
+            .subscribe("task.start");
 
         assert!(hat.is_subscribed(&Topic::new("impl.done")));
         assert!(hat.is_subscribed(&Topic::new("task.start")));

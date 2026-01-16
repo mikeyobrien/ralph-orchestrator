@@ -151,8 +151,7 @@ fn override_backend_in_yaml(content: &str, backend: &str) -> Result<String, Init
         .map_err(|e| InitError::YamlError(e.to_string()))?;
 
     // Check if there's a cli: section
-    let cli_re = Regex::new(r"(?m)^cli:\s*$")
-        .map_err(|e| InitError::YamlError(e.to_string()))?;
+    let cli_re = Regex::new(r"(?m)^cli:\s*$").map_err(|e| InitError::YamlError(e.to_string()))?;
 
     if cli_re.is_match(content) {
         // cli section exists - replace or insert backend
@@ -167,8 +166,8 @@ fn override_backend_in_yaml(content: &str, backend: &str) -> Result<String, Init
         }
     } else {
         // No cli section - add one at the start (after any leading comments)
-        let first_key_re = Regex::new(r"(?m)^[a-z_]+:\s*")
-            .map_err(|e| InitError::YamlError(e.to_string()))?;
+        let first_key_re =
+            Regex::new(r"(?m)^[a-z_]+:\s*").map_err(|e| InitError::YamlError(e.to_string()))?;
 
         if let Some(m) = first_key_re.find(content) {
             let pos = m.start();

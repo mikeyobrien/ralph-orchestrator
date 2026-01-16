@@ -54,14 +54,14 @@ pub fn render(state: &TuiState) -> Paragraph<'static> {
 mod tests {
     use super::*;
     use ralph_proto::{Event, HatId};
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::time::Duration;
 
     fn render_to_string(state: &TuiState) -> String {
         let backend = TestBackend::new(80, 3);
         let mut terminal = Terminal::new(backend).unwrap();
-        
+
         terminal
             .draw(|f| {
                 let widget = render(state);
@@ -84,7 +84,11 @@ mod tests {
         state.max_iterations = None;
 
         let text = render_to_string(&state);
-        assert!(text.contains("[iter 3]"), "should show [iter 3], got: {}", text);
+        assert!(
+            text.contains("[iter 3]"),
+            "should show [iter 3], got: {}",
+            text
+        );
     }
 
     #[test]
@@ -94,7 +98,11 @@ mod tests {
         state.max_iterations = Some(10);
 
         let text = render_to_string(&state);
-        assert!(text.contains("[iter 3/10]"), "should show [iter 3/10], got: {}", text);
+        assert!(
+            text.contains("[iter 3/10]"),
+            "should show [iter 3/10], got: {}",
+            text
+        );
     }
 
     #[test]
@@ -104,7 +112,11 @@ mod tests {
         state.update(&event);
 
         // Simulate 4 minutes 32 seconds elapsed
-        state.loop_started = Some(std::time::Instant::now().checked_sub(Duration::from_secs(272)).unwrap());
+        state.loop_started = Some(
+            std::time::Instant::now()
+                .checked_sub(Duration::from_secs(272))
+                .unwrap(),
+        );
 
         let text = render_to_string(&state);
         assert!(text.contains("04:32"), "should show 04:32, got: {}", text);
@@ -125,7 +137,11 @@ mod tests {
         state.idle_timeout_remaining = Some(Duration::from_secs(25));
 
         let text = render_to_string(&state);
-        assert!(text.contains("idle: 25s"), "should show idle countdown, got: {}", text);
+        assert!(
+            text.contains("idle: 25s"),
+            "should show idle countdown, got: {}",
+            text
+        );
     }
 
     #[test]
@@ -134,7 +150,11 @@ mod tests {
         state.idle_timeout_remaining = None;
 
         let text = render_to_string(&state);
-        assert!(!text.contains("idle:"), "should not show idle when None, got: {}", text);
+        assert!(
+            !text.contains("idle:"),
+            "should not show idle when None, got: {}",
+            text
+        );
     }
 
     #[test]
@@ -143,7 +163,11 @@ mod tests {
         state.loop_mode = LoopMode::Auto;
 
         let text = render_to_string(&state);
-        assert!(text.contains("▶ auto"), "should show auto mode, got: {}", text);
+        assert!(
+            text.contains("▶ auto"),
+            "should show auto mode, got: {}",
+            text
+        );
     }
 
     #[test]
@@ -152,7 +176,11 @@ mod tests {
         state.loop_mode = LoopMode::Paused;
 
         let text = render_to_string(&state);
-        assert!(text.contains("⏸ paused"), "should show paused mode, got: {}", text);
+        assert!(
+            text.contains("⏸ paused"),
+            "should show paused mode, got: {}",
+            text
+        );
     }
 
     #[test]
@@ -161,7 +189,11 @@ mod tests {
         state.in_scroll_mode = true;
 
         let text = render_to_string(&state);
-        assert!(text.contains("[SCROLL]"), "should show scroll indicator, got: {}", text);
+        assert!(
+            text.contains("[SCROLL]"),
+            "should show scroll indicator, got: {}",
+            text
+        );
     }
 
     #[test]
@@ -169,10 +201,14 @@ mod tests {
         let mut state = TuiState::new();
         let event = Event::new("task.start", "");
         state.update(&event);
-        
+
         state.iteration = 2;
         state.max_iterations = Some(10);
-        state.loop_started = Some(std::time::Instant::now().checked_sub(Duration::from_secs(272)).unwrap());
+        state.loop_started = Some(
+            std::time::Instant::now()
+                .checked_sub(Duration::from_secs(272))
+                .unwrap(),
+        );
         state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
         state.idle_timeout_remaining = Some(Duration::from_secs(25));
         state.loop_mode = LoopMode::Auto;
@@ -181,11 +217,27 @@ mod tests {
         let text = render_to_string(&state);
 
         // Verify all components present
-        assert!(text.contains("[iter 3/10]"), "missing iteration, got: {}", text);
-        assert!(text.contains("04:32"), "missing elapsed time, got: {}", text);
+        assert!(
+            text.contains("[iter 3/10]"),
+            "missing iteration, got: {}",
+            text
+        );
+        assert!(
+            text.contains("04:32"),
+            "missing elapsed time, got: {}",
+            text
+        );
         assert!(text.contains("Builder"), "missing hat, got: {}", text);
-        assert!(text.contains("idle: 25s"), "missing idle countdown, got: {}", text);
+        assert!(
+            text.contains("idle: 25s"),
+            "missing idle countdown, got: {}",
+            text
+        );
         assert!(text.contains("▶ auto"), "missing mode, got: {}", text);
-        assert!(text.contains("[SCROLL]"), "missing scroll indicator, got: {}", text);
+        assert!(
+            text.contains("[SCROLL]"),
+            "missing scroll indicator, got: {}",
+            text
+        );
     }
 }

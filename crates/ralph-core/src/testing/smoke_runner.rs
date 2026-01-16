@@ -176,9 +176,7 @@ impl SmokeRunner {
     pub fn run(config: &SmokeTestConfig) -> Result<SmokeTestResult, SmokeTestError> {
         // Validate fixture exists
         if !config.fixture_path.exists() {
-            return Err(SmokeTestError::FixtureNotFound(
-                config.fixture_path.clone(),
-            ));
+            return Err(SmokeTestError::FixtureNotFound(config.fixture_path.clone()));
         }
 
         // Load the replay backend
@@ -238,8 +236,8 @@ impl SmokeRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::io::Write;
+    use tempfile::TempDir;
 
     /// Helper to create a JSONL fixture file.
     fn create_fixture(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -337,7 +335,10 @@ mod tests {
         let config = SmokeTestConfig::new(&fixture_path);
         let result = SmokeRunner::run(&config).unwrap();
 
-        assert_eq!(*result.termination_reason(), TerminationReason::FixtureExhausted);
+        assert_eq!(
+            *result.termination_reason(),
+            TerminationReason::FixtureExhausted
+        );
         assert!(result.completed_successfully()); // FixtureExhausted is considered success
     }
 
@@ -387,15 +388,16 @@ typecheck: pass
 
         // Note: This test verifies timeout handling works, but won't actually timeout
         // since the fixture is small. A real timeout test would need realistic timing.
-        let config = SmokeTestConfig::new(&fixture_path)
-            .with_timeout(Duration::from_millis(1)); // Very short timeout
+        let config = SmokeTestConfig::new(&fixture_path).with_timeout(Duration::from_millis(1)); // Very short timeout
 
         let result = SmokeRunner::run(&config).unwrap();
 
         // The test should complete quickly so won't actually timeout,
         // but the timeout mechanism is in place
-        assert!(result.completed_successfully() ||
-                *result.termination_reason() == TerminationReason::Timeout);
+        assert!(
+            result.completed_successfully()
+                || *result.termination_reason() == TerminationReason::Timeout
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -446,7 +448,10 @@ typecheck: pass
 
         assert_eq!(result.iterations_run(), 0);
         assert_eq!(result.event_count(), 0);
-        assert_eq!(*result.termination_reason(), TerminationReason::FixtureExhausted);
+        assert_eq!(
+            *result.termination_reason(),
+            TerminationReason::FixtureExhausted
+        );
     }
 
     #[test]

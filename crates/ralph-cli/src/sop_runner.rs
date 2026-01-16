@@ -6,7 +6,7 @@
 //! 2. Build a prompt with the SOP content wrapped in XML tags
 //! 3. Spawn an interactive session with the backend
 
-use ralph_adapters::{detect_backend_default, CliBackend, CustomBackendError, NoBackendError};
+use ralph_adapters::{CliBackend, CustomBackendError, NoBackendError, detect_backend_default};
 use ralph_core::RalphConfig;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

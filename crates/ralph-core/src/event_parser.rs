@@ -346,9 +346,18 @@ Working on implementation...
 
     #[test]
     fn test_contains_promise() {
-        assert!(EventParser::contains_promise("LOOP_COMPLETE", "LOOP_COMPLETE"));
-        assert!(EventParser::contains_promise("prefix LOOP_COMPLETE suffix", "LOOP_COMPLETE"));
-        assert!(!EventParser::contains_promise("No promise here", "LOOP_COMPLETE"));
+        assert!(EventParser::contains_promise(
+            "LOOP_COMPLETE",
+            "LOOP_COMPLETE"
+        ));
+        assert!(EventParser::contains_promise(
+            "prefix LOOP_COMPLETE suffix",
+            "LOOP_COMPLETE"
+        ));
+        assert!(!EventParser::contains_promise(
+            "No promise here",
+            "LOOP_COMPLETE"
+        ));
     }
 
     #[test]
@@ -423,7 +432,8 @@ Still working..."#;
         assert!(!stripped.contains("payload"));
 
         // Multiple events
-        let output = r#"start <event topic="a">one</event> middle <event topic="b">two</event> end"#;
+        let output =
+            r#"start <event topic="a">one</event> middle <event topic="b">two</event> end"#;
         let stripped = EventParser::strip_event_tags(output);
         assert_eq!(stripped, "start  middle  end");
 

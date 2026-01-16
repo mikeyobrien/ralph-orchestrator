@@ -97,9 +97,7 @@ impl StreamHandler for ConsoleStreamHandler {
             let _ = writeln!(
                 self.stdout,
                 "\n--- Session Complete ---\nDuration: {}ms | Cost: ${:.4} | Turns: {}",
-                result.duration_ms,
-                result.total_cost_usd,
-                result.num_turns
+                result.duration_ms, result.total_cost_usd, result.num_turns
             );
         }
     }
@@ -122,9 +120,7 @@ impl StreamHandler for QuietStreamHandler {
 /// Returns `None` for unknown tools or if the expected field is missing.
 fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> {
     match name {
-        "Read" | "Edit" | "Write" => {
-            input.get("file_path")?.as_str().map(|s| s.to_string())
-        }
+        "Read" | "Edit" | "Write" => input.get("file_path")?.as_str().map(|s| s.to_string()),
         "Bash" => {
             let cmd = input.get("command")?.as_str()?;
             Some(truncate(cmd, 60))

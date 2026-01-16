@@ -9,5 +9,5 @@ pub use mock_backend::{ExecutionRecord, MockBackend};
 pub use replay_backend::{ReplayBackend, ReplayTimingMode};
 pub use scenario::{ExecutionTrace, Scenario, ScenarioRunner};
 pub use smoke_runner::{
-    list_fixtures, SmokeRunner, SmokeTestConfig, SmokeTestError, SmokeTestResult, TerminationReason,
+    SmokeRunner, SmokeTestConfig, SmokeTestError, SmokeTestResult, TerminationReason, list_fixtures,
 };

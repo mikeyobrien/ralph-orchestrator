@@ -114,19 +114,17 @@ impl InputRouter {
                     RouteResult::ScrollKey(key)
                 }
             }
-            InputMode::Search => {
-                match key.code {
-                    KeyCode::Enter => {
-                        self.mode = InputMode::Scroll;
-                        RouteResult::ExecuteSearch
-                    }
-                    KeyCode::Esc => {
-                        self.mode = InputMode::Scroll;
-                        RouteResult::CancelSearch
-                    }
-                    _ => RouteResult::SearchInput(key),
+            InputMode::Search => match key.code {
+                KeyCode::Enter => {
+                    self.mode = InputMode::Scroll;
+                    RouteResult::ExecuteSearch
                 }
-            }
+                KeyCode::Esc => {
+                    self.mode = InputMode::Scroll;
+                    RouteResult::CancelSearch
+                }
+                _ => RouteResult::SearchInput(key),
+            },
         }
     }
 
@@ -317,7 +315,10 @@ mod tests {
         router.enter_scroll_mode();
 
         let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
-        assert_eq!(router.route_key(key), RouteResult::EnterSearch { forward: true });
+        assert_eq!(
+            router.route_key(key),
+            RouteResult::EnterSearch { forward: true }
+        );
     }
 
     #[test]
@@ -326,7 +327,10 @@ mod tests {
         router.enter_scroll_mode();
 
         let key = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE);
-        assert_eq!(router.route_key(key), RouteResult::EnterSearch { forward: false });
+        assert_eq!(
+            router.route_key(key),
+            RouteResult::EnterSearch { forward: false }
+        );
     }
 
     #[test]
@@ -380,11 +384,11 @@ mod tests {
     #[test]
     fn custom_prefix_ctrl_b_works() {
         let mut router = InputRouter::with_prefix(KeyCode::Char('b'), KeyModifiers::CONTROL);
-        
+
         // Ctrl+B should trigger command mode
         let prefix = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
         assert_eq!(router.route_key(prefix), RouteResult::Consumed);
-        
+
         // Next key should be interpreted as command
         let cmd = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         assert_eq!(router.route_key(cmd), RouteResult::Command(Command::Quit));
@@ -393,7 +397,7 @@ mod tests {
     #[test]
     fn custom_prefix_ctrl_b_ignores_ctrl_a() {
         let mut router = InputRouter::with_prefix(KeyCode::Char('b'), KeyModifiers::CONTROL);
-        
+
         // Ctrl+A should be forwarded, not consumed
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
         assert_eq!(router.route_key(key), RouteResult::Forward(key));

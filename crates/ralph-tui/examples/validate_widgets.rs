@@ -4,9 +4,9 @@
 
 use ralph_proto::{Event, HatId};
 use ralph_tui::TuiState;
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::Terminal;
 use std::fs;
 use std::time::Duration;
 
@@ -35,7 +35,11 @@ fn main() {
 
     state.iteration = 2;
     state.max_iterations = Some(10);
-    state.loop_started = Some(std::time::Instant::now().checked_sub(Duration::from_secs(272)).unwrap());
+    state.loop_started = Some(
+        std::time::Instant::now()
+            .checked_sub(Duration::from_secs(272))
+            .unwrap(),
+    );
     state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
     state.loop_mode = ralph_tui::LoopMode::Auto;
     state.last_event = Some("build.task".to_string());
@@ -124,7 +128,11 @@ fn main() {
     println!();
 
     // Render footer (idle state)
-    state.last_event_at = Some(std::time::Instant::now().checked_sub(Duration::from_secs(10)).unwrap());
+    state.last_event_at = Some(
+        std::time::Instant::now()
+            .checked_sub(Duration::from_secs(10))
+            .unwrap(),
+    );
     let backend = TestBackend::new(80, 3);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -179,7 +187,10 @@ fn main() {
                     .title(" Terminal Output "),
                 chunks[1],
             );
-            f.render_widget(ralph_tui::footer::render(&state, &scroll_manager), chunks[2]);
+            f.render_widget(
+                ralph_tui::footer::render(&state, &scroll_manager),
+                chunks[2],
+            );
         })
         .unwrap();
     let full_output = render_to_string(&terminal);

@@ -1,6 +1,6 @@
 //! Integration tests for the smoke test replay runner.
 
-use ralph_core::testing::{list_fixtures, SmokeRunner, SmokeTestConfig, TerminationReason};
+use ralph_core::testing::{SmokeRunner, SmokeTestConfig, TerminationReason, list_fixtures};
 use std::path::PathBuf;
 
 /// Returns the path to the test fixtures directory.
@@ -251,7 +251,10 @@ mod regression_detection {
 
         // ReplayBackend should handle this gracefully (returns None for bad decode)
         let backend = ReplayBackend::from_file(&fixture_path);
-        assert!(backend.is_ok(), "Should load file, handling bad data gracefully");
+        assert!(
+            backend.is_ok(),
+            "Should load file, handling bad data gracefully"
+        );
 
         let mut backend = backend.unwrap();
         // Invalid base64 should result in None output (skipped)
@@ -772,8 +775,7 @@ mod kiro_smoke_tests {
         // Run Claude fixture
         let claude_fixture = fixtures_dir().join("basic_session.jsonl");
         let claude_config = SmokeTestConfig::new(&claude_fixture);
-        let claude_result =
-            SmokeRunner::run(&claude_config).expect("Claude fixture should run");
+        let claude_result = SmokeRunner::run(&claude_config).expect("Claude fixture should run");
 
         // Run Kiro fixture
         let kiro_fixture = kiro_fixtures_dir().join("basic_kiro_session.jsonl");

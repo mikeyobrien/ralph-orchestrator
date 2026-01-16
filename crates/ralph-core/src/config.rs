@@ -44,7 +44,6 @@ pub struct RalphConfig {
     // V1 COMPATIBILITY FIELDS (flat format)
     // These map to nested v2 fields for backwards compatibility.
     // ─────────────────────────────────────────────────────────────────────────
-
     /// V1 field: Backend CLI (maps to cli.backend).
     /// Values: "claude", "kiro", "gemini", "codex", "amp", "auto", or "custom".
     #[serde(default)]
@@ -77,7 +76,6 @@ pub struct RalphConfig {
     // ─────────────────────────────────────────────────────────────────────────
     // FEATURE FLAGS
     // ─────────────────────────────────────────────────────────────────────────
-
     /// Enable verbose output.
     #[serde(default)]
     pub verbose: bool,
@@ -93,7 +91,6 @@ pub struct RalphConfig {
     // ─────────────────────────────────────────────────────────────────────────
     // DROPPED FIELDS (accepted but ignored with warning)
     // ─────────────────────────────────────────────────────────────────────────
-
     /// V1 field: Token limits (DROPPED: controlled by CLI tool).
     #[serde(default)]
     pub max_tokens: Option<u32>,
@@ -109,7 +106,6 @@ pub struct RalphConfig {
     // ─────────────────────────────────────────────────────────────────────────
     // WARNING CONTROL
     // ─────────────────────────────────────────────────────────────────────────
-
     /// Suppress all warnings (for CI environments).
     #[serde(default, rename = "_suppress_warnings")]
     pub suppress_warnings: bool,
@@ -249,34 +245,55 @@ impl RalphConfig {
 
         // Map v1 `completion_promise` to v2 `event_loop.completion_promise`
         if let Some(ref cp) = self.completion_promise {
-            debug!(from = "completion_promise", to = "event_loop.completion_promise", "Normalizing v1 field");
+            debug!(
+                from = "completion_promise",
+                to = "event_loop.completion_promise",
+                "Normalizing v1 field"
+            );
             self.event_loop.completion_promise = cp.clone();
             normalized_count += 1;
         }
 
         // Map v1 `max_iterations` to v2 `event_loop.max_iterations`
         if let Some(mi) = self.max_iterations {
-            debug!(from = "max_iterations", to = "event_loop.max_iterations", value = mi, "Normalizing v1 field");
+            debug!(
+                from = "max_iterations",
+                to = "event_loop.max_iterations",
+                value = mi,
+                "Normalizing v1 field"
+            );
             self.event_loop.max_iterations = mi;
             normalized_count += 1;
         }
 
         // Map v1 `max_runtime` to v2 `event_loop.max_runtime_seconds`
         if let Some(mr) = self.max_runtime {
-            debug!(from = "max_runtime", to = "event_loop.max_runtime_seconds", value = mr, "Normalizing v1 field");
+            debug!(
+                from = "max_runtime",
+                to = "event_loop.max_runtime_seconds",
+                value = mr,
+                "Normalizing v1 field"
+            );
             self.event_loop.max_runtime_seconds = mr;
             normalized_count += 1;
         }
 
         // Map v1 `max_cost` to v2 `event_loop.max_cost_usd`
         if self.max_cost.is_some() {
-            debug!(from = "max_cost", to = "event_loop.max_cost_usd", "Normalizing v1 field");
+            debug!(
+                from = "max_cost",
+                to = "event_loop.max_cost_usd",
+                "Normalizing v1 field"
+            );
             self.event_loop.max_cost_usd = self.max_cost;
             normalized_count += 1;
         }
 
         if normalized_count > 0 {
-            debug!(fields_normalized = normalized_count, "V1 to V2 config normalization complete");
+            debug!(
+                fields_normalized = normalized_count,
+                "V1 to V2 config normalization complete"
+            );
         }
     }
 
@@ -299,7 +316,10 @@ impl RalphConfig {
 
         // Check for mutual exclusivity of prompt and prompt_file in config
         // Only error if both are explicitly set (not defaults)
-        if self.event_loop.prompt.is_some() && !self.event_loop.prompt_file.is_empty() && self.event_loop.prompt_file != default_prompt_file() {
+        if self.event_loop.prompt.is_some()
+            && !self.event_loop.prompt_file.is_empty()
+            && self.event_loop.prompt_file != default_prompt_file()
+        {
             return Err(ConfigError::MutuallyExclusive {
                 field1: "event_loop.prompt".to_string(),
                 field2: "event_loop.prompt_file".to_string(),
@@ -355,7 +375,11 @@ impl RalphConfig {
 
         // Check for required description field on all hats
         for (hat_id, hat_config) in &self.hats {
-            if hat_config.description.as_ref().is_none_or(|d| d.trim().is_empty()) {
+            if hat_config
+                .description
+                .as_ref()
+                .is_none_or(|d| d.trim().is_empty())
+            {
                 return Err(ConfigError::MissingDescription {
                     hat: hat_id.clone(),
                 });
@@ -674,9 +698,11 @@ impl Default for TuiConfig {
 impl TuiConfig {
     /// Parses the prefix_key string into KeyCode and KeyModifiers.
     /// Returns an error if the format is invalid.
-    pub fn parse_prefix(&self) -> Result<(crossterm::event::KeyCode, crossterm::event::KeyModifiers), String> {
+    pub fn parse_prefix(
+        &self,
+    ) -> Result<(crossterm::event::KeyCode, crossterm::event::KeyModifiers), String> {
         use crossterm::event::{KeyCode, KeyModifiers};
-        
+
         let parts: Vec<&str> = self.prefix_key.split('-').collect();
         if parts.len() != 2 {
             return Err(format!(
@@ -829,18 +855,19 @@ pub enum ConfigError {
     },
 
     #[error("Mutually exclusive fields: '{field1}' and '{field2}' cannot both be specified")]
-    MutuallyExclusive {
-        field1: String,
-        field2: String,
-    },
+    MutuallyExclusive { field1: String, field2: String },
 
     #[error("Custom backend requires a command - set 'cli.command' in config")]
     CustomBackendRequiresCommand,
 
-    #[error("Reserved trigger '{trigger}' used by hat '{hat}' - task.start and task.resume are reserved for Ralph (the coordinator). Use a delegated event like 'work.start' instead.")]
+    #[error(
+        "Reserved trigger '{trigger}' used by hat '{hat}' - task.start and task.resume are reserved for Ralph (the coordinator). Use a delegated event like 'work.start' instead."
+    )]
     ReservedTrigger { trigger: String, hat: String },
 
-    #[error("Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose")]
+    #[error(
+        "Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose"
+    )]
     MissingDescription { hat: String },
 }
 
@@ -962,12 +989,12 @@ adapters:
         let warnings = config.validate().unwrap();
 
         assert_eq!(warnings.len(), 3);
-        assert!(warnings
-            .iter()
-            .any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "max_tokens")));
-        assert!(warnings
-            .iter()
-            .any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "retry_delay")));
+        assert!(warnings.iter().any(
+            |w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "max_tokens")
+        ));
+        assert!(warnings.iter().any(
+            |w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "retry_delay")
+        ));
         assert!(warnings
             .iter()
             .any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "adapters.*.tool_permissions")));
@@ -1067,7 +1094,11 @@ hats:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
 
-        assert!(result.is_ok(), "Expected valid config, got: {:?}", result.unwrap_err());
+        assert!(
+            result.is_ok(),
+            "Expected valid config, got: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
@@ -1211,11 +1242,11 @@ event_loop:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-        
+
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(&err, ConfigError::MutuallyExclusive { field1, field2 } 
+            matches!(&err, ConfigError::MutuallyExclusive { field1, field2 }
                 if field1 == "event_loop.prompt" && field2 == "event_loop.prompt_file"),
             "Expected MutuallyExclusive error, got: {:?}",
             err
@@ -1231,8 +1262,11 @@ event_loop:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-        
-        assert!(result.is_ok(), "Should allow inline prompt with default prompt_file");
+
+        assert!(
+            result.is_ok(),
+            "Should allow inline prompt with default prompt_file"
+        );
         assert_eq!(config.event_loop.prompt, Some("inline text".to_string()));
         assert_eq!(config.event_loop.prompt_file, "PROMPT.md");
     }
@@ -1246,7 +1280,7 @@ cli:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-        
+
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1266,7 +1300,7 @@ cli:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-        
+
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1286,8 +1320,12 @@ cli:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-        
-        assert!(result.is_ok(), "Should allow custom backend with command: {:?}", result.unwrap_err());
+
+        assert!(
+            result.is_ok(),
+            "Should allow custom backend with command: {:?}",
+            result.unwrap_err()
+        );
     }
 
     #[test]
@@ -1299,8 +1337,11 @@ event_loop:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-        
-        assert!(result.is_ok(), "Should allow prompt_file without inline prompt");
+
+        assert!(
+            result.is_ok(),
+            "Should allow prompt_file without inline prompt"
+        );
         assert_eq!(config.event_loop.prompt, None);
         assert_eq!(config.event_loop.prompt_file, "custom.md");
     }
@@ -1326,7 +1367,7 @@ tui:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let (key_code, key_modifiers) = config.tui.parse_prefix().unwrap();
-        
+
         use crossterm::event::{KeyCode, KeyModifiers};
         assert_eq!(key_code, KeyCode::Char('b'));
         assert_eq!(key_modifiers, KeyModifiers::CONTROL);
@@ -1382,7 +1423,10 @@ agent: "builder"
         let backend: HatBackend = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(backend.to_cli_backend(), "kiro");
         match backend {
-            HatBackend::KiroAgent { backend_type, agent } => {
+            HatBackend::KiroAgent {
+                backend_type,
+                agent,
+            } => {
                 assert_eq!(backend_type, "kiro");
                 assert_eq!(agent, "builder");
             }
@@ -1493,7 +1537,10 @@ hats:
         let builder = config.hats.get("builder").unwrap();
         assert!(builder.backend.is_some());
         match builder.backend.as_ref().unwrap() {
-            HatBackend::KiroAgent { backend_type, agent } => {
+            HatBackend::KiroAgent {
+                backend_type,
+                agent,
+            } => {
                 assert_eq!(backend_type, "kiro");
                 assert_eq!(agent, "builder");
             }
@@ -1510,6 +1557,9 @@ hats:
             }
             _ => panic!("Expected Custom backend for reviewer"),
         }
-        assert_eq!(reviewer.default_publishes, Some("review.complete".to_string()));
+        assert_eq!(
+            reviewer.default_publishes,
+            Some("review.complete".to_string())
+        );
     }
 }

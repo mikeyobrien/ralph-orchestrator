@@ -273,10 +273,10 @@ hats:
 
         // Topics to test - mix of matches and non-matches
         let topics = [
-            "topic0.start",    // First hat match
-            "topic10.event",   // Middle hat match
-            "topic19.done",    // Last hat match
-            "nomatch.topic",   // No match
+            "topic0.start",  // First hat match
+            "topic10.event", // Middle hat match
+            "topic19.done",  // Last hat match
+            "nomatch.topic", // No match
         ];
 
         const ITERATIONS: u32 = 100_000;
@@ -300,6 +300,10 @@ hats:
         println!("================================\n");
 
         // Assert reasonable performance (sanity check)
-        assert!(ns_per_op < 10_000, "Performance degraded: {} ns/op", ns_per_op);
+        assert!(
+            ns_per_op < 10_000,
+            "Performance degraded: {} ns/op",
+            ns_per_op
+        );
     }
 }

@@ -29,9 +29,7 @@ pub enum ClaudeStreamEvent {
     },
 
     /// Tool results returned to Claude.
-    User {
-        message: UserMessage,
-    },
+    User { message: UserMessage },
 
     /// Session complete - final event with stats.
     Result {
@@ -132,7 +130,11 @@ mod tests {
         let event = ClaudeStreamParser::parse_line(json).unwrap();
 
         match event {
-            ClaudeStreamEvent::System { session_id, model, tools } => {
+            ClaudeStreamEvent::System {
+                session_id,
+                model,
+                tools,
+            } => {
                 assert_eq!(session_id, "abc123");
                 assert_eq!(model, "claude-opus");
                 assert!(tools.is_empty());
@@ -143,7 +145,8 @@ mod tests {
 
     #[test]
     fn test_parse_assistant_text() {
-        let json = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}"#;
+        let json =
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}"#;
         let event = ClaudeStreamParser::parse_line(json).unwrap();
 
         match event {
@@ -188,7 +191,10 @@ mod tests {
             ClaudeStreamEvent::User { message } => {
                 assert_eq!(message.content.len(), 1);
                 match &message.content[0] {
-                    UserContentBlock::ToolResult { tool_use_id, content } => {
+                    UserContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                    } => {
                         assert_eq!(tool_use_id, "tool_1");
                         assert_eq!(content, "file.txt");
                     }
@@ -204,7 +210,12 @@ mod tests {
         let event = ClaudeStreamParser::parse_line(json).unwrap();
 
         match event {
-            ClaudeStreamEvent::Result { duration_ms, total_cost_usd, num_turns, is_error } => {
+            ClaudeStreamEvent::Result {
+                duration_ms,
+                total_cost_usd,
+                num_turns,
+                is_error,
+            } => {
                 assert_eq!(duration_ms, 5000);
                 assert!((total_cost_usd - 0.02).abs() < f64::EPSILON);
                 assert_eq!(num_turns, 2);

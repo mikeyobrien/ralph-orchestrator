@@ -450,7 +450,9 @@ mod tests {
         // Write a Ralph-logged event (full format)
         let mut logger = EventLogger::new(&path);
         let event = make_event("task.start", "Initial task");
-        logger.log_event(1, "loop", &event, Some(&HatId::new("planner"))).unwrap();
+        logger
+            .log_event(1, "loop", &event, Some(&HatId::new("planner")))
+            .unwrap();
 
         // Write an agent-style event (simple format)
         let mut file = std::fs::OpenOptions::new()

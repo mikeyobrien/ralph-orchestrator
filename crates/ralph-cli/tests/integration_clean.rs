@@ -85,7 +85,10 @@ core:
     assert!(output.status.success());
 
     // Custom directory should be deleted
-    assert!(!custom_dir.exists(), "custom-agent directory should be deleted");
+    assert!(
+        !custom_dir.exists(),
+        "custom-agent directory should be deleted"
+    );
 
     Ok(())
 }
@@ -121,7 +124,10 @@ core:
     assert!(output.status.success());
 
     // Directory should still exist
-    assert!(agent_dir.exists(), ".agent directory should still exist after dry-run");
+    assert!(
+        agent_dir.exists(),
+        ".agent directory should still exist after dry-run"
+    );
     assert!(agent_dir.join("scratchpad.md").exists());
 
     // Output should mention dry-run or preview
@@ -159,12 +165,17 @@ core:
         .output()?;
 
     // Should succeed (not an error)
-    assert!(output.status.success(), "Command should succeed even when directory doesn't exist");
+    assert!(
+        output.status.success(),
+        "Command should succeed even when directory doesn't exist"
+    );
 
     // Output should indicate nothing to clean
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("not found") || stdout.contains("does not exist") || stdout.contains("Nothing to clean"),
+        stdout.contains("not found")
+            || stdout.contains("does not exist")
+            || stdout.contains("Nothing to clean"),
         "Output should indicate directory doesn't exist"
     );
 
@@ -286,7 +297,10 @@ core:
     fs::set_permissions(&agent_dir, perms)?;
 
     // Should fail with non-zero exit code
-    assert!(!output.status.success(), "Command should fail with permission error");
+    assert!(
+        !output.status.success(),
+        "Command should fail with permission error"
+    );
 
     // Should contain error message
     let stderr = String::from_utf8_lossy(&output.stderr);

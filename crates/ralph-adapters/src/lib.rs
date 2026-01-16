@@ -24,19 +24,24 @@
 //! input forwarded) and observe mode (output-only).
 
 mod auto_detect;
+mod claude_stream;
 mod cli_backend;
 mod cli_executor;
-mod claude_stream;
 mod pty_executor;
 pub mod pty_handle;
 mod stream_handler;
 
-pub use auto_detect::{detect_backend, detect_backend_default, is_backend_available, NoBackendError, DEFAULT_PRIORITY};
+pub use auto_detect::{
+    DEFAULT_PRIORITY, NoBackendError, detect_backend, detect_backend_default, is_backend_available,
+};
+pub use claude_stream::{
+    AssistantMessage, ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, Usage, UserContentBlock,
+    UserMessage,
+};
 pub use cli_backend::{CliBackend, CustomBackendError, OutputFormat, PromptMode};
-pub use claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, AssistantMessage, UserMessage, UserContentBlock, Usage};
 pub use cli_executor::{CliExecutor, ExecutionResult};
-pub use stream_handler::{ConsoleStreamHandler, QuietStreamHandler, SessionResult, StreamHandler};
 pub use pty_executor::{
     CtrlCAction, CtrlCState, PtyConfig, PtyExecutionResult, PtyExecutor, TerminationType,
 };
 pub use pty_handle::{ControlCommand, PtyHandle};
+pub use stream_handler::{ConsoleStreamHandler, QuietStreamHandler, SessionResult, StreamHandler};

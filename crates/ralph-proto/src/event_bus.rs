@@ -24,7 +24,6 @@ pub struct EventBus {
     observers: Vec<Observer>,
 }
 
-
 impl EventBus {
     /// Creates a new empty event bus.
     pub fn new() -> Self {
@@ -257,10 +256,7 @@ mod tests {
 
         let observed_clone = Arc::clone(&observed);
         bus.add_observer(move |event| {
-            observed_clone
-                .lock()
-                .unwrap()
-                .push(event.payload.clone());
+            observed_clone.lock().unwrap().push(event.payload.clone());
         });
 
         let hat = Hat::new("impl", "Implementer").subscribe("task.*");

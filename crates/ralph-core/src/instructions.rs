@@ -65,11 +65,19 @@ impl InstructionBuilder {
 
             // Fall back to built-in defaults for well-known events
             let default_behavior = match trigger_str {
-                "task.start" | "task.resume" => Some("Analyze the task and create a plan in the scratchpad."),
+                "task.start" | "task.resume" => {
+                    Some("Analyze the task and create a plan in the scratchpad.")
+                }
                 "build.done" => Some("Review the completed work and decide next steps."),
-                "build.blocked" => Some("Analyze the blocker and decide how to unblock (simplify task, gather info, or escalate)."),
-                "build.task" => Some("Implement the assigned task. Follow existing patterns. Run backpressure (tests/checks). Commit when done."),
-                "review.request" => Some("Review the recent changes for correctness, tests, patterns, errors, and security."),
+                "build.blocked" => Some(
+                    "Analyze the blocker and decide how to unblock (simplify task, gather info, or escalate).",
+                ),
+                "build.task" => Some(
+                    "Implement the assigned task. Follow existing patterns. Run backpressure (tests/checks). Commit when done.",
+                ),
+                "review.request" => Some(
+                    "Review the recent changes for correctness, tests, patterns, errors, and security.",
+                ),
                 "review.approved" => Some("Mark the task complete `[x]` and proceed to next task."),
                 "review.changes_requested" => Some("Add fix tasks to scratchpad and dispatch."),
                 _ => None,
@@ -87,7 +95,10 @@ impl InstructionBuilder {
             // First, check event metadata
             if let Some(meta) = self.events.get(publish_str) {
                 if !meta.on_publish.is_empty() {
-                    behaviors.push(format!("**Publish `{}`:** {}", publish_str, meta.on_publish));
+                    behaviors.push(format!(
+                        "**Publish `{}`:** {}",
+                        publish_str, meta.on_publish
+                    ));
                     continue;
                 }
             }
@@ -189,7 +200,6 @@ INCOMING:
             events = events_context,
         )
     }
-
 }
 
 #[cfg(test)]
@@ -238,10 +248,7 @@ mod tests {
         let custom_core = CoreConfig {
             scratchpad: ".workspace/plan.md".to_string(),
             specs_dir: "./specifications/".to_string(),
-            guardrails: vec![
-                "Custom rule one".to_string(),
-                "Custom rule two".to_string(),
-            ],
+            guardrails: vec!["Custom rule one".to_string(), "Custom rule two".to_string()],
         };
         let builder = InstructionBuilder::new("DONE", custom_core);
 

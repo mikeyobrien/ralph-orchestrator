@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_adapters::{detect_backend, CliBackend, CliExecutor};
+use ralph_adapters::{CliBackend, CliExecutor, detect_backend};
 use ralph_core::{
     CleanupPolicy, CliCapture, EventLoop, PlayerConfig, RalphConfig, ReplayMode, SessionPlayer,
     TaskSuite, TerminationReason, WorkspaceManager,
@@ -188,19 +188,11 @@ async fn cmd_run(
     let suite = TaskSuite::from_file(&tasks_path)
         .with_context(|| format!("Failed to load tasks from {:?}", tasks_path))?;
 
-    info!(
-        "Loaded {} tasks from {:?}",
-        suite.tasks.len(),
-        tasks_path
-    );
+    info!("Loaded {} tasks from {:?}", suite.tasks.len(), tasks_path);
 
     // Determine tasks to run
     let tasks_to_run: Vec<_> = if let Some(ref name) = task_filter {
-        suite
-            .tasks
-            .iter()
-            .filter(|t| &t.name == name)
-            .collect()
+        suite.tasks.iter().filter(|t| &t.name == name).collect()
     } else {
         suite.tasks.iter().collect()
     };
@@ -258,14 +250,10 @@ async fn cmd_run(
         let task_start = std::time::Instant::now();
 
         // Run the orchestration loop for this task
-        let (iterations, termination_reason) = run_task_loop(
-            task,
-            &workspace,
-            record_path.as_ref(),
-            record_ux,
-        )
-        .await
-        .with_context(|| format!("Failed to run task '{}'", task.name))?;
+        let (iterations, termination_reason) =
+            run_task_loop(task, &workspace, record_path.as_ref(), record_ux)
+                .await
+                .with_context(|| format!("Failed to run task '{}'", task.name))?;
 
         // Run verification command (this works even without full EventLoop integration)
         let verification_result = workspace
@@ -273,7 +261,11 @@ async fn cmd_run(
             .with_context(|| format!("Failed to run verification for task '{}'", task.name))?;
 
         if verification_result.passed {
-            info!("Task '{}' verification: {}", task.name, verification_result.summary());
+            info!(
+                "Task '{}' verification: {}",
+                task.name,
+                verification_result.summary()
+            );
         } else {
             tracing::warn!(
                 "Task '{}' verification: {}\nstderr: {}",
@@ -313,10 +305,7 @@ async fn cmd_run(
     // Write results if output specified
     if let Some(output_path) = output {
         let results_json = BenchmarkResults {
-            run_id: format!(
-                "bench-{}",
-                chrono_timestamp()
-            ),
+            run_id: format!("bench-{}", chrono_timestamp()),
             timestamp: chrono_timestamp(),
             tasks: results,
         };
@@ -378,31 +367,29 @@ async fn run_task_loop(
     event_loop.initialize(&prompt_content);
 
     // Create CLI executor
-    let backend = CliBackend::from_config(&config.cli)
-        .map_err(|e| anyhow::Error::new(e))?;
+    let backend = CliBackend::from_config(&config.cli).map_err(|e| anyhow::Error::new(e))?;
     let executor = CliExecutor::new(backend);
 
     // Setup session recording if requested
-    let recorder: Option<Arc<SessionRecorder<BufWriter<File>>>> = if let Some(record_path) =
-        record_path
-    {
-        let file = File::create(record_path)
-            .with_context(|| format!("Failed to create recording file: {:?}", record_path))?;
-        let recorder = Arc::new(SessionRecorder::new(BufWriter::new(file)));
-        recorder.record_meta(Record::meta_loop_start(
-            &config.event_loop.prompt_file,
-            config.event_loop.max_iterations,
-            Some("cli"),
-        ));
+    let recorder: Option<Arc<SessionRecorder<BufWriter<File>>>> =
+        if let Some(record_path) = record_path {
+            let file = File::create(record_path)
+                .with_context(|| format!("Failed to create recording file: {:?}", record_path))?;
+            let recorder = Arc::new(SessionRecorder::new(BufWriter::new(file)));
+            recorder.record_meta(Record::meta_loop_start(
+                &config.event_loop.prompt_file,
+                config.event_loop.max_iterations,
+                Some("cli"),
+            ));
 
-        // Wire observer to EventBus so events are recorded
-        let observer = SessionRecorder::make_observer(Arc::clone(&recorder));
-        event_loop.add_observer(observer);
+            // Wire observer to EventBus so events are recorded
+            let observer = SessionRecorder::make_observer(Arc::clone(&recorder));
+            event_loop.add_observer(observer);
 
-        Some(recorder)
-    } else {
-        None
-    };
+            Some(recorder)
+        } else {
+            None
+        };
 
     // Determine if we should capture UX events (requires both flag and recorder)
     let should_capture_ux = record_ux && recorder.is_some();
@@ -480,7 +467,9 @@ async fn run_task_loop(
             // Wrap output buffer with CliCapture to record terminal output
             let mut output_buf = Vec::new();
             let mut capture = CliCapture::new(&mut output_buf, true);
-            let result = executor.execute(&prompt, &mut capture, timeout, false).await?;
+            let result = executor
+                .execute(&prompt, &mut capture, timeout, false)
+                .await?;
 
             // Extract and record UX events
             let ux_events = capture.take_captures();
@@ -491,7 +480,9 @@ async fn run_task_loop(
             result
         } else {
             let mut output_buf = Vec::new();
-            executor.execute(&prompt, &mut output_buf, timeout, false).await?
+            executor
+                .execute(&prompt, &mut output_buf, timeout, false)
+                .await?
         };
 
         // Process output
@@ -598,11 +589,7 @@ fn cmd_list(what: ListTarget, dir: Option<PathBuf>) -> Result<()> {
 
             let mut sessions: Vec<_> = fs::read_dir(&search_dir)?
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext == "jsonl")
-                })
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
                 .collect();
 
             sessions.sort_by_key(|e| e.file_name());
@@ -634,7 +621,10 @@ fn cmd_list(what: ListTarget, dir: Option<PathBuf>) -> Result<()> {
                 println!("Workspaces in {:?}:", search_dir);
                 for ws in workspaces {
                     let task = ws.task_name.as_deref().unwrap_or("unknown");
-                    let ts = ws.timestamp.map(|t| t.to_string()).unwrap_or_else(|| "?".to_string());
+                    let ts = ws
+                        .timestamp
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "?".to_string());
                     println!("  {} (task: {}, ts: {})", ws.path.display(), task, ts);
                 }
             }
@@ -670,8 +660,8 @@ impl TaskResult {
         verification_passed: bool,
         workspace_path: String,
     ) -> Self {
-        let iteration_delta = expected_iterations
-            .map(|expected| iterations as i32 - expected as i32);
+        let iteration_delta =
+            expected_iterations.map(|expected| iterations as i32 - expected as i32);
 
         Self {
             name,

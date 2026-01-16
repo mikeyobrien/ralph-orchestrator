@@ -88,7 +88,10 @@ impl SummaryWriter {
         let status = self.status_text(reason);
         content.push_str(&format!("**Status:** {status}\n"));
         content.push_str(&format!("**Iterations:** {}\n", state.iteration));
-        content.push_str(&format!("**Duration:** {}\n", format_duration(state.elapsed())));
+        content.push_str(&format!(
+            "**Duration:** {}\n",
+            format_duration(state.elapsed())
+        ));
 
         // Cost (if tracked)
         if state.cumulative_cost > 0.0 {
@@ -153,11 +156,7 @@ impl SummaryWriter {
             }
         }
 
-        if tasks.is_empty() {
-            None
-        } else {
-            Some(tasks)
-        }
+        if tasks.is_empty() { None } else { Some(tasks) }
     }
 
     /// Summarizes events from the event history file.
