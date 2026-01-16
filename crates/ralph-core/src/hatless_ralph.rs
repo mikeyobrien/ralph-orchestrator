@@ -266,11 +266,20 @@ Until all tasks `[x]` or `[~]`.
         format!(
             r#"## EVENT WRITING
 
-Write events to `{events_file}` as:
-{{"topic": "build.task", "payload": "...", "ts": "2026-01-14T12:00:00Z"}}
+Events are **routing signals**, not data transport. Keep payloads brief.
+
+**Use `ralph emit` to write events** (handles JSON escaping correctly):
+```bash
+ralph emit "build.done" "tests: pass, lint: pass"
+ralph emit "review.done" --json '{{"status": "approved", "issues": 0}}'
+```
+
+⚠️ **NEVER use echo/cat to write events** — shell escaping breaks JSON.
+
+For detailed output, write to `{scratchpad}` and emit a brief event.
 
 "#,
-            events_file = ".agent/events.jsonl"
+            scratchpad = self.core.scratchpad
         )
     }
 
@@ -329,7 +338,8 @@ mod tests {
 
         // Event writing and completion
         assert!(prompt.contains("## EVENT WRITING"));
-        assert!(prompt.contains(".agent/events.jsonl"));
+        assert!(prompt.contains("ralph emit"));
+        assert!(prompt.contains("NEVER use echo/cat"));
         assert!(prompt.contains("LOOP_COMPLETE"));
     }
 

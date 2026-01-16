@@ -4,11 +4,42 @@
 //! The observer pattern allows hooking into the event bus without modifying routing.
 
 use ralph_proto::{Event, HatId};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
+
+/// Custom deserializer that accepts both String and structured JSON payloads.
+///
+/// Agents sometimes write structured data as JSON objects instead of strings.
+/// This deserializer accepts both formats:
+/// - `"payload": "string"` → `"string"`
+/// - `"payload": {...}` → `"{...}"` (serialized to JSON string)
+/// - `"payload": null` or missing → `""` (empty string)
+fn deserialize_flexible_payload<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FlexiblePayload {
+        String(String),
+        Object(serde_json::Value),
+    }
+
+    let opt = Option::<FlexiblePayload>::deserialize(deserializer)?;
+    Ok(opt
+        .map(|flex| match flex {
+            FlexiblePayload::String(s) => s,
+            FlexiblePayload::Object(serde_json::Value::Null) => String::new(),
+            FlexiblePayload::Object(obj) => {
+                // Serialize the object back to a JSON string
+                serde_json::to_string(&obj).unwrap_or_else(|_| obj.to_string())
+            }
+        })
+        .unwrap_or_default())
+}
 
 /// A logged event record for debugging.
 ///
@@ -40,7 +71,8 @@ pub struct EventRecord {
     pub triggered: Option<String>,
 
     /// Event content (truncated if large). Defaults to empty string for agent events without payload.
-    #[serde(default)]
+    /// Accepts both string and object payloads - objects are serialized to JSON strings.
+    #[serde(default, deserialize_with = "deserialize_flexible_payload")]
     pub payload: String,
 
     /// How many times this task has blocked (optional).
@@ -444,5 +476,58 @@ mod tests {
         assert_eq!(records[1].topic, "build.task");
         assert_eq!(records[1].iteration, 0); // Defaulted
         assert_eq!(records[1].hat, ""); // Defaulted
+    }
+
+    #[test]
+    fn test_object_payload_from_ralph_emit_json() {
+        // Test that `ralph emit --json` object payloads are parsed correctly
+        // This was the root cause of "invalid type: map, expected a string" errors
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("events.jsonl");
+
+        let mut file = File::create(&path).unwrap();
+
+        // String payload (normal case)
+        writeln!(
+            file,
+            r#"{{"ts":"2024-01-15T10:00:00Z","topic":"task.start","payload":"implement feature"}}"#
+        )
+        .unwrap();
+
+        // Object payload (from `ralph emit --json`)
+        writeln!(
+            file,
+            r#"{{"topic":"task.complete","payload":{{"status":"verified","tasks":["auth","api"]}},"ts":"2024-01-15T10:30:00Z"}}"#
+        )
+        .unwrap();
+
+        // Nested object payload
+        writeln!(
+            file,
+            r#"{{"topic":"loop.recovery","payload":{{"status":"recovered","evidence":{{"tests":"pass"}}}},"ts":"2024-01-15T10:45:00Z"}}"#
+        )
+        .unwrap();
+
+        let history = EventHistory::new(&path);
+        let records = history.read_all().unwrap();
+
+        assert_eq!(records.len(), 3);
+
+        // String payload unchanged
+        assert_eq!(records[0].topic, "task.start");
+        assert_eq!(records[0].payload, "implement feature");
+
+        // Object payload converted to JSON string
+        assert_eq!(records[1].topic, "task.complete");
+        assert!(records[1].payload.contains("\"status\""));
+        assert!(records[1].payload.contains("\"verified\""));
+        // Should be valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&records[1].payload).unwrap();
+        assert_eq!(parsed["status"], "verified");
+
+        // Nested object also works
+        assert_eq!(records[2].topic, "loop.recovery");
+        let parsed: serde_json::Value = serde_json::from_str(&records[2].payload).unwrap();
+        assert_eq!(parsed["evidence"]["tests"], "pass");
     }
 }

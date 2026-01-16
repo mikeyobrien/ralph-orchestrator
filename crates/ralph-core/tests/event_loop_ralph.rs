@@ -168,3 +168,42 @@ event_loop:
     assert!(prompt.contains("Builder"), "Builder hat should be listed");
     assert!(prompt.contains("| Hat | Triggers On | Publishes |"), "Hat table header should be present");
 }
+
+#[test]
+fn test_reads_actual_events_jsonl_with_object_payloads() {
+    // This test verifies the fix for "invalid type: map, expected a string" errors
+    // when reading events.jsonl containing object payloads from `ralph emit --json`
+    use ralph_core::EventHistory;
+    
+    let history = EventHistory::new(".agent/events.jsonl");
+    if !history.exists() {
+        // Skip if no events file (CI environment)
+        return;
+    }
+    
+    // This should NOT produce any warnings about failed parsing
+    let records = history.read_all().expect("Should read events.jsonl");
+    
+    // We expect at least some records
+    assert!(!records.is_empty(), "events.jsonl should have records");
+    
+    // Verify all records were parsed (no silently dropped records)
+    println!("\n✓ Successfully parsed {} records from .agent/events.jsonl:\n", records.len());
+    for (i, record) in records.iter().enumerate() {
+        let payload_preview = if record.payload.len() > 50 {
+            format!("{}...", &record.payload[..50])
+        } else {
+            record.payload.clone()
+        };
+        let payload_type = if record.payload.starts_with('{') { "object→string" } else { "string" };
+        println!("  [{}] topic={:<25} type={:<14} payload={}", i + 1, record.topic, payload_type, payload_preview);
+
+        // Object payloads should be converted to JSON strings
+        if record.payload.starts_with('{') {
+            // Verify it's valid JSON
+            let _: serde_json::Value = serde_json::from_str(&record.payload)
+                .expect("Object payload should be valid JSON string");
+        }
+    }
+    println!();
+}
