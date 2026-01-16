@@ -139,29 +139,29 @@ impl ScrollManager {
 
     /// Jumps to next match.
     pub fn next_match(&mut self) {
-        if let Some(ref mut search) = self.search {
-            if !search.matches.is_empty() {
-                search.current_match = (search.current_match + 1) % search.matches.len();
-                let line = search.matches[search.current_match];
-                let _ = search; // End the mutable borrow
-                self.jump_to_line(line);
-            }
+        if let Some(ref mut search) = self.search
+            && !search.matches.is_empty()
+        {
+            search.current_match = (search.current_match + 1) % search.matches.len();
+            let line = search.matches[search.current_match];
+            let _ = search; // End the mutable borrow
+            self.jump_to_line(line);
         }
     }
 
     /// Jumps to previous match.
     pub fn prev_match(&mut self) {
-        if let Some(ref mut search) = self.search {
-            if !search.matches.is_empty() {
-                search.current_match = if search.current_match == 0 {
-                    search.matches.len() - 1
-                } else {
-                    search.current_match - 1
-                };
-                let line = search.matches[search.current_match];
-                let _ = search; // End the mutable borrow
-                self.jump_to_line(line);
-            }
+        if let Some(ref mut search) = self.search
+            && !search.matches.is_empty()
+        {
+            search.current_match = if search.current_match == 0 {
+                search.matches.len() - 1
+            } else {
+                search.current_match - 1
+            };
+            let line = search.matches[search.current_match];
+            let _ = search; // End the mutable borrow
+            self.jump_to_line(line);
         }
     }
 

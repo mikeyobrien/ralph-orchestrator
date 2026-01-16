@@ -82,11 +82,11 @@ impl CliExecutor {
         let mut child = command.spawn()?;
 
         // Write to stdin if needed
-        if let Some(input) = stdin_input {
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(input.as_bytes()).await?;
-                drop(stdin); // Close stdin to signal EOF
-            }
+        if let Some(input) = stdin_input
+            && let Some(mut stdin) = child.stdin.take()
+        {
+            stdin.write_all(input.as_bytes()).await?;
+            drop(stdin); // Close stdin to signal EOF
         }
 
         let mut timed_out = false;

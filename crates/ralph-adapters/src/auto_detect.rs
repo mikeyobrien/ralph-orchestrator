@@ -97,11 +97,11 @@ where
     debug!(priority = ?priority, "Starting backend auto-detection");
 
     // Check cache first
-    if let Some(cached) = DETECTED_BACKEND.get() {
-        if let Some(backend) = cached {
-            debug!(backend = %backend, "Using cached backend detection result");
-            return Ok(backend.clone());
-        }
+    if let Some(cached) = DETECTED_BACKEND.get()
+        && let Some(backend) = cached
+    {
+        debug!(backend = %backend, "Using cached backend detection result");
+        return Ok(backend.clone());
     }
 
     let mut checked = Vec::new();

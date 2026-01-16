@@ -227,10 +227,8 @@ impl SessionPlayer {
             }
 
             // Parse and output the terminal write
-            if let Ok(ux_event) = Self::parse_ux_event(&record.record) {
-                if let UxEvent::TerminalWrite(write) = ux_event {
-                    self.output_terminal_write(writer, &write)?;
-                }
+            if let Ok(UxEvent::TerminalWrite(write)) = Self::parse_ux_event(&record.record) {
+                self.output_terminal_write(writer, &write)?;
             }
 
             // Step mode: wait for Enter
@@ -288,16 +286,14 @@ impl SessionPlayer {
         let mut output = Vec::new();
 
         for record in self.terminal_writes() {
-            if let Ok(ux_event) = Self::parse_ux_event(&record.record) {
-                if let UxEvent::TerminalWrite(write) = ux_event {
-                    let bytes = write.decode_bytes().map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Failed to decode base64: {}", e),
-                        )
-                    })?;
-                    output.extend_from_slice(&bytes);
-                }
+            if let Ok(UxEvent::TerminalWrite(write)) = Self::parse_ux_event(&record.record) {
+                let bytes = write.decode_bytes().map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Failed to decode base64: {}", e),
+                    )
+                })?;
+                output.extend_from_slice(&bytes);
             }
         }
 

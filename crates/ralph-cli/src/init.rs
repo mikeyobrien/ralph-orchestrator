@@ -121,10 +121,10 @@ pub fn init_from_preset(
     })?;
 
     // Validate backend if provided
-    if let Some(backend) = backend_override {
-        if !VALID_BACKENDS.contains(&backend) {
-            return Err(InitError::UnknownBackend(backend.to_string()));
-        }
+    if let Some(backend) = backend_override
+        && !VALID_BACKENDS.contains(&backend)
+    {
+        return Err(InitError::UnknownBackend(backend.to_string()));
     }
 
     check_file_exists(force)?;

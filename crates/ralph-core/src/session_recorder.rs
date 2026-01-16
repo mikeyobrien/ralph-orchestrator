@@ -153,10 +153,10 @@ impl<W: Write> SessionRecorder<W> {
 
     /// Records a UX event.
     pub fn record_ux_event(&self, ux_event: &UxEvent) {
-        if matches!(ux_event, UxEvent::TerminalWrite(_)) {
-            if let Ok(mut count) = self.ux_write_count.lock() {
-                *count += 1;
-            }
+        if matches!(ux_event, UxEvent::TerminalWrite(_))
+            && let Ok(mut count) = self.ux_write_count.lock()
+        {
+            *count += 1;
         }
         let record = Record::from_ux_event(ux_event);
         self.write_record(&record);

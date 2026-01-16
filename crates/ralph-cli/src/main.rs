@@ -868,10 +868,10 @@ fn events_command(color_mode: ColorMode, args: EventsArgs) -> Result<()> {
     }
 
     // Apply 'last' filter after other filters (to get last N of filtered results)
-    if let Some(n) = args.last {
-        if records.len() > n {
-            records = records.into_iter().rev().take(n).rev().collect();
-        }
+    if let Some(n) = args.last
+        && records.len() > n
+    {
+        records = records.into_iter().rev().take(n).rev().collect();
     }
 
     if records.is_empty() {
@@ -1017,11 +1017,11 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
     });
 
     // Ensure parent directory exists
-    if let Some(parent) = args.file.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-        }
+    if let Some(parent) = args.file.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
     // Append to file

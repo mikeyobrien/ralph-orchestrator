@@ -379,7 +379,7 @@ impl PtyExecutor {
                 if elapsed >= d {
                     Duration::from_millis(1) // Trigger immediately
                 } else {
-                    d - elapsed
+                    d.saturating_sub(elapsed)
                 }
             });
 
@@ -626,7 +626,7 @@ impl PtyExecutor {
                 if elapsed >= d {
                     Duration::from_millis(1)
                 } else {
-                    d - elapsed
+                    d.saturating_sub(elapsed)
                 }
             });
 
@@ -665,10 +665,10 @@ impl PtyExecutor {
                         Some(OutputEvent::Eof) | None => {
                             debug!("Output channel closed");
                             // Process any remaining content in buffer
-                            if !line_buffer.is_empty() {
-                                if let Some(event) = ClaudeStreamParser::parse_line(&line_buffer) {
-                                    dispatch_stream_event(event, handler, &mut extracted_text);
-                                }
+                            if !line_buffer.is_empty()
+                                && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
+                            {
+                                dispatch_stream_event(event, handler, &mut extracted_text);
                             }
                             break;
                         }
@@ -724,10 +724,10 @@ impl PtyExecutor {
                 }
 
                 // Process final buffer content
-                if !line_buffer.is_empty() {
-                    if let Some(event) = ClaudeStreamParser::parse_line(&line_buffer) {
-                        dispatch_stream_event(event, handler, &mut extracted_text);
-                    }
+                if !line_buffer.is_empty()
+                    && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
+                {
+                    dispatch_stream_event(event, handler, &mut extracted_text);
                 }
 
                 let final_termination = resolve_termination_type(exit_code, termination);
@@ -982,7 +982,7 @@ impl PtyExecutor {
                         if elapsed >= d {
                             tokio::time::sleep(Duration::ZERO).await
                         } else {
-                            tokio::time::sleep(d - elapsed).await
+                            tokio::time::sleep(d.saturating_sub(elapsed)).await
                         }
                     }
                     None => std::future::pending::<()>().await,
@@ -1255,10 +1255,10 @@ impl PtyExecutor {
                 return Ok(Some(status));
             }
 
-            if let Some(max) = max_wait {
-                if start.elapsed() >= max {
-                    return Ok(None);
-                }
+            if let Some(max) = max_wait
+                && start.elapsed() >= max
+            {
+                return Ok(None);
             }
 
             tokio::select! {

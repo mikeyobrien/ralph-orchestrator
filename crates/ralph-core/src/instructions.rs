@@ -56,11 +56,11 @@ impl InstructionBuilder {
             let trigger_str = trigger.as_str();
 
             // First, check event metadata
-            if let Some(meta) = self.events.get(trigger_str) {
-                if !meta.on_trigger.is_empty() {
-                    behaviors.push(format!("**On `{}`:** {}", trigger_str, meta.on_trigger));
-                    continue;
-                }
+            if let Some(meta) = self.events.get(trigger_str)
+                && !meta.on_trigger.is_empty()
+            {
+                behaviors.push(format!("**On `{}`:** {}", trigger_str, meta.on_trigger));
+                continue;
             }
 
             // Fall back to built-in defaults for well-known events
@@ -93,14 +93,14 @@ impl InstructionBuilder {
             let publish_str = publish.as_str();
 
             // First, check event metadata
-            if let Some(meta) = self.events.get(publish_str) {
-                if !meta.on_publish.is_empty() {
-                    behaviors.push(format!(
-                        "**Publish `{}`:** {}",
-                        publish_str, meta.on_publish
-                    ));
-                    continue;
-                }
+            if let Some(meta) = self.events.get(publish_str)
+                && !meta.on_publish.is_empty()
+            {
+                behaviors.push(format!(
+                    "**Publish `{}`:** {}",
+                    publish_str, meta.on_publish
+                ));
+                continue;
             }
 
             // Fall back to built-in defaults for well-known events

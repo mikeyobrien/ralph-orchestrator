@@ -24,10 +24,10 @@ fn main() -> io::Result<()> {
             f.render_widget(pseudo_term, f.area());
         })?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.code == KeyCode::Char('q') {
-                break;
-            }
+        if let Event::Key(key) = event::read()?
+            && key.code == KeyCode::Char('q')
+        {
+            break;
         }
     }
 

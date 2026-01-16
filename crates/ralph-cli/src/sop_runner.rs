@@ -123,14 +123,12 @@ fn resolve_backend(
     }
 
     // 2. Check config file
-    if let Some(path) = config_path {
-        if path.exists() {
-            if let Ok(config) = RalphConfig::from_file(path) {
-                if config.cli.backend != "auto" {
-                    return Ok(config.cli.backend);
-                }
-            }
-        }
+    if let Some(path) = config_path
+        && path.exists()
+        && let Ok(config) = RalphConfig::from_file(path)
+        && config.cli.backend != "auto"
+    {
+        return Ok(config.cli.backend);
     }
 
     // 3. Auto-detect

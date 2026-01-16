@@ -261,10 +261,10 @@ impl EventLoop {
             return Some(TerminationReason::MaxRuntime);
         }
 
-        if let Some(max_cost) = cfg.max_cost_usd {
-            if self.state.cumulative_cost >= max_cost {
-                return Some(TerminationReason::MaxCost);
-            }
+        if let Some(max_cost) = cfg.max_cost_usd
+            && self.state.cumulative_cost >= max_cost
+        {
+            return Some(TerminationReason::MaxCost);
         }
 
         if self.state.consecutive_failures >= cfg.max_consecutive_failures {
@@ -493,16 +493,14 @@ impl EventLoop {
     pub fn get_active_hat_id(&self) -> HatId {
         // Peek at pending events (don't consume them)
         for hat_id in self.bus.hat_ids() {
-            if let Some(events) = self.bus.peek_pending(hat_id) {
-                if !events.is_empty() {
-                    // Return the hat ID that this event triggers
-                    if let Some(event) = events.first() {
-                        if let Some(active_hat) = self.registry.get_for_topic(event.topic.as_str())
-                        {
-                            return active_hat.id.clone();
-                        }
-                    }
-                }
+            let Some(events) = self.bus.peek_pending(hat_id) else {
+                continue;
+            };
+            let Some(event) = events.first() else {
+                continue;
+            };
+            if let Some(active_hat) = self.registry.get_for_topic(event.topic.as_str()) {
+                return active_hat.id.clone();
             }
         }
         HatId::new("ralph")
@@ -531,23 +529,20 @@ impl EventLoop {
             .map(|r| r.events.len())
             .unwrap_or(0);
 
-        if events_after == 0 {
-            // No new events written
-            if let Some(config) = self.registry.get_config(hat_id) {
-                if let Some(default_topic) = &config.default_publishes {
-                    // Inject default event
-                    let default_event =
-                        Event::new(default_topic.as_str(), "").with_source(hat_id.clone());
+        if events_after == 0
+            && let Some(config) = self.registry.get_config(hat_id)
+            && let Some(default_topic) = &config.default_publishes
+        {
+            // No new events written - inject default event
+            let default_event = Event::new(default_topic.as_str(), "").with_source(hat_id.clone());
 
-                    debug!(
-                        hat = %hat_id.as_str(),
-                        topic = %default_topic,
-                        "No events written by hat, injecting default_publishes event"
-                    );
+            debug!(
+                hat = %hat_id.as_str(),
+                topic = %default_topic,
+                "No events written by hat, injecting default_publishes event"
+            );
 
-                    self.bus.publish(default_event);
-                }
-            }
+            self.bus.publish(default_event);
         }
     }
 
