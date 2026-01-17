@@ -377,5 +377,237 @@ fn resolve(cli_verbose: bool, cli_quiet: bool) -> Self {
 
 ---
 
+## 6. Hat System Configuration
+
+The "hat system" is Ralph's mechanism for role-based agent coordination. Each hat is a specialized persona that triggers on specific events and publishes its own events to drive workflows.
+
+### Hat System Modes
+
+| Mode | Configuration | Description |
+|------|---------------|-------------|
+| **Solo Mode** | `hats: {}` or no hats section | Ralph handles everything directly |
+| **Single Hat** | One hat defined | Hat handles work, Ralph coordinates |
+| **Multi-Hat** | Multiple hats defined | Hats coordinate via events, Ralph is universal fallback |
+
+### Hat Configuration Schema
+
+```yaml
+hats:
+  <hat_id>:                        # Unique identifier (used internally)
+    name: "🔴 My Hat"              # Human-readable name (required)
+    description: "What this hat does"  # Short purpose description (required in v2)
+    triggers: ["event.start"]      # Events that activate this hat (required)
+    publishes: ["event.done"]      # Events this hat can emit (optional)
+    instructions: |                # Custom prompt instructions (optional)
+      Your instructions here...
+    backend: claude                # Override default backend (optional)
+    default_publishes: "event.done"  # Fallback event if hat forgets (optional)
+```
+
+### Hat Configuration Options Table
+
+| Field | Required | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `name` | ✅ Yes | `String` | - | Human-readable display name (supports emoji) |
+| `description` | ✅ Yes* | `Option<String>` | `None` | Purpose description for hat selection |
+| `triggers` | ✅ Yes | `Vec<String>` | `[]` | Events that activate this hat |
+| `publishes` | ❌ No | `Vec<String>` | `[]` | Events this hat can emit |
+| `instructions` | ❌ No | `String` | `""` | Custom instructions prepended to prompts |
+| `backend` | ❌ No | `HatBackend` | Inherits `cli.backend` | Override backend for this hat |
+| `default_publishes` | ❌ No | `Option<String>` | `None` | Auto-publish if hat forgets |
+
+*`description` is required when hats are defined (validation error if missing)
+
+### Hat Backend Options
+
+Hats can override the default backend using three formats:
+
+```yaml
+# Format 1: Named backend (string)
+hats:
+  builder:
+    backend: gemini
+
+# Format 2: Kiro with custom agent
+hats:
+  reviewer:
+    backend:
+      type: kiro
+      agent: codex
+
+# Format 3: Custom command
+hats:
+  specialist:
+    backend:
+      command: ./my-agent
+      args: ["--flag", "value"]
+```
+
+### Event Loop Configuration for Hats
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `event_loop.starting_event` | `String` | `"task.start"` | Initial event Ralph publishes |
+| `event_loop.completion_promise` | `String` | `"LOOP_COMPLETE"` | Output string that signals completion |
+
+### Available Presets (23 total)
+
+| Category | Presets |
+|----------|---------|
+| **Development** | `feature.yml`, `feature-minimal.yml`, `tdd-red-green.yml`, `spec-driven.yml`, `refactor.yml` |
+| **Quality** | `review.yml`, `pr-review.yml`, `adversarial-review.yml`, `gap-analysis.yml` |
+| **Debugging** | `debug.yml`, `incident-response.yml`, `code-archaeology.yml`, `scientific-method.yml` |
+| **Documentation** | `docs.yml`, `documentation-first.yml` |
+| **Specialized** | `api-design.yml`, `migration-safety.yml`, `performance-optimization.yml`, `deploy.yml` |
+| **Learning** | `research.yml`, `socratic-learning.yml`, `mob-programming.yml` |
+| **Baseline** | `hatless-baseline.yml` |
+
+### Hat Validation Rules
+
+The only hard validation rule remaining after "Hatless Ralph" redesign:
+
+| Rule | Error Message |
+|------|---------------|
+| **Unique Triggers** | `Ambiguous routing for trigger 'X'. Both 'hat1' and 'hat2' trigger on 'X'.` |
+| **Reserved Triggers** | `Reserved trigger 'task.start' used by hat 'X' - use 'work.start' instead.` |
+| **Missing Description** | `Hat 'X' is missing required 'description' field` |
+
+**Note**: Many former validation rules (entry point, orphan events, reachability) were removed because Ralph acts as a universal fallback.
+
+### Hat System Documentation Gaps
+
+#### 6.1 No Dedicated Hat System Guide
+
+**Location**: None exists
+
+**Issue**: There is no user-facing documentation that explains:
+- What the hat system is and why to use it
+- How to choose between solo mode and multi-hat mode
+- How to design custom hat workflows
+- Event naming conventions and best practices
+
+**Available Resources**:
+- `specs/hat-collections.spec.md` - Technical specification (not user-friendly)
+- `presets/README.md` - Lists 7 of 23 presets, outdated examples
+- GitHub README - Brief overview only
+
+**Recommendation**: Create `docs/guide/hat-system.md` with:
+1. Conceptual overview (what are hats, when to use them)
+2. Quick start (using a preset)
+3. Custom hat creation tutorial
+4. Event flow design patterns
+5. Troubleshooting common issues
+
+---
+
+#### 6.2 Preset Documentation Incomplete
+
+**Location**: `presets/README.md`
+
+**Issues**:
+1. Documents 7 presets, but 23 exist
+2. Uses `ralph start` command (should be `ralph run`)
+3. Missing presets not documented at all:
+   - `adversarial-review.yml`
+   - `api-design.yml`
+   - `code-archaeology.yml`
+   - `deploy.yml`
+   - `documentation-first.yml`
+   - `feature-minimal.yml`
+   - `hatless-baseline.yml`
+   - `incident-response.yml`
+   - `migration-safety.yml`
+   - `mob-programming.yml`
+   - `performance-optimization.yml`
+   - `pr-review.yml`
+   - `scientific-method.yml`
+   - `socratic-learning.yml`
+   - `spec-driven.yml`
+   - `tdd-red-green.yml`
+
+**Recommendation**: Auto-generate preset documentation from YAML frontmatter or add all presets manually.
+
+---
+
+#### 6.3 Hat Backend Configuration Undocumented
+
+**Location**: Mentioned in `docs/guide/configuration.md` but with incorrect format
+
+**Issue**: The three backend formats (Named, KiroAgent, Custom) are only documented in code comments at `config.rs:773-784`.
+
+**Example from docs** (WRONG):
+```yaml
+hats:
+  - name: builder
+    backend: gemini
+```
+
+**Actual format** (CORRECT):
+```yaml
+hats:
+  builder:
+    name: "🟢 Builder"
+    backend: gemini
+```
+
+---
+
+#### 6.4 Event Naming Conventions Undocumented
+
+**Location**: None
+
+**Issue**: No documentation on:
+- Reserved event names (`task.start`, `task.resume`)
+- Naming conventions (e.g., `category.action`)
+- Glob pattern support for triggers
+- Self-routing behavior
+
+**Evidence**: `specs/hat-collections.spec.md` has technical details but they're not exposed to users.
+
+---
+
+#### 6.5 `default_publishes` Feature Undocumented
+
+**Location**: Only in code at `config.rs:824-826`
+
+**Issue**: The `default_publishes` field allows a hat to auto-emit an event if it forgets to write one. This is useful for ensuring workflow continuity but is completely undocumented.
+
+**Example**:
+```yaml
+hats:
+  refactorer:
+    triggers: ["refactor.task"]
+    publishes: ["refactor.done", "cycle.complete"]
+    default_publishes: "cycle.complete"  # Auto-emit if hat forgets
+```
+
+---
+
+## 7. Updated Recommendations Summary
+
+### High Priority (Updated)
+
+1. **Delete or Archive Python Docs**: `docs/api/config.md` and `docs/api/cli.md` are dangerously outdated
+2. **Environment Variables**: Either implement claimed env vars or remove them from all docs
+3. **Create YAML Schema Reference**: Generate from config.rs with all fields, types, defaults
+4. **Create Hat System Guide**: New `docs/guide/hat-system.md` with conceptual overview and tutorials
+
+### Medium Priority (Updated)
+
+5. **Fix presets/README.md**: Update command (`ralph run`), add all 23 presets
+6. **Fix Hat Config Examples**: Use map format, not list format
+7. **Document Hat Backend Formats**: Three formats (Named, KiroAgent, Custom)
+8. **Consolidate CLI Reference**: README should be canonical, link to --help
+
+### Low Priority
+
+9. **Document adapters section**: Per-backend timeout and enabled settings
+10. **Document TUI config**: prefix_key customization
+11. **Document core config**: scratchpad, specs_dir, guardrails
+12. **Document event naming conventions**: Reserved names, patterns, self-routing
+13. **Document default_publishes**: Fallback event mechanism
+
+---
+
 *Report generated: 2026-01-17*
 *Ralph Orchestrator Version: v2.0 (Rust)*
