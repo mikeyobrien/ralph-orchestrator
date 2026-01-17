@@ -180,7 +180,38 @@ fn resolve(cli_verbose: bool, cli_quiet: bool) -> Self {
 
 ### Critical Issues
 
-#### 3.1 Outdated Python Documentation
+#### 3.1 JSON Config File Ghost Documentation
+
+**Location**: Multiple docs reference `ralph.json`
+- `docs/faq.md:156` - "Edit `ralph.json`"
+- `docs/api/cli.md:339-346` - Creates `ralph.json` config
+- `docs/troubleshooting.md:95` - "In ralph.json"
+- `docs/glossary.md:29` - "Configuration settings stored in `ralph.json`"
+
+**Issue**: The Rust v2 implementation **ONLY supports YAML** (`ralph.yml`). JSON config files are NOT supported.
+
+**Evidence from code**:
+```rust
+// crates/ralph-core/src/config.rs:211
+pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+    let content = std::fs::read_to_string(path_ref)?;
+    let config: Self = serde_yaml::from_str(&content)?;  // ← YAML only!
+    Ok(config)
+}
+
+// crates/ralph-cli/src/main.rs:193
+#[arg(short, long, default_value = "ralph.yml", global = true)]  // ← Default is .yml
+```
+
+**Impact**: High - users creating `ralph.json` files will get parse errors or their config will be silently ignored.
+
+**Recommendation**:
+1. Search and replace all `ralph.json` references with `ralph.yml`
+2. Or implement JSON support in `from_file()` with extension detection
+
+---
+
+#### 3.2 Outdated Python Documentation
 
 **Location**: `docs/api/config.md`, `docs/api/cli.md`
 
@@ -587,25 +618,26 @@ hats:
 
 ### High Priority (Updated)
 
-1. **Delete or Archive Python Docs**: `docs/api/config.md` and `docs/api/cli.md` are dangerously outdated
-2. **Environment Variables**: Either implement claimed env vars or remove them from all docs
-3. **Create YAML Schema Reference**: Generate from config.rs with all fields, types, defaults
-4. **Create Hat System Guide**: New `docs/guide/hat-system.md` with conceptual overview and tutorials
+1. **Fix JSON Config Ghost Docs**: Replace all `ralph.json` references with `ralph.yml` (or implement JSON support)
+2. **Delete or Archive Python Docs**: `docs/api/config.md` and `docs/api/cli.md` are dangerously outdated
+3. **Environment Variables**: Either implement claimed env vars or remove them from all docs
+4. **Create YAML Schema Reference**: Generate from config.rs with all fields, types, defaults
+5. **Create Hat System Guide**: New `docs/guide/hat-system.md` with conceptual overview and tutorials
 
 ### Medium Priority (Updated)
 
-5. **Fix presets/README.md**: Update command (`ralph run`), add all 23 presets
-6. **Fix Hat Config Examples**: Use map format, not list format
-7. **Document Hat Backend Formats**: Three formats (Named, KiroAgent, Custom)
-8. **Consolidate CLI Reference**: README should be canonical, link to --help
+6. **Fix presets/README.md**: Update command (`ralph run`), add all 23 presets
+7. **Fix Hat Config Examples**: Use map format, not list format
+8. **Document Hat Backend Formats**: Three formats (Named, KiroAgent, Custom)
+9. **Consolidate CLI Reference**: README should be canonical, link to --help
 
 ### Low Priority
 
-9. **Document adapters section**: Per-backend timeout and enabled settings
-10. **Document TUI config**: prefix_key customization
-11. **Document core config**: scratchpad, specs_dir, guardrails
-12. **Document event naming conventions**: Reserved names, patterns, self-routing
-13. **Document default_publishes**: Fallback event mechanism
+10. **Document adapters section**: Per-backend timeout and enabled settings
+11. **Document TUI config**: prefix_key customization
+12. **Document core config**: scratchpad, specs_dir, guardrails
+13. **Document event naming conventions**: Reserved names, patterns, self-routing
+14. **Document default_publishes**: Fallback event mechanism
 
 ---
 
