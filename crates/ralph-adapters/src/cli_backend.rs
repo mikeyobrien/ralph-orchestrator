@@ -66,6 +66,7 @@ impl CliBackend {
             "gemini" => Ok(Self::gemini()),
             "codex" => Ok(Self::codex()),
             "amp" => Ok(Self::amp()),
+            "copilot" => Ok(Self::copilot()),
             "custom" => Self::custom(config),
             _ => Ok(Self::claude()), // Default to claude
         }
@@ -161,6 +162,7 @@ impl CliBackend {
             "gemini" => Ok(Self::gemini()),
             "codex" => Ok(Self::codex()),
             "amp" => Ok(Self::amp()),
+            "copilot" => Ok(Self::copilot()),
             _ => Err(CustomBackendError),
         }
     }
@@ -216,6 +218,35 @@ impl CliBackend {
         }
     }
 
+    /// Creates the Copilot backend for autonomous mode.
+    ///
+    /// Uses GitHub Copilot CLI with `--allow-all-tools` for automated tool approval.
+    /// Output is plain text (no JSON streaming available).
+    pub fn copilot() -> Self {
+        Self {
+            command: "copilot".to_string(),
+            args: vec!["--allow-all-tools".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: Some("-p".to_string()),
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Creates the Copilot TUI backend for interactive mode.
+    ///
+    /// Runs Copilot in full interactive mode (no -p flag), allowing
+    /// Copilot's native TUI to render. The prompt is passed as a
+    /// positional argument.
+    pub fn copilot_tui() -> Self {
+        Self {
+            command: "copilot".to_string(),
+            args: vec![], // No --allow-all-tools in TUI mode
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::Text,
+        }
+    }
+
     /// Creates a backend configured for interactive mode with initial prompt.
     ///
     /// This factory method returns the correct backend configuration for running
@@ -229,6 +260,7 @@ impl CliBackend {
     /// | Gemini  | uses `-i` instead of `-p` |
     /// | Codex   | no `exec` subcommand |
     /// | Amp     | removes `--dangerously-allow-all` |
+    /// | Copilot | removes `--allow-all-tools` |
     ///
     /// # Errors
     /// Returns `CustomBackendError` if the backend name is not recognized.
@@ -239,6 +271,7 @@ impl CliBackend {
             "gemini" => Ok(Self::gemini_interactive()),
             "codex" => Ok(Self::codex_interactive()),
             "amp" => Ok(Self::amp_interactive()),
+            "copilot" => Ok(Self::copilot_interactive()),
             _ => Err(CustomBackendError),
         }
     }
@@ -295,6 +328,20 @@ impl CliBackend {
             args: vec![],
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Copilot in interactive mode (removes --allow-all-tools).
+    ///
+    /// Unlike headless `copilot()`, this runs without the auto-approve flag,
+    /// requiring user confirmation for tool usage.
+    pub fn copilot_interactive() -> Self {
+        Self {
+            command: "copilot".to_string(),
+            args: vec![],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
         }
     }
@@ -400,6 +447,10 @@ impl CliBackend {
             "amp" => args
                 .into_iter()
                 .filter(|a| a != "--dangerously-allow-all")
+                .collect(),
+            "copilot" => args
+                .into_iter()
+                .filter(|a| a != "--allow-all-tools")
                 .collect(),
             _ => args, // claude, gemini unchanged
         }
@@ -520,6 +571,30 @@ mod tests {
     }
 
     #[test]
+    fn test_copilot_backend() {
+        let backend = CliBackend::copilot();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "copilot");
+        assert_eq!(args, vec!["--allow-all-tools", "-p", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+    }
+
+    #[test]
+    fn test_copilot_tui_backend() {
+        let backend = CliBackend::copilot_tui();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "copilot");
+        // Should have prompt as positional arg, no -p flag, no --allow-all-tools
+        assert_eq!(args, vec!["test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+    }
+
+    #[test]
     fn test_from_config() {
         // Claude backend uses -p arg mode for headless execution
         let config = CliConfig {
@@ -566,6 +641,17 @@ mod tests {
         assert_eq!(args, vec!["-x", "test prompt"]);
         assert!(stdin.is_none());
         assert!(!args.contains(&"--dangerously-allow-all".to_string()));
+    }
+
+    #[test]
+    fn test_copilot_interactive_mode_omits_allow_all_tools() {
+        let backend = CliBackend::copilot();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
+
+        assert_eq!(cmd, "copilot");
+        assert_eq!(args, vec!["-p", "test prompt"]);
+        assert!(stdin.is_none());
+        assert!(!args.contains(&"--allow-all-tools".to_string()));
     }
 
     #[test]
@@ -728,6 +814,13 @@ mod tests {
     }
 
     #[test]
+    fn test_from_name_copilot() {
+        let backend = CliBackend::from_name("copilot").unwrap();
+        assert_eq!(backend.command, "copilot");
+        assert_eq!(backend.prompt_flag, Some("-p".to_string()));
+    }
+
+    #[test]
     fn test_from_name_invalid() {
         let result = CliBackend::from_name("invalid");
         assert!(result.is_err());
@@ -826,6 +919,18 @@ mod tests {
         // Should NOT have --dangerously-allow-all
         assert_eq!(args, vec!["-x", "test prompt"]);
         assert!(!args.contains(&"--dangerously-allow-all".to_string()));
+        assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn test_for_interactive_prompt_copilot() {
+        let backend = CliBackend::for_interactive_prompt("copilot").unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "copilot");
+        // Should NOT have --allow-all-tools
+        assert_eq!(args, vec!["-p", "test prompt"]);
+        assert!(!args.contains(&"--allow-all-tools".to_string()));
         assert!(stdin.is_none());
     }
 
