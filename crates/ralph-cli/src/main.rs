@@ -275,6 +275,21 @@ struct RunArgs {
     dry_run: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Backend and Resource Limit Options
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Backend to use (overrides config)
+    #[arg(short = 'b', long)]
+    backend: Option<String>,
+
+    /// Maximum runtime in seconds
+    #[arg(long)]
+    max_runtime: Option<u64>,
+
+    /// Maximum cost in USD
+    #[arg(long)]
+    max_cost: Option<f64>,
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Execution Mode Options
     // ─────────────────────────────────────────────────────────────────────────
     /// Enable interactive TUI mode for real-time monitoring
@@ -321,6 +336,21 @@ struct ResumeArgs {
     /// Override max iterations (from current position)
     #[arg(long)]
     max_iterations: Option<u32>,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Backend and Resource Limit Options
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Backend to use (overrides config)
+    #[arg(short = 'b', long)]
+    backend: Option<String>,
+
+    /// Maximum runtime in seconds
+    #[arg(long)]
+    max_runtime: Option<u64>,
+
+    /// Maximum cost in USD
+    #[arg(long)]
+    max_cost: Option<f64>,
 
     /// Enable interactive TUI mode for real-time monitoring
     #[arg(short, long, conflicts_with = "autonomous")]
@@ -473,6 +503,9 @@ async fn main() -> Result<()> {
                 max_iterations: None,
                 completion_promise: None,
                 dry_run: false,
+                backend: None,
+                max_runtime: None,
+                max_cost: None,
                 interactive: false,
                 autonomous: false,
                 idle_timeout: None,
@@ -509,20 +542,53 @@ async fn run_command(
     // Normalize v1 flat fields into v2 nested structure
     config.normalize();
 
-    // Apply CLI overrides (after normalization so they take final precedence)
+    // Apply environment variable overrides (after normalize, before CLI flags)
+    // Priority: CLI > ENV > YAML > defaults
+    if let Ok(backend) = std::env::var("RALPH_BACKEND") {
+        config.cli.backend = backend;
+    }
+    if let Ok(max_iter) = std::env::var("RALPH_MAX_ITERATIONS") {
+        if let Ok(n) = max_iter.parse() {
+            config.event_loop.max_iterations = n;
+        }
+    }
+    if let Ok(max_runtime) = std::env::var("RALPH_MAX_RUNTIME") {
+        if let Ok(n) = max_runtime.parse() {
+            config.event_loop.max_runtime_seconds = n;
+        }
+    }
+    if let Ok(max_cost) = std::env::var("RALPH_MAX_COST") {
+        if let Ok(n) = max_cost.parse() {
+            config.event_loop.max_cost_usd = Some(n);
+        }
+    }
+    if std::env::var("RALPH_DRY_RUN").is_ok() {
+        config.cli.dry_run = true;
+    }
+
+    // Apply CLI overrides (after env vars so they take final precedence)
     // Per spec: CLI -p and -P are mutually exclusive (enforced by clap)
-    if let Some(text) = args.prompt_text {
-        config.event_loop.prompt = Some(text);
+    if let Some(ref text) = args.prompt_text {
+        config.event_loop.prompt = Some(text.clone());
         config.event_loop.prompt_file = String::new(); // Clear file path
-    } else if let Some(path) = args.prompt_file {
+    } else if let Some(ref path) = args.prompt_file {
         config.event_loop.prompt_file = path.to_string_lossy().to_string();
         config.event_loop.prompt = None; // Clear inline
     }
     if let Some(max_iter) = args.max_iterations {
         config.event_loop.max_iterations = max_iter;
     }
-    if let Some(promise) = args.completion_promise {
-        config.event_loop.completion_promise = promise;
+    if let Some(ref promise) = args.completion_promise {
+        config.event_loop.completion_promise = promise.clone();
+    }
+    if let Some(ref backend) = args.backend {
+        config.cli.backend = backend.clone();
+    }
+    if let Some(runtime) = args.max_runtime {
+        config.event_loop.max_runtime_seconds = runtime;
+    }
+    if let Some(cost) = args.max_cost {
+        config.event_loop.max_cost_usd = Some(cost);
     }
     if verbose {
         config.verbose = true;
@@ -567,8 +633,11 @@ async fn run_command(
         }
     }
 
-    if args.dry_run {
-        println!("Dry run mode - configuration:");
+    // Check if dry run (from CLI flag, env var, or config)
+    let effective_dry_run = args.dry_run || config.cli.dry_run;
+
+    if effective_dry_run {
+        println!("Dry run mode - configuration (source shown in parentheses):");
         println!(
             "  Hats: {}",
             if config.hats.is_empty() {
@@ -585,23 +654,101 @@ async fn run_command(
             } else {
                 inline.replace('\n', " ")
             };
-            println!("  Prompt: inline text ({})", preview);
+            let source = if args.prompt_text.is_some() {
+                "CLI"
+            } else {
+                "config"
+            };
+            println!("  Prompt: inline text ({}) [{}]", preview, source);
         } else {
-            println!("  Prompt file: {}", config.event_loop.prompt_file);
+            let source = if args.prompt_file.is_some() {
+                "CLI"
+            } else {
+                "config"
+            };
+            println!(
+                "  Prompt file: {} [{}]",
+                config.event_loop.prompt_file, source
+            );
         }
 
+        // Determine source for each config value
+        let backend_source = if args.backend.is_some() {
+            "CLI"
+        } else if std::env::var("RALPH_BACKEND").is_ok() {
+            "env"
+        } else {
+            "config"
+        };
+
+        let max_iter_source = if args.max_iterations.is_some() {
+            "CLI"
+        } else if std::env::var("RALPH_MAX_ITERATIONS").is_ok() {
+            "env"
+        } else {
+            "config"
+        };
+
+        let max_runtime_source = if args.max_runtime.is_some() {
+            "CLI"
+        } else if std::env::var("RALPH_MAX_RUNTIME").is_ok() {
+            "env"
+        } else {
+            "config"
+        };
+
+        let max_cost_source = if args.max_cost.is_some() {
+            "CLI"
+        } else if std::env::var("RALPH_MAX_COST").is_ok() {
+            "env"
+        } else if config.event_loop.max_cost_usd.is_some() {
+            "config"
+        } else {
+            "default"
+        };
+
         println!(
-            "  Completion promise: {}",
-            config.event_loop.completion_promise
+            "  Completion promise: {} [{}]",
+            config.event_loop.completion_promise,
+            if args.completion_promise.is_some() {
+                "CLI"
+            } else {
+                "config"
+            }
         );
-        println!("  Max iterations: {}", config.event_loop.max_iterations);
-        println!("  Max runtime: {}s", config.event_loop.max_runtime_seconds);
-        println!("  Backend: {}", config.cli.backend);
+        println!(
+            "  Max iterations: {} [{}]",
+            config.event_loop.max_iterations, max_iter_source
+        );
+        println!(
+            "  Max runtime: {}s [{}]",
+            config.event_loop.max_runtime_seconds, max_runtime_source
+        );
+        if let Some(cost) = config.event_loop.max_cost_usd {
+            println!("  Max cost: ${:.2} [{}]", cost, max_cost_source);
+        }
+        println!("  Backend: {} [{}]", config.cli.backend, backend_source);
         println!("  Verbose: {}", config.verbose);
         // Execution mode info
-        println!("  Default mode: {}", config.cli.default_mode);
+        let mode_source = if args.autonomous || args.interactive {
+            "CLI"
+        } else {
+            "config"
+        };
+        println!(
+            "  Default mode: {} [{}]",
+            config.cli.default_mode, mode_source
+        );
         if config.cli.default_mode == "interactive" {
-            println!("  Idle timeout: {}s", config.cli.idle_timeout_secs);
+            let timeout_source = if args.idle_timeout.is_some() {
+                "CLI"
+            } else {
+                "config"
+            };
+            println!(
+                "  Idle timeout: {}s [{}]",
+                config.cli.idle_timeout_secs, timeout_source
+            );
         }
         if !warnings.is_empty() {
             println!("  Warnings: {}", warnings.len());
@@ -611,15 +758,21 @@ async fn run_command(
 
     // Run the orchestration loop and exit with proper exit code
     let enable_tui = args.interactive || args.tui; // Support both for backward compat
-    let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
-    let reason = run_loop(
-        config,
-        color_mode,
-        enable_tui,
-        verbosity,
-        args.record_session,
-    )
-    .await?;
+
+    // Resolve verbosity: CLI flags take precedence, then config
+    let effective_quiet = args.quiet || config.cli.quiet;
+    let verbosity = Verbosity::resolve(verbose || args.verbose, effective_quiet);
+
+    // Resolve record_session: CLI flag takes precedence, then config
+    let record_session = args.record_session.or_else(|| {
+        config
+            .cli
+            .record_session
+            .as_ref()
+            .map(|s| PathBuf::from(s))
+    });
+
+    let reason = run_loop(config, color_mode, enable_tui, verbosity, record_session).await?;
     let exit_code = reason.exit_code();
 
     // Use explicit exit for non-zero codes to ensure proper exit status
@@ -657,6 +810,27 @@ async fn resume_command(
 
     config.normalize();
 
+    // Apply environment variable overrides (after normalize, before CLI flags)
+    // Priority: CLI > ENV > YAML > defaults
+    if let Ok(backend) = std::env::var("RALPH_BACKEND") {
+        config.cli.backend = backend;
+    }
+    if let Ok(max_iter) = std::env::var("RALPH_MAX_ITERATIONS") {
+        if let Ok(n) = max_iter.parse() {
+            config.event_loop.max_iterations = n;
+        }
+    }
+    if let Ok(max_runtime) = std::env::var("RALPH_MAX_RUNTIME") {
+        if let Ok(n) = max_runtime.parse() {
+            config.event_loop.max_runtime_seconds = n;
+        }
+    }
+    if let Ok(max_cost) = std::env::var("RALPH_MAX_COST") {
+        if let Ok(n) = max_cost.parse() {
+            config.event_loop.max_cost_usd = Some(n);
+        }
+    }
+
     // Check that scratchpad exists (required for resume)
     let scratchpad_path = std::path::Path::new(&config.core.scratchpad);
     if !scratchpad_path.exists() {
@@ -671,6 +845,15 @@ async fn resume_command(
     // Apply CLI overrides
     if let Some(max_iter) = args.max_iterations {
         config.event_loop.max_iterations = max_iter;
+    }
+    if let Some(backend) = args.backend {
+        config.cli.backend = backend;
+    }
+    if let Some(runtime) = args.max_runtime {
+        config.event_loop.max_runtime_seconds = runtime;
+    }
+    if let Some(cost) = args.max_cost {
+        config.event_loop.max_cost_usd = Some(cost);
     }
     if verbose {
         config.verbose = true;
@@ -719,16 +902,22 @@ async fn resume_command(
     // The key difference: we publish task.resume instead of task.start,
     // signaling the planner to read the existing scratchpad
     let enable_tui = args.interactive || args.tui; // Support both for backward compat
-    let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
-    let reason = run_loop_impl(
-        config,
-        color_mode,
-        true,
-        enable_tui,
-        verbosity,
-        args.record_session,
-    )
-    .await?;
+
+    // Resolve verbosity: CLI flags take precedence, then config
+    let effective_quiet = args.quiet || config.cli.quiet;
+    let verbosity = Verbosity::resolve(verbose || args.verbose, effective_quiet);
+
+    // Resolve record_session: CLI flag takes precedence, then config
+    let record_session = args.record_session.or_else(|| {
+        config
+            .cli
+            .record_session
+            .as_ref()
+            .map(|s| PathBuf::from(s))
+    });
+
+    let reason = run_loop_impl(config, color_mode, true, enable_tui, verbosity, record_session)
+        .await?;
     let exit_code = reason.exit_code();
 
     if exit_code != 0 {

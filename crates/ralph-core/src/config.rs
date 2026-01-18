@@ -642,6 +642,33 @@ pub struct CliConfig {
     /// Set to true to enable interactive TUI mode.
     #[serde(default)]
     pub experimental_tui: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Output and Session Options (synced with CLI flags)
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Dry run mode - show what would execute without running.
+    /// Can be overridden by CLI flag --dry-run.
+    #[serde(default)]
+    pub dry_run: bool,
+
+    /// Suppress streaming output (for CI/scripting).
+    /// Can be overridden by CLI flag -q/--quiet.
+    #[serde(default)]
+    pub quiet: bool,
+
+    /// Color output mode: "auto", "always", or "never".
+    /// Can be overridden by CLI flag --color.
+    #[serde(default = "default_color_mode")]
+    pub color_mode: String,
+
+    /// Record session to JSONL file path.
+    /// Can be overridden by CLI flag --record-session.
+    #[serde(default)]
+    pub record_session: Option<String>,
+}
+
+fn default_color_mode() -> String {
+    "auto".to_string()
 }
 
 fn default_backend() -> String {
@@ -671,6 +698,10 @@ impl Default for CliConfig {
             args: Vec::new(),
             prompt_flag: None,
             experimental_tui: false,
+            dry_run: false,
+            quiet: false,
+            color_mode: default_color_mode(),
+            record_session: None,
         }
     }
 }
@@ -1561,5 +1592,55 @@ hats:
             reviewer.default_publishes,
             Some("review.complete".to_string())
         );
+    }
+
+    #[test]
+    fn test_cli_config_new_fields_defaults() {
+        let config = CliConfig::default();
+        assert!(!config.dry_run);
+        assert!(!config.quiet);
+        assert_eq!(config.color_mode, "auto");
+        assert!(config.record_session.is_none());
+    }
+
+    #[test]
+    fn test_cli_config_new_fields_from_yaml() {
+        let yaml = r#"
+cli:
+  backend: "claude"
+  dry_run: true
+  quiet: true
+  color_mode: "never"
+  record_session: "session.jsonl"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.cli.dry_run);
+        assert!(config.cli.quiet);
+        assert_eq!(config.cli.color_mode, "never");
+        assert_eq!(config.cli.record_session, Some("session.jsonl".to_string()));
+    }
+
+    #[test]
+    fn test_cli_config_color_mode_values() {
+        // Test "always"
+        let yaml = r#"
+cli:
+  color_mode: "always"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.cli.color_mode, "always");
+
+        // Test "never"
+        let yaml = r#"
+cli:
+  color_mode: "never"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.cli.color_mode, "never");
+
+        // Test default (auto)
+        let yaml = "cli: {}";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.cli.color_mode, "auto");
     }
 }
