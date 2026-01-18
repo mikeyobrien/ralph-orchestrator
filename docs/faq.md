@@ -19,14 +19,16 @@ The Ralph Wiggum technique was created by [Geoffrey Huntley](https://ghuntley.co
 Ralph Orchestrator currently supports:
 
 - **Claude** (Anthropic Claude Code CLI)
+- **Kiro** (Kiro CLI)
 - **Gemini** (Google Gemini CLI)
-- **Q Chat** (Q CLI tool)
+- **Codex** (Codex CLI)
+- **Amp** (Amp CLI)
 
 The system auto-detects available agents and can automatically select the best one.
 
 ## Installation & Setup
 
-### Do I need all three AI agents installed?
+### Do I need all AI agents installed?
 
 No, you only need at least one AI agent installed. Ralph will auto-detect which agents are available and use them accordingly.
 
@@ -36,17 +38,17 @@ No, you only need at least one AI agent installed. Ralph will auto-detect which 
 # Claude
 npm install -g @anthropic-ai/claude-code
 
+# Kiro
+npm install -g @anthropic-ai/kiro
+
 # Gemini
 npm install -g @google/gemini-cli
-
-# Q Chat
-# Follow instructions at https://github.com/qchat/qchat
 ```
 
 ### What are the system requirements?
 
 - **OS**: Linux, macOS, or Windows (with WSL)
-- **Python**: 3.9 or higher
+- **Rust**: For building from source (or use pre-built binaries)
 - **Git**: 2.25 or higher
 - **Memory**: 4GB minimum, 8GB recommended
 - **Storage**: 20GB available space
@@ -153,18 +155,17 @@ tail -f .agent/logs/ralph.log
 
 ### How do I change the default agent?
 
-Edit `ralph.json`:
+Edit `ralph.yml`:
 
-```json
-{
-  "agent": "claude" // or "gemini", "q", "auto"
-}
+```yaml
+cli:
+  backend: claude  # or kiro, gemini, codex, amp, auto
 ```
 
 Or use command line:
 
 ```bash
-ralph run --agent claude
+ralph run -b claude
 ```
 
 ### Can I set custom iteration limits?
@@ -173,15 +174,11 @@ Yes, in multiple ways:
 
 ```bash
 # Command line
-ralph run --max-iterations 50
+ralph run -n 50
 
-# Config file (ralph.json)
-{
-  "max_iterations": 50
-}
-
-# Environment variable
-export RALPH_MAX_ITERATIONS=50
+# Config file (ralph.yml)
+event_loop:
+  max_iterations: 50
 ```
 
 ### What is checkpoint interval?
@@ -190,17 +187,7 @@ Checkpoint interval determines how often Ralph creates Git commits to save progr
 
 ### How do I disable Git operations?
 
-```bash
-ralph run --no-git
-```
-
-Or in config:
-
-```json
-{
-  "git_enabled": false
-}
-```
+Git operations are managed by the AI agent, not Ralph directly. Consult your agent's documentation for disabling Git integration.
 
 ## Troubleshooting
 
@@ -237,17 +224,17 @@ No, Ralph requires internet access to communicate with AI agent APIs. However, y
 
 ### Can I extend Ralph with custom agents?
 
-Yes! Implement the Agent interface:
+Yes! Use the custom backend configuration:
 
-```python
-class MyAgent(Agent):
-    def __init__(self):
-        super().__init__('myagent', 'myagent-cli')
-
-    def execute(self, prompt_file):
-        # Your implementation
-        pass
+```yaml
+cli:
+  backend: custom
+  command: /path/to/my-agent
+  args: ["--mode", "batch"]
+  prompt_mode: stdin  # or "arg"
 ```
+
+Ralph will execute your custom command and pass the prompt according to `prompt_mode`.
 
 ### Can I run multiple Ralph instances?
 

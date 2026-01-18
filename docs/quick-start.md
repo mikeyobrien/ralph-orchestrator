@@ -6,8 +6,7 @@ Get Ralph Orchestrator up and running in 5 minutes!
 
 Before you begin, ensure you have:
 
-- Python 3.8 or higher
-- Git (for checkpointing features)
+- Git (for version control)
 - At least one AI CLI tool installed
 
 ## Step 1: Install an AI Agent
@@ -18,42 +17,35 @@ Ralph works with multiple AI agents. Install at least one:
 
     ```bash
     npm install -g @anthropic-ai/claude-code
-    # Or visit https://claude.ai/code for setup instructions
     ```
 
-=== "Q Chat"
+=== "Kiro"
 
     ```bash
-    pip install q-cli
-    # Or follow instructions at https://github.com/qchat/qchat
+    npm install -g @anthropic-ai/kiro
     ```
 
 === "Gemini"
 
     ```bash
     npm install -g @google/gemini-cli
-    # Configure with your API key
     ```
 
-=== "ACP Agent"
-
-    ```bash
-    # Any ACP-compliant agent can be used
-    # Example: Gemini CLI with ACP mode
-    npm install -g @google/gemini-cli
-    # Run with: ralph run -a acp --acp-agent gemini
-    ```
-
-## Step 2: Clone Ralph Orchestrator
+## Step 2: Install Ralph
 
 ```bash
 # Clone the repository
 git clone https://github.com/mikeyobrien/ralph-orchestrator.git
 cd ralph-orchestrator
 
-# Install optional dependencies for monitoring
-pip install psutil  # Recommended for system metrics
+# Build from source
+cargo build --release
+
+# Add to your PATH
+export PATH="$PWD/target/release:$PATH"
 ```
+
+Or download a pre-built binary from the [releases page](https://github.com/mikeyobrien/ralph-orchestrator/releases).
 
 ## Step 3: Create Your First Task
 
@@ -77,14 +69,14 @@ The orchestrator will continue iterations until all requirements are met or limi
 ## Step 4: Run Ralph
 
 ```bash
-# Basic execution (auto-detects available agent)
-python ralph_orchestrator.py --prompt PROMPT.md
+# Basic execution (uses Claude by default)
+ralph run
 
-# Or specify an agent explicitly
-python ralph_orchestrator.py --agent claude --prompt PROMPT.md
+# Or specify a different agent
+ralph run -b gemini
 
-# Or use an ACP-compliant agent
-python ralph_orchestrator.py --agent acp --acp-agent gemini --prompt PROMPT.md
+# Or use an inline prompt
+ralph run -p "Create a hello world program in Python"
 ```
 
 ## Step 5: Monitor Progress
@@ -99,57 +91,65 @@ Ralph will now:
 You'll see output like:
 
 ```
-2025-09-08 10:30:45 - INFO - Starting Ralph Orchestrator v1.0.0
-2025-09-08 10:30:45 - INFO - Using agent: claude
-2025-09-08 10:30:45 - INFO - Starting iteration 1/100
-2025-09-08 10:30:52 - INFO - Iteration 1 complete
-2025-09-08 10:30:52 - INFO - Task not complete, continuing...
+[iter 1] Starting iteration...
+[iter 1] Agent executing...
+[iter 1] Complete (45s)
+[iter 2] Starting iteration...
 ```
 
 ## What Happens Next?
 
 Ralph will continue iterating until one of these conditions is met:
 
-- 🎯 All requirements appear to be satisfied
-- ⏱️ Maximum iterations reached (default: 100)
-- ⏰ Maximum runtime exceeded (default: 4 hours)
-- 💰 Token or cost limits reached
-- ❌ Unrecoverable error occurs
-- ✅ Completion marker detected in prompt file
-- 🔄 Loop detection triggers (repetitive outputs)
+- All requirements appear to be satisfied
+- Maximum iterations reached (default: 100)
+- Maximum runtime exceeded (default: 4 hours)
+- Cost limits reached
+- Unrecoverable error occurs
+- Completion marker detected in output
+- Loop detection triggers (repetitive outputs)
 
 ## Signaling Completion
 
-Add a completion marker to your PROMPT.md when the task is done:
+Add a completion marker to your output when the task is done:
 
 ```markdown
-## Status
-
-- [x] Created todo.py with CLI interface
-- [x] Implemented add, list, complete commands
-- [x] Added JSON persistence
-- [x] Wrote unit tests
-- [x] TASK_COMPLETE
+LOOP_COMPLETE
 ```
 
-Ralph will detect the `- [x] TASK_COMPLETE` marker and stop orchestration immediately. This allows the AI agent to signal "I'm done" rather than relying solely on iteration limits.
+Ralph will detect this marker and stop orchestration. You can customize the marker:
+
+```yaml
+# ralph.yml
+event_loop:
+  completion_promise: "TASK_DONE"
+```
 
 ## Basic Configuration
 
-Control Ralph's behavior with command-line options:
+Create a `ralph.yml` file to control behavior:
+
+```yaml
+cli:
+  backend: claude
+
+event_loop:
+  max_iterations: 50
+  max_runtime_seconds: 3600
+  max_cost_usd: 10.0
+```
+
+Or use command-line flags:
 
 ```bash
 # Limit iterations
-python ralph_orchestrator.py --prompt PROMPT.md --max-iterations 50
-
-# Set cost limit
-python ralph_orchestrator.py --prompt PROMPT.md --max-cost 10.0
-
-# Enable verbose logging
-python ralph_orchestrator.py --prompt PROMPT.md --verbose
+ralph run -n 50
 
 # Dry run (test without executing)
-python ralph_orchestrator.py --prompt PROMPT.md --dry-run
+ralph run --dry-run
+
+# Quiet mode
+ralph run -q
 ```
 
 ## Example Tasks
@@ -182,15 +182,28 @@ Build a markdown to HTML converter CLI tool:
 - Add --watch mode for auto-conversion
 ```
 
+## Using Presets
+
+Ralph includes pre-configured presets for common workflows:
+
+```bash
+# Research mode - exploration without code changes
+ralph run -c presets/research.yml -p "How does auth work in this codebase?"
+
+# TDD workflow - test-first development
+ralph run -c presets/tdd-red-green.yml
+```
+
+See [Presets](../presets/README.md) for the full list.
+
 ## Next Steps
 
 Now that you've run your first Ralph task:
 
-- 📖 Read the [User Guide](guide/overview.md) for detailed configuration
-- 🔒 Learn about [Security Features](advanced/security.md)
-- 💰 Understand [Cost Management](guide/cost-management.md)
-- 📊 Set up [Monitoring](advanced/monitoring.md)
-- 🚀 Deploy to [Production](advanced/production-deployment.md)
+- Read the [Configuration Guide](guide/configuration.md) for detailed setup
+- Learn about [Presets](../presets/README.md) for specialized workflows
+- Understand [Cost Management](guide/cost-management.md)
+- Explore [Advanced Architecture](advanced/architecture.md) for hat-based workflows
 
 ## Troubleshooting
 
@@ -198,8 +211,8 @@ Now that you've run your first Ralph task:
 
 If Ralph can't find an AI agent:
 
-```bash
-ERROR: No AI agents detected. Please install claude, q, gemini, or an ACP-compliant agent.
+```
+ERROR: No AI agents detected
 ```
 
 **Solution**: Install one of the supported agents (see Step 1)
@@ -209,7 +222,7 @@ ERROR: No AI agents detected. Please install claude, q, gemini, or an ACP-compli
 If you get permission errors:
 
 ```bash
-chmod +x ralph_orchestrator.py
+chmod +x ralph
 ```
 
 ### Task Not Completing
@@ -217,8 +230,8 @@ chmod +x ralph_orchestrator.py
 If your task runs indefinitely:
 
 - Check that your prompt includes clear completion criteria
-- Ensure the agent can modify files and work towards completion
-- Review iteration logs in `.agent/metrics/`
+- Ensure the agent can work towards completion
+- Add `LOOP_COMPLETE` marker to signal completion
 
 ## Getting Help
 
@@ -226,7 +239,3 @@ If your task runs indefinitely:
 - Read the [Troubleshooting Guide](troubleshooting.md)
 - Open an [issue on GitHub](https://github.com/mikeyobrien/ralph-orchestrator/issues)
 - Join the [discussions](https://github.com/mikeyobrien/ralph-orchestrator/discussions)
-
----
-
-🎉 **Congratulations!** You've successfully run your first Ralph orchestration!

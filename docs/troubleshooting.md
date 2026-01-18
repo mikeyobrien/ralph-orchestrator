@@ -14,8 +14,8 @@
 
    ```bash
    which claude
+   which kiro
    which gemini
-   which q
    ```
 
 2. Install missing agent:
@@ -23,6 +23,9 @@
    ```bash
    # Claude
    npm install -g @anthropic-ai/claude-code
+
+   # Kiro
+   npm install -g @anthropic-ai/kiro
 
    # Gemini
    npm install -g @google/gemini-cli
@@ -41,7 +44,7 @@
 **Solution**:
 
 ```bash
-chmod +x ralph ralph_orchestrator.py
+chmod +x ralph
 ```
 
 ### Execution Issues
@@ -79,8 +82,8 @@ chmod +x ralph ralph_orchestrator.py
 3. Increase iteration limits or try different agent:
 
    ```bash
-   ralph run --max-iterations 200
-   ralph run --agent gemini
+   ralph run -n 200
+   ralph run -b gemini
    ```
 
 #### Agent Timeout
@@ -91,11 +94,11 @@ chmod +x ralph ralph_orchestrator.py
 
 1. Increase timeout:
 
-   ```python
-   # In ralph.json
-   {
-     "timeout_per_iteration": 600
-   }
+   ```yaml
+   # In ralph.yml
+   adapters:
+     claude:
+       timeout: 600
    ```
 
 2. Reduce prompt complexity:
@@ -283,12 +286,6 @@ Ralph's loop detection triggers when agent output is ≥90% similar to any of th
    git stash pop
    ```
 
-3. Disable Git operations:
-
-   ```bash
-   ralph run --no-git
-   ```
-
 ### Context Issues
 
 #### Context Window Exceeded
@@ -322,7 +319,7 @@ Ralph's loop detection triggers when agent output is ≥90% similar to any of th
 
    ```bash
    # Claude has 200K context
-   ralph run --agent claude
+   ralph run -b claude
    ```
 
 4. Clear iteration history:
@@ -351,11 +348,10 @@ Ralph's loop detection triggers when agent output is ≥90% similar to any of th
    - Close other applications
    - Limit background processes
 
-3. Use faster agent:
+3. Use a different agent:
 
    ```bash
-   # Q is typically faster
-   ralph run --agent q
+   ralph run -b kiro
    ```
 
 #### High Memory Usage
@@ -364,27 +360,16 @@ Ralph's loop detection triggers when agent output is ≥90% similar to any of th
 
 **Solutions**:
 
-1. Set resource limits:
-
-   ```python
-   # In ralph.json
-   {
-     "resource_limits": {
-       "memory_mb": 2048
-     }
-   }
-   ```
-
-2. Clean old state files:
+1. Clean old state files:
 
    ```bash
    find .agent -name "*.json" -mtime +7 -delete
    ```
 
-3. Restart Ralph:
+2. Restart Ralph:
 
    ```bash
-   pkill -f ralph_orchestrator
+   pkill -f ralph
    ralph run
    ```
 
@@ -479,34 +464,16 @@ Ralph's loop detection triggers when agent output is ≥90% similar to any of th
 
 **Solution**: Check Gemini CLI version and update
 
-#### Q Chat Errors
-
-```
-"Connection refused"
-```
-
-**Solution**: Ensure Q service is running
-
 ## Debug Mode
 
 ### Enable Verbose Logging
 
 ```bash
 # Maximum verbosity
-ralph run --verbose
-
-# With debug environment
-DEBUG=1 ralph run
+RUST_LOG=debug ralph run
 
 # Save logs
-ralph run --verbose 2>&1 | tee debug.log
-```
-
-### Inspect Execution
-
-```python
-# Add debug points in PROMPT.md
-print("DEBUG: Reached checkpoint 1")
+ralph run 2>&1 | tee debug.log
 ```
 
 ### Trace Execution
@@ -514,9 +481,6 @@ print("DEBUG: Reached checkpoint 1")
 ```bash
 # Trace system calls
 strace -o trace.log ralph run
-
-# Profile Python execution
-python -m cProfile ralph_orchestrator.py
 ```
 
 ## Recovery Procedures
@@ -576,8 +540,8 @@ echo "Ralph Orchestrator Diagnostic"
 echo "============================"
 echo "Agents available:"
 which claude && echo "  ✓ Claude" || echo "  ✗ Claude"
+which kiro && echo "  ✓ Kiro" || echo "  ✗ Kiro"
 which gemini && echo "  ✓ Gemini" || echo "  ✗ Gemini"
-which q && echo "  ✓ Q" || echo "  ✗ Q"
 echo ""
 echo "Git status:"
 git status --short

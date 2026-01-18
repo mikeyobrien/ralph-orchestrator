@@ -3,7 +3,7 @@
 ## A
 
 **Agent**
-: An AI-powered CLI tool that executes tasks based on prompts. Ralph supports Claude, Gemini, and Q agents.
+: An AI-powered CLI tool that executes tasks based on prompts. Ralph supports Claude, Kiro, Gemini, Codex, and Amp agents.
 
 **Agent Manager**
 : Component that detects, selects, and manages AI agents, including automatic fallback when preferred agents are unavailable.
@@ -26,10 +26,10 @@
 : Command Line Interface - the primary way to interact with Ralph Orchestrator through terminal commands.
 
 **Config**
-: Configuration settings stored in `ralph.json` or passed via command line arguments and environment variables.
+: Configuration settings stored in `ralph.yml` or passed via command line arguments.
 
 **Context Window**
-: The maximum amount of text/tokens an AI agent can process in a single request. Varies by agent (Claude: 200K, Gemini: 32K, Q: 8K).
+: The maximum amount of text/tokens an AI agent can process in a single request. Varies by agent (Claude: 200K, others vary).
 
 **Convergence**
 : The process of iterations gradually approaching task completion through successive improvements.
@@ -101,11 +101,6 @@
 **Plugin**
 : Extension mechanism for adding custom agents or commands to Ralph.
 
-## Q
-
-**Q Chat**
-: An AI assistant accessible via Q CLI. Smaller context window (8K tokens) but fast execution.
-
 ## R
 
 **Ralph Wiggum Technique**
@@ -169,24 +164,21 @@
 : Application Programming Interface - the interface through which Ralph communicates with AI services.
 
 **JSON**
-: JavaScript Object Notation - format used for configuration files and state storage.
+: JavaScript Object Notation - format used for session recordings and internal data.
 
 **Subprocess**
 : Separate process spawned to execute AI agents, providing isolation and timeout control.
 
 **YAML**
-: YAML Ain't Markup Language - human-readable data format used for some configuration files.
+: YAML Ain't Markup Language - human-readable data format used for Ralph configuration files (`ralph.yml`).
 
 ## File Formats
 
 **`.md`**
 : Markdown files used for prompts and documentation.
 
-**`.json`**
-: JSON files used for configuration and state storage.
-
-**`.yaml`/`.yml`**
-: YAML files used for configuration (e.g., `mkdocs.yml`).
+**`.yml`**
+: YAML files used for configuration (`ralph.yml`, presets).
 
 **`.log`**
 : Log files containing execution history and debugging information.
@@ -227,23 +219,6 @@
 
 **`ralph agents`**
 : List available AI agents on the system.
-
-## Environment Variables
-
-**`RALPH_AGENT`**
-: Override default agent selection.
-
-**`RALPH_MAX_ITERATIONS`**
-: Set maximum iteration limit.
-
-**`RALPH_MAX_RUNTIME`**
-: Set maximum runtime in seconds.
-
-**`RALPH_VERBOSE`**
-: Enable verbose logging (true/false).
-
-**`RALPH_DRY_RUN`**
-: Enable dry run mode (true/false).
 
 ## Exit Codes
 

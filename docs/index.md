@@ -6,10 +6,9 @@
 
 *Put your AI agent in a loop until the task is done*
 
-[![Version](https://img.shields.io/badge/version-1.2.3-blue)](https://github.com/mikeyobrien/ralph-orchestrator/releases)
+[![Version](https://img.shields.io/badge/version-2.0-blue)](https://github.com/mikeyobrien/ralph-orchestrator/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-920%2B%20passing-brightgreen)](tests/)
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org/)
 
 > "Me fail English? That's unpossible!" - Ralph Wiggum
 
@@ -26,7 +25,7 @@ Based on Huntley's technique, this implementation adds practical safety, monitor
 <div class="grid cards" markdown>
 
 - **🤖 Multi-Agent Support**
-  Works seamlessly with Claude, Q Chat, Gemini CLI, and ACP-compliant agents with automatic detection
+  Works seamlessly with Claude, Kiro, Gemini, Codex, and Amp CLI tools with automatic detection
 
 - **💰 Cost Management**  
   Real-time token tracking, cost calculation, and configurable spending limits
@@ -43,8 +42,8 @@ Based on Huntley's technique, this implementation adds practical safety, monitor
 - **💾 Git Checkpointing**
   Version control integration for state recovery and history tracking
 
-- **🔌 ACP Protocol Support**
-  Full Agent Client Protocol integration with permission handling, file/terminal operations, and session management
+- **🎩 Hat-Based Workflows**
+  Define specialized agent personas (hats) for complex multi-phase workflows
 
 </div>
 
@@ -59,7 +58,7 @@ The orchestrator will iterate until the function is complete.
 EOF
 
 # 2. Run Ralph
-python ralph_orchestrator.py --prompt PROMPT.md
+ralph run
 
 # 3. Ralph iterates until the task is done!
 ```
