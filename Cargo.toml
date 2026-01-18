@@ -5,6 +5,7 @@ members = [
     "crates/ralph-core",
     "crates/ralph-adapters",
     "crates/ralph-tui",
+    "crates/ralph-mcp",
     "crates/ralph-cli",
     "crates/ralph-bench",
 ]
@@ -102,6 +103,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # Testing
 tempfile = "3"
 
+# MCP (Model Context Protocol)
+rmcp = { version = "0.8", features = ["server", "transport-io", "macros"] }
+schemars = "1.0"
+
 # PTY support
 portable-pty = "0.9"
 nix = { version = "0.29", features = ["signal", "term"] }
@@ -114,6 +119,7 @@ ralph-proto = { version = "2.0.9", path = "crates/ralph-proto" }
 ralph-core = { version = "2.0.9", path = "crates/ralph-core" }
 ralph-adapters = { version = "2.0.9", path = "crates/ralph-adapters" }
 ralph-tui = { version = "2.0.9", path = "crates/ralph-tui" }
+ralph-mcp = { version = "2.0.9", path = "crates/ralph-mcp" }
 ralph-cli = { version = "2.0.9", path = "crates/ralph-cli" }
 ralph-bench = { version = "2.0.9", path = "crates/ralph-bench" }
 

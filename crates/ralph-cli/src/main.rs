@@ -227,6 +227,9 @@ enum Commands {
 
     /// Generate code task files from descriptions or plans
     Task(TaskArgs),
+
+    /// MCP (Model Context Protocol) server commands
+    Mcp(McpArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -442,6 +445,20 @@ struct TaskArgs {
     backend: Option<String>,
 }
 
+/// Arguments for the mcp subcommand.
+#[derive(Parser, Debug)]
+struct McpArgs {
+    #[command(subcommand)]
+    command: McpCommands,
+}
+
+/// MCP (Model Context Protocol) subcommands.
+#[derive(Subcommand, Debug)]
+enum McpCommands {
+    /// Start the MCP server over stdio
+    Serve,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install panic hook to restore terminal state on crash
@@ -465,6 +482,7 @@ async fn main() -> Result<()> {
         Some(Commands::Emit(args)) => emit_command(cli.color, args),
         Some(Commands::Plan(args)) => plan_command(cli.config, cli.color, args),
         Some(Commands::Task(args)) => task_command(cli.config, cli.color, args),
+        Some(Commands::Mcp(args)) => mcp_command(args).await,
         None => {
             // Default to run with no overrides (backwards compatibility)
             let args = RunArgs {
@@ -1124,6 +1142,16 @@ fn task_command(config_path: PathBuf, color_mode: ColorMode, args: TaskArgs) -> 
         ),
         SopRunError::SpawnError(io_err) => anyhow::anyhow!("Failed to spawn backend: {}", io_err),
     })
+}
+
+/// Runs MCP (Model Context Protocol) commands.
+async fn mcp_command(args: McpArgs) -> Result<()> {
+    match args.command {
+        McpCommands::Serve => {
+            // Note: MCP servers log to stderr since stdout is reserved for the protocol
+            ralph_mcp::serve_stdio().await
+        }
+    }
 }
 
 /// Lists directory contents recursively for dry-run mode.

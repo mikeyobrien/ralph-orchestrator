@@ -23,6 +23,7 @@ ralph-proto.workspace = true
 ralph-core.workspace = true
 ralph-adapters.workspace = true
 ralph-tui.workspace = true
+ralph-mcp.workspace = true
 
 tokio.workspace = true
 clap.workspace = true

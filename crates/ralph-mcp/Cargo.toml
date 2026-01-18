@@ -1,0 +1,31 @@
+[package]
+name = "ralph-mcp"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "MCP server for Ralph Orchestrator"
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ralph-proto.workspace = true
+ralph-core.workspace = true
+
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+rmcp.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wait-timeout = "0.2"
