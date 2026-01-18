@@ -24,6 +24,7 @@ v1.0.0 was ralphed into existence with little oversight and guidance. v2.0.0 is 
 - [Presets](#presets)
 - [Key Concepts](#key-concepts)
 - [CLI Reference](#cli-reference)
+- [MCP Support (Experimental)](#mcp-support-experimental)
 - [Architecture](#architecture)
 - [Building & Testing](#building--testing)
 - [Contributing](#contributing)
@@ -69,6 +70,7 @@ See [AGENTS.md](AGENTS.md) for the full philosophy.
 - **Presets Library** — 20+ pre-configured workflows for common development patterns
 - **Interactive TUI** — Real-time terminal UI for monitoring Ralph's activity (experimental)
 - **Session Recording** — Record and replay sessions for debugging and testing (experimental)
+- **MCP Server** — Expose Ralph as an MCP server for integration with Claude Desktop and other MCP clients (experimental)
 
 ## Installation
 
@@ -426,6 +428,7 @@ tests: pass, lint: pass, typecheck: pass
 | `ralph init` | Initialize configuration file |
 | `ralph clean` | Clean up `.agent/` directory |
 | `ralph emit` | Emit an event to the event log |
+| `ralph mcp serve` | Start MCP server over stdio (experimental) |
 
 ### Global Options
 
@@ -473,9 +476,71 @@ tests: pass, lint: pass, typecheck: pass
 | `<INPUT>` | Optional description text or path to PDD plan file |
 | `-b, --backend <BACKEND>` | Backend to use (overrides config and auto-detection) |
 
+## MCP Support (Experimental)
+
+Ralph can run as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, allowing integration with Claude Desktop and other MCP-compatible clients.
+
+### Starting the MCP Server
+
+```bash
+# Start MCP server over stdio
+ralph mcp serve
+
+# With specific config file
+ralph mcp serve -c my-ralph.yml
+```
+
+### Available Tools
+
+When running as an MCP server, Ralph exposes these tools:
+
+| Tool | Description |
+|------|-------------|
+| `ralph_run` | Start a new Ralph orchestration session with a prompt |
+| `ralph_status` | Get status of a running or completed session |
+| `ralph_stop` | Stop a running session (idempotent) |
+| `ralph_list_sessions` | List all sessions |
+| `ralph_list_hats` | List available hats from the config |
+
+### Claude Desktop Configuration
+
+Add Ralph to your Claude Desktop MCP configuration (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "ralph": {
+      "command": "ralph",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+With a specific config file:
+
+```json
+{
+  "mcpServers": {
+    "ralph": {
+      "command": "ralph",
+      "args": ["mcp", "serve", "-c", "/path/to/your/ralph.yml"]
+    }
+  }
+}
+```
+
+### Example Usage
+
+Once configured, you can ask Claude Desktop to:
+
+- "Use Ralph to implement a REST API for user management"
+- "Start a Ralph session to fix the failing tests"
+- "Check the status of the running Ralph session"
+
 ## Architecture
 
-Ralph is organized as a Cargo workspace with six crates:
+Ralph is organized as a Cargo workspace with seven crates:
 
 | Crate | Purpose |
 |-------|---------|
@@ -483,6 +548,7 @@ Ralph is organized as a Cargo workspace with six crates:
 | `ralph-core` | Business logic: EventLoop, HatRegistry, Config |
 | `ralph-adapters` | CLI backend integrations (Claude, Kiro, Gemini, etc.) |
 | `ralph-tui` | Terminal UI with ratatui |
+| `ralph-mcp` | MCP server for Claude Desktop integration |
 | `ralph-cli` | Binary entry point and CLI parsing |
 | `ralph-bench` | Benchmarking harness (dev-only) |
 
