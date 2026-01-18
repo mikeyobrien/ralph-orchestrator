@@ -102,6 +102,10 @@ chrono = { version = "0.4", features = ["serde"] }
 # Testing
 tempfile = "3"
 
+# MCP (Model Context Protocol)
+rmcp = { version = "0.8", features = ["server", "transport-io", "macros"] }
+schemars = "1.0"
+
 # PTY support
 portable-pty = "0.9"
 nix = { version = "0.29", features = ["signal", "term"] }
