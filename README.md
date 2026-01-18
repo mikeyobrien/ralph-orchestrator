@@ -62,7 +62,7 @@ See [AGENTS.md](AGENTS.md) for the full philosophy.
 
 ## Features
 
-- **Multi-Backend Support** — Works with Claude Code, Kiro, Gemini CLI, Codex, Amp, and Copilot CLI
+- **Multi-Backend Support** — Works with Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, and OpenCode
 - **Hat System** — Specialized Ralph personas with distinct behaviors
 - **Event-Driven Coordination** — Hats communicate through typed events with glob pattern matching
 - **Backpressure Enforcement** — Gates that reject incomplete work (tests, lint, typecheck)
@@ -82,6 +82,7 @@ See [AGENTS.md](AGENTS.md) for the full philosophy.
   - [Codex](https://github.com/openai/codex)
   - [Amp](https://github.com/sourcegraph/amp)
   - [Copilot CLI](https://docs.github.com/copilot) (`npm install -g @github/copilot`)
+  - [OpenCode](https://opencode.ai/) (`curl -fsSL https://opencode.ai/install | bash`)
 
 ### Via npm (Recommended)
 
@@ -91,6 +92,12 @@ npm install -g @ralph-orchestrator/ralph-cli
 
 # Or run directly with npx
 npx @ralph-orchestrator/ralph-cli --version
+```
+
+### Via Homebrew (macOS)
+
+```bash
+brew install ralph-orchestrator
 ```
 
 ### Via Cargo
@@ -282,7 +289,7 @@ event_loop:
 
 # CLI backend settings
 cli:
-  backend: "claude"                     # claude, kiro, gemini, codex, amp, copilot, custom
+  backend: "claude"                     # claude, kiro, gemini, codex, amp, copilot, opencode, custom
   prompt_mode: "arg"                    # arg (CLI argument) or stdin
   experimental_tui: false               # Enable TUI mode support
 
@@ -447,7 +454,7 @@ tests: pass, lint: pass, typecheck: pass
 
 | Option | Description |
 |--------|-------------|
-| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot` |
+| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode` |
 | `--preset <NAME>` | Use preset configuration |
 | `--list-presets` | List available presets |
 | `--force` | Overwrite existing config |
