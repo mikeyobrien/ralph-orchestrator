@@ -67,6 +67,7 @@ impl CliBackend {
             "codex" => Ok(Self::codex()),
             "amp" => Ok(Self::amp()),
             "copilot" => Ok(Self::copilot()),
+            "opencode" => Ok(Self::opencode()),
             "custom" => Self::custom(config),
             _ => Ok(Self::claude()), // Default to claude
         }
@@ -163,6 +164,7 @@ impl CliBackend {
             "codex" => Ok(Self::codex()),
             "amp" => Ok(Self::amp()),
             "copilot" => Ok(Self::copilot()),
+            "opencode" => Ok(Self::opencode()),
             _ => Err(CustomBackendError),
         }
     }
@@ -261,6 +263,7 @@ impl CliBackend {
     /// | Codex   | no `exec` subcommand |
     /// | Amp     | removes `--dangerously-allow-all` |
     /// | Copilot | removes `--allow-all-tools` |
+    /// | OpenCode| removes `--dangerously-skip-permissions` |
     ///
     /// # Errors
     /// Returns `CustomBackendError` if the backend name is not recognized.
@@ -272,6 +275,7 @@ impl CliBackend {
             "codex" => Ok(Self::codex_interactive()),
             "amp" => Ok(Self::amp_interactive()),
             "copilot" => Ok(Self::copilot_interactive()),
+            "opencode" => Ok(Self::opencode_interactive()),
             _ => Err(CustomBackendError),
         }
     }
@@ -339,6 +343,49 @@ impl CliBackend {
     pub fn copilot_interactive() -> Self {
         Self {
             command: "copilot".to_string(),
+            args: vec![],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: Some("-p".to_string()),
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Creates the OpenCode backend for autonomous mode.
+    ///
+    /// Uses OpenCode CLI with `--dangerously-skip-permissions` for automated tool approval.
+    /// Output is plain text (no JSON streaming available).
+    pub fn opencode() -> Self {
+        Self {
+            command: "opencode".to_string(),
+            args: vec!["--dangerously-skip-permissions".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: Some("-p".to_string()),
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Creates the OpenCode TUI backend for interactive mode.
+    ///
+    /// Runs OpenCode in full interactive mode (no -p flag), allowing
+    /// OpenCode's native TUI to render. The prompt is passed as a
+    /// positional argument.
+    pub fn opencode_tui() -> Self {
+        Self {
+            command: "opencode".to_string(),
+            args: vec![], // No --dangerously-skip-permissions in TUI mode
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// OpenCode in interactive mode (removes --dangerously-skip-permissions).
+    ///
+    /// Unlike headless `opencode()`, this runs without the auto-approve flag,
+    /// requiring user confirmation for tool usage.
+    pub fn opencode_interactive() -> Self {
+        Self {
+            command: "opencode".to_string(),
             args: vec![],
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
@@ -451,6 +498,10 @@ impl CliBackend {
             "copilot" => args
                 .into_iter()
                 .filter(|a| a != "--allow-all-tools")
+                .collect(),
+            "opencode" => args
+                .into_iter()
+                .filter(|a| a != "--dangerously-skip-permissions")
                 .collect(),
             _ => args, // claude, gemini unchanged
         }
@@ -938,5 +989,66 @@ mod tests {
     fn test_for_interactive_prompt_invalid() {
         let result = CliBackend::for_interactive_prompt("invalid_backend");
         assert!(result.is_err());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for OpenCode backend
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_opencode_backend() {
+        let backend = CliBackend::opencode();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "opencode");
+        assert_eq!(
+            args,
+            vec!["--dangerously-skip-permissions", "-p", "test prompt"]
+        );
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+    }
+
+    #[test]
+    fn test_opencode_tui_backend() {
+        let backend = CliBackend::opencode_tui();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "opencode");
+        // Should have prompt as positional arg, no -p flag, no --dangerously-skip-permissions
+        assert_eq!(args, vec!["test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+    }
+
+    #[test]
+    fn test_opencode_interactive_mode_omits_flag() {
+        let backend = CliBackend::opencode();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
+
+        assert_eq!(cmd, "opencode");
+        assert_eq!(args, vec!["-p", "test prompt"]);
+        assert!(stdin.is_none());
+        assert!(!args.contains(&"--dangerously-skip-permissions".to_string()));
+    }
+
+    #[test]
+    fn test_from_name_opencode() {
+        let backend = CliBackend::from_name("opencode").unwrap();
+        assert_eq!(backend.command, "opencode");
+        assert_eq!(backend.prompt_flag, Some("-p".to_string()));
+    }
+
+    #[test]
+    fn test_for_interactive_prompt_opencode() {
+        let backend = CliBackend::for_interactive_prompt("opencode").unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "opencode");
+        // Should NOT have --dangerously-skip-permissions
+        assert_eq!(args, vec!["-p", "test prompt"]);
+        assert!(!args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(stdin.is_none());
     }
 }

@@ -8,7 +8,9 @@ use std::sync::OnceLock;
 use tracing::debug;
 
 /// Default priority order for backend detection.
-pub const DEFAULT_PRIORITY: &[&str] = &["claude", "kiro", "gemini", "codex", "amp", "copilot"];
+pub const DEFAULT_PRIORITY: &[&str] = &[
+    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode",
+];
 
 /// Maps backend config names to their actual CLI command names.
 ///
@@ -38,12 +40,16 @@ impl std::fmt::Display for NoBackendError {
         writeln!(f, "Checked backends: {}", self.checked.join(", "))?;
         writeln!(f)?;
         writeln!(f, "Install one of the following:")?;
-        writeln!(f, "  • Claude CLI:  https://docs.anthropic.com/claude-code")?;
-        writeln!(f, "  • Kiro CLI:    https://kiro.dev")?;
-        writeln!(f, "  • Gemini CLI:  https://cloud.google.com/gemini")?;
-        writeln!(f, "  • Codex CLI:   https://openai.com/codex")?;
-        writeln!(f, "  • Amp CLI:     https://amp.dev")?;
-        writeln!(f, "  • Copilot CLI: https://docs.github.com/copilot")?;
+        writeln!(
+            f,
+            "  • Claude CLI:   https://docs.anthropic.com/claude-code"
+        )?;
+        writeln!(f, "  • Kiro CLI:     https://kiro.dev")?;
+        writeln!(f, "  • Gemini CLI:   https://cloud.google.com/gemini")?;
+        writeln!(f, "  • Codex CLI:    https://openai.com/codex")?;
+        writeln!(f, "  • Amp CLI:      https://amp.dev")?;
+        writeln!(f, "  • Copilot CLI:  https://docs.github.com/copilot")?;
+        writeln!(f, "  • OpenCode CLI: https://opencode.ai")?;
         Ok(())
     }
 }
