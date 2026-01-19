@@ -116,7 +116,14 @@ fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        // Find the last valid char boundary at or before max_len
+        let boundary = s
+            .char_indices()
+            .take_while(|(i, _)| *i < max_len)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        format!("{}...", &s[..boundary])
     }
 }
 
@@ -243,5 +250,43 @@ mod tests {
     fn test_truncate_helper() {
         assert_eq!(truncate("short", 10), "short");
         assert_eq!(truncate("this is a long string", 10), "this is a ...");
+    }
+
+    #[test]
+    fn test_truncate_utf8_boundary() {
+        // The arrow character → is 3 bytes (E2 86 92 in UTF-8)
+        // This string: "hello→world" has bytes:
+        //   h(0) e(1) l(2) l(3) o(4) →(5,6,7) w(8) o(9) r(10) l(11) d(12)
+        // Truncating at byte 6 or 7 would land INSIDE the → character
+        let s = "hello→world";
+
+        // Truncate at max_len=6, which is inside the → character (bytes 5-7)
+        // This should NOT panic - it should truncate to "hello" (before the →)
+        let result = truncate(s, 6);
+
+        // The result should be truncated at a valid UTF-8 boundary
+        // Expected: "hello..." (truncated before the multi-byte char)
+        assert!(result.ends_with("..."), "Should end with ellipsis");
+        assert!(result.len() < s.len(), "Should be truncated");
+
+        // Verify the result is valid UTF-8 (won't panic on iteration)
+        for _ in result.chars() {}
+    }
+
+    #[test]
+    fn test_truncate_utf8_emoji() {
+        // Emoji like 🦀 is 4 bytes (F0 9F A6 80)
+        // "hi🦀" = h(0) i(1) 🦀(2,3,4,5)
+        // Truncating at byte 3, 4, or 5 would panic
+        let s = "hi🦀bye";
+
+        // Truncate at max_len=4, which is inside the 🦀 (bytes 2-5)
+        let result = truncate(s, 4);
+
+        // Should truncate to "hi..." (before the emoji)
+        assert!(result.ends_with("..."));
+
+        // Verify valid UTF-8
+        for _ in result.chars() {}
     }
 }
