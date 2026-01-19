@@ -61,10 +61,13 @@ nav:
   - User Guide:
     - guide/overview.md
     - guide/configuration.md
+    - guide/hat-system.md
     - guide/kiro-migration.md
     - guide/agents.md
     - guide/prompts.md
     - guide/cost-management.md
+  - Reference:
+    - reference/presets.md
   - Deployment:
     - deployment/docker.md
     - deployment/kubernetes.md

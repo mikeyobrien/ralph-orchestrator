@@ -200,10 +200,12 @@ See [Presets](../presets/README.md) for the full list.
 
 Now that you've run your first Ralph task:
 
-- Read the [Configuration Guide](guide/configuration.md) for detailed setup
-- Learn about [Presets](../presets/README.md) for specialized workflows
-- Understand [Cost Management](guide/cost-management.md)
-- Explore [Advanced Architecture](advanced/architecture.md) for hat-based workflows
+- 🎩 Explore [Hat-Based Workflows](guide/hat-system.md) for TDD, code review, and more
+- 📋 Browse [23 Ready-Made Presets](reference/presets.md) for common workflows
+- 📖 Read the [Configuration Guide](guide/configuration.md) for detailed setup
+- 💰 Understand [Cost Management](guide/cost-management.md)
+- 🔒 Learn about [Security Features](advanced/security.md)
+- 📊 Set up [Monitoring](advanced/monitoring.md)
 
 ## Troubleshooting
 

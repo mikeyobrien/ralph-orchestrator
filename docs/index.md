@@ -24,26 +24,26 @@ Based on Huntley's technique, this implementation adds practical safety, monitor
 
 <div class="grid cards" markdown>
 
+- **🎩 Hat-Based Orchestration**
+  Specialized agent personas coordinate through events. 23 pre-configured workflows for TDD, code review, debugging, and more. See the [Hat System Guide](guide/hat-system.md).
+
 - **🤖 Multi-Agent Support**
   Works seamlessly with Claude, Kiro, Gemini, Codex, and Amp CLI tools with automatic detection
 
-- **💰 Cost Management**  
+- **💰 Cost Management**
   Real-time token tracking, cost calculation, and configurable spending limits
 
-- **🔒 Security Controls**  
+- **🔒 Security Controls**
   Input sanitization, command injection prevention, and path traversal protection
 
-- **📊 Monitoring & Metrics**  
+- **📊 Monitoring & Metrics**
   System metrics, performance tracking, and detailed JSON exports
 
-- **🔄 Resilient Execution**  
+- **🔄 Resilient Execution**
   Automatic retries, circuit breakers, and state persistence
 
 - **💾 Git Checkpointing**
   Version control integration for state recovery and history tracking
-
-- **🎩 Hat-Based Workflows**
-  Define specialized agent personas (hats) for complex multi-phase workflows
 
 </div>
 

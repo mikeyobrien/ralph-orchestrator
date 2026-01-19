@@ -153,7 +153,7 @@ hats:
 
 **Important:** Every hat requires a `description` field.
 
-See [Hat System Guide](../advanced/architecture.md) for detailed hat configuration.
+See [Hat System Guide](hat-system.md) for detailed hat configuration.
 
 ## CLI Flags
 
@@ -223,6 +223,114 @@ event_loop:
   max_consecutive_failures: 3
 ```
 
+## Hat Configuration (v2.0+)
+
+Ralph v2.0 introduces "Hatless Ralph" - a constant coordinator with optional, configurable hats.
+
+For comprehensive hat system documentation, see the [Hat System Guide](hat-system.md).
+
+### Hat Backends
+
+Each hat can specify its own backend:
+
+```yaml
+cli:
+  backend: claude  # Default backend for Ralph
+
+hats:
+  builder:
+    name: "Builder"
+    description: "Implements code changes"
+    backend: gemini  # This hat uses Gemini
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+
+  reviewer:
+    name: "Reviewer"
+    description: "Reviews code for quality"
+    backend:
+      type: kiro
+      agent: codex  # Kiro with custom agent
+    triggers: ["review.request"]
+    publishes: ["review.done"]
+```
+
+**Backend types:**
+
+| Type | Format | Example |
+|------|--------|---------|
+| Named | String | `backend: claude` |
+| Kiro Agent | Object | `backend: {type: kiro, agent: codex}` |
+| Custom | Object | `backend: {command: ./my-agent, args: [--flag]}` |
+
+### Default Publishes
+
+Hats can specify a fallback event if they forget to write one:
+
+```yaml
+hats:
+  builder:
+    name: "Builder"
+    description: "Implements code changes"
+    triggers: ["build.task"]
+    publishes: ["build.done", "build.blocked"]
+    default_publishes: "build.done"
+```
+
+If the builder completes without writing events to `.agent/events.jsonl`, Ralph automatically injects `build.done`.
+
+### Solo Mode vs Multi-Hat Mode
+
+**Solo mode** (no hats):
+```yaml
+cli:
+  backend: claude
+
+event_loop:
+  prompt_file: PROMPT.md
+  completion_promise: "LOOP_COMPLETE"
+# No hats section - Ralph handles everything
+```
+
+**Multi-hat mode**:
+```yaml
+cli:
+  backend: claude
+
+event_loop:
+  starting_event: "task.start"
+  completion_promise: "LOOP_COMPLETE"
+
+hats:
+  builder:
+    name: "Builder"
+    description: "Implements code changes"
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+    backend: claude
+
+  tester:
+    name: "Tester"
+    description: "Runs tests and reports results"
+    triggers: ["test.request"]
+    publishes: ["test.pass", "test.fail"]
+    backend: gemini
+```
+
+### Using Presets
+
+Ralph ships with 23 pre-configured hat collections:
+
+```bash
+# List available presets
+ralph init --list-presets
+
+# Initialize with a preset
+ralph init --preset tdd-red-green
+```
+
+See the [Preset Reference](../reference/presets.md) for all available presets.
+
 ## V1 Compatibility
 
 Ralph still supports the flat V1 configuration format:
@@ -267,7 +375,6 @@ Ralph warns about dropped fields unless `_suppress_warnings: true` is set.
 
 ## Next Steps
 
-- [YAML Schema Reference](../reference/yaml-schema.md) - Complete field reference
-- [Presets](../../presets/README.md) - Pre-configured workflows
-- [Hat System](../advanced/architecture.md) - Advanced multi-hat workflows
+- [Hat System Guide](hat-system.md) - Comprehensive hat documentation
+- [Preset Reference](../reference/presets.md) - 23 pre-configured workflows
 - [Cost Management](cost-management.md) - Budget control strategies
