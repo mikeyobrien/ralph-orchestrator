@@ -1,75 +1,68 @@
 # Installation Guide
 
-Comprehensive installation instructions for Ralph Orchestrator.
+Comprehensive installation instructions for Ralph Orchestrator v2.0 (Rust).
 
 ## System Requirements
 
 ### Minimum Requirements
 
-- **Python**: 3.8 or higher
-- **Memory**: 512 MB RAM
-- **Disk**: 100 MB free space
 - **OS**: Linux, macOS, or Windows
+- **Memory**: 512 MB RAM
+- **Disk**: 50 MB free space
 
 ### Recommended Requirements
 
-- **Python**: 3.10 or higher
 - **Memory**: 2 GB RAM
-- **Disk**: 1 GB free space
+- **Disk**: 500 MB free space
 - **Git**: For checkpoint features
 - **Network**: Stable internet connection
 
 ## Installation Methods
 
-### Method 1: Git Clone (Recommended)
+### Method 1: Cargo Install (Recommended)
+
+```bash
+# Install from crates.io
+cargo install ralph-orchestrator
+
+# Verify installation
+ralph --version
+```
+
+### Method 2: Build from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/mikeyobrien/ralph-orchestrator.git
 cd ralph-orchestrator
 
-# Make the orchestrator executable
-chmod +x ralph_orchestrator.py
-chmod +x ralph
-
-# Install optional dependencies
-pip install psutil  # For system metrics
-```
-
-### Method 2: Direct Download
-
-```bash
-# Download the latest release
-wget https://github.com/mikeyobrien/ralph-orchestrator/archive/refs/tags/v1.0.0.tar.gz
-
-# Extract the archive
-tar -xzf v1.0.0.tar.gz
-cd ralph-orchestrator-1.0.0
-
-# Make executable
-chmod +x ralph_orchestrator.py
-```
-
-### Method 3: uv tool (Recommended for Users)
-
-If you just want to run Ralph without setting up a development environment:
-
-```bash
-# Install uv if you haven't already
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install Ralph globally
-uv tool install ralph-orchestrator
+# Build and install
+cargo build --release
+cargo install --path .
 
 # Verify installation
-ralph --help
+ralph --version
 ```
 
-### Method 4: pip Install
+### Method 3: Download Binary
+
+Download pre-built binaries from the [releases page](https://github.com/mikeyobrien/ralph-orchestrator/releases).
 
 ```bash
-# Install via pip
-pip install ralph-orchestrator
+# macOS (Apple Silicon)
+curl -L https://github.com/mikeyobrien/ralph-orchestrator/releases/latest/download/ralph-aarch64-apple-darwin.tar.gz | tar xz
+mv ralph /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/mikeyobrien/ralph-orchestrator/releases/latest/download/ralph-x86_64-apple-darwin.tar.gz | tar xz
+mv ralph /usr/local/bin/
+
+# Linux (x86_64)
+curl -L https://github.com/mikeyobrien/ralph-orchestrator/releases/latest/download/ralph-x86_64-unknown-linux-gnu.tar.gz | tar xz
+mv ralph /usr/local/bin/
+
+# Verify installation
+ralph --version
 ```
 
 ## AI Agent Installation
@@ -97,27 +90,16 @@ claude --version
 export ANTHROPIC_API_KEY="your-api-key-here"
 ```
 
-### Q Chat
+### Kiro (AWS)
 
-Q Chat is a lightweight alternative agent.
+Kiro is an alternative agent with AWS integration.
 
 ```bash
-# Install via pip
-pip install q-cli
-
-# Or clone from repository
-git clone https://github.com/qchat/qchat.git
-cd qchat
-python setup.py install
+# Install via npm
+npm install -g @anthropic-ai/kiro-cli
 
 # Verify installation
-q --version
-```
-
-**Configuration:**
-```bash
-# Configure Q Chat
-q config --set api_key="your-api-key"
+kiro --version
 ```
 
 ### Gemini (Google)
@@ -141,58 +123,6 @@ export GEMINI_API_KEY="your-api-key-here"
 gemini config set api_key "your-api-key"
 ```
 
-## Dependency Installation
-
-### Required Python Packages
-
-Ralph Orchestrator has minimal dependencies, but some features require additional packages:
-
-```bash
-# Core functionality (no additional packages needed)
-# Ralph uses only Python standard library for core features
-
-# Optional: System metrics monitoring
-pip install psutil
-
-# Optional: Enhanced JSON handling
-pip install orjson  # Faster JSON processing
-
-# Optional: Development dependencies
-pip install pytest pytest-cov black ruff
-```
-
-### Using requirements.txt
-
-If you want to install all optional dependencies:
-
-```bash
-# Create requirements.txt
-cat > requirements.txt << EOF
-psutil>=5.9.0
-orjson>=3.9.0
-pytest>=7.0.0
-pytest-cov>=4.0.0
-black>=23.0.0
-ruff>=0.1.0
-EOF
-
-# Install all dependencies
-pip install -r requirements.txt
-```
-
-### Using uv (Recommended for Development)
-
-```bash
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies with uv
-uv pip install psutil orjson
-
-# Or use pyproject.toml
-uv sync
-```
-
 ## Verification
 
 ### Verify Installation
@@ -200,27 +130,20 @@ uv sync
 Run these commands to verify your installation:
 
 ```bash
-# Check Python version
-python --version  # Should be 3.8+
+# Check Ralph version
+ralph --version
 
-# Check Ralph Orchestrator
-python ralph_orchestrator.py --version
+# List available commands
+ralph --help
 
-# Check for available agents
-python ralph_orchestrator.py --list-agents
-
-# Run a test
-echo "Say hello (orchestrator will iterate until completion)" > test.md
-python ralph_orchestrator.py --prompt test.md --dry-run
+# Run a dry-run test
+ralph run --dry-run -p "Say hello"
 ```
 
 ### Expected Output
 
 ```
-Ralph Orchestrator v1.0.0
-Python 3.10.12
-Available agents: claude, q, gemini
-Dry run completed successfully
+ralph 2.0.0
 ```
 
 ## Platform-Specific Instructions
@@ -228,28 +151,26 @@ Dry run completed successfully
 ### Linux
 
 ```bash
-# Ubuntu/Debian
-sudo apt update
-sudo apt install python3 python3-pip git
+# Ubuntu/Debian - Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
-# Fedora/RHEL
-sudo dnf install python3 python3-pip git
-
-# Arch Linux
-sudo pacman -S python python-pip git
+# Install Ralph
+cargo install ralph-orchestrator
 ```
 
 ### macOS
 
 ```bash
-# Using Homebrew
-brew install python git
+# Install Rust via Homebrew or rustup
+brew install rustup
+rustup-init
 
-# Using MacPorts
-sudo port install python310 git
+# Or use rustup directly
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Verify Python installation
-python3 --version
+# Install Ralph
+cargo install ralph-orchestrator
 ```
 
 ### Windows
@@ -257,61 +178,57 @@ python3 --version
 ```powershell
 # Using PowerShell as Administrator
 
-# Install Python from Microsoft Store
-winget install Python.Python.3.11
+# Install Rust from https://rustup.rs
+# Download and run rustup-init.exe
 
-# Or download from python.org
-# https://www.python.org/downloads/windows/
+# Install Ralph
+cargo install ralph-orchestrator
 
-# Install Git
-winget install Git.Git
-
-# Clone Ralph
-git clone https://github.com/mikeyobrien/ralph-orchestrator.git
-cd ralph-orchestrator
-
-# Run Ralph
-python ralph_orchestrator.py --prompt PROMPT.md
+# Verify installation
+ralph --version
 ```
 
 ### Docker (Alternative)
 
 ```dockerfile
 # Dockerfile
-FROM python:3.11-slim
+FROM rust:1.75-slim AS builder
 
 WORKDIR /app
 COPY . /app
 
-RUN pip install psutil
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+COPY --from=builder /app/target/release/ralph /usr/local/bin/
 
 # Install your preferred AI agent
 RUN npm install -g @anthropic-ai/claude-code
 
-CMD ["python", "ralph_orchestrator.py"]
+CMD ["ralph", "run"]
 ```
 
 ```bash
 # Build and run
 docker build -t ralph-orchestrator .
-docker run -v $(pwd):/app ralph-orchestrator --prompt PROMPT.md
+docker run -v $(pwd):/app ralph-orchestrator run -p "Your prompt"
 ```
 
 ## Configuration Files
 
 ### Basic Configuration
 
-Create a configuration file for default settings:
+Create a configuration file for your project:
 
 ```bash
-# Create .ralph.conf
-cat > .ralph.conf << EOF
-# Default Ralph Configuration
-agent=claude
-max_iterations=100
-max_runtime=14400
-checkpoint_interval=5
-verbose=false
+# Create ralph.yml
+cat > ralph.yml << EOF
+cli:
+  backend: claude
+
+limits:
+  max_iterations: 100
+  max_runtime: 14400
 EOF
 ```
 
@@ -321,32 +238,25 @@ Set environment variables for common settings:
 
 ```bash
 # Add to your ~/.bashrc or ~/.zshrc
-export RALPH_AGENT="claude"
+export RALPH_BACKEND="claude"
 export RALPH_MAX_ITERATIONS="100"
 export RALPH_MAX_COST="50.0"
-export RALPH_VERBOSE="false"
 ```
 
 ## Troubleshooting Installation
 
 ### Common Issues
 
-#### Python Version Too Old
+#### Rust Not Installed
 
 ```bash
-ERROR: Python 3.8+ required, found 3.7.3
+error: command 'cargo' not found
 ```
 
-**Solution**: Upgrade Python
+**Solution**: Install Rust
 ```bash
-# Ubuntu/Debian
-sudo apt install python3.10
-
-# macOS
-brew upgrade python
-
-# Windows
-winget upgrade Python.Python.3.11
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 ```
 
 #### Agent Not Found
@@ -359,30 +269,18 @@ ERROR: No AI agents detected
 ```bash
 npm install -g @anthropic-ai/claude-code
 # or
-pip install q-cli
+npm install -g @google/gemini-cli
 ```
 
 #### Permission Denied
 
 ```bash
-Permission denied: './ralph_orchestrator.py'
+Permission denied: 'ralph'
 ```
 
-**Solution**: Make executable
+**Solution**: Ensure cargo bin is in PATH
 ```bash
-chmod +x ralph_orchestrator.py
-chmod +x ralph
-```
-
-#### Module Not Found
-
-```bash
-ModuleNotFoundError: No module named 'psutil'
-```
-
-**Solution**: Install optional dependencies
-```bash
-pip install psutil
+export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
 ## Uninstallation
@@ -390,14 +288,12 @@ pip install psutil
 To remove Ralph Orchestrator:
 
 ```bash
-# Remove the directory
-rm -rf ralph-orchestrator
+# Remove via cargo
+cargo uninstall ralph-orchestrator
 
-# Uninstall optional dependencies
-pip uninstall psutil orjson
-
-# Remove configuration files
-rm ~/.ralph.conf
+# Remove configuration files (optional)
+rm -rf ~/.config/ralph
+rm ralph.yml
 ```
 
 ## Next Steps

@@ -49,7 +49,9 @@ cli:
   backend: claude
 
 hats:
-  - name: builder
+  builder:
+    name: "Builder"
+    description: "Builds code from tasks"
     triggers: ["build.task"]
     publishes: ["build.done", "build.blocked"]
     backend: claude
@@ -67,11 +69,13 @@ cli:
   backend: claude  # Default for Ralph
 
 hats:
-  - name: builder
+  builder:
+    name: "Builder"
     backend: gemini  # This hat uses Gemini
     triggers: ["build.task"]
-    
-  - name: reviewer
+
+  reviewer:
+    name: "Reviewer"
     backend:
       type: kiro
       agent: codex  # Kiro with custom agent
@@ -84,7 +88,8 @@ hats:
 
 ```yaml
 hats:
-  - name: builder
+  builder:
+    name: "Builder"
     triggers: ["build.task"]
     default_publishes: "build.done"
 ```
@@ -116,13 +121,15 @@ cli:
   backend: claude
 
 hats:
-  - name: builder
+  builder:
+    name: "Builder"
     triggers: ["build.task"]
     publishes: ["build.done", "build.blocked"]
     backend: claude
     default_publishes: "build.done"
-    
-  - name: tester
+
+  tester:
+    name: "Tester"
     triggers: ["test.request"]
     publishes: ["test.pass", "test.fail"]
     backend: gemini
@@ -143,11 +150,13 @@ cli:
   backend: claude
 
 hats:
-  - name: fast-tasks
+  fast-tasks:
+    name: "Fast Tasks"
     backend: gemini
     triggers: ["quick.task"]
-    
-  - name: complex-tasks
+
+  complex-tasks:
+    name: "Complex Tasks"
     backend: claude
     triggers: ["complex.task"]
 ```

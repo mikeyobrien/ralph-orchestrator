@@ -29,7 +29,7 @@ npm install -g @anthropic-ai/claude-cli
 
 **Usage:**
 ```bash
-python ralph_orchestrator.py --agent claude
+ralph run --agent claude
 ```
 
 **Cost:**
@@ -65,10 +65,10 @@ pip install q-cli
 
 **Usage:**
 ```bash
-python ralph_orchestrator.py --agent q
+ralph run --agent q
 
 # Short form
-python ralph_orchestrator.py -a q
+ralph run -a q
 ```
 
 **Operational Features:**
@@ -109,7 +109,7 @@ pip install google-generativeai
 
 **Usage:**
 ```bash
-python ralph_orchestrator.py --agent gemini
+ralph run --agent gemini
 ```
 
 **Cost:**
@@ -147,13 +147,13 @@ npm install -g @google/gemini-cli
 **Usage:**
 ```bash
 # Basic ACP usage with Gemini
-python ralph_orchestrator.py --agent acp --acp-agent gemini
+ralph run --agent acp --acp-agent gemini
 
 # With specific permission mode
-python ralph_orchestrator.py --agent acp --acp-agent gemini --acp-permission-mode auto_approve
+ralph run --agent acp --acp-agent gemini --acp-permission-mode auto_approve
 
 # Using allowlist mode
-python ralph_orchestrator.py --agent acp --acp-permission-mode allowlist
+ralph run --agent acp --acp-permission-mode allowlist
 ```
 
 **Permission Modes:**
@@ -211,7 +211,7 @@ export RALPH_ACP_TIMEOUT=300
 Ralph Orchestrator can automatically detect and use available agents:
 
 ```bash
-python ralph_orchestrator.py --agent auto
+ralph run --agent auto
 ```
 
 **Detection Order:**
@@ -278,15 +278,15 @@ graph TD
 
 ```bash
 # Standard Claude usage
-python ralph_orchestrator.py --agent claude
+ralph run --agent claude
 
 # With specific model
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --agent-args "--model claude-3-sonnet-20240229"
 
 # With custom parameters
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --agent-args "--temperature 0.7 --max-tokens 4096"
 ```
@@ -295,15 +295,15 @@ python ralph_orchestrator.py \
 
 ```bash
 # Standard Q usage
-python ralph_orchestrator.py --agent q
+ralph run --agent q
 
 # With custom parameters
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --agent-args "--context-length 50000"
 
 # Production configuration with enhanced settings
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --max-iterations 100 \
   --retry-delay 2 \
@@ -311,7 +311,7 @@ python ralph_orchestrator.py \
   --verbose
 
 # High-concurrency configuration
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --agent-args "--async --timeout 300" \
   --max-iterations 200
@@ -333,10 +333,10 @@ export QCHAT_MAX_RETRIES=5
 
 ```bash
 # Standard Gemini usage
-python ralph_orchestrator.py --agent gemini
+ralph run --agent gemini
 
 # With specific model
-python ralph_orchestrator.py \
+ralph run \
   --agent gemini \
   --agent-args "--model gemini-pro"
 ```
@@ -345,16 +345,16 @@ python ralph_orchestrator.py \
 
 ```bash
 # Standard ACP usage with Gemini
-python ralph_orchestrator.py --agent acp --acp-agent gemini
+ralph run --agent acp --acp-agent gemini
 
 # With custom permission mode
-python ralph_orchestrator.py \
+ralph run \
   --agent acp \
   --acp-agent gemini \
   --acp-permission-mode allowlist
 
 # Production configuration
-python ralph_orchestrator.py \
+ralph run \
   --agent acp \
   --acp-agent gemini \
   --acp-permission-mode auto_approve \
@@ -399,7 +399,7 @@ export RALPH_ACP_TIMEOUT=300
 
 ```bash
 # Leverage Claude's long context
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --context-window 200000 \
   --context-threshold 0.9
@@ -417,26 +417,26 @@ python ralph_orchestrator.py \
 **Operational Capabilities:**
 ```bash
 # Quick iterations with Q
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --max-iterations 100 \
   --retry-delay 1
 
 # Async execution with timeout
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --agent-args "--async --timeout 300" \
   --checkpoint-interval 10
 
 # Stress testing configuration
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --max-iterations 500 \
   --metrics-interval 10 \
   --verbose
 
 # Long-running batch processing
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --checkpoint-interval 5 \
   --max-cost 50.0 \
@@ -458,7 +458,7 @@ python ralph_orchestrator.py \
 
 ```bash
 # Data processing with Gemini
-python ralph_orchestrator.py \
+ralph run \
   --agent gemini \
   --prompt data_analysis.md
 ```
@@ -475,19 +475,19 @@ python ralph_orchestrator.py \
 **Permission Mode Examples:**
 ```bash
 # Auto-approve all requests (CI/CD)
-python ralph_orchestrator.py \
+ralph run \
   --agent acp \
   --acp-agent gemini \
   --acp-permission-mode auto_approve
 
 # Deny all requests (testing)
-python ralph_orchestrator.py \
+ralph run \
   --agent acp \
   --acp-agent gemini \
   --acp-permission-mode deny_all
 
 # Interactive approval (development)
-python ralph_orchestrator.py \
+ralph run \
   --agent acp \
   --acp-agent gemini \
   --acp-permission-mode interactive
@@ -530,13 +530,13 @@ Process with different agents for different phases:
 
 ```bash
 # Phase 1: Research with Claude
-python ralph_orchestrator.py --agent claude --prompt research.md
+ralph run --agent claude --prompt research.md
 
 # Phase 2: Implementation with Q
-python ralph_orchestrator.py --agent q --prompt implement.md
+ralph run --agent q --prompt implement.md
 
 # Phase 3: Documentation with Claude
-python ralph_orchestrator.py --agent claude --prompt document.md
+ralph run --agent claude --prompt document.md
 ```
 
 ### Cost Optimization
@@ -545,10 +545,10 @@ Start with cheaper agents, escalate if needed:
 
 ```bash
 # Try Q first
-python ralph_orchestrator.py --agent q --max-cost 2.0
+ralph run --agent q --max-cost 2.0
 
 # If unsuccessful, try Claude
-python ralph_orchestrator.py --agent claude --max-cost 20.0
+ralph run --agent claude --max-cost 20.0
 ```
 
 ## Agent Performance Tuning
@@ -557,14 +557,14 @@ python ralph_orchestrator.py --agent claude --max-cost 20.0
 
 ```bash
 # Optimized for quality
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --max-iterations 50 \
   --checkpoint-interval 5 \
   --context-window 200000
 
 # Optimized for speed
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --max-iterations 20 \
   --retry-delay 1
@@ -574,7 +574,7 @@ python ralph_orchestrator.py \
 
 ```bash
 # Maximum efficiency
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --max-iterations 200 \
   --checkpoint-interval 20 \
@@ -585,7 +585,7 @@ python ralph_orchestrator.py \
 
 ```bash
 # Data-heavy tasks
-python ralph_orchestrator.py \
+ralph run \
   --agent gemini \
   --context-window 128000 \
   --max-tokens 500000
@@ -601,19 +601,19 @@ python ralph_orchestrator.py \
    which claude  # or q, gemini
    
    # Use auto-detection
-   python ralph_orchestrator.py --agent auto --dry-run
+   ralph run --agent auto --dry-run
    ```
 
 2. **Rate Limiting**
    ```bash
    # Increase retry delay
-   python ralph_orchestrator.py --retry-delay 10
+   ralph run --retry-delay 10
    ```
 
 3. **Context Overflow**
    ```bash
    # Adjust context settings
-   python ralph_orchestrator.py \
+   ralph run \
      --context-window 100000 \
      --context-threshold 0.7
    ```
@@ -621,17 +621,17 @@ python ralph_orchestrator.py \
 4. **Poor Output Quality**
    ```bash
    # Switch to higher-quality agent
-   python ralph_orchestrator.py --agent claude
+   ralph run --agent claude
    ```
 
 ### Agent Diagnostics
 
 ```bash
 # Test agent availability
-python ralph_orchestrator.py --agent auto --dry-run --verbose
+ralph run --agent auto --dry-run --verbose
 
 # Check agent performance
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --max-iterations 1 \
   --verbose \
@@ -644,13 +644,13 @@ python ralph_orchestrator.py \
 
 ```bash
 # Low budget: Use Q
-python ralph_orchestrator.py --agent q --max-cost 5.0
+ralph run --agent q --max-cost 5.0
 
 # Medium budget: Use Gemini
-python ralph_orchestrator.py --agent gemini --max-cost 25.0
+ralph run --agent gemini --max-cost 25.0
 
 # High budget: Use Claude
-python ralph_orchestrator.py --agent claude --max-cost 100.0
+ralph run --agent claude --max-cost 100.0
 ```
 
 ### Cost Tracking
@@ -659,7 +659,7 @@ Monitor costs per agent:
 
 ```bash
 # Enable detailed metrics
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --metrics-interval 1 \
   --verbose
@@ -743,7 +743,7 @@ This format is no longer supported in v2.0. See [Migration Guide](../migration/v
 Test with few iterations first:
 
 ```bash
-python ralph_orchestrator.py --agent auto --max-iterations 5
+ralph run --agent auto --max-iterations 5
 ```
 
 ### 3. Monitor Performance
@@ -751,7 +751,7 @@ python ralph_orchestrator.py --agent auto --max-iterations 5
 Track metrics for optimization:
 
 ```bash
-python ralph_orchestrator.py --metrics-interval 5 --verbose
+ralph run --metrics-interval 5 --verbose
 ```
 
 ### 4. Use Auto-Detection
@@ -759,7 +759,7 @@ python ralph_orchestrator.py --metrics-interval 5 --verbose
 Let the system choose when unsure:
 
 ```bash
-python ralph_orchestrator.py --agent auto
+ralph run --agent auto
 ```
 
 ### 5. Consider Costs

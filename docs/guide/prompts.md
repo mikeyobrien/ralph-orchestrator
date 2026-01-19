@@ -32,7 +32,7 @@ Default prompt file: `PROMPT.md`
 
 Custom location:
 ```bash
-python ralph_orchestrator.py --prompt path/to/task.md
+ralph run --prompt path/to/task.md
 ```
 
 ## Prompt Structure
@@ -440,7 +440,7 @@ Default maximum prompt size: 10MB
 
 Adjust if needed:
 ```bash
-python ralph_orchestrator.py --max-prompt-size 20971520  # 20MB
+ralph run --max-prompt-size 20971520  # 20MB
 ```
 
 ## Testing Prompts
@@ -450,7 +450,7 @@ python ralph_orchestrator.py --max-prompt-size 20971520  # 20MB
 Test prompts without execution:
 
 ```bash
-python ralph_orchestrator.py --dry-run --prompt test.md
+ralph run --dry-run --prompt test.md
 ```
 
 ### Limited Iterations
@@ -458,7 +458,7 @@ python ralph_orchestrator.py --dry-run --prompt test.md
 Test with few iterations:
 
 ```bash
-python ralph_orchestrator.py --max-iterations 3 --prompt test.md
+ralph run --max-iterations 3 --prompt test.md
 ```
 
 ### Verbose Mode
@@ -466,7 +466,7 @@ python ralph_orchestrator.py --max-iterations 3 --prompt test.md
 Debug prompt processing:
 
 ```bash
-python ralph_orchestrator.py --verbose --prompt test.md
+ralph run --verbose --prompt test.md
 ```
 
 ## Common Pitfalls

@@ -82,7 +82,7 @@ chmod +x ralph
 3. Increase iteration limits or try different agent:
 
    ```bash
-   ralph run -n 200
+   ralph run --max-iterations 200
    ralph run -b gemini
    ```
 

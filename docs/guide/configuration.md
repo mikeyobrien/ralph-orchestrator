@@ -165,7 +165,7 @@ ralph run -b gemini -p "Your prompt"
 ralph run --backend kiro -p "Your prompt"
 
 # Limits
-ralph run -n 50 -p "Your prompt"          # Max iterations
+ralph run --max-iterations 50 -p "Your prompt"  # Max iterations
 ralph run --max-runtime 3600 -p "Your prompt"  # 1 hour limit
 ralph run --max-cost 25.0 -p "Your prompt"
 

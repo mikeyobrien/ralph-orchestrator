@@ -113,21 +113,21 @@ The orchestrator will continue iterations until all criteria are met or limits r
 ### Basic Execution
 
 ```bash
-python ralph_orchestrator.py --prompt todo-prompt.md
+ralph run --prompt todo-prompt.md
 ```
 
 ### With Specific Settings
 
 ```bash
 # Budget-conscious approach
-python ralph_orchestrator.py \
+ralph run \
   --agent q \
   --prompt todo-prompt.md \
   --max-cost 2.0 \
   --max-iterations 20
 
 # Quality-focused approach
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --prompt todo-prompt.md \
   --max-cost 10.0 \
@@ -360,7 +360,7 @@ Add multi-user support:
 ls -la
 
 # Run with explicit path
-python ralph_orchestrator.py --prompt ./todo-prompt.md
+ralph run --prompt ./todo-prompt.md
 ```
 
 ### Issue: Tests Failing

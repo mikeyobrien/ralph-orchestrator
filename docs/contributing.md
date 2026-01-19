@@ -26,7 +26,7 @@ Found a bug? Help us fix it:
 Brief description of the bug
 
 ## Steps to Reproduce
-1. Run command: `python ralph_orchestrator.py ...`
+1. Run command: `ralph run -p "..."`
 2. See error
 
 ## Expected Behavior
@@ -37,8 +37,8 @@ What actually happens
 
 ## Environment
 - OS: [e.g., Ubuntu 22.04]
-- Python: [e.g., 3.10.5]
-- Ralph Version: [e.g., 1.0.0]
+- Rust: [e.g., 1.75.0]
+- Ralph Version: [e.g., 2.0.0]
 - AI Agent: [e.g., claude]
 
 ## Logs
@@ -80,17 +80,18 @@ Ready to code? Follow these steps:
 git clone https://github.com/YOUR_USERNAME/ralph-orchestrator.git
 cd ralph-orchestrator
 
-# Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
 
-# Install development dependencies
-pip install -e .
-pip install pytest pytest-cov black ruff
+# Build the project
+cargo build
 
-# Install pre-commit hooks (optional)
-pip install pre-commit
-pre-commit install
+# Run tests
+cargo test
+
+# Install pre-commit hooks
+./scripts/setup-hooks.sh
 ```
 
 #### Development Workflow
@@ -110,22 +111,22 @@ pre-commit install
 3. **Test your changes**
    ```bash
    # Run all tests
-   pytest
+   cargo test
 
    # Run specific test
-   pytest test_orchestrator.py::test_function
+   cargo test test_function_name
 
-   # Check coverage
-   pytest --cov=ralph_orchestrator --cov-report=html
+   # Run smoke tests
+   cargo test -p ralph-core smoke_runner
    ```
 
-4. **Format code**
+4. **Format and lint**
    ```bash
-   # Format with black
-   black ralph_orchestrator.py
+   # Format with rustfmt
+   cargo fmt
 
-   # Lint with ruff
-   ruff check ralph_orchestrator.py
+   # Lint with clippy
+   cargo clippy
    ```
 
 5. **Commit changes**
@@ -144,42 +145,44 @@ pre-commit install
 
 ### Code Style
 
-We follow PEP 8 with these preferences:
+We follow Rust conventions with these preferences:
 
-- **Line length**: 88 characters (Black default)
-- **Quotes**: Double quotes for strings
-- **Imports**: Sorted with `isort`
-- **Type hints**: Use where beneficial
-- **Docstrings**: Google style
+- **Line length**: 100 characters
+- **Use clippy**: All warnings should be addressed
+- **Type safety**: Prefer strong typing over dynamic types
+- **Error handling**: Use `Result` and `?` operator appropriately
+- **Documentation**: Document public APIs with rustdoc
 
 **Example:**
-```python
-def calculate_cost(
-    input_tokens: int,
-    output_tokens: int,
-    agent_type: str = "claude"
-) -> float:
-    """
-    Calculate token usage cost.
-    
-    Args:
-        input_tokens: Number of input tokens
-        output_tokens: Number of output tokens
-        agent_type: Type of AI agent
-        
-    Returns:
-        Cost in USD
-        
-    Raises:
-        ValueError: If agent_type is unknown
-    """
-    if agent_type not in TOKEN_COSTS:
-        raise ValueError(f"Unknown agent: {agent_type}")
-    
-    rates = TOKEN_COSTS[agent_type]
-    cost = (input_tokens * rates["input"] + 
-            output_tokens * rates["output"]) / 1_000_000
-    return round(cost, 4)
+```rust
+/// Calculate token usage cost.
+///
+/// # Arguments
+///
+/// * `input_tokens` - Number of input tokens
+/// * `output_tokens` - Number of output tokens
+/// * `agent_type` - Type of AI agent
+///
+/// # Returns
+///
+/// Cost in USD
+///
+/// # Errors
+///
+/// Returns an error if the agent type is unknown
+pub fn calculate_cost(
+    input_tokens: u64,
+    output_tokens: u64,
+    agent_type: &str,
+) -> Result<f64, AgentError> {
+    let rates = TOKEN_COSTS
+        .get(agent_type)
+        .ok_or_else(|| AgentError::UnknownAgent(agent_type.to_string()))?;
+
+    let cost = (input_tokens as f64 * rates.input +
+                output_tokens as f64 * rates.output) / 1_000_000.0;
+    Ok((cost * 10000.0).round() / 10000.0)
+}
 ```
 
 ### Testing Guidelines
@@ -192,20 +195,32 @@ All new features require tests:
 4. **Documentation** of test purpose
 
 **Test Example:**
-```python
-def test_calculate_cost():
-    """Test cost calculation for different agents."""
-    # Test Claude pricing
-    cost = calculate_cost(1000, 500, "claude")
-    assert cost == 0.0105
-    
-    # Test invalid agent
-    with pytest.raises(ValueError):
-        calculate_cost(1000, 500, "invalid")
-    
-    # Test edge case: zero tokens
-    cost = calculate_cost(0, 0, "claude")
-    assert cost == 0.0
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_cost() {
+        // Test Claude pricing
+        let cost = calculate_cost(1000, 500, "claude").unwrap();
+        assert!((cost - 0.0105).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_calculate_cost_invalid_agent() {
+        // Test invalid agent
+        let result = calculate_cost(1000, 500, "invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_calculate_cost_zero_tokens() {
+        // Test edge case: zero tokens
+        let cost = calculate_cost(0, 0, "claude").unwrap();
+        assert_eq!(cost, 0.0);
+    }
+}
 ```
 
 ### Commit Message Convention
@@ -223,7 +238,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 
 **Examples:**
 ```bash
-feat: add Gemini agent support
+feat: add Kiro backend support
 fix: resolve token overflow in long prompts
 docs: update installation guide for Windows
 test: add integration tests for checkpointing
@@ -265,19 +280,15 @@ Brief description of changes
 
 ```
 ralph-orchestrator/
-├── ralph_orchestrator.py   # Main orchestrator
-├── ralph                   # CLI wrapper
-├── tests/                  # Test files
-│   ├── test_orchestrator.py
-│   ├── test_integration.py
-│   └── test_production.py
-├── docs/                   # Documentation
-│   ├── index.md
-│   ├── guide/
-│   └── api/
-├── examples/               # Example prompts
-├── .agent/                 # Runtime data
-└── .github/               # GitHub configs
+├── crates/
+│   ├── ralph-core/       # Core orchestration logic
+│   ├── ralph-tui/        # Terminal UI
+│   └── ralph-cli/        # CLI entry point
+├── src/                  # Main binary
+├── tests/                # Integration tests
+├── docs/                 # Documentation
+├── examples/             # Example configs
+└── .github/              # GitHub configs
 ```
 
 ## Testing
@@ -286,28 +297,27 @@ ralph-orchestrator/
 
 ```bash
 # All tests
-pytest
+cargo test
 
-# With coverage
-pytest --cov=ralph_orchestrator
+# Specific crate
+cargo test -p ralph-core
 
-# Specific test file
-pytest test_orchestrator.py
+# Smoke tests (replay-based)
+cargo test -p ralph-core smoke_runner
 
 # Verbose output
-pytest -v
+cargo test -- --nocapture
 
 # Stop on first failure
-pytest -x
+cargo test -- --test-threads=1
 ```
 
 ### Test Categories
 
 1. **Unit Tests**: Test individual functions
 2. **Integration Tests**: Test component interaction
-3. **E2E Tests**: Test complete workflows
+3. **Smoke Tests**: Replay-based tests using recorded fixtures
 4. **Performance Tests**: Test resource usage
-5. **Security Tests**: Test input validation
 
 ## Documentation
 
@@ -334,7 +344,7 @@ mkdocs build
 
 ## Release Process
 
-1. **Version Bump**: Update version in code
+1. **Version Bump**: Update version in `Cargo.toml`
 2. **Changelog**: Update CHANGELOG.md
 3. **Tests**: Ensure all tests pass
 4. **Documentation**: Update if needed
@@ -351,7 +361,6 @@ mkdocs build
 
 ### Resources
 
-- [Development Setup Video](https://youtube.com/...)
 - [Architecture Overview](advanced/architecture.md)
 - [API Documentation](api/orchestrator.md)
 - [Testing Guide](testing.md)
@@ -370,4 +379,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ---
 
-Thank you for contributing to Ralph Orchestrator! 🎉
+Thank you for contributing to Ralph Orchestrator!

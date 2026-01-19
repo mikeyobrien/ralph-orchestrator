@@ -16,7 +16,7 @@ Save it to hello.py. The orchestrator will continue iterations until completion.
 
 Run with:
 ```bash
-python ralph_orchestrator.py --prompt PROMPT.md --max-iterations 5
+ralph run --prompt PROMPT.md --max-iterations 5
 ```
 
 ### Basic Math Function
@@ -190,14 +190,14 @@ Create an order validation module that:
 
 ```bash
 # Run with default settings
-python ralph_orchestrator.py --prompt examples/simple-task.md
+ralph run --prompt examples/simple-task.md
 ```
 
 ### With Cost Limits
 
 ```bash
 # Limit spending
-python ralph_orchestrator.py \
+ralph run \
   --prompt examples/web-api.md \
   --max-cost 5.0 \
   --max-tokens 100000
@@ -207,12 +207,12 @@ python ralph_orchestrator.py \
 
 ```bash
 # Use Claude for complex tasks
-python ralph_orchestrator.py \
+ralph run \
   --agent claude \
   --prompt examples/cli-tool.md
 
 # Use Gemini for research tasks
-python ralph_orchestrator.py \
+ralph run \
   --agent gemini \
   --prompt examples/data-analysis.md
 ```
@@ -221,7 +221,7 @@ python ralph_orchestrator.py \
 
 ```bash
 # Verbose output with frequent checkpoints
-python ralph_orchestrator.py \
+ralph run \
   --prompt examples/simple-task.md \
   --verbose \
   --checkpoint-interval 1 \

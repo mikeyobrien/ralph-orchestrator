@@ -143,7 +143,7 @@ Or use command-line flags:
 
 ```bash
 # Limit iterations
-ralph run -n 50
+ralph run --max-iterations 50
 
 # Dry run (test without executing)
 ralph run --dry-run

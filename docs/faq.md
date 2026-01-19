@@ -174,7 +174,7 @@ Yes, in multiple ways:
 
 ```bash
 # Command line
-ralph run -n 50
+ralph run --max-iterations 50
 
 # Config file (ralph.yml)
 event_loop:
