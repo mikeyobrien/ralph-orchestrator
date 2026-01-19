@@ -641,5 +641,48 @@ hats:
 
 ---
 
+## 8. Post-Update Verification (2026-01-18)
+
+### Completed Fixes ✅
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `ralph.json` references in faq.md | ✅ Fixed | Now uses `ralph.yml` |
+| `ralph.json` references in troubleshooting.md | ✅ Fixed | Now uses `ralph.yml` |
+| `ralph.json` references in glossary.md | ✅ Fixed | Now uses `ralph.yml` |
+| presets/README.md command | ✅ Fixed | Uses `ralph run` not `ralph start` |
+| presets/README.md preset count | ✅ Fixed | Lists all 23 presets |
+| docs/guide/configuration.md hat examples | ✅ Fixed | Uses map format |
+| docs/guide/configuration.md CLI flags | ✅ Fixed | Documents `--backend`, `--max-runtime`, `--max-cost` |
+
+### Remaining Issues ⚠️
+
+| Item | Location | Issue |
+|------|----------|-------|
+| List-format hat examples | `docs/migration/v2-hatless-ralph.md` | Still uses `hats: - name:` format |
+| Python CLI commands | `docs/installation.md` | Still references `python ralph_orchestrator.py` |
+| Python CLI commands | `docs/guide/cost-management.md` | Still references Python CLI |
+| Python CLI commands | `docs/guide/agents.md` | Still references Python CLI |
+| Python CLI commands | `docs/examples/*.md` | Still references Python CLI |
+| Incorrect short flag | `docs/guide/configuration.md:168` | Shows `-n 50` but `--max-iterations` has no short flag |
+| Outdated Python API docs | `docs/api/config.md`, `docs/api/cli.md` | Still exist, completely outdated |
+
+### Summary
+
+The core configuration documentation (`docs/guide/configuration.md`) and presets documentation (`presets/README.md`) have been updated and are now accurate for Ralph v2.0.
+
+However, several secondary documentation files still contain Python v1 references that need cleanup:
+- Installation guide
+- Cost management guide
+- Agents guide
+- Example files
+- Migration guide (list-format hats)
+- API reference docs (should be deleted or archived)
+
+**Recommendation**: Create follow-up tasks to clean up remaining Python references in secondary docs.
+
+---
+
 *Report generated: 2026-01-17*
-*Ralph Orchestrator Version: v2.0 (Rust)*
+*Report updated: 2026-01-18*
+*Ralph Orchestrator Version: v2.0.7 (Rust)*
