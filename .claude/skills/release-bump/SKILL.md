@@ -18,7 +18,7 @@ Bump version and trigger release for ralph-orchestrator. All versions live in wo
 | 3. Test | `cargo test` |
 | 4. Commit | `git add Cargo.toml Cargo.lock && git commit -m "chore: bump to vX.Y.Z"` |
 | 5. Push | `git push origin main` |
-| 6. Release | `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."` |
+| 6. Tag | `git tag vX.Y.Z && git push origin vX.Y.Z` |
 
 ## Version Locations (All in Cargo.toml)
 
@@ -38,36 +38,15 @@ ralph-bench = { version = "X.Y.Z", path = "crates/ralph-bench" }
 
 **Tip:** Use Edit tool with `replace_all: true` on `version = "OLD"` → `version = "NEW"` to update all 7 at once.
 
-## Release Notes Template
-
-```bash
-gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'EOF'
-## Changes
-
-- **type: description** - Brief explanation of what changed
-
-## Installation
-
-\`\`\`bash
-cargo install ralph-cli
-\`\`\`
-
-Or via npm:
-\`\`\`bash
-npm install -g @ralph-orchestrator/ralph
-\`\`\`
-EOF
-)"
-```
-
 ## What CI Does Automatically
 
-Once you create the release (which creates the tag), `.github/workflows/release.yml` triggers:
+Once you push the tag, `.github/workflows/release.yml` triggers and:
 
-1. Builds binaries for macOS (arm64, x64) and Linux (arm64, x64)
-2. Uploads artifacts to GitHub Release
-3. Publishes to crates.io (in dependency order)
-4. Publishes to npm as `@ralph-orchestrator/ralph`
+1. Creates the GitHub Release with auto-generated notes
+2. Builds binaries for macOS (arm64, x64) and Linux (arm64, x64)
+3. Uploads artifacts to the GitHub Release
+4. Publishes to crates.io (in dependency order)
+5. Publishes to npm as `@ralph-orchestrator/ralph`
 
 ## Common Mistakes
 
@@ -75,5 +54,5 @@ Once you create the release (which creates the tag), `.github/workflows/release.
 |---------|-----|
 | Only updating workspace.package.version | Must update all 7 occurrences including internal deps |
 | Forgetting to run tests | Always `cargo test` before commit |
-| Using `git tag` separately | Use `gh release create` - it creates tag AND release together |
-| Pushing tag before main | Push main first, then create release |
+| Creating release manually with `gh release create` | Just push the tag - CI creates the release with artifacts |
+| Pushing tag before main | Push main first, then push the tag |
