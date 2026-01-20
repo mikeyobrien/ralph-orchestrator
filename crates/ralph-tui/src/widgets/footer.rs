@@ -1,7 +1,7 @@
 use crate::state::TuiState;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
@@ -65,7 +65,7 @@ impl Widget for Footer<'_> {
         }
 
         // Default footer with flexible layout
-        // Build left content: optional alert + last event
+        // Build left content: optional alert + elapsed time
         let mut left_spans = vec![Span::raw(" ")];
 
         // Show new iteration alert when viewing history and a new iteration arrived
@@ -79,29 +79,27 @@ impl Widget for Footer<'_> {
             left_spans.push(Span::raw("│ "));
         }
 
-        let last_event = self
-            .state
-            .last_event
-            .as_ref()
-            .map_or_else(|| "Last: —".to_string(), |e| format!("Last: {e}"));
-        left_spans.push(Span::raw(last_event.clone()));
-
-        let indicator_text = if self.state.pending_hat.is_none() {
-            "■ done"
-        } else if self.state.is_active() {
-            "◉ active"
+        // Show total elapsed time (default to 00:00 if loop hasn't started)
+        let elapsed_display = if let Some(elapsed) = self.state.get_loop_elapsed() {
+            let total_secs = elapsed.as_secs();
+            let mins = total_secs / 60;
+            let secs = total_secs % 60;
+            format!("Total Time Elapsed: {mins:02}:{secs:02}")
         } else {
-            "◯ idle"
+            "Total Time Elapsed: 00:00".to_string()
+        };
+        left_spans.push(Span::raw(elapsed_display));
+
+        let indicator_text = if self.state.loop_completed {
+            "■ DONE"
+        } else {
+            "◉ ACTIVE"
         };
 
-        let indicator_style = if self.state.pending_hat.is_none() {
+        let indicator_style = if self.state.loop_completed {
             Style::default().fg(Color::Blue)
-        } else if self.state.is_active() {
-            Style::default().fg(Color::Green)
         } else {
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM)
+            Style::default().fg(Color::Green)
         };
 
         // Calculate left content width for layout
@@ -204,37 +202,39 @@ mod tests {
     }
 
     #[test]
-    fn footer_shows_last_event() {
-        // Given last_event = Some("build.done")
+    fn footer_shows_elapsed_time() {
+        // Given loop_started is set (simulating 2 minutes 30 seconds elapsed)
         let mut state = TuiState::new();
-        state.last_event = Some("build.done".to_string());
+        state.loop_started = Some(
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(150))
+                .unwrap(),
+        );
 
         // When footer renders
         let text = render_to_string(&state);
 
-        // Then output contains "build.done"
+        // Then output contains "Total Time Elapsed: MM:SS" format
         assert!(
-            text.contains("build.done"),
-            "should show last event, got: {}",
+            text.contains("Total Time Elapsed: 02:30"),
+            "should show 'Total Time Elapsed: 02:30', got: {}",
             text
         );
     }
 
     #[test]
-    fn footer_shows_activity_indicator_active() {
-        // Given activity is ongoing (recent event)
+    fn footer_shows_active_indicator() {
+        // Given pending_hat is set (task in progress)
         let mut state = TuiState::new();
-        state.last_event = Some("build.task".to_string());
-        state.last_event_at = Some(std::time::Instant::now());
         state.pending_hat = Some((ralph_proto::HatId::new("builder"), "🔨Builder".to_string()));
 
         // When footer renders
         let text = render_to_string(&state);
 
-        // Then output contains ◉ (active indicator)
+        // Then output contains ◉ ACTIVE
         assert!(
-            text.contains('◉'),
-            "should show active indicator, got: {}",
+            text.contains('◉') && text.contains("ACTIVE"),
+            "should show ACTIVE indicator, got: {}",
             text
         );
     }
@@ -282,41 +282,33 @@ mod tests {
 
     #[test]
     fn footer_shows_done_indicator_when_complete() {
-        // Given pending_hat = None (task complete)
+        // Given loop_completed = true (task complete after loop.terminate)
         let mut state = TuiState::new();
-        state.pending_hat = None;
-        state.last_event = Some("loop.terminate".to_string());
+        state.loop_completed = true;
 
         // When footer renders
         let text = render_to_string(&state);
 
-        // Then output contains ■ done
+        // Then output contains ■ DONE
         assert!(
-            text.contains('■') && text.contains("done"),
-            "should show done indicator, got: {}",
+            text.contains('■') && text.contains("DONE"),
+            "should show DONE indicator, got: {}",
             text
         );
     }
 
     #[test]
-    fn footer_shows_idle_indicator() {
-        // Given activity is not ongoing (no recent event)
-        let mut state = TuiState::new();
-        state.last_event = Some("old.event".to_string());
-        state.last_event_at = Some(
-            std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_secs(5))
-                .unwrap(),
-        );
-        state.pending_hat = Some((ralph_proto::HatId::new("builder"), "🔨Builder".to_string()));
+    fn footer_shows_active_at_startup() {
+        // Given fresh state (loop not yet completed)
+        let state = TuiState::new();
 
         // When footer renders
         let text = render_to_string(&state);
 
-        // Then output contains ◯ (idle indicator)
+        // Then output contains ◉ ACTIVE (not DONE)
         assert!(
-            text.contains('◯'),
-            "should show idle indicator when no recent activity, got: {}",
+            text.contains('◉') && text.contains("ACTIVE"),
+            "should show ACTIVE indicator at startup, got: {}",
             text
         );
     }

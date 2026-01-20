@@ -2,4 +2,4 @@
 source: crates/ralph-tui/tests/integration_snapshots.rs
 expression: harness.render_footer()
 ---
-──────────────────────────────────────────────────────────────────────────────── ▶ New: iter 3 │ Last: —                                              ■ done
+──────────────────────────────────────────────────────────────────────────────── ▶ New: iter 3 │ Total Time Elapsed: 00:00                          ◉ ACTIVE

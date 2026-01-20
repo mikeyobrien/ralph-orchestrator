@@ -21,11 +21,8 @@ anyhow.workspace = true
 tracing.workspace = true
 tempfile.workspace = true
 
-# Terminal markdown rendering
+# Terminal markdown rendering (used for both TUI and non-TUI modes for parity)
 termimad.workspace = true
-
-# TUI markdown rendering (converts markdown to ratatui Text)
-tui-markdown = "0.3"
 
 # ANSI escape code parsing (converts ANSI to ratatui Text)
 ansi-to-tui = "8"

@@ -243,81 +243,63 @@ impl StreamHandler for QuietStreamHandler {
 ///
 /// When text contains ANSI escape sequences (e.g., from CLI tools like Kiro),
 /// uses `ansi_to_tui` to preserve colors and formatting. Otherwise, uses
-/// `tui_markdown` to parse markdown syntax into styled Lines.
+/// `termimad` to parse markdown (matching non-TUI mode behavior), then
+/// converts the ANSI output via `ansi_to_tui`.
+///
+/// Using `termimad` ensures parity between TUI and non-TUI modes, as both
+/// use the same markdown processing engine with the same line-breaking rules.
 fn text_to_lines(text: &str) -> Vec<Line<'static>> {
     if text.is_empty() {
         return Vec::new();
     }
 
-    // Check if text contains ANSI escape sequences
-    if contains_ansi(text) {
-        // Parse ANSI codes to ratatui Text
-        match text.into_text() {
-            Ok(parsed_text) => {
-                // Convert Text to owned Lines
-                parsed_text
-                    .lines
-                    .into_iter()
-                    .map(|line| {
-                        let owned_spans: Vec<Span<'static>> = line
-                            .spans
-                            .into_iter()
-                            .map(|span| Span::styled(span.content.into_owned(), span.style))
-                            .collect();
-                        Line::from(owned_spans)
-                    })
-                    .collect()
-            }
-            Err(_) => {
-                // Fallback: treat as plain text if ANSI parsing fails
-                vec![Line::from(text.to_string())]
-            }
-        }
+    // Convert text to ANSI-styled string
+    // - If already contains ANSI: use as-is
+    // - If plain/markdown: process through termimad (matches non-TUI behavior)
+    let ansi_text = if contains_ansi(text) {
+        text.to_string()
     } else {
-        // No ANSI codes - use markdown parsing
-        markdown_to_lines(text)
+        // Use termimad to process markdown - this matches PrettyStreamHandler behavior
+        // and ensures consistent line-breaking between TUI and non-TUI modes
+        let skin = MadSkin::default();
+        skin.term_text(text).to_string()
+    };
+
+    // Parse ANSI codes to ratatui Text
+    match ansi_text.as_str().into_text() {
+        Ok(parsed_text) => {
+            // Convert Text to owned Lines
+            parsed_text
+                .lines
+                .into_iter()
+                .map(|line| {
+                    let owned_spans: Vec<Span<'static>> = line
+                        .spans
+                        .into_iter()
+                        .map(|span| Span::styled(span.content.into_owned(), span.style))
+                        .collect();
+                    Line::from(owned_spans)
+                })
+                .collect()
+        }
+        Err(_) => {
+            // Fallback: split on newlines and treat as plain text
+            text.split('\n')
+                .map(|line| Line::from(line.to_string()))
+                .collect()
+        }
     }
 }
 
-/// Converts markdown text to styled ratatui Lines.
+/// A content block in the chronological stream.
 ///
-/// Uses `tui_markdown` to parse markdown and produce properly styled
-/// Lines with bold, italic, code, and header formatting.
-///
-/// **Important:** Standard markdown treats single newlines as soft breaks
-/// (converting them to spaces). This function splits on newlines first
-/// to preserve line boundaries from streaming CLI output.
-fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-
-    let mut result = Vec::new();
-
-    // Split text by newlines to preserve line boundaries
-    // Then parse each line as markdown individually
-    for line_text in text.split('\n') {
-        if line_text.is_empty() {
-            // Preserve empty lines
-            result.push(Line::from(""));
-            continue;
-        }
-
-        // Parse this line as markdown
-        let parsed_text = tui_markdown::from_str(line_text);
-
-        // Convert Text to owned Lines (usually just one line per input)
-        for line in parsed_text.lines {
-            let owned_spans: Vec<Span<'static>> = line
-                .spans
-                .into_iter()
-                .map(|span| Span::styled(span.content.into_owned(), span.style))
-                .collect();
-            result.push(Line::from(owned_spans));
-        }
-    }
-
-    result
+/// Used to preserve ordering between text and non-text content (tool calls, errors).
+#[derive(Clone)]
+enum ContentBlock {
+    /// Markdown/ANSI text that was accumulated before being frozen
+    Text(String),
+    /// A single non-text line (tool call, error, completion summary, etc.)
+    NonText(Line<'static>),
 }
 
 /// Renders streaming output as ratatui Lines for TUI display.
@@ -328,16 +310,18 @@ fn markdown_to_lines(text: &str) -> Vec<Line<'static>> {
 /// Text content is parsed as markdown, producing styled output for bold, italic,
 /// code, headers, etc. Tool calls and errors bypass markdown parsing to preserve
 /// their explicit styling.
+///
+/// **Chronological ordering**: When a tool call arrives, the current text buffer
+/// is "frozen" into a content block, preserving the order in which events arrived.
 pub struct TuiStreamHandler {
-    /// Buffer for accumulating markdown text
-    markdown_buffer: String,
+    /// Buffer for accumulating current markdown text (not yet frozen)
+    current_text_buffer: String,
+    /// Chronological sequence of content blocks (frozen text + non-text events)
+    blocks: Vec<ContentBlock>,
     /// Verbose mode (show tool results)
     verbose: bool,
-    /// Collected output lines (markdown lines + tool/error lines)
+    /// Collected output lines for rendering
     lines: Arc<Mutex<Vec<Line<'static>>>>,
-    /// Lines that are not markdown (tool calls, errors, etc.)
-    /// These are appended after markdown lines on each re-parse
-    non_markdown_lines: Vec<Line<'static>>,
 }
 
 impl TuiStreamHandler {
@@ -347,10 +331,10 @@ impl TuiStreamHandler {
     /// * `verbose` - If true, shows tool results and session summary.
     pub fn new(verbose: bool) -> Self {
         Self {
-            markdown_buffer: String::new(),
+            current_text_buffer: String::new(),
+            blocks: Vec::new(),
             verbose,
             lines: Arc::new(Mutex::new(Vec::new())),
-            non_markdown_lines: Vec::new(),
         }
     }
 
@@ -359,10 +343,10 @@ impl TuiStreamHandler {
     /// Use this to share output lines with the TUI application.
     pub fn with_lines(verbose: bool, lines: Arc<Mutex<Vec<Line<'static>>>>) -> Self {
         Self {
-            markdown_buffer: String::new(),
+            current_text_buffer: String::new(),
+            blocks: Vec::new(),
             verbose,
             lines,
-            non_markdown_lines: Vec::new(),
         }
     }
 
@@ -376,34 +360,64 @@ impl TuiStreamHandler {
         self.update_lines();
     }
 
-    /// Re-parses the text buffer and updates the shared lines.
+    /// Freezes the current text buffer into a content block.
     ///
-    /// This replaces all lines with: parsed text lines + non-text lines.
-    /// Text is parsed as ANSI if escape codes are detected, otherwise as markdown.
+    /// This is called when a non-text event (tool call, error) arrives,
+    /// ensuring that text before the event stays before it in the output.
+    fn freeze_current_text(&mut self) {
+        if !self.current_text_buffer.is_empty() {
+            self.blocks
+                .push(ContentBlock::Text(self.current_text_buffer.clone()));
+            self.current_text_buffer.clear();
+        }
+    }
+
+    /// Re-renders all content blocks and updates the shared lines.
+    ///
+    /// Iterates through frozen blocks in chronological order, then appends
+    /// any current (unfrozen) text buffer content. This preserves the
+    /// interleaved ordering of text and non-text content.
     fn update_lines(&mut self) {
-        let mut all_lines = text_to_lines(&self.markdown_buffer);
+        let mut all_lines = Vec::new();
+
+        // Render frozen blocks in chronological order
+        for block in &self.blocks {
+            match block {
+                ContentBlock::Text(text) => {
+                    all_lines.extend(text_to_lines(text));
+                }
+                ContentBlock::NonText(line) => {
+                    all_lines.push(line.clone());
+                }
+            }
+        }
+
+        // Render current (unfrozen) text buffer for real-time updates
+        if !self.current_text_buffer.is_empty() {
+            all_lines.extend(text_to_lines(&self.current_text_buffer));
+        }
 
         // Note: Long lines are NOT truncated here. The TUI's ContentPane widget
         // handles soft-wrapping at viewport boundaries, preserving full content.
-
-        // Append non-markdown lines (tool calls, errors, etc.)
-        all_lines.extend(self.non_markdown_lines.clone());
 
         // Update shared lines
         *self.lines.lock().unwrap() = all_lines;
     }
 
-    /// Adds a non-markdown line (tool call, error, etc.) and updates display.
-    fn add_non_markdown_line(&mut self, line: Line<'static>) {
-        self.non_markdown_lines.push(line);
+    /// Adds a non-text line (tool call, error, etc.) and updates display.
+    ///
+    /// First freezes any pending text buffer to preserve chronological order.
+    fn add_non_text_line(&mut self, line: Line<'static>) {
+        self.freeze_current_text();
+        self.blocks.push(ContentBlock::NonText(line));
         self.update_lines();
     }
 }
 
 impl StreamHandler for TuiStreamHandler {
     fn on_text(&mut self, text: &str) {
-        // Append text to markdown buffer
-        self.markdown_buffer.push_str(text);
+        // Append text to current buffer
+        self.current_text_buffer.push_str(text);
 
         // Re-parse and update lines on each text chunk
         // This handles streaming markdown correctly
@@ -424,7 +438,7 @@ impl StreamHandler for TuiStreamHandler {
             ));
         }
 
-        self.add_non_markdown_line(Line::from(spans));
+        self.add_non_text_line(Line::from(spans));
     }
 
     fn on_tool_result(&mut self, _id: &str, output: &str) {
@@ -433,7 +447,7 @@ impl StreamHandler for TuiStreamHandler {
                 format!(" \u{2713} {}", truncate(output, 200)),
                 Style::default().fg(RatatuiColor::DarkGray),
             ));
-            self.add_non_markdown_line(line);
+            self.add_non_text_line(line);
         }
     }
 
@@ -442,7 +456,7 @@ impl StreamHandler for TuiStreamHandler {
             format!("\n\u{2717} Error: {}", error),
             Style::default().fg(RatatuiColor::Red),
         ));
-        self.add_non_markdown_line(line);
+        self.add_non_text_line(line);
     }
 
     fn on_complete(&mut self, result: &SessionResult) {
@@ -450,7 +464,7 @@ impl StreamHandler for TuiStreamHandler {
         self.flush_text_buffer();
 
         // Add blank line
-        self.add_non_markdown_line(Line::from(""));
+        self.add_non_text_line(Line::from(""));
 
         // Add summary with color based on error status
         let color = if result.is_error {
@@ -463,7 +477,7 @@ impl StreamHandler for TuiStreamHandler {
             result.duration_ms, result.total_cost_usd, result.num_turns
         );
         let line = Line::from(Span::styled(summary, Style::default().fg(color)));
-        self.add_non_markdown_line(line);
+        self.add_non_text_line(line);
     }
 }
 
@@ -673,15 +687,15 @@ mod tests {
             // When on_text("hello\n") is called
             handler.on_text("hello\n");
 
-            // Then a Line with "hello" content is produced (trailing newline creates empty line)
+            // Then a Line with "hello" content is produced
+            // Note: termimad (like non-TUI mode) doesn't create empty line for trailing \n
             let lines = collect_lines(&handler);
-            assert_eq!(lines.len(), 2, "trailing newline creates an empty line");
-            assert_eq!(lines[0].to_string(), "hello");
             assert_eq!(
-                lines[1].to_string(),
-                "",
-                "trailing newline should create empty line"
+                lines.len(),
+                1,
+                "termimad doesn't create trailing empty line"
             );
+            assert_eq!(lines[0].to_string(), "hello");
         }
 
         #[test]
@@ -820,22 +834,23 @@ mod tests {
             let long_string: String = "a".repeat(500) + "\n";
             handler.on_text(&long_string);
 
-            // Then line is preserved fully (ContentPane handles wrapping)
+            // Then content is preserved fully (termimad may wrap at terminal width)
+            // Note: termimad wraps at ~80 chars by default, so 500 chars = multiple lines
             let lines = collect_lines(&handler);
-            assert_eq!(lines.len(), 2, "trailing newline creates an empty line");
-            let line_text = lines[0].to_string();
 
-            // Line should NOT be truncated - full content preserved
+            // Verify total content is preserved (all 500 'a's present)
+            let total_content: String = lines.iter().map(|l| l.to_string()).collect();
+            let a_count = total_content.chars().filter(|c| *c == 'a').count();
             assert_eq!(
-                line_text.len(),
-                500,
-                "Line should preserve full content: len={}",
-                line_text.len()
+                a_count, 500,
+                "All 500 'a' chars should be preserved. Got {}",
+                a_count
             );
+
+            // Should not have truncation ellipsis
             assert!(
-                !line_text.ends_with("..."),
-                "Line should not have ellipsis truncation: {}",
-                &line_text[line_text.len().saturating_sub(10)..]
+                !total_content.contains("..."),
+                "Content should not have ellipsis truncation"
             );
         }
 
@@ -863,6 +878,33 @@ mod tests {
         }
 
         #[test]
+        fn termimad_parity_with_non_tui_mode() {
+            // Verify that TUI mode (using termimad) matches non-TUI mode output
+            // This ensures the "★ Insight" box renders consistently in both modes
+            let text = "Some text before:★ Insight ─────\nKey point here";
+
+            let mut handler = TuiStreamHandler::new(false);
+            handler.on_text(text);
+
+            let lines = collect_lines(&handler);
+
+            // termimad wraps after "★ Insight " putting dashes on their own line
+            // This matches PrettyStreamHandler (non-TUI) behavior
+            assert!(
+                lines.len() >= 2,
+                "termimad should produce multiple lines. Got: {:?}",
+                lines.iter().map(|l| l.to_string()).collect::<Vec<_>>()
+            );
+
+            // Content should be preserved
+            let full_text: String = lines.iter().map(|l| l.to_string()).collect();
+            assert!(
+                full_text.contains("★ Insight"),
+                "Content should contain insight marker"
+            );
+        }
+
+        #[test]
         fn tool_call_flushes_text_buffer() {
             // Given buffered text
             let mut handler = TuiStreamHandler::new(false);
@@ -876,6 +918,81 @@ mod tests {
             assert_eq!(lines.len(), 2);
             assert_eq!(lines[0].to_string(), "partial text");
             assert!(lines[1].to_string().contains('\u{2699}'));
+        }
+
+        #[test]
+        fn interleaved_text_and_tools_preserves_chronological_order() {
+            // Given: text1 → tool1 → text2 → tool2
+            // Expected output order: text1, tool1, text2, tool2
+            // NOT: text1 + text2, then tool1 + tool2 (the bug we fixed)
+            let mut handler = TuiStreamHandler::new(false);
+
+            // Simulate Claude's streaming output pattern
+            handler.on_text("I'll start by reviewing the scratchpad.\n");
+            handler.on_tool_call("Read", "id1", &json!({"file_path": "scratchpad.md"}));
+            handler.on_text("I found the task. Now checking the code.\n");
+            handler.on_tool_call("Read", "id2", &json!({"file_path": "main.rs"}));
+            handler.on_text("Done reviewing.\n");
+
+            let lines = collect_lines(&handler);
+
+            // Find indices of key content
+            let text1_idx = lines
+                .iter()
+                .position(|l| l.to_string().contains("reviewing the scratchpad"));
+            let tool1_idx = lines
+                .iter()
+                .position(|l| l.to_string().contains("scratchpad.md"));
+            let text2_idx = lines
+                .iter()
+                .position(|l| l.to_string().contains("checking the code"));
+            let tool2_idx = lines.iter().position(|l| l.to_string().contains("main.rs"));
+            let text3_idx = lines
+                .iter()
+                .position(|l| l.to_string().contains("Done reviewing"));
+
+            // All content should be present
+            assert!(text1_idx.is_some(), "text1 should be present");
+            assert!(tool1_idx.is_some(), "tool1 should be present");
+            assert!(text2_idx.is_some(), "text2 should be present");
+            assert!(tool2_idx.is_some(), "tool2 should be present");
+            assert!(text3_idx.is_some(), "text3 should be present");
+
+            // Chronological order must be preserved
+            let text1_idx = text1_idx.unwrap();
+            let tool1_idx = tool1_idx.unwrap();
+            let text2_idx = text2_idx.unwrap();
+            let tool2_idx = tool2_idx.unwrap();
+            let text3_idx = text3_idx.unwrap();
+
+            assert!(
+                text1_idx < tool1_idx,
+                "text1 ({}) should come before tool1 ({}). Lines: {:?}",
+                text1_idx,
+                tool1_idx,
+                lines.iter().map(|l| l.to_string()).collect::<Vec<_>>()
+            );
+            assert!(
+                tool1_idx < text2_idx,
+                "tool1 ({}) should come before text2 ({}). Lines: {:?}",
+                tool1_idx,
+                text2_idx,
+                lines.iter().map(|l| l.to_string()).collect::<Vec<_>>()
+            );
+            assert!(
+                text2_idx < tool2_idx,
+                "text2 ({}) should come before tool2 ({}). Lines: {:?}",
+                text2_idx,
+                tool2_idx,
+                lines.iter().map(|l| l.to_string()).collect::<Vec<_>>()
+            );
+            assert!(
+                tool2_idx < text3_idx,
+                "tool2 ({}) should come before text3 ({}). Lines: {:?}",
+                tool2_idx,
+                text3_idx,
+                lines.iter().map(|l| l.to_string()).collect::<Vec<_>>()
+            );
         }
 
         #[test]
@@ -1070,8 +1187,7 @@ mod tests {
             handler.on_text("## Section Title\n");
 
             // Then "Section Title" appears in the output
-            // Note: tui-markdown may or may not apply bold/color to headers
-            // depending on its default stylesheet
+            // Note: termimad applies ANSI styling to headers
             let lines = collect_lines(&handler);
             assert!(!lines.is_empty(), "Should have at least one line");
 

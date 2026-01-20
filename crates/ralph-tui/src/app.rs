@@ -228,15 +228,13 @@ impl App {
 
                     let mut state = self.state.lock().unwrap();
 
-                    // Autoscroll: if user is at/near the bottom, keep them at the bottom
+                    // Autoscroll: if user hasn't scrolled away, keep them at the bottom
                     // as new content arrives. This mimics standard terminal behavior.
-                    if let Some(buffer) = state.current_iteration_mut() {
-                        let line_count = buffer.line_count();
-                        let max_scroll = line_count.saturating_sub(viewport_height);
-                        // If scroll is at or past where bottom would be, follow new content
-                        if buffer.scroll_offset >= max_scroll.saturating_sub(1) {
-                            buffer.scroll_offset = max_scroll;
-                        }
+                    if let Some(buffer) = state.current_iteration_mut()
+                        && buffer.following_bottom
+                    {
+                        let max_scroll = buffer.line_count().saturating_sub(viewport_height);
+                        buffer.scroll_offset = max_scroll;
                     }
 
                     let state = state; // Rebind as immutable for rendering

@@ -88,16 +88,22 @@ pub struct TuiState {
     // ========================================================================
     /// Search state for finding and navigating matches in iteration content.
     pub search_state: SearchState,
+
+    // ========================================================================
+    // Completion State
+    // ========================================================================
+    /// Whether the loop has completed (received loop.terminate event).
+    pub loop_completed: bool,
 }
 
 impl TuiState {
-    /// Creates empty state.
+    /// Creates empty state. Timer starts immediately at creation.
     pub fn new() -> Self {
         Self {
             pending_hat: None,
             iteration: 0,
             prev_iteration: 0,
-            loop_started: None,
+            loop_started: Some(Instant::now()),
             iteration_started: None,
             last_event: None,
             last_event_at: None,
@@ -115,16 +121,19 @@ impl TuiState {
             new_iteration_alert: None,
             // Search state
             search_state: SearchState::new(),
+            // Completion state
+            loop_completed: false,
         }
     }
 
     /// Creates state with a custom hat map for dynamic topic-to-hat resolution.
+    /// Timer starts immediately at creation.
     pub fn with_hat_map(hat_map: HashMap<String, (HatId, String)>) -> Self {
         Self {
             pending_hat: None,
             iteration: 0,
             prev_iteration: 0,
-            loop_started: None,
+            loop_started: Some(Instant::now()),
             iteration_started: None,
             last_event: None,
             last_event_at: None,
@@ -142,6 +151,8 @@ impl TuiState {
             new_iteration_alert: None,
             // Search state
             search_state: SearchState::new(),
+            // Completion state
+            loop_completed: false,
         }
     }
 
@@ -166,17 +177,18 @@ impl TuiState {
         // Fall back to hardcoded mappings for backward compatibility
         match topic {
             "task.start" => {
-                // Save hat_map before resetting
+                // Save state we want to preserve across reset
                 let saved_hat_map = std::mem::take(&mut self.hat_map);
+                let saved_loop_started = self.loop_started; // Preserve timer from TUI init
                 *self = Self::new();
                 self.hat_map = saved_hat_map;
-                self.loop_started = Some(now);
+                self.loop_started = saved_loop_started; // Keep original timer
                 self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
                 self.last_event = Some(topic.to_string());
                 self.last_event_at = Some(now);
             }
             "task.resume" => {
-                self.loop_started = Some(now);
+                // Don't reset timer on resume - keep counting from TUI init
                 self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
             }
             "build.task" => {
@@ -193,6 +205,7 @@ impl TuiState {
             }
             "loop.terminate" => {
                 self.pending_hat = None;
+                self.loop_completed = true;
             }
             _ => {
                 // Unknown topic - don't change pending_hat
@@ -432,6 +445,10 @@ pub struct IterationBuffer {
     pub lines: Arc<Mutex<Vec<Line<'static>>>>,
     /// Scroll position within this buffer
     pub scroll_offset: usize,
+    /// Whether to auto-scroll to bottom as new content arrives.
+    /// Starts true, becomes false when user scrolls up, restored when user
+    /// scrolls to bottom (G key) or manually scrolls down to reach bottom.
+    pub following_bottom: bool,
 }
 
 impl IterationBuffer {
@@ -441,6 +458,7 @@ impl IterationBuffer {
             number,
             lines: Arc::new(Mutex::new(Vec::new())),
             scroll_offset: 0,
+            following_bottom: true, // Start following bottom for auto-scroll
         }
     }
 
@@ -480,26 +498,37 @@ impl IterationBuffer {
     }
 
     /// Scrolls up by one line.
+    /// Disables auto-scroll since user is moving away from bottom.
     pub fn scroll_up(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
+        self.following_bottom = false;
     }
 
     /// Scrolls down by one line, respecting the viewport bounds.
+    /// Re-enables auto-scroll if user reaches the bottom.
     pub fn scroll_down(&mut self, viewport_height: usize) {
         let max_scroll = self.max_scroll_offset(viewport_height);
         if self.scroll_offset < max_scroll {
             self.scroll_offset += 1;
         }
+        // Re-enable following if user scrolled to or past the bottom
+        if self.scroll_offset >= max_scroll {
+            self.following_bottom = true;
+        }
     }
 
     /// Scrolls to the top of the buffer.
+    /// Disables auto-scroll since user is moving away from bottom.
     pub fn scroll_top(&mut self) {
         self.scroll_offset = 0;
+        self.following_bottom = false;
     }
 
     /// Scrolls to the bottom of the buffer.
+    /// Re-enables auto-scroll since user explicitly went to bottom.
     pub fn scroll_bottom(&mut self, viewport_height: usize) {
         self.scroll_offset = self.max_scroll_offset(viewport_height);
+        self.following_bottom = true;
     }
 
     /// Calculates the maximum scroll offset for the given viewport height.
@@ -694,6 +723,144 @@ mod tests {
             let mut buffer = IterationBuffer::new(1);
             buffer.scroll_down(5);
             assert_eq!(buffer.scroll_offset, 0);
+        }
+
+        // =====================================================================
+        // Auto-scroll (following_bottom) Tests
+        // =====================================================================
+
+        #[test]
+        fn following_bottom_is_true_initially() {
+            let buffer = IterationBuffer::new(1);
+            assert!(
+                buffer.following_bottom,
+                "New buffer should start with following_bottom = true"
+            );
+        }
+
+        #[test]
+        fn scroll_up_disables_following_bottom() {
+            let mut buffer = IterationBuffer::new(1);
+            for _ in 0..10 {
+                buffer.append_line(Line::from("line"));
+            }
+            buffer.scroll_offset = 5;
+            assert!(buffer.following_bottom);
+
+            buffer.scroll_up();
+
+            assert!(
+                !buffer.following_bottom,
+                "scroll_up should disable following_bottom"
+            );
+        }
+
+        #[test]
+        fn scroll_top_disables_following_bottom() {
+            let mut buffer = IterationBuffer::new(1);
+            for _ in 0..10 {
+                buffer.append_line(Line::from("line"));
+            }
+            assert!(buffer.following_bottom);
+
+            buffer.scroll_top();
+
+            assert!(
+                !buffer.following_bottom,
+                "scroll_top should disable following_bottom"
+            );
+        }
+
+        #[test]
+        fn scroll_bottom_enables_following_bottom() {
+            let mut buffer = IterationBuffer::new(1);
+            for _ in 0..10 {
+                buffer.append_line(Line::from("line"));
+            }
+            buffer.following_bottom = false;
+
+            buffer.scroll_bottom(5);
+
+            assert!(
+                buffer.following_bottom,
+                "scroll_bottom should enable following_bottom"
+            );
+        }
+
+        #[test]
+        fn scroll_down_to_bottom_enables_following_bottom() {
+            let mut buffer = IterationBuffer::new(1);
+            for _ in 0..10 {
+                buffer.append_line(Line::from("line"));
+            }
+            buffer.scroll_offset = 4; // One away from max (5 with viewport 5)
+            buffer.following_bottom = false;
+
+            buffer.scroll_down(5); // Now at max (5)
+
+            assert!(
+                buffer.following_bottom,
+                "scroll_down to bottom should enable following_bottom"
+            );
+        }
+
+        #[test]
+        fn scroll_down_not_at_bottom_keeps_following_false() {
+            let mut buffer = IterationBuffer::new(1);
+            for _ in 0..10 {
+                buffer.append_line(Line::from("line"));
+            }
+            buffer.scroll_offset = 0;
+            buffer.following_bottom = false;
+
+            buffer.scroll_down(5); // Now at 1, max is 5
+
+            assert!(
+                !buffer.following_bottom,
+                "scroll_down not reaching bottom should keep following_bottom false"
+            );
+        }
+
+        #[test]
+        fn autoscroll_scenario_content_grows_past_viewport() {
+            // This tests the core bug fix: content growing from small to large
+            let mut buffer = IterationBuffer::new(1);
+
+            // Start with small content that fits in viewport
+            for _ in 0..5 {
+                buffer.append_line(Line::from("line"));
+            }
+
+            // Simulate initial state: following_bottom = true, scroll_offset = 0
+            let viewport = 20;
+            assert!(buffer.following_bottom);
+            assert_eq!(buffer.scroll_offset, 0);
+
+            // Simulate auto-scroll logic: if following_bottom, scroll to bottom
+            if buffer.following_bottom {
+                let max_scroll = buffer.line_count().saturating_sub(viewport);
+                buffer.scroll_offset = max_scroll;
+            }
+            assert_eq!(buffer.scroll_offset, 0); // max_scroll is 0 when content < viewport
+
+            // Content grows past viewport size
+            for _ in 0..25 {
+                buffer.append_line(Line::from("more content"));
+            }
+            // Now we have 30 lines, viewport is 20, max_scroll = 10
+
+            // The bug was: scroll_offset = 0, but old logic checked if 0 >= 10-1 (false)
+            // With following_bottom flag, we just check the flag:
+            if buffer.following_bottom {
+                let max_scroll = buffer.line_count().saturating_sub(viewport);
+                buffer.scroll_offset = max_scroll;
+            }
+
+            // Now scroll_offset should be at the bottom
+            assert_eq!(
+                buffer.scroll_offset, 10,
+                "Auto-scroll should move to bottom when content grows past viewport"
+            );
         }
     }
 
