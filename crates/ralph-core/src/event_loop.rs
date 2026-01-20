@@ -9,7 +9,7 @@ use crate::hat_registry::HatRegistry;
 use crate::hatless_ralph::HatlessRalph;
 use crate::instructions::InstructionBuilder;
 use ralph_proto::{Event, EventBus, Hat, HatId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -104,6 +104,12 @@ pub struct LoopState {
     pub completion_confirmations: u32,
     /// Consecutive malformed JSONL lines encountered (for validation backpressure).
     pub consecutive_malformed_events: u32,
+
+    /// Per-hat activation counts (used for max_activations).
+    pub hat_activation_counts: HashMap<HatId, u32>,
+
+    /// Hats for which `<hat_id>.exhausted` has been emitted.
+    pub exhausted_hats: HashSet<HatId>,
 }
 
 impl Default for LoopState {
@@ -121,6 +127,8 @@ impl Default for LoopState {
             abandoned_task_redispatches: 0,
             completion_confirmations: 0,
             consecutive_malformed_events: 0,
+            hat_activation_counts: HashMap::new(),
+            exhausted_hats: HashSet::new(),
         }
     }
 }
@@ -415,13 +423,41 @@ impl EventLoop {
                 return Some(self.ralph.build_prompt(&events_context, &[]));
             } else {
                 // Multi-hat mode: collect events and determine active hats
-                let all_hat_ids: Vec<HatId> = self.bus.hat_ids().cloned().collect();
+                let mut all_hat_ids: Vec<HatId> = self.bus.hat_ids().cloned().collect();
+                // Deterministic ordering (avoid HashMap iteration order nondeterminism).
+                all_hat_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+
                 let mut all_events = Vec::new();
-                for id in all_hat_ids {
-                    all_events.extend(self.bus.take_pending(&id));
+                let mut system_events = Vec::new();
+
+                for id in &all_hat_ids {
+                    let pending = self.bus.take_pending(id);
+                    if pending.is_empty() {
+                        continue;
+                    }
+
+                    let (drop_pending, exhausted_event) = self.check_hat_exhaustion(id, &pending);
+                    if drop_pending {
+                        // Drop the pending events that would have activated the hat.
+                        if let Some(exhausted_event) = exhausted_event {
+                            all_events.push(exhausted_event.clone());
+                            system_events.push(exhausted_event);
+                        }
+                        continue;
+                    }
+
+                    all_events.extend(pending);
+                }
+
+                // Publish orchestrator-generated system events after consuming pending events,
+                // so they become visible in the event log and can be handled next iteration.
+                for event in system_events {
+                    self.bus.publish(event);
                 }
 
                 // Determine which hats are active based on events
+                let active_hat_ids = self.determine_active_hat_ids(&all_events);
+                self.record_hat_activations(&active_hat_ids);
                 let active_hats = self.determine_active_hats(&all_events);
 
                 // Format events for context
@@ -482,15 +518,83 @@ impl EventLoop {
     /// Returns list of Hat references that are triggered by any pending event.
     fn determine_active_hats(&self, events: &[Event]) -> Vec<&Hat> {
         let mut active_hats = Vec::new();
-        for event in events {
-            if let Some(hat) = self.registry.get_for_topic(event.topic.as_str()) {
-                // Avoid duplicates
-                if !active_hats.iter().any(|h: &&Hat| h.id == hat.id) {
-                    active_hats.push(hat);
-                }
+        for id in self.determine_active_hat_ids(events) {
+            if let Some(hat) = self.registry.get(&id) {
+                active_hats.push(hat);
             }
         }
         active_hats
+    }
+
+    fn determine_active_hat_ids(&self, events: &[Event]) -> Vec<HatId> {
+        let mut active_hat_ids = Vec::new();
+        for event in events {
+            if let Some(hat) = self.registry.get_for_topic(event.topic.as_str()) {
+                // Avoid duplicates
+                if !active_hat_ids.iter().any(|id| id == &hat.id) {
+                    active_hat_ids.push(hat.id.clone());
+                }
+            }
+        }
+        active_hat_ids
+    }
+
+    fn check_hat_exhaustion(&mut self, hat_id: &HatId, dropped: &[Event]) -> (bool, Option<Event>) {
+        let Some(config) = self.registry.get_config(hat_id) else {
+            return (false, None);
+        };
+        let Some(max) = config.max_activations else {
+            return (false, None);
+        };
+
+        let count = *self.state.hat_activation_counts.get(hat_id).unwrap_or(&0);
+        if count < max {
+            return (false, None);
+        }
+
+        // Emit only once per hat per run (avoid flooding).
+        let should_emit = self.state.exhausted_hats.insert(hat_id.clone());
+
+        if !should_emit {
+            // Hat is already exhausted - drop pending events silently.
+            return (true, None);
+        }
+
+        let mut dropped_topics: Vec<String> = dropped.iter().map(|e| e.topic.to_string()).collect();
+        dropped_topics.sort();
+
+        let payload = format!(
+            "Hat '{hat}' exhausted.\n- max_activations: {max}\n- activations: {count}\n- dropped_topics:\n  - {topics}",
+            hat = hat_id.as_str(),
+            max = max,
+            count = count,
+            topics = dropped_topics.join("\n  - ")
+        );
+
+        warn!(
+            hat = %hat_id.as_str(),
+            max_activations = max,
+            activations = count,
+            "Hat exhausted (max_activations reached)"
+        );
+
+        (
+            true,
+            Some(Event::new(
+                format!("{}.exhausted", hat_id.as_str()),
+                payload,
+            )),
+        )
+    }
+
+    fn record_hat_activations(&mut self, active_hat_ids: &[HatId]) {
+        for hat_id in active_hat_ids {
+            *self
+                .state
+                .hat_activation_counts
+                .entry(hat_id.clone())
+                .or_insert(0) += 1;
+        }
     }
 
     /// Returns the primary active hat ID for display purposes.
@@ -986,6 +1090,117 @@ hats:
     }
 
     #[test]
+    fn test_hat_max_activations_emits_exhausted_event() {
+        // Repro for issue #66: per-hat max_activations should prevent infinite reviewer loops.
+        let yaml = r#"
+hats:
+  executor:
+    name: "Executor"
+    description: "Implements requested changes"
+    triggers: ["work.start", "review.changes_requested"]
+    publishes: ["implementation.done"]
+  code_reviewer:
+    name: "Code Reviewer"
+    description: "Reviews changes and requests fixes"
+    triggers: ["implementation.done"]
+    publishes: ["review.changes_requested"]
+    max_activations: 3
+  escalator:
+    name: "Escalator"
+    description: "Handles exhausted hats"
+    triggers: ["code_reviewer.exhausted"]
+    publishes: []
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut event_loop = EventLoop::new(config);
+        let ralph = HatId::new("ralph");
+
+        // Seed the loop with an executor event.
+        event_loop
+            .bus
+            .publish(Event::new("work.start", "begin").with_source(ralph.clone()));
+
+        // Cycle: executor -> implementation.done; reviewer -> review.changes_requested.
+        for _ in 0..3 {
+            // Executor active.
+            let _ = event_loop.build_prompt(&ralph).unwrap();
+            event_loop.process_output(
+                &ralph,
+                "<event topic=\"implementation.done\">done</event>",
+                true,
+            );
+
+            // Reviewer active (up to max_activations=3).
+            let prompt = event_loop.build_prompt(&ralph).unwrap();
+            assert!(
+                !prompt.contains("Event: code_reviewer.exhausted"),
+                "Reviewer should not be exhausted yet"
+            );
+            event_loop.process_output(
+                &ralph,
+                "<event topic=\"review.changes_requested\">fix</event>",
+                true,
+            );
+        }
+
+        // One more implementation.done should attempt a 4th reviewer activation.
+        let _ = event_loop.build_prompt(&ralph).unwrap();
+        event_loop.process_output(
+            &ralph,
+            "<event topic=\"implementation.done\">done</event>",
+            true,
+        );
+
+        let prompt = event_loop.build_prompt(&ralph).unwrap();
+        assert!(
+            prompt.contains("Event: code_reviewer.exhausted"),
+            "Expected code_reviewer.exhausted to be emitted when max_activations is exceeded"
+        );
+        let escalator_id = HatId::new("escalator");
+        assert!(
+            event_loop
+                .bus
+                .peek_pending(&escalator_id)
+                .is_some_and(|events| {
+                    events
+                        .iter()
+                        .any(|e| e.topic.as_str() == "code_reviewer.exhausted")
+                }),
+            "Expected code_reviewer.exhausted to be published for escalator"
+        );
+
+        // Further would-trigger events are dropped (no re-activation beyond max).
+        let reviewer_id = HatId::new("code_reviewer");
+        assert_eq!(
+            *event_loop
+                .state
+                .hat_activation_counts
+                .get(&reviewer_id)
+                .unwrap_or(&0),
+            3,
+            "Reviewer should have exactly max activations recorded"
+        );
+
+        event_loop
+            .bus
+            .publish(Event::new("implementation.done", "done again").with_source(ralph.clone()));
+        let prompt = event_loop.build_prompt(&ralph).unwrap();
+        assert!(
+            !prompt.contains("Event: implementation.done"),
+            "Pending events for an exhausted hat should be dropped"
+        );
+        assert_eq!(
+            *event_loop
+                .state
+                .hat_activation_counts
+                .get(&reviewer_id)
+                .unwrap_or(&0),
+            3,
+            "Reviewer should not be activated after exhaustion"
+        );
+    }
+
+    #[test]
     fn test_termination_max_iterations() {
         let yaml = r"
 event_loop:
@@ -1004,17 +1219,21 @@ event_loop:
     #[test]
     fn test_completion_promise_detection() {
         use std::fs;
-        use std::path::Path;
+        use tempfile::TempDir;
 
         let config = RalphConfig::default();
         let mut event_loop = EventLoop::new(config);
+
+        // Use a per-test scratchpad path (tests run in parallel).
+        let temp_dir = TempDir::new().unwrap();
+        let scratchpad_path = temp_dir.path().join("scratchpad.md");
+        event_loop.config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+
         event_loop.initialize("Test");
 
         // Create scratchpad with all tasks completed
-        let scratchpad_path = Path::new(".agent/scratchpad.md");
-        fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
         fs::write(
-            scratchpad_path,
+            &scratchpad_path,
             "## Tasks\n- [x] Task 1 done\n- [x] Task 2 done\n",
         )
         .unwrap();
@@ -1033,9 +1252,6 @@ event_loop:
             Some(TerminationReason::CompletionPromise),
             "Second consecutive confirmation should terminate"
         );
-
-        // Cleanup
-        fs::remove_file(scratchpad_path).ok();
     }
 
     #[test]
@@ -1540,7 +1756,7 @@ hats:
     #[test]
     fn test_partial_completion_with_cancelled_tasks() {
         use std::fs;
-        use std::path::Path;
+        use tempfile::TempDir;
 
         // Test that cancelled tasks don't block completion when all other tasks are done
         let yaml = r#"
@@ -1558,15 +1774,17 @@ hats:
         let ralph_id = HatId::new("ralph");
 
         // Create scratchpad with completed and cancelled tasks
-        let scratchpad_path = Path::new(".agent/scratchpad.md");
-        fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let scratchpad_path = temp_dir.path().join("scratchpad.md");
+        event_loop.config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+
         let scratchpad_content = r"## Tasks
 - [x] Core feature implemented
 - [x] Tests added
 - [~] Documentation update (cancelled: out of scope)
 - [~] Performance optimization (cancelled: not needed)
 ";
-        fs::write(scratchpad_path, scratchpad_content).unwrap();
+        fs::write(&scratchpad_path, scratchpad_content).unwrap();
 
         // Simulate completion with some cancelled tasks
         let output = "All done! LOOP_COMPLETE";
@@ -1582,9 +1800,6 @@ hats:
             Some(TerminationReason::CompletionPromise),
             "Should complete with partial completion"
         );
-
-        // Cleanup
-        fs::remove_file(scratchpad_path).ok();
     }
 
     #[test]
@@ -1679,6 +1894,7 @@ hats:
                 instructions: "Test hat".to_string(),
                 backend: None,
                 default_publishes: Some("task.done".to_string()),
+                max_activations: None,
             },
         );
         config.hats = hats;
@@ -1726,6 +1942,7 @@ hats:
                 instructions: "Test hat".to_string(),
                 backend: None,
                 default_publishes: Some("task.done".to_string()),
+                max_activations: None,
             },
         );
         config.hats = hats;
@@ -1775,6 +1992,7 @@ hats:
                 instructions: "Test hat".to_string(),
                 backend: None,
                 default_publishes: None, // No default configured
+                max_activations: None,
             },
         );
         config.hats = hats;
