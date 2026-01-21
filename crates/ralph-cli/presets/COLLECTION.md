@@ -784,6 +784,33 @@ hats:
       If successful: LOOP_COMPLETE
 ```
 
+## Quick Reference: When to Use Each Preset
+---
+
+## 13. `confession-loop.yml` - Confidence-Gated Completion
+
+**Pattern**: Critic-Actor with Verification Gate  
+**Philosophy**: Separate usefulness from honesty. Do not allow completion until a self-audit reports a high confidence score.
+
+```yaml
+event_loop:
+  starting_event: "build.task"
+
+hats:
+  builder:
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+
+  confessor:
+    triggers: ["build.done"]
+    publishes: ["confession.clean", "confession.issues_found"]
+
+  confession_handler:
+    triggers: ["confession.clean", "confession.issues_found"]
+    publishes: ["build.task", "escalate.human"]
+    # Emits LOOP_COMPLETE only when confidence >= 80 and nothing material is found.
+```
+
 ---
 
 ## Quick Reference: When to Use Each Preset
@@ -802,6 +829,7 @@ hats:
 | `documentation-first` | Features that need clear docs |
 | `incident-response` | Production incidents |
 | `migration-safety` | Database/system migrations |
+| `confession-loop` | Confidence-gated completion via self-assessment |
 
 ---
 
