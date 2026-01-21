@@ -177,6 +177,16 @@ mod tests {
     }
 
     #[test]
+    fn test_confession_loop_preset_is_embedded() {
+        let preset =
+            get_preset("confession-loop").expect("confession-loop preset should exist (issue #74)");
+        assert!(!preset.description.is_empty());
+        assert!(preset.content.contains("confession.issues_found"));
+        assert!(preset.content.contains("confession.clean"));
+        assert!(preset.content.contains("Confidence (0-100)"));
+    }
+
+    #[test]
     fn test_get_preset_invalid_name() {
         let preset = get_preset("nonexistent-preset");
         assert!(preset.is_none(), "Nonexistent preset should return None");
@@ -221,6 +231,7 @@ mod tests {
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
         assert_eq!(names.len(), 24);
+        assert!(names.contains(&"confession-loop"));
         assert!(names.contains(&"tdd-red-green"));
         assert!(names.contains(&"debug"));
     }

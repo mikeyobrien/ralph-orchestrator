@@ -235,9 +235,43 @@ mod tests {
     fn test_format_preset_list() {
         let output = format_preset_list();
         assert!(output.contains("Available presets:"));
+        assert!(output.contains("confession-loop"));
         assert!(output.contains("tdd-red-green"));
         assert!(output.contains("debug"));
         assert!(output.contains("Usage:"));
+    }
+
+    #[test]
+    fn test_init_from_preset_confession_loop_writes_config() {
+        use std::sync::{Mutex, OnceLock};
+        use tempfile::TempDir;
+
+        struct RestoreDir(std::path::PathBuf);
+        impl Drop for RestoreDir {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+
+        static CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = CWD_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("cwd lock poisoned");
+
+        let original_dir = std::env::current_dir().expect("get current dir");
+        let _restore = RestoreDir(original_dir);
+
+        let temp_dir = TempDir::new().expect("create temp dir");
+        std::env::set_current_dir(temp_dir.path()).expect("set current dir");
+
+        init_from_preset("confession-loop", None, false).expect("init_from_preset succeeds");
+
+        let content = fs::read_to_string("ralph.yml").expect("read ralph.yml");
+        assert!(
+            content.contains("confession.issues_found") && content.contains("confession.clean"),
+            "expected confession events in generated config"
+        );
     }
 
     #[test]
