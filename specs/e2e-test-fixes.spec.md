@@ -569,14 +569,130 @@ cargo run -p ralph-e2e -- claude --filter "max-iterations"
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Task 1: Reporter exit code | `[ ]` | Quick win - 5 min |
-| Task 2: New assertion helper | `[ ]` | Quick win - 15 min |
-| Task 3: Update scenarios | `[ ]` | Fixes 15+ tests |
-| Task 4: Hat XML syntax | `[ ]` | Fixes 2 tests |
-| Task 5: Memory path | `[ ]` | Architectural - 1-2 hrs |
-| Task 6: Timeout capture | `[ ]` | Architectural - 1-2 hrs |
+| Task 1: Reporter exit code | `[x]` | ✅ Completed - removed hardcoded "Exit Code: 0" |
+| Task 2: New assertion helper | `[x]` | ✅ Completed - added `exit_code_success_or_limit()` |
+| Task 3: Update scenarios | `[x]` | ✅ Completed - updated assertions in all scenarios |
+| Task 4: Hat XML syntax | `[x]` | ✅ Completed - added XML examples to 6 hat scenarios |
+| Task 5: Memory path | `[x]` | ✅ Completed - added `workspace_root` to CoreConfig |
+| Task 6: Timeout capture | `[ ]` | Pending - still needed for max-iterations test |
 
-**Expected Result After All Tasks:** 21/21 E2E tests passing
+**Current Result:** 15/21 E2E tests passing (up from 4/21)
+
+---
+
+## Remaining Failures (6 tests)
+
+After the first round of fixes, 6 tests still fail. These require additional investigation and fixes.
+
+### Task 7: Fix Event Emission in Claude Scenarios (3 tests)
+
+**Status:** `[ ]` Pending
+
+**Failing Tests:**
+- `claude-multi-iter` — 0 events emitted (expected ≥2)
+- `claude-completion` — 5 iterations (expected 1-4)
+- `claude-backpressure` — No build.done event found
+
+**Root Cause Analysis:**
+The Claude scenarios instruct the agent to emit events, but agents are not outputting the XML tags consistently. This could be:
+1. Instructions not specific enough about XML format
+2. Agent choosing not to emit events
+3. Event parsing not finding tags in output
+
+**Files to Investigate:**
+- `crates/ralph-e2e/src/scenarios/claude.rs` — Check event emission instructions
+- `crates/ralph-e2e/src/scenarios/orchestration.rs` — Check multi-iter setup
+
+**Steps:**
+1. Read the claude.rs and orchestration.rs scenario configs
+2. Check if instructions include explicit XML event examples
+3. Add `<event topic="...">` examples to completion_promise prompts
+4. Increase max_iterations buffer if needed for dual-confirmation
+
+**Verification:**
+```bash
+cargo run -p ralph-e2e -- claude --filter "claude-multi-iter"
+cargo run -p ralph-e2e -- claude --filter "claude-completion"
+cargo run -p ralph-e2e -- claude --filter "claude-backpressure"
+```
+
+---
+
+### Task 8: Fix Memory File Creation (2 tests)
+
+**Status:** `[ ]` Pending
+
+**Failing Tests:**
+- `memory-add` — `.agent/memories.md` file not created
+- `memory-persistence` — File doesn't exist
+
+**Root Cause Analysis:**
+Even with `workspace_root` in CoreConfig, the E2E executor may not be:
+1. Passing the workspace path correctly to Ralph
+2. Creating the `.agent/` directory in the workspace
+3. The CLI may not be using the workspace_root for memory commands
+
+**Files to Investigate:**
+- `crates/ralph-e2e/src/scenarios/memory.rs` — Check workspace setup
+- `crates/ralph-e2e/src/executor.rs` — Check how workspace is passed
+- `crates/ralph-cli/src/main.rs` — Check if `ralph memory add` uses workspace_root
+
+**Steps:**
+1. Check if memory scenarios set up `.agent/` directory
+2. Verify executor passes `--workspace` or `-C` flag to ralph
+3. Ensure `ralph memory add` respects the workspace context
+4. Add workspace initialization step if missing
+
+**Verification:**
+```bash
+cargo run -p ralph-e2e -- claude --filter "memory-add"
+cargo run -p ralph-e2e -- claude --filter "memory-persistence"
+```
+
+---
+
+### Task 9: Fix Backend Unavailable Timing (1 test)
+
+**Status:** `[ ]` Pending
+
+**Failing Test:**
+- `backend-unavailable` — Took 14.6s (expected <10s)
+
+**Root Cause Analysis:**
+The test expects Ralph to fail fast when a backend is unavailable, but it's taking 14.6 seconds. This is likely due to:
+1. Retry attempts before giving up
+2. Timeout waiting for backend response
+3. The 10-second threshold may be too tight
+
+**Simple Fix:**
+Relax the timing assertion from <10s to <20s, or investigate why the failure takes 14.6s.
+
+**Files to Modify:**
+- `crates/ralph-e2e/src/scenarios/errors.rs` — Find `backend-unavailable` scenario
+
+**Steps:**
+1. Find the `backend-unavailable` scenario in errors.rs
+2. Check the timing assertion threshold
+3. Either relax to <20s or investigate actual failure path
+
+**Verification:**
+```bash
+cargo run -p ralph-e2e -- claude --filter "backend-unavailable"
+```
+
+---
+
+## Updated Progress Tracking
+
+| Task | Status | Impact |
+|------|--------|--------|
+| Tasks 1-5 | `[x]` Done | Fixed 11 tests (4→15 passing) |
+| Task 6: Timeout capture | `[ ]` | 1 test (max-iterations) |
+| Task 7: Event emission | `[ ]` | 3 tests (multi-iter, completion, backpressure) |
+| Task 8: Memory file creation | `[ ]` | 2 tests (memory-add, memory-persistence) |
+| Task 9: Backend timing | `[ ]` | 1 test (backend-unavailable) |
+
+**Target:** 21/21 E2E tests passing
 
 ---
 
