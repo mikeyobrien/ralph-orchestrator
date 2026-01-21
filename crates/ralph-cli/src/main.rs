@@ -11,6 +11,7 @@
 //! - SOP-based planning via `ralph plan` and `ralph task`
 
 mod init;
+mod memory;
 mod presets;
 mod sop_runner;
 
@@ -230,6 +231,9 @@ enum Commands {
 
     /// Generate code task files from descriptions or plans
     Task(TaskArgs),
+
+    /// Manage persistent memories for accumulated learning
+    Memory(memory::MemoryArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -490,6 +494,7 @@ async fn main() -> Result<()> {
         Some(Commands::Emit(args)) => emit_command(cli.color, args),
         Some(Commands::Plan(args)) => plan_command(cli.config, cli.color, args),
         Some(Commands::Task(args)) => task_command(cli.config, cli.color, args),
+        Some(Commands::Memory(args)) => memory::execute(args, cli.color.should_use_colors()),
         None => {
             // Default to run with no overrides (backwards compatibility)
             let args = RunArgs {
