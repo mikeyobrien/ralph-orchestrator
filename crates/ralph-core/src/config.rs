@@ -817,6 +817,12 @@ pub struct HatConfig {
     /// Default event to publish if hat forgets to write an event.
     #[serde(default)]
     pub default_publishes: Option<String>,
+
+    /// Maximum number of times this hat may be activated in a single loop run.
+    ///
+    /// When the limit is exceeded, the orchestrator publishes `<hat_id>.exhausted`
+    /// instead of activating the hat again.
+    pub max_activations: Option<u32>,
 }
 
 impl HatConfig {

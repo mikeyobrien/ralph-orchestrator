@@ -6,7 +6,9 @@
 use crate::cli_backend::CliBackend;
 #[cfg(test)]
 use crate::cli_backend::{OutputFormat, PromptMode};
+#[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
+#[cfg(unix)]
 use nix::unistd::Pid;
 use std::io::Write;
 use std::process::Stdio;
@@ -188,13 +190,23 @@ impl CliExecutor {
 
     /// Terminates the child process with SIGTERM.
     fn terminate_child(child: &mut tokio::process::Child) -> std::io::Result<()> {
+        #[cfg(not(unix))]
+        {
+            // SIGTERM doesn't exist on Windows. Best-effort termination:
+            // On Unix this would be SIGKILL, on Windows it maps to process termination.
+            child.start_kill()
+        }
+
+        #[cfg(unix)]
         if let Some(pid) = child.id() {
             #[allow(clippy::cast_possible_wrap)]
             let pid = Pid::from_raw(pid as i32);
             debug!(%pid, "Sending SIGTERM to child process");
             let _ = kill(pid, Signal::SIGTERM);
+            Ok(())
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     /// Executes a prompt without streaming (captures all output).

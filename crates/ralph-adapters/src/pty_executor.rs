@@ -21,7 +21,9 @@
 use crate::claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock};
 use crate::cli_backend::{CliBackend, OutputFormat};
 use crate::stream_handler::{SessionResult, StreamHandler};
+#[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
+#[cfg(unix)]
 use nix::unistd::Pid;
 use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
 use std::io::{self, Read, Write};
@@ -1239,6 +1241,17 @@ impl PtyExecutor {
     /// grace period wait. Previously used `std::thread::sleep` which blocked the
     /// worker thread for up to 5 seconds, making the TUI appear frozen.
     #[allow(clippy::unused_self)] // Self is conceptually the right receiver for this method
+    #[allow(clippy::unused_async)] // Kept async to preserve signature parity with Unix implementation
+    #[cfg(not(unix))]
+    async fn terminate_child(
+        &self,
+        child: &mut Box<dyn portable_pty::Child + Send>,
+        _graceful: bool,
+    ) -> io::Result<()> {
+        child.kill()
+    }
+
+    #[cfg(unix)]
     async fn terminate_child(
         &self,
         child: &mut Box<dyn portable_pty::Child + Send>,
