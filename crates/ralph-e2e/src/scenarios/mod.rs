@@ -20,17 +20,18 @@
 //! # Example
 //!
 //! ```no_run
-//! use ralph_e2e::scenarios::{TestScenario, ClaudeConnectScenario};
+//! use ralph_e2e::scenarios::{TestScenario, ConnectivityScenario};
 //! use ralph_e2e::executor::RalphExecutor;
+//! use ralph_e2e::Backend;
 //! use std::path::Path;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let scenario = ClaudeConnectScenario::new();
-//!     let workspace = Path::new(".e2e-tests/claude-connect");
+//!     let scenario = ConnectivityScenario::new();
+//!     let workspace = Path::new(".e2e-tests/connect");
 //!
-//!     // Setup creates config files
-//!     let config = scenario.setup(workspace).unwrap();
+//!     // Setup creates config files for the target backend
+//!     let config = scenario.setup(workspace, Backend::Claude).unwrap();
 //!
 //!     // Run executes and validates
 //!     let executor = RalphExecutor::new(workspace.to_path_buf());
@@ -41,33 +42,33 @@
 //! ```
 
 mod capabilities;
-mod claude;
+mod connectivity;
 mod errors;
 mod events;
 mod hats;
-mod kiro;
+mod incremental;
 mod memory;
-mod opencode;
 mod orchestration;
+mod tasks;
 
-pub use capabilities::{ClaudeStreamingScenario, ClaudeToolUseScenario};
-pub use claude::ClaudeConnectScenario;
+pub use capabilities::{StreamingScenario, ToolUseScenario};
+pub use connectivity::ConnectivityScenario;
 pub use errors::{
     AuthFailureScenario, BackendUnavailableScenario, MaxIterationsScenario, TimeoutScenario,
 };
-pub use events::{ClaudeBackpressureScenario, ClaudeEventsScenario};
+pub use events::{BackpressureScenario, EventsScenario};
 pub use hats::{
     HatBackendOverrideScenario, HatEventRoutingScenario, HatInstructionsScenario,
     HatMultiWorkflowScenario, HatSingleScenario,
 };
-pub use kiro::KiroConnectScenario;
+pub use incremental::{ChainedLoopScenario, IncrementalFeatureScenario};
 pub use memory::{
-    MemoryAddScenario, MemoryInjectionScenario, MemoryPersistenceScenario, MemorySearchScenario,
+    MemoryAddScenario, MemoryCorruptedFileScenario, MemoryInjectionScenario,
+    MemoryLargeContentScenario, MemoryMissingFileScenario, MemoryPersistenceScenario,
+    MemoryRapidWriteScenario, MemorySearchScenario,
 };
-pub use opencode::OpenCodeConnectScenario;
-pub use orchestration::{
-    ClaudeCompletionScenario, ClaudeMultiIterScenario, ClaudeSingleIterScenario,
-};
+pub use orchestration::{CompletionScenario, MultiIterScenario, SingleIterScenario};
+pub use tasks::{TaskAddScenario, TaskCloseScenario, TaskCompletionScenario, TaskReadyScenario};
 
 use crate::Backend;
 use crate::executor::{ExecutionResult, RalphExecutor, ScenarioConfig};
@@ -101,7 +102,10 @@ pub enum ScenarioError {
 /// - Validate the results with assertions
 #[async_trait]
 pub trait TestScenario: Send + Sync {
-    /// Unique identifier for the scenario (e.g., "claude-connect").
+    /// Unique identifier for the scenario (e.g., "connect").
+    ///
+    /// Note: This is the base ID without backend suffix. When running for
+    /// specific backends, the runner will append the backend name (e.g., "connect-claude").
     fn id(&self) -> &str;
 
     /// Human-readable description of what the scenario tests.
@@ -110,13 +114,19 @@ pub trait TestScenario: Send + Sync {
     /// The tier this scenario belongs to (e.g., "Tier 1: Connectivity").
     fn tier(&self) -> &str;
 
-    /// Which backend this scenario is designed for.
-    fn backend(&self) -> Backend;
+    /// Returns the list of backends this scenario supports.
+    ///
+    /// Default implementation returns all backends. Override this to restrict
+    /// the scenario to specific backends.
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+    }
 
     /// Sets up the scenario by creating necessary files in the workspace.
     ///
+    /// The `backend` parameter specifies which backend to configure for.
     /// Returns the configuration to use when running the scenario.
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError>;
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError>;
 
     /// Runs the scenario and returns the test result.
     ///

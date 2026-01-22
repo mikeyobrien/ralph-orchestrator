@@ -11,9 +11,10 @@ use tempfile::TempDir;
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Run ralph memory command with given args in the temp directory.
+/// Run ralph tools memory command with given args in the temp directory.
 fn ralph_memory(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ralph"))
+        .arg("tools")
         .arg("memory")
         .args(args)
         .arg("--root")
@@ -23,12 +24,12 @@ fn ralph_memory(temp_path: &std::path::Path, args: &[&str]) -> std::process::Out
         .expect("Failed to execute ralph command")
 }
 
-/// Run ralph memory command and assert success.
+/// Run ralph tools memory command and assert success.
 fn ralph_memory_ok(temp_path: &std::path::Path, args: &[&str]) -> String {
     let output = ralph_memory(temp_path, args);
     assert!(
         output.status.success(),
-        "Command 'ralph memory {}' failed: {}",
+        "Command 'ralph tools memory {}' failed: {}",
         args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -240,7 +241,7 @@ fn test_memory_list_shows_all() -> Result<()> {
     assert!(stdout.contains("first memory") || stdout.contains("first mem..."));
     assert!(stdout.contains("second memory") || stdout.contains("second me..."));
     assert!(stdout.contains("third memory") || stdout.contains("third mem..."));
-    assert!(stdout.contains("Total: 3 memories"));
+    assert!(stdout.contains("Showing 3 memories"));
 
     Ok(())
 }
@@ -262,7 +263,7 @@ fn test_memory_list_filter_by_type() -> Result<()> {
     assert!(stdout.contains("fix one") || stdout.contains("fix o..."));
     assert!(stdout.contains("fix two") || stdout.contains("fix t..."));
     assert!(!stdout.contains("pattern one"));
-    assert!(stdout.contains("Total: 2 memories"));
+    assert!(stdout.contains("Showing 2 memories"));
 
     Ok(())
 }
@@ -281,7 +282,7 @@ fn test_memory_list_last_n() -> Result<()> {
     // List only last 2
     let stdout = ralph_memory_ok(temp_path, &["list", "--last", "2"]);
 
-    assert!(stdout.contains("Total: 2 memories"));
+    assert!(stdout.contains("Showing 2 memories"));
 
     Ok(())
 }
@@ -298,7 +299,7 @@ fn test_memory_list_empty() -> Result<()> {
     let stdout = ralph_memory_ok(temp_path, &["list"]);
 
     assert!(
-        stdout.contains("No memories found"),
+        stdout.contains("No memories yet"),
         "Should indicate empty list: {}",
         stdout
     );
@@ -691,6 +692,7 @@ fn test_memory_list_color_never() -> Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
         .arg("--color")
         .arg("never")
+        .arg("tools")
         .arg("memory")
         .arg("list")
         .arg("--root")

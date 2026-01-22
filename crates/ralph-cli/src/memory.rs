@@ -20,6 +20,38 @@ mod colors {
     pub const BOLD: &str = "\x1b[1m";
     pub const DIM: &str = "\x1b[2m";
     pub const GREEN: &str = "\x1b[32m";
+    pub const CYAN: &str = "\x1b[36m";
+}
+
+/// Format a date string as a human-readable relative time.
+fn format_relative_date(date_str: &str) -> String {
+    use chrono::{NaiveDate, Utc};
+
+    let today = Utc::now().date_naive();
+    let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+        return date_str.to_string();
+    };
+
+    let days = (today - date).num_days();
+
+    match days {
+        0 => "today".to_string(),
+        1 => "yesterday".to_string(),
+        2..=6 => format!("{} days ago", days),
+        7..=13 => "1 week ago".to_string(),
+        14..=20 => "2 weeks ago".to_string(),
+        21..=27 => "3 weeks ago".to_string(),
+        28..=44 => "1 month ago".to_string(),
+        45..=89 => "2 months ago".to_string(),
+        _ => {
+            let months = days / 30;
+            if months < 12 {
+                format!("{} months ago", months)
+            } else {
+                date_str.to_string()
+            }
+        }
+    }
 }
 
 /// Output format for memory commands.
@@ -246,13 +278,21 @@ fn list_command(store: &MarkdownMemoryStore, args: ListArgs, use_colors: bool) -
 
     if memories.is_empty() {
         if use_colors {
+            println!("\n{}No memories yet.{}\n", colors::DIM, colors::RESET);
+            println!("Create your first memory:");
             println!(
-                "{}No memories found.{} Use `ralph memory add` to create one.",
-                colors::DIM,
+                "  {}ralph tools memory add \"<content>\" -t pattern --tags tag1,tag2{}\n",
+                colors::CYAN,
                 colors::RESET
             );
+            println!("Memory types: pattern, decision, fix, context");
+            println!();
         } else {
-            println!("No memories found. Use `ralph memory add` to create one.");
+            println!("\nNo memories yet.\n");
+            println!("Create your first memory:");
+            println!("  ralph tools memory add \"<content>\" -t pattern --tags tag1,tag2\n");
+            println!("Memory types: pattern, decision, fix, context");
+            println!();
         }
         return Ok(());
     }
@@ -292,7 +332,9 @@ fn delete_command(store: &MarkdownMemoryStore, args: DeleteArgs, use_colors: boo
 }
 
 fn search_command(store: &MarkdownMemoryStore, args: SearchArgs, use_colors: bool) -> Result<()> {
-    let mut memories = store.load().context("Failed to load memories")?;
+    let all_memories = store.load().context("Failed to load memories")?;
+    let total_count = all_memories.len();
+    let mut memories = all_memories;
 
     // Filter by query if provided
     if let Some(ref query) = args.query {
@@ -310,25 +352,77 @@ fn search_command(store: &MarkdownMemoryStore, args: SearchArgs, use_colors: boo
         memories.retain(|m| m.has_any_tag(&tags));
     }
 
+    let match_count = memories.len();
+    let truncated = !args.all && match_count > 10;
+
     // Limit results unless --all is specified
-    if !args.all && memories.len() > 10 {
+    if truncated {
         memories.truncate(10);
     }
 
     if memories.is_empty() {
         if use_colors {
             println!(
-                "{}No matching memories found.{}",
+                "\n{}No matching memories found in {} total memories.{}",
+                colors::DIM,
+                total_count,
+                colors::RESET
+            );
+            println!(
+                "{}Try a different search term or use `ralph tools memory list` to see all.{}\n",
                 colors::DIM,
                 colors::RESET
             );
         } else {
-            println!("No matching memories found.");
+            println!(
+                "\nNo matching memories found in {} total memories.",
+                total_count
+            );
+            println!("Try a different search term or use `ralph tools memory list` to see all.\n");
         }
         return Ok(());
     }
 
+    // Print search header (only for table format)
+    if args.format == OutputFormat::Table {
+        if use_colors {
+            if let Some(ref query) = args.query {
+                println!(
+                    "\n{}Search results for \"{}\"{} ({} of {} memories)",
+                    colors::DIM,
+                    query,
+                    colors::RESET,
+                    match_count,
+                    total_count
+                );
+            }
+        } else if let Some(ref query) = args.query {
+            println!(
+                "\nSearch results for \"{}\" ({} of {} memories)",
+                query, match_count, total_count
+            );
+        }
+    }
+
     output_memories(&memories, args.format, use_colors);
+
+    // Show truncation hint (only for table format)
+    if truncated && args.format == OutputFormat::Table {
+        if use_colors {
+            println!(
+                "{}Showing 10 of {} matches • Use --all to see all results{}\n",
+                colors::DIM,
+                match_count,
+                colors::RESET
+            );
+        } else {
+            println!(
+                "Showing 10 of {} matches • Use --all to see all results\n",
+                match_count
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -463,109 +557,125 @@ fn output_memory(memory: &Memory, format: OutputFormat, use_colors: bool) {
 fn print_memories_table(memories: &[Memory], use_colors: bool) {
     use colors::*;
 
-    // Header
+    // Header - simplified columns: Type, Age, Tags, Content
     if use_colors {
+        println!("\n{BOLD}  # │ Type      │ Age          │ Tags             │ Content{RESET}");
         println!(
-            "{BOLD}{DIM}  # │ Type     │ ID                      │ Tags             │ Content{RESET}"
-        );
-        println!(
-            "{DIM}────┼──────────┼─────────────────────────┼──────────────────┼─────────────────────────{RESET}"
+            "{DIM}────┼───────────┼──────────────┼──────────────────┼────────────────────────────────────────{RESET}"
         );
     } else {
-        println!("  # | Type     | ID                      | Tags             | Content");
+        println!("\n  # | Type      | Age          | Tags             | Content");
         println!(
-            "----|----------|-------------------------|------------------|-------------------------"
+            "----|-----------|--------------|------------------|----------------------------------------"
         );
     }
 
     for (i, memory) in memories.iter().enumerate() {
         let emoji = memory.memory_type.emoji();
         let type_name = memory.memory_type.to_string();
+        let age = format_relative_date(&memory.created);
         let tags = if memory.tags.is_empty() {
             "-".to_string()
         } else {
             memory.tags.join(", ")
         };
-        let content_preview = if memory.content.len() > 30 {
-            format!("{}...", &memory.content[..30].replace('\n', " "))
+        // Longer content preview (50 chars) for better readability
+        let content_preview = if memory.content.len() > 50 {
+            format!("{}…", &memory.content[..50].replace('\n', " "))
         } else {
             memory.content.replace('\n', " ")
         };
 
         if use_colors {
             println!(
-                "{DIM}{:>3}{RESET} │ {} {:<6} │ {:<23} │ {:<16} │ {}",
+                "{DIM}{:>3}{RESET} │ {} {:<7} │ {:<12} │ {CYAN}{:<16}{RESET} │ {}",
                 i + 1,
                 emoji,
                 type_name,
-                truncate_str(&memory.id, 23),
+                age,
                 truncate_str(&tags, 16),
                 content_preview
             );
         } else {
             println!(
-                "{:>3} | {} {:<6} | {:<23} | {:<16} | {}",
+                "{:>3} | {} {:<7} | {:<12} | {:<16} | {}",
                 i + 1,
                 emoji,
                 type_name,
-                truncate_str(&memory.id, 23),
+                age,
                 truncate_str(&tags, 16),
                 content_preview
             );
         }
     }
 
-    // Footer
+    // Footer with hint
     if use_colors {
-        println!("\n{DIM}Total: {} memories{RESET}", memories.len());
+        println!(
+            "\n{DIM}Showing {} memories • Use `ralph tools memory show <id>` for details{RESET}",
+            memories.len()
+        );
     } else {
-        println!("\nTotal: {} memories", memories.len());
+        println!(
+            "\nShowing {} memories • Use `ralph tools memory show <id>` for details",
+            memories.len()
+        );
     }
 }
 
 fn print_memory_detail(memory: &Memory, use_colors: bool) {
     use colors::*;
 
-    if use_colors {
-        println!("{BOLD}ID:{RESET}      {}", memory.id);
-        println!(
-            "{BOLD}Type:{RESET}    {} {}",
-            memory.memory_type.emoji(),
-            memory.memory_type
-        );
-        println!("{BOLD}Created:{RESET} {}", memory.created);
-        println!(
-            "{BOLD}Tags:{RESET}    {}",
-            if memory.tags.is_empty() {
-                "-".to_string()
-            } else {
-                memory.tags.join(", ")
-            }
-        );
-        println!("{BOLD}Content:{RESET}");
-        for line in memory.content.lines() {
-            println!("  {}", line);
-        }
+    let relative_date = format_relative_date(&memory.created);
+    let tags_display = if memory.tags.is_empty() {
+        "-".to_string()
     } else {
-        println!("ID:      {}", memory.id);
+        memory.tags.join(", ")
+    };
+
+    if use_colors {
+        println!();
+        println!("{DIM}╭────────────────────────────────────────────────────────────────╮{RESET}");
         println!(
-            "Type:    {} {}",
+            "{DIM}│{RESET} {} {BOLD}{}{RESET}",
             memory.memory_type.emoji(),
-            memory.memory_type
+            memory.memory_type.to_string().to_uppercase()
         );
-        println!("Created: {}", memory.created);
+        println!("{DIM}╰────────────────────────────────────────────────────────────────╯{RESET}");
+        println!();
+        println!("  {BOLD}ID:{RESET}      {DIM}{}{RESET}", memory.id);
         println!(
-            "Tags:    {}",
-            if memory.tags.is_empty() {
-                "-".to_string()
-            } else {
-                memory.tags.join(", ")
-            }
+            "  {BOLD}Created:{RESET} {} {DIM}({}){RESET}",
+            relative_date, memory.created
         );
-        println!("Content:");
+        println!("  {BOLD}Tags:{RESET}    {CYAN}{}{RESET}", tags_display);
+        println!();
+        println!("  {BOLD}Content:{RESET}");
+        println!("{DIM}  ─────────────────────────────────────────────────────────────{RESET}");
         for line in memory.content.lines() {
             println!("  {}", line);
         }
+        println!();
+    } else {
+        println!();
+        println!("┌────────────────────────────────────────────────────────────────┐");
+        println!(
+            "│ {} {}",
+            memory.memory_type.emoji(),
+            memory.memory_type.to_string().to_uppercase()
+        );
+        println!("└────────────────────────────────────────────────────────────────┘");
+        println!();
+        println!("  ID:      {}", memory.id);
+        println!("  Created: {} ({})", relative_date, memory.created);
+        println!("  Tags:    {}", tags_display);
+        println!();
+        println!("  Content:");
+        println!("  ─────────────────────────────────────────────────────────────");
+        for line in memory.content.lines() {
+            println!("  {}", line);
+        }
+        println!();
     }
 }
 

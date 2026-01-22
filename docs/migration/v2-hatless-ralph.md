@@ -11,9 +11,10 @@ This guide helps you migrate from v1.x to v2.0, which introduces the "Hatless Ra
 ## Breaking Changes
 
 1. **No default hats**: Empty config = solo Ralph mode (no hats)
-2. **JSONL events**: Events written to `.agent/events.jsonl` instead of XML in output
+2. **JSONL events**: Events written to `.ralph/events-YYYYMMDD-HHMMSS.jsonl` instead of XML in output
 3. **Per-hat backends**: Each hat can specify its own backend
 4. **Planner removed**: No automatic planner hat
+5. **Events directory moved**: Events now live in `.ralph/` (orchestrator metadata), not `.agent/` (agent state)
 
 ## Migration Steps
 
@@ -32,7 +33,7 @@ cli:
 # No hats section = Ralph handles everything
 ```
 
-Ralph receives all prompts directly and writes events to `.agent/events.jsonl`.
+Ralph receives all prompts directly and writes events to `.ralph/events-YYYYMMDD-HHMMSS.jsonl`.
 
 ### Multi-Hat Mode
 
@@ -100,12 +101,13 @@ tests: pass
 </event>
 ```
 
-**After (v2.0)**: JSONL in `.agent/events.jsonl`
-```json
-{"topic":"build.done","payload":"tests: pass","ts":"2026-01-14T19:30:00Z"}
+**After (v2.0)**: JSONL in `.ralph/events-YYYYMMDD-HHMMSS.jsonl`
+```bash
+# Preferred: Use ralph emit for safe JSON formatting
+ralph emit build.done "tests: pass"
 ```
 
-Agents write events using this format. Ralph reads from the file.
+Each run creates a unique timestamped events file. Use `ralph emit` to write events safely.
 
 ## Common Configurations
 

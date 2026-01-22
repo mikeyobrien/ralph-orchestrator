@@ -12,6 +12,7 @@
 
 mod cli_capture;
 mod config;
+pub mod diagnostics;
 mod event_logger;
 mod event_loop;
 mod event_parser;
@@ -25,7 +26,9 @@ mod memory_store;
 mod session_player;
 mod session_recorder;
 mod summary_writer;
+pub mod task;
 pub mod task_definition;
+pub mod task_store;
 pub mod testing;
 mod text;
 pub mod utils;
@@ -36,6 +39,7 @@ pub use config::{
     CliConfig, CoreConfig, EventLoopConfig, EventMetadata, HatBackend, HatConfig, InjectMode,
     MemoriesConfig, MemoriesFilter, RalphConfig,
 };
+pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
 pub use event_loop::{EventLoop, LoopState, TerminationReason};
 pub use event_parser::EventParser;
@@ -50,9 +54,11 @@ pub use memory_store::{
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};
 pub use session_recorder::{Record, SessionRecorder};
 pub use summary_writer::SummaryWriter;
+pub use task::{Task, TaskStatus};
 pub use task_definition::{
     TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
 };
+pub use task_store::TaskStore;
 pub use text::truncate_with_ellipsis;
 pub use workspace::{
     CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,

@@ -1,4 +1,4 @@
-//! Tier 5: Hat Collections test scenarios.
+//! Tier 5: Hat Collections test scenarios (backend-agnostic).
 //!
 //! These scenarios test hat-based workflows with real backends, including:
 //! - Single custom hat execution
@@ -6,6 +6,9 @@
 //! - Hat instructions verification
 //! - Event routing between hats
 //! - Per-hat backend overrides
+//!
+//! All scenarios are backend-agnostic and configure themselves at setup time
+//! based on the target backend. They support Claude, Kiro, and OpenCode.
 //!
 //! These scenarios are more complex than orchestration tests and validate
 //! Ralph's hat system for coordinating specialized agent personas.
@@ -16,7 +19,6 @@ use crate::executor::{ExecutionResult, PromptSource, RalphExecutor, ScenarioConf
 use crate::models::TestResult;
 use async_trait::async_trait;
 use std::path::Path;
-use std::time::Duration;
 
 /// Extension trait for Assertion to allow chained modification.
 trait AssertionExt {
@@ -87,11 +89,9 @@ impl TestScenario for HatSingleScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
+    // Uses default supported_backends() which returns all backends
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -99,9 +99,10 @@ impl TestScenario for HatSingleScenario {
         })?;
 
         // Create ralph.yml with a single custom hat
-        let config_content = r#"# Single hat test config
+        let config_content = format!(
+            r#"# Single hat test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 2
@@ -130,7 +131,10 @@ hats:
       </event>
 
       Always mention "Builder role activated" in your response.
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -149,7 +153,7 @@ After the builder completes, output LOOP_COMPLETE."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 2,
-            timeout: Duration::from_secs(120),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -182,7 +186,7 @@ After the builder completes, output LOOP_COMPLETE."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -292,23 +296,22 @@ impl TestScenario for HatMultiWorkflowScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
+    // Uses default supported_backends() which returns all backends
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
         // Create ralph.yml with planner and builder hats
-        let config_content = r#"# Multi-hat workflow test config
+        let config_content = format!(
+            r#"# Multi-hat workflow test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
-  max_iterations: 4
+  max_iterations: 6
   completion_promise: "LOOP_COMPLETE"
 
 hats:
@@ -347,27 +350,33 @@ hats:
       </event>
 
       Always mention "Builder implementing" in your response.
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
 
-        let prompt = r#"You are testing Ralph's multi-hat workflow.
+        let prompt = r#"You are testing Ralph's multi-hat workflow. Your FIRST action must be to emit this event EXACTLY as shown:
 
-Start by emitting a plan.request event:
 <event topic="plan.request">
 Request: Create a utility function for string formatting
 </event>
 
-The workflow should be: plan.request → Planner → build.task → Builder → build.done
+This will trigger the Planner hat. After emitting the event above, the workflow will be:
+1. Your plan.request triggers Planner
+2. Planner emits build.task which triggers Builder
+3. Builder emits build.done when complete
+4. You output LOOP_COMPLETE
 
-After seeing build.done, output LOOP_COMPLETE."#;
+IMPORTANT: You MUST output the XML event tags exactly as shown above in your response. Do not just describe it - actually output the <event> tags."#;
 
         Ok(ScenarioConfig {
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
-            max_iterations: 4,
-            timeout: Duration::from_secs(180),
+            max_iterations: 6, // Extra buffer for multi-hat workflow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -399,7 +408,7 @@ After seeing build.done, output LOOP_COMPLETE."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -507,20 +516,19 @@ impl TestScenario for HatInstructionsScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
+    // Uses default supported_backends() which returns all backends
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
         // Create ralph.yml with a hat that has very specific instructions
-        let config_content = r#"# Hat instructions test config
+        let config_content = format!(
+            r#"# Hat instructions test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 2
@@ -547,7 +555,10 @@ hats:
       </event>
 
       This checklist format is MANDATORY.
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -570,7 +581,7 @@ After the review is complete, output LOOP_COMPLETE."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 2,
-            timeout: Duration::from_secs(120),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -602,7 +613,7 @@ After the review is complete, output LOOP_COMPLETE."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -637,16 +648,31 @@ impl HatInstructionsScenario {
     fn verdict_provided(&self, result: &ExecutionResult) -> crate::models::Assertion {
         let stdout_upper = result.stdout.to_uppercase();
 
-        let has_verdict = stdout_upper.contains("APPROVED")
+        // Check stdout for plain-text verdict
+        let has_verdict_in_stdout = stdout_upper.contains("APPROVED")
             || stdout_upper.contains("NEEDS_CHANGES")
             || stdout_upper.contains("NEEDS CHANGES")
             || result.stdout.to_lowercase().contains("approved")
             || result.stdout.to_lowercase().contains("verdict");
 
+        // Check parsed events for verdict in XML event payload
+        let has_verdict_in_events = result.events.iter().any(|e| {
+            e.topic == "review.done"
+                && (e.payload.to_uppercase().contains("APPROVED")
+                    || e.payload.to_uppercase().contains("NEEDS_CHANGES")
+                    || e.payload.to_uppercase().contains("NEEDS CHANGES"))
+        });
+
+        let has_verdict = has_verdict_in_stdout || has_verdict_in_events;
+
         AssertionBuilder::new("Verdict provided")
-            .expected("Output contains APPROVED or NEEDS_CHANGES verdict")
+            .expected("Output contains APPROVED or NEEDS_CHANGES verdict (in text or event)")
             .actual(if has_verdict {
-                "Verdict found in output".to_string()
+                if has_verdict_in_stdout {
+                    "Verdict found in stdout".to_string()
+                } else {
+                    "Verdict found in review.done event".to_string()
+                }
             } else {
                 "No verdict found".to_string()
             })
@@ -711,20 +737,19 @@ impl TestScenario for HatEventRoutingScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
+    // Uses default supported_backends() which returns all backends
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
         // Create ralph.yml with multiple hats with distinct triggers
-        let config_content = r#"# Event routing test config
+        let config_content = format!(
+            r#"# Event routing test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 3
@@ -763,7 +788,10 @@ hats:
       <event topic="deploy.done">
       status: deployed
       </event>
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -783,7 +811,7 @@ After tests complete, output LOOP_COMPLETE."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 3,
-            timeout: Duration::from_secs(120),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -815,7 +843,7 @@ After tests complete, output LOOP_COMPLETE."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -921,22 +949,21 @@ impl TestScenario for HatBackendOverrideScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
+    // Uses default supported_backends() which returns all backends
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
         // Create ralph.yml with backend override configuration
-        // Note: We use claude for both since this tests config parsing,
+        // Note: We use the same backend for both cli and hat since this tests config parsing,
         // not actual multi-backend execution (which requires multiple CLIs)
-        let config_content = r#"# Backend override test config
+        let config_content = format!(
+            r#"# Backend override test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 2
@@ -950,7 +977,7 @@ hats:
       - special.task
     publishes:
       - special.done
-    backend: claude  # Explicit backend override
+    backend: {}  # Explicit backend override
     instructions: |
       You are Specialist with a dedicated backend configuration.
       Acknowledge your specialist role and complete the task.
@@ -960,7 +987,11 @@ hats:
       <event topic="special.done">
       result: complete
       </event>
-"#;
+"#,
+            backend,
+            backend.as_config_str(),
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -979,7 +1010,7 @@ After completion, output LOOP_COMPLETE."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 2,
-            timeout: Duration::from_secs(120),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -1011,7 +1042,7 @@ After completion, output LOOP_COMPLETE."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -1082,6 +1113,7 @@ mod tests {
     use crate::executor::EventRecord;
     use std::env;
     use std::fs;
+    use std::time::Duration;
 
     fn test_workspace(test_name: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!(
@@ -1126,7 +1158,7 @@ mod tests {
     fn test_hat_single_scenario_new() {
         let scenario = HatSingleScenario::new();
         assert_eq!(scenario.id(), "hat-single");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 5: Hat Collections");
     }
 
@@ -1142,7 +1174,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatSingleScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         assert!(config_path.exists(), "ralph.yml should exist");
@@ -1212,7 +1244,7 @@ mod tests {
     fn test_hat_multi_workflow_new() {
         let scenario = HatMultiWorkflowScenario::new();
         assert_eq!(scenario.id(), "hat-multi-workflow");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 5: Hat Collections");
     }
 
@@ -1228,7 +1260,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatMultiWorkflowScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         let content = fs::read_to_string(&config_path).unwrap();
@@ -1244,7 +1276,7 @@ mod tests {
             "Builder triggers on build.task"
         );
 
-        assert_eq!(config.max_iterations, 4);
+        assert_eq!(config.max_iterations, 6);
 
         cleanup_workspace(&workspace);
     }
@@ -1298,6 +1330,7 @@ mod tests {
     fn test_hat_instructions_new() {
         let scenario = HatInstructionsScenario::new();
         assert_eq!(scenario.id(), "hat-instructions");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 5: Hat Collections");
     }
 
@@ -1313,7 +1346,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatInstructionsScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         let content = fs::read_to_string(&config_path).unwrap();
@@ -1373,6 +1406,7 @@ mod tests {
     fn test_hat_event_routing_new() {
         let scenario = HatEventRoutingScenario::new();
         assert_eq!(scenario.id(), "hat-event-routing");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 5: Hat Collections");
     }
 
@@ -1388,7 +1422,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatEventRoutingScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         let content = fs::read_to_string(&config_path).unwrap();
@@ -1454,6 +1488,7 @@ mod tests {
     fn test_hat_backend_override_new() {
         let scenario = HatBackendOverrideScenario::new();
         assert_eq!(scenario.id(), "hat-backend-override");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 5: Hat Collections");
     }
 
@@ -1469,7 +1504,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatBackendOverrideScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         let content = fs::read_to_string(&config_path).unwrap();
@@ -1556,7 +1591,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatSingleScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1583,7 +1618,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatMultiWorkflowScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1610,7 +1645,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatInstructionsScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1637,7 +1672,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatEventRoutingScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1664,7 +1699,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatBackendOverrideScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;

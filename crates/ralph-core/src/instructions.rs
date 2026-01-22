@@ -249,6 +249,7 @@ mod tests {
             scratchpad: ".workspace/plan.md".to_string(),
             specs_dir: "./specifications/".to_string(),
             guardrails: vec!["Custom rule one".to_string(), "Custom rule two".to_string()],
+            workspace_root: std::path::PathBuf::from("."),
         };
         let builder = InstructionBuilder::new("DONE", custom_core);
 

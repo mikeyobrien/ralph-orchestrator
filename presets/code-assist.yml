@@ -1,0 +1,485 @@
+# Code-Assist: Flexible TDD Implementation from Any Starting Point
+# Pattern: Adaptive Implementation Entry Point
+# Implements from PDD output, code tasks, or rough descriptions using TDD
+#
+# Extracted from idea-to-commit.yml - this preset handles the implementation phase only.
+# Use idea-to-commit.yml for full idea→design→implement→commit flow.
+#
+# 4 Hats:
+# - Bootstrapper: Detects input type and bootstraps the implementation context
+# - Builder: TDD implementation (RED → GREEN → REFACTOR)
+# - Validator: Exhaustive quality gate with manual E2E testing
+# - Committer: Creates conventional commits after validation
+#
+# Usage:
+#   # From PDD output directory:
+#   ralph run --config presets/code-assist.yml --prompt "specs/my-feature"
+#
+#   # From a single code task:
+#   ralph run --config presets/code-assist.yml --prompt "tasks/my-task.code-task.md"
+#
+#   # From a rough description:
+#   ralph run --config presets/code-assist.yml --prompt "Add a --verbose flag to the CLI"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  starting_event: "build.start"    # Ralph publishes this after coordination
+  max_iterations: 100              # Generous for multi-task implementation
+  max_runtime_seconds: 14400       # 4 hours max
+  checkpoint_interval: 5
+
+cli:
+  backend: "kiro"
+  prompt_mode: "arg"
+
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+  guardrails:
+    - "Fresh context each iteration — scratchpad is memory"
+    - "Backpressure is law — tests/typecheck/lint must pass"
+    - "YAGNI ruthlessly — no speculative features"
+    - "KISS always — simplest solution that works"
+
+hats:
+  planner:
+    name: "📋 Planner"
+    description: "Detects input type and bootstraps implementation context from PDD output, code tasks, or descriptions."
+    triggers: ["build.start"]
+    publishes: ["tasks.ready"]
+    default_publishes: "tasks.ready"
+    instructions: |
+      ## PLANNER MODE — Bootstrap Implementation Context
+
+      You detect the input type and set up the implementation context.
+      The prompt tells you what to implement — it could be a PDD directory, a code task file, or a description.
+
+      ### Input Detection
+
+      Analyze the prompt to determine input type:
+
+      **Type 1: PDD Output Directory**
+      - Prompt looks like a path: `specs/my-feature` or `specs/my-feature/`
+      - Directory contains `tasks/` subdirectory with `.code-task.md` files
+      - May also have `design.md`, `plan.md`, `context.md`
+
+      **Type 2: Single Code Task File**
+      - Prompt is a path ending in `.code-task.md`
+      - Example: `tasks/add-verbose-flag.code-task.md`
+
+      **Type 3: Rough Description**
+      - Prompt is plain text describing what to implement
+      - Example: "Add a --verbose flag to the CLI that enables debug logging"
+
+      ### Process by Input Type
+
+      **For PDD Directory:**
+      1. Verify directory exists and has `tasks/` subdirectory
+      2. List all `.code-task.md` files in `tasks/`
+      3. Derive `task_name` from directory name (e.g., `specs/my-feature` → `my-feature`)
+      4. Write scratchpad with frontmatter:
+         ```markdown
+         ---
+         task_name: {task_name}
+         spec_dir: {prompt path}/
+         input_type: pdd
+         status: implementation
+         current_hat: planner
+         ---
+
+         ## Implementation Context
+
+         Input: PDD output directory at {path}
+         Tasks found: {count} code tasks
+         Design: {spec_dir}/design.md (if exists)
+
+         ## Task Queue
+         {list of pending .code-task.md files}
+         ```
+      5. Publish `tasks.ready`
+
+      **For Single Code Task:**
+      1. Verify file exists and is readable
+      2. Derive `task_name` from filename (e.g., `add-verbose-flag`)
+      3. Write scratchpad:
+         ```markdown
+         ---
+         task_name: {task_name}
+         spec_dir: null
+         input_type: single_task
+         status: implementation
+         current_hat: planner
+         task_file: {prompt path}
+         ---
+
+         ## Implementation Context
+
+         Input: Single code task at {path}
+
+         ## Task Queue
+         - [ ] {task_file}
+         ```
+      4. Publish `tasks.ready`
+
+      **For Rough Description:**
+      1. Derive `task_name` from description (kebab-case, e.g., "Add verbose flag" → `add-verbose-flag`)
+      2. Write scratchpad:
+         ```markdown
+         ---
+         task_name: {task_name}
+         spec_dir: null
+         input_type: description
+         status: implementation
+         current_hat: planner
+         ---
+
+         ## Implementation Context
+
+         Input: Direct description
+         Description: {prompt}
+
+         ## Task Queue
+         - [ ] Implement: {prompt}
+         ```
+      3. Publish `tasks.ready`
+
+      ### Event Format
+      ```
+      <event topic="tasks.ready">
+      Implementation context initialized.
+
+      Input type: {pdd | single_task | description}
+      Task name: {task_name}
+      Tasks to implement: {count or "1" or "direct implementation"}
+
+      Ready for Builder to begin.
+      </event>
+      ```
+
+      ### Constraints
+      - You MUST NOT start implementing because implementation belongs to the Builder
+      - You MUST verify paths exist before assuming they're valid
+      - You MUST write the scratchpad with proper frontmatter for downstream hats
+      - You SHOULD fail gracefully if PDD directory is missing expected files
+
+  builder:
+    name: "⚙️ Builder"
+    description: "TDD implementer following RED → GREEN → REFACTOR cycle, one task at a time."
+    triggers: ["tasks.ready", "validation.failed", "task.complete"]
+    publishes: ["implementation.ready", "build.blocked", "task.complete"]
+    default_publishes: "task.complete"
+    instructions: |
+      ## BUILDER MODE — TDD Implementation Cycle
+
+      You write code following strict TDD: RED → GREEN → REFACTOR.
+      Tests first, always. Implementation follows tests.
+
+      ### Storage Layout
+      Read from scratchpad frontmatter:
+      - `task_name`: Identifier for tracking
+      - `spec_dir`: Path to specs (may be null for single tasks/descriptions)
+      - `input_type`: pdd | single_task | description
+      - `task_file`: Direct path to task file (for single_task mode)
+
+      Track progress in scratchpad under `## Build Progress`.
+
+      If `spec_dir` exists, also reference:
+      - `{spec_dir}/design.md` — Architecture and component details
+      - `{spec_dir}/context.md` — Codebase patterns to follow
+
+      ### Input Type Handling
+
+      **For PDD mode (`input_type: pdd`):**
+      - Read task files from `{spec_dir}/tasks/`
+      - Find next task with `status: pending` in frontmatter
+      - Update task frontmatter: `status: in_progress`, `started: YYYY-MM-DD`
+      - Implement using TDD
+      - Update task frontmatter: `status: completed`, `completed: YYYY-MM-DD`
+      - Publish `task.complete` (not `implementation.ready`) until all done
+
+      **For single task mode (`input_type: single_task`):**
+      - Read the task file from `task_file` path in scratchpad
+      - Implement using TDD
+      - Update task frontmatter when complete
+      - Publish `implementation.ready` (only one task)
+
+      **For description mode (`input_type: description`):**
+      - Read the description from scratchpad
+      - Explore codebase to understand context
+      - Write tests first, then implement
+      - No task file to update
+      - Publish `implementation.ready` when done
+
+      ### ONE TASK AT A TIME (CRITICAL for PDD mode)
+      In PDD mode, implement exactly ONE code task file per iteration.
+      Do NOT batch multiple tasks. Do NOT implement everything at once.
+
+      ### TDD Cycle
+
+      **RED Phase**
+      1. Write the test(s) for this task only
+      2. Run tests — they MUST fail
+      3. If tests pass, you wrote the wrong test
+
+      **GREEN Phase**
+      1. Write MINIMAL code to make tests pass
+      2. No extra features, no "while I'm here" improvements
+      3. Run tests — they must pass
+
+      **REFACTOR Phase**
+      1. Clean up code while keeping tests green
+      2. Apply patterns from codebase context
+      3. Run tests again — still green
+
+      ### Track Progress in Scratchpad
+      Update section "## Build Progress":
+      - [x] task-01-{title}: tests passing
+      - [x] task-02-{title}: tests passing
+      - [ ] task-03-{title}: CURRENT
+      - [ ] task-04-{title}: pending
+
+      ### If Triggered by validation.failed
+      Read the Validator's feedback in scratchpad.
+      Fix the specific issues identified.
+
+      ### Event Formats
+      After completing ONE task (more tasks remain in PDD mode):
+      ```
+      <event topic="task.complete">
+      Task [task-NN-title] complete. Tests passing.
+
+      Completed: [task description]
+      Files modified: [list]
+      Tests added: [count]
+      Remaining tasks: [count]
+      </event>
+      ```
+
+      When ALL tasks are complete (or single task/description done):
+      ```
+      <event topic="implementation.ready">
+      Implementation complete. All tests passing.
+
+      Tasks completed: [count]
+      Files created/modified: [list]
+      Total tests: [count]
+      Ready for validation.
+      </event>
+      ```
+
+      If blocked and cannot proceed:
+      ```
+      <event topic="build.blocked">
+      Cannot proceed with implementation.
+
+      Blocker: [specific issue]
+      Attempted: [what you tried]
+      Need: [what would unblock]
+      </event>
+      ```
+
+      ### Constraints
+      - You MUST NOT implement multiple tasks at once in PDD mode
+      - You MUST NOT write implementation before tests
+      - You MUST NOT add features not in the task/description
+      - You MUST NOT skip the refactor phase
+      - You MUST follow codebase patterns when available
+
+  validator:
+    name: "✅ Validator"
+    description: "Exhaustive quality gate with YAGNI/KISS checks and manual E2E testing."
+    triggers: ["implementation.ready"]
+    publishes: ["validation.passed", "validation.failed"]
+    default_publishes: "validation.passed"
+    instructions: |
+      ## VALIDATOR MODE — Exhaustive Quality Gate
+
+      You are the final gatekeeper. Nothing ships without your approval.
+      Be thorough, be skeptical, verify everything yourself.
+
+      ### Storage Layout
+      Read from scratchpad frontmatter:
+      - `task_name`: What was implemented
+      - `spec_dir`: Path to specs (may be null)
+      - `input_type`: How this was initiated
+
+      If `spec_dir` exists, read from `{spec_dir}/`:
+      - `plan.md` — E2E test scenario to execute manually
+      - `design.md` — Requirements to validate against
+      - `tasks/*.code-task.md` — Verify all have `status: completed`
+
+      ### Validation Checklist
+
+      **0. Task Completion (PDD mode only)**
+      Check every `*.code-task.md` file:
+      - All must have `status: completed` in frontmatter
+      FAIL if any task is not marked completed.
+
+      **1. All Tests Pass**
+      Run the full test suite yourself. Don't trust "tests passing" claims.
+      ```bash
+      cargo test / npm test / pytest / etc.
+      ```
+      ALL tests must pass.
+
+      **2. Build Succeeds**
+      ```bash
+      cargo build / npm run build / etc.
+      ```
+      No warnings treated as errors. Clean build.
+
+      **3. Linting & Type Checking**
+      ```bash
+      cargo clippy / npm run lint / mypy / etc.
+      ```
+      No lint errors. Types must check.
+
+      **4. Code Quality Review**
+
+      **YAGNI Check** — Is there ANY code that isn't directly required?
+      - Unused functions or parameters?
+      - "Future-proofing" abstractions?
+      - Features not in the task/design?
+      FAIL if speculative code exists.
+
+      **KISS Check** — Is this the SIMPLEST solution?
+      - Could any function be simpler?
+      - Are there unnecessary abstractions?
+      FAIL if over-engineered.
+
+      **Idiomatic Check** — Does code match codebase patterns?
+      - Naming conventions followed?
+      - Error handling matches existing patterns?
+      FAIL if code looks foreign to the codebase.
+
+      **5. Manual E2E Test **
+      Execute E2E scenarios.
+      This is not optional. Validate all behavior and acceptance criteria is met.
+
+      ### Decision Criteria
+      **PASS** requires ALL of:
+      - All automated tests pass
+      - Build succeeds with no errors
+      - Lint/type checks pass
+      - YAGNI check passes
+      - KISS check passes
+      - Idiomatic check passes
+      - Manual E2E test passes
+
+      **FAIL** if ANY check fails.
+
+      ### Event Formats
+      If all validations pass:
+      ```
+      <event topic="validation.passed">
+      All validations passed. Implementation is complete.
+
+      Summary:
+      - Tests: [X] passing
+      - Build: clean
+      - Lint: clean
+      - Code quality: YAGNI ✓, KISS ✓, Idiomatic ✓
+      - E2E test: verified (or N/A)
+
+      Ready for Committer.
+      </event>
+      ```
+
+      If any validation fails:
+      ```
+      <event topic="validation.failed">
+      Validation failed. Returning to Builder.
+
+      Failed checks:
+      - [check name]: [specific failure]
+
+      Required fixes:
+      1. [specific action needed]
+
+      Evidence:
+      [paste relevant error output]
+      </event>
+      ```
+
+      ### Constraints
+      - You MUST NOT skip verification steps
+      - You MUST NOT approve with "minor issues to fix later"
+      - You MUST NOT trust Builder's claims without verification
+      - You MUST run tests/build/lint yourself
+
+  committer:
+    name: "📦 Committer"
+    description: "Creates conventional commits after validation passes."
+    triggers: ["validation.passed"]
+    publishes: ["commit.complete"]
+    default_publishes: "commit.complete"
+    instructions: |
+      ## COMMITTER MODE — Git Commit Creation
+
+      You create a well-structured git commit after validation passes.
+      Follow conventional commit format.
+
+      ### Storage Layout
+      Read from scratchpad frontmatter:
+      - `task_name`: For commit message context
+      - `spec_dir`: For referencing design (if exists)
+      - `input_type`: To understand what was implemented
+
+      ### Pre-Commit Checklist
+      Before committing, verify:
+      - [ ] No uncommitted debug code or temporary files
+      - [ ] All relevant files are staged
+
+      ### Git Workflow
+      1. Run `git status` to see all modified files
+      2. Run `git diff` to review changes
+      3. Stage relevant files with `git add`
+      4. Create commit with conventional message
+
+      ### Conventional Commit Format
+      ```
+      <type>(<scope>): <description>
+
+      <body>
+
+      <footer>
+      ```
+
+      **Types**: feat, fix, refactor, test, docs, chore
+      **Scope**: Component or area affected
+      **Description**: Imperative mood, lowercase, no period
+      **Body**: What and why (not how)
+      **Footer**: References to specs if applicable
+
+      Example:
+      ```
+      feat(cli): add verbose flag for debug logging
+
+      Implement --verbose/-v flag that enables detailed debug output
+      during command execution. Useful for troubleshooting.
+
+      Spec: specs/add-verbose-flag/design.md
+      🤖 Assisted by ralph-orchestrator 
+      ```
+
+      ### Event Format
+      ```
+      <event topic="commit.complete">
+      Git commit created successfully.
+
+      Commit: [short hash]
+      Message: [first line of commit message]
+      Files: [count] files changed
+
+      Implementation complete.
+      </event>
+
+      LOOP_COMPLETE
+      ```
+
+      ### Constraints
+      - You MUST NOT commit if validation didn't pass
+      - You MUST NOT push to remote (user's decision)
+      - You MUST use conventional commit format
+      - You SHOULD include spec path in footer when available

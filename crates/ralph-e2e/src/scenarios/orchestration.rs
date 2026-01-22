@@ -1,12 +1,13 @@
-//! Tier 2: Orchestration Loop test scenarios.
+//! Tier 2: Orchestration Loop test scenarios (backend-agnostic).
 //!
 //! These scenarios test the full Ralph orchestration loop, including:
 //! - Single iteration completion
 //! - Multi-iteration workflows
 //! - LOOP_COMPLETE detection
 //!
-//! These scenarios are more complex than Tier 1 connectivity tests and
-//! require prompts designed to trigger specific orchestration behaviors.
+//! These scenarios are backend-agnostic and support all configured backends.
+//! They are more complex than Tier 1 connectivity tests and require prompts
+//! designed to trigger specific orchestration behaviors.
 
 use super::{Assertions, ScenarioError, TestScenario};
 use crate::Backend;
@@ -14,11 +15,10 @@ use crate::executor::{PromptSource, RalphExecutor, ScenarioConfig};
 use crate::models::TestResult;
 use async_trait::async_trait;
 use std::path::Path;
-use std::time::Duration;
 
 /// Test scenario that verifies a single iteration completes successfully.
 ///
-/// This scenario:
+/// This scenario is backend-agnostic and:
 /// - Configures max_iterations to 1
 /// - Sends a simple task that completes in one turn
 /// - Verifies exactly 1 iteration completed
@@ -27,41 +27,41 @@ use std::time::Duration;
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeSingleIterScenario, TestScenario};
+/// use ralph_e2e::scenarios::{SingleIterScenario, TestScenario};
 /// use ralph_e2e::executor::RalphExecutor;
 /// use std::path::Path;
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     let scenario = ClaudeSingleIterScenario::new();
+///     let scenario = SingleIterScenario::new();
 ///     assert_eq!(scenario.tier(), "Tier 2: Orchestration Loop");
 /// }
 /// ```
-pub struct ClaudeSingleIterScenario {
+pub struct SingleIterScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeSingleIterScenario {
+impl SingleIterScenario {
     /// Creates a new single iteration scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-single-iter".to_string(),
+            id: "single-iter".to_string(),
             description: "Verifies single iteration completion with scratchpad update".to_string(),
             tier: "Tier 2: Orchestration Loop".to_string(),
         }
     }
 }
 
-impl Default for ClaudeSingleIterScenario {
+impl Default for SingleIterScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeSingleIterScenario {
+impl TestScenario for SingleIterScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -74,11 +74,11 @@ impl TestScenario for ClaudeSingleIterScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -86,14 +86,17 @@ impl TestScenario for ClaudeSingleIterScenario {
         })?;
 
         // Create ralph.yml with single iteration config
-        let config_content = r#"# Single iteration test config
+        let config_content = format!(
+            r#"# Single iteration test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -111,7 +114,7 @@ Write to the scratchpad first, then output LOOP_COMPLETE.";
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - Claude iterations can take 60-120s
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -147,7 +150,7 @@ Write to the scratchpad first, then output LOOP_COMPLETE.";
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(),
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -156,7 +159,7 @@ Write to the scratchpad first, then output LOOP_COMPLETE.";
     }
 }
 
-impl ClaudeSingleIterScenario {
+impl SingleIterScenario {
     /// Asserts that the scratchpad was updated during execution.
     fn scratchpad_updated(
         &self,
@@ -180,7 +183,7 @@ impl ClaudeSingleIterScenario {
 
 /// Test scenario that verifies multi-iteration workflow.
 ///
-/// This scenario:
+/// This scenario is backend-agnostic and:
 /// - Configures max_iterations to 3
 /// - Sends a task requiring multiple steps
 /// - Verifies iteration count progression
@@ -189,36 +192,36 @@ impl ClaudeSingleIterScenario {
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeMultiIterScenario, TestScenario};
+/// use ralph_e2e::scenarios::{MultiIterScenario, TestScenario};
 ///
-/// let scenario = ClaudeMultiIterScenario::new();
-/// assert_eq!(scenario.id(), "claude-multi-iter");
+/// let scenario = MultiIterScenario::new();
+/// assert_eq!(scenario.id(), "multi-iter");
 /// ```
-pub struct ClaudeMultiIterScenario {
+pub struct MultiIterScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeMultiIterScenario {
+impl MultiIterScenario {
     /// Creates a new multi-iteration scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-multi-iter".to_string(),
+            id: "multi-iter".to_string(),
             description: "Verifies multi-iteration workflow with event progression".to_string(),
             tier: "Tier 2: Orchestration Loop".to_string(),
         }
     }
 }
 
-impl Default for ClaudeMultiIterScenario {
+impl Default for MultiIterScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeMultiIterScenario {
+impl TestScenario for MultiIterScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -231,11 +234,11 @@ impl TestScenario for ClaudeMultiIterScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -243,14 +246,17 @@ impl TestScenario for ClaudeMultiIterScenario {
         })?;
 
         // Create ralph.yml allowing multiple iterations
-        let config_content = r#"# Multi-iteration test config
+        let config_content = format!(
+            r#"# Multi-iteration test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 3
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -278,7 +284,7 @@ After all events are emitted, output LOOP_COMPLETE on its own line."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 3,
-            timeout: Duration::from_secs(180),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -313,7 +319,7 @@ After all events are emitted, output LOOP_COMPLETE on its own line."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(),
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -322,7 +328,7 @@ After all events are emitted, output LOOP_COMPLETE on its own line."#;
     }
 }
 
-impl ClaudeMultiIterScenario {
+impl MultiIterScenario {
     /// Asserts that exactly the expected number of iterations occurred.
     fn iterations_match(
         &self,
@@ -359,43 +365,43 @@ impl ClaudeMultiIterScenario {
 
 /// Test scenario that verifies LOOP_COMPLETE detection.
 ///
-/// This scenario:
+/// This scenario is backend-agnostic and:
 /// - Sends a task that explicitly outputs LOOP_COMPLETE
 /// - Verifies the termination reason is detected correctly
 ///
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeCompletionScenario, TestScenario};
+/// use ralph_e2e::scenarios::{CompletionScenario, TestScenario};
 ///
-/// let scenario = ClaudeCompletionScenario::new();
-/// assert_eq!(scenario.id(), "claude-completion");
+/// let scenario = CompletionScenario::new();
+/// assert_eq!(scenario.id(), "completion");
 /// ```
-pub struct ClaudeCompletionScenario {
+pub struct CompletionScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeCompletionScenario {
+impl CompletionScenario {
     /// Creates a new completion detection scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-completion".to_string(),
+            id: "completion".to_string(),
             description: "Verifies LOOP_COMPLETE detection terminates orchestration".to_string(),
             tier: "Tier 2: Orchestration Loop".to_string(),
         }
     }
 }
 
-impl Default for ClaudeCompletionScenario {
+impl Default for CompletionScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeCompletionScenario {
+impl TestScenario for CompletionScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -408,11 +414,11 @@ impl TestScenario for ClaudeCompletionScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -420,14 +426,17 @@ impl TestScenario for ClaudeCompletionScenario {
         })?;
 
         // Create ralph.yml - allow multiple iterations but expect early termination
-        let config_content = r#"# Completion detection test config
+        let config_content = format!(
+            r#"# Completion detection test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 5
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -452,7 +461,7 @@ Keep outputting LOOP_COMPLETE until the orchestration ends.";
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 5,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -487,7 +496,7 @@ Keep outputting LOOP_COMPLETE until the orchestration ends.";
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(),
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -496,7 +505,7 @@ Keep outputting LOOP_COMPLETE until the orchestration ends.";
     }
 }
 
-impl ClaudeCompletionScenario {
+impl CompletionScenario {
     /// Asserts that LOOP_COMPLETE was detected as the termination reason.
     fn loop_complete_detected(
         &self,
@@ -546,6 +555,7 @@ mod tests {
     use crate::executor::EventRecord;
     use std::env;
     use std::fs;
+    use std::time::Duration;
 
     fn test_workspace(test_name: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!(
@@ -575,20 +585,20 @@ mod tests {
         }
     }
 
-    // ========== ClaudeSingleIterScenario Tests ==========
+    // ========== SingleIterScenario Tests ==========
 
     #[test]
     fn test_single_iter_scenario_new() {
-        let scenario = ClaudeSingleIterScenario::new();
-        assert_eq!(scenario.id(), "claude-single-iter");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = SingleIterScenario::new();
+        assert_eq!(scenario.id(), "single-iter");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 2: Orchestration Loop");
     }
 
     #[test]
     fn test_single_iter_scenario_default() {
-        let scenario = ClaudeSingleIterScenario::default();
-        assert_eq!(scenario.id(), "claude-single-iter");
+        let scenario = SingleIterScenario::default();
+        assert_eq!(scenario.id(), "single-iter");
     }
 
     #[test]
@@ -596,8 +606,8 @@ mod tests {
         let workspace = test_workspace("single-iter-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeSingleIterScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = SingleIterScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
@@ -614,14 +624,14 @@ mod tests {
 
         // Verify config struct
         assert_eq!(config.max_iterations, 1);
-        assert_eq!(config.timeout, Duration::from_secs(300));
+        assert_eq!(config.timeout, Backend::Claude.default_timeout());
 
         cleanup_workspace(&workspace);
     }
 
     #[test]
     fn test_single_iter_scratchpad_assertion_passed() {
-        let scenario = ClaudeSingleIterScenario::new();
+        let scenario = SingleIterScenario::new();
         let result = mock_execution_result();
         let assertion = scenario.scratchpad_updated(&result);
         assert!(assertion.passed, "Should pass when scratchpad has content");
@@ -629,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_single_iter_scratchpad_assertion_failed_empty() {
-        let scenario = ClaudeSingleIterScenario::new();
+        let scenario = SingleIterScenario::new();
         let mut result = mock_execution_result();
         result.scratchpad = Some(String::new());
         let assertion = scenario.scratchpad_updated(&result);
@@ -638,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_single_iter_scratchpad_assertion_failed_none() {
-        let scenario = ClaudeSingleIterScenario::new();
+        let scenario = SingleIterScenario::new();
         let mut result = mock_execution_result();
         result.scratchpad = None;
         let assertion = scenario.scratchpad_updated(&result);
@@ -647,24 +657,24 @@ mod tests {
 
     #[test]
     fn test_single_iter_description() {
-        let scenario = ClaudeSingleIterScenario::new();
+        let scenario = SingleIterScenario::new();
         assert!(scenario.description().contains("single iteration"));
     }
 
-    // ========== ClaudeMultiIterScenario Tests ==========
+    // ========== MultiIterScenario Tests ==========
 
     #[test]
     fn test_multi_iter_scenario_new() {
-        let scenario = ClaudeMultiIterScenario::new();
-        assert_eq!(scenario.id(), "claude-multi-iter");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = MultiIterScenario::new();
+        assert_eq!(scenario.id(), "multi-iter");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 2: Orchestration Loop");
     }
 
     #[test]
     fn test_multi_iter_scenario_default() {
-        let scenario = ClaudeMultiIterScenario::default();
-        assert_eq!(scenario.id(), "claude-multi-iter");
+        let scenario = MultiIterScenario::default();
+        assert_eq!(scenario.id(), "multi-iter");
     }
 
     #[test]
@@ -672,8 +682,8 @@ mod tests {
         let workspace = test_workspace("multi-iter-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeMultiIterScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = MultiIterScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
@@ -686,14 +696,14 @@ mod tests {
 
         // Verify config struct
         assert_eq!(config.max_iterations, 3);
-        assert_eq!(config.timeout, Duration::from_secs(180));
+        assert_eq!(config.timeout, Backend::Claude.default_timeout());
 
         cleanup_workspace(&workspace);
     }
 
     #[test]
     fn test_multi_iter_iterations_match_passed() {
-        let scenario = ClaudeMultiIterScenario::new();
+        let scenario = MultiIterScenario::new();
         let mut result = mock_execution_result();
         result.iterations = 3;
         let assertion = scenario.iterations_match(&result, 3);
@@ -705,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_multi_iter_iterations_match_failed() {
-        let scenario = ClaudeMultiIterScenario::new();
+        let scenario = MultiIterScenario::new();
         let mut result = mock_execution_result();
         result.iterations = 2;
         let assertion = scenario.iterations_match(&result, 3);
@@ -714,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_multi_iter_events_progressed_passed() {
-        let scenario = ClaudeMultiIterScenario::new();
+        let scenario = MultiIterScenario::new();
         let mut result = mock_execution_result();
         result.events = vec![
             EventRecord {
@@ -736,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_multi_iter_events_progressed_failed() {
-        let scenario = ClaudeMultiIterScenario::new();
+        let scenario = MultiIterScenario::new();
         let mut result = mock_execution_result();
         result.events = vec![EventRecord {
             topic: "single.event".to_string(),
@@ -748,24 +758,24 @@ mod tests {
 
     #[test]
     fn test_multi_iter_description() {
-        let scenario = ClaudeMultiIterScenario::new();
+        let scenario = MultiIterScenario::new();
         assert!(scenario.description().contains("multi-iteration"));
     }
 
-    // ========== ClaudeCompletionScenario Tests ==========
+    // ========== CompletionScenario Tests ==========
 
     #[test]
     fn test_completion_scenario_new() {
-        let scenario = ClaudeCompletionScenario::new();
-        assert_eq!(scenario.id(), "claude-completion");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = CompletionScenario::new();
+        assert_eq!(scenario.id(), "completion");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 2: Orchestration Loop");
     }
 
     #[test]
     fn test_completion_scenario_default() {
-        let scenario = ClaudeCompletionScenario::default();
-        assert_eq!(scenario.id(), "claude-completion");
+        let scenario = CompletionScenario::default();
+        assert_eq!(scenario.id(), "completion");
     }
 
     #[test]
@@ -773,8 +783,8 @@ mod tests {
         let workspace = test_workspace("completion-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeCompletionScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = CompletionScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
@@ -794,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_completion_loop_complete_detected_passed() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         let result = mock_execution_result(); // Has LOOP_COMPLETE
         let assertion = scenario.loop_complete_detected(&result);
         assert!(assertion.passed, "Should pass when LOOP_COMPLETE detected");
@@ -802,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_completion_loop_complete_detected_failed() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         let mut result = mock_execution_result();
         result.termination_reason = Some("MAX_ITERATIONS".to_string());
         let assertion = scenario.loop_complete_detected(&result);
@@ -814,7 +824,7 @@ mod tests {
 
     #[test]
     fn test_completion_loop_complete_detected_failed_none() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         let mut result = mock_execution_result();
         result.termination_reason = None;
         let assertion = scenario.loop_complete_detected(&result);
@@ -823,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_completion_terminated_early_passed() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         let mut result = mock_execution_result();
         result.iterations = 2; // Less than max 5
         let assertion = scenario.terminated_early(&result);
@@ -835,7 +845,7 @@ mod tests {
 
     #[test]
     fn test_completion_terminated_early_failed_at_max() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         let mut result = mock_execution_result();
         result.iterations = 5; // Equals max
         let assertion = scenario.terminated_early(&result);
@@ -844,7 +854,7 @@ mod tests {
 
     #[test]
     fn test_completion_terminated_early_failed_zero() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         let mut result = mock_execution_result();
         result.iterations = 0; // No iterations
         let assertion = scenario.terminated_early(&result);
@@ -853,7 +863,7 @@ mod tests {
 
     #[test]
     fn test_completion_description() {
-        let scenario = ClaudeCompletionScenario::new();
+        let scenario = CompletionScenario::new();
         assert!(scenario.description().contains("LOOP_COMPLETE"));
     }
 
@@ -865,8 +875,8 @@ mod tests {
         let workspace = test_workspace("single-iter-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeSingleIterScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = SingleIterScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -892,8 +902,8 @@ mod tests {
         let workspace = test_workspace("multi-iter-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeMultiIterScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = MultiIterScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -919,8 +929,8 @@ mod tests {
         let workspace = test_workspace("completion-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeCompletionScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = CompletionScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;

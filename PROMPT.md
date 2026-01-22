@@ -1,5 +1,6 @@
-Implement ALL of the remaining work for the tui-integration tests.  
+Study ralph orchestrator.
 
-- You MUST implement tier 2 and tier 3. 
-- You can RUN "claude -p", claude is authenticated through the subcscriptions
-- You MUST fix any issues you uncover to make the tests pass.
+Create a more complicated test scenario to ensure that memories+tasks work together, across multiple ralph loops that build on eachother. 
+Add it to the e2e test crate. 
+
+The scenario should be a generic software engineering task, each loop adding another piece of functionality.

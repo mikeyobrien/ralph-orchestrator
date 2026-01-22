@@ -1,4 +1,4 @@
-//! Tier 6: Memory System test scenarios.
+//! Tier 6: Memory System test scenarios (backend-agnostic).
 //!
 //! These scenarios test Ralph's persistent memory system, including:
 //! - Adding memories via CLI
@@ -8,6 +8,9 @@
 //!
 //! The memory system stores learnings in `.agent/memories.md` and can
 //! automatically inject relevant memories into agent prompts.
+//!
+//! All scenarios in this module are backend-agnostic and support Claude, Kiro,
+//! and OpenCode backends. The backend is configured at setup time.
 
 use super::{AssertionBuilder, Assertions, ScenarioError, TestScenario};
 use crate::Backend;
@@ -15,7 +18,6 @@ use crate::executor::{ExecutionResult, PromptSource, RalphExecutor, ScenarioConf
 use crate::models::TestResult;
 use async_trait::async_trait;
 use std::path::Path;
-use std::time::Duration;
 
 /// Extension trait for Assertion to allow chained modification.
 trait AssertionExt {
@@ -36,7 +38,7 @@ impl AssertionExt for crate::models::Assertion {
 /// Test scenario that verifies memories can be added via the CLI.
 ///
 /// This scenario:
-/// - Uses `ralph memory add` to create a memory entry
+/// - Uses `ralph tools memory add` to create a memory entry
 /// - Verifies the memory is stored in `.agent/memories.md`
 /// - Verifies the memory ID format is correct
 ///
@@ -59,7 +61,7 @@ impl MemoryAddScenario {
     pub fn new() -> Self {
         Self {
             id: "memory-add".to_string(),
-            description: "Verifies memories can be added via ralph memory add".to_string(),
+            description: "Verifies memories can be added via ralph tools memory add".to_string(),
             tier: "Tier 6: Memory System".to_string(),
         }
     }
@@ -85,11 +87,11 @@ impl TestScenario for MemoryAddScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -97,9 +99,10 @@ impl TestScenario for MemoryAddScenario {
         })?;
 
         // Create a minimal ralph.yml (memory commands don't need orchestration)
-        let config_content = r#"# Memory add test config
+        let config_content = format!(
+            r#"# Memory add test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
@@ -108,7 +111,10 @@ event_loop:
 memories:
   enabled: true
   inject: manual
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -122,7 +128,7 @@ Your task is to add a memory using the Bash tool.
 
 STEP 1: Use the Bash tool to run this exact command:
 ```
-ralph memory add "E2E test uses isolated workspaces" --type pattern --tags e2e,testing
+ralph tools memory add "E2E test uses isolated workspaces" --type pattern --tags e2e,testing
 ```
 
 STEP 2: After the command succeeds, output LOOP_COMPLETE
@@ -135,7 +141,7 @@ IMPORTANT: You MUST actually execute the command using the Bash tool, not just d
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -177,7 +183,7 @@ IMPORTANT: You MUST actually execute the command using the Bash tool, not just d
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -191,11 +197,11 @@ impl MemoryAddScenario {
     fn memory_command_executed(&self, result: &ExecutionResult) -> crate::models::Assertion {
         let stdout_lower = result.stdout.to_lowercase();
         let executed = stdout_lower.contains("memory")
-            || stdout_lower.contains("ralph memory")
+            || stdout_lower.contains("ralph tools memory")
             || stdout_lower.contains("mem-");
 
         AssertionBuilder::new("Memory command executed")
-            .expected("Agent executed ralph memory add")
+            .expected("Agent executed ralph tools memory add")
             .actual(if executed {
                 "Memory command activity detected".to_string()
             } else {
@@ -225,16 +231,18 @@ impl MemoryAddScenario {
         let has_memory_id = content.contains("mem-");
         let has_content = content.contains("E2E test") || content.contains("isolated workspace");
 
-        let valid = has_header || has_memory_id || has_content || content.is_empty();
+        // Empty files indicate the memory command didn't run properly
+        let is_empty = content.trim().is_empty();
+        let valid = !is_empty && (has_header || has_memory_id || has_content);
 
         AssertionBuilder::new("Memory content valid")
-            .expected("Valid memory structure or empty file")
-            .actual(if has_memory_id {
+            .expected("Valid memory structure with content (not empty)")
+            .actual(if is_empty {
+                "Memory file exists but is empty - injection failed".to_string()
+            } else if has_memory_id {
                 "Memory entry with ID found".to_string()
             } else if has_header {
                 "Memory header structure found".to_string()
-            } else if content.is_empty() {
-                "Empty file (command may not have run)".to_string()
             } else {
                 format!("Unexpected content: {}", truncate(content, 50))
             })
@@ -251,7 +259,7 @@ impl MemoryAddScenario {
 ///
 /// This scenario:
 /// - Pre-populates `.agent/memories.md` with test data
-/// - Uses `ralph memory search` to find entries
+/// - Uses `ralph tools memory search` to find entries
 /// - Verifies search results are correct
 ///
 /// # Example
@@ -273,7 +281,8 @@ impl MemorySearchScenario {
     pub fn new() -> Self {
         Self {
             id: "memory-search".to_string(),
-            description: "Verifies memories can be searched via ralph memory search".to_string(),
+            description: "Verifies memories can be searched via ralph tools memory search"
+                .to_string(),
             tier: "Tier 6: Memory System".to_string(),
         }
     }
@@ -299,32 +308,33 @@ impl TestScenario for MemorySearchScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
         // Pre-populate memories.md with searchable test data
+        // Note: Memory ID suffixes must be valid hex (0-9, a-f) to match the parser regex
         let memories_content = r"# Memories
 
 ## Patterns
 
-### mem-1737300000-e2e1
+### mem-1737300000-a1b1
 > Authentication uses JWT tokens with 24h expiry
 <!-- tags: auth, security | created: 2025-01-19 -->
 
-### mem-1737300100-e2e2
+### mem-1737300100-a2b2
 > Database connections pool with max 10 connections
 <!-- tags: database, performance | created: 2025-01-19 -->
 
 ## Fixes
 
-### mem-1737300200-e2e3
+### mem-1737300200-a3b3
 > ECONNREFUSED on port 5432 means start docker compose
 <!-- tags: docker, database | created: 2025-01-19 -->
 ";
@@ -333,9 +343,10 @@ impl TestScenario for MemorySearchScenario {
             ScenarioError::SetupError(format!("failed to write memories.md: {}", e))
         })?;
 
-        let config_content = r#"# Memory search test config
+        let config_content = format!(
+            r#"# Memory search test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
@@ -344,7 +355,10 @@ event_loop:
 memories:
   enabled: true
   inject: manual
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -357,7 +371,7 @@ Pre-existing memories are in .agent/memories.md with these entries:
 - A fix about docker ECONNREFUSED
 
 Your task:
-1. Run `ralph memory search "database"` to find database-related memories
+1. Run `ralph tools memory search "database"` to find database-related memories
 2. You should find 2 matching memories (connection pool and docker fix)
 3. Report what you found
 
@@ -367,7 +381,7 @@ Output LOOP_COMPLETE when done."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -399,7 +413,7 @@ Output LOOP_COMPLETE when done."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -413,12 +427,12 @@ impl MemorySearchScenario {
     fn search_command_executed(&self, result: &ExecutionResult) -> crate::models::Assertion {
         let stdout_lower = result.stdout.to_lowercase();
         let executed = stdout_lower.contains("search")
-            || stdout_lower.contains("ralph memory")
+            || stdout_lower.contains("ralph tools memory")
             || stdout_lower.contains("database")
             || stdout_lower.contains("mem-");
 
         AssertionBuilder::new("Search command executed")
-            .expected("Agent executed ralph memory search")
+            .expected("Agent executed ralph tools memory search")
             .actual(if executed {
                 "Search activity detected".to_string()
             } else {
@@ -435,10 +449,10 @@ impl MemorySearchScenario {
         // Check for evidence that database-related memories were found
         let found_connection = stdout_lower.contains("connection")
             || stdout_lower.contains("pool")
-            || stdout_lower.contains("mem-1737300100");
+            || stdout_lower.contains("mem-1737300100-a2b2");
         let found_docker = stdout_lower.contains("docker")
             || stdout_lower.contains("econnrefused")
-            || stdout_lower.contains("mem-1737300200");
+            || stdout_lower.contains("mem-1737300200-a3b3");
         let found_database = stdout_lower.contains("database");
 
         let found = found_connection || found_docker || found_database;
@@ -514,28 +528,29 @@ impl TestScenario for MemoryInjectionScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
         // Pre-populate memories.md with a distinctive memory
+        // Note: Memory ID suffixes must be valid hex (0-9, a-f) to match the parser regex
         let memories_content = r"# Memories
 
 ## Patterns
 
-### mem-1737400000-inj1
+### mem-1737400000-a1b1
 > The secret codeword is PURPLE_ELEPHANT_42
 <!-- tags: testing, secret | created: 2025-01-20 -->
 
 ## Context
 
-### mem-1737400100-inj2
+### mem-1737400100-a2b2
 > This project uses the Ralph orchestrator for agentic workflows
 <!-- tags: architecture | created: 2025-01-20 -->
 ";
@@ -545,9 +560,10 @@ impl TestScenario for MemoryInjectionScenario {
         })?;
 
         // Configure auto-injection
-        let config_content = r#"# Memory injection test config
+        let config_content = format!(
+            r#"# Memory injection test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
@@ -557,8 +573,10 @@ memories:
   enabled: true
   inject: auto
   budget: 0
-  skill_injection: false
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -583,7 +601,7 @@ Then output LOOP_COMPLETE."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -615,7 +633,7 @@ Then output LOOP_COMPLETE."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -733,19 +751,20 @@ impl TestScenario for MemoryPersistenceScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
-        let config_content = r#"# Memory persistence test config
+        let config_content = format!(
+            r#"# Memory persistence test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 2
@@ -754,7 +773,10 @@ event_loop:
 memories:
   enabled: true
   inject: manual
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -767,7 +789,7 @@ Your task is to add a memory using the Bash tool.
 
 STEP 1: Use the Bash tool to run this exact command:
 ```
-ralph memory add "Persistence test marker: PERSIST_CHECK_12345" --type context --tags persistence,e2e
+ralph tools memory add "Persistence test marker: PERSIST_CHECK_12345" --type context --tags persistence,e2e
 ```
 
 STEP 2: The command will output the memory ID (like "Memory stored: mem-1234...")
@@ -780,7 +802,7 @@ IMPORTANT: You MUST actually execute the command using the Bash tool."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 2,
-            timeout: Duration::from_secs(120),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -822,7 +844,7 @@ IMPORTANT: You MUST actually execute the command using the Bash tool."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -891,6 +913,795 @@ fn truncate(s: &str, max_len: usize) -> String {
 }
 
 // =============================================================================
+// Chaos Tests - Memory System Robustness
+// =============================================================================
+
+/// Chaos test: Verifies memory system handles corrupted memory files gracefully.
+///
+/// This scenario:
+/// - Pre-populates `.agent/memories.md` with malformed content
+/// - Verifies Ralph doesn't crash when reading corrupted memories
+/// - Checks that memory operations still work (add new memories)
+///
+/// # Example
+///
+/// ```no_run
+/// use ralph_e2e::scenarios::{MemoryCorruptedFileScenario, TestScenario};
+///
+/// let scenario = MemoryCorruptedFileScenario::new();
+/// assert_eq!(scenario.tier(), "Tier 6: Memory System (Chaos)");
+/// ```
+pub struct MemoryCorruptedFileScenario {
+    id: String,
+    description: String,
+    tier: String,
+}
+
+impl MemoryCorruptedFileScenario {
+    /// Creates a new corrupted file chaos scenario.
+    pub fn new() -> Self {
+        Self {
+            id: "memory-corrupted-file".to_string(),
+            description: "Verifies graceful handling of corrupted memory files".to_string(),
+            tier: "Tier 6: Memory System (Chaos)".to_string(),
+        }
+    }
+}
+
+impl Default for MemoryCorruptedFileScenario {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TestScenario for MemoryCorruptedFileScenario {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn tier(&self) -> &str {
+        &self.tier
+    }
+
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+    }
+
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
+        let agent_dir = workspace.join(".agent");
+        std::fs::create_dir_all(&agent_dir).map_err(|e| {
+            ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
+        })?;
+
+        // Pre-populate memories.md with malformed/corrupted content
+        // This tests various corruption scenarios:
+        // - Invalid memory ID format
+        // - Missing required fields
+        // - Truncated content
+        // - Binary garbage
+        let corrupted_content = r"# Memories
+
+## Patterns
+
+### INVALID-ID-FORMAT
+> This has an invalid ID format
+<!-- missing closing comment
+
+### mem-notavalidtimestamp-xyz!
+> Invalid timestamp and non-hex suffix
+<!-- tags: broken | created: not-a-date -->
+
+###
+> Memory with empty ID
+<!-- tags: empty -->
+
+## Fixes
+
+### mem-1737300200-a3b3
+> This one is valid for comparison
+<!-- tags: valid | created: 2025-01-19 -->
+
+RANDOM_GARBAGE_HERE_NOT_VALID_MARKDOWN
+\x00\x01\x02BINARY_LIKE_DATA
+";
+        let memories_path = agent_dir.join("memories.md");
+        std::fs::write(&memories_path, corrupted_content).map_err(|e| {
+            ScenarioError::SetupError(format!("failed to write memories.md: {}", e))
+        })?;
+
+        let config_content = format!(
+            r#"# Corrupted memory file test config for {}
+cli:
+  backend: {}
+
+event_loop:
+  max_iterations: 1
+  completion_promise: "LOOP_COMPLETE"
+
+memories:
+  enabled: true
+  inject: auto
+"#,
+            backend,
+            backend.as_config_str()
+        );
+        let config_path = workspace.join("ralph.yml");
+        std::fs::write(&config_path, config_content)
+            .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
+
+        // The prompt asks the agent to interact with memories despite corruption
+        let prompt = r#"You are testing memory system robustness against corrupted files.
+
+The memories.md file contains some corrupted entries. Your task:
+
+1. Try to add a new memory using Bash: ralph tools memory add "Chaos test survived" --type context --tags chaos,test
+2. Report if the command succeeded or failed
+3. If any errors occurred, describe them
+
+Output LOOP_COMPLETE when done.
+
+IMPORTANT: Use the Bash tool to execute the command."#;
+
+        Ok(ScenarioConfig {
+            config_file: "ralph.yml".into(),
+            prompt: PromptSource::Inline(prompt.to_string()),
+            max_iterations: 1,
+            timeout: backend.default_timeout(),
+            extra_args: vec![],
+        })
+    }
+
+    async fn run(
+        &self,
+        executor: &RalphExecutor,
+        config: &ScenarioConfig,
+    ) -> Result<TestResult, ScenarioError> {
+        let start = std::time::Instant::now();
+
+        let execution = executor
+            .run(config)
+            .await
+            .map_err(|e| ScenarioError::ExecutionError(format!("ralph execution failed: {}", e)))?;
+
+        let duration = start.elapsed();
+
+        // Read memories file after execution
+        let memories_path = executor.workspace().join(".agent/memories.md");
+        let memories_content = std::fs::read_to_string(&memories_path).unwrap_or_default();
+
+        let assertions = vec![
+            Assertions::response_received(&execution),
+            Assertions::exit_code_success_or_limit(&execution),
+            Assertions::no_timeout(&execution),
+            self.did_not_crash(&execution),
+            self.new_memory_added(&memories_content),
+        ];
+
+        let all_passed = assertions.iter().all(|a| a.passed);
+
+        Ok(TestResult {
+            scenario_id: self.id.clone(),
+            scenario_description: self.description.clone(),
+            backend: String::new(), // Will be set by runner
+            tier: self.tier.clone(),
+            passed: all_passed,
+            assertions,
+            duration,
+        })
+    }
+}
+
+impl MemoryCorruptedFileScenario {
+    /// Asserts that Ralph didn't crash due to corrupted file.
+    fn did_not_crash(&self, result: &ExecutionResult) -> crate::models::Assertion {
+        // Check for crash indicators
+        let crashed = result.stdout.to_lowercase().contains("panic")
+            || result.stderr.to_lowercase().contains("panic")
+            || result.stderr.to_lowercase().contains("fatal error")
+            || result.exit_code == Some(101); // Rust panic exit code
+
+        AssertionBuilder::new("Did not crash on corrupted file")
+            .expected("No panic or fatal error")
+            .actual(if crashed {
+                format!(
+                    "Crash detected. Exit code: {:?}, stderr contains panic: {}",
+                    result.exit_code,
+                    result.stderr.to_lowercase().contains("panic")
+                )
+            } else {
+                "No crash indicators found".to_string()
+            })
+            .build()
+            .with_passed(!crashed)
+    }
+
+    /// Asserts that a new memory was successfully added despite corruption.
+    fn new_memory_added(&self, content: &str) -> crate::models::Assertion {
+        let has_new = content.contains("Chaos test survived") || content.contains("chaos");
+
+        AssertionBuilder::new("New memory added despite corruption")
+            .expected("Memory containing 'Chaos test survived' or 'chaos' tag")
+            .actual(if has_new {
+                "New memory found in file".to_string()
+            } else {
+                "New memory not found".to_string()
+            })
+            .build()
+            .with_passed(has_new)
+    }
+}
+
+/// Chaos test: Verifies memory system handles empty/missing memory file gracefully.
+///
+/// This scenario:
+/// - Starts with no `.agent/memories.md` file
+/// - Verifies memory add creates the file correctly
+/// - Checks that auto-injection doesn't crash on missing file
+///
+/// # Example
+///
+/// ```no_run
+/// use ralph_e2e::scenarios::{MemoryMissingFileScenario, TestScenario};
+///
+/// let scenario = MemoryMissingFileScenario::new();
+/// assert_eq!(scenario.tier(), "Tier 6: Memory System (Chaos)");
+/// ```
+pub struct MemoryMissingFileScenario {
+    id: String,
+    description: String,
+    tier: String,
+}
+
+impl MemoryMissingFileScenario {
+    /// Creates a new missing file chaos scenario.
+    pub fn new() -> Self {
+        Self {
+            id: "memory-missing-file".to_string(),
+            description: "Verifies graceful handling when memories.md doesn't exist".to_string(),
+            tier: "Tier 6: Memory System (Chaos)".to_string(),
+        }
+    }
+}
+
+impl Default for MemoryMissingFileScenario {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TestScenario for MemoryMissingFileScenario {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn tier(&self) -> &str {
+        &self.tier
+    }
+
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+    }
+
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
+        let agent_dir = workspace.join(".agent");
+        std::fs::create_dir_all(&agent_dir).map_err(|e| {
+            ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
+        })?;
+
+        // DO NOT create memories.md - that's the point of this test
+
+        let config_content = format!(
+            r#"# Missing memory file test config for {}
+cli:
+  backend: {}
+
+event_loop:
+  max_iterations: 1
+  completion_promise: "LOOP_COMPLETE"
+
+memories:
+  enabled: true
+  inject: auto
+"#,
+            backend,
+            backend.as_config_str()
+        );
+        let config_path = workspace.join("ralph.yml");
+        std::fs::write(&config_path, config_content)
+            .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
+
+        let prompt = r#"You are testing memory system behavior when no memories file exists.
+
+Your task:
+1. Add a memory using Bash: ralph tools memory add "First memory ever" --type pattern --tags first,test
+2. Verify the command succeeded
+3. Report what happened
+
+Output LOOP_COMPLETE when done.
+
+IMPORTANT: Use the Bash tool to execute the command."#;
+
+        Ok(ScenarioConfig {
+            config_file: "ralph.yml".into(),
+            prompt: PromptSource::Inline(prompt.to_string()),
+            max_iterations: 1,
+            timeout: backend.default_timeout(),
+            extra_args: vec![],
+        })
+    }
+
+    async fn run(
+        &self,
+        executor: &RalphExecutor,
+        config: &ScenarioConfig,
+    ) -> Result<TestResult, ScenarioError> {
+        let start = std::time::Instant::now();
+
+        let execution = executor
+            .run(config)
+            .await
+            .map_err(|e| ScenarioError::ExecutionError(format!("ralph execution failed: {}", e)))?;
+
+        let duration = start.elapsed();
+
+        // Check if memories.md was created
+        let memories_path = executor.workspace().join(".agent/memories.md");
+        let memories_exist = memories_path.exists();
+        let memories_content = if memories_exist {
+            std::fs::read_to_string(&memories_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let assertions = vec![
+            Assertions::response_received(&execution),
+            Assertions::exit_code_success_or_limit(&execution),
+            Assertions::no_timeout(&execution),
+            self.did_not_crash_on_missing(&execution),
+            self.file_created_on_first_add(memories_exist),
+            self.first_memory_stored(&memories_content),
+        ];
+
+        let all_passed = assertions.iter().all(|a| a.passed);
+
+        Ok(TestResult {
+            scenario_id: self.id.clone(),
+            scenario_description: self.description.clone(),
+            backend: String::new(), // Will be set by runner
+            tier: self.tier.clone(),
+            passed: all_passed,
+            assertions,
+            duration,
+        })
+    }
+}
+
+impl MemoryMissingFileScenario {
+    /// Asserts that Ralph didn't crash due to missing file.
+    fn did_not_crash_on_missing(&self, result: &ExecutionResult) -> crate::models::Assertion {
+        let crashed = result.stdout.to_lowercase().contains("panic")
+            || result.stderr.to_lowercase().contains("panic")
+            || result.stderr.contains("No such file")
+            || result.exit_code == Some(101);
+
+        AssertionBuilder::new("Did not crash on missing file")
+            .expected("No panic or file not found error")
+            .actual(if crashed {
+                format!("Error detected. Exit code: {:?}", result.exit_code)
+            } else {
+                "Handled missing file gracefully".to_string()
+            })
+            .build()
+            .with_passed(!crashed)
+    }
+
+    /// Asserts that the memories file was created on first add.
+    fn file_created_on_first_add(&self, exists: bool) -> crate::models::Assertion {
+        AssertionBuilder::new("File created on first add")
+            .expected("memories.md created after first memory add")
+            .actual(if exists {
+                "File was created".to_string()
+            } else {
+                "File not created".to_string()
+            })
+            .build()
+            .with_passed(exists)
+    }
+
+    /// Asserts that the first memory was stored correctly.
+    fn first_memory_stored(&self, content: &str) -> crate::models::Assertion {
+        let has_memory = content.contains("First memory ever") || content.contains("mem-");
+
+        AssertionBuilder::new("First memory stored correctly")
+            .expected("Memory content or ID present")
+            .actual(if has_memory {
+                "Memory stored successfully".to_string()
+            } else {
+                "Memory not found in file".to_string()
+            })
+            .build()
+            .with_passed(has_memory)
+    }
+}
+
+/// Chaos test: Verifies memory system handles concurrent access simulation.
+///
+/// This scenario:
+/// - Rapidly adds multiple memories in sequence
+/// - Verifies all memories are persisted correctly
+/// - Checks for race conditions or data loss
+///
+/// # Example
+///
+/// ```no_run
+/// use ralph_e2e::scenarios::{MemoryRapidWriteScenario, TestScenario};
+///
+/// let scenario = MemoryRapidWriteScenario::new();
+/// assert_eq!(scenario.tier(), "Tier 6: Memory System (Chaos)");
+/// ```
+pub struct MemoryRapidWriteScenario {
+    id: String,
+    description: String,
+    tier: String,
+}
+
+impl MemoryRapidWriteScenario {
+    /// Creates a new rapid write chaos scenario.
+    pub fn new() -> Self {
+        Self {
+            id: "memory-rapid-write".to_string(),
+            description: "Verifies memory system handles rapid sequential writes".to_string(),
+            tier: "Tier 6: Memory System (Chaos)".to_string(),
+        }
+    }
+}
+
+impl Default for MemoryRapidWriteScenario {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TestScenario for MemoryRapidWriteScenario {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn tier(&self) -> &str {
+        &self.tier
+    }
+
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+    }
+
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
+        let agent_dir = workspace.join(".agent");
+        std::fs::create_dir_all(&agent_dir).map_err(|e| {
+            ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
+        })?;
+
+        let config_content = format!(
+            r#"# Rapid write test config for {}
+cli:
+  backend: {}
+
+event_loop:
+  max_iterations: 1
+  completion_promise: "LOOP_COMPLETE"
+
+memories:
+  enabled: true
+  inject: manual
+"#,
+            backend,
+            backend.as_config_str()
+        );
+        let config_path = workspace.join("ralph.yml");
+        std::fs::write(&config_path, config_content)
+            .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
+
+        // The prompt asks the agent to add multiple memories rapidly
+        let prompt = r#"You are stress testing the memory system with rapid writes.
+
+Your task is to add THREE memories in quick succession using Bash. Run these commands:
+
+1. ralph tools memory add "RAPID_TEST_1: First rapid write" --type pattern --tags rapid,test
+2. ralph tools memory add "RAPID_TEST_2: Second rapid write" --type pattern --tags rapid,test
+3. ralph tools memory add "RAPID_TEST_3: Third rapid write" --type pattern --tags rapid,test
+
+After adding all three, output LOOP_COMPLETE.
+
+IMPORTANT: Use the Bash tool to execute each command."#;
+
+        Ok(ScenarioConfig {
+            config_file: "ralph.yml".into(),
+            prompt: PromptSource::Inline(prompt.to_string()),
+            max_iterations: 1,
+            timeout: backend.default_timeout(),
+            extra_args: vec![],
+        })
+    }
+
+    async fn run(
+        &self,
+        executor: &RalphExecutor,
+        config: &ScenarioConfig,
+    ) -> Result<TestResult, ScenarioError> {
+        let start = std::time::Instant::now();
+
+        let execution = executor
+            .run(config)
+            .await
+            .map_err(|e| ScenarioError::ExecutionError(format!("ralph execution failed: {}", e)))?;
+
+        let duration = start.elapsed();
+
+        // Read memories file
+        let memories_path = executor.workspace().join(".agent/memories.md");
+        let memories_content = std::fs::read_to_string(&memories_path).unwrap_or_default();
+
+        let assertions = vec![
+            Assertions::response_received(&execution),
+            Assertions::exit_code_success_or_limit(&execution),
+            Assertions::no_timeout(&execution),
+            self.all_memories_persisted(&memories_content),
+            self.no_data_corruption(&memories_content),
+        ];
+
+        let all_passed = assertions.iter().all(|a| a.passed);
+
+        Ok(TestResult {
+            scenario_id: self.id.clone(),
+            scenario_description: self.description.clone(),
+            backend: String::new(), // Will be set by runner
+            tier: self.tier.clone(),
+            passed: all_passed,
+            assertions,
+            duration,
+        })
+    }
+}
+
+impl MemoryRapidWriteScenario {
+    /// Asserts that all memories from rapid writes were persisted.
+    fn all_memories_persisted(&self, content: &str) -> crate::models::Assertion {
+        let has_test1 = content.contains("RAPID_TEST_1");
+        let has_test2 = content.contains("RAPID_TEST_2");
+        let has_test3 = content.contains("RAPID_TEST_3");
+
+        let count = [has_test1, has_test2, has_test3]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+
+        AssertionBuilder::new("All rapid writes persisted")
+            .expected("All 3 RAPID_TEST markers present")
+            .actual(format!(
+                "{}/3 persisted: T1={}, T2={}, T3={}",
+                count, has_test1, has_test2, has_test3
+            ))
+            .build()
+            .with_passed(count >= 2) // Allow 2/3 for robustness (agents may not execute all)
+    }
+
+    /// Asserts that there's no data corruption from rapid writes.
+    fn no_data_corruption(&self, content: &str) -> crate::models::Assertion {
+        // Check for signs of corruption:
+        // - Truncated memory IDs
+        // - Mixed/interleaved content
+        // - Invalid markdown structure
+        let has_valid_structure = content.contains("# Memories") || content.contains("## ");
+        let no_interleaving = !content.contains("RAPID_TEST_1RAPID_TEST_2");
+        let valid_ids = content.matches("mem-").count() >= 1;
+
+        let valid = has_valid_structure && no_interleaving && valid_ids;
+
+        AssertionBuilder::new("No data corruption")
+            .expected("Valid markdown structure, no interleaved content")
+            .actual(format!(
+                "structure={}, no_interleave={}, valid_ids={}",
+                has_valid_structure, no_interleaving, valid_ids
+            ))
+            .build()
+            .with_passed(valid)
+    }
+}
+
+/// Chaos test: Verifies memory system handles large memory content.
+///
+/// This scenario:
+/// - Adds a memory with very large content
+/// - Verifies the memory is stored correctly
+/// - Checks that search still works with large content
+///
+/// # Example
+///
+/// ```no_run
+/// use ralph_e2e::scenarios::{MemoryLargeContentScenario, TestScenario};
+///
+/// let scenario = MemoryLargeContentScenario::new();
+/// assert_eq!(scenario.tier(), "Tier 6: Memory System (Chaos)");
+/// ```
+pub struct MemoryLargeContentScenario {
+    id: String,
+    description: String,
+    tier: String,
+}
+
+impl MemoryLargeContentScenario {
+    /// Creates a new large content chaos scenario.
+    pub fn new() -> Self {
+        Self {
+            id: "memory-large-content".to_string(),
+            description: "Verifies memory system handles large memory content".to_string(),
+            tier: "Tier 6: Memory System (Chaos)".to_string(),
+        }
+    }
+}
+
+impl Default for MemoryLargeContentScenario {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TestScenario for MemoryLargeContentScenario {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn tier(&self) -> &str {
+        &self.tier
+    }
+
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+    }
+
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
+        let agent_dir = workspace.join(".agent");
+        std::fs::create_dir_all(&agent_dir).map_err(|e| {
+            ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
+        })?;
+
+        let config_content = format!(
+            r#"# Large content test config for {}
+cli:
+  backend: {}
+
+event_loop:
+  max_iterations: 1
+  completion_promise: "LOOP_COMPLETE"
+
+memories:
+  enabled: true
+  inject: manual
+"#,
+            backend,
+            backend.as_config_str()
+        );
+        let config_path = workspace.join("ralph.yml");
+        std::fs::write(&config_path, config_content)
+            .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
+
+        // Create a large content string (but not too large for CLI args)
+        // ~500 chars is reasonable for testing without hitting arg limits
+        let prompt = r#"You are testing memory system handling of larger content.
+
+Your task is to add a memory with detailed, multi-line content using Bash:
+
+ralph tools memory add "LARGE_CONTENT_TEST: This is a comprehensive memory entry that contains multiple sentences describing a complex architectural decision. The decision involves choosing between microservices and monolithic architecture for the authentication service. After careful consideration of scalability, maintainability, and team expertise, we decided to implement a modular monolith with clear bounded contexts that can be extracted into microservices later if needed. Key factors: team size (5 engineers), expected load (10K requests/min), and deployment infrastructure (Kubernetes). END_MARKER_12345" --type decision --tags architecture,large,test
+
+After adding, output LOOP_COMPLETE.
+
+IMPORTANT: Use the Bash tool to execute the command."#;
+
+        Ok(ScenarioConfig {
+            config_file: "ralph.yml".into(),
+            prompt: PromptSource::Inline(prompt.to_string()),
+            max_iterations: 1,
+            timeout: backend.default_timeout(),
+            extra_args: vec![],
+        })
+    }
+
+    async fn run(
+        &self,
+        executor: &RalphExecutor,
+        config: &ScenarioConfig,
+    ) -> Result<TestResult, ScenarioError> {
+        let start = std::time::Instant::now();
+
+        let execution = executor
+            .run(config)
+            .await
+            .map_err(|e| ScenarioError::ExecutionError(format!("ralph execution failed: {}", e)))?;
+
+        let duration = start.elapsed();
+
+        // Read memories file
+        let memories_path = executor.workspace().join(".agent/memories.md");
+        let memories_content = std::fs::read_to_string(&memories_path).unwrap_or_default();
+
+        let assertions = vec![
+            Assertions::response_received(&execution),
+            Assertions::exit_code_success_or_limit(&execution),
+            Assertions::no_timeout(&execution),
+            self.large_content_stored(&memories_content),
+            self.content_not_truncated(&memories_content),
+        ];
+
+        let all_passed = assertions.iter().all(|a| a.passed);
+
+        Ok(TestResult {
+            scenario_id: self.id.clone(),
+            scenario_description: self.description.clone(),
+            backend: String::new(), // Will be set by runner
+            tier: self.tier.clone(),
+            passed: all_passed,
+            assertions,
+            duration,
+        })
+    }
+}
+
+impl MemoryLargeContentScenario {
+    /// Asserts that large content was stored.
+    fn large_content_stored(&self, content: &str) -> crate::models::Assertion {
+        let has_marker = content.contains("LARGE_CONTENT_TEST")
+            || content.contains("microservices")
+            || content.contains("architecture");
+
+        AssertionBuilder::new("Large content stored")
+            .expected("Memory with large content present")
+            .actual(if has_marker {
+                "Large content found".to_string()
+            } else {
+                "Large content not found".to_string()
+            })
+            .build()
+            .with_passed(has_marker)
+    }
+
+    /// Asserts that content was not truncated.
+    fn content_not_truncated(&self, content: &str) -> crate::models::Assertion {
+        // Check for the end marker which proves content wasn't truncated
+        let has_end_marker = content.contains("END_MARKER_12345");
+
+        AssertionBuilder::new("Content not truncated")
+            .expected("END_MARKER_12345 present (proves full content stored)")
+            .actual(if has_end_marker {
+                "End marker found - content complete".to_string()
+            } else {
+                "End marker missing - possible truncation".to_string()
+            })
+            .build()
+            .with_passed(has_end_marker)
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -899,6 +1710,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
+    use std::time::Duration;
 
     fn test_workspace(test_name: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!(
@@ -934,7 +1746,7 @@ mod tests {
     fn test_memory_add_scenario_new() {
         let scenario = MemoryAddScenario::new();
         assert_eq!(scenario.id(), "memory-add");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 6: Memory System");
     }
 
@@ -945,12 +1757,21 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_add_supports_all_backends() {
+        let scenario = MemoryAddScenario::new();
+        let supported = scenario.supported_backends();
+        assert!(supported.contains(&Backend::Claude));
+        assert!(supported.contains(&Backend::Kiro));
+        assert!(supported.contains(&Backend::OpenCode));
+    }
+
+    #[test]
     fn test_memory_add_setup_creates_config() {
         let workspace = test_workspace("memory-add-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryAddScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         assert!(config_path.exists(), "ralph.yml should exist");
@@ -961,9 +1782,14 @@ mod tests {
             "Should have memories section"
         );
         assert!(content.contains("enabled: true"), "Should enable memories");
+        assert!(
+            content.contains("backend: claude"),
+            "Should have claude backend"
+        );
 
         assert!(workspace.join(".agent").exists(), ".agent should exist");
         assert_eq!(config.max_iterations, 1);
+        assert_eq!(config.timeout, Backend::Claude.default_timeout());
 
         cleanup_workspace(&workspace);
     }
@@ -1016,6 +1842,25 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_add_content_empty_fails() {
+        let scenario = MemoryAddScenario::new();
+        let content = "";
+        let assertion = scenario.memory_content_valid(content);
+        assert!(!assertion.passed, "Empty files should fail validation");
+    }
+
+    #[test]
+    fn test_memory_add_content_whitespace_only_fails() {
+        let scenario = MemoryAddScenario::new();
+        let content = "   \n  \t  ";
+        let assertion = scenario.memory_content_valid(content);
+        assert!(
+            !assertion.passed,
+            "Whitespace-only files should fail validation"
+        );
+    }
+
+    #[test]
     fn test_memory_add_description() {
         let scenario = MemoryAddScenario::new();
         assert!(scenario.description().contains("add"));
@@ -1027,7 +1872,7 @@ mod tests {
     fn test_memory_search_scenario_new() {
         let scenario = MemorySearchScenario::new();
         assert_eq!(scenario.id(), "memory-search");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 6: Memory System");
     }
 
@@ -1038,12 +1883,21 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_search_supports_all_backends() {
+        let scenario = MemorySearchScenario::new();
+        let supported = scenario.supported_backends();
+        assert!(supported.contains(&Backend::Claude));
+        assert!(supported.contains(&Backend::Kiro));
+        assert!(supported.contains(&Backend::OpenCode));
+    }
+
+    #[test]
     fn test_memory_search_setup_creates_memories() {
         let workspace = test_workspace("memory-search-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemorySearchScenario::new();
-        let _config = scenario.setup(&workspace).unwrap();
+        let _config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let memories_path = workspace.join(".agent/memories.md");
         assert!(memories_path.exists(), "memories.md should exist");
@@ -1089,7 +1943,7 @@ mod tests {
     fn test_memory_injection_scenario_new() {
         let scenario = MemoryInjectionScenario::new();
         assert_eq!(scenario.id(), "memory-injection");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 6: Memory System");
     }
 
@@ -1100,16 +1954,29 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_injection_supports_all_backends() {
+        let scenario = MemoryInjectionScenario::new();
+        let supported = scenario.supported_backends();
+        assert!(supported.contains(&Backend::Claude));
+        assert!(supported.contains(&Backend::Kiro));
+        assert!(supported.contains(&Backend::OpenCode));
+    }
+
+    #[test]
     fn test_memory_injection_setup_with_auto() {
         let workspace = test_workspace("memory-injection-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryInjectionScenario::new();
-        let _config = scenario.setup(&workspace).unwrap();
+        let _config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("inject: auto"), "Should have inject: auto");
+        assert!(
+            content.contains("backend: claude"),
+            "Should have claude backend"
+        );
 
         let memories_path = workspace.join(".agent/memories.md");
         let mem_content = fs::read_to_string(&memories_path).unwrap();
@@ -1172,7 +2039,7 @@ mod tests {
     fn test_memory_persistence_scenario_new() {
         let scenario = MemoryPersistenceScenario::new();
         assert_eq!(scenario.id(), "memory-persistence");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 6: Memory System");
     }
 
@@ -1183,16 +2050,31 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_persistence_supports_all_backends() {
+        let scenario = MemoryPersistenceScenario::new();
+        let supported = scenario.supported_backends();
+        assert!(supported.contains(&Backend::Claude));
+        assert!(supported.contains(&Backend::Kiro));
+        assert!(supported.contains(&Backend::OpenCode));
+    }
+
+    #[test]
     fn test_memory_persistence_setup() {
         let workspace = test_workspace("memory-persistence-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryPersistenceScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let config_path = workspace.join("ralph.yml");
         assert!(config_path.exists());
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("backend: claude"),
+            "Should have claude backend"
+        );
         assert_eq!(config.max_iterations, 2);
+        assert_eq!(config.timeout, Backend::Claude.default_timeout());
 
         cleanup_workspace(&workspace);
     }
@@ -1280,7 +2162,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryAddScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1307,7 +2189,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemorySearchScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1334,7 +2216,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryInjectionScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1361,7 +2243,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryPersistenceScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;

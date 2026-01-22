@@ -129,9 +129,9 @@ cat > .agent/scratchpad.md << 'SCRATCHPAD_EOF'
 Follow the instructions in the prompt. This is a fresh evaluation context.
 SCRATCHPAD_EOF
 
-# Create empty JSONL file (EventReader expects line-by-line JSON, not array)
-touch .agent/events.jsonl
-echo -e "${GREEN}Created fresh .agent/ state for evaluation${NC}"
+# Create .ralph directory for events isolation
+mkdir -p .ralph
+echo -e "${GREEN}Created fresh .agent/ and .ralph/ state for evaluation${NC}"
 echo ""
 
 # Run evaluation

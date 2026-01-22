@@ -48,3 +48,11 @@ nix = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[[example]]
+name = "calculator"
+path = "examples/calculator.rs"
+
+[[example]]
+name = "greeter"
+path = "examples/greeter.rs"

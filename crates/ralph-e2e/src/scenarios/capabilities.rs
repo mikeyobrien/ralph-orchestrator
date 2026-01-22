@@ -1,10 +1,10 @@
 //! Tier 4: Capabilities test scenarios.
 //!
-//! These scenarios test Claude's advanced capabilities through Ralph:
+//! These scenarios test advanced agent capabilities through Ralph:
 //! - Tool invocation and response handling
 //! - NDJSON streaming output parsing
 //!
-//! These tests verify that Ralph correctly interfaces with Claude's
+//! These tests verify that Ralph correctly interfaces with backend
 //! extended features beyond basic text generation.
 
 use super::{Assertions, ScenarioError, TestScenario};
@@ -13,48 +13,48 @@ use crate::executor::{PromptSource, RalphExecutor, ScenarioConfig};
 use crate::models::TestResult;
 use async_trait::async_trait;
 use std::path::Path;
-use std::time::Duration;
 
 /// Test scenario that verifies tool invocation.
 ///
 /// This scenario:
 /// - Sends a prompt that requires using a tool (e.g., file system access)
-/// - Verifies that Claude invokes the tool correctly
+/// - Verifies that the agent invokes the tool correctly
 /// - Validates that tool results are incorporated into the response
 ///
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeToolUseScenario, TestScenario};
+/// use ralph_e2e::scenarios::{ToolUseScenario, TestScenario};
+/// use ralph_e2e::Backend;
 ///
-/// let scenario = ClaudeToolUseScenario::new();
+/// let scenario = ToolUseScenario::new();
 /// assert_eq!(scenario.tier(), "Tier 4: Capabilities");
 /// ```
-pub struct ClaudeToolUseScenario {
+pub struct ToolUseScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeToolUseScenario {
+impl ToolUseScenario {
     /// Creates a new tool use scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-tool-use".to_string(),
+            id: "tool-use".to_string(),
             description: "Verifies tool invocation and response handling".to_string(),
             tier: "Tier 4: Capabilities".to_string(),
         }
     }
 }
 
-impl Default for ClaudeToolUseScenario {
+impl Default for ToolUseScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeToolUseScenario {
+impl TestScenario for ToolUseScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -67,11 +67,7 @@ impl TestScenario for ClaudeToolUseScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
-
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -83,15 +79,19 @@ impl TestScenario for ClaudeToolUseScenario {
         std::fs::write(&test_file, "Secret content: E2E_TEST_MARKER_42\n")
             .map_err(|e| ScenarioError::SetupError(format!("failed to write test file: {}", e)))?;
 
-        // Create ralph.yml for tool use testing
-        let config_content = r#"# Tool use test config
+        // Create backend-specific ralph.yml
+        let config_content = format!(
+            r#"# Tool use test config for {}
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -113,7 +113,7 @@ You MUST use a tool to read the file. Do not guess the contents.",
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - Claude iterations can take 60-120s
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -132,9 +132,6 @@ You MUST use a tool to read the file. Do not guess the contents.",
 
         let duration = start.elapsed();
 
-        // Build assertions for tool use
-        // Note: We use exit_code_success_or_limit() because Ralph's exit code 2 means
-        // "max iterations reached" which is valid when functional behavior succeeds.
         let assertions = vec![
             Assertions::response_received(&execution),
             Assertions::exit_code_success_or_limit(&execution),
@@ -148,7 +145,7 @@ You MUST use a tool to read the file. Do not guess the contents.",
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -157,14 +154,12 @@ You MUST use a tool to read the file. Do not guess the contents.",
     }
 }
 
-impl ClaudeToolUseScenario {
+impl ToolUseScenario {
     /// Asserts that a tool was invoked during execution.
     fn tool_was_invoked(
         &self,
         result: &crate::executor::ExecutionResult,
     ) -> crate::models::Assertion {
-        // Claude Code typically shows tool use in output with markers like "Read" or "Bash"
-        // or shows tool results. Look for common patterns.
         let stdout = &result.stdout.to_lowercase();
         let has_tool_markers = stdout.contains("read")
             || stdout.contains("bash")
@@ -191,7 +186,6 @@ impl ClaudeToolUseScenario {
         &self,
         result: &crate::executor::ExecutionResult,
     ) -> crate::models::Assertion {
-        // The test file contains "E2E_TEST_MARKER_42"
         let contains_marker = result.stdout.contains("E2E_TEST_MARKER_42");
 
         super::AssertionBuilder::new("File content reported")
@@ -216,41 +210,42 @@ impl ClaudeToolUseScenario {
 /// - Verifies that Ralph correctly parses the streaming output
 /// - Validates that iteration boundaries are detected
 ///
-/// NDJSON (Newline-Delimited JSON) is used by Claude CLI for structured streaming output.
+/// NDJSON (Newline-Delimited JSON) is used by some CLIs for structured streaming output.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeStreamingScenario, TestScenario};
+/// use ralph_e2e::scenarios::{StreamingScenario, TestScenario};
+/// use ralph_e2e::Backend;
 ///
-/// let scenario = ClaudeStreamingScenario::new();
+/// let scenario = StreamingScenario::new();
 /// assert_eq!(scenario.tier(), "Tier 4: Capabilities");
 /// ```
-pub struct ClaudeStreamingScenario {
+pub struct StreamingScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeStreamingScenario {
+impl StreamingScenario {
     /// Creates a new streaming scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-streaming".to_string(),
+            id: "streaming".to_string(),
             description: "Verifies NDJSON streaming output parsing".to_string(),
             tier: "Tier 4: Capabilities".to_string(),
         }
     }
 }
 
-impl Default for ClaudeStreamingScenario {
+impl Default for StreamingScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeStreamingScenario {
+impl TestScenario for StreamingScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -263,21 +258,18 @@ impl TestScenario for ClaudeStreamingScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
-    }
-
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
             ScenarioError::SetupError(format!("failed to create .agent directory: {}", e))
         })?;
 
-        // Create ralph.yml with streaming enabled
-        let config_content = r#"# Streaming test config
+        // Create backend-specific ralph.yml with streaming enabled
+        let config_content = format!(
+            r#"# Streaming test config for {}
 cli:
-  backend: claude
+  backend: {}
   args:
     - "--output-format"
     - "stream-json"
@@ -285,12 +277,14 @@ cli:
 event_loop:
   max_iterations: 1
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
 
-        // Create a simple prompt for streaming test
         let prompt = r#"You are testing streaming output.
 
 Say "Hello from streaming test!" and then output LOOP_COMPLETE.
@@ -301,7 +295,7 @@ Keep your response short."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -320,9 +314,6 @@ Keep your response short."#;
 
         let duration = start.elapsed();
 
-        // Build assertions for streaming
-        // Note: We use exit_code_success_or_limit() because Ralph's exit code 2 means
-        // "max iterations reached" which is valid when functional behavior succeeds.
         let assertions = vec![
             Assertions::response_received(&execution),
             Assertions::exit_code_success_or_limit(&execution),
@@ -336,7 +327,7 @@ Keep your response short."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Will be set by runner
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -345,14 +336,12 @@ Keep your response short."#;
     }
 }
 
-impl ClaudeStreamingScenario {
+impl StreamingScenario {
     /// Asserts that streaming output was received.
     fn streaming_output_received(
         &self,
         result: &crate::executor::ExecutionResult,
     ) -> crate::models::Assertion {
-        // NDJSON output contains JSON lines with fields like "type", "content", etc.
-        // Also check for regular output if NDJSON isn't being used
         let is_streaming = result.stdout.contains("{\"")
             || result.stdout.contains("\"type\"")
             || !result.stdout.is_empty();
@@ -373,11 +362,10 @@ impl ClaudeStreamingScenario {
         &self,
         result: &crate::executor::ExecutionResult,
     ) -> crate::models::Assertion {
-        // Look for our expected content or any meaningful text
         let has_content = result.stdout.to_lowercase().contains("hello")
             || result.stdout.to_lowercase().contains("streaming")
             || result.stdout.contains("LOOP_COMPLETE")
-            || result.stdout.len() > 50; // Or just substantial output
+            || result.stdout.len() > 50;
 
         super::AssertionBuilder::new("Content extracted from stream")
             .expected("Meaningful content in output")
@@ -391,7 +379,7 @@ impl ClaudeStreamingScenario {
     }
 }
 
-/// Extension trait for with_passed (duplicated here to avoid cross-module issues)
+/// Extension trait for with_passed
 trait AssertionExt {
     fn with_passed(self, passed: bool) -> Self;
 }
@@ -417,6 +405,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
+    use std::time::Duration;
 
     fn test_workspace(test_name: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!(
@@ -460,26 +449,28 @@ mod tests {
         }
     }
 
-    // ========== ClaudeToolUseScenario Tests ==========
+    // ========== ToolUseScenario Tests ==========
 
     #[test]
     fn test_tool_use_scenario_new() {
-        let scenario = ClaudeToolUseScenario::new();
-        assert_eq!(scenario.id(), "claude-tool-use");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = ToolUseScenario::new();
+        assert_eq!(scenario.id(), "tool-use");
         assert_eq!(scenario.tier(), "Tier 4: Capabilities");
     }
 
     #[test]
     fn test_tool_use_scenario_default() {
-        let scenario = ClaudeToolUseScenario::default();
-        assert_eq!(scenario.id(), "claude-tool-use");
+        let scenario = ToolUseScenario::default();
+        assert_eq!(scenario.id(), "tool-use");
     }
 
     #[test]
-    fn test_tool_use_scenario_description() {
-        let scenario = ClaudeToolUseScenario::new();
-        assert!(scenario.description().contains("tool"));
+    fn test_tool_use_supports_all_backends() {
+        let scenario = ToolUseScenario::new();
+        let supported = scenario.supported_backends();
+        assert!(supported.contains(&Backend::Claude));
+        assert!(supported.contains(&Backend::Kiro));
+        assert!(supported.contains(&Backend::OpenCode));
     }
 
     #[test]
@@ -487,32 +478,30 @@ mod tests {
         let workspace = test_workspace("tool-use-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeToolUseScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = ToolUseScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
-        // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
         assert!(config_path.exists(), "ralph.yml should exist");
 
-        // Verify test file was created
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("backend: claude"));
+
         let test_file = workspace.join("test-data.txt");
         assert!(test_file.exists(), "test-data.txt should exist");
-        let content = fs::read_to_string(&test_file).unwrap();
-        assert!(content.contains("E2E_TEST_MARKER_42"));
+        let file_content = fs::read_to_string(&test_file).unwrap();
+        assert!(file_content.contains("E2E_TEST_MARKER_42"));
 
-        // Verify .agent directory was created
         assert!(workspace.join(".agent").exists());
-
-        // Verify config struct
         assert_eq!(config.max_iterations, 1);
-        assert_eq!(config.timeout, Duration::from_secs(300));
+        assert_eq!(config.timeout, Backend::Claude.default_timeout());
 
         cleanup_workspace(&workspace);
     }
 
     #[test]
     fn test_tool_use_tool_was_invoked_passed() {
-        let scenario = ClaudeToolUseScenario::new();
+        let scenario = ToolUseScenario::new();
         let result = mock_tool_use_result();
         let assertion = scenario.tool_was_invoked(&result);
         assert!(assertion.passed, "Should pass when tool invocation evident");
@@ -520,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_tool_use_tool_was_invoked_failed() {
-        let scenario = ClaudeToolUseScenario::new();
+        let scenario = ToolUseScenario::new();
         let mut result = mock_tool_use_result();
         result.stdout = "Just some ordinary output with no relevant markers".to_string();
         let assertion = scenario.tool_was_invoked(&result);
@@ -529,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_tool_use_file_content_reported_passed() {
-        let scenario = ClaudeToolUseScenario::new();
+        let scenario = ToolUseScenario::new();
         let result = mock_tool_use_result();
         let assertion = scenario.file_content_reported(&result);
         assert!(assertion.passed, "Should pass when marker found");
@@ -537,33 +526,35 @@ mod tests {
 
     #[test]
     fn test_tool_use_file_content_reported_failed() {
-        let scenario = ClaudeToolUseScenario::new();
+        let scenario = ToolUseScenario::new();
         let mut result = mock_tool_use_result();
         result.stdout = "I read the file but didn't find anything".to_string();
         let assertion = scenario.file_content_reported(&result);
         assert!(!assertion.passed, "Should fail without marker");
     }
 
-    // ========== ClaudeStreamingScenario Tests ==========
+    // ========== StreamingScenario Tests ==========
 
     #[test]
     fn test_streaming_scenario_new() {
-        let scenario = ClaudeStreamingScenario::new();
-        assert_eq!(scenario.id(), "claude-streaming");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = StreamingScenario::new();
+        assert_eq!(scenario.id(), "streaming");
         assert_eq!(scenario.tier(), "Tier 4: Capabilities");
     }
 
     #[test]
     fn test_streaming_scenario_default() {
-        let scenario = ClaudeStreamingScenario::default();
-        assert_eq!(scenario.id(), "claude-streaming");
+        let scenario = StreamingScenario::default();
+        assert_eq!(scenario.id(), "streaming");
     }
 
     #[test]
-    fn test_streaming_scenario_description() {
-        let scenario = ClaudeStreamingScenario::new();
-        assert!(scenario.description().contains("streaming"));
+    fn test_streaming_supports_all_backends() {
+        let scenario = StreamingScenario::new();
+        let supported = scenario.supported_backends();
+        assert!(supported.contains(&Backend::Claude));
+        assert!(supported.contains(&Backend::Kiro));
+        assert!(supported.contains(&Backend::OpenCode));
     }
 
     #[test]
@@ -571,27 +562,25 @@ mod tests {
         let workspace = test_workspace("streaming-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeStreamingScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = StreamingScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
-        // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
         assert!(config_path.exists(), "ralph.yml should exist");
 
-        // Verify content includes streaming args
         let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("backend: claude"));
         assert!(content.contains("stream-json"));
 
-        // Verify config struct
         assert_eq!(config.max_iterations, 1);
-        assert_eq!(config.timeout, Duration::from_secs(300));
+        assert_eq!(config.timeout, Backend::Claude.default_timeout());
 
         cleanup_workspace(&workspace);
     }
 
     #[test]
     fn test_streaming_output_received_passed_json() {
-        let scenario = ClaudeStreamingScenario::new();
+        let scenario = StreamingScenario::new();
         let result = mock_streaming_result();
         let assertion = scenario.streaming_output_received(&result);
         assert!(assertion.passed, "Should pass with JSON output");
@@ -599,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_streaming_output_received_passed_text() {
-        let scenario = ClaudeStreamingScenario::new();
+        let scenario = StreamingScenario::new();
         let mut result = mock_streaming_result();
         result.stdout = "Regular text output".to_string();
         let assertion = scenario.streaming_output_received(&result);
@@ -608,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_streaming_output_received_failed() {
-        let scenario = ClaudeStreamingScenario::new();
+        let scenario = StreamingScenario::new();
         let mut result = mock_streaming_result();
         result.stdout = String::new();
         let assertion = scenario.streaming_output_received(&result);
@@ -617,33 +606,15 @@ mod tests {
 
     #[test]
     fn test_streaming_content_extracted_passed() {
-        let scenario = ClaudeStreamingScenario::new();
+        let scenario = StreamingScenario::new();
         let result = mock_streaming_result();
         let assertion = scenario.content_extracted(&result);
         assert!(assertion.passed, "Should pass with expected content");
     }
 
     #[test]
-    fn test_streaming_content_extracted_passed_loop_complete() {
-        let scenario = ClaudeStreamingScenario::new();
-        let mut result = mock_streaming_result();
-        result.stdout = "LOOP_COMPLETE".to_string();
-        let assertion = scenario.content_extracted(&result);
-        assert!(assertion.passed, "Should pass with LOOP_COMPLETE");
-    }
-
-    #[test]
-    fn test_streaming_content_extracted_passed_substantial_output() {
-        let scenario = ClaudeStreamingScenario::new();
-        let mut result = mock_streaming_result();
-        result.stdout = "x".repeat(60); // More than 50 chars
-        let assertion = scenario.content_extracted(&result);
-        assert!(assertion.passed, "Should pass with substantial output");
-    }
-
-    #[test]
     fn test_streaming_content_extracted_failed() {
-        let scenario = ClaudeStreamingScenario::new();
+        let scenario = StreamingScenario::new();
         let mut result = mock_streaming_result();
         result.stdout = "tiny".to_string();
         let assertion = scenario.content_extracted(&result);
@@ -661,8 +632,8 @@ mod tests {
         let workspace = test_workspace("tool-use-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeToolUseScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = ToolUseScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -688,8 +659,8 @@ mod tests {
         let workspace = test_workspace("streaming-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeStreamingScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = StreamingScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;

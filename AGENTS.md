@@ -33,59 +33,12 @@
 ## Tasks
 
 - Create code tasks in `tasks/` using `.code-task.md` extension
-- Use `/code-task-generator` to create structured task files from descriptions
-- Run tasks with `/code-assist tasks/<task-name>.code-task.md`
 - Tasks are self-contained implementation units with acceptance criteria
 
-## Memories
-
-Persistent learning system for accumulated wisdom across sessions. Storage: `.agent/memories.md`.
-
-### Quick Start
-
-```bash
-# Add a memory
-ralph memory add "uses barrel exports" --type pattern --tags imports,structure
-
-# Search memories
-ralph memory search "authentication"
-ralph memory search --type fix --tags docker
-
-# List and manage
-ralph memory list                    # Show all
-ralph memory show mem-1737372000-a1b2
-ralph memory delete mem-1737372000-a1b2
-
-# Context injection (used by orchestrator)
-ralph memory prime --budget 2000
-```
-
-### Memory Types
-
-| Type | Use Case | Emoji |
-|------|----------|-------|
-| `pattern` | How this codebase does things | 🔄 |
-| `decision` | Why something was chosen | ⚖️ |
-| `fix` | Solution to recurring problem | 🔧 |
-| `context` | Project-specific knowledge | 📍 |
-
-### Configuration
-
-```yaml
-# ralph.yml
-memories:
-  enabled: true
-  inject: auto       # auto | manual | none
-  budget: 2000       # max tokens (0 = unlimited)
-  skill_injection: true
-```
-
-### When to Create Memories
-
-- Discovering codebase patterns others should follow
-- Making architectural decisions with rationale
-- Solving problems that might recur
-- Learning project-specific context
+When `memories.enabled: true`:
+- Scratchpad is disabled
+- Tasks replace scratchpad for completion verification
+- Loop terminates when no open tasks + consecutive LOOP_COMPLETE
 
 ## Build & Test
 

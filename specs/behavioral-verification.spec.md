@@ -799,7 +799,7 @@ Tests that verify always-present behaviors.
 | CB-005 | Specs directory referenced | Specs exist | Prompt mentions ./specs/ |
 | CB-006 | Custom guardrails injected | Config has custom guardrails | Appear in prompt |
 | CB-007 | Less-is-more principle applied | Large task | Atomic subtask dispatched |
-| CB-008 | Event history logged | Events occur | .agent/events.jsonl populated |
+| CB-008 | Event history logged | Events occur | .ralph/events-*.jsonl populated |
 
 ---
 

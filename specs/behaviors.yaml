@@ -788,7 +788,7 @@ behavioral-verification:
       type: runtime
       skip_ci: true
       run: |
-        # Requires mock backend: events occur, .agent/events.jsonl populated
+        # Requires mock backend: events occur, .ralph/events-*.jsonl populated
         echo "Skip: Requires cassette/mock backend execution"
         exit 0
 

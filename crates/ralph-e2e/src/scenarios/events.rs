@@ -6,6 +6,8 @@
 //!
 //! Events are the primary communication mechanism between the agent and Ralph,
 //! so reliable parsing is critical for orchestration correctness.
+//!
+//! All scenarios are backend-agnostic and can run against any supported backend.
 
 use super::{Assertions, ScenarioError, TestScenario};
 use crate::Backend;
@@ -13,7 +15,6 @@ use crate::executor::{PromptSource, RalphExecutor, ScenarioConfig};
 use crate::models::TestResult;
 use async_trait::async_trait;
 use std::path::Path;
-use std::time::Duration;
 
 /// Test scenario that verifies event XML parsing.
 ///
@@ -25,36 +26,36 @@ use std::time::Duration;
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeEventsScenario, TestScenario};
+/// use ralph_e2e::scenarios::{EventsScenario, TestScenario};
 ///
-/// let scenario = ClaudeEventsScenario::new();
+/// let scenario = EventsScenario::new();
 /// assert_eq!(scenario.tier(), "Tier 3: Events");
 /// ```
-pub struct ClaudeEventsScenario {
+pub struct EventsScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeEventsScenario {
+impl EventsScenario {
     /// Creates a new event parsing scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-events".to_string(),
+            id: "events".to_string(),
             description: "Verifies event XML parsing from agent output".to_string(),
             tier: "Tier 3: Events".to_string(),
         }
     }
 }
 
-impl Default for ClaudeEventsScenario {
+impl Default for EventsScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeEventsScenario {
+impl TestScenario for EventsScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -67,11 +68,11 @@ impl TestScenario for ClaudeEventsScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -79,14 +80,17 @@ impl TestScenario for ClaudeEventsScenario {
         })?;
 
         // Create ralph.yml for event testing
-        let config_content = r#"# Event parsing test config
+        let config_content = format!(
+            r#"# Event parsing test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -109,7 +113,7 @@ Nothing else."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 1,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -144,7 +148,7 @@ Nothing else."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Runner sets this
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -153,7 +157,7 @@ Nothing else."#;
     }
 }
 
-impl ClaudeEventsScenario {
+impl EventsScenario {
     /// Asserts that an event has the expected payload substring.
     fn event_has_payload(
         &self,
@@ -193,36 +197,36 @@ impl ClaudeEventsScenario {
 /// # Example
 ///
 /// ```no_run
-/// use ralph_e2e::scenarios::{ClaudeBackpressureScenario, TestScenario};
+/// use ralph_e2e::scenarios::{BackpressureScenario, TestScenario};
 ///
-/// let scenario = ClaudeBackpressureScenario::new();
+/// let scenario = BackpressureScenario::new();
 /// assert_eq!(scenario.tier(), "Tier 3: Events");
 /// ```
-pub struct ClaudeBackpressureScenario {
+pub struct BackpressureScenario {
     id: String,
     description: String,
     tier: String,
 }
 
-impl ClaudeBackpressureScenario {
+impl BackpressureScenario {
     /// Creates a new backpressure scenario.
     pub fn new() -> Self {
         Self {
-            id: "claude-backpressure".to_string(),
+            id: "backpressure".to_string(),
             description: "Verifies backpressure mechanism with build.done evidence".to_string(),
             tier: "Tier 3: Events".to_string(),
         }
     }
 }
 
-impl Default for ClaudeBackpressureScenario {
+impl Default for BackpressureScenario {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl TestScenario for ClaudeBackpressureScenario {
+impl TestScenario for BackpressureScenario {
     fn id(&self) -> &str {
         &self.id
     }
@@ -235,11 +239,11 @@ impl TestScenario for ClaudeBackpressureScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -247,14 +251,17 @@ impl TestScenario for ClaudeBackpressureScenario {
         })?;
 
         // Create ralph.yml for backpressure testing
-        let config_content = r#"# Backpressure test config
+        let config_content = format!(
+            r#"# Backpressure test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 2
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -280,7 +287,7 @@ Now emit the event:"#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 2,
-            timeout: Duration::from_secs(300), // 5 minutes - backend iterations can be slow
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -315,7 +322,7 @@ Now emit the event:"#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Runner sets this
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -324,7 +331,7 @@ Now emit the event:"#;
     }
 }
 
-impl ClaudeBackpressureScenario {
+impl BackpressureScenario {
     /// Asserts that build.done event contains verification evidence.
     fn build_done_has_evidence(
         &self,
@@ -377,6 +384,7 @@ mod tests {
     use crate::executor::EventRecord;
     use std::env;
     use std::fs;
+    use std::time::Duration;
 
     fn test_workspace(test_name: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!(
@@ -428,25 +436,25 @@ mod tests {
         }
     }
 
-    // ========== ClaudeEventsScenario Tests ==========
+    // ========== EventsScenario Tests ==========
 
     #[test]
     fn test_events_scenario_new() {
-        let scenario = ClaudeEventsScenario::new();
-        assert_eq!(scenario.id(), "claude-events");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = EventsScenario::new();
+        assert_eq!(scenario.id(), "events");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 3: Events");
     }
 
     #[test]
     fn test_events_scenario_default() {
-        let scenario = ClaudeEventsScenario::default();
-        assert_eq!(scenario.id(), "claude-events");
+        let scenario = EventsScenario::default();
+        assert_eq!(scenario.id(), "events");
     }
 
     #[test]
     fn test_events_scenario_description() {
-        let scenario = ClaudeEventsScenario::new();
+        let scenario = EventsScenario::new();
         assert!(scenario.description().contains("event"));
     }
 
@@ -455,8 +463,8 @@ mod tests {
         let workspace = test_workspace("events-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeEventsScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = EventsScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
@@ -472,14 +480,13 @@ mod tests {
 
         // Verify config struct
         assert_eq!(config.max_iterations, 1);
-        assert_eq!(config.timeout, Duration::from_secs(300));
 
         cleanup_workspace(&workspace);
     }
 
     #[test]
     fn test_events_event_has_payload_passed() {
-        let scenario = ClaudeEventsScenario::new();
+        let scenario = EventsScenario::new();
         let result = mock_execution_result();
         let assertion = scenario.event_has_payload(&result, "test.event", "Test payload");
         assert!(
@@ -490,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_events_event_has_payload_failed_wrong_substring() {
-        let scenario = ClaudeEventsScenario::new();
+        let scenario = EventsScenario::new();
         let result = mock_execution_result();
         let assertion = scenario.event_has_payload(&result, "test.event", "nonexistent");
         assert!(
@@ -501,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_events_event_has_payload_failed_wrong_topic() {
-        let scenario = ClaudeEventsScenario::new();
+        let scenario = EventsScenario::new();
         let result = mock_execution_result();
         let assertion = scenario.event_has_payload(&result, "wrong.topic", "Test payload");
         assert!(!assertion.passed, "Should fail when event topic not found");
@@ -509,32 +516,32 @@ mod tests {
 
     #[test]
     fn test_events_event_has_payload_failed_no_events() {
-        let scenario = ClaudeEventsScenario::new();
+        let scenario = EventsScenario::new();
         let mut result = mock_execution_result();
         result.events = vec![];
         let assertion = scenario.event_has_payload(&result, "test.event", "Test payload");
         assert!(!assertion.passed, "Should fail when no events present");
     }
 
-    // ========== ClaudeBackpressureScenario Tests ==========
+    // ========== BackpressureScenario Tests ==========
 
     #[test]
     fn test_backpressure_scenario_new() {
-        let scenario = ClaudeBackpressureScenario::new();
-        assert_eq!(scenario.id(), "claude-backpressure");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        let scenario = BackpressureScenario::new();
+        assert_eq!(scenario.id(), "backpressure");
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 3: Events");
     }
 
     #[test]
     fn test_backpressure_scenario_default() {
-        let scenario = ClaudeBackpressureScenario::default();
-        assert_eq!(scenario.id(), "claude-backpressure");
+        let scenario = BackpressureScenario::default();
+        assert_eq!(scenario.id(), "backpressure");
     }
 
     #[test]
     fn test_backpressure_scenario_description() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         assert!(scenario.description().contains("backpressure"));
     }
 
@@ -543,8 +550,8 @@ mod tests {
         let workspace = test_workspace("backpressure-setup");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeBackpressureScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = BackpressureScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
@@ -557,14 +564,13 @@ mod tests {
 
         // Verify config struct
         assert_eq!(config.max_iterations, 2);
-        assert_eq!(config.timeout, Duration::from_secs(300));
 
         cleanup_workspace(&workspace);
     }
 
     #[test]
     fn test_backpressure_build_done_has_evidence_passed() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         let result = mock_backpressure_result();
         let assertion = scenario.build_done_has_evidence(&result);
         assert!(
@@ -575,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_build_done_has_evidence_passed_tests_keyword() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         let mut result = mock_backpressure_result();
         result.events = vec![EventRecord {
             topic: "build.done".to_string(),
@@ -587,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_build_done_has_evidence_passed_lint_keyword() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         let mut result = mock_backpressure_result();
         result.events = vec![EventRecord {
             topic: "build.done".to_string(),
@@ -599,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_build_done_has_evidence_failed_no_keywords() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         let mut result = mock_backpressure_result();
         result.events = vec![EventRecord {
             topic: "build.done".to_string(),
@@ -614,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_build_done_has_evidence_failed_no_event() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         let mut result = mock_backpressure_result();
         result.events = vec![];
         let assertion = scenario.build_done_has_evidence(&result);
@@ -626,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_build_done_has_evidence_failed_wrong_topic() {
-        let scenario = ClaudeBackpressureScenario::new();
+        let scenario = BackpressureScenario::new();
         let mut result = mock_backpressure_result();
         result.events = vec![EventRecord {
             topic: "other.event".to_string(),
@@ -647,8 +653,8 @@ mod tests {
         let workspace = test_workspace("events-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeEventsScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = EventsScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -674,8 +680,8 @@ mod tests {
         let workspace = test_workspace("backpressure-full");
         fs::create_dir_all(&workspace).unwrap();
 
-        let scenario = ClaudeBackpressureScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let scenario = BackpressureScenario::new();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;

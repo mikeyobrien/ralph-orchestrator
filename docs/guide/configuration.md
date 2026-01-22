@@ -470,7 +470,7 @@ hats:
     default_publishes: "build.done"
 ```
 
-If the builder completes without writing events to `.agent/events.jsonl`, Ralph automatically injects `build.done`.
+If the builder completes without writing events to the run's events file, Ralph automatically injects `build.done`.
 
 ### Solo Mode vs Multi-Hat Mode
 

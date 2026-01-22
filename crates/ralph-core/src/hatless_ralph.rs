@@ -14,6 +14,9 @@ pub struct HatlessRalph {
     hat_topology: Option<HatTopology>,
     /// Event to publish after coordination to start the hat workflow.
     starting_event: Option<String>,
+    /// Whether to include scratchpad instructions in the prompt.
+    /// When memories are enabled, scratchpad is excluded (mutually exclusive).
+    include_scratchpad: bool,
 }
 
 /// Hat topology for multi-hat mode prompt generation.
@@ -81,7 +84,16 @@ impl HatlessRalph {
             core,
             hat_topology,
             starting_event,
+            include_scratchpad: true, // Default: include scratchpad
         }
+    }
+
+    /// Sets whether to include scratchpad instructions in the prompt.
+    ///
+    /// When memories are enabled, scratchpad should be excluded (mutually exclusive).
+    pub fn with_scratchpad(mut self, include: bool) -> Self {
+        self.include_scratchpad = include;
+        self
     }
 
     /// Builds Ralph's prompt with filtered instructions for only active hats.
@@ -142,23 +154,42 @@ impl HatlessRalph {
     }
 
     fn core_prompt(&self) -> String {
+        // Adapt guardrails based on whether scratchpad or memories mode is active
         let guardrails = self
             .core
             .guardrails
             .iter()
             .enumerate()
-            .map(|(i, g)| format!("{}. {g}", 999 + i))
+            .map(|(i, g)| {
+                // Replace scratchpad reference with memories reference when memories are enabled
+                let guardrail = if !self.include_scratchpad && g.contains("scratchpad is memory") {
+                    g.replace(
+                        "scratchpad is memory",
+                        "save learnings to memories for next time",
+                    )
+                } else {
+                    g.clone()
+                };
+                format!("{}. {guardrail}", 999 + i)
+            })
             .collect::<Vec<_>>()
             .join("\n");
 
-        format!(
+        let mut prompt = format!(
             r"I'm Ralph. Fresh context each iteration.
 
 ### 0a. ORIENTATION
 Study `{specs_dir}` to understand requirements.
 Don't assume features aren't implemented—search first.
 
-### 0b. SCRATCHPAD
+",
+            specs_dir = self.core.specs_dir,
+        );
+
+        // Include scratchpad section only when enabled (disabled when memories are active)
+        if self.include_scratchpad {
+            prompt.push_str(&format!(
+                r"### 0b. SCRATCHPAD
 Study `{scratchpad}`. It's shared state. It's memory.
 
 Task markers:
@@ -166,14 +197,39 @@ Task markers:
 - `[x]` done
 - `[~]` cancelled (with reason)
 
-### GUARDRAILS
+",
+                scratchpad = self.core.scratchpad,
+            ));
+        } else {
+            // When memories are enabled, include task tracking instructions
+            prompt.push_str("### 0b. TASKS\nUse `ralph tools task` CLI to track work:\n\n");
+            prompt.push_str("```bash\n");
+            prompt.push_str(
+                "ralph tools task add \"Title\" -p 2           # Create task (priority 1-5)\n",
+            );
+            prompt.push_str(
+                "ralph tools task add \"X\" --blocked-by Y     # Create with dependency\n",
+            );
+            prompt.push_str("ralph tools task list                        # Show all tasks\n");
+            prompt
+                .push_str("ralph tools task ready                       # Show unblocked tasks\n");
+            prompt.push_str("ralph tools task close <id>                  # Mark complete\n");
+            prompt.push_str("```\n\n");
+            prompt.push_str(
+                "⚠️ **NEVER use echo/cat to write memories or tasks** — use the CLI tools.\n\n",
+            );
+            prompt.push_str("Before saying LOOP_COMPLETE, close all tasks.\n\n");
+        }
+
+        prompt.push_str(&format!(
+            r"### GUARDRAILS
 {guardrails}
 
 ",
-            scratchpad = self.core.scratchpad,
-            specs_dir = self.core.specs_dir,
             guardrails = guardrails,
-        )
+        ));
+
+        prompt
     }
 
     fn workflow_section(&self) -> String {
@@ -194,8 +250,9 @@ Do not plan or analyze — delegate now.
             }
 
             // Multi-hat mode: Ralph coordinates and delegates
-            format!(
-                r"## WORKFLOW
+            if self.include_scratchpad {
+                format!(
+                    r"## WORKFLOW
 
 ### 1. PLAN
 Update `{scratchpad}` with prioritized tasks.
@@ -205,14 +262,29 @@ You have one job. Publish ONE event to hand off to specialized hats. Do
 NOT do any work.
 
 ",
-                scratchpad = self.core.scratchpad
-            )
-        } else {
-            // Solo mode: Ralph does everything
-            format!(
+                    scratchpad = self.core.scratchpad
+                )
+            } else {
+                // Memories mode: no scratchpad reference
                 r"## WORKFLOW
 
-### 1. Study the prompt. 
+### 1. PLAN
+Review memories and pending events to understand context.
+
+### 2. DELEGATE
+You have one job. Publish ONE event to hand off to specialized hats. Do
+NOT do any work.
+
+"
+                .to_string()
+            }
+        } else {
+            // Solo mode: Ralph does everything
+            if self.include_scratchpad {
+                format!(
+                    r"## WORKFLOW
+
+### 1. Study the prompt.
 Study, explore, and research what needs to be done. Use parallel subagents (up to 10) for searches.
 
 ### 2. PLAN
@@ -228,8 +300,30 @@ Capture the why, not just the what. Mark `[x]` in scratchpad.
 Until all tasks `[x]` or `[~]`.
 
 ",
-                scratchpad = self.core.scratchpad
-            )
+                    scratchpad = self.core.scratchpad
+                )
+            } else {
+                // Memories mode: no scratchpad reference, use tasks CLI
+                r"## WORKFLOW
+
+### 1. Study the prompt.
+Study, explore, and research what needs to be done. Use parallel subagents (up to 10) for searches.
+
+### 2. PLAN
+Review memories for context. Create tasks with `ralph tools task add`.
+
+### 3. IMPLEMENT
+Pick ONE task from `ralph tools task ready`. Only 1 subagent for build/tests.
+
+### 4. COMMIT
+Capture the why, not just the what. Close task with `ralph tools task close`. Save learnings with `ralph tools memory add`.
+
+### 5. REPEAT
+Until `ralph tools task list` shows all tasks closed.
+
+"
+                .to_string()
+            }
         }
     }
 
@@ -422,6 +516,16 @@ Until all tasks `[x]` or `[~]`.
     }
 
     fn event_writing_section(&self) -> String {
+        let detailed_output_hint = if self.include_scratchpad {
+            format!(
+                "For detailed output, write to `{}` and emit a brief event.",
+                self.core.scratchpad
+            )
+        } else {
+            "For detailed output, create a memory with `ralph tools memory add` and emit a brief event."
+                .to_string()
+        };
+
         format!(
             r#"## EVENT WRITING
 
@@ -435,15 +539,15 @@ ralph emit "review.done" --json '{{"status": "approved", "issues": 0}}'
 
 ⚠️ **NEVER use echo/cat to write events** — shell escaping breaks JSON.
 
-For detailed output, write to `{scratchpad}` and emit a brief event.
+{detailed_output_hint}
 
 **CRITICAL: STOP after publishing the event.** A new iteration will start
 with fresh context to handle the work. Do NOT continue working in this
 iteration — let the next iteration handle the event with the appropriate
-hat persona. By doing the work now, you won't be wearing the correct hat 
+hat persona. By doing the work now, you won't be wearing the correct hat
 the specialty to do an even better job.
 "#,
-            scratchpad = self.core.scratchpad
+            detailed_output_hint = detailed_output_hint
         )
     }
 
@@ -1106,6 +1210,166 @@ hats:
         assert!(
             prompt.contains("review.architecture"),
             "Topology table should show all triggers"
+        );
+    }
+
+    // === Memories/Scratchpad Exclusivity Tests ===
+
+    #[test]
+    fn test_scratchpad_included_by_default() {
+        // By default, scratchpad instructions should be included
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            prompt.contains("### 0b. SCRATCHPAD"),
+            "Scratchpad section should be included by default"
+        );
+        assert!(
+            prompt.contains("Study `.agent/scratchpad.md`"),
+            "Scratchpad path should be referenced"
+        );
+        assert!(
+            prompt.contains("Task markers:"),
+            "Task markers should be documented"
+        );
+    }
+
+    #[test]
+    fn test_scratchpad_excluded_when_disabled() {
+        // When with_scratchpad(false), scratchpad instructions should be excluded
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_scratchpad(false);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            !prompt.contains("### 0b. SCRATCHPAD"),
+            "Scratchpad section should NOT be included when disabled"
+        );
+        assert!(
+            !prompt.contains("Task markers:"),
+            "Task markers should NOT be documented when scratchpad disabled"
+        );
+
+        // But orientation should still be present
+        assert!(
+            prompt.contains("### 0a. ORIENTATION"),
+            "Orientation should still be present"
+        );
+        assert!(
+            prompt.contains("### GUARDRAILS"),
+            "Guardrails should still be present"
+        );
+    }
+
+    #[test]
+    fn test_workflow_references_memories_when_scratchpad_disabled() {
+        // When scratchpad is disabled, workflow should reference memories instead
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_scratchpad(false);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        // Workflow should mention memories, not scratchpad
+        assert!(
+            prompt.contains("Review memories"),
+            "Workflow should reference memories when scratchpad disabled"
+        );
+        assert!(
+            !prompt.contains("Update `.agent/scratchpad.md`"),
+            "Workflow should NOT reference scratchpad when disabled"
+        );
+    }
+
+    #[test]
+    fn test_event_writing_references_memories_when_scratchpad_disabled() {
+        // When scratchpad is disabled, event writing hints should reference memories
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_scratchpad(false);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            prompt.contains("ralph tools memory add"),
+            "Event writing should mention ralph tools memory add when scratchpad disabled"
+        );
+    }
+
+    #[test]
+    fn test_multi_hat_mode_workflow_with_scratchpad_disabled() {
+        // Multi-hat mode should also adapt workflow when scratchpad disabled
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_scratchpad(false);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        // Multi-hat workflow should mention memories
+        assert!(
+            prompt.contains("Review memories and pending events"),
+            "Multi-hat workflow should reference memories when scratchpad disabled"
+        );
+        assert!(
+            !prompt.contains("Update `.agent/scratchpad.md`"),
+            "Multi-hat workflow should NOT reference scratchpad when disabled"
+        );
+    }
+
+    #[test]
+    fn test_guardrails_adapt_to_memories_mode() {
+        // When scratchpad is disabled (memories enabled), guardrails should not mention scratchpad
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_scratchpad(false);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            !prompt.contains("scratchpad is memory"),
+            "Guardrails should NOT mention 'scratchpad is memory' when memories enabled"
+        );
+        assert!(
+            prompt.contains("save learnings to memories"),
+            "Guardrails should encourage saving to memories when memories enabled"
+        );
+    }
+
+    #[test]
+    fn test_guardrails_mention_scratchpad_when_enabled() {
+        // When scratchpad is enabled, guardrails should mention scratchpad
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_scratchpad(true);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            prompt.contains("scratchpad is memory"),
+            "Guardrails should mention 'scratchpad is memory' when scratchpad enabled"
+        );
+        assert!(
+            !prompt.contains("save learnings to memories"),
+            "Guardrails should NOT mention memories when scratchpad enabled"
         );
     }
 }

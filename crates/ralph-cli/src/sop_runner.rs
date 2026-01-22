@@ -1,6 +1,6 @@
 //! SOP Runner - executes bundled SOPs in interactive backend sessions.
 //!
-//! This module provides functionality for the `ralph plan` and `ralph task` commands,
+//! This module provides functionality for the `ralph plan` and `ralph code-task` commands,
 //! which are thin wrappers that bypass Ralph's event loop entirely. They:
 //! 1. Resolve which backend to use (flag → config → auto-detect)
 //! 2. Build a prompt with the SOP content wrapped in XML tags
@@ -85,7 +85,7 @@ impl From<CustomBackendError> for SopRunError {
 
 /// Runs an SOP in an interactive backend session.
 ///
-/// This is the main entry point for `ralph plan` and `ralph task` commands.
+/// This is the main entry point for `ralph plan` and `ralph code-task` commands.
 /// It resolves the backend, builds the prompt, and spawns an interactive session.
 pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
     // 1. Resolve backend

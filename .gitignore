@@ -55,6 +55,7 @@ htmlcov/
 .pytest_cache/
 .tox/
 tui-validation/
+.e2e-tests/
 
 # Documentation
 docs/_build/site/

@@ -246,10 +246,11 @@ impl RalphExecutor {
         let start = Instant::now();
 
         // Build the command
+        // Note: Pass config_file (not full config_path) because current_dir is set to workspace
         let mut cmd = Command::new(self.ralph_binary());
         cmd.arg("run")
             .arg("-c")
-            .arg(&config_path)
+            .arg(&config.config_file)
             .arg("--max-iterations")
             .arg(config.max_iterations.to_string())
             .current_dir(&self.workspace)
@@ -258,6 +259,8 @@ impl RalphExecutor {
             .stderr(Stdio::piped())
             // Always enable diagnostics for E2E tests to aid debugging
             .env("RALPH_DIAGNOSTICS", "1")
+            // Pass workspace root so Ralph resolves paths correctly in E2E tests
+            .env("RALPH_WORKSPACE_ROOT", &self.workspace)
             // Use Haiku for faster, cheaper E2E tests
             .env("CLAUDE_MODEL", "haiku");
 
@@ -299,8 +302,8 @@ impl RalphExecutor {
                 // Read scratchpad if it exists
                 let scratchpad = self.read_scratchpad().await;
 
-                // Parse events from output
-                let events = self.parse_events(&stdout);
+                // Read events from JSONL file (primary source)
+                let events = self.read_events_from_jsonl().await;
 
                 // Count iterations from output
                 let iterations = self.count_iterations(&stdout);
@@ -346,28 +349,44 @@ impl RalphExecutor {
         tokio::fs::read_to_string(scratchpad_path).await.ok()
     }
 
-    /// Parses events from Ralph output.
+    /// Reads events from .ralph/events.jsonl file.
     ///
-    /// Events are in the format:
-    /// ```text
-    /// <event topic="build.done">
-    /// payload content here
-    /// </event>
-    /// ```
-    fn parse_events(&self, output: &str) -> Vec<EventRecord> {
-        let mut events = Vec::new();
-        let event_regex =
-            regex::Regex::new(r#"<event\s+topic="([^"]+)">([\s\S]*?)</event>"#).unwrap();
+    /// Ralph writes events to JSONL format since commit dfb8f8de.
+    /// Each line is a JSON object with "topic" and "payload" fields.
+    async fn read_events_from_jsonl(&self) -> Vec<EventRecord> {
+        // Find the current events file (uses marker file for timestamped paths)
+        let events_marker = self.workspace.join(".ralph").join("current-events");
+        let fallback_path = self.workspace.join(".ralph/events.jsonl");
 
-        for cap in event_regex.captures_iter(output) {
-            if let (Some(topic), Some(payload)) = (cap.get(1), cap.get(2)) {
-                events.push(EventRecord {
-                    topic: topic.as_str().to_string(),
-                    payload: payload.as_str().trim().to_string(),
-                });
+        let events_path = match tokio::fs::read_to_string(&events_marker).await {
+            Ok(path) => {
+                let marker_path = self.workspace.join(path.trim());
+                // Fall back to events.jsonl if marker-pointed file doesn't exist
+                if tokio::fs::metadata(&marker_path).await.is_ok() {
+                    marker_path
+                } else {
+                    fallback_path.clone()
+                }
+            }
+            Err(_) => fallback_path.clone(), // marker file missing
+        };
+
+        let mut events = Vec::new();
+        if let Ok(content) = tokio::fs::read_to_string(&events_path).await {
+            for line in content.lines().filter(|l| !l.trim().is_empty()) {
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(line)
+                    && let (Some(topic), Some(payload)) = (
+                        event.get("topic").and_then(|v| v.as_str()),
+                        event.get("payload").and_then(|v| v.as_str()),
+                    )
+                {
+                    events.push(EventRecord {
+                        topic: topic.to_string(),
+                        payload: payload.to_string(),
+                    });
+                }
             }
         }
-
         events
     }
 
@@ -501,46 +520,6 @@ mod tests {
         assert_eq!(config.max_iterations, 1);
         assert_eq!(config.timeout, Duration::from_secs(300));
         assert!(config.extra_args.is_empty());
-    }
-
-    #[test]
-    fn test_parse_events_empty() {
-        let executor = RalphExecutor::new(PathBuf::from("/tmp"));
-        let events = executor.parse_events("no events here");
-        assert!(events.is_empty());
-    }
-
-    #[test]
-    fn test_parse_events_single() {
-        let executor = RalphExecutor::new(PathBuf::from("/tmp"));
-        let output = r#"Some output
-<event topic="build.done">
-tests: pass
-lint: pass
-</event>
-More output"#;
-        let events = executor.parse_events(output);
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].topic, "build.done");
-        assert!(events[0].payload.contains("tests: pass"));
-    }
-
-    #[test]
-    fn test_parse_events_multiple() {
-        let executor = RalphExecutor::new(PathBuf::from("/tmp"));
-        let output = r#"
-<event topic="task.complete">
-Task done
-</event>
-Some text
-<event topic="implementation.ready">
-All done
-</event>
-"#;
-        let events = executor.parse_events(output);
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].topic, "task.complete");
-        assert_eq!(events[1].topic, "implementation.ready");
     }
 
     #[test]

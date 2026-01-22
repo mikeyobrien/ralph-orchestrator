@@ -211,7 +211,7 @@ fn test_reads_actual_events_jsonl_with_object_payloads() {
     // when reading events.jsonl containing object payloads from `ralph emit --json`
     use ralph_core::EventHistory;
 
-    let history = EventHistory::new(".agent/events.jsonl");
+    let history = EventHistory::new(".ralph/events.jsonl");
     if !history.exists() {
         // Skip if no events file (CI environment)
         return;
@@ -225,7 +225,7 @@ fn test_reads_actual_events_jsonl_with_object_payloads() {
 
     // Verify all records were parsed (no silently dropped records)
     println!(
-        "\n✓ Successfully parsed {} records from .agent/events.jsonl:\n",
+        "\n✓ Successfully parsed {} records from .ralph/events.jsonl:\n",
         records.len()
     );
     for (i, record) in records.iter().enumerate() {

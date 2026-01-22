@@ -8,6 +8,8 @@
 //!
 //! Unlike other tiers which test "green" (success) paths, these scenarios
 //! intentionally trigger failure conditions to verify graceful degradation.
+//!
+//! All scenarios are backend-agnostic and can run against any supported backend.
 
 use super::{Assertions, ScenarioError, TestScenario};
 use crate::Backend;
@@ -69,12 +71,11 @@ impl TestScenario for TimeoutScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        // Use Claude as the backend - the timeout is on Ralph's side
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -82,14 +83,17 @@ impl TestScenario for TimeoutScenario {
         })?;
 
         // Create ralph.yml for timeout testing
-        let config_content = r#"# Timeout test config
+        let config_content = format!(
+            r#"# Timeout test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 100
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -142,7 +146,7 @@ Start the essay now.";
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Runner sets this
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -259,11 +263,11 @@ impl TestScenario for MaxIterationsScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -271,14 +275,17 @@ impl TestScenario for MaxIterationsScenario {
         })?;
 
         // Create ralph.yml with low max iterations
-        let config_content = r#"# Max iterations test config
+        let config_content = format!(
+            r#"# Max iterations test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 2
   completion_promise: "NEVER_GOING_TO_MATCH_THIS"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -299,7 +306,7 @@ Complete exactly one step per iteration. Stop after each step."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(prompt.to_string()),
             max_iterations: 2,
-            timeout: Duration::from_secs(120),
+            timeout: backend.default_timeout(),
             extra_args: vec![],
         })
     }
@@ -331,7 +338,7 @@ Complete exactly one step per iteration. Stop after each step."#;
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Runner sets this
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -435,11 +442,11 @@ impl TestScenario for AuthFailureScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -447,14 +454,17 @@ impl TestScenario for AuthFailureScenario {
         })?;
 
         // Create ralph.yml - we'll pass bad auth via environment
-        let config_content = r#"# Auth failure test config
+        let config_content = format!(
+            r#"# Auth failure test config
 cli:
-  backend: claude
+  backend: {}
 
 event_loop:
   max_iterations: 1
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -497,7 +507,7 @@ event_loop:
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Runner sets this
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -625,13 +635,11 @@ impl TestScenario for BackendUnavailableScenario {
         &self.tier
     }
 
-    fn backend(&self) -> Backend {
-        // We're testing a nonexistent backend, but return Claude
-        // since that's what we'll try to misconfigure
-        Backend::Claude
+    fn supported_backends(&self) -> Vec<Backend> {
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
     }
 
-    fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+    fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
         // Create the .agent directory
         let agent_dir = workspace.join(".agent");
         std::fs::create_dir_all(&agent_dir).map_err(|e| {
@@ -639,15 +647,18 @@ impl TestScenario for BackendUnavailableScenario {
         })?;
 
         // Create ralph.yml with a nonexistent backend command
-        let config_content = r#"# Backend unavailable test config
+        let config_content = format!(
+            r#"# Backend unavailable test config
 cli:
-  backend: claude
+  backend: {}
   command: nonexistent-cli-that-does-not-exist-12345
 
 event_loop:
   max_iterations: 1
   completion_promise: "LOOP_COMPLETE"
-"#;
+"#,
+            backend.as_config_str()
+        );
         let config_path = workspace.join("ralph.yml");
         std::fs::write(&config_path, config_content)
             .map_err(|e| ScenarioError::SetupError(format!("failed to write ralph.yml: {}", e)))?;
@@ -689,7 +700,7 @@ event_loop:
         Ok(TestResult {
             scenario_id: self.id.clone(),
             scenario_description: self.description.clone(),
-            backend: self.backend().to_string(),
+            backend: String::new(), // Runner sets this
             tier: self.tier.clone(),
             passed: all_passed,
             assertions,
@@ -865,7 +876,7 @@ mod tests {
     fn test_timeout_scenario_new() {
         let scenario = TimeoutScenario::new();
         assert_eq!(scenario.id(), "timeout-handling");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 7: Error Handling");
     }
 
@@ -887,7 +898,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = TimeoutScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify ralph.yml was created
         let config_path = workspace.join("ralph.yml");
@@ -950,7 +961,7 @@ mod tests {
     fn test_max_iter_scenario_new() {
         let scenario = MaxIterationsScenario::new();
         assert_eq!(scenario.id(), "max-iterations");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 7: Error Handling");
     }
 
@@ -972,7 +983,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MaxIterationsScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify low max iterations
         assert_eq!(config.max_iterations, 2);
@@ -1034,7 +1045,7 @@ mod tests {
     fn test_auth_failure_scenario_new() {
         let scenario = AuthFailureScenario::new();
         assert_eq!(scenario.id(), "auth-failure");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 7: Error Handling");
     }
 
@@ -1056,7 +1067,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = AuthFailureScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify invalid API key in extra args
         assert!(config.extra_args.contains(&"--api-key".to_string()));
@@ -1123,7 +1134,7 @@ mod tests {
     fn test_backend_unavailable_scenario_new() {
         let scenario = BackendUnavailableScenario::new();
         assert_eq!(scenario.id(), "backend-unavailable");
-        assert_eq!(scenario.backend(), Backend::Claude);
+        assert!(scenario.supported_backends().contains(&Backend::Claude));
         assert_eq!(scenario.tier(), "Tier 7: Error Handling");
     }
 
@@ -1147,7 +1158,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = BackendUnavailableScenario::new();
-        let _config = scenario.setup(&workspace).unwrap();
+        let _config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         // Verify config has nonexistent command
         let config_path = workspace.join("ralph.yml");
@@ -1217,7 +1228,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = TimeoutScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1244,7 +1255,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MaxIterationsScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;
@@ -1271,7 +1282,7 @@ mod tests {
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = BackendUnavailableScenario::new();
-        let config = scenario.setup(&workspace).unwrap();
+        let config = scenario.setup(&workspace, Backend::Claude).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
         let result = scenario.run(&executor, &config).await;

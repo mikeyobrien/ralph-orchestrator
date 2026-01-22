@@ -35,8 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-hat mode: Ralph orchestrates multiple specialized hats
   - Per-hat backend configuration (each hat can use different AI agent)
   - Default publishes: Hats can specify fallback events
-- **JSONL Event Format**: Events written to `.agent/events.jsonl` instead of XML in output
+- **JSONL Event Format**: Events written to `.ralph/events-YYYYMMDD-HHMMSS.jsonl` instead of XML in output
+  - Each run creates unique timestamped events file for isolation
   - Structured event format: `{"topic":"...", "payload":"...", "ts":"..."}`
+  - `ralph emit` command for safe event emission
   - EventReader for reading new events since last read
   - Backward compatible with existing event topics
 - **Interactive TUI Mode**: Full-screen terminal UI for agent interaction
@@ -55,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING**: No default hats - empty config = solo Ralph mode
 - **BREAKING**: Planner hat removed from all presets
-- **BREAKING**: Events must be written to `.agent/events.jsonl` (XML format deprecated)
+- **BREAKING**: Events must be written to `.ralph/` directory (XML format deprecated)
 - **BREAKING**: HatRegistry no longer creates default planner/builder hats
 - CLI flag `--tui` launches TUI mode for visual observation
 - TUI mode provides scroll and search navigation while removing execution controls (pause, skip, abort)

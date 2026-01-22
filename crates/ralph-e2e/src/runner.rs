@@ -6,14 +6,14 @@
 //! # Example
 //!
 //! ```no_run
-//! use ralph_e2e::{TestRunner, RunConfig, ClaudeConnectScenario, TestScenario, WorkspaceManager};
+//! use ralph_e2e::{TestRunner, RunConfig, ConnectivityScenario, TestScenario, WorkspaceManager};
 //! use std::path::PathBuf;
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     let workspace_mgr = WorkspaceManager::new(PathBuf::from(".e2e-tests"));
 //!     let scenarios: Vec<Box<dyn TestScenario>> = vec![
-//!         Box::new(ClaudeConnectScenario::new()),
+//!         Box::new(ConnectivityScenario::new()),
 //!     ];
 //!
 //!     let runner = TestRunner::new(workspace_mgr, scenarios);
@@ -227,6 +227,9 @@ impl TestRunner {
     }
 
     /// Runs all scenarios matching the configuration.
+    ///
+    /// When a specific backend is set in `config`, each scenario runs once for that backend.
+    /// When no backend is set (running "all"), each scenario runs once per supported backend.
     pub async fn run(&self, config: &RunConfig) -> Result<RunResults, RunnerError> {
         let start = Instant::now();
         let matching = self.matching_scenarios(config);
@@ -237,101 +240,127 @@ impl TestRunner {
             ));
         }
 
-        self.emit_progress(ProgressEvent::RunStarted {
-            total_scenarios: matching.len(),
-        });
+        // Calculate total scenarios: if no backend specified, multiply by supported backends
+        let total_scenarios: usize = if config.backend.is_some() {
+            matching.len()
+        } else {
+            matching.iter().map(|s| s.supported_backends().len()).sum()
+        };
+
+        self.emit_progress(ProgressEvent::RunStarted { total_scenarios });
 
         let mut results = Vec::new();
         let mut skipped_count = 0;
 
         for scenario in matching {
-            let scenario_id = scenario.id().to_string();
-            let tier = scenario.tier().to_string();
+            // Determine which backends to run for this scenario
+            let backends_to_run: Vec<Backend> = match &config.backend {
+                Some(b) => vec![*b],
+                None => scenario.supported_backends(),
+            };
 
-            self.emit_progress(ProgressEvent::ScenarioStarted {
-                scenario_id: scenario_id.clone(),
-                tier: tier.clone(),
-            });
+            for backend in backends_to_run {
+                let scenario_id = if config.backend.is_some() {
+                    // Single backend mode: use base scenario ID
+                    scenario.id().to_string()
+                } else {
+                    // All backends mode: append backend name
+                    format!("{}-{}", scenario.id(), backend.as_config_str())
+                };
+                let tier = scenario.tier().to_string();
 
-            // Create workspace for this scenario
-            let workspace_path = self
-                .workspace_mgr
-                .create_workspace(&scenario_id)
-                .map_err(|e| RunnerError::WorkspaceError(e.to_string()))?;
+                self.emit_progress(ProgressEvent::ScenarioStarted {
+                    scenario_id: scenario_id.clone(),
+                    tier: tier.clone(),
+                });
 
-            // Setup the scenario
-            let setup_result = scenario.setup(&workspace_path);
-            let scenario_config = match setup_result {
-                Ok(config) => config,
-                Err(e) => {
-                    self.emit_progress(ProgressEvent::ScenarioSkipped {
-                        scenario_id: scenario_id.clone(),
-                        reason: format!("Setup failed: {}", e),
-                    });
-                    skipped_count += 1;
+                // Create workspace for this scenario
+                let workspace_path = self
+                    .workspace_mgr
+                    .create_workspace(&scenario_id)
+                    .map_err(|e| RunnerError::WorkspaceError(e.to_string()))?;
 
-                    if !config.keep_workspaces {
-                        self.workspace_mgr.cleanup(&scenario_id).ok();
+                // Setup the scenario with the target backend
+                let setup_result = scenario.setup(&workspace_path, backend);
+                let scenario_config = match setup_result {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        self.emit_progress(ProgressEvent::ScenarioSkipped {
+                            scenario_id: scenario_id.clone(),
+                            reason: format!("Setup failed: {}", e),
+                        });
+                        skipped_count += 1;
+
+                        if !config.keep_workspaces {
+                            self.workspace_mgr.cleanup(&scenario_id).ok();
+                        }
+                        continue;
                     }
-                    continue;
-                }
-            };
+                };
 
-            // Execute the scenario
-            let executor = match &self.ralph_binary {
-                Some(binary) => RalphExecutor::with_binary(workspace_path.clone(), binary.clone()),
-                None => RalphExecutor::new(workspace_path.clone()),
-            };
-            let scenario_start = Instant::now();
+                // Execute the scenario
+                let executor = match &self.ralph_binary {
+                    Some(binary) => {
+                        RalphExecutor::with_binary(workspace_path.clone(), binary.clone())
+                    }
+                    None => RalphExecutor::new(workspace_path.clone()),
+                };
+                let scenario_start = Instant::now();
 
-            let result = scenario.run(&executor, &scenario_config).await;
-            let scenario_duration = scenario_start.elapsed();
+                let result = scenario.run(&executor, &scenario_config).await;
+                let scenario_duration = scenario_start.elapsed();
 
-            match result {
-                Ok(test_result) => {
-                    let passed = test_result.passed;
+                match result {
+                    Ok(mut test_result) => {
+                        // Update scenario_id to include backend suffix when running all
+                        if config.backend.is_none() {
+                            test_result.scenario_id = scenario_id.clone();
+                        }
+                        test_result.backend = backend.to_string();
+                        let passed = test_result.passed;
 
-                    self.emit_progress(ProgressEvent::ScenarioCompleted {
-                        scenario_id: scenario_id.clone(),
-                        passed,
-                        duration: scenario_duration,
-                        result: test_result.clone(),
-                    });
+                        self.emit_progress(ProgressEvent::ScenarioCompleted {
+                            scenario_id: scenario_id.clone(),
+                            passed,
+                            duration: scenario_duration,
+                            result: test_result.clone(),
+                        });
 
-                    results.push(test_result);
-                }
-                Err(e) => {
-                    // Create a failed result for the scenario
-                    let failed_result = TestResult {
-                        scenario_id: scenario_id.clone(),
-                        scenario_description: scenario.description().to_string(),
-                        backend: format!("{:?}", scenario.backend()),
-                        tier: tier.clone(),
-                        passed: false,
-                        assertions: vec![crate::models::Assertion {
-                            name: "Execution".to_string(),
+                        results.push(test_result);
+                    }
+                    Err(e) => {
+                        // Create a failed result for the scenario
+                        let failed_result = TestResult {
+                            scenario_id: scenario_id.clone(),
+                            scenario_description: scenario.description().to_string(),
+                            backend: backend.to_string(),
+                            tier: tier.clone(),
                             passed: false,
-                            expected: "Scenario executes successfully".to_string(),
-                            actual: format!("Error: {}", e),
-                        }],
-                        duration: scenario_duration,
-                    };
+                            assertions: vec![crate::models::Assertion {
+                                name: "Execution".to_string(),
+                                passed: false,
+                                expected: "Scenario executes successfully".to_string(),
+                                actual: format!("Error: {}", e),
+                            }],
+                            duration: scenario_duration,
+                        };
 
-                    self.emit_progress(ProgressEvent::ScenarioCompleted {
-                        scenario_id: scenario_id.clone(),
-                        passed: false,
-                        duration: scenario_duration,
-                        result: failed_result.clone(),
-                    });
+                        self.emit_progress(ProgressEvent::ScenarioCompleted {
+                            scenario_id: scenario_id.clone(),
+                            passed: false,
+                            duration: scenario_duration,
+                            result: failed_result.clone(),
+                        });
 
-                    results.push(failed_result);
+                        results.push(failed_result);
+                    }
                 }
-            }
 
-            // Cleanup unless keeping workspaces
-            if !config.keep_workspaces {
-                scenario.cleanup(&workspace_path).ok();
-                self.workspace_mgr.cleanup(&scenario_id).ok();
+                // Cleanup unless keeping workspaces
+                if !config.keep_workspaces {
+                    scenario.cleanup(&workspace_path).ok();
+                    self.workspace_mgr.cleanup(&scenario_id).ok();
+                }
             }
         }
 
@@ -355,9 +384,9 @@ impl TestRunner {
 
     /// Checks if a scenario matches the run configuration.
     fn matches_config(&self, scenario: &dyn TestScenario, config: &RunConfig) -> bool {
-        // Check backend filter
+        // Check backend filter: scenario must support the requested backend
         if let Some(backend) = &config.backend
-            && scenario.backend() != *backend
+            && !scenario.supported_backends().contains(backend)
         {
             return false;
         }
@@ -404,7 +433,7 @@ mod tests {
         id: String,
         description: String,
         tier: String,
-        backend: Backend,
+        supported_backends: Vec<Backend>,
         should_pass: bool,
     }
 
@@ -414,7 +443,7 @@ mod tests {
                 id: id.to_string(),
                 description: format!("Mock scenario {}", id),
                 tier: "Tier 0: Mock".to_string(),
-                backend: Backend::Claude,
+                supported_backends: vec![Backend::Claude, Backend::Kiro, Backend::OpenCode],
                 should_pass: pass,
             }
         }
@@ -426,7 +455,7 @@ mod tests {
         }
 
         fn with_backend(mut self, backend: Backend) -> Self {
-            self.backend = backend;
+            self.supported_backends = vec![backend];
             self
         }
     }
@@ -445,15 +474,22 @@ mod tests {
             &self.tier
         }
 
-        fn backend(&self) -> Backend {
-            self.backend
+        fn supported_backends(&self) -> Vec<Backend> {
+            self.supported_backends.clone()
         }
 
-        fn setup(&self, workspace: &Path) -> Result<ScenarioConfig, ScenarioError> {
+        fn setup(
+            &self,
+            workspace: &Path,
+            backend: Backend,
+        ) -> Result<ScenarioConfig, ScenarioError> {
             // Create a minimal ralph.yml for the mock
             std::fs::write(
                 workspace.join("ralph.yml"),
-                "cli:\n  backend: claude\n  max_iterations: 1\n",
+                format!(
+                    "cli:\n  backend: {}\n  max_iterations: 1\n",
+                    backend.as_config_str()
+                ),
             )?;
 
             Ok(ScenarioConfig::minimal("mock prompt"))
@@ -468,7 +504,11 @@ mod tests {
             Ok(TestResult {
                 scenario_id: self.id.clone(),
                 scenario_description: self.description.clone(),
-                backend: format!("{:?}", self.backend),
+                backend: self
+                    .supported_backends
+                    .first()
+                    .map(|b| b.to_string())
+                    .unwrap_or_default(),
                 tier: self.tier.clone(),
                 passed: self.should_pass,
                 assertions: vec![Assertion {
@@ -755,8 +795,9 @@ mod tests {
     async fn test_runner_run_single_passing() {
         let workspace = test_workspace_base("run-single-pass");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
-        let scenarios: Vec<Box<dyn TestScenario>> =
-            vec![Box::new(MockScenario::new("mock-1", true))];
+        let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
+            MockScenario::new("mock-1", true).with_backend(Backend::Claude),
+        )];
 
         let runner = TestRunner::new(workspace_mgr, scenarios);
         let results = runner.run_all().await.unwrap();
@@ -772,8 +813,9 @@ mod tests {
     async fn test_runner_run_single_failing() {
         let workspace = test_workspace_base("run-single-fail");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
-        let scenarios: Vec<Box<dyn TestScenario>> =
-            vec![Box::new(MockScenario::new("mock-1", false))];
+        let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
+            MockScenario::new("mock-1", false).with_backend(Backend::Claude),
+        )];
 
         let runner = TestRunner::new(workspace_mgr, scenarios);
         let results = runner.run_all().await.unwrap();
@@ -790,9 +832,9 @@ mod tests {
         let workspace = test_workspace_base("run-mixed");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
-            Box::new(MockScenario::new("pass-1", true)),
-            Box::new(MockScenario::new("fail-1", false)),
-            Box::new(MockScenario::new("pass-2", true)),
+            Box::new(MockScenario::new("pass-1", true).with_backend(Backend::Claude)),
+            Box::new(MockScenario::new("fail-1", false).with_backend(Backend::Claude)),
+            Box::new(MockScenario::new("pass-2", true).with_backend(Backend::Claude)),
         ];
 
         let runner = TestRunner::new(workspace_mgr, scenarios);
@@ -811,9 +853,9 @@ mod tests {
         let workspace = test_workspace_base("run-filter");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
-            Box::new(MockScenario::new("connect-1", true)),
-            Box::new(MockScenario::new("connect-2", true)),
-            Box::new(MockScenario::new("loop-1", true)),
+            Box::new(MockScenario::new("connect-1", true).with_backend(Backend::Claude)),
+            Box::new(MockScenario::new("connect-2", true).with_backend(Backend::Claude)),
+            Box::new(MockScenario::new("loop-1", true).with_backend(Backend::Claude)),
         ];
 
         let runner = TestRunner::new(workspace_mgr, scenarios);
@@ -846,8 +888,9 @@ mod tests {
     async fn test_runner_progress_callback() {
         let workspace = test_workspace_base("run-progress");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
-        let scenarios: Vec<Box<dyn TestScenario>> =
-            vec![Box::new(MockScenario::new("mock-1", true))];
+        let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
+            MockScenario::new("mock-1", true).with_backend(Backend::Claude),
+        )];
 
         let event_count = Arc::new(AtomicUsize::new(0));
         let counter = event_count.clone();
@@ -868,15 +911,16 @@ mod tests {
     async fn test_runner_keep_workspaces() {
         let workspace = test_workspace_base("run-keep");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
-        let scenarios: Vec<Box<dyn TestScenario>> =
-            vec![Box::new(MockScenario::new("mock-1", true))];
+        let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
+            MockScenario::new("mock-1", true).with_backend(Backend::Claude),
+        )];
 
         let runner = TestRunner::new(workspace_mgr, scenarios);
         let config = RunConfig::new().keep_workspaces(true);
         runner.run(&config).await.unwrap();
 
-        // Workspace should still exist
-        let scenario_workspace = workspace.join("mock-1");
+        // Workspace should still exist (with backend suffix)
+        let scenario_workspace = workspace.join("mock-1-claude");
         assert!(scenario_workspace.exists());
 
         cleanup_workspace(&workspace);
@@ -886,15 +930,16 @@ mod tests {
     async fn test_runner_cleanup_workspaces() {
         let workspace = test_workspace_base("run-cleanup");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
-        let scenarios: Vec<Box<dyn TestScenario>> =
-            vec![Box::new(MockScenario::new("mock-1", true))];
+        let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
+            MockScenario::new("mock-1", true).with_backend(Backend::Claude),
+        )];
 
         let runner = TestRunner::new(workspace_mgr, scenarios);
         let config = RunConfig::default(); // keep_workspaces = false
         runner.run(&config).await.unwrap();
 
-        // Workspace should be cleaned up
-        let scenario_workspace = workspace.join("mock-1");
+        // Workspace should be cleaned up (with backend suffix)
+        let scenario_workspace = workspace.join("mock-1-claude");
         assert!(!scenario_workspace.exists());
 
         cleanup_workspace(&workspace);

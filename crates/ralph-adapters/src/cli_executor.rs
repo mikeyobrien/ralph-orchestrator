@@ -65,7 +65,8 @@ impl CliExecutor {
         command.stderr(Stdio::piped());
 
         // Set working directory to current directory (mirrors PTY executor behavior)
-        let cwd = std::env::current_dir()?;
+        // Use fallback to "." if current_dir fails (e.g., E2E test workspaces)
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         command.current_dir(&cwd);
 
         debug!(

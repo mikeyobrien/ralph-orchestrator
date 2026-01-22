@@ -31,44 +31,45 @@ use ralph_e2e::{
     Backend as LibBackend,
     BackendUnavailableScenario,
     // Tier 3: Events
-    ClaudeBackpressureScenario,
+    BackpressureScenario,
     // Tier 2: Orchestration Loop
-    ClaudeCompletionScenario,
+    CompletionScenario,
     // Tier 1: Connectivity
-    ClaudeConnectScenario,
-    ClaudeEventsScenario,
-    ClaudeMultiIterScenario,
-    ClaudeSingleIterScenario,
-    // Tier 4: Capabilities
-    ClaudeStreamingScenario,
-    ClaudeToolUseScenario,
+    ConnectivityScenario,
+    EventsScenario,
     // Tier 5: Hat Collections
     HatBackendOverrideScenario,
     HatEventRoutingScenario,
     HatInstructionsScenario,
     HatMultiWorkflowScenario,
     HatSingleScenario,
-    KiroConnectScenario,
     MaxIterationsScenario,
     // Tier 6: Memory System
     MemoryAddScenario,
+    MemoryCorruptedFileScenario,
     MemoryInjectionScenario,
+    MemoryLargeContentScenario,
+    MemoryMissingFileScenario,
     MemoryPersistenceScenario,
+    MemoryRapidWriteScenario,
     MemorySearchScenario,
-    OpenCodeConnectScenario,
+    MultiIterScenario,
     ReportFormat as LibReportFormat,
     ReportWriter,
     RunConfig,
+    SingleIterScenario,
+    // Tier 4: Capabilities
+    StreamingScenario,
     TerminalReporter,
     TestRunner,
     TestScenario,
     TimeoutScenario,
+    ToolUseScenario,
     Verbosity,
     WorkspaceManager,
     create_incremental_progress_callback,
     resolve_ralph_binary,
 };
-use std::path::PathBuf;
 
 /// Backend selection for E2E tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -174,32 +175,35 @@ impl ReportFormat {
 /// Returns all registered test scenarios.
 fn get_all_scenarios() -> Vec<Box<dyn TestScenario>> {
     vec![
-        // Tier 1: Connectivity
-        Box::new(ClaudeConnectScenario::new()),
-        Box::new(KiroConnectScenario::new()),
-        Box::new(OpenCodeConnectScenario::new()),
-        // Tier 2: Orchestration Loop
-        Box::new(ClaudeSingleIterScenario::new()),
-        Box::new(ClaudeMultiIterScenario::new()),
-        Box::new(ClaudeCompletionScenario::new()),
-        // Tier 3: Events
-        Box::new(ClaudeEventsScenario::new()),
-        Box::new(ClaudeBackpressureScenario::new()),
-        // Tier 4: Capabilities
-        Box::new(ClaudeToolUseScenario::new()),
-        Box::new(ClaudeStreamingScenario::new()),
-        // Tier 5: Hat Collections
+        // Tier 1: Connectivity (backend-agnostic)
+        Box::new(ConnectivityScenario::new()),
+        // Tier 2: Orchestration Loop (backend-agnostic)
+        Box::new(SingleIterScenario::new()),
+        Box::new(MultiIterScenario::new()),
+        Box::new(CompletionScenario::new()),
+        // Tier 3: Events (backend-agnostic)
+        Box::new(EventsScenario::new()),
+        Box::new(BackpressureScenario::new()),
+        // Tier 4: Capabilities (backend-agnostic)
+        Box::new(ToolUseScenario::new()),
+        Box::new(StreamingScenario::new()),
+        // Tier 5: Hat Collections (backend-agnostic)
         Box::new(HatSingleScenario::new()),
         Box::new(HatMultiWorkflowScenario::new()),
         Box::new(HatInstructionsScenario::new()),
         Box::new(HatEventRoutingScenario::new()),
         Box::new(HatBackendOverrideScenario::new()),
-        // Tier 6: Memory System
+        // Tier 6: Memory System (backend-agnostic)
         Box::new(MemoryAddScenario::new()),
         Box::new(MemorySearchScenario::new()),
         Box::new(MemoryInjectionScenario::new()),
         Box::new(MemoryPersistenceScenario::new()),
-        // Tier 7: Error Handling
+        // Tier 6: Memory System (Chaos Tests)
+        Box::new(MemoryCorruptedFileScenario::new()),
+        Box::new(MemoryMissingFileScenario::new()),
+        Box::new(MemoryRapidWriteScenario::new()),
+        Box::new(MemoryLargeContentScenario::new()),
+        // Tier 7: Error Handling (backend-agnostic)
         Box::new(TimeoutScenario::new()),
         Box::new(MaxIterationsScenario::new()),
         Box::new(AuthFailureScenario::new()),
@@ -267,7 +271,7 @@ async fn list_scenarios(cli: &Cli, verbosity: Verbosity) {
     for scenario in &scenarios {
         // Filter by backend if specified
         if let Some(backend) = cli.backend.to_lib_backend()
-            && scenario.backend() != backend
+            && !scenario.supported_backends().contains(&backend)
         {
             continue;
         }
@@ -334,8 +338,12 @@ async fn run_tests(cli: &Cli, verbosity: Verbosity) {
         }
     }
 
-    // Set up workspace manager
-    let workspace_path = PathBuf::from(".e2e-tests");
+    // Set up workspace manager with absolute path
+    // The PTY executor calls std::env::current_dir() which requires the workspace to exist.
+    // Using absolute paths ensures the workspace is resolvable regardless of working directory changes.
+    let workspace_path = std::env::current_dir()
+        .expect("Failed to get current directory")
+        .join(".e2e-tests");
     let workspace_mgr = WorkspaceManager::new(workspace_path.clone());
 
     // Get scenarios

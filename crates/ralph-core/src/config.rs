@@ -613,8 +613,11 @@ impl Default for CoreConfig {
             scratchpad: default_scratchpad(),
             specs_dir: default_specs_dir(),
             guardrails: default_guardrails(),
-            workspace_root: std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            workspace_root: std::env::var("RALPH_WORKSPACE_ROOT")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                }),
         }
     }
 }
@@ -746,17 +749,21 @@ impl std::fmt::Display for InjectMode {
 /// Controls the persistent learning system that allows Ralph to accumulate
 /// wisdom across sessions. Memories are stored in `.agent/memories.md`.
 ///
+/// When enabled, the memories skill is automatically injected to teach
+/// agents how to create and search memories (skill injection is implicit).
+///
 /// Example configuration:
 /// ```yaml
 /// memories:
 ///   enabled: true
 ///   inject: auto
 ///   budget: 2000
-///   skill_injection: true
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoriesConfig {
     /// Whether the memories feature is enabled.
+    ///
+    /// When true, memories are injected and the skill is taught to the agent.
     #[serde(default)]
     pub enabled: bool,
 
@@ -770,13 +777,6 @@ pub struct MemoriesConfig {
     #[serde(default)]
     pub budget: usize,
 
-    /// Whether to inject the "how to use memories" skill.
-    ///
-    /// When enabled, agents receive instructions on how to create
-    /// and search memories.
-    #[serde(default)]
-    pub skill_injection: bool,
-
     /// Filter configuration for memory injection.
     #[serde(default)]
     pub filter: MemoriesFilter,
@@ -788,7 +788,6 @@ impl Default for MemoriesConfig {
             enabled: false,
             inject: InjectMode::Auto,
             budget: 0,
-            skill_injection: false,
             filter: MemoriesFilter::default(),
         }
     }

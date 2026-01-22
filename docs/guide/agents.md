@@ -673,7 +673,7 @@ Events are **routing signals**, not data transport. Keep payloads brief.
 
 ### Writing Events
 
-Agents write events to `.agent/events.jsonl`:
+Agents write events to the run's events file (`.ralph/events-YYYYMMDD-HHMMSS.jsonl`):
 
 ```json
 {"topic":"build.done","payload":"tests: pass, lint: pass","ts":"2026-01-14T19:30:00Z"}
@@ -708,16 +708,18 @@ For detailed output, write to `.agent/scratchpad.md` and emit a brief event.
 ### Example: Builder Hat
 
 ```bash
-# Brief string payload
-echo '{"topic":"build.done","payload":"tests: pass","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> .agent/events.jsonl
+# Preferred: Use ralph emit for safe JSON formatting
+ralph emit build.done "tests: pass"
 
-# Structured object payload (preferred for complex data)
-echo '{"topic":"review.done","payload":{"status":"approved","files":3},"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> .agent/events.jsonl
+# Structured object payload
+ralph emit review.done --json '{"status":"approved","files":3}'
 ```
 
 ### Reading Events
 
-Ralph reads new events from `.agent/events.jsonl` after each agent execution. Events trigger hat transitions based on configured triggers.
+Ralph reads new events from the run's events file after each agent execution. Events trigger hat transitions based on configured triggers.
+
+Each run creates a unique timestamped events file (e.g., `.ralph/events-20260120-193202.jsonl`) to prevent stale events from polluting new runs. The `ralph emit` command automatically writes to the correct file.
 
 ### Legacy XML Format (v1.x)
 

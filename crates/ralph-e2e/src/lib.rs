@@ -53,38 +53,48 @@ pub use crate::runner::{
 pub use crate::scenarios::{
     // Core traits and helpers
     Assertions,
-    // Tier 7: Error Handling
+    // Tier 8: Error Handling (backend-agnostic)
     AuthFailureScenario,
     BackendUnavailableScenario,
-    // Tier 3: Events
-    ClaudeBackpressureScenario,
-    // Tier 2: Orchestration Loop
-    ClaudeCompletionScenario,
-    // Tier 1: Connectivity
-    ClaudeConnectScenario,
-    ClaudeEventsScenario,
-    ClaudeMultiIterScenario,
-    ClaudeSingleIterScenario,
-    // Tier 4: Capabilities
-    ClaudeStreamingScenario,
-    ClaudeToolUseScenario,
-    // Tier 5: Hat Collections
+    // Tier 3: Events (backend-agnostic)
+    BackpressureScenario,
+    // Tier 7: Incremental Development (backend-agnostic)
+    ChainedLoopScenario,
+    // Tier 2: Orchestration Loop (backend-agnostic)
+    CompletionScenario,
+    // Tier 1: Connectivity (backend-agnostic)
+    ConnectivityScenario,
+    EventsScenario,
+    // Tier 5: Hat Collections (backend-agnostic)
     HatBackendOverrideScenario,
     HatEventRoutingScenario,
     HatInstructionsScenario,
     HatMultiWorkflowScenario,
     HatSingleScenario,
-    KiroConnectScenario,
+    IncrementalFeatureScenario,
     MaxIterationsScenario,
-    // Tier 6: Memory System
+    // Tier 6: Memory System (backend-agnostic)
     MemoryAddScenario,
+    MemoryCorruptedFileScenario,
     MemoryInjectionScenario,
+    MemoryLargeContentScenario,
+    MemoryMissingFileScenario,
     MemoryPersistenceScenario,
+    MemoryRapidWriteScenario,
     MemorySearchScenario,
-    OpenCodeConnectScenario,
+    MultiIterScenario,
     ScenarioError,
+    SingleIterScenario,
+    // Tier 4: Capabilities (backend-agnostic)
+    StreamingScenario,
+    // Tier 6: Task System (backend-agnostic)
+    TaskAddScenario,
+    TaskCloseScenario,
+    TaskCompletionScenario,
+    TaskReadyScenario,
     TestScenario,
     TimeoutScenario,
+    ToolUseScenario,
 };
 pub use crate::workspace::WorkspaceManager;
 
