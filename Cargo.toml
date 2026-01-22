@@ -16,7 +16,7 @@ exclude = [
 
 [workspace.package]
 edition = "2024"
-version = "2.2.0"
+version = "2.2.1"
 license = "MIT"
 repository = "https://github.com/mikeyobrien/ralph-orchestrator"
 homepage = "https://github.com/mikeyobrien/ralph-orchestrator"
@@ -123,13 +123,13 @@ scopeguard = "1"
 strip-ansi-escapes = "0.2"
 
 # Internal crates (version required for crates.io publishing)
-ralph-proto = { version = "2.2.0", path = "crates/ralph-proto" }
-ralph-core = { version = "2.2.0", path = "crates/ralph-core" }
-ralph-adapters = { version = "2.2.0", path = "crates/ralph-adapters" }
-ralph-tui = { version = "2.2.0", path = "crates/ralph-tui" }
-ralph-cli = { version = "2.2.0", path = "crates/ralph-cli" }
-ralph-bench = { version = "2.2.0", path = "crates/ralph-bench" }
-ralph-e2e = { version = "2.2.0", path = "crates/ralph-e2e" }
+ralph-proto = { version = "2.2.1", path = "crates/ralph-proto" }
+ralph-core = { version = "2.2.1", path = "crates/ralph-core" }
+ralph-adapters = { version = "2.2.1", path = "crates/ralph-adapters" }
+ralph-tui = { version = "2.2.1", path = "crates/ralph-tui" }
+ralph-cli = { version = "2.2.1", path = "crates/ralph-cli" }
+ralph-bench = { version = "2.2.1", path = "crates/ralph-bench" }
+ralph-e2e = { version = "2.2.1", path = "crates/ralph-e2e" }
 
 # Config for 'dist'
 [workspace.metadata.dist]
