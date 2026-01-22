@@ -290,9 +290,10 @@ You MUST NOT do implementation work — delegation is your only job.
 
 ### 1. PLAN
 You MUST review memories and pending events to understand context.
+You SHOULD create tasks with `ralph tools task add` to represent units of work.
 
 ### 2. DELEGATE
-You MUST publish exactly ONE event to hand off to specialized hats.
+You MUST publish exactly ONE event to hand off ONE task to specialized hats.
 You MUST NOT do implementation work — delegation is your only job.
 
 "
@@ -348,8 +349,9 @@ You MUST capture the why, not just the what.
 You MUST close the task with `ralph tools task close` only AFTER verification passes.
 You SHOULD save learnings with `ralph tools memory add`.
 
-### 5. REPEAT
-You MUST continue until `ralph tools task list` shows all tasks closed.
+### 5. EXIT
+You MUST exit after completing ONE task.
+The next iteration will continue with fresh context.
 
 "
                 .to_string()

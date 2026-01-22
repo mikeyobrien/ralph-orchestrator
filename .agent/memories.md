@@ -8,6 +8,10 @@
 
 ## Decisions
 
+### mem-1769053131-adaf
+> Ralph should never close a task unless it's actually been completed. Tasks must have verified completion evidence before closure.
+<!-- tags: tasks, workflow, policy | created: 2026-01-22 -->
+
 ## Fixes
 
 ### mem-1769047926-2118
@@ -15,6 +19,14 @@
 <!-- tags: cli, ux, memory | created: 2026-01-22 -->
 
 ## Context
+
+### mem-1769055756-489a
+> confession: objective=validate build.done event, met=Yes, evidence=cargo build pass, 344 tests pass, clippy clean (only deprecated lint)
+<!-- tags: confession | created: 2026-01-22 -->
+
+### mem-1769055680-0faf
+> Build validation complete: cargo build passes, all 344 tests pass (135 adapters, 110 core, etc.), smoke tests pass (12 smoke_runner + 9 kiro), clippy clean with only deprecated lint warning
+<!-- tags: build, validation, release | created: 2026-01-22 -->
 
 ### mem-1769046701-9e40
 > Ralph uses Rust workspace with crates in crates/ directory. Examples go in crates/ralph-cli/examples/

@@ -2017,10 +2017,12 @@ async fn run_loop_impl(
         // TuiStreamHandler appear immediately in the TUI (real-time streaming).
         let tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>> =
             if let Some(ref state) = tui_state {
-                // Start new iteration and get handle to its lines buffer
+                // Start new iteration and get handle to the LATEST iteration's lines buffer.
+                // We must use latest_iteration_lines_handle() instead of current_iteration_lines_handle()
+                // because the user may be viewing an older iteration while a new one executes.
                 if let Ok(mut s) = state.lock() {
                     s.start_new_iteration();
-                    s.current_iteration_lines_handle()
+                    s.latest_iteration_lines_handle()
                 } else {
                     None
                 }
