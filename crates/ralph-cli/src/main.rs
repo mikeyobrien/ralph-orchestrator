@@ -33,7 +33,7 @@ use ralph_core::{
 use ralph_proto::{Event, HatId};
 use ralph_tui::Tui;
 use std::fs::{self, File};
-use std::io::{BufWriter, IsTerminal, Write, stdout};
+use std::io::{BufWriter, IsTerminal, Write, stdin, stdout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -1843,8 +1843,9 @@ async fn run_loop_impl(
 
     // Wire TUI with termination signal and shared state
     // TUI is observation-only - works in both interactive and autonomous modes
-    // Only requirement: stdout must be a terminal for TUI to render
-    let enable_tui = enable_tui && stdout().is_terminal();
+    // Requirements: both stdin and stdout must be terminals for TUI
+    // (Crossterm requires stdin for keyboard input, stdout for rendering)
+    let enable_tui = enable_tui && stdin().is_terminal() && stdout().is_terminal();
     let (mut tui_handle, tui_state) = if enable_tui {
         // Build hat map for dynamic topic-to-hat resolution
         // This allows TUI to display custom hats (e.g., "🔒 Security Reviewer")
