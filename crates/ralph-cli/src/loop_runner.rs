@@ -71,50 +71,15 @@ pub async fn run_loop_impl(
     // Always use PTY for real-time streaming output (vs buffered CliExecutor)
     let use_pty = true;
 
-    // Set up signal handling for immediate termination
+    // Set up interrupt channel for signal handling
     // Per spec:
     // - SIGINT (Ctrl+C): Immediately terminate child process (SIGTERM -> 5s grace -> SIGKILL), exit with code 130
     // - SIGTERM: Same as SIGINT
     // - SIGHUP: Same as SIGINT
     //
     // Use watch channel for interrupt notification so we can race execution vs interrupt
+    // Note: Signal handlers are spawned AFTER TUI initialization to avoid deadlock
     let (interrupt_tx, interrupt_rx) = tokio::sync::watch::channel(false);
-
-    // Spawn task to listen for SIGINT (Ctrl+C)
-    let interrupt_tx_sigint = interrupt_tx.clone();
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            debug!("Interrupt received (SIGINT), terminating immediately...");
-            let _ = interrupt_tx_sigint.send(true);
-        }
-    });
-
-    // Spawn task to listen for SIGTERM (Unix only)
-    #[cfg(unix)]
-    {
-        let interrupt_tx_sigterm = interrupt_tx.clone();
-        tokio::spawn(async move {
-            let mut sigterm =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("Failed to register SIGTERM handler");
-            sigterm.recv().await;
-            debug!("SIGTERM received, terminating immediately...");
-            let _ = interrupt_tx_sigterm.send(true);
-        });
-    }
-
-    // Spawn task to listen for SIGHUP (Unix only)
-    #[cfg(unix)]
-    {
-        let interrupt_tx_sighup = interrupt_tx.clone();
-        tokio::spawn(async move {
-            let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
-                .expect("Failed to register SIGHUP handler");
-            sighup.recv().await;
-            warn!("SIGHUP received (terminal closed), terminating immediately...");
-            let _ = interrupt_tx_sighup.send(true);
-        });
-    }
 
     // Resolve prompt content with precedence:
     // 1. CLI -p (inline text)
@@ -251,6 +216,45 @@ pub async fn run_loop_impl(
     // before the main loop starts doing work
     if tui_handle.is_some() {
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Spawn signal handlers AFTER TUI initialization to avoid deadlock
+    // (TUI must enter raw mode and create EventStream before signal handlers are registered)
+
+    // Spawn task to listen for SIGINT (Ctrl+C)
+    let interrupt_tx_sigint = interrupt_tx.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            debug!("Interrupt received (SIGINT), terminating immediately...");
+            let _ = interrupt_tx_sigint.send(true);
+        }
+    });
+
+    // Spawn task to listen for SIGTERM (Unix only)
+    #[cfg(unix)]
+    {
+        let interrupt_tx_sigterm = interrupt_tx.clone();
+        tokio::spawn(async move {
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("Failed to register SIGTERM handler");
+            sigterm.recv().await;
+            debug!("SIGTERM received, terminating immediately...");
+            let _ = interrupt_tx_sigterm.send(true);
+        });
+    }
+
+    // Spawn task to listen for SIGHUP (Unix only)
+    #[cfg(unix)]
+    {
+        let interrupt_tx_sighup = interrupt_tx.clone();
+        tokio::spawn(async move {
+            let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+                .expect("Failed to register SIGHUP handler");
+            sighup.recv().await;
+            warn!("SIGHUP received (terminal closed), terminating immediately...");
+            let _ = interrupt_tx_sighup.send(true);
+        });
     }
 
     // Log execution mode - hat info already logged by initialize()
