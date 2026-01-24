@@ -31,6 +31,10 @@ cargo build
 cargo test
 ```
 
+You the `playwright-mcp` tools to manually validate ralph-web functionality.
+
+When running `ralph`, you should always use `RALPH_DIAGNOSTICS=1` to debug.
+
 ## IMPORTANT
 
 - Run `cargo test` before declaring any task done (includes replay smoke tests)
