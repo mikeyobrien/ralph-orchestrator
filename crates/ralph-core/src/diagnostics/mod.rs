@@ -23,7 +23,11 @@ pub use trace_layer::{DiagnosticTraceLayer, TraceEntry};
 use chrono::Local;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Global storage for the shared session directory path.
+/// This allows the trace layer and EventLoop to share the same session directory.
+static SHARED_SESSION_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Central coordinator for diagnostic logging.
 ///
@@ -41,12 +45,52 @@ impl DiagnosticsCollector {
     /// Creates a new diagnostics collector.
     ///
     /// If `RALPH_DIAGNOSTICS=1`, creates `.ralph/diagnostics/<timestamp>/` directory.
+    /// If a shared session directory has been set via `set_shared_session_dir`, reuses
+    /// that directory instead of creating a new one.
     pub fn new(base_path: &Path) -> std::io::Result<Self> {
         let enabled = std::env::var("RALPH_DIAGNOSTICS")
             .map(|v| v == "1")
             .unwrap_or(false);
 
+        // Check if we should reuse an existing session directory
+        if enabled
+            && let Some(session_dir) = SHARED_SESSION_DIR.get()
+            && session_dir.exists()
+        {
+            return Self::for_session(session_dir);
+        }
+
         Self::with_enabled(base_path, enabled)
+    }
+
+    /// Sets the shared session directory for use by other components.
+    ///
+    /// This should be called once during initialization (e.g., in main() after
+    /// setting up the trace layer) so that the EventLoop can reuse the same
+    /// session directory.
+    ///
+    /// Returns `Ok(())` if the directory was set, or `Err` with the path if
+    /// it was already set (OnceLock can only be set once).
+    pub fn set_shared_session_dir(session_dir: PathBuf) -> Result<(), PathBuf> {
+        SHARED_SESSION_DIR.set(session_dir)
+    }
+
+    /// Creates a diagnostics collector that uses an existing session directory.
+    ///
+    /// This is used when the session directory was already created (e.g., by the trace layer)
+    /// and we want to share it with other components like the EventLoop.
+    pub fn for_session(session_dir: &Path) -> std::io::Result<Self> {
+        let orch_logger = orchestration::OrchestrationLogger::new(session_dir)?;
+        let perf_logger = performance::PerformanceLogger::new(session_dir)?;
+        let err_logger = errors::ErrorLogger::new(session_dir)?;
+
+        Ok(Self {
+            enabled: true,
+            session_dir: Some(session_dir.to_path_buf()),
+            orchestration_logger: Some(Arc::new(Mutex::new(orch_logger))),
+            performance_logger: Some(Arc::new(Mutex::new(perf_logger))),
+            error_logger: Some(Arc::new(Mutex::new(err_logger))),
+        })
     }
 
     /// Creates a diagnostics collector with explicit enabled flag (for testing).

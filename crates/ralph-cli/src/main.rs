@@ -495,6 +495,17 @@ async fn main() -> Result<()> {
         .map(|v| v == "1")
         .unwrap_or(false);
 
+    // When diagnostics are enabled, set up the shared session directory early
+    // so EventLoop can reuse it instead of creating its own
+    if diagnostics_enabled {
+        use ralph_core::diagnostics::DiagnosticsCollector;
+        if let Ok(collector) = DiagnosticsCollector::new(std::path::Path::new("."))
+            && let Some(session_dir) = collector.session_dir()
+        {
+            let _ = DiagnosticsCollector::set_shared_session_dir(session_dir.to_path_buf());
+        }
+    }
+
     if tui_enabled {
         // TUI mode: logs would corrupt the display, so we suppress them entirely.
         // For debugging TUI issues, set RALPH_DEBUG_LOG=1 to write to .agent/ralph.log
@@ -504,12 +515,16 @@ async fn main() -> Result<()> {
                 if diagnostics_enabled {
                     // TUI + diagnostics: logs to file + trace layer
                     use ralph_core::diagnostics::DiagnosticTraceLayer;
+                    use ralph_core::diagnostics::DiagnosticsCollector;
                     use tracing_subscriber::prelude::*;
 
-                    if let Ok(collector) = ralph_core::diagnostics::DiagnosticsCollector::new(
-                        std::path::Path::new("."),
-                    ) && let Some(session_dir) = collector.session_dir()
+                    if let Ok(collector) = DiagnosticsCollector::new(std::path::Path::new("."))
+                        && let Some(session_dir) = collector.session_dir()
                     {
+                        // Share session dir with EventLoop
+                        let _ =
+                            DiagnosticsCollector::set_shared_session_dir(session_dir.to_path_buf());
+
                         if let Ok(trace_layer) = DiagnosticTraceLayer::new(session_dir) {
                             tracing_subscriber::registry()
                                 .with(
@@ -545,12 +560,15 @@ async fn main() -> Result<()> {
         if diagnostics_enabled {
             // Normal mode + diagnostics: stdout + trace layer
             use ralph_core::diagnostics::DiagnosticTraceLayer;
+            use ralph_core::diagnostics::DiagnosticsCollector;
             use tracing_subscriber::prelude::*;
 
-            if let Ok(collector) =
-                ralph_core::diagnostics::DiagnosticsCollector::new(std::path::Path::new("."))
+            if let Ok(collector) = DiagnosticsCollector::new(std::path::Path::new("."))
                 && let Some(session_dir) = collector.session_dir()
             {
+                // Share session dir with EventLoop
+                let _ = DiagnosticsCollector::set_shared_session_dir(session_dir.to_path_buf());
+
                 if let Ok(trace_layer) = DiagnosticTraceLayer::new(session_dir) {
                     tracing_subscriber::registry()
                         .with(tracing_subscriber::fmt::layer())
