@@ -94,11 +94,36 @@ pub fn format_elapsed(d: Duration) -> String {
 
 /// Truncates a string to max_len characters, adding ellipsis if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len - 1])
+    // 注意：这里的 `max_len` 沿用旧逻辑(按字节长度近似)，但必须保证切片发生在合法的 UTF-8 字符边界上。
+    // 否则当字符串里包含中文/emoji 等多字节字符时，`&s[..N]` 会直接 panic。
+    if max_len == 0 {
+        return String::new();
     }
+
+    if s.len() <= max_len {
+        return s.to_string();
+    }
+
+    truncate_prefix_bytes(s, max_len.saturating_sub(1))
+}
+
+/// 将字符串截断到最多 `prefix_max_bytes` 个字节(尽量接近)，并追加 "..."。
+///
+/// 关键点：永远用 `char_indices()` 找到合法 UTF-8 边界后再切片，避免在多字节字符中间切片导致 panic。
+fn truncate_prefix_bytes(s: &str, prefix_max_bytes: usize) -> String {
+    if s.len() <= prefix_max_bytes {
+        return s.to_string();
+    }
+
+    // 找到小于 prefix_max_bytes 的最后一个字符起始位置，并加上该字符的字节长度，得到合法边界。
+    let boundary = s
+        .char_indices()
+        .take_while(|(i, _)| *i < prefix_max_bytes)
+        .last()
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+
+    format!("{}...", &s[..boundary])
 }
 
 /// Prints termination message with status.
@@ -200,10 +225,11 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
     for (i, record) in records.iter().enumerate() {
         let topic_color = get_topic_color(&record.topic);
         let triggered = record.triggered.as_deref().unwrap_or("-");
-        let payload_preview = if record.payload.len() > 40 {
-            format!("{}...", &record.payload[..40].replace('\n', " "))
+        let payload_one_line = record.payload.replace('\n', " ");
+        let payload_preview = if payload_one_line.len() > 40 {
+            truncate_prefix_bytes(&payload_one_line, 40)
         } else {
-            record.payload.replace('\n', " ")
+            payload_one_line
         };
 
         // Extract time portion (HH:MM:SS) from ISO 8601 timestamp
@@ -217,8 +243,13 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
                     .find(|c| c == 'Z' || c == '+' || c == '-')
                     .unwrap_or(after_t.len());
                 let time_str = &after_t[..end];
-                // Take only HH:MM:SS (first 8 chars if available)
-                Some(&time_str[..time_str.len().min(8)])
+                // 只取 HH:MM:SS（通常是 ASCII），但为了稳健性仍要保证 UTF-8 边界安全。
+                // 否则如果 agent 写入了异常 `ts`（包含中文/emoji），这里也可能因为 `&s[..N]` 触发 panic。
+                let mut boundary = time_str.len().min(8);
+                while boundary > 0 && !time_str.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                Some(&time_str[..boundary])
             })
             .unwrap_or("-");
 
@@ -309,6 +340,51 @@ mod tests {
     #[test]
     fn test_truncate_long_string() {
         assert_eq!(truncate("hello world", 8), "hello w...");
+    }
+
+    #[test]
+    fn test_truncate_does_not_panic_on_multibyte_chars() {
+        // 让多字节字符刚好跨过截断边界：旧实现会因为 `&s[..N]` 不是 UTF-8 字符边界而 panic。
+        let s = format!("{}✅{}", "x".repeat(39), "y".repeat(10));
+
+        let out = truncate(&s, 40);
+
+        // 验证输出是合法 UTF-8(迭代 chars 不应 panic)
+        for _ in out.chars() {}
+        assert!(out.ends_with("..."));
+    }
+
+    #[test]
+    fn test_print_events_table_does_not_panic_on_multibyte_payload() {
+        // 触发 payload_preview 的截断路径(>40 bytes)，并把 emoji 放在边界附近。
+        let payload = format!("{}✅{}", "x".repeat(39), "y".repeat(10));
+        let record = EventRecord {
+            ts: "2026-01-23T00:00:00Z".to_string(),
+            iteration: 1,
+            hat: "hat".to_string(),
+            topic: "task.start".to_string(),
+            triggered: None,
+            payload,
+            blocked_count: None,
+        };
+
+        print_events_table(&[record], false);
+    }
+
+    #[test]
+    fn test_print_events_table_does_not_panic_on_multibyte_ts() {
+        // 让多字节字符卡在“取前 8 个字节”的边界上：旧实现会因为 `&time_str[..8]` 不是 UTF-8 边界而 panic。
+        let record = EventRecord {
+            ts: "2026-01-23Txxxxxxx✅Z".to_string(),
+            iteration: 1,
+            hat: "hat".to_string(),
+            topic: "task.start".to_string(),
+            triggered: None,
+            payload: "ok".to_string(),
+            blocked_count: None,
+        };
+
+        print_events_table(&[record], false);
     }
 
     #[test]

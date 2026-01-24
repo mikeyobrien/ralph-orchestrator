@@ -908,7 +908,13 @@ fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        // 这里的 `max_len` 是按“字节”计数的上限。
+        // 必须回退到合法的 UTF-8 字符边界，否则当输出包含中文/emoji 时会因为 `&s[..N]` 触发 panic。
+        let mut boundary = max_len.min(s.len());
+        while boundary > 0 && !s.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        format!("{}...", &s[..boundary])
     }
 }
 
@@ -1711,6 +1717,13 @@ mod tests {
     use std::env;
     use std::fs;
     use std::time::Duration;
+
+    #[test]
+    fn test_truncate_does_not_panic_on_multibyte_chars() {
+        let s = format!("{}✅{}", "x".repeat(99), "y".repeat(10));
+        let out = truncate(&s, 100);
+        for _ in out.chars() {}
+    }
 
     fn test_workspace(test_name: &str) -> std::path::PathBuf {
         env::temp_dir().join(format!(
