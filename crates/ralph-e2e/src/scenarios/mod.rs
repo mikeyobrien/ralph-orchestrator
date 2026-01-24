@@ -119,7 +119,7 @@ pub trait TestScenario: Send + Sync {
     /// Default implementation returns all backends. Override this to restrict
     /// the scenario to specific backends.
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     /// Sets up the scenario by creating necessary files in the workspace.

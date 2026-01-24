@@ -68,7 +68,7 @@ See [AGENTS.md](AGENTS.md) for the full philosophy.
 
 ## Features
 
-- **Multi-Backend Support** — Works with Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, and OpenCode
+- **Multi-Backend Support** — Works with Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, OpenCode, and Cursor
 - **Hat System** — Specialized Ralph personas with distinct behaviors
 - **Event-Driven Coordination** — Hats communicate through typed events with glob pattern matching
 - **Backpressure Enforcement** — Gates that reject incomplete work (tests, lint, typecheck)
@@ -91,6 +91,7 @@ See [AGENTS.md](AGENTS.md) for the full philosophy.
   - [Amp](https://github.com/sourcegraph/amp)
   - [Copilot CLI](https://docs.github.com/copilot) (`npm install -g @github/copilot`)
   - [OpenCode](https://opencode.ai/) (`curl -fsSL https://opencode.ai/install | bash`)
+  - [Cursor CLI](https://cursor.com/cli) (`curl https://cursor.com/install -fsS | bash`)
 
 ### Via npm (Recommended)
 
@@ -297,7 +298,7 @@ event_loop:
 
 # CLI backend settings
 cli:
-  backend: "claude"                     # claude, kiro, gemini, codex, amp, copilot, opencode, custom
+  backend: "claude"                     # claude, kiro, gemini, codex, amp, copilot, opencode, cursor, custom
   prompt_mode: "arg"                    # arg (CLI argument) or stdin
 
 # Core behaviors (always injected into prompts)
@@ -968,7 +969,7 @@ tests: pass, lint: pass, typecheck: pass
 
 | Option | Description |
 |--------|-------------|
-| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode` |
+| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `cursor` |
 | `--preset <NAME>` | Use preset configuration |
 | `--list-presets` | List available presets |
 | `--force` | Overwrite existing config |

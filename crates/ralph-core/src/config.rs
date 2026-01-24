@@ -186,6 +186,10 @@ pub struct AdaptersConfig {
     /// Amp adapter settings.
     #[serde(default)]
     pub amp: AdapterSettings,
+
+    /// Cursor adapter settings.
+    #[serde(default)]
+    pub cursor: AdapterSettings,
 }
 
 /// Per-adapter settings.
@@ -462,6 +466,7 @@ impl RalphConfig {
             "kiro" => &self.adapters.kiro,
             "codex" => &self.adapters.codex,
             "amp" => &self.adapters.amp,
+            "cursor" => &self.adapters.cursor,
             _ => &self.adapters.claude, // Default fallback
         }
     }

@@ -175,6 +175,7 @@ impl AuthChecker {
     /// - Claude: `claude --version` with API key set returns successfully
     /// - Kiro: `kiro-cli --version` similarly
     /// - OpenCode: `opencode --version`
+    /// - Cursor: `agent --version` similarly
     ///
     /// For now, we use a simple heuristic: if the CLI is available and
     /// can report its version, we assume it's configured. A more robust
@@ -192,6 +193,7 @@ impl AuthChecker {
             Backend::Claude => Self::check_claude_auth().await,
             Backend::Kiro => Self::check_kiro_auth().await,
             Backend::OpenCode => Self::check_opencode_auth().await,
+            Backend::Cursor => Self::check_cursor_auth().await,
         }
     }
 
@@ -227,6 +229,20 @@ impl AuthChecker {
     async fn check_opencode_auth() -> bool {
         // Similar to Claude
         let output = Command::new(Backend::OpenCode.command())
+            .arg("--version")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+
+        matches!(output, Ok(o) if o.status.success())
+    }
+
+    /// Cursor-specific authentication check.
+    async fn check_cursor_auth() -> bool {
+        // Cursor CLI uses `agent` command
+        // Check if version command succeeds (indicates basic setup)
+        let output = Command::new(Backend::Cursor.command())
             .arg("--version")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -310,13 +326,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_all_returns_three_backends() {
+    async fn test_check_all_returns_all_backends() {
         let checker = AuthChecker::new();
         let results = checker.check_all().await;
-        assert_eq!(results.len(), 3);
+        assert_eq!(results.len(), 4);
         assert!(results.iter().any(|r| r.backend == Backend::Claude));
         assert!(results.iter().any(|r| r.backend == Backend::Kiro));
         assert!(results.iter().any(|r| r.backend == Backend::OpenCode));
+        assert!(results.iter().any(|r| r.backend == Backend::Cursor));
     }
 
     #[tokio::test]

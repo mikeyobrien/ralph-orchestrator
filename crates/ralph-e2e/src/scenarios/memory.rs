@@ -88,7 +88,7 @@ impl TestScenario for MemoryAddScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -309,7 +309,7 @@ impl TestScenario for MemorySearchScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -529,7 +529,7 @@ impl TestScenario for MemoryInjectionScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -752,7 +752,7 @@ impl TestScenario for MemoryPersistenceScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -969,7 +969,7 @@ impl TestScenario for MemoryCorruptedFileScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -1189,7 +1189,7 @@ impl TestScenario for MemoryMissingFileScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -1387,7 +1387,7 @@ impl TestScenario for MemoryRapidWriteScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -1576,7 +1576,7 @@ impl TestScenario for MemoryLargeContentScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {

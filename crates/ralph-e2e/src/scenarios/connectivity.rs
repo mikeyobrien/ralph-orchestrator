@@ -247,6 +247,7 @@ mod tests {
         assert!(supported.contains(&Backend::Claude));
         assert!(supported.contains(&Backend::Kiro));
         assert!(supported.contains(&Backend::OpenCode));
+        assert!(supported.contains(&Backend::Cursor));
     }
 
     #[test]
@@ -298,6 +299,23 @@ mod tests {
         assert!(content.contains("backend: opencode"));
 
         assert_eq!(config.timeout, Backend::OpenCode.default_timeout());
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn test_connectivity_setup_cursor() {
+        let workspace = test_workspace("setup-cursor");
+        fs::create_dir_all(&workspace).unwrap();
+
+        let scenario = ConnectivityScenario::new();
+        let config = scenario.setup(&workspace, Backend::Cursor).unwrap();
+
+        let config_path = workspace.join("ralph.yml");
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("backend: cursor"));
+
+        assert_eq!(config.timeout, Backend::Cursor.default_timeout());
 
         cleanup_workspace(&workspace);
     }

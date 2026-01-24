@@ -9,16 +9,18 @@ use tracing::debug;
 
 /// Default priority order for backend detection.
 pub const DEFAULT_PRIORITY: &[&str] = &[
-    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode",
+    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "cursor",
 ];
 
 /// Maps backend config names to their actual CLI command names.
 ///
 /// Some backends have CLI binaries with different names than their config identifiers.
-/// For example, the "kiro" backend uses the "kiro-cli" binary.
+/// For example, the "kiro" backend uses the "kiro-cli" binary, and the "cursor"
+/// backend uses the "agent" binary.
 fn detection_command(backend: &str) -> &str {
     match backend {
         "kiro" => "kiro-cli",
+        "cursor" => "agent",
         _ => backend,
     }
 }
@@ -50,6 +52,7 @@ impl std::fmt::Display for NoBackendError {
         writeln!(f, "  • Amp CLI:      https://amp.dev")?;
         writeln!(f, "  • Copilot CLI:  https://docs.github.com/copilot")?;
         writeln!(f, "  • OpenCode CLI: https://opencode.ai")?;
+        writeln!(f, "  • Cursor CLI:   https://cursor.com/cli")?;
         Ok(())
     }
 }
@@ -187,6 +190,12 @@ mod tests {
     fn test_detection_command_kiro() {
         // Kiro backend uses kiro-cli as the command
         assert_eq!(detection_command("kiro"), "kiro-cli");
+    }
+
+    #[test]
+    fn test_detection_command_cursor() {
+        // Cursor backend uses agent as the command
+        assert_eq!(detection_command("cursor"), "agent");
     }
 
     #[test]

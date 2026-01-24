@@ -69,7 +69,7 @@ impl TestScenario for EventsScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {
@@ -240,7 +240,7 @@ impl TestScenario for BackpressureScenario {
     }
 
     fn supported_backends(&self) -> Vec<Backend> {
-        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        vec![Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     fn setup(&self, workspace: &Path, backend: Backend) -> Result<ScenarioConfig, ScenarioError> {

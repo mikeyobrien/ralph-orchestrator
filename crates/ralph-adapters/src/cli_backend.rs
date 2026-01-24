@@ -68,6 +68,7 @@ impl CliBackend {
             "amp" => Ok(Self::amp()),
             "copilot" => Ok(Self::copilot()),
             "opencode" => Ok(Self::opencode()),
+            "cursor" => Ok(Self::cursor()),
             "custom" => Self::custom(config),
             _ => Ok(Self::claude()), // Default to claude
         }
@@ -162,6 +163,7 @@ impl CliBackend {
             "amp" => Ok(Self::amp()),
             "copilot" => Ok(Self::copilot()),
             "opencode" => Ok(Self::opencode()),
+            "cursor" => Ok(Self::cursor()),
             _ => Err(CustomBackendError),
         }
     }
@@ -261,6 +263,7 @@ impl CliBackend {
     /// | Amp     | removes `--dangerously-allow-all` |
     /// | Copilot | removes `--allow-all-tools` |
     /// | OpenCode| `run` subcommand with positional prompt |
+    /// | Cursor  | `chat` subcommand with positional prompt |
     ///
     /// # Errors
     /// Returns `CustomBackendError` if the backend name is not recognized.
@@ -273,6 +276,7 @@ impl CliBackend {
             "amp" => Ok(Self::amp_interactive()),
             "copilot" => Ok(Self::copilot_interactive()),
             "opencode" => Ok(Self::opencode_interactive()),
+            "cursor" => Ok(Self::cursor_interactive()),
             _ => Err(CustomBackendError),
         }
     }
@@ -398,6 +402,60 @@ impl CliBackend {
             args: vec![],
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("--prompt".to_string()),
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Creates the Cursor backend for autonomous mode.
+    ///
+    /// Uses Cursor's `agent` CLI with `chat` subcommand. The prompt is passed as a
+    /// positional argument after the subcommand:
+    /// ```bash
+    /// agent chat "prompt text here"
+    /// ```
+    ///
+    /// Output is plain text (no JSON streaming available).
+    pub fn cursor() -> Self {
+        Self {
+            command: "agent".to_string(),
+            args: vec!["chat".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Creates the Cursor TUI backend for interactive mode.
+    ///
+    /// Runs Cursor's agent CLI with `chat` subcommand. The prompt is passed as a
+    /// positional argument:
+    /// ```bash
+    /// agent chat "prompt text here"
+    /// ```
+    pub fn cursor_tui() -> Self {
+        Self {
+            command: "agent".to_string(),
+            args: vec!["chat".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::Text,
+        }
+    }
+
+    /// Cursor in interactive TUI mode.
+    ///
+    /// Runs Cursor's agent TUI with an initial prompt as a positional argument:
+    /// ```bash
+    /// agent chat "prompt text here"
+    /// ```
+    ///
+    /// Both headless and interactive modes use the same command structure for Cursor.
+    pub fn cursor_interactive() -> Self {
+        Self {
+            command: "agent".to_string(),
+            args: vec!["chat".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
         }
     }
@@ -1091,6 +1149,87 @@ mod tests {
             "opencode_interactive() should use --prompt flag for TUI mode. \
              Expected args to contain '--prompt', got: {:?}",
             args
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for Cursor backend
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cursor_backend() {
+        let backend = CliBackend::cursor();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "agent");
+        // Uses `chat` subcommand with positional prompt arg
+        assert_eq!(args, vec!["chat", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+    }
+
+    #[test]
+    fn test_cursor_tui_backend() {
+        let backend = CliBackend::cursor_tui();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "agent");
+        // Uses `chat` subcommand with positional prompt arg
+        assert_eq!(args, vec!["chat", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+    }
+
+    #[test]
+    fn test_cursor_interactive_mode_unchanged() {
+        // Cursor has no flags to filter in interactive mode
+        let backend = CliBackend::cursor();
+        let (cmd, args_auto, stdin_auto, _) = backend.build_command("test prompt", false);
+        let (_, args_interactive, stdin_interactive, _) =
+            backend.build_command("test prompt", true);
+
+        assert_eq!(cmd, "agent");
+        // Should be identical in both modes
+        assert_eq!(args_auto, args_interactive);
+        assert_eq!(args_auto, vec!["chat", "test prompt"]);
+        assert!(stdin_auto.is_none());
+        assert!(stdin_interactive.is_none());
+    }
+
+    #[test]
+    fn test_from_name_cursor() {
+        let backend = CliBackend::from_name("cursor").unwrap();
+        assert_eq!(backend.command, "agent");
+        assert_eq!(backend.prompt_flag, None); // Positional argument
+    }
+
+    #[test]
+    fn test_for_interactive_prompt_cursor() {
+        let backend = CliBackend::for_interactive_prompt("cursor").unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "agent");
+        // Uses `chat` subcommand with positional prompt arg
+        assert_eq!(args, vec!["chat", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.prompt_flag, None);
+    }
+
+    #[test]
+    fn test_cursor_interactive_uses_same_command_structure() {
+        // Cursor's agent CLI uses the same command structure for both
+        // headless and interactive modes: `agent chat "prompt"`
+        let backend = CliBackend::cursor_interactive();
+        let (cmd, args, _, _) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "agent");
+        assert_eq!(args, vec!["chat", "test prompt"]);
+        // Both modes use the same command structure for Cursor
+        assert_eq!(
+            CliBackend::cursor().command,
+            CliBackend::cursor_interactive().command
         );
     }
 }

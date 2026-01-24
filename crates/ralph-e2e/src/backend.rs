@@ -15,6 +15,8 @@ pub enum Backend {
     Kiro,
     /// OpenCode CLI backend
     OpenCode,
+    /// Cursor CLI backend
+    Cursor,
 }
 
 impl Backend {
@@ -24,19 +26,20 @@ impl Backend {
             Backend::Claude => "claude",
             Backend::Kiro => "kiro-cli",
             Backend::OpenCode => "opencode",
+            Backend::Cursor => "agent",
         }
     }
 
     /// Returns all available backends.
     pub fn all() -> &'static [Backend] {
-        &[Backend::Claude, Backend::Kiro, Backend::OpenCode]
+        &[Backend::Claude, Backend::Kiro, Backend::OpenCode, Backend::Cursor]
     }
 
     /// Returns the default timeout for this backend.
     pub fn default_timeout(&self) -> Duration {
         match self {
             Backend::Claude => Duration::from_secs(600), // 10 minutes - Claude iterations can take 60-120s each
-            Backend::Kiro | Backend::OpenCode => Duration::from_secs(300), // 5 minutes
+            Backend::Kiro | Backend::OpenCode | Backend::Cursor => Duration::from_secs(300), // 5 minutes
         }
     }
 
@@ -44,7 +47,7 @@ impl Backend {
     pub fn default_max_iterations(&self) -> u32 {
         match self {
             Backend::Claude => 5, // Extra buffer for LLM non-determinism
-            Backend::Kiro | Backend::OpenCode => 3,
+            Backend::Kiro | Backend::OpenCode | Backend::Cursor => 3,
         }
     }
 
@@ -54,6 +57,7 @@ impl Backend {
             Backend::Claude => "claude",
             Backend::Kiro => "kiro",
             Backend::OpenCode => "opencode",
+            Backend::Cursor => "cursor",
         }
     }
 }
@@ -64,6 +68,7 @@ impl fmt::Display for Backend {
             Backend::Claude => write!(f, "Claude"),
             Backend::Kiro => write!(f, "Kiro"),
             Backend::OpenCode => write!(f, "OpenCode"),
+            Backend::Cursor => write!(f, "Cursor"),
         }
     }
 }
