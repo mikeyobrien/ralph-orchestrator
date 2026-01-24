@@ -94,8 +94,9 @@ pub fn format_elapsed(d: Duration) -> String {
 
 /// Truncates a string to max_len characters, adding ellipsis if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
-    // 注意：这里的 `max_len` 沿用旧逻辑(按字节长度近似)，但必须保证切片发生在合法的 UTF-8 字符边界上。
-    // 否则当字符串里包含中文/emoji 等多字节字符时，`&s[..N]` 会直接 panic。
+    // Note: `max_len` keeps the legacy behavior (byte-count-ish), but we must slice only on a
+    // valid UTF-8 character boundary. Otherwise, multi-byte characters (e.g. CJK, emoji) can make
+    // `&s[..N]` panic.
     if max_len == 0 {
         return String::new();
     }
@@ -107,15 +108,17 @@ pub fn truncate(s: &str, max_len: usize) -> String {
     truncate_prefix_bytes(s, max_len.saturating_sub(1))
 }
 
-/// 将字符串截断到最多 `prefix_max_bytes` 个字节(尽量接近)，并追加 "..."。
+/// Truncates the string to at most `prefix_max_bytes` bytes (as close as possible) and appends "...".
 ///
-/// 关键点：永远用 `char_indices()` 找到合法 UTF-8 边界后再切片，避免在多字节字符中间切片导致 panic。
+/// Key point: always use `char_indices()` to find a valid UTF-8 boundary before slicing, so we
+/// never slice through a multi-byte character and panic.
 fn truncate_prefix_bytes(s: &str, prefix_max_bytes: usize) -> String {
     if s.len() <= prefix_max_bytes {
         return s.to_string();
     }
 
-    // 找到小于 prefix_max_bytes 的最后一个字符起始位置，并加上该字符的字节长度，得到合法边界。
+    // Find the last character start before `prefix_max_bytes`, then add its byte length to get a
+    // valid boundary.
     let boundary = s
         .char_indices()
         .take_while(|(i, _)| *i < prefix_max_bytes)
@@ -243,8 +246,9 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
                     .find(|c| c == 'Z' || c == '+' || c == '-')
                     .unwrap_or(after_t.len());
                 let time_str = &after_t[..end];
-                // 只取 HH:MM:SS（通常是 ASCII），但为了稳健性仍要保证 UTF-8 边界安全。
-                // 否则如果 agent 写入了异常 `ts`（包含中文/emoji），这里也可能因为 `&s[..N]` 触发 panic。
+                // Take only HH:MM:SS (usually ASCII), but still ensure we slice on a valid UTF-8
+                // boundary for robustness. Otherwise, an unexpected `ts` (e.g. CJK/emoji) can make
+                // `&s[..N]` panic.
                 let mut boundary = time_str.len().min(8);
                 while boundary > 0 && !time_str.is_char_boundary(boundary) {
                     boundary -= 1;
@@ -344,19 +348,21 @@ mod tests {
 
     #[test]
     fn test_truncate_does_not_panic_on_multibyte_chars() {
-        // 让多字节字符刚好跨过截断边界：旧实现会因为 `&s[..N]` 不是 UTF-8 字符边界而 panic。
+        // Let a multi-byte character straddle the truncation boundary. The old implementation
+        // would panic because `&s[..N]` was not on a UTF-8 boundary.
         let s = format!("{}✅{}", "x".repeat(39), "y".repeat(10));
 
         let out = truncate(&s, 40);
 
-        // 验证输出是合法 UTF-8(迭代 chars 不应 panic)
+        // Verify output is valid UTF-8 (iterating `chars()` should not panic).
         for _ in out.chars() {}
         assert!(out.ends_with("..."));
     }
 
     #[test]
     fn test_print_events_table_does_not_panic_on_multibyte_payload() {
-        // 触发 payload_preview 的截断路径(>40 bytes)，并把 emoji 放在边界附近。
+        // Trigger the `payload_preview` truncation path (>40 bytes) and place an emoji near the
+        // boundary.
         let payload = format!("{}✅{}", "x".repeat(39), "y".repeat(10));
         let record = EventRecord {
             ts: "2026-01-23T00:00:00Z".to_string(),
@@ -373,7 +379,8 @@ mod tests {
 
     #[test]
     fn test_print_events_table_does_not_panic_on_multibyte_ts() {
-        // 让多字节字符卡在“取前 8 个字节”的边界上：旧实现会因为 `&time_str[..8]` 不是 UTF-8 边界而 panic。
+        // Make a multi-byte character land on the "take the first 8 bytes" boundary. The old
+        // implementation would panic because `&time_str[..8]` was not a UTF-8 boundary.
         let record = EventRecord {
             ts: "2026-01-23Txxxxxxx✅Z".to_string(),
             iteration: 1,

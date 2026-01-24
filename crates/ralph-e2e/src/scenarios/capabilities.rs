@@ -396,8 +396,9 @@ fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        // 这里的 `max_len` 是按“字节”计数的上限。
-        // 必须回退到合法的 UTF-8 字符边界，否则当输出包含中文/emoji 时会因为 `&s[..N]` 触发 panic。
+        // Note: `max_len` is a byte-count upper bound.
+        // We must back off to a valid UTF-8 character boundary; otherwise slicing `&s[..N]` can
+        // panic when the output contains multi-byte characters (e.g. CJK, emoji).
         let mut boundary = max_len.min(s.len());
         while boundary > 0 && !s.is_char_boundary(boundary) {
             boundary -= 1;
