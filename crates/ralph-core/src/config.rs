@@ -615,6 +615,7 @@ fn default_guardrails() -> Vec<String> {
         "Fresh context each iteration - scratchpad is memory".to_string(),
         "Don't assume 'not implemented' - search first".to_string(),
         "Backpressure is law - tests/typecheck/lint must pass".to_string(),
+        "Break down before building - decompose multi-step tasks first".to_string(),
     ]
 }
 
@@ -1370,10 +1371,11 @@ hats:
         assert_eq!(config.core.scratchpad, ".agent/scratchpad.md");
         assert_eq!(config.core.specs_dir, "./specs/");
         // Default guardrails per spec
-        assert_eq!(config.core.guardrails.len(), 3);
+        assert_eq!(config.core.guardrails.len(), 4);
         assert!(config.core.guardrails[0].contains("Fresh context"));
         assert!(config.core.guardrails[1].contains("search first"));
         assert!(config.core.guardrails[2].contains("Backpressure"));
+        assert!(config.core.guardrails[3].contains("Break down"));
     }
 
     #[test]
@@ -1387,7 +1389,7 @@ core:
         assert_eq!(config.core.scratchpad, ".workspace/plan.md");
         assert_eq!(config.core.specs_dir, "./specifications/");
         // Guardrails should use defaults when not specified
-        assert_eq!(config.core.guardrails.len(), 3);
+        assert_eq!(config.core.guardrails.len(), 4);
     }
 
     #[test]

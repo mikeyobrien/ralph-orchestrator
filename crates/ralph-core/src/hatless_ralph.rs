@@ -276,7 +276,27 @@ You MUST close all tasks before LOOP_COMPLETE.
         // Add task breakdown guidance
         prompt.push_str(
             "### TASK BREAKDOWN\n\n\
-- One task = one testable unit of work\n\
+**Granularity:**\n\
+- One task = one testable unit of work (completable in 1-2 iterations)\n\
+- If a task has multiple distinct steps, break it down BEFORE starting\n\
+- If you can't describe the task in one sentence, decompose it first\n\
+\n\
+**Create tasks when:**\n\
+- Work has 2+ distinct implementation steps\n\
+- There are dependencies between pieces of work\n\
+- Work could be blocked by external factors\n\
+\n",
+        );
+
+        // Add pre-implementation check
+        prompt.push_str(
+            "### PRE-IMPLEMENTATION CHECK\n\n\
+Before writing code, verify:\n\
+- [ ] Task can be completed in 1-2 iterations\n\
+- [ ] Task has single clear acceptance criteria\n\
+- [ ] Task does not require changes to multiple unrelated systems\n\
+\n\
+If any check fails, decompose into smaller tasks first.\n\
 \n",
         );
 
