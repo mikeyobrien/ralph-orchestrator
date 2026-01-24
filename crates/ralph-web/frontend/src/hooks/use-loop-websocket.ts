@@ -82,6 +82,8 @@ export interface UseLoopWebSocketReturn {
   stop: () => Promise<void>;
   /** Whether a stop operation is in progress */
   isStopping: boolean;
+  /** Initialize state from existing session data */
+  initializeFromSession: (iteration: number, hat: string | null, isRunning: boolean) => void;
 }
 
 /**
@@ -115,6 +117,18 @@ export function useLoopWebSocket(sessionId?: string): UseLoopWebSocketReturn {
     setStartTime(null);
     setElapsedSeconds(0);
     setError(null);
+  }, []);
+
+  // Initialize state from existing session data (e.g., when navigating to a running session)
+  const initializeFromSession = useCallback((iter: number, hat: string | null, isRunning: boolean) => {
+    if (iter > 0 && stateRef.current === 'idle') {
+      setIteration(iter);
+      setActiveHat(hat);
+      if (isRunning) {
+        setState('running');
+        setStartTime(new Date());
+      }
+    }
   }, []);
 
   const stop = useCallback(async () => {
@@ -278,5 +292,6 @@ export function useLoopWebSocket(sessionId?: string): UseLoopWebSocketReturn {
     clear,
     stop,
     isStopping,
+    initializeFromSession,
   };
 }

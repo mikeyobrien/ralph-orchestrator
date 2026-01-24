@@ -9,7 +9,7 @@
  * - Task sidebar with event stream
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,6 +47,59 @@ export function LiveRoute() {
   // Connect to WebSocket for current session
   const ws = useLoopWebSocket(currentSessionId ?? undefined);
 
+  // State for initial content loaded from files (before WebSocket connected)
+  const [initialOutput, setInitialOutput] = useState<string[]>([]);
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
+  // Fetch session data to get current state and initial content
+  const { data: sessionData } = useQuery({
+    queryKey: ['session', currentSessionId],
+    queryFn: () => currentSessionId ? api.getSession(currentSessionId) : Promise.resolve(null),
+    enabled: !!currentSessionId,
+    // Only fetch once when session changes
+    staleTime: Infinity,
+  });
+
+  // Fetch initial content for the current iteration when session data is available
+  useEffect(() => {
+    async function loadInitialContent() {
+      if (!currentSessionId || !sessionData || initialLoaded) return;
+
+      // Get the latest iteration number from session data
+      const latestIteration = sessionData.iterations.length > 0
+        ? Math.max(...sessionData.iterations.map(i => i.number))
+        : 1;
+
+      // Initialize WebSocket state from session data
+      const latestIterationData = sessionData.iterations.find(i => i.number === latestIteration);
+      const isRunning = sessionData.status === 'running';
+      ws.initializeFromSession(
+        latestIteration,
+        latestIterationData?.hat?.id ?? null,
+        isRunning
+      );
+
+      try {
+        const content = await api.getIterationContent(currentSessionId, latestIteration);
+        if (content && content.lines.length > 0) {
+          setInitialOutput(content.lines.map(line => line.text));
+        }
+        setInitialLoaded(true);
+      } catch {
+        // If fetch fails, just mark as loaded so we don't retry
+        setInitialLoaded(true);
+      }
+    }
+
+    loadInitialContent();
+  }, [currentSessionId, sessionData, initialLoaded, ws]);
+
+  // Reset initial loaded state when session changes
+  useEffect(() => {
+    setInitialLoaded(false);
+    setInitialOutput([]);
+  }, [currentSessionId]);
+
   // Fetch historical content when viewing past iteration
   const {
     data: historicalContent,
@@ -64,15 +117,20 @@ export function LiveRoute() {
   const isLive = viewingIteration === null;
 
   // Output lines to display (live or historical)
+  // Merge initial content with WebSocket output, avoiding duplicates
   const displayLines = useMemo(() => {
     if (isLive) {
-      return ws.output;
+      // If WebSocket has output, use it; otherwise use initial loaded content
+      if (ws.output.length > 0) {
+        return ws.output;
+      }
+      return initialOutput;
     }
     if (historicalContent) {
       return historicalContent.lines.map((line) => line.text);
     }
     return [];
-  }, [isLive, ws.output, historicalContent]);
+  }, [isLive, ws.output, historicalContent, initialOutput]);
 
   // Transform active loops for LoopSwitcher
   const loopInfos: ActiveLoopInfo[] = useMemo(() => {
