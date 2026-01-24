@@ -217,15 +217,13 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut prompt = format!(
+        let mut prompt = String::from(
             r"You are Ralph. You have fresh context each iteration.
 
 ### 0a. ORIENTATION
-You MUST study `{specs_dir}` to understand requirements.
-You MUST NOT assume features aren't implemented — search first.
+You MUST study the prompt to understand requirements.
 
 ",
-            specs_dir = self.core.specs_dir,
         );
 
         // Include scratchpad section only when enabled (disabled when memories are active)
@@ -247,7 +245,7 @@ Task markers:
             prompt.push_str(
                 "### 0b. TASKS
 
-Runtime work tracking. For implementation planning, use code tasks (`tasks/*.code-task.md`).
+Work tracking. 
 
 **When you SHOULD create tasks:**
 - You need to defer work (blocked, out of scope, lower priority)
@@ -262,8 +260,6 @@ ralph tools task ready                       # Unblocked tasks only
 ralph tools task close <id>                  # Mark complete (ONLY after verification)
 ```
 
-You MUST NOT use echo/cat — use CLI tools only.
-
 **CRITICAL: Task Closure Requirements**
 You MUST NOT close a task unless ALL of these conditions are met:
 1. The implementation is actually complete (not partially done)
@@ -271,7 +267,7 @@ You MUST NOT close a task unless ALL of these conditions are met:
 3. Build succeeds (if applicable)
 4. You have evidence of completion (command output, test results)
 
-You MUST close all tasks before LOOP_COMPLETE. 
+You MUST close all tasks before LOOP_COMPLETE.
 
 ",
             );
@@ -281,8 +277,6 @@ You MUST close all tasks before LOOP_COMPLETE.
         prompt.push_str(
             "### TASK BREAKDOWN\n\n\
 - One task = one testable unit of work\n\
-- Tasks should be completable in 1-2 iterations\n\
-- Break large features into smaller tasks\n\
 \n",
         );
 
@@ -446,7 +440,6 @@ You SHOULD save any learnings with `ralph tools memory add`.
 ### 5. EXIT
 You MUST exit after completing ONE task.
 The next iteration will continue with fresh context.
-
 "
                 .to_string()
             }
@@ -648,7 +641,7 @@ The next iteration will continue with fresh context.
                 self.core.scratchpad
             )
         } else {
-            "You SHOULD create a memory with `ralph tools memory add` for detailed output and emit only a brief event."
+            "You SHOULD create a memory with `ralph tools memory add` for sharing context with other agents and emit only a brief event."
                 .to_string()
         };
 
@@ -720,7 +713,6 @@ mod tests {
         // Numbered orientation phases (RFC2119)
         assert!(prompt.contains("### 0a. ORIENTATION"));
         assert!(prompt.contains("MUST study"));
-        assert!(prompt.contains("MUST NOT assume features aren't implemented"));
 
         // Scratchpad section with task markers
         assert!(prompt.contains("### 0b. SCRATCHPAD"));
@@ -827,10 +819,6 @@ hats:
         assert!(
             prompt.contains("You MUST study"),
             "Should use RFC2119 MUST with 'study' verb"
-        );
-        assert!(
-            prompt.contains("You MUST NOT assume features aren't implemented"),
-            "Should have RFC2119 MUST NOT assume guardrail"
         );
         assert!(
             prompt.contains("You MAY use parallel subagents"),

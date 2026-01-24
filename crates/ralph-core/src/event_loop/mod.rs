@@ -604,21 +604,8 @@ impl EventLoop {
     }
 
     /// Formats an event for prompt context.
-    ///
-    /// For top-level prompts (task.start, task.resume), wraps the payload in
-    /// `<top-level-prompt>` XML tags to clearly delineate the user's original request.
     fn format_event(event: &Event) -> String {
-        let topic = &event.topic;
-        let payload = &event.payload;
-
-        if topic.as_str() == "task.start" || topic.as_str() == "task.resume" {
-            format!(
-                "Event: {} - <top-level-prompt>\n{}\n</top-level-prompt>",
-                topic, payload
-            )
-        } else {
-            format!("Event: {} - {}", topic, payload)
-        }
+        format!("Event: {} - {}", event.topic, event.payload)
     }
 
     fn check_hat_exhaustion(&mut self, hat_id: &HatId, dropped: &[Event]) -> (bool, Option<Event>) {

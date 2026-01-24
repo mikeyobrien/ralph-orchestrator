@@ -20,9 +20,15 @@
 //!
 //! # List available scenarios
 //! ralph-e2e --list
+//!
+//! # Run in mock mode (uses recorded cassettes, no API calls)
+//! ralph-e2e --mock
+//!
+//! # Mock CLI subcommand (invoked by ralph as custom backend)
+//! ralph-e2e mock-cli --cassette cassettes/e2e/connect.jsonl
 //! ```
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use ralph_e2e::{
     AuthChecker,
@@ -32,6 +38,7 @@ use ralph_e2e::{
     BackendUnavailableScenario,
     // Tier 3: Events
     BackpressureScenario,
+    CassetteResolver,
     // Tier 2: Orchestration Loop
     CompletionScenario,
     // Tier 1: Connectivity
@@ -53,6 +60,7 @@ use ralph_e2e::{
     MemoryPersistenceScenario,
     MemoryRapidWriteScenario,
     MemorySearchScenario,
+    MockConfig,
     MultiIterScenario,
     ReportFormat as LibReportFormat,
     ReportWriter,
@@ -70,6 +78,9 @@ use ralph_e2e::{
     create_incremental_progress_callback,
     resolve_ralph_binary,
 };
+use std::path::PathBuf;
+
+mod mock_cli;
 
 /// Backend selection for E2E tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -116,6 +127,9 @@ impl Backend {
 #[command(name = "ralph-e2e")]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
     /// Backend to test
     #[arg(value_enum, default_value_t = Backend::All)]
     pub backend: Backend,
@@ -147,6 +161,41 @@ pub struct Cli {
     /// Skip meta-Ralph analysis (faster, raw results only)
     #[arg(long)]
     pub skip_analysis: bool,
+
+    /// Run in mock mode using recorded cassettes (no API calls)
+    #[arg(long)]
+    pub mock: bool,
+
+    /// Replay speed for mock mode (0 = instant, 1.0 = real-time, 10.0 = 10x faster)
+    #[arg(long, default_value_t = 0.0)]
+    pub mock_speed: f32,
+
+    /// Directory containing cassette files (default: cassettes/e2e)
+    #[arg(long)]
+    pub cassette_dir: Option<PathBuf>,
+}
+
+/// Subcommands for ralph-e2e.
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Mock CLI that replays recorded cassettes (used as custom backend)
+    MockCli {
+        /// Path to the cassette file to replay
+        #[arg(long)]
+        cassette: PathBuf,
+
+        /// Replay speed (0 = instant, 1.0 = real-time, 10.0 = 10x faster)
+        #[arg(long, default_value_t = 0.0)]
+        speed: f32,
+
+        /// Commands allowed to be executed (comma-separated prefixes)
+        #[arg(long)]
+        allow: Option<String>,
+
+        /// Print version and exit (for backend availability check)
+        #[arg(long)]
+        version: bool,
+    },
 }
 
 /// Report output format.
@@ -214,6 +263,28 @@ fn get_all_scenarios() -> Vec<Box<dyn TestScenario>> {
 fn main() {
     let cli = Cli::parse();
 
+    // Handle subcommands first
+    if let Some(command) = &cli.command {
+        match command {
+            Commands::MockCli {
+                cassette,
+                speed,
+                allow,
+                version,
+            } => {
+                if *version {
+                    println!("ralph-e2e mock-cli {}", env!("CARGO_PKG_VERSION"));
+                    return;
+                }
+                if let Err(e) = mock_cli::run(cassette, *speed, allow.as_deref()) {
+                    eprintln!("{} {}", "Error:".red().bold(), e);
+                    std::process::exit(1);
+                }
+                return;
+            }
+        }
+    }
+
     // Print header
     println!(
         "\n{} {}",
@@ -221,6 +292,22 @@ fn main() {
         format!("v{}", env!("CARGO_PKG_VERSION")).dimmed()
     );
     println!("{}", "━".repeat(40).dimmed());
+
+    // Show mock mode indicator
+    if cli.mock {
+        println!(
+            "{}",
+            format!(
+                "📼 Mock mode enabled (speed: {})",
+                if cli.mock_speed == 0.0 {
+                    "instant".to_string()
+                } else {
+                    format!("{}x", cli.mock_speed)
+                }
+            )
+            .cyan()
+        );
+    }
 
     // Determine verbosity
     let verbosity = if cli.quiet {
@@ -243,23 +330,57 @@ fn main() {
 }
 
 async fn list_scenarios(cli: &Cli, verbosity: Verbosity) {
-    // Check backend availability
-    if verbosity != Verbosity::Quiet {
-        println!("\n{}", "Checking backends...".dimmed());
-        let checker = AuthChecker::new();
-        let backends = checker.check_all().await;
+    // In mock mode, show cassette status instead of backend availability
+    if cli.mock {
+        if verbosity != Verbosity::Quiet {
+            let cassette_dir = cli
+                .cassette_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(ralph_e2e::mock::DEFAULT_CASSETTE_DIR));
+            println!(
+                "\n{}",
+                format!("Cassette directory: {}", cassette_dir.display()).dimmed()
+            );
 
-        for info in backends {
-            let status = match info.status_string().as_str() {
-                s if s.contains("Authenticated") => format!("✅ {} - {}", info.backend, s).green(),
-                s if s.contains("Not authenticated") => {
-                    format!("⚠️  {} - {}", info.backend, s).yellow()
+            let resolver = CassetteResolver::new(&cassette_dir);
+            let scenarios = get_all_scenarios();
+
+            println!("{}", "Checking cassettes...".dimmed());
+            for scenario in &scenarios {
+                if let Some(backend) = cli.backend.to_lib_backend() {
+                    let candidates = resolver.candidates(scenario.id(), backend);
+                    let found = candidates.iter().any(|p| p.exists());
+                    let status = if found {
+                        format!("  ✅ {} - cassette found", scenario.id()).green()
+                    } else {
+                        format!("  ❌ {} - cassette missing", scenario.id()).red()
+                    };
+                    println!("{}", status);
                 }
-                s => format!("❌ {} - {}", info.backend, s).red(),
-            };
-            println!("  {}", status);
+            }
+            println!();
         }
-        println!();
+    } else {
+        // Check backend availability
+        if verbosity != Verbosity::Quiet {
+            println!("\n{}", "Checking backends...".dimmed());
+            let checker = AuthChecker::new();
+            let backends = checker.check_all().await;
+
+            for info in backends {
+                let status = match info.status_string().as_str() {
+                    s if s.contains("Authenticated") => {
+                        format!("✅ {} - {}", info.backend, s).green()
+                    }
+                    s if s.contains("Not authenticated") => {
+                        format!("⚠️  {} - {}", info.backend, s).yellow()
+                    }
+                    s => format!("❌ {} - {}", info.backend, s).red(),
+                };
+                println!("  {}", status);
+            }
+            println!();
+        }
     }
 
     // List scenarios
@@ -305,35 +426,49 @@ async fn list_scenarios(cli: &Cli, verbosity: Verbosity) {
 }
 
 async fn run_tests(cli: &Cli, verbosity: Verbosity) {
-    // Check backend availability first
-    if verbosity != Verbosity::Quiet {
-        println!();
-        let checker = AuthChecker::new();
+    // Build mock config if in mock mode
+    let mock_config = if cli.mock {
+        let cassette_dir = cli
+            .cassette_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(ralph_e2e::mock::DEFAULT_CASSETTE_DIR));
+        Some(MockConfig::new(cassette_dir).with_speed(cli.mock_speed))
+    } else {
+        None
+    };
 
-        if let Some(backend) = cli.backend.to_lib_backend() {
-            let info = checker.check(backend).await;
-            let status = info.status_string();
-            let status_fmt = if status.contains("Authenticated") {
-                format!("{}: {} ✅", info.backend, status).green()
-            } else if status.contains("Not authenticated") {
-                format!("{}: {} ⚠️", info.backend, status).yellow()
-            } else {
-                format!("{}: {} ❌", info.backend, status).red()
-            };
-            println!("{}", status_fmt);
-        } else {
-            println!("{}", "Checking all backends...".dimmed());
-            for info in checker.check_all().await {
-                let status = match info.status_string().as_str() {
-                    s if s.contains("Authenticated") => {
-                        format!("  ✅ {} - {}", info.backend, s).green()
-                    }
-                    s if s.contains("Not authenticated") => {
-                        format!("  ⚠️  {} - {}", info.backend, s).yellow()
-                    }
-                    s => format!("  ❌ {} - {}", info.backend, s).red(),
+    // Skip backend availability check in mock mode
+    if !cli.mock {
+        // Check backend availability first
+        if verbosity != Verbosity::Quiet {
+            println!();
+            let checker = AuthChecker::new();
+
+            if let Some(backend) = cli.backend.to_lib_backend() {
+                let info = checker.check(backend).await;
+                let status = info.status_string();
+                let status_fmt = if status.contains("Authenticated") {
+                    format!("{}: {} ✅", info.backend, status).green()
+                } else if status.contains("Not authenticated") {
+                    format!("{}: {} ⚠️", info.backend, status).yellow()
+                } else {
+                    format!("{}: {} ❌", info.backend, status).red()
                 };
-                println!("{}", status);
+                println!("{}", status_fmt);
+            } else {
+                println!("{}", "Checking all backends...".dimmed());
+                for info in checker.check_all().await {
+                    let status = match info.status_string().as_str() {
+                        s if s.contains("Authenticated") => {
+                            format!("  ✅ {} - {}", info.backend, s).green()
+                        }
+                        s if s.contains("Not authenticated") => {
+                            format!("  ⚠️  {} - {}", info.backend, s).yellow()
+                        }
+                        s => format!("  ❌ {} - {}", info.backend, s).red(),
+                    };
+                    println!("{}", status);
+                }
             }
         }
     }
@@ -358,6 +493,11 @@ async fn run_tests(cli: &Cli, verbosity: Verbosity) {
 
     if let Some(backend) = cli.backend.to_lib_backend() {
         config = config.with_backend(backend);
+    }
+
+    // Add mock mode configuration
+    if let Some(mock_cfg) = mock_config {
+        config = config.with_mock(mock_cfg);
     }
 
     // Resolve the ralph binary to use (local build preferred over PATH)

@@ -25,10 +25,11 @@
 
 use crate::Backend;
 use crate::executor::RalphExecutor;
+use crate::mock::{CassetteResolver, MockConfig};
 use crate::models::TestResult;
 use crate::scenarios::{ScenarioError, TestScenario};
 use crate::workspace::WorkspaceManager;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -62,6 +63,9 @@ pub struct RunConfig {
 
     /// Skip scenarios that require unavailable backends.
     pub skip_unavailable: bool,
+
+    /// Mock mode configuration (uses recorded cassettes instead of real backends).
+    pub mock_config: Option<MockConfig>,
 }
 
 impl RunConfig {
@@ -86,6 +90,17 @@ impl RunConfig {
     pub fn keep_workspaces(mut self, keep: bool) -> Self {
         self.keep_workspaces = keep;
         self
+    }
+
+    /// Sets the mock mode configuration.
+    pub fn with_mock(mut self, config: MockConfig) -> Self {
+        self.mock_config = Some(config);
+        self
+    }
+
+    /// Returns true if mock mode is enabled.
+    pub fn is_mock_mode(&self) -> bool {
+        self.mock_config.is_some()
     }
 }
 
@@ -298,6 +313,39 @@ impl TestRunner {
                     }
                 };
 
+                // In mock mode, rewrite ralph.yml to use mock-cli as custom backend
+                if let Some(mock_cfg) = &config.mock_config {
+                    let resolver = CassetteResolver::new(&mock_cfg.cassette_dir);
+                    match resolver.resolve(scenario.id(), backend) {
+                        Ok(cassette_path) => {
+                            if let Err(e) =
+                                self.write_mock_config(&workspace_path, &cassette_path, mock_cfg)
+                            {
+                                self.emit_progress(ProgressEvent::ScenarioSkipped {
+                                    scenario_id: scenario_id.clone(),
+                                    reason: format!("Mock config error: {}", e),
+                                });
+                                skipped_count += 1;
+                                if !config.keep_workspaces {
+                                    self.workspace_mgr.cleanup(&scenario_id).ok();
+                                }
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            self.emit_progress(ProgressEvent::ScenarioSkipped {
+                                scenario_id: scenario_id.clone(),
+                                reason: format!("Cassette not found: {}", e),
+                            });
+                            skipped_count += 1;
+                            if !config.keep_workspaces {
+                                self.workspace_mgr.cleanup(&scenario_id).ok();
+                            }
+                            continue;
+                        }
+                    }
+                }
+
                 // Execute the scenario
                 let executor = match &self.ralph_binary {
                     Some(binary) => {
@@ -414,6 +462,46 @@ impl TestRunner {
         if let Some(callback) = &self.on_progress {
             callback(event);
         }
+    }
+
+    /// Writes a mock-mode ralph.yml configuration.
+    ///
+    /// This overwrites the scenario's ralph.yml to use `mock-cli` as a custom backend,
+    /// enabling cassette-based replay instead of real API calls.
+    fn write_mock_config(
+        &self,
+        workspace_path: &Path,
+        cassette_path: &Path,
+        mock_cfg: &MockConfig,
+    ) -> Result<(), std::io::Error> {
+        // Get the ralph-e2e binary path for mock-cli
+        let mock_cli_binary = std::env::current_exe().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("failed to get current executable: {}", e),
+            )
+        })?;
+
+        // Build the mock-cli arguments
+        let mock_args = crate::mock::build_mock_cli_args(cassette_path, mock_cfg);
+
+        // Generate the ralph.yml content with custom backend
+        let config_content = format!(
+            r#"# Mock mode configuration (auto-generated)
+cli:
+  backend: custom
+  command: "{}"
+  args: {}
+
+event_loop:
+  max_iterations: 10
+  completion_promise: "LOOP_COMPLETE"
+"#,
+            mock_cli_binary.display(),
+            serde_json::to_string(&mock_args).unwrap_or_else(|_| "[]".to_string())
+        );
+
+        std::fs::write(workspace_path.join("ralph.yml"), config_content)
     }
 }
 
@@ -943,5 +1031,25 @@ mod tests {
         assert!(!scenario_workspace.exists());
 
         cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn test_run_config_with_mock() {
+        let mock_cfg = MockConfig::new("/custom/cassettes").with_speed(10.0);
+        let config = RunConfig::new().with_mock(mock_cfg);
+
+        assert!(config.is_mock_mode());
+        assert!(config.mock_config.is_some());
+
+        let mock = config.mock_config.unwrap();
+        assert_eq!(mock.cassette_dir, PathBuf::from("/custom/cassettes"));
+        assert!((mock.speed - 10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_run_config_no_mock() {
+        let config = RunConfig::new();
+        assert!(!config.is_mock_mode());
+        assert!(config.mock_config.is_none());
     }
 }

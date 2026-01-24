@@ -1,0 +1,78 @@
+[package]
+name = "ralph-web"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Web dashboard for Ralph Orchestrator - live monitoring, session browser, loop management"
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = []
+# Enable test mode with MockLoopManager and test-only endpoints.
+# SECURITY: Production builds MUST NOT include this feature.
+test-mode = ["dep:uuid", "dep:subtle", "dep:serde_yaml", "dep:libc"]
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ralph-web"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+
+# Async runtime
+tokio.workspace = true
+
+# Static file serving and CORS
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Async trait support
+async-trait = "0.1"
+
+# UUID generation (for test mode session IDs)
+uuid = { version = "1.0", features = ["v4"], optional = true }
+
+# Constant-time cryptographic comparison (for test mode secret validation)
+subtle = { version = "2.5", optional = true }
+
+# YAML parsing for test scenarios
+serde_yaml = { version = "0.9", optional = true }
+
+# libc for O_NOFOLLOW flag on Unix (test mode TOCTOU-safe file access)
+libc = { version = "0.2", optional = true }
+
+# Async stream utilities (for WebSocket)
+futures-util = "0.3"
+
+# Logging/tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# File watching
+notify = "7"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Process signaling (Unix)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+
+[dev-dependencies]
+# HTTP client for testing
+reqwest = { workspace = true, features = ["json"] }
+tokio-test = "0.4"
+# For ServiceExt::oneshot in tests
+tower = "0.5"
+# Temporary directories for testing
+tempfile = "3"
+# URL encoding for test URIs
+urlencoding = "2"

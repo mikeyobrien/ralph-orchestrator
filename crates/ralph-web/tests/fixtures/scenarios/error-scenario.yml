@@ -1,0 +1,19 @@
+# error-scenario.yml
+# Loop fails with error
+name: error-scenario
+description: Loop fails with error
+iterations:
+  - number: 1
+    hat:
+      id: builder
+      display: "⚙️ Builder"
+    events:
+      - topic: error
+        payload: API rate limited
+    output:
+      - type: text
+        text: "Attempting build..."
+      - type: error
+        text: "Error: API rate limit exceeded"
+    duration_ms: 200
+final_status: failed

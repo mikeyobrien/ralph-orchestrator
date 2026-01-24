@@ -8,6 +8,7 @@ members = [
     "crates/ralph-cli",
     "crates/ralph-bench",
     "crates/ralph-e2e",
+    "crates/ralph-web",
 ]
 exclude = [
     ".eval-sandbox",  # Evaluation sandbox - should never be in workspace

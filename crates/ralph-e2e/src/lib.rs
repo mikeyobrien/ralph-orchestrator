@@ -41,6 +41,7 @@ pub use crate::executor::{
     EventRecord, ExecutionResult, ExecutorError, PromptSource, RalphExecutor, ScenarioConfig,
     resolve_ralph_binary,
 };
+pub use crate::mock::{CassetteError, CassetteResolver, MockConfig, build_mock_cli_args};
 pub use crate::models::{Assertion, ReportFormat, TestResult};
 pub use crate::reporter::{
     AnalyzedResultData, BackendSummary, JsonReporter, MarkdownReporter, QualityBreakdown,
@@ -102,6 +103,7 @@ pub mod analyzer;
 pub mod auth;
 mod backend;
 pub mod executor;
+pub mod mock;
 mod models;
 pub mod reporter;
 pub mod runner;

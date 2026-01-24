@@ -1,0 +1,27 @@
+# basic-success.yml
+# Single iteration that completes successfully
+name: basic-success
+description: Single iteration that completes successfully
+iterations:
+  - number: 1
+    hat:
+      id: builder
+      display: "⚙️ Builder"
+    events:
+      - topic: task.start
+        payload: implement feature
+      - topic: build.ready
+        payload: tests pass
+    output:
+      - type: text
+        text: "Starting implementation..."
+      - type: tool_call
+        name: Bash
+        input: { "command": "cargo build" }
+      - type: tool_result
+        output: "Build successful"
+      - type: complete
+        input_tokens: 1500
+        output_tokens: 800
+    duration_ms: 500
+final_status: completed

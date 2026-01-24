@@ -1,0 +1,48 @@
+# multi-iteration.yml
+# Three iterations with hat changes
+name: multi-iteration
+description: Three iterations with hat changes
+iterations:
+  - number: 1
+    hat:
+      id: ralph
+      display: "🎩 Ralph"
+    events:
+      - topic: security.review
+        payload: review code
+    output:
+      - type: text
+        text: "Delegating to security review..."
+      - type: complete
+        input_tokens: 1000
+        output_tokens: 500
+    duration_ms: 300
+  - number: 2
+    hat:
+      id: red-team
+      display: "🔴 Red Team"
+    events:
+      - topic: vulnerability.found
+        payload: XSS in input
+    output:
+      - type: text
+        text: "Found potential XSS vulnerability..."
+      - type: complete
+        input_tokens: 2000
+        output_tokens: 1200
+    duration_ms: 400
+  - number: 3
+    hat:
+      id: security-fixer
+      display: "🛡️ Fixer"
+    events:
+      - topic: fix.applied
+        payload: sanitized inputs
+    output:
+      - type: text
+        text: "Applied input sanitization..."
+      - type: complete
+        input_tokens: 1800
+        output_tokens: 900
+    duration_ms: 350
+final_status: completed

@@ -41,5 +41,8 @@ regex.workspace = true
 # Async trait support
 async-trait.workspace = true
 
+# Core library for session playback
+ralph-core = { path = "../ralph-core" }
+
 [dev-dependencies]
 tempfile.workspace = true
