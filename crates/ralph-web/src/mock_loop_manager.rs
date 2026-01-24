@@ -13,11 +13,13 @@ use crate::loop_manager::{ActiveLoopInfo, LoopConfig, LoopError, LoopManagerTrai
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 /// Mock loop status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -177,12 +179,12 @@ impl MockLoopManager {
         }
     }
 
-    /// Generate a cryptographically random session ID.
+    /// Generate a timestamp-based session ID.
     ///
-    /// SECURITY: Uses UUID v4 instead of predictable timestamps to prevent
-    /// session enumeration attacks.
+    /// Uses the same format as the real LoopManager (e.g., "2026-01-24T10-33-47")
+    /// so the SessionStore can find and serve the session data.
     fn generate_session_id() -> String {
-        Uuid::new_v4().to_string()
+        Utc::now().format("%Y-%m-%dT%H-%M-%S").to_string()
     }
 
     /// Load a scenario for later use.
@@ -216,11 +218,25 @@ impl MockLoopManager {
         }
 
         state.current_iteration += 1;
-        tracing::info!(
-            "Advanced loop {} to iteration {}",
+        let iteration = state.current_iteration;
+        let hat = state.current_hat.clone();
+
+        // Write iteration_started event to diagnostics
+        // Note: Need to drop the lock before calling write methods
+        drop(loops);
+        self.write_orchestration_event(session_id, iteration, &hat, "iteration_started")?;
+
+        // Write initial output for the new iteration
+        self.write_agent_output(
             session_id,
-            state.current_iteration
-        );
+            iteration,
+            &hat,
+            &MockOutput::Text {
+                text: format!("🔄 Starting iteration {}", iteration),
+            },
+        )?;
+
+        tracing::info!("Advanced loop {} to iteration {}", session_id, iteration);
 
         Ok(())
     }
@@ -239,9 +255,24 @@ impl MockLoopManager {
             });
         }
 
+        let iteration = state.current_iteration;
+        let hat = state.current_hat.clone();
+
+        // Drop the lock before writing
+        drop(loops);
+
+        // Write event as agent output text
+        self.write_agent_output(
+            session_id,
+            iteration,
+            &hat,
+            &MockOutput::Text {
+                text: format!("📨 Event: {} - {}", event.topic, event.payload),
+            },
+        )?;
+
         tracing::info!("Injected event {} into loop {}", event.topic, session_id);
 
-        // In a full implementation, this would write to the diagnostics JSONL
         Ok(())
     }
 
@@ -280,6 +311,166 @@ impl MockLoopManager {
 
         tracing::info!("MockLoopManager state reset");
     }
+
+    /// Write diagnostic files to disk for a session.
+    ///
+    /// Creates the session directory and writes initial `orchestration.jsonl`
+    /// with an iteration_started event. This allows the FileWatcher to detect
+    /// the new session and stream events to the WebSocket.
+    fn write_initial_diagnostics(&self, session_id: &str, hat: &str) -> Result<(), LoopError> {
+        let session_dir = self.diagnostics_path.join(session_id);
+
+        // Create session directory
+        fs::create_dir_all(&session_dir).map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to create session directory: {}", e),
+        })?;
+
+        // Write orchestration.jsonl with iteration_started event
+        let orchestration_path = session_dir.join("orchestration.jsonl");
+        let event = json!({
+            "timestamp": Utc::now().to_rfc3339(),
+            "iteration": 1,
+            "hat": hat,
+            "event": { "type": "iteration_started" }
+        });
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&orchestration_path)
+            .map_err(|e| LoopError::SpawnFailed {
+                message: format!("Failed to open orchestration.jsonl: {}", e),
+            })?;
+
+        writeln!(file, "{}", event).map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to write to orchestration.jsonl: {}", e),
+        })?;
+
+        // Ensure content is flushed to disk for FileWatcher to detect
+        file.sync_all().map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to sync orchestration.jsonl: {}", e),
+        })?;
+
+        tracing::debug!(
+            "Wrote initial diagnostics for session {} to {:?}",
+            session_id,
+            session_dir
+        );
+
+        Ok(())
+    }
+
+    /// Write agent output to the diagnostics file.
+    fn write_agent_output(
+        &self,
+        session_id: &str,
+        iteration: u32,
+        hat: &str,
+        output: &MockOutput,
+    ) -> Result<(), LoopError> {
+        let session_dir = self.diagnostics_path.join(session_id);
+        let output_path = session_dir.join("agent-output.jsonl");
+
+        let event = match output {
+            MockOutput::Text { text } => json!({
+                "ts": Utc::now().to_rfc3339(),
+                "iteration": iteration,
+                "hat": hat,
+                "type": "text",
+                "text": text
+            }),
+            MockOutput::ToolCall { name, input } => json!({
+                "ts": Utc::now().to_rfc3339(),
+                "iteration": iteration,
+                "hat": hat,
+                "type": "tool_call",
+                "name": name,
+                "input": input
+            }),
+            MockOutput::ToolResult { output } => json!({
+                "ts": Utc::now().to_rfc3339(),
+                "iteration": iteration,
+                "hat": hat,
+                "type": "tool_result",
+                "output": output
+            }),
+            MockOutput::Complete {
+                input_tokens,
+                output_tokens,
+            } => json!({
+                "ts": Utc::now().to_rfc3339(),
+                "iteration": iteration,
+                "hat": hat,
+                "type": "complete",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens
+            }),
+            MockOutput::Error { text } => json!({
+                "ts": Utc::now().to_rfc3339(),
+                "iteration": iteration,
+                "hat": hat,
+                "type": "error",
+                "text": text
+            }),
+        };
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&output_path)
+            .map_err(|e| LoopError::SpawnFailed {
+                message: format!("Failed to open agent-output.jsonl: {}", e),
+            })?;
+
+        writeln!(file, "{}", event).map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to write to agent-output.jsonl: {}", e),
+        })?;
+
+        // Ensure content is flushed to disk for FileWatcher to detect
+        file.sync_all().map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to sync agent-output.jsonl: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    /// Write an orchestration event (iteration started, hat selected, etc.)
+    fn write_orchestration_event(
+        &self,
+        session_id: &str,
+        iteration: u32,
+        hat: &str,
+        event_type: &str,
+    ) -> Result<(), LoopError> {
+        let session_dir = self.diagnostics_path.join(session_id);
+        let orchestration_path = session_dir.join("orchestration.jsonl");
+
+        let event = json!({
+            "timestamp": Utc::now().to_rfc3339(),
+            "iteration": iteration,
+            "hat": hat,
+            "event": { "type": event_type }
+        });
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&orchestration_path)
+            .map_err(|e| LoopError::SpawnFailed {
+                message: format!("Failed to open orchestration.jsonl: {}", e),
+            })?;
+
+        writeln!(file, "{}", event).map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to write to orchestration.jsonl: {}", e),
+        })?;
+
+        // Ensure content is flushed to disk for FileWatcher to detect
+        file.sync_all().map_err(|e| LoopError::SpawnFailed {
+            message: format!("Failed to sync orchestration.jsonl: {}", e),
+        })?;
+
+        Ok(())
+    }
 }
 
 impl Default for MockLoopManager {
@@ -301,6 +492,20 @@ impl LoopManagerTrait for MockLoopManager {
 
         let session_id = Self::generate_session_id();
         let started_at = Utc::now().to_rfc3339();
+        let initial_hat = "ralph".to_string();
+
+        // Write initial diagnostics files so FileWatcher can detect the session
+        self.write_initial_diagnostics(&session_id, &initial_hat)?;
+
+        // Write initial agent output so something appears on the live page
+        self.write_agent_output(
+            &session_id,
+            1,
+            &initial_hat,
+            &MockOutput::Text {
+                text: format!("🎩 Starting mock loop with prompt: {}", config.prompt),
+            },
+        )?;
 
         let state = MockLoopState {
             session_id: session_id.clone(),
@@ -308,7 +513,7 @@ impl LoopManagerTrait for MockLoopManager {
             prompt: config.prompt,
             working_dir: config.working_dir,
             current_iteration: 1,
-            current_hat: "ralph".to_string(),
+            current_hat: initial_hat,
             status: MockLoopStatus::Running,
             started_at,
             scenario_name: None,
@@ -401,8 +606,9 @@ max_iterations: 1
 
         let session_id = manager.start(config).await.unwrap();
 
-        // Session ID should be UUID v4 format
-        assert!(Uuid::parse_str(&session_id).is_ok());
+        // Session ID should be timestamp format (e.g., "2026-01-24T10-33-47")
+        assert!(session_id.contains('T'));
+        assert!(session_id.contains('-'));
 
         // Should be active
         assert!(manager.has_active_loops().await);
@@ -545,16 +751,14 @@ max_iterations: 1
     }
 
     #[tokio::test]
-    async fn test_session_ids_are_uuid_v4() {
-        // Generate 10 session IDs and verify they're all valid UUID v4
-        for _ in 0..10 {
+    async fn test_session_ids_are_timestamps() {
+        // Generate session IDs and verify they're valid timestamp format
+        for _ in 0..3 {
             let id = MockLoopManager::generate_session_id();
-            let uuid = Uuid::parse_str(&id).expect("Should be valid UUID");
-            assert_eq!(
-                uuid.get_version(),
-                Some(uuid::Version::Random),
-                "Should be UUID v4"
-            );
+            // Should be format like "2026-01-24T10-33-47"
+            assert!(id.contains('T'), "Should contain T separator");
+            assert_eq!(id.matches('-').count(), 4, "Should have 4 dashes");
+            assert_eq!(id.len(), 19, "Should be 19 chars (YYYY-MM-DDTHH-MM-SS)");
         }
     }
 }

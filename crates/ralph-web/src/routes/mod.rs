@@ -50,7 +50,7 @@ async fn get_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<crate::models::Session>, (StatusCode, Json<ErrorResponse>)> {
-    let store = state.sessions.read().map_err(|_| {
+    let mut store = state.sessions.write().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -74,7 +74,7 @@ async fn list_iterations(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<crate::models::Iteration>>, (StatusCode, Json<ErrorResponse>)> {
-    let store = state.sessions.read().map_err(|_| {
+    let mut store = state.sessions.write().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -101,7 +101,7 @@ async fn get_iteration_content(
     State(state): State<AppState>,
     Path((session_id, iteration_num)): Path<(String, u32)>,
 ) -> Result<Json<IterationContent>, (StatusCode, Json<ErrorResponse>)> {
-    let store = state.sessions.read().map_err(|_| {
+    let mut store = state.sessions.write().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {

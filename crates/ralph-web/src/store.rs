@@ -73,16 +73,34 @@ impl SessionStore {
     }
 
     /// Gets a session by ID.
-    pub fn get(&self, id: &SessionId) -> Option<&Session> {
-        self.sessions.get(id)
+    ///
+    /// If the session is not in the cache, attempts to load it from disk.
+    pub fn get(&mut self, id: &SessionId) -> Option<&Session> {
+        // Check cache first
+        if self.sessions.contains_key(id) {
+            return self.sessions.get(id);
+        }
+
+        // Try to load from disk if not cached
+        let session_path = self.base_path.join(id);
+        if session_path.is_dir()
+            && let Some(session) = self.parse_session(&session_path)
+        {
+            self.sessions.insert(id.clone(), session);
+            return self.sessions.get(id);
+        }
+
+        None
     }
 
     /// Gets iteration content for a specific iteration.
     pub fn get_iteration_content(
-        &self,
+        &mut self,
         session_id: &SessionId,
         iteration_num: u32,
     ) -> Option<IterationContent> {
+        // First ensure session is loaded
+        let _ = self.get(session_id)?;
         let session = self.sessions.get(session_id)?;
 
         // Find the iteration
