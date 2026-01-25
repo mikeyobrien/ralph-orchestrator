@@ -228,6 +228,17 @@ impl PtyExecutor {
         self.tui_mode = enabled;
     }
 
+    /// Updates the backend configuration for this executor.
+    ///
+    /// This allows switching backends between iterations without recreating
+    /// the entire executor. Critical for hat-level backend configuration support.
+    ///
+    /// # Arguments
+    /// * `backend` - The new backend configuration to use
+    pub fn set_backend(&mut self, backend: CliBackend) {
+        self.backend = backend;
+    }
+
     /// Returns a handle for TUI integration.
     ///
     /// Can only be called once - panics if called multiple times.

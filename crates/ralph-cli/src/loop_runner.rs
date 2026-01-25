@@ -468,48 +468,61 @@ pub async fn run_loop_impl(
         }
 
         // Execute the prompt (interactive or autonomous mode)
-        // Determine which backend to use for this hat
+        // Determine which backend to use for this hat and the appropriate timeout
         // Hat-level backend configuration takes precedence over global cli.backend
-        let effective_backend = if let Some(hat_backend) = event_loop.get_hat_backend(&hat_id) {
-            // Hat has custom backend configuration - use it
-            match CliBackend::from_hat_backend(hat_backend) {
-                Ok(hat_backend_instance) => {
-                    debug!(
-                        "Using hat-level backend for '{}': {:?}",
-                        hat_id,
-                        hat_backend
-                    );
-                    hat_backend_instance
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to create backend from hat configuration for '{}': {}. Falling back to global backend.",
-                        hat_id, e
-                    );
-                    backend.clone()
+
+        // Step 1: Get hat backend configuration (only called once)
+        let hat_backend_opt = event_loop.get_hat_backend(&hat_id);
+
+        // Step 2: Resolve effective backend and determine backend name for timeout
+        let (effective_backend, backend_name_for_timeout) = match hat_backend_opt {
+            Some(hat_backend) => {
+                // Hat has custom backend configuration
+                match CliBackend::from_hat_backend(hat_backend) {
+                    Ok(hat_backend_instance) => {
+                        debug!(
+                            "Using hat-level backend for '{}': {:?}",
+                            hat_id, hat_backend
+                        );
+
+                        // Determine backend name for timeout based on hat backend type
+                        let backend_name = match hat_backend {
+                            ralph_core::HatBackend::Named(name) => name.as_str(),
+                            ralph_core::HatBackend::KiroAgent { .. } => "kiro",
+                            // For Custom backends, use the command name directly
+                            // This allows custom backends to have their own timeout configuration
+                            ralph_core::HatBackend::Custom { command, .. } => {
+                                // Try to extract backend name from command path
+                                // e.g., "/usr/bin/codex" -> "codex", "claude" -> "claude"
+                                command.split('/').last().unwrap_or(command.as_str())
+                            }
+                        };
+
+                        (hat_backend_instance, backend_name)
+                    }
+                    Err(e) => {
+                        // Failed to create backend from hat config - fall back to global
+                        warn!(
+                            "Failed to create backend from hat configuration for '{}': {}. Falling back to global backend.",
+                            hat_id, e
+                        );
+                        // IMPORTANT: Use global backend name for timeout since we're using global backend
+                        (backend.clone(), config.cli.backend.as_str())
+                    }
                 }
             }
-        } else {
-            // No custom backend - use global configuration
-            debug!(
-                "Using global backend for '{}': {}",
-                hat_id, config.cli.backend
-            );
-            backend.clone()
+            None => {
+                // No custom backend - use global configuration
+                debug!(
+                    "Using global backend for '{}': {}",
+                    hat_id, config.cli.backend
+                );
+                (backend.clone(), config.cli.backend.as_str())
+            }
         };
 
-        // Get per-adapter timeout from config
-        // Use the effective backend's command name to determine timeout
-        let backend_name = if let Some(hat_backend) = event_loop.get_hat_backend(&hat_id) {
-            match hat_backend {
-                ralph_core::HatBackend::Named(name) => name.as_str(),
-                ralph_core::HatBackend::KiroAgent { .. } => "kiro",
-                ralph_core::HatBackend::Custom { .. } => &config.cli.backend,
-            }
-        } else {
-            &config.cli.backend
-        };
-        let timeout_secs = config.adapter_settings(backend_name).timeout;
+        // Step 3: Get timeout from config based on actual backend being used
+        let timeout_secs = config.adapter_settings(backend_name_for_timeout).timeout;
         let timeout = Some(Duration::from_secs(timeout_secs));
 
         // For TUI mode, get the shared lines buffer for this iteration.
@@ -716,6 +729,10 @@ async fn execute_pty(
     let tui_connected = executor.is_some();
     let mut temp_executor;
     let exec = if let Some(e) = executor {
+        // Update the executor's backend to use hat-level configuration
+        // This is critical for hat-level backend support - without this update,
+        // the executor would continue using the global backend it was created with
+        e.set_backend(backend.clone());
         e
     } else {
         let idle_timeout_secs = if interactive {
