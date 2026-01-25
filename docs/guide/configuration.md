@@ -10,6 +10,38 @@ Ralph uses `ralph.yml` by default. Override with:
 ralph run -c custom-config.yml
 ```
 
+## CLI Config Overrides
+
+You can override specific core fields from the command line without creating a separate config file. This is useful for:
+
+- Running parallel Ralph instances with isolated scratchpads
+- Testing with different specs directories
+- CI/CD pipelines with dynamic paths
+
+**Syntax:** `-c core.field=value`
+
+**Supported fields:**
+
+| Field | Description |
+|-------|-------------|
+| `core.scratchpad` | Path to scratchpad file |
+| `core.specs_dir` | Path to specs directory |
+
+**Examples:**
+
+```bash
+# Override scratchpad (loads ralph.yml + applies override)
+ralph run -c core.scratchpad=.agent/feature-auth/scratchpad.md
+
+# Explicit config + override
+ralph run -c ralph.yml -c core.scratchpad=.agent/feature-auth/scratchpad.md
+
+# Multiple overrides
+ralph run -c core.scratchpad=.runs/task-1/scratchpad.md -c core.specs_dir=./custom-specs/
+```
+
+Overrides are applied after `ralph.yml` is loaded, so they take precedence. The scratchpad directory is auto-created if it doesn't exist.
+
 ## Full Configuration Reference
 
 ```yaml

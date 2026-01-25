@@ -23,7 +23,7 @@ mod task_cli;
 mod tools;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use ralph_adapters::detect_backend;
 use ralph_core::{
     EventHistory, LockError, LoopContext, LoopLock, RalphConfig,
@@ -202,7 +202,7 @@ pub enum OutputFormat {
 // Re-export colors from display module for use in this file
 use display::colors;
 
-/// Source for configuration: file path, builtin preset, or remote URL.
+/// Source for configuration: file path, builtin preset, remote URL, or config override.
 #[derive(Debug, Clone)]
 pub enum ConfigSource {
     /// Local file path (default behavior)
@@ -211,16 +211,30 @@ pub enum ConfigSource {
     Builtin(String),
     /// Remote URL (e.g., "http://example.com/preset.yml")
     Remote(String),
+    /// Config override (e.g., "core.scratchpad=.ralph/feature/scratchpad.md")
+    Override { key: String, value: String },
 }
 
 impl ConfigSource {
     /// Parse a config source string into its variant.
     ///
     /// Format:
+    /// - `core.field=value` → Override (for core.* fields)
     /// - `builtin:preset-name` → Builtin preset
     /// - `http://...` or `https://...` → Remote URL
     /// - Anything else → File path
     fn parse(s: &str) -> Self {
+        // Check for core.* override pattern first (prevents false positives on paths with '=')
+        // Only treat as override if it starts with "core." AND contains '='
+        if s.starts_with("core.")
+            && let Some((key, value)) = s.split_once('=')
+        {
+            return ConfigSource::Override {
+                key: key.to_string(),
+                value: value.to_string(),
+            };
+        }
+        // Existing logic unchanged
         if let Some(name) = s.strip_prefix("builtin:") {
             ConfigSource::Builtin(name.to_string())
         } else if s.starts_with("http://") || s.starts_with("https://") {
@@ -229,6 +243,99 @@ impl ConfigSource {
             ConfigSource::File(PathBuf::from(s))
         }
     }
+}
+
+/// Known core fields that can be overridden via CLI.
+const KNOWN_CORE_FIELDS: &[&str] = &["scratchpad", "specs_dir"];
+
+/// Applies CLI config overrides to the loaded configuration.
+///
+/// Overrides are in the format `core.field=value` and take precedence
+/// over values from the config file.
+fn apply_config_overrides(
+    config: &mut RalphConfig,
+    sources: &[ConfigSource],
+) -> anyhow::Result<()> {
+    for source in sources {
+        if let ConfigSource::Override { key, value } = source {
+            match key.as_str() {
+                "core.scratchpad" => {
+                    config.core.scratchpad = value.clone();
+                }
+                "core.specs_dir" => {
+                    config.core.specs_dir = value.clone();
+                }
+                other => {
+                    // Note: with core.* prefix requirement in parse(), this branch
+                    // only handles unknown core.* fields
+                    let field = other.strip_prefix("core.").unwrap_or(other);
+                    warn!(
+                        "Unknown core field '{}'. Known fields: {}",
+                        field,
+                        KNOWN_CORE_FIELDS.join(", ")
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Ensures the scratchpad's parent directory exists, creating it if needed.
+fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Result<()> {
+    let scratchpad_path = config.core.resolve_path(&config.core.scratchpad);
+    if let Some(parent) = scratchpad_path.parent()
+        && !parent.exists()
+    {
+        info!("Creating scratchpad directory: {}", parent.display());
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+/// Loads configuration from file sources with override support.
+///
+/// This is the common sync path used by resume_command and clean_command.
+/// For the full async path (including Remote URLs), see run_command.
+///
+/// Returns the loaded config with overrides applied and workspace_root set.
+fn load_config_with_overrides(config_sources: &[ConfigSource]) -> anyhow::Result<RalphConfig> {
+    // Partition sources: file sources vs overrides
+    let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
+        .iter()
+        .partition(|s| !matches!(s, ConfigSource::Override { .. }));
+
+    // Load configuration from first file source, or default ralph.yml
+    let mut config = if let Some(ConfigSource::File(path)) = primary_sources.first() {
+        if path.exists() {
+            RalphConfig::from_file(path)
+                .with_context(|| format!("Failed to load config from {:?}", path))?
+        } else {
+            warn!("Config file {:?} not found, using defaults", path);
+            RalphConfig::default()
+        }
+    } else {
+        // Only overrides specified - load default ralph.yml as base
+        let default_path = PathBuf::from("ralph.yml");
+        if default_path.exists() {
+            RalphConfig::from_file(&default_path)
+                .with_context(|| "Failed to load config from ralph.yml")?
+        } else {
+            RalphConfig::default()
+        }
+    };
+
+    config.normalize();
+
+    // Set workspace_root to current directory
+    config.core.workspace_root =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    // Apply CLI config overrides
+    let override_sources: Vec<_> = overrides.into_iter().cloned().collect();
+    apply_config_overrides(&mut config, &override_sources)?;
+
+    Ok(config)
 }
 
 /// Ralph Orchestrator - Multi-agent orchestration framework
@@ -241,9 +348,10 @@ struct Cli {
     // ─────────────────────────────────────────────────────────────────────────
     // Global options (available for all subcommands)
     // ─────────────────────────────────────────────────────────────────────────
-    /// Path to configuration file
-    #[arg(short, long, default_value = "ralph.yml", global = true)]
-    config: PathBuf,
+    /// Configuration source: file path, builtin:preset, URL, or core.field=value override.
+    /// Can be specified multiple times. Overrides are applied after config file loading.
+    #[arg(short, long, default_value = "ralph.yml", global = true, action = ArgAction::Append)]
+    config: Vec<String>,
 
     /// Verbose output
     #[arg(short, long, global = true)]
@@ -624,18 +732,24 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Parse all config sources from CLI
+    let config_sources: Vec<ConfigSource> =
+        cli.config.iter().map(|s| ConfigSource::parse(s)).collect();
+
     match cli.command {
-        Some(Commands::Run(args)) => run_command(cli.config, cli.verbose, cli.color, args).await,
+        Some(Commands::Run(args)) => {
+            run_command(&config_sources, cli.verbose, cli.color, args).await
+        }
         Some(Commands::Resume(args)) => {
-            resume_command(cli.config, cli.verbose, cli.color, args).await
+            resume_command(&config_sources, cli.verbose, cli.color, args).await
         }
         Some(Commands::Events(args)) => events_command(cli.color, args),
         Some(Commands::Init(args)) => init_command(cli.color, args),
-        Some(Commands::Clean(args)) => clean_command(cli.config, cli.color, args),
+        Some(Commands::Clean(args)) => clean_command(&config_sources, cli.color, args),
         Some(Commands::Emit(args)) => emit_command(cli.color, args),
-        Some(Commands::Plan(args)) => plan_command(cli.config, cli.color, args),
-        Some(Commands::CodeTask(args)) => code_task_command(cli.config, cli.color, args),
-        Some(Commands::Task(args)) => code_task_command(cli.config, cli.color, args),
+        Some(Commands::Plan(args)) => plan_command(&config_sources, cli.color, args),
+        Some(Commands::CodeTask(args)) => code_task_command(&config_sources, cli.color, args),
+        Some(Commands::Task(args)) => code_task_command(&config_sources, cli.color, args),
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()),
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         None => {
@@ -657,64 +771,84 @@ async fn main() -> Result<()> {
                 quiet: false,
                 record_session: None,
             };
-            run_command(cli.config, cli.verbose, cli.color, args).await
+            run_command(&config_sources, cli.verbose, cli.color, args).await
         }
     }
 }
 
 async fn run_command(
-    config_path: PathBuf,
+    config_sources: &[ConfigSource],
     verbose: bool,
     color_mode: ColorMode,
     args: RunArgs,
 ) -> Result<()> {
-    // Parse config source (file, builtin, or remote)
-    let config_source = ConfigSource::parse(config_path.to_string_lossy().as_ref());
+    // Partition sources: file/builtin/remote sources vs overrides
+    let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
+        .iter()
+        .partition(|s| !matches!(s, ConfigSource::Override { .. }));
 
-    // Load configuration based on source type
-    let mut config = match config_source {
-        ConfigSource::File(path) => {
-            if path.exists() {
-                RalphConfig::from_file(&path)
-                    .with_context(|| format!("Failed to load config from {:?}", path))?
-            } else {
-                warn!("Config file {:?} not found, using defaults", path);
-                RalphConfig::default()
+    // Warn if multiple config sources are specified
+    if primary_sources.len() > 1 {
+        warn!("Multiple config sources specified, using first one. Others ignored.");
+    }
+
+    // Load configuration based on first primary source, or default if only overrides
+    let mut config = if let Some(source) = primary_sources.first() {
+        match source {
+            ConfigSource::File(path) => {
+                if path.exists() {
+                    RalphConfig::from_file(path)
+                        .with_context(|| format!("Failed to load config from {:?}", path))?
+                } else {
+                    warn!("Config file {:?} not found, using defaults", path);
+                    RalphConfig::default()
+                }
             }
-        }
-        ConfigSource::Builtin(name) => {
-            let preset = presets::get_preset(&name).ok_or_else(|| {
-                let available = presets::preset_names().join(", ");
-                anyhow::anyhow!(
-                    "Unknown preset '{}'. Run `ralph run --list-presets` to see available presets.\n\nAvailable: {}",
-                    name,
-                    available
-                )
-            })?;
-            RalphConfig::parse_yaml(preset.content)
-                .with_context(|| format!("Failed to parse builtin preset '{}'", name))?
-        }
-        ConfigSource::Remote(url) => {
-            info!("Fetching config from {}", url);
-            let response = reqwest::get(&url)
-                .await
-                .with_context(|| format!("Failed to fetch config from {}", url))?;
-
-            if !response.status().is_success() {
-                anyhow::bail!(
-                    "Failed to fetch config from {}: HTTP {}",
-                    url,
-                    response.status()
-                );
+            ConfigSource::Builtin(name) => {
+                let preset = presets::get_preset(name).ok_or_else(|| {
+                    let available = presets::preset_names().join(", ");
+                    anyhow::anyhow!(
+                        "Unknown preset '{}'. Run `ralph run --list-presets` to see available presets.\n\nAvailable: {}",
+                        name,
+                        available
+                    )
+                })?;
+                RalphConfig::parse_yaml(preset.content)
+                    .with_context(|| format!("Failed to parse builtin preset '{}'", name))?
             }
+            ConfigSource::Remote(url) => {
+                info!("Fetching config from {}", url);
+                let response = reqwest::get(url)
+                    .await
+                    .with_context(|| format!("Failed to fetch config from {}", url))?;
 
-            let content = response
-                .text()
-                .await
-                .with_context(|| format!("Failed to read config content from {}", url))?;
+                if !response.status().is_success() {
+                    anyhow::bail!(
+                        "Failed to fetch config from {}: HTTP {}",
+                        url,
+                        response.status()
+                    );
+                }
 
-            RalphConfig::parse_yaml(&content)
-                .with_context(|| format!("Failed to parse config from {}", url))?
+                let content = response
+                    .text()
+                    .await
+                    .with_context(|| format!("Failed to read config content from {}", url))?;
+
+                RalphConfig::parse_yaml(&content)
+                    .with_context(|| format!("Failed to parse config from {}", url))?
+            }
+            ConfigSource::Override { .. } => unreachable!("Partitioned out overrides"),
+        }
+    } else {
+        // Only overrides specified - load default ralph.yml as base
+        let default_path = PathBuf::from("ralph.yml");
+        if default_path.exists() {
+            RalphConfig::from_file(&default_path)
+                .with_context(|| "Failed to load config from ralph.yml")?
+        } else {
+            warn!("Config file ralph.yml not found, using defaults");
+            RalphConfig::default()
         }
     };
 
@@ -726,6 +860,10 @@ async fn run_command(
     // defaults to cwd at deserialize time - but we need it set to the actual runtime cwd.
     config.core.workspace_root =
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    // Apply CLI config overrides (takes precedence over config file values)
+    let override_sources: Vec<_> = overrides.into_iter().cloned().collect();
+    apply_config_overrides(&mut config, &override_sources)?;
 
     // Handle --continue mode: check scratchpad exists before proceeding
     let resume = args.continue_mode;
@@ -837,6 +975,8 @@ async fn run_command(
         );
         println!("  Max iterations: {}", config.event_loop.max_iterations);
         println!("  Max runtime: {}s", config.event_loop.max_runtime_seconds);
+        println!("  Scratchpad: {}", config.core.scratchpad);
+        println!("  Specs dir: {}", config.core.specs_dir);
         println!("  Backend: {}", config.cli.backend);
         println!("  Verbose: {}", config.verbose);
         // Execution mode info
@@ -849,6 +989,10 @@ async fn run_command(
         }
         return Ok(());
     }
+
+    // Ensure scratchpad directory exists (auto-create with depth limit)
+    // This is done after dry-run check to avoid creating directories during dry-run
+    ensure_scratchpad_directory(&config)?;
 
     // Get the prompt for lock metadata (short version for display)
     let prompt_summary = config
@@ -1008,7 +1152,7 @@ fn generate_loop_id() -> String {
 /// user can run `ralph run --continue` to restart reading existing scratchpad,
 /// continuing from where it left off."
 async fn resume_command(
-    config_path: PathBuf,
+    config_sources: &[ConfigSource],
     verbose: bool,
     color_mode: ColorMode,
     args: ResumeArgs,
@@ -1020,20 +1164,8 @@ async fn resume_command(
         colors::RESET
     );
 
-    // Load configuration
-    let mut config = if config_path.exists() {
-        RalphConfig::from_file(&config_path)
-            .with_context(|| format!("Failed to load config from {:?}", config_path))?
-    } else {
-        warn!("Config file {:?} not found, using defaults", config_path);
-        RalphConfig::default()
-    };
-
-    config.normalize();
-
-    // Set workspace_root to current directory (critical for E2E tests in isolated workspaces).
-    config.core.workspace_root =
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    // Load config with overrides applied
+    let mut config = load_config_with_overrides(config_sources)?;
 
     // Check that scratchpad exists (required for resume)
     let scratchpad_path = std::path::Path::new(&config.core.scratchpad);
@@ -1285,7 +1417,11 @@ fn events_command(color_mode: ColorMode, args: EventsArgs) -> Result<()> {
     Ok(())
 }
 
-fn clean_command(config_path: PathBuf, color_mode: ColorMode, args: CleanArgs) -> Result<()> {
+fn clean_command(
+    config_sources: &[ConfigSource],
+    color_mode: ColorMode,
+    args: CleanArgs,
+) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
 
     // If --diagnostics flag is set, clean diagnostics directory
@@ -1294,15 +1430,8 @@ fn clean_command(config_path: PathBuf, color_mode: ColorMode, args: CleanArgs) -
         return ralph_cli::clean_diagnostics(&workspace_root, use_colors, args.dry_run);
     }
 
-    // Otherwise, clean .agent directory (existing behavior)
-    // Load configuration
-    let config = if config_path.exists() {
-        RalphConfig::from_file(&config_path)
-            .with_context(|| format!("Failed to load config from {:?}", config_path))?
-    } else {
-        warn!("Config file {:?} not found, using defaults", config_path);
-        RalphConfig::default()
-    };
+    // Load config with overrides applied
+    let config = load_config_with_overrides(config_sources)?;
 
     // Extract the .agent directory path from scratchpad path
     let scratchpad_path = Path::new(&config.core.scratchpad);
@@ -1459,7 +1588,11 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
 ///
 /// This is a thin wrapper that bypasses Ralph's event loop entirely.
 /// It spawns the AI backend with the bundled PDD SOP for interactive planning.
-fn plan_command(config_path: PathBuf, color_mode: ColorMode, args: PlanArgs) -> Result<()> {
+fn plan_command(
+    config_sources: &[ConfigSource],
+    color_mode: ColorMode,
+    args: PlanArgs,
+) -> Result<()> {
     use sop_runner::{Sop, SopRunConfig, SopRunError};
 
     let use_colors = color_mode.should_use_colors();
@@ -1476,11 +1609,17 @@ fn plan_command(config_path: PathBuf, color_mode: ColorMode, args: PlanArgs) -> 
         println!("Starting {} session...", Sop::Pdd.name());
     }
 
+    // Extract first file source for config path
+    let config_path = config_sources.iter().find_map(|s| match s {
+        ConfigSource::File(path) => Some(path.clone()),
+        _ => None,
+    });
+
     let config = SopRunConfig {
         sop: Sop::Pdd,
         user_input: args.idea,
         backend_override: args.backend,
-        config_path: Some(config_path),
+        config_path,
     };
 
     sop_runner::run_sop(config).map_err(|e| match e {
@@ -1498,7 +1637,7 @@ fn plan_command(config_path: PathBuf, color_mode: ColorMode, args: PlanArgs) -> 
 /// This is a thin wrapper that bypasses Ralph's event loop entirely.
 /// It spawns the AI backend with the bundled code-task-generator SOP.
 fn code_task_command(
-    config_path: PathBuf,
+    config_sources: &[ConfigSource],
     color_mode: ColorMode,
     args: CodeTaskArgs,
 ) -> Result<()> {
@@ -1518,11 +1657,17 @@ fn code_task_command(
         println!("Starting {} session...", Sop::CodeTaskGenerator.name());
     }
 
+    // Extract first file source for config path
+    let config_path = config_sources.iter().find_map(|s| match s {
+        ConfigSource::File(path) => Some(path.clone()),
+        _ => None,
+    });
+
     let config = SopRunConfig {
         sop: Sop::CodeTaskGenerator,
         user_input: args.input,
         backend_override: args.backend,
-        config_path: Some(config_path),
+        config_path,
     };
 
     sop_runner::run_sop(config).map_err(|e| match e {
@@ -1627,5 +1772,224 @@ mod tests {
             ConfigSource::File(path) => assert_eq!(path, std::path::PathBuf::from("ralph.yml")),
             _ => panic!("Expected File variant"),
         }
+    }
+
+    #[test]
+    fn test_config_source_parse_override_scratchpad() {
+        let source = ConfigSource::parse("core.scratchpad=.ralph/feature/scratchpad.md");
+        match source {
+            ConfigSource::Override { key, value } => {
+                assert_eq!(key, "core.scratchpad");
+                assert_eq!(value, ".ralph/feature/scratchpad.md");
+            }
+            _ => panic!("Expected Override variant"),
+        }
+    }
+
+    #[test]
+    fn test_config_source_parse_override_specs_dir() {
+        let source = ConfigSource::parse("core.specs_dir=./my-specs/");
+        match source {
+            ConfigSource::Override { key, value } => {
+                assert_eq!(key, "core.specs_dir");
+                assert_eq!(value, "./my-specs/");
+            }
+            _ => panic!("Expected Override variant"),
+        }
+    }
+
+    #[test]
+    fn test_config_source_parse_file_with_equals() {
+        // Paths containing '=' but not starting with 'core.' should be treated as files
+        let source = ConfigSource::parse("path/with=equals.yml");
+        match source {
+            ConfigSource::File(path) => {
+                assert_eq!(path, std::path::PathBuf::from("path/with=equals.yml"))
+            }
+            _ => panic!("Expected File variant for path with equals sign"),
+        }
+    }
+
+    #[test]
+    fn test_config_source_parse_core_without_equals() {
+        // "core.field" without '=' should be treated as a file path (will fail to load)
+        let source = ConfigSource::parse("core.field");
+        match source {
+            ConfigSource::File(path) => assert_eq!(path, std::path::PathBuf::from("core.field")),
+            _ => panic!("Expected File variant for core.field without ="),
+        }
+    }
+
+    #[test]
+    fn test_apply_config_overrides_scratchpad() {
+        let mut config = RalphConfig::default();
+        let sources = vec![ConfigSource::Override {
+            key: "core.scratchpad".to_string(),
+            value: ".custom/scratch.md".to_string(),
+        }];
+        apply_config_overrides(&mut config, &sources).unwrap();
+        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+    }
+
+    #[test]
+    fn test_apply_config_overrides_specs_dir() {
+        let mut config = RalphConfig::default();
+        let sources = vec![ConfigSource::Override {
+            key: "core.specs_dir".to_string(),
+            value: "./specifications/".to_string(),
+        }];
+        apply_config_overrides(&mut config, &sources).unwrap();
+        assert_eq!(config.core.specs_dir, "./specifications/");
+    }
+
+    #[test]
+    fn test_apply_config_overrides_multiple() {
+        let mut config = RalphConfig::default();
+        let sources = vec![
+            ConfigSource::Override {
+                key: "core.scratchpad".to_string(),
+                value: ".custom/scratch.md".to_string(),
+            },
+            ConfigSource::Override {
+                key: "core.specs_dir".to_string(),
+                value: "./my-specs/".to_string(),
+            },
+        ];
+        apply_config_overrides(&mut config, &sources).unwrap();
+        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(config.core.specs_dir, "./my-specs/");
+    }
+
+    #[test]
+    fn test_apply_config_overrides_unknown_field() {
+        // Unknown core.* fields should warn but not error
+        let mut config = RalphConfig::default();
+        let original_scratchpad = config.core.scratchpad.clone();
+        let sources = vec![ConfigSource::Override {
+            key: "core.unknown_field".to_string(),
+            value: "some_value".to_string(),
+        }];
+        // Should not error
+        apply_config_overrides(&mut config, &sources).unwrap();
+        // Original values should be unchanged
+        assert_eq!(config.core.scratchpad, original_scratchpad);
+    }
+
+    #[test]
+    fn test_config_source_parse_non_core_with_equals_is_file() {
+        // Non-core.* prefix with '=' should be treated as file path per spec
+        let source = ConfigSource::parse("event_loop.max_iterations=5");
+        match source {
+            ConfigSource::File(path) => {
+                assert_eq!(
+                    path,
+                    std::path::PathBuf::from("event_loop.max_iterations=5")
+                )
+            }
+            _ => panic!("Expected File variant, not Override"),
+        }
+    }
+
+    #[test]
+    fn test_ensure_scratchpad_directory_creates_nested() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+
+        config.core.scratchpad = "a/b/c/scratchpad.md".to_string();
+
+        let result = ensure_scratchpad_directory(&config);
+        assert!(result.is_ok());
+
+        // Verify directory was created
+        let expected_dir = temp_dir.path().join("a/b/c");
+        assert!(expected_dir.exists());
+    }
+
+    #[test]
+    fn test_ensure_scratchpad_directory_noop_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+
+        // Pre-create the directory
+        let subdir = temp_dir.path().join("existing");
+        std::fs::create_dir_all(&subdir).unwrap();
+        config.core.scratchpad = "existing/scratchpad.md".to_string();
+
+        // Should succeed without error (no-op)
+        let result = ensure_scratchpad_directory(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_partition_config_sources_separates_overrides() {
+        let sources = [
+            ConfigSource::File(PathBuf::from("ralph.yml")),
+            ConfigSource::Override {
+                key: "core.scratchpad".to_string(),
+                value: ".custom/scratchpad.md".to_string(),
+            },
+            ConfigSource::Builtin("tdd".to_string()),
+            ConfigSource::Override {
+                key: "core.specs_dir".to_string(),
+                value: "./specs/".to_string(),
+            },
+        ];
+
+        let (primary, overrides): (Vec<_>, Vec<_>) = sources
+            .iter()
+            .partition(|s| !matches!(s, ConfigSource::Override { .. }));
+
+        assert_eq!(primary.len(), 2); // File + Builtin
+        assert_eq!(overrides.len(), 2); // Two overrides
+        assert!(matches!(primary[0], ConfigSource::File(_)));
+        assert!(matches!(primary[1], ConfigSource::Builtin(_)));
+    }
+
+    #[test]
+    fn test_partition_config_sources_only_overrides() {
+        let sources = [ConfigSource::Override {
+            key: "core.scratchpad".to_string(),
+            value: ".custom/scratchpad.md".to_string(),
+        }];
+
+        let (primary, overrides): (Vec<_>, Vec<_>) = sources
+            .iter()
+            .partition(|s| !matches!(s, ConfigSource::Override { .. }));
+
+        assert_eq!(primary.len(), 0); // No primary sources
+        assert_eq!(overrides.len(), 1); // One override
+    }
+
+    #[test]
+    fn test_load_config_from_file_with_overrides() {
+        // Integration test: load a real config file and apply overrides
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.yml");
+        std::fs::write(
+            &config_path,
+            r"
+cli:
+  backend: claude
+core:
+  scratchpad: .agent/scratchpad.md
+  specs_dir: ./specs/
+",
+        )
+        .unwrap();
+
+        let mut config = RalphConfig::from_file(&config_path).unwrap();
+        assert_eq!(config.core.scratchpad, ".agent/scratchpad.md");
+
+        // Apply override
+        let overrides = vec![ConfigSource::Override {
+            key: "core.scratchpad".to_string(),
+            value: ".custom/scratch.md".to_string(),
+        }];
+        apply_config_overrides(&mut config, &overrides).unwrap();
+
+        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(config.core.specs_dir, "./specs/"); // Unchanged
     }
 }

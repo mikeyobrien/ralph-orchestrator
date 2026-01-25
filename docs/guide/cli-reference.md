@@ -8,11 +8,54 @@ These options work with all commands:
 
 | Option | Description |
 |--------|-------------|
-| `-c, --config <FILE>` | Config file path (default: `ralph.yml`) |
+| `-c, --config <SOURCE>` | Config source (can be specified multiple times) |
 | `-v, --verbose` | Verbose output |
 | `--color <MODE>` | Color output: `auto`, `always`, `never` |
 | `-h, --help` | Show help |
 | `-V, --version` | Show version |
+
+### Config Sources (`-c`)
+
+The `-c` flag specifies where to load configuration from. If not provided, `ralph.yml` is loaded by default.
+
+**Config source types:**
+
+| Format | Description |
+|--------|-------------|
+| `ralph.yml` | Local file path |
+| `builtin:preset-name` | Embedded preset |
+| `https://example.com/config.yml` | Remote URL |
+| `core.field=value` | Override a core config field |
+
+Only one config file/preset/URL is used (the first one specified). Overrides can be specified multiple times and layer on top.
+
+**Supported override fields:**
+
+| Field | Description |
+|-------|-------------|
+| `core.scratchpad` | Path to scratchpad file |
+| `core.specs_dir` | Path to specs directory |
+
+**Examples:**
+
+```bash
+# Use custom config file
+ralph run -c production.yml
+
+# Use embedded preset
+ralph run -c builtin:tdd-red-green
+
+# Override scratchpad (loads ralph.yml + applies override)
+ralph run -c core.scratchpad=.agent/feature-x/scratchpad.md
+
+# Explicit config + override
+ralph run -c ralph.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
+
+# Multiple overrides
+ralph run -c core.scratchpad=.runs/task-123/scratchpad.md -c core.specs_dir=./my-specs/
+```
+
+Overrides are applied after config file loading, so they take precedence.
 
 ## Commands
 
@@ -51,6 +94,12 @@ ralph run -p "Implement user authentication"
 
 # Use custom config
 ralph run -c production.yml
+
+# Use builtin preset
+ralph run -c builtin:tdd-red-green
+
+# Override scratchpad for parallel runs
+ralph run -c ralph.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
 
 # Dry run
 ralph run --dry-run
