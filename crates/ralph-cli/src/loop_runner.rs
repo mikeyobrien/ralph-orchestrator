@@ -471,8 +471,9 @@ pub async fn run_loop_impl(
         // Determine which backend to use for this hat and the appropriate timeout
         // Hat-level backend configuration takes precedence over global cli.backend
 
-        // Step 1: Get hat backend configuration (only called once)
-        let hat_backend_opt = event_loop.get_hat_backend(&hat_id);
+        // Step 1: Get hat backend configuration for the active hat (only called once)
+        // Use display_hat (the active hat) instead of hat_id ("ralph" in multi-hat mode)
+        let hat_backend_opt = event_loop.get_hat_backend(&display_hat);
 
         // Step 2: Resolve effective backend and determine backend name for timeout
         let (effective_backend, backend_name_for_timeout) = match hat_backend_opt {
@@ -482,7 +483,7 @@ pub async fn run_loop_impl(
                     Ok(hat_backend_instance) => {
                         debug!(
                             "Using hat-level backend for '{}': {:?}",
-                            hat_id, hat_backend
+                            display_hat, hat_backend
                         );
 
                         // Determine backend name for timeout based on hat backend type
@@ -504,7 +505,7 @@ pub async fn run_loop_impl(
                         // Failed to create backend from hat config - fall back to global
                         warn!(
                             "Failed to create backend from hat configuration for '{}': {}. Falling back to global backend.",
-                            hat_id, e
+                            display_hat, e
                         );
                         // IMPORTANT: Use global backend name for timeout since we're using global backend
                         (backend.clone(), config.cli.backend.as_str())
@@ -515,7 +516,7 @@ pub async fn run_loop_impl(
                 // No custom backend - use global configuration
                 debug!(
                     "Using global backend for '{}': {}",
-                    hat_id, config.cli.backend
+                    display_hat, config.cli.backend
                 );
                 (backend.clone(), config.cli.backend.as_str())
             }
