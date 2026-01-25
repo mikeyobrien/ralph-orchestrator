@@ -31,7 +31,7 @@ hats:
     name: "❓ Socratic Questioner"
     description: "Challenges understanding with probing questions."
     triggers: ["understanding.claimed"]
-    publishes: ["question.asked", "understanding.verified"]
+    publishes: ["question.asked"]
     instructions: |
       Challenge the Explorer's understanding with probing questions.
 
@@ -48,7 +48,10 @@ hats:
       - "How does this handle...?"
       - "What are the implications of...?"
 
-      If understanding is solid and complete: publish understanding.verified
+      If understanding is solid and complete after 2-3 rounds of questioning:
+      - Document the final understanding to the output file
+      - Output LOOP_COMPLETE
+
       Otherwise: publish question.asked with your challenge
 
   answerer:
@@ -66,5 +69,3 @@ hats:
       5. Publish answer.provided
 
       If you can't find the answer, say so honestly and explain what you tried.
-
-      When understanding.verified is published, output LOOP_COMPLETE.

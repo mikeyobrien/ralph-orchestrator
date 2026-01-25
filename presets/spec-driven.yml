@@ -46,8 +46,15 @@ hats:
       - [ ] Are there ambiguous terms that need definition?
       - [ ] Are there missing scenarios?
 
+      NOTE: Be pragmatic. Don't reject specs for minor issues that
+      can be clarified during implementation. Only reject for:
+      - Fundamental ambiguity that would lead to wrong implementation
+      - Missing critical requirements
+
+      After 1 rejection, approve with notes rather than rejecting again.
+
       If issues found: publish spec.rejected with specific feedback
-      If solid: publish spec.approved
+      If solid (or already revised once): publish spec.approved
 
   implementer:
     name: "⚙️ Implementer"

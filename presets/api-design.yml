@@ -72,8 +72,14 @@ hats:
       - [ ] Are there unnecessary concepts to learn?
       - [ ] Can it be misused easily?
 
-      If issues found: publish api.refined with specific feedback
-      If solid: publish api.approved
+      IMPORTANT: Be pragmatic. Only request refinement for critical issues
+      that would make the API unusable or dangerous. Minor improvements
+      can be noted but approved with comments.
+
+      After 1 refinement cycle, approve with notes rather than rejecting again.
+
+      If critical issues found: publish api.refined with specific feedback
+      If solid (or already refined once): publish api.approved
 
   implementer:
     name: "🔧 Implementer"

@@ -87,15 +87,17 @@ test_tasks:
     Use the expand-contract pattern. Document the plan in `.eval-sandbox/migration/plan.md`.
 
 # Complexity ratings for time budgeting
+# NOTE: Ratings based on actual iteration counts and per-iteration times observed
+# Multi-hat presets with exploration tend to run longer (~75-90s/iteration)
 complexity:
   hatless-baseline: medium
   tdd-red-green: simple
   adversarial-review: medium
-  socratic-learning: simple
+  socratic-learning: medium     # Up to 9 iterations with exploration - was incorrectly simple
   spec-driven: medium
-  mob-programming: simple
+  mob-programming: medium       # Multi-role preset runs longer - was incorrectly simple
   scientific-method: medium
-  code-archaeology: medium
+  code-archaeology: complex     # Git history exploration runs slow - was incorrectly medium
   performance-optimization: complex
   api-design: medium
   documentation-first: medium
@@ -119,11 +121,15 @@ expected_iterations:
   migration-safety: [4, 5]
 
 # Timeout per preset (seconds)
-# Based on ~45-60s per iteration:
-#   simple (3-6 iters): 6 × 60s = 360s → use 300s
-#   medium (4-8 iters): 8 × 60s = 480s → use 600s
-#   complex (4-8 iters): 8 × 75s = 600s → use 900s
+# Based on observed per-iteration times:
+#   - Simple presets: ~45-60s/iteration
+#   - Multi-hat presets: ~75-90s/iteration (context loading, exploration)
+#   - Complex presets: ~90-120s/iteration (git history, profiling)
+# Adding 50% buffer for API latency variance
+#   simple (3-6 iters): 6 × 75s = 450s → use 450s
+#   medium (4-9 iters): 9 × 90s = 810s → use 900s
+#   complex (4-8 iters): 8 × 120s = 960s → use 1200s
 timeouts:
-  simple: 300
-  medium: 600
-  complex: 900
+  simple: 450
+  medium: 900
+  complex: 1200

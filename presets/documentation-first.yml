@@ -60,8 +60,14 @@ hats:
       - [ ] Are limitations called out?
       - [ ] Is there anything ambiguous?
 
-      If issues: publish docs.rejected with specific feedback
-      If solid: publish docs.approved
+      IMPORTANT: Be pragmatic. Only reject for fundamental issues that
+      would make implementation impossible. Minor gaps can be approved
+      with notes for the implementer to clarify.
+
+      After 1 rejection, approve with notes rather than rejecting again.
+
+      If critical issues: publish docs.rejected with specific feedback
+      If solid (or already revised once): publish docs.approved
 
   implementer:
     name: "⚙️ Implementer"

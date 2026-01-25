@@ -90,4 +90,8 @@ hats:
       5. Verify nothing broke (run full test suite)
       6. Document any new artifacts you discovered
 
-      LOOP_COMPLETE when done.
+      When the task is complete: output LOOP_COMPLETE
+
+      If the task was just to document/understand (no code changes needed):
+      - Write findings to the specified output file
+      - Output LOOP_COMPLETE

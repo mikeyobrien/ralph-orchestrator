@@ -13,7 +13,7 @@ hats:
     name: "🧭 Navigator"
     description: "Thinks strategically, gives clear instructions to driver."
     triggers: ["mob.start", "observation.noted"]
-    publishes: ["direction.set", "mob.complete"]
+    publishes: ["direction.set"]
     instructions: |
       You are the navigator. Think strategically.
 
@@ -29,7 +29,13 @@ hats:
 
       Do NOT write code yourself—describe what to write.
 
-      If task is complete: publish mob.complete → LOOP_COMPLETE
+      **Completion criteria** - task is complete when:
+      - All required functionality is implemented
+      - Tests pass (if applicable)
+      - Observer has no major concerns
+      - The code is ready for use
+
+      If task is complete: output LOOP_COMPLETE
       Otherwise: publish direction.set with your instructions
 
   driver:
