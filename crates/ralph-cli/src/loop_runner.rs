@@ -472,12 +472,13 @@ pub async fn run_loop_impl(
         // Determine which backend to use for this hat and the appropriate timeout
         // Hat-level backend configuration takes precedence over global cli.backend
 
-        // Step 1: Get hat backend configuration for the active hat (only called once)
+        // Step 1: Get hat backend configuration for the active hat
         // Use display_hat (the active hat) instead of hat_id ("ralph" in multi-hat mode)
         let hat_backend_opt = event_loop.get_hat_backend(&display_hat);
 
         // Step 2: Resolve effective backend and determine backend name for timeout
-        let (effective_backend, backend_name_for_timeout) = match hat_backend_opt {
+        // Note: backend_name_for_timeout is owned String to avoid lifetime issues with hat_backend reference
+        let (effective_backend, backend_name_for_timeout): (CliBackend, String) = match hat_backend_opt {
             Some(hat_backend) => {
                 // Hat has custom backend configuration
                 match CliBackend::from_hat_backend(hat_backend) {
@@ -488,15 +489,23 @@ pub async fn run_loop_impl(
                         );
 
                         // Determine backend name for timeout based on hat backend type
+                        // Use owned String to avoid borrowing issues and improve code clarity
                         let backend_name = match hat_backend {
-                            ralph_core::HatBackend::Named(name) => name.as_str(),
-                            ralph_core::HatBackend::KiroAgent { .. } => "kiro",
-                            // For Custom backends, use the command name directly
-                            // This allows custom backends to have their own timeout configuration
+                            ralph_core::HatBackend::Named(name) => name.clone(),
+                            ralph_core::HatBackend::KiroAgent { .. } => "kiro".to_string(),
+                            // For Custom backends, extract command name from path
+                            // Handles both Unix ("/usr/bin/codex") and commands with args ("ollama run llama3")
                             ralph_core::HatBackend::Custom { command, .. } => {
-                                // Try to extract backend name from command path
-                                // e.g., "/usr/bin/codex" -> "codex", "claude" -> "claude"
-                                command.split('/').last().unwrap_or(command.as_str())
+                                // First split by whitespace to handle commands with arguments
+                                // e.g., "ollama run llama3" -> "ollama"
+                                let base_command = command.split_whitespace().next().unwrap_or(command);
+                                // Then extract filename from path
+                                // e.g., "/usr/bin/codex" -> "codex"
+                                std::path::Path::new(base_command)
+                                    .file_name()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("custom")
+                                    .to_string()
                             }
                         };
 
@@ -509,7 +518,7 @@ pub async fn run_loop_impl(
                             display_hat, e
                         );
                         // IMPORTANT: Use global backend name for timeout since we're using global backend
-                        (backend.clone(), config.cli.backend.as_str())
+                        (backend.clone(), config.cli.backend.to_string())
                     }
                 }
             }
@@ -519,12 +528,12 @@ pub async fn run_loop_impl(
                     "Using global backend for '{}': {}",
                     display_hat, config.cli.backend
                 );
-                (backend.clone(), config.cli.backend.as_str())
+                (backend.clone(), config.cli.backend.to_string())
             }
         };
 
         // Step 3: Get timeout from config based on actual backend being used
-        let timeout_secs = config.adapter_settings(backend_name_for_timeout).timeout;
+        let timeout_secs = config.adapter_settings(&backend_name_for_timeout).timeout;
         let timeout = Some(Duration::from_secs(timeout_secs));
 
         // For TUI mode, get the shared lines buffer for this iteration.
