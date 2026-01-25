@@ -114,7 +114,7 @@ impl SummaryWriter {
 
         // Cost (if tracked)
         if state.cumulative_cost > 0.0 {
-            content.push_str(&format!("**Cost:** ${:.2}\n", state.cumulative_cost));
+            content.push_str(&format!("**Est. cost:** ${:.2}\n", state.cumulative_cost));
         }
 
         // Tasks section (read from scratchpad if available)
@@ -326,7 +326,7 @@ More text here.
         assert!(content.contains("# Loop Summary"));
         assert!(content.contains("**Status:** Completed successfully"));
         assert!(content.contains("**Iterations:** 12"));
-        assert!(content.contains("**Cost:** $1.50"));
+        assert!(content.contains("**Est. cost:** $1.50"));
         assert!(content.contains("## Tasks"));
         assert!(content.contains("## Events"));
         assert!(content.contains("## Final Commit"));

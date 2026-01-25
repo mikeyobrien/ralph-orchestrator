@@ -168,7 +168,7 @@ pub fn print_termination(
         );
         if state.cumulative_cost > 0.0 {
             println!(
-                "{BOLD}|{RESET}   Cost:        {CYAN}${:.2}{RESET}",
+                "{BOLD}|{RESET}   Est. cost:   {CYAN}${:.2}{RESET}",
                 state.cumulative_cost
             );
         }
@@ -180,7 +180,7 @@ pub fn print_termination(
         println!("|   Iterations:  {}", state.iteration);
         println!("|   Elapsed:     {:.1}s", state.elapsed().as_secs_f64());
         if state.cumulative_cost > 0.0 {
-            println!("|   Cost:        ${:.2}", state.cumulative_cost);
+            println!("|   Est. cost:   ${:.2}", state.cumulative_cost);
         }
         println!("+{}+", "-".repeat(58));
     }

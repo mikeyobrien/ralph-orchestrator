@@ -112,7 +112,7 @@ impl StreamHandler for PrettyStreamHandler {
         let _ = self.stdout.queue(style::SetForegroundColor(color));
         let _ = self.stdout.write(
             format!(
-                "Duration: {}ms | Cost: ${:.4} | Turns: {}\n",
+                "Duration: {}ms | Est. cost: ${:.4} | Turns: {}\n",
                 result.duration_ms, result.total_cost_usd, result.num_turns
             )
             .as_bytes(),
@@ -224,7 +224,7 @@ impl StreamHandler for ConsoleStreamHandler {
         if self.verbose {
             let _ = writeln!(
                 self.stdout,
-                "\n--- Session Complete ---\nDuration: {}ms | Cost: ${:.4} | Turns: {}",
+                "\n--- Session Complete ---\nDuration: {}ms | Est. cost: ${:.4} | Turns: {}",
                 result.duration_ms, result.total_cost_usd, result.num_turns
             );
         }
@@ -476,7 +476,7 @@ impl StreamHandler for TuiStreamHandler {
             RatatuiColor::Green
         };
         let summary = format!(
-            "Duration: {}ms | Cost: ${:.4} | Turns: {}",
+            "Duration: {}ms | Est. cost: ${:.4} | Turns: {}",
             result.duration_ms, result.total_cost_usd, result.num_turns
         );
         let line = Line::from(Span::styled(summary, Style::default().fg(color)));
