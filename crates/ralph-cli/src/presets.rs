@@ -83,6 +83,11 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/incident-response.yml"),
     },
     EmbeddedPreset {
+        name: "merge-loop",
+        description: "Merges completed parallel loop from worktree back to main branch",
+        content: include_str!("../presets/merge-loop.yml"),
+    },
+    EmbeddedPreset {
         name: "migration-safety",
         description: "Safe Database/API Migration Workflow",
         content: include_str!("../presets/migration-safety.yml"),
@@ -163,7 +168,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 24, "Expected 24 presets");
+        assert_eq!(presets.len(), 25, "Expected 25 presets");
     }
 
     #[test]
@@ -199,6 +204,23 @@ mod tests {
                 .content
                 .contains("If you were triggered by `confession.clean`:")
         );
+    }
+
+    #[test]
+    fn test_merge_loop_preset_is_embedded() {
+        let preset = get_preset("merge-loop").expect("merge-loop preset should exist");
+        assert_eq!(
+            preset.description,
+            "Merges completed parallel loop from worktree back to main branch"
+        );
+        // Verify key merge-related content
+        assert!(preset.content.contains("RALPH_MERGE_LOOP_ID"));
+        assert!(preset.content.contains("merge.start"));
+        assert!(preset.content.contains("MERGE_COMPLETE"));
+        assert!(preset.content.contains("conflict.detected"));
+        assert!(preset.content.contains("conflict.resolved"));
+        assert!(preset.content.contains("git merge"));
+        assert!(preset.content.contains("git worktree remove"));
     }
 
     #[test]
@@ -245,9 +267,10 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 24);
+        assert_eq!(names.len(), 25);
         assert!(names.contains(&"confession-loop"));
         assert!(names.contains(&"tdd-red-green"));
         assert!(names.contains(&"debug"));
+        assert!(names.contains(&"merge-loop"));
     }
 }

@@ -15,6 +15,7 @@
 mod display;
 mod init;
 mod loop_runner;
+mod loops;
 mod memory;
 mod presets;
 mod sop_runner;
@@ -24,11 +25,14 @@ mod tools;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use ralph_adapters::detect_backend;
-use ralph_core::{EventHistory, RalphConfig};
+use ralph_core::{
+    EventHistory, LockError, LoopContext, LoopLock, RalphConfig,
+    worktree::{WorktreeConfig, create_worktree, ensure_gitignore},
+};
 use std::fs;
 use std::io::{IsTerminal, Write, stdout};
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 // Unix-specific process management for process group leadership
 #[cfg(unix)]
@@ -250,6 +254,9 @@ enum Commands {
 
     /// Ralph's runtime tools (agent-facing)
     Tools(tools::ToolsArgs),
+
+    /// Manage parallel loops
+    Loops(loops::LoopsArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -324,6 +331,19 @@ struct RunArgs {
     /// Set to 0 to disable idle timeout.
     #[arg(long)]
     idle_timeout: Option<u32>,
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Multi-Loop Concurrency Options
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Wait for the primary loop slot instead of spawning into a worktree.
+    /// Use this when you want to ensure only one loop runs at a time.
+    #[arg(long)]
+    exclusive: bool,
+
+    /// Skip automatic merge after loop completes (keep worktree for manual handling).
+    /// Only relevant for parallel loops running in worktrees.
+    #[arg(long)]
+    no_auto_merge: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Verbosity Options
@@ -584,6 +604,7 @@ async fn main() -> Result<()> {
         Some(Commands::CodeTask(args)) => code_task_command(cli.config, cli.color, args),
         Some(Commands::Task(args)) => code_task_command(cli.config, cli.color, args),
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()),
+        Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         None => {
             // Default to run with TUI enabled (new default behavior)
             let args = RunArgs {
@@ -597,6 +618,8 @@ async fn main() -> Result<()> {
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
                 idle_timeout: None,
+                exclusive: false,
+                no_auto_merge: false,
                 verbose: false,
                 quiet: false,
                 record_session: None,
@@ -794,6 +817,115 @@ async fn run_command(
         return Ok(());
     }
 
+    // Get the prompt for lock metadata (short version for display)
+    let prompt_summary = config
+        .event_loop
+        .prompt
+        .as_ref()
+        .map(|p| {
+            if p.len() > 100 {
+                format!("{}...", &p[..100])
+            } else {
+                p.clone()
+            }
+        })
+        .unwrap_or_else(|| config.event_loop.prompt_file.clone());
+
+    // Try to acquire the loop lock for multi-loop concurrency support
+    // This implements the lock detection flow from the multi-loop spec
+    let workspace_root = &config.core.workspace_root;
+    let (loop_context, _lock_guard) = match LoopLock::try_acquire(workspace_root, &prompt_summary) {
+        Ok(guard) => {
+            // We're the primary loop - run in place
+            debug!("Acquired loop lock, running as primary loop");
+            let context = LoopContext::primary(workspace_root.clone());
+            (context, Some(guard))
+        }
+        Err(LockError::AlreadyLocked(existing)) => {
+            // Another loop is running
+            if args.exclusive {
+                // --exclusive: wait for the lock instead of spawning worktree
+                info!(
+                    "Loop lock held by PID {} (started {}), waiting for lock (--exclusive mode)...",
+                    existing.pid, existing.started
+                );
+                let guard = LoopLock::acquire_blocking(workspace_root, &prompt_summary)
+                    .context("Failed to acquire loop lock in exclusive mode")?;
+                debug!("Acquired loop lock after waiting");
+                let context = LoopContext::primary(workspace_root.clone());
+                (context, Some(guard))
+            } else {
+                // Auto-spawn into worktree
+                info!(
+                    "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
+                    existing.pid,
+                    existing.prompt.chars().take(50).collect::<String>()
+                );
+
+                let loop_id = generate_loop_id();
+                let worktree_config = WorktreeConfig::default();
+
+                // Ensure worktree directory is in .gitignore
+                ensure_gitignore(workspace_root, ".worktrees")
+                    .context("Failed to update .gitignore for worktrees")?;
+
+                // Create the worktree
+                let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
+                    .context("Failed to create worktree for parallel loop")?;
+
+                info!(
+                    "Created worktree at {} on branch {}",
+                    worktree.path.display(),
+                    worktree.branch
+                );
+
+                // Create loop context for the worktree
+                let context = LoopContext::worktree(
+                    loop_id.clone(),
+                    worktree.path.clone(),
+                    workspace_root.clone(),
+                );
+
+                // Set up memory symlink so parallel loop shares memories
+                context
+                    .setup_memory_symlink()
+                    .context("Failed to create memory symlink in worktree")?;
+
+                // Update config to use worktree paths
+                // The scratchpad and other paths should resolve to the worktree
+                // Note: We keep the lock guard as None since worktree loops don't hold the primary lock
+
+                (context, None)
+            }
+        }
+        Err(LockError::UnsupportedPlatform) => {
+            // Non-Unix: just run without locking (single-loop fallback)
+            warn!("Loop locking not supported on this platform, running without lock");
+            let context = LoopContext::primary(workspace_root.clone());
+            (context, None)
+        }
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context("Failed to acquire loop lock"));
+        }
+    };
+
+    // Update workspace_root in config if running in worktree
+    if !loop_context.is_primary() {
+        config.core.workspace_root = loop_context.workspace().to_path_buf();
+        // Also update scratchpad path to use worktree location
+        config.core.scratchpad = loop_context.scratchpad_path().to_string_lossy().to_string();
+        debug!(
+            "Running in worktree: workspace={}, scratchpad={}",
+            config.core.workspace_root.display(),
+            config.core.scratchpad
+        );
+    }
+
+    // Ensure directories exist in the loop context
+    loop_context
+        .ensure_directories()
+        .context("Failed to create loop directories")?;
+
     // Run the orchestration loop and exit with proper exit code
     // TUI is enabled by default (unless --no-tui or --autonomous is specified)
     let enable_tui = !args.no_tui && !args.autonomous;
@@ -805,6 +937,7 @@ async fn run_command(
         enable_tui,
         verbosity,
         args.record_session,
+        Some(loop_context),
     )
     .await?;
     let exit_code = reason.exit_code();
@@ -815,6 +948,23 @@ async fn run_command(
     }
 
     Ok(())
+}
+
+/// Generates a unique loop ID for worktree-based parallel loops.
+///
+/// Format: `ralph-YYYYMMDD-HHMMSS-XXXX` where XXXX is a random hex suffix.
+fn generate_loop_id() -> String {
+    use std::time::SystemTime;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+
+    // Generate 4-character random hex suffix
+    let random_suffix: u16 = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| (d.as_nanos() & 0xFFFF) as u16)
+        .unwrap_or(0);
+
+    format!("ralph-{}-{:04x}", timestamp, random_suffix)
 }
 
 /// Resume a previously interrupted loop from existing scratchpad.
@@ -928,6 +1078,7 @@ async fn resume_command(
         enable_tui,
         verbosity,
         args.record_session,
+        None, // Deprecated resume command doesn't have loop_context
     )
     .await?;
     let exit_code = reason.exit_code();

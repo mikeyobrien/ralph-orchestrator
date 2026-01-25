@@ -3,6 +3,7 @@
 //! Logs all events to `.ralph/events.jsonl` as specified in the event-loop spec.
 //! The observer pattern allows hooking into the event bus without modifying routing.
 
+use crate::loop_context::LoopContext;
 use ralph_proto::{Event, HatId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -153,6 +154,14 @@ impl EventLogger {
         Self::new(Self::DEFAULT_PATH)
     }
 
+    /// Creates a logger using the events path from a LoopContext.
+    ///
+    /// This ensures the logger writes to the correct location when running
+    /// in a worktree or other isolated workspace.
+    pub fn from_context(context: &LoopContext) -> Self {
+        Self::new(context.events_path())
+    }
+
     /// Ensures the parent directory exists and opens the file.
     fn ensure_open(&mut self) -> std::io::Result<&mut File> {
         if self.file.is_none() {
@@ -210,6 +219,14 @@ impl EventHistory {
     /// Creates a reader for the default path.
     pub fn default_path() -> Self {
         Self::new(EventLogger::DEFAULT_PATH)
+    }
+
+    /// Creates a history reader using the events path from a LoopContext.
+    ///
+    /// This ensures the reader looks in the correct location when running
+    /// in a worktree or other isolated workspace.
+    pub fn from_context(context: &LoopContext) -> Self {
+        Self::new(context.events_path())
     }
 
     /// Returns true if the history file exists.

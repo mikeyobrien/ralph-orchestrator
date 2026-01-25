@@ -2,11 +2,23 @@
 //!
 //! Provides `MarkdownMemoryStore` for reading, writing, and managing
 //! memories in the `.agent/memories.md` file format.
+//!
+//! # Multi-loop Safety
+//!
+//! When multiple Ralph loops run concurrently (in worktrees), this store uses
+//! file locking to ensure safe concurrent access:
+//!
+//! - **Shared locks** for reading: Multiple loops can read simultaneously
+//! - **Exclusive locks** for writing: Only one loop can write at a time
+//!
+//! The `MarkdownMemoryStore` is Clone because it doesn't hold the lock;
+//! locks are acquired for each operation.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::file_lock::FileLock;
 use crate::memory::{Memory, MemoryType};
 use crate::memory_parser::parse_memories;
 
@@ -17,6 +29,12 @@ pub const DEFAULT_MEMORIES_PATH: &str = ".agent/memories.md";
 ///
 /// This store uses a single markdown file (`.agent/memories.md`) to persist
 /// memories. The file format is human-readable and version-control friendly.
+///
+/// # Multi-loop Safety
+///
+/// All read operations use shared locks, and all write operations use
+/// exclusive locks. This ensures safe concurrent access from multiple
+/// Ralph loops running in worktrees.
 #[derive(Debug, Clone)]
 pub struct MarkdownMemoryStore {
     path: PathBuf,
@@ -55,7 +73,11 @@ impl MarkdownMemoryStore {
     /// Initializes the memories file with an empty template.
     ///
     /// If `force` is false and the file already exists, this returns an error.
+    /// Uses an exclusive lock to prevent concurrent writes.
     pub fn init(&self, force: bool) -> io::Result<()> {
+        let lock = FileLock::new(&self.path)?;
+        let _guard = lock.exclusive()?;
+
         if self.exists() && !force {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -74,10 +96,14 @@ impl MarkdownMemoryStore {
     /// Reads all memories from the file.
     ///
     /// Returns an empty vector if the file doesn't exist.
+    /// Uses a shared lock to allow concurrent reads from multiple loops.
     pub fn load(&self) -> io::Result<Vec<Memory>> {
         if !self.exists() {
             return Ok(Vec::new());
         }
+
+        let lock = FileLock::new(&self.path)?;
+        let _guard = lock.shared()?;
 
         let content = fs::read_to_string(&self.path)?;
         Ok(parse_memories(&content))
@@ -87,7 +113,11 @@ impl MarkdownMemoryStore {
     ///
     /// The memory is inserted into its appropriate section (based on type).
     /// If the file doesn't exist, it's created with the template first.
+    /// Uses an exclusive lock to prevent concurrent writes.
     pub fn append(&self, memory: &Memory) -> io::Result<()> {
+        let lock = FileLock::new(&self.path)?;
+        let _guard = lock.exclusive()?;
+
         let content = if self.exists() {
             fs::read_to_string(&self.path)?
         } else {
@@ -115,10 +145,14 @@ impl MarkdownMemoryStore {
     ///
     /// Returns `Ok(true)` if the memory was found and deleted,
     /// `Ok(false)` if the memory was not found.
+    /// Uses an exclusive lock to prevent concurrent writes.
     pub fn delete(&self, id: &str) -> io::Result<bool> {
         if !self.exists() {
             return Ok(false);
         }
+
+        let lock = FileLock::new(&self.path)?;
+        let _guard = lock.exclusive()?;
 
         let content = fs::read_to_string(&self.path)?;
         let memories = parse_memories(&content);
@@ -129,7 +163,7 @@ impl MarkdownMemoryStore {
 
         // Rebuild the file without the deleted memory
         let remaining: Vec<_> = memories.into_iter().filter(|m| m.id != id).collect();
-        self.write_all(&remaining)?;
+        self.write_all_internal(&remaining)?;
 
         Ok(true)
     }
@@ -172,8 +206,8 @@ impl MarkdownMemoryStore {
     /// Writes all memories to the file, replacing existing content.
     ///
     /// This is used internally for operations like delete that need
-    /// to rewrite the entire file.
-    fn write_all(&self, memories: &[Memory]) -> io::Result<()> {
+    /// to rewrite the entire file. The caller must hold the exclusive lock.
+    fn write_all_internal(&self, memories: &[Memory]) -> io::Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;

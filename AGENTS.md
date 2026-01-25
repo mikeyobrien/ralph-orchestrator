@@ -54,6 +54,70 @@ tasks:
   enabled: false
 ```
 
+## Parallel Loops (Multi-Loop Concurrency)
+
+Ralph supports running multiple orchestration loops in parallel using git worktrees.
+
+### Architecture
+
+```
+Primary Loop (holds .ralph/loop.lock)
+├── Runs in main workspace
+├── Processes merge queue on completion
+└── Spawns merge-ralph for queued loops
+
+Worktree Loops (.worktrees/<loop-id>/)
+├── Isolated filesystem via git worktree
+├── Symlinked memories → main repo
+├── Queue for merge on completion
+└── Exit cleanly (no spawn)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `.ralph/loop.lock` | Contains PID + prompt of primary loop |
+| `.ralph/loops.json` | Registry of all tracked loops |
+| `.ralph/merge-queue.jsonl` | Event-sourced merge queue |
+| `.worktrees/<id>/` | Isolated worktree directory |
+
+### Code Locations
+
+- **Lock coordination**: `crates/ralph-core/src/worktree.rs`
+- **Loop registry**: `crates/ralph-core/src/loop_registry.rs`
+- **Merge queue**: `crates/ralph-core/src/merge_queue.rs`
+- **Loop commands**: `crates/ralph-cli/src/loops.rs`
+- **Queue processing**: `crates/ralph-cli/src/loop_runner.rs` (`process_pending_merges()`)
+- **Merge preset**: `crates/ralph-cli/presets/merge-loop.yml`
+
+### Testing Parallel Loops
+
+```bash
+# Create temp directory with git repo
+cd $(mktemp -d) && git init && echo "<p>Hello</p>" > index.html && git add . && git commit -m "init"
+
+# Terminal 1: Primary loop
+ralph run -p "Add header before <p>" --max-iterations 5
+
+# Terminal 2: Worktree loop
+ralph run -p "Add footer after </p>" --max-iterations 5
+
+# Monitor
+ralph loops
+```
+
+### Queue-Based Merge Coordination
+
+The merge system uses a queue-based approach to avoid recursive worktree spawning:
+
+1. Worktree loop completes → queues in `merge-queue.jsonl` → exits
+2. Primary loop completes → calls `process_pending_merges()`
+3. For each queued entry → spawns `ralph run -c .ralph/merge-loop-config.yml`
+4. Merge-ralph runs as primary (not worktree) and merges the branch
+
+This prevents the issue where spawning merge-ralph immediately would create another worktree if the primary loop still held the lock.
+
 ## Build & Test
 
 ```bash

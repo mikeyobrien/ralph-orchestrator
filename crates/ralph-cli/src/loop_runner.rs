@@ -10,14 +10,15 @@ use ralph_adapters::{
     PrettyStreamHandler, PtyConfig, PtyExecutor, QuietStreamHandler, TuiStreamHandler,
 };
 use ralph_core::{
-    EventLogger, EventLoop, EventParser, EventRecord, RalphConfig, Record, SessionRecorder,
+    CompletionAction, EventLogger, EventLoop, EventParser, EventRecord, LoopCompletionHandler,
+    LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record, SessionRecorder,
     SummaryWriter, TerminationReason,
 };
 use ralph_proto::{Event, HatId};
 use ralph_tui::Tui;
 use std::fs::{self, File};
 use std::io::{BufWriter, IsTerminal, stdin, stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,6 +48,7 @@ pub async fn run_loop_impl(
     enable_tui: bool,
     verbosity: Verbosity,
     record_session: Option<PathBuf>,
+    loop_context: Option<LoopContext>,
 ) -> Result<TerminationReason> {
     // Set up process group leadership per spec
     // "The orchestrator must run as a process group leader"
@@ -272,10 +274,29 @@ pub async fn run_loop_impl(
     let mut consecutive_fallbacks: u32 = 0;
     const MAX_FALLBACK_ATTEMPTS: u32 = 3;
 
-    // Helper closure to handle termination (writes summary, prints status)
+    // Initialize loop history if we have a loop context
+    let loop_history = loop_context
+        .as_ref()
+        .map(|ctx| LoopHistory::from_context(ctx));
+
+    // Record loop start in history
+    if let Some(ref history) = loop_history
+        && let Err(e) = history.record_started(&prompt_content)
+    {
+        warn!("Failed to record loop start in history: {}", e);
+    }
+
+    // Auto-merge setting (default: true; can be overridden by config later)
+    let auto_merge = true;
+
+    // Helper closure to handle termination (writes summary, prints status, records history)
     let handle_termination = |reason: &TerminationReason,
                               state: &ralph_core::LoopState,
-                              scratchpad: &str| {
+                              scratchpad: &str,
+                              history: &Option<LoopHistory>,
+                              context: &Option<LoopContext>,
+                              auto_merge: bool,
+                              prompt: &str| {
         // Per spec: Write summary file on termination
         let summary_writer = SummaryWriter::default();
         let scratchpad_path = std::path::Path::new(scratchpad);
@@ -291,6 +312,80 @@ pub async fn run_loop_impl(
         if let Err(e) = summary_writer.write(reason, state, scratchpad_opt, final_commit.as_deref())
         {
             warn!("Failed to write summary file: {}", e);
+        }
+
+        // Record termination in history
+        if let Some(hist) = history {
+            let reason_str = match reason {
+                TerminationReason::CompletionPromise => "completion_promise",
+                TerminationReason::MaxIterations => "max_iterations",
+                TerminationReason::MaxRuntime => "max_runtime",
+                TerminationReason::MaxCost => "max_cost",
+                TerminationReason::ConsecutiveFailures => "consecutive_failures",
+                TerminationReason::LoopThrashing => "loop_thrashing",
+                TerminationReason::ValidationFailure => "validation_failure",
+                TerminationReason::Stopped => "stopped",
+                TerminationReason::Interrupted => "interrupted",
+            };
+
+            if matches!(reason, TerminationReason::Interrupted) {
+                if let Err(e) = hist.record_terminated("SIGTERM") {
+                    warn!("Failed to record termination in history: {}", e);
+                }
+            } else if let Err(e) = hist.record_completed(reason_str) {
+                warn!("Failed to record completion in history: {}", e);
+            }
+        }
+
+        // Handle completion for worktree loops (auto-merge or manual)
+        if let Some(ctx) = context {
+            if !ctx.is_primary() && matches!(reason, TerminationReason::CompletionPromise) {
+                let handler = LoopCompletionHandler::new(auto_merge);
+                match handler.handle_completion(ctx, prompt) {
+                    Ok(CompletionAction::None) => {
+                        debug!("Primary loop completed, no action needed");
+                    }
+                    Ok(CompletionAction::Enqueued { loop_id }) => {
+                        info!(loop_id = %loop_id, "Loop queued for auto-merge");
+                        if let Some(hist) = history {
+                            let _ = hist.record_merge_queued();
+                        }
+                        // Worktree loop exits cleanly; merge will be processed
+                        // when the primary loop completes and checks the queue
+                    }
+                    Ok(CompletionAction::ManualMerge {
+                        loop_id,
+                        worktree_path,
+                    }) => {
+                        info!(
+                            loop_id = %loop_id,
+                            "Loop completed. To merge manually: cd {} && git merge",
+                            worktree_path
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Completion handler failed: {}", e);
+                    }
+                }
+            }
+
+            // Handle merge queue processing for primary loop completion
+            if ctx.is_primary() && matches!(reason, TerminationReason::CompletionPromise) {
+                process_pending_merges(ctx.repo_root());
+            }
+
+            // Deregister from registry if terminated (not completed normally)
+            if matches!(
+                reason,
+                TerminationReason::Interrupted | TerminationReason::Stopped
+            ) {
+                let registry = LoopRegistry::new(ctx.repo_root());
+                if let Some(loop_id) = ctx.loop_id()
+                    && let Err(e) = registry.deregister(loop_id)
+                {
+                    warn!("Failed to deregister loop from registry: {}", e);
+                }
+            }
         }
 
         // Print termination info to console (skip in TUI mode - TUI handles display)
@@ -324,7 +419,15 @@ pub async fn run_loop_impl(
                 event_loop.state().iteration,
                 &terminate_event,
             );
-            handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
             // Signal TUI to exit immediately on interrupt
             let _ = terminated_tx.send(true);
             return Ok(reason);
@@ -339,7 +442,15 @@ pub async fn run_loop_impl(
                 event_loop.state().iteration,
                 &terminate_event,
             );
-            handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
             // Wait for user to exit TUI (press 'q') on natural completion
             if let Some(handle) = tui_handle.take() {
                 let _ = handle.await;
@@ -372,7 +483,15 @@ pub async fn run_loop_impl(
                         event_loop.state().iteration,
                         &terminate_event,
                     );
-                    handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+                    handle_termination(
+                        &reason,
+                        event_loop.state(),
+                        &config.core.scratchpad,
+                        &loop_history,
+                        &loop_context,
+                        auto_merge,
+                        &prompt_content,
+                    );
                     // Wait for user to exit TUI (press 'q') on natural completion
                     if let Some(handle) = tui_handle.take() {
                         let _ = handle.await;
@@ -399,7 +518,15 @@ pub async fn run_loop_impl(
                     event_loop.state().iteration,
                     &terminate_event,
                 );
-                handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
                 // Wait for user to exit TUI (press 'q') on natural completion
                 if let Some(handle) = tui_handle.take() {
                     let _ = handle.await;
@@ -540,7 +667,7 @@ pub async fn run_loop_impl(
                 let reason = TerminationReason::Interrupted;
                 let terminate_event = event_loop.publish_terminate_event(&reason);
                 log_terminate_event(&mut event_logger, event_loop.state().iteration, &terminate_event);
-                handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+                handle_termination(&reason, event_loop.state(), &config.core.scratchpad, &loop_history, &loop_context, auto_merge, &prompt_content);
                 // Signal TUI to exit immediately on interrupt
                 let _ = terminated_tx.send(true);
                 return Ok(reason);
@@ -554,7 +681,15 @@ pub async fn run_loop_impl(
                 event_loop.state().iteration,
                 &terminate_event,
             );
-            handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
             // Wait for user to exit TUI (press 'q') on natural completion
             if let Some(handle) = tui_handle.take() {
                 let _ = handle.await;
@@ -593,7 +728,15 @@ pub async fn run_loop_impl(
                 event_loop.state().iteration,
                 &terminate_event,
             );
-            handle_termination(&reason, event_loop.state(), &config.core.scratchpad);
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
             // Wait for user to exit TUI (press 'q') on natural completion
             if let Some(handle) = tui_handle.take() {
                 let _ = handle.await;
@@ -893,6 +1036,88 @@ fn resolve_prompt_content(event_loop_config: &ralph_core::EventLoopConfig) -> Re
         "No prompt specified. Use -p \"text\" for inline prompt, -P path for file, \
          or create PROMPT.md in the current directory."
     )
+}
+
+/// Processes pending merges from the merge queue.
+///
+/// Called when the primary loop completes successfully. Spawns merge-ralph
+/// processes for each queued loop in FIFO order.
+fn process_pending_merges(repo_root: &Path) {
+    let queue = MergeQueue::new(repo_root);
+
+    // Get all pending merges
+    let pending = match queue.list_by_state(ralph_core::merge_queue::MergeState::Queued) {
+        Ok(entries) => entries,
+        Err(e) => {
+            warn!("Failed to read merge queue: {}", e);
+            return;
+        }
+    };
+
+    if pending.is_empty() {
+        debug!("No pending merges in queue");
+        return;
+    }
+
+    info!(
+        count = pending.len(),
+        "Processing pending merges from queue"
+    );
+
+    // Get the merge-loop preset content
+    let preset = match crate::presets::get_preset("merge-loop") {
+        Some(p) => p,
+        None => {
+            warn!("merge-loop preset not found, pending merges will remain queued");
+            return;
+        }
+    };
+
+    // Write the merge config once (shared by all merge loops)
+    let config_path = repo_root.join(".ralph/merge-loop-config.yml");
+    if let Err(e) = fs::write(&config_path, preset.content) {
+        warn!(
+            error = %e,
+            "Failed to write merge config, pending merges will remain queued"
+        );
+        return;
+    }
+
+    // Process each pending merge
+    for entry in pending {
+        let loop_id = &entry.loop_id;
+
+        info!(loop_id = %loop_id, "Spawning merge-ralph process");
+
+        match Command::new("ralph")
+            .current_dir(repo_root)
+            .args([
+                "run",
+                "-c",
+                ".ralph/merge-loop-config.yml",
+                "--no-tui",
+                "-p",
+                &format!("Merge loop {} from branch ralph/{}", loop_id, loop_id),
+            ])
+            .env("RALPH_MERGE_LOOP_ID", loop_id)
+            .spawn()
+        {
+            Ok(child) => {
+                info!(
+                    loop_id = %loop_id,
+                    pid = child.id(),
+                    "merge-ralph spawned successfully"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    loop_id = %loop_id,
+                    error = %e,
+                    "Failed to spawn merge-ralph, loop will remain queued for manual retry"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

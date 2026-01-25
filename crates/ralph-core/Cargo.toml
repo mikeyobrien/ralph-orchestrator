@@ -24,5 +24,9 @@ chrono.workspace = true
 crossterm.workspace = true
 regex.workspace = true
 
+# For Unix file locking (flock)
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
 [dev-dependencies]
 tempfile.workspace = true

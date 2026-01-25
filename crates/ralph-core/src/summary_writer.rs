@@ -5,6 +5,7 @@
 
 use crate::event_logger::EventHistory;
 use crate::event_loop::{LoopState, TerminationReason};
+use crate::loop_context::LoopContext;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -38,6 +39,9 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct SummaryWriter {
     path: PathBuf,
+    /// Path to the events file for reading history.
+    /// If None, uses the default path relative to current directory.
+    events_path: Option<PathBuf>,
 }
 
 impl Default for SummaryWriter {
@@ -49,7 +53,22 @@ impl Default for SummaryWriter {
 impl SummaryWriter {
     /// Creates a new summary writer with the given path.
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            events_path: None,
+        }
+    }
+
+    /// Creates a summary writer using paths from a LoopContext.
+    ///
+    /// This ensures the writer outputs to the correct location and reads
+    /// events from the correct events file when running in a worktree
+    /// or other isolated workspace.
+    pub fn from_context(context: &LoopContext) -> Self {
+        Self {
+            path: context.summary_path(),
+            events_path: Some(context.events_path()),
+        }
     }
 
     /// Writes the summary file based on loop state and termination reason.
@@ -161,7 +180,10 @@ impl SummaryWriter {
 
     /// Summarizes events from the event history file.
     fn summarize_events(&self) -> String {
-        let history = EventHistory::default_path();
+        let history = match &self.events_path {
+            Some(path) => EventHistory::new(path),
+            None => EventHistory::default_path(),
+        };
 
         let records = match history.read_all() {
             Ok(r) => r,

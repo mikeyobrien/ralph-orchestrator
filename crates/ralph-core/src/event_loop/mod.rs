@@ -14,8 +14,10 @@ use crate::event_reader::EventReader;
 use crate::hat_registry::HatRegistry;
 use crate::hatless_ralph::HatlessRalph;
 use crate::instructions::InstructionBuilder;
+use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use ralph_proto::{Event, EventBus, Hat, HatId};
+use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -100,6 +102,8 @@ pub struct EventLoop {
     ralph: HatlessRalph,
     event_reader: EventReader,
     diagnostics: crate::diagnostics::DiagnosticsCollector,
+    /// Loop context for path resolution (None for legacy single-loop mode).
+    loop_context: Option<LoopContext>,
 }
 
 impl EventLoop {
@@ -117,6 +121,86 @@ impl EventLoop {
             });
 
         Self::with_diagnostics(config, diagnostics)
+    }
+
+    /// Creates a new event loop with a loop context for path resolution.
+    ///
+    /// The loop context determines where events, tasks, and other state files
+    /// are located. Use this for multi-loop scenarios where each loop runs
+    /// in an isolated workspace (git worktree).
+    pub fn with_context(config: RalphConfig, context: LoopContext) -> Self {
+        let diagnostics = crate::diagnostics::DiagnosticsCollector::new(context.workspace())
+            .unwrap_or_else(|e| {
+                debug!(
+                    "Failed to initialize diagnostics: {}, using disabled collector",
+                    e
+                );
+                crate::diagnostics::DiagnosticsCollector::disabled()
+            });
+
+        Self::with_context_and_diagnostics(config, context, diagnostics)
+    }
+
+    /// Creates a new event loop with explicit loop context and diagnostics.
+    pub fn with_context_and_diagnostics(
+        config: RalphConfig,
+        context: LoopContext,
+        diagnostics: crate::diagnostics::DiagnosticsCollector,
+    ) -> Self {
+        let registry = HatRegistry::from_config(&config);
+        let instruction_builder = InstructionBuilder::with_events(
+            &config.event_loop.completion_promise,
+            config.core.clone(),
+            config.events.clone(),
+        );
+
+        let mut bus = EventBus::new();
+
+        // Per spec: "Hatless Ralph is constant — Cannot be replaced, overwritten, or configured away"
+        // Ralph is ALWAYS registered as the universal fallback for orphaned events.
+        // Custom hats are registered first (higher priority), Ralph catches everything else.
+        for hat in registry.all() {
+            bus.register(hat.clone());
+        }
+
+        // Always register Ralph as catch-all coordinator
+        // Per spec: "Ralph runs when no hat triggered — Universal fallback for orphaned events"
+        let ralph_hat = ralph_proto::Hat::new("ralph", "Ralph").subscribe("*"); // Subscribe to all events
+        bus.register(ralph_hat);
+
+        if registry.is_empty() {
+            debug!("Solo mode: Ralph is the only coordinator");
+        } else {
+            debug!(
+                "Multi-hat mode: {} custom hats + Ralph as fallback",
+                registry.len()
+            );
+        }
+
+        // When memories are enabled, scratchpad instructions are excluded (mutually exclusive)
+        let ralph = HatlessRalph::new(
+            config.event_loop.completion_promise.clone(),
+            config.core.clone(),
+            &registry,
+            config.event_loop.starting_event.clone(),
+        )
+        .with_scratchpad(!config.memories.enabled);
+
+        // Use LoopContext for events path resolution
+        let events_path = context.events_path();
+        let event_reader = EventReader::new(&events_path);
+
+        Self {
+            config,
+            registry,
+            bus,
+            state: LoopState::new(),
+            instruction_builder,
+            ralph,
+            event_reader,
+            diagnostics,
+            loop_context: Some(context),
+        }
     }
 
     /// Creates a new event loop with explicit diagnostics collector (for testing).
@@ -179,7 +263,29 @@ impl EventLoop {
             ralph,
             event_reader,
             diagnostics,
+            loop_context: None,
         }
+    }
+
+    /// Returns the loop context, if one was provided.
+    pub fn loop_context(&self) -> Option<&LoopContext> {
+        self.loop_context.as_ref()
+    }
+
+    /// Returns the tasks path based on loop context or default.
+    fn tasks_path(&self) -> PathBuf {
+        self.loop_context
+            .as_ref()
+            .map(|ctx| ctx.tasks_path())
+            .unwrap_or_else(|| PathBuf::from(".agent/tasks.jsonl"))
+    }
+
+    /// Returns the scratchpad path based on loop context or config.
+    fn scratchpad_path(&self) -> PathBuf {
+        self.loop_context
+            .as_ref()
+            .map(|ctx| ctx.scratchpad_path())
+            .unwrap_or_else(|| PathBuf::from(&self.config.core.scratchpad))
     }
 
     /// Returns the current loop state.
@@ -1055,9 +1161,7 @@ impl EventLoop {
     /// - `Ok(false)` if any tasks are `[ ]` (pending)
     /// - `Err(...)` if scratchpad doesn't exist or can't be read
     fn verify_scratchpad_complete(&self) -> Result<bool, std::io::Error> {
-        use std::path::Path;
-
-        let scratchpad_path = Path::new(&self.config.core.scratchpad);
+        let scratchpad_path = self.scratchpad_path();
 
         if !scratchpad_path.exists() {
             return Err(std::io::Error::new(
@@ -1077,9 +1181,8 @@ impl EventLoop {
 
     fn verify_tasks_complete(&self) -> Result<bool, std::io::Error> {
         use crate::task_store::TaskStore;
-        use std::path::Path;
 
-        let tasks_path = Path::new(".agent").join("tasks.jsonl");
+        let tasks_path = self.tasks_path();
 
         // No tasks file = no pending tasks = complete
         if !tasks_path.exists() {
