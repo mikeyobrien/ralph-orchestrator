@@ -267,7 +267,11 @@ impl EventLoop {
 
     /// Initializes the loop by publishing the start event.
     pub fn initialize(&mut self, prompt_content: &str) {
-        self.initialize_with_topic("task.start", prompt_content);
+        // Use configured starting_event or default to task.start for backward compatibility
+        let topic = self.config.event_loop.starting_event
+            .clone()
+            .unwrap_or_else(|| "task.start".to_string());
+        self.initialize_with_topic(&topic, prompt_content);
     }
 
     /// Initializes the loop for resume mode by publishing task.resume.
@@ -275,6 +279,7 @@ impl EventLoop {
     /// Per spec: "User can run `ralph resume` to restart reading existing scratchpad."
     /// The planner should read the existing scratchpad rather than doing fresh gap analysis.
     pub fn initialize_resume(&mut self, prompt_content: &str) {
+        // Resume always uses task.resume regardless of starting_event config
         self.initialize_with_topic("task.resume", prompt_content);
     }
 

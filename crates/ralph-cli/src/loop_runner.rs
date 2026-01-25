@@ -143,12 +143,13 @@ pub async fn run_loop_impl(
     // Initialize event logger for debugging
     let mut event_logger = EventLogger::default_path();
 
-    // Log initial event (task.start or task.resume)
-    let (start_topic, start_triggered) = if resume {
-        ("task.resume", "planner")
-    } else {
-        ("task.start", "planner")
-    };
+    // Log initial event (use configured starting_event or default to task.start/task.resume)
+    let default_start_topic = if resume { "task.resume" } else { "task.start" };
+    let start_topic = config.event_loop.starting_event
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or(default_start_topic);
+    let start_triggered = "planner"; // Default triggered hat for backward compat
     let start_event = Event::new(start_topic, &prompt_content);
     let start_record =
         EventRecord::new(0, "loop", &start_event, Some(&HatId::new(start_triggered)));
