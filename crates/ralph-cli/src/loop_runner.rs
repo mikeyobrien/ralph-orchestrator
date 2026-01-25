@@ -468,8 +468,48 @@ pub async fn run_loop_impl(
         }
 
         // Execute the prompt (interactive or autonomous mode)
+        // Determine which backend to use for this hat
+        // Hat-level backend configuration takes precedence over global cli.backend
+        let effective_backend = if let Some(hat_backend) = event_loop.get_hat_backend(&hat_id) {
+            // Hat has custom backend configuration - use it
+            match CliBackend::from_hat_backend(hat_backend) {
+                Ok(hat_backend_instance) => {
+                    debug!(
+                        "Using hat-level backend for '{}': {:?}",
+                        hat_id,
+                        hat_backend
+                    );
+                    hat_backend_instance
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to create backend from hat configuration for '{}': {}. Falling back to global backend.",
+                        hat_id, e
+                    );
+                    backend.clone()
+                }
+            }
+        } else {
+            // No custom backend - use global configuration
+            debug!(
+                "Using global backend for '{}': {}",
+                hat_id, config.cli.backend
+            );
+            backend.clone()
+        };
+
         // Get per-adapter timeout from config
-        let timeout_secs = config.adapter_settings(&config.cli.backend).timeout;
+        // Use the effective backend's command name to determine timeout
+        let backend_name = if let Some(hat_backend) = event_loop.get_hat_backend(&hat_id) {
+            match hat_backend {
+                ralph_core::HatBackend::Named(name) => name.as_str(),
+                ralph_core::HatBackend::KiroAgent { .. } => "kiro",
+                ralph_core::HatBackend::Custom { .. } => &config.cli.backend,
+            }
+        } else {
+            &config.cli.backend
+        };
+        let timeout_secs = config.adapter_settings(backend_name).timeout;
         let timeout = Some(Duration::from_secs(timeout_secs));
 
         // For TUI mode, get the shared lines buffer for this iteration.
@@ -498,7 +538,7 @@ pub async fn run_loop_impl(
             if use_pty {
                 execute_pty(
                     pty_executor.as_mut(),
-                    &backend,
+                    &effective_backend,
                     &config,
                     &prompt,
                     user_interactive,
@@ -508,7 +548,7 @@ pub async fn run_loop_impl(
                 )
                 .await
             } else {
-                let executor = CliExecutor::new(backend.clone());
+                let executor = CliExecutor::new(effective_backend.clone());
                 let result = executor
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
