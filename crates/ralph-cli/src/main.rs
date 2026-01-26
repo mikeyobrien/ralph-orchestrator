@@ -614,6 +614,10 @@ struct PlanArgs {
     /// Backend to use (overrides config and auto-detection)
     #[arg(short, long, value_name = "BACKEND")]
     backend: Option<String>,
+
+    /// Custom backend command and arguments (use after --)
+    #[arg(last = true)]
+    custom_args: Vec<String>,
 }
 
 /// Arguments for the task subcommand.
@@ -630,6 +634,10 @@ struct CodeTaskArgs {
     /// Backend to use (overrides config and auto-detection)
     #[arg(short, long, value_name = "BACKEND")]
     backend: Option<String>,
+
+    /// Custom backend command and arguments (use after --)
+    #[arg(last = true)]
+    custom_args: Vec<String>,
 }
 
 #[tokio::main]
@@ -1620,6 +1628,11 @@ fn plan_command(
         user_input: args.idea,
         backend_override: args.backend,
         config_path,
+        custom_args: if args.custom_args.is_empty() {
+            None
+        } else {
+            Some(args.custom_args)
+        },
     };
 
     sop_runner::run_sop(config).map_err(|e| match e {
@@ -1668,6 +1681,11 @@ fn code_task_command(
         user_input: args.input,
         backend_override: args.backend,
         config_path,
+        custom_args: if args.custom_args.is_empty() {
+            None
+        } else {
+            Some(args.custom_args)
+        },
     };
 
     sop_runner::run_sop(config).map_err(|e| match e {

@@ -8,7 +8,7 @@
 
 use ralph_adapters::{CliBackend, CustomBackendError, NoBackendError, detect_backend_default};
 use ralph_core::RalphConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use thiserror::Error;
 
@@ -62,6 +62,8 @@ pub struct SopRunConfig {
     pub backend_override: Option<String>,
     /// Path to config file (for backend resolution fallback).
     pub config_path: Option<PathBuf>,
+    /// Custom backend command and arguments (from CLI args).
+    pub custom_args: Option<Vec<String>>,
 }
 
 /// Errors that can occur when running an SOP.
@@ -98,7 +100,48 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
     let prompt = build_prompt(config.sop, config.user_input.as_deref());
 
     // 3. Get interactive backend configuration
-    let cli_backend = CliBackend::for_interactive_prompt(&backend_name)?;
+    let cli_backend = if backend_name == "custom" {
+        if let Some(args) = &config.custom_args {
+            // Ad-hoc custom backend from CLI args
+            if args.is_empty() {
+                return Err(SopRunError::UnknownBackend(
+                    "custom (no command specified in args)".to_string(),
+                ));
+            }
+            let command = args[0].clone();
+            let cli_args = args[1..].to_vec();
+
+            CliBackend {
+                command,
+                args: cli_args,
+                prompt_mode: ralph_adapters::PromptMode::Arg,
+                prompt_flag: None, // Prompt appended as last arg by default
+                output_format: ralph_adapters::OutputFormat::Text,
+            }
+        } else {
+            // For custom backend from config, we need to load the configuration to get the command/args
+            let config_path = config
+                .config_path
+                .as_deref()
+                .unwrap_or_else(|| Path::new("ralph.yml"));
+
+            if config_path.exists() {
+                let ralph_config = RalphConfig::from_file(config_path).map_err(|e| {
+                    SopRunError::SpawnError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        e.to_string(),
+                    ))
+                })?;
+                CliBackend::custom(&ralph_config.cli)?
+            } else {
+                return Err(SopRunError::UnknownBackend(
+                    "custom (configuration file not found and no CLI args provided)".to_string(),
+                ));
+            }
+        }
+    } else {
+        CliBackend::for_interactive_prompt(&backend_name)?
+    };
 
     // 4. Spawn the interactive session
     spawn_interactive(&cli_backend, &prompt)?;
@@ -138,7 +181,9 @@ fn resolve_backend(
 /// Validates a backend name.
 fn validate_backend_name(name: &str) -> Result<(), SopRunError> {
     match name {
-        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" => Ok(()),
+        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "custom" => {
+            Ok(())
+        }
         _ => Err(SopRunError::UnknownBackend(name.to_string())),
     }
 }
@@ -252,6 +297,7 @@ mod tests {
         assert!(validate_backend_name("amp").is_ok());
         assert!(validate_backend_name("copilot").is_ok());
         assert!(validate_backend_name("opencode").is_ok());
+        assert!(validate_backend_name("custom").is_ok());
     }
 
     #[test]

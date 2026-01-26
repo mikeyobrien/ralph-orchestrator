@@ -57,6 +57,9 @@ pub enum LoopsCommands {
 
     /// Show diff of loop's changes from merge-base
     Diff(DiffArgs),
+
+    /// Merge a completed loop (or force retry)
+    Merge(MergeArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -121,6 +124,16 @@ pub struct DiffArgs {
     pub stat: bool,
 }
 
+#[derive(Parser, Debug)]
+pub struct MergeArgs {
+    /// Loop ID
+    pub loop_id: String,
+
+    /// Force merge even if state is 'merging'
+    #[arg(long)]
+    pub force: bool,
+}
+
 /// Execute a loops command.
 pub fn execute(args: LoopsArgs, use_colors: bool) -> Result<()> {
     match args.command {
@@ -133,6 +146,7 @@ pub fn execute(args: LoopsArgs, use_colors: bool) -> Result<()> {
         Some(LoopsCommands::Prune) => prune_stale(),
         Some(LoopsCommands::Attach(attach_args)) => attach_to_loop(attach_args),
         Some(LoopsCommands::Diff(diff_args)) => show_diff(diff_args),
+        Some(LoopsCommands::Merge(merge_args)) => merge_loop(merge_args),
     }
 }
 
@@ -439,35 +453,7 @@ fn retry_merge(args: RetryArgs) -> Result<()> {
         );
     }
 
-    // Get the merge-loop preset and write to config file
-    let preset = crate::presets::get_preset("merge-loop").context("merge-loop preset not found")?;
-
-    let config_path = cwd.join(".ralph/merge-loop-config.yml");
-    std::fs::write(&config_path, preset.content).context("Failed to write merge config file")?;
-
-    // Spawn merge-ralph
-    println!("Spawning merge-ralph for loop '{}'...", args.loop_id);
-
-    let status = Command::new("ralph")
-        .args([
-            "run",
-            "-c",
-            ".ralph/merge-loop-config.yml",
-            "-p",
-            &format!(
-                "Merge loop {} from branch ralph/{}",
-                args.loop_id, args.loop_id
-            ),
-        ])
-        .env("RALPH_MERGE_LOOP_ID", &args.loop_id)
-        .status()
-        .context("Failed to spawn merge-ralph")?;
-
-    if !status.success() {
-        bail!("merge-ralph exited with error");
-    }
-
-    Ok(())
+    spawn_merge_ralph(&cwd, &args.loop_id)
 }
 
 /// Discard a loop and clean up.
@@ -699,6 +685,108 @@ fn show_diff(args: DiffArgs) -> Result<()> {
 
     if !status.success() {
         bail!("git diff failed");
+    }
+
+    Ok(())
+}
+
+/// Merge a completed loop (or force retry).
+fn merge_loop(args: MergeArgs) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let registry = LoopRegistry::new(&cwd);
+    let merge_queue = MergeQueue::new(&cwd);
+
+    // Try to find the loop in various places
+    let (loop_id, worktree_path) = resolve_loop(&cwd, &args.loop_id)?;
+
+    // 1. Check if it's running
+    if let Ok(Some(entry)) = registry.get(&loop_id)
+        && entry.is_alive()
+    {
+        bail!("Loop '{}' is still running. Stop it first.", loop_id);
+    }
+
+    // 2. Check merge queue state
+    if let Ok(Some(entry)) = merge_queue.get_entry(&loop_id) {
+        match entry.state {
+            MergeState::Merged => bail!("Loop '{}' is already merged.", loop_id),
+            MergeState::Discarded => bail!("Loop '{}' is discarded.", loop_id),
+            MergeState::Merging => {
+                if !args.force {
+                    bail!(
+                        "Loop '{}' is currently merging (PID {:?}). Use --force to override.",
+                        loop_id,
+                        entry.merge_pid
+                    );
+                }
+                println!("Force-merging loop '{}'...", loop_id);
+            }
+            MergeState::Queued | MergeState::NeedsReview => {
+                println!("Merging loop '{}'...", loop_id);
+            }
+        }
+    } else {
+        // 3. Not in queue - check if it's an orphan worktree
+        let worktrees = list_ralph_worktrees(&cwd).unwrap_or_default();
+        let is_orphan = worktrees
+            .iter()
+            .any(|wt| wt.branch == format!("ralph/{}", loop_id));
+
+        if is_orphan {
+            println!(
+                "Found orphan worktree for loop '{}'. Queueing for merge...",
+                loop_id
+            );
+            // We need a prompt for the queue entry. Since it's an orphan, we might not have it easily.
+            // Try to read it from the worktree's loop lock if available, or use a placeholder.
+            let prompt = if let Some(wt_path) = worktree_path {
+                use ralph_core::LoopLock;
+                LoopLock::read_existing(std::path::Path::new(&wt_path))
+                    .ok()
+                    .flatten()
+                    .map(|m| m.prompt)
+                    .unwrap_or_else(|| "Orphan loop (recovered)".to_string())
+            } else {
+                "Orphan loop (recovered)".to_string()
+            };
+
+            merge_queue.enqueue(&loop_id, &prompt)?;
+        } else {
+            bail!(
+                "Loop '{}' is not ready for merge (not in queue and not an orphan worktree).",
+                loop_id
+            );
+        }
+    }
+
+    spawn_merge_ralph(&cwd, &loop_id)
+}
+
+/// Helper to spawn merge-ralph
+fn spawn_merge_ralph(cwd: &std::path::Path, loop_id: &str) -> Result<()> {
+    // Get the merge-loop preset and write to config file
+    let preset = crate::presets::get_preset("merge-loop").context("merge-loop preset not found")?;
+
+    let config_path = cwd.join(".ralph/merge-loop-config.yml");
+    std::fs::write(&config_path, preset.content).context("Failed to write merge config file")?;
+
+    // Spawn merge-ralph
+    println!("Spawning merge-ralph for loop '{}'...", loop_id);
+
+    let status = Command::new("ralph")
+        .args([
+            "run",
+            "-c",
+            ".ralph/merge-loop-config.yml",
+            "-p",
+            &format!("Merge loop {} from branch ralph/{}", loop_id, loop_id),
+        ])
+        .env("RALPH_MERGE_LOOP_ID", loop_id)
+        .status()
+        .context("Failed to spawn merge-ralph")?;
+
+    if !status.success() {
+        bail!("merge-ralph exited with error");
     }
 
     Ok(())
