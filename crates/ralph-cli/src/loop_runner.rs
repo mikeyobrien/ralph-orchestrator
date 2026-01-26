@@ -49,6 +49,7 @@ pub async fn run_loop_impl(
     verbosity: Verbosity,
     record_session: Option<PathBuf>,
     loop_context: Option<LoopContext>,
+    custom_args: Vec<String>,
 ) -> Result<TerminationReason> {
     // Set up process group leadership per spec
     // "The orchestrator must run as a process group leader"
@@ -160,7 +161,12 @@ pub async fn run_loop_impl(
 
     // Create backend from config - TUI mode uses the same backend as non-TUI
     // The TUI is an observation layer that displays output, not a different mode
-    let backend = CliBackend::from_config(&config.cli).map_err(|e| anyhow::Error::new(e))?;
+    let mut backend = CliBackend::from_config(&config.cli).map_err(|e| anyhow::Error::new(e))?;
+
+    // Append custom args from CLI if provided (e.g., `ralph run -b opencode -- --model="some-model"`)
+    if !custom_args.is_empty() {
+        backend.args.extend(custom_args);
+    }
 
     // Create PTY executor if using interactive mode
     let mut pty_executor = if use_pty {

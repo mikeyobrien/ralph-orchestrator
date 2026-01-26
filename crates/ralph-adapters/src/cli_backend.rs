@@ -1093,4 +1093,33 @@ mod tests {
             args
         );
     }
+
+    #[test]
+    fn test_custom_args_can_be_appended() {
+        // Verify that custom args can be appended to backend args
+        // This is used for `ralph run -b opencode -- --model="some-model"`
+        let mut backend = CliBackend::opencode();
+
+        // Append custom args
+        let custom_args = vec!["--model=gpt-4".to_string(), "--temperature=0.7".to_string()];
+        backend.args.extend(custom_args.clone());
+
+        // Build command and verify custom args are included
+        let (cmd, args, _, _) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "opencode");
+        // Should have: original args + custom args + prompt
+        assert!(args.contains(&"run".to_string())); // Original arg
+        assert!(args.contains(&"--model=gpt-4".to_string())); // Custom arg
+        assert!(args.contains(&"--temperature=0.7".to_string())); // Custom arg
+        assert!(args.contains(&"test prompt".to_string())); // Prompt
+
+        // Verify order: original args come before custom args
+        let run_idx = args.iter().position(|a| a == "run").unwrap();
+        let model_idx = args.iter().position(|a| a == "--model=gpt-4").unwrap();
+        assert!(
+            run_idx < model_idx,
+            "Original args should come before custom args"
+        );
+    }
 }

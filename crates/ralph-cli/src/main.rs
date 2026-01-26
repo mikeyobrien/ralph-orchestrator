@@ -500,6 +500,10 @@ struct RunArgs {
     /// Record session to JSONL file for replay testing
     #[arg(long, value_name = "FILE")]
     record_session: Option<PathBuf>,
+
+    /// Custom backend command and arguments (use after --)
+    #[arg(last = true)]
+    custom_args: Vec<String>,
 }
 
 /// Arguments for the resume subcommand.
@@ -778,6 +782,7 @@ async fn main() -> Result<()> {
                 verbose: false,
                 quiet: false,
                 record_session: None,
+                custom_args: Vec::new(),
             };
             run_command(&config_sources, cli.verbose, cli.color, args).await
         }
@@ -1115,6 +1120,7 @@ async fn run_command(
     // TUI is enabled by default (unless --no-tui or --autonomous is specified)
     let enable_tui = !args.no_tui && !args.autonomous;
     let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
+    let custom_args = args.custom_args;
     let reason = loop_runner::run_loop_impl(
         config,
         color_mode,
@@ -1123,6 +1129,7 @@ async fn run_command(
         verbosity,
         args.record_session,
         Some(loop_context),
+        custom_args,
     )
     .await?;
     let exit_code = reason.exit_code();
@@ -1251,7 +1258,8 @@ async fn resume_command(
         enable_tui,
         verbosity,
         args.record_session,
-        None, // Deprecated resume command doesn't have loop_context
+        None,       // Deprecated resume command doesn't have loop_context
+        Vec::new(), // Resume command doesn't support custom args
     )
     .await?;
     let exit_code = reason.exit_code();
