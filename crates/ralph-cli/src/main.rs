@@ -1039,6 +1039,15 @@ async fn run_command(
                 debug!("Acquired loop lock after waiting");
                 let context = LoopContext::primary(workspace_root.clone());
                 (context, Some(guard))
+            } else if !config.features.parallel {
+                // Parallel loops disabled via config - error out
+                anyhow::bail!(
+                    "Another loop is already running (PID {}, prompt: \"{}\"). \
+                    Parallel loops are disabled in config (features.parallel: false). \
+                    Use --exclusive to wait for the lock, or enable parallel loops.",
+                    existing.pid,
+                    existing.prompt.chars().take(50).collect::<String>()
+                );
             } else {
                 // Auto-spawn into worktree
                 info!(

@@ -44,8 +44,8 @@ pub mod worktree;
 
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
-    CliConfig, CoreConfig, EventLoopConfig, EventMetadata, HatBackend, HatConfig, InjectMode,
-    MemoriesConfig, MemoriesFilter, RalphConfig,
+    CliConfig, CoreConfig, EventLoopConfig, EventMetadata, FeaturesConfig, HatBackend, HatConfig,
+    InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig,
 };
 pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};

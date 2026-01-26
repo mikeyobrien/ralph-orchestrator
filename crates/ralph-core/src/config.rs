@@ -121,6 +121,10 @@ pub struct RalphConfig {
     /// Tasks configuration for runtime work tracking.
     #[serde(default)]
     pub tasks: TasksConfig,
+
+    /// Feature flags for optional capabilities.
+    #[serde(default)]
+    pub features: FeaturesConfig,
 }
 
 fn default_true() -> bool {
@@ -160,6 +164,8 @@ impl Default for RalphConfig {
             memories: MemoriesConfig::default(),
             // Tasks
             tasks: TasksConfig::default(),
+            // Features
+            features: FeaturesConfig::default(),
         }
     }
 }
@@ -847,6 +853,31 @@ impl Default for TasksConfig {
     fn default() -> Self {
         Self {
             enabled: true, // Tasks enabled by default
+        }
+    }
+}
+
+/// Feature flags for optional Ralph capabilities.
+///
+/// Example configuration:
+/// ```yaml
+/// features:
+///   parallel: true  # Enable parallel loops via git worktrees
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeaturesConfig {
+    /// Whether parallel loops are enabled.
+    ///
+    /// When true (default), if another loop holds the lock, Ralph spawns
+    /// a parallel loop in a git worktree. When false, Ralph errors instead.
+    #[serde(default = "default_true")]
+    pub parallel: bool,
+}
+
+impl Default for FeaturesConfig {
+    fn default() -> Self {
+        Self {
+            parallel: true, // Parallel loops enabled by default
         }
     }
 }
