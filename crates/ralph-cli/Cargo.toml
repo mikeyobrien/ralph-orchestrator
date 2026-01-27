@@ -43,6 +43,9 @@ scopeguard.workspace = true
 # For TUI stream handler line types
 ratatui.workspace = true
 
+# For progress spinners
+indicatif.workspace = true
+
 # For Unix process group and signal handling
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }

@@ -13,6 +13,7 @@
 //! - Work item tracking via `ralph task`
 
 mod display;
+mod hats;
 mod init;
 mod loop_runner;
 mod loops;
@@ -398,6 +399,9 @@ enum Commands {
 
     /// Manage parallel loops
     Loops(loops::LoopsArgs),
+
+    /// Manage configured hats
+    Hats(hats::HatsArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -760,6 +764,9 @@ async fn main() -> Result<()> {
         Some(Commands::Task(args)) => code_task_command(&config_sources, cli.color, args),
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()),
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
+        Some(Commands::Hats(args)) => {
+            hats::execute(&cli.config, args, cli.color.should_use_colors())
+        }
         None => {
             // Default to run with TUI enabled (new default behavior)
             let args = RunArgs {
