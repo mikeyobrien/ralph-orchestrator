@@ -5,6 +5,19 @@ use std::fmt;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
+/// バックエンドの種類を表す列挙型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackendKind {
+    Claude,
+    Kiro,
+    Gemini,
+    Codex,
+    Amp,
+    Copilot,
+    OpenCode,
+    Custom,
+}
+
 /// Output format supported by a CLI backend.
 ///
 /// This allows adapters to declare whether they emit structured JSON
@@ -52,6 +65,10 @@ pub struct CliBackend {
     pub prompt_flag: Option<String>,
     /// Output format emitted by this backend.
     pub output_format: OutputFormat,
+    /// Additional system prompts to append (Claude-specific).
+    pub append_system_prompts: Vec<String>,
+    /// Backend kind for type-safe operations.
+    pub kind: BackendKind,
 }
 
 impl CliBackend {
@@ -61,7 +78,7 @@ impl CliBackend {
     /// Returns `CustomBackendError` if backend is "custom" but no command is specified.
     pub fn from_config(config: &CliConfig) -> Result<Self, CustomBackendError> {
         match config.backend.as_str() {
-            "claude" => Ok(Self::claude()),
+            "claude" => Ok(Self::claude_with_config(config)),
             "kiro" => Ok(Self::kiro()),
             "gemini" => Ok(Self::gemini()),
             "codex" => Ok(Self::codex()),
@@ -93,6 +110,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::StreamJson,
+            append_system_prompts: vec![],
+            kind: BackendKind::Claude,
         }
     }
 
@@ -110,6 +129,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Claude,
         }
     }
 
@@ -127,6 +148,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Kiro,
         }
     }
 
@@ -146,6 +169,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Kiro,
         }
     }
 
@@ -180,6 +205,8 @@ impl CliBackend {
                 prompt_mode: PromptMode::Arg,
                 prompt_flag: None,
                 output_format: OutputFormat::Text,
+                append_system_prompts: vec![],
+                kind: BackendKind::Custom,
             }),
         }
     }
@@ -192,6 +219,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Gemini,
         }
     }
 
@@ -203,6 +232,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Codex,
         }
     }
 
@@ -214,6 +245,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Amp,
         }
     }
 
@@ -228,6 +261,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Copilot,
         }
     }
 
@@ -243,6 +278,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Copilot,
         }
     }
 
@@ -288,6 +325,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Kiro,
         }
     }
 
@@ -302,6 +341,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-i".to_string()), // NOT -p!
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Gemini,
         }
     }
 
@@ -316,6 +357,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Codex,
         }
     }
 
@@ -330,6 +373,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Amp,
         }
     }
 
@@ -344,6 +389,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Copilot,
         }
     }
 
@@ -363,6 +410,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::OpenCode,
         }
     }
 
@@ -380,6 +429,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::OpenCode,
         }
     }
 
@@ -399,6 +450,8 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("--prompt".to_string()),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::OpenCode,
         }
     }
 
@@ -420,7 +473,73 @@ impl CliBackend {
             prompt_mode,
             prompt_flag: config.prompt_flag.clone(),
             output_format: OutputFormat::Text,
+            append_system_prompts: vec![],
+            kind: BackendKind::Custom,
         })
+    }
+
+    pub fn claude_with_config(config: &CliConfig) -> Self {
+        use shellexpand::tilde;
+
+        let claude_cfg = &config.claude;
+        let mut args = vec![];
+
+        if claude_cfg.dangerously_skip_permissions {
+            args.push("--dangerously-skip-permissions".to_string());
+        }
+
+        args.push("--verbose".to_string());
+        args.push("--output-format".to_string());
+        args.push("stream-json".to_string());
+
+        if !claude_cfg.plugin_dirs.is_empty() {
+            args.push("--plugin-dir".to_string());
+            let expanded: Vec<String> = claude_cfg.plugin_dirs.iter().map(|p| tilde(p).into_owned()).collect();
+            args.extend(expanded);
+        }
+
+        if !claude_cfg.mcp_configs.is_empty() {
+            args.push("--mcp-config".to_string());
+            let expanded: Vec<String> = claude_cfg.mcp_configs.iter().map(|p| tilde(p).into_owned()).collect();
+            args.extend(expanded);
+        }
+
+        if !claude_cfg.allowed_tools.is_empty() {
+            args.push("--allowedTools".to_string());
+            args.push(claude_cfg.allowed_tools.join(","));
+        }
+
+        args.extend(config.args.clone());
+
+        let mut append_prompts = claude_cfg.append_system_prompts.clone();
+
+        for file_path in &claude_cfg.append_system_prompt_files {
+            let expanded_path = tilde(file_path).into_owned();
+            match std::fs::read_to_string(&expanded_path) {
+                Ok(content) => {
+                    if content.len() > 10_000 {
+                        tracing::warn!(path = %expanded_path, size = content.len(), "System prompt file is large");
+                    }
+                    append_prompts.push(content);
+                }
+                Err(e) => {
+                    tracing::warn!(path = %expanded_path, error = %e, "Failed to read system prompt file");
+                }
+            }
+        }
+
+        let command = config.command.clone().unwrap_or_else(|| "claude".to_string());
+        let prompt_flag = config.prompt_flag.clone().or(Some("-p".to_string()));
+
+        Self {
+            command,
+            args,
+            prompt_mode: PromptMode::Arg,
+            prompt_flag,
+            output_format: OutputFormat::StreamJson,
+            append_system_prompts: append_prompts,
+            kind: BackendKind::Claude,
+        }
     }
 
     /// Builds the full command with arguments for execution.
@@ -433,6 +552,14 @@ impl CliBackend {
         prompt: &str,
         interactive: bool,
     ) -> (String, Vec<String>, Option<String>, Option<NamedTempFile>) {
+        tracing::trace!(
+            command = %self.command,
+            kind = ?self.kind,
+            prompt_len = prompt.len(),
+            interactive = interactive,
+            "build_command called"
+        );
+
         let mut args = self.args.clone();
 
         // Filter args based on execution mode per interactive-mode.spec.md
@@ -440,10 +567,18 @@ impl CliBackend {
             args = self.filter_args_for_interactive(args);
         }
 
+        // Add append-system-prompt flags for Claude backend
+        if matches!(self.kind, BackendKind::Claude) && !self.append_system_prompts.is_empty() {
+            for prompt_text in &self.append_system_prompts {
+                args.push("--append-system-prompt".to_string());
+                args.push(prompt_text.clone());
+            }
+        }
+
         // Handle large prompts for Claude (>7000 chars)
         let (stdin_input, temp_file) = match self.prompt_mode {
             PromptMode::Arg => {
-                let (prompt_text, temp_file) = if self.command == "claude" && prompt.len() > 7000 {
+                let (prompt_text, temp_file) = if matches!(self.kind, BackendKind::Claude) && prompt.len() > 7000 {
                     // Write to temp file and instruct Claude to read it
                     match NamedTempFile::new() {
                         Ok(mut file) => {

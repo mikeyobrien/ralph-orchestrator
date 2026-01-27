@@ -36,3 +36,4 @@ nix.workspace = true
 crossterm.workspace = true
 vt100.workspace = true
 strip-ansi-escapes.workspace = true
+shellexpand = "3"

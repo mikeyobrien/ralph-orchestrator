@@ -662,6 +662,32 @@ impl CoreConfig {
     }
 }
 
+/// Claude CLI-specific configuration.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ClaudeCliConfig {
+    #[serde(default)]
+    pub plugin_dirs: Vec<String>,
+
+    #[serde(default)]
+    pub mcp_configs: Vec<String>,
+
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+
+    #[serde(default)]
+    pub append_system_prompts: Vec<String>,
+
+    #[serde(default)]
+    pub append_system_prompt_files: Vec<String>,
+
+    #[serde(default = "default_skip_permissions")]
+    pub dangerously_skip_permissions: bool,
+}
+
+fn default_skip_permissions() -> bool {
+    true
+}
+
 /// CLI backend configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliConfig {
@@ -696,6 +722,10 @@ pub struct CliConfig {
     /// If None, defaults to "-p" for arg mode.
     #[serde(default)]
     pub prompt_flag: Option<String>,
+
+    /// Claude-specific configuration.
+    #[serde(default)]
+    pub claude: ClaudeCliConfig,
 }
 
 fn default_backend() -> String {
@@ -724,6 +754,7 @@ impl Default for CliConfig {
             idle_timeout_secs: default_idle_timeout(),
             args: Vec::new(),
             prompt_flag: None,
+            claude: ClaudeCliConfig::default(),
         }
     }
 }

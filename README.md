@@ -94,3 +94,19 @@ MIT License — See [LICENSE](LICENSE) for details.
 ---
 
 *"I'm learnding!" - Ralph Wiggum*
+
+```yaml
+cli:
+  backend: "claude"
+  claude:
+    plugin_dirs:
+      - "~/.factory/claude/plugins/official"
+    mcp_configs:
+      - "~/.factory/claude/mcp-policy.json"
+    allowed_tools:
+      - "filesystem"
+    append_system_prompts:
+      - "Cite skill names explicitly."
+    append_system_prompt_files:
+      - "~/.factory/policy/claude-system.txt"
+```
