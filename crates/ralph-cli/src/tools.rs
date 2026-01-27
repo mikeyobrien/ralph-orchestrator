@@ -34,6 +34,6 @@ pub enum ToolsCommands {
 pub fn execute(args: ToolsArgs, use_colors: bool) -> Result<()> {
     match args.command {
         ToolsCommands::Memory(memory_args) => memory::execute(memory_args, use_colors),
-        ToolsCommands::Task(task_args) => task_cli::execute(task_args),
+        ToolsCommands::Task(task_args) => task_cli::execute(task_args, use_colors),
     }
 }

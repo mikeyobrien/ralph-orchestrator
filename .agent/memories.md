@@ -2,6 +2,10 @@
 
 ## Patterns
 
+### mem-1769391452-a0b9
+> Added task breakdown and state management guidance to Ralph's core prompt. Also added context file listing (.agent/*.md) to help agents discover research notes.
+<!-- tags: prompt, ux, guidance | created: 2026-01-26 -->
+
 ### mem-1769102069-37b5
 > Coverage reporting configured with cargo-tarpaulin. Run 'cargo tarpaulin --out Html --output-dir coverage --skip-clean' to generate reports. Badge shows 65% coverage in README.
 <!-- tags: testing, coverage, ci | created: 2026-01-22 -->
@@ -26,11 +30,19 @@
 
 ## Fixes
 
+### mem-1769390410-9433
+> Improved task list CLI: Added --days and --limit flags to limit output, and added colors/sorting for better readability.
+<!-- tags: cli, ux, task | created: 2026-01-26 -->
+
 ### mem-1769047926-2118
 > Memory CLI output improvements: Use relative dates (today/yesterday/N days ago), longer content previews (50 chars), cyan colored tags, boxed detail views with visual separators. Follow clig.dev CLI UX guidelines: human-first output with JSON fallback, colors disabled for non-TTY.
 <!-- tags: cli, ux, memory | created: 2026-01-22 -->
 
 ## Context
+
+### mem-1769391457-53da
+> Added end-to-end integration tests for event isolation in crates/ralph-cli/tests/integration_events_isolation.rs to verify fix for issue #82.
+<!-- tags: testing, events, integration | created: 2026-01-26 -->
 
 ### mem-1769098088-0181
 > confession: objective=Add task breakdown guidance, state management guidance, and context file listing to prompt generation, met=Yes, evidence=crates/ralph-core/src/hatless_ralph.rs:244-318, cargo build pass, 347 tests pass

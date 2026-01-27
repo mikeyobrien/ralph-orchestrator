@@ -258,6 +258,7 @@ Runtime work tracking. For implementation planning, use code tasks (`tasks/*.cod
 ralph tools task add 'Title' -p 2           # Create (priority 1-5, 1=highest)
 ralph tools task add 'X' --blocked-by Y     # With dependency
 ralph tools task list                        # All tasks
+ralph tools task list -s open -d 7           # Open tasks from last 7 days
 ralph tools task ready                       # Unblocked tasks only
 ralph tools task close <id>                  # Mark complete (ONLY after verification)
 ```
