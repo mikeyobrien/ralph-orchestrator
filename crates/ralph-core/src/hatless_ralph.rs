@@ -5,6 +5,7 @@
 use crate::config::CoreConfig;
 use crate::hat_registry::HatRegistry;
 use ralph_proto::Topic;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Hatless Ralph - the constant coordinator.
@@ -24,6 +25,13 @@ pub struct HatTopology {
     hats: Vec<HatInfo>,
 }
 
+/// Information about a hat that receives an event.
+#[derive(Debug, Clone)]
+pub struct EventReceiver {
+    pub name: String,
+    pub description: String,
+}
+
 /// Information about a hat for prompt generation.
 pub struct HatInfo {
     pub name: String,
@@ -31,6 +39,50 @@ pub struct HatInfo {
     pub subscribes_to: Vec<String>,
     pub publishes: Vec<String>,
     pub instructions: String,
+    /// Maps each published event to the hats that receive it.
+    pub event_receivers: HashMap<String, Vec<EventReceiver>>,
+}
+
+impl HatInfo {
+    /// Generates an Event Publishing Guide section showing what happens when this hat publishes events.
+    ///
+    /// Returns `None` if the hat doesn't publish any events.
+    pub fn event_publishing_guide(&self) -> Option<String> {
+        if self.publishes.is_empty() {
+            return None;
+        }
+
+        let mut guide = String::from(
+            "### Event Publishing Guide\n\n\
+             You MUST publish exactly ONE event when your work is complete.\n\
+             Publishing hands off to the next hat and starts a fresh iteration with clear context.\n\n\
+             When you publish:\n",
+        );
+
+        for pub_event in &self.publishes {
+            let receivers = self.event_receivers.get(pub_event);
+            let receiver_text = match receivers {
+                Some(r) if !r.is_empty() => r
+                    .iter()
+                    .map(|recv| {
+                        if recv.description.is_empty() {
+                            recv.name.clone()
+                        } else {
+                            format!("{} ({})", recv.name, recv.description)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                _ => "Ralph (coordinates next steps)".to_string(),
+            };
+            guide.push_str(&format!(
+                "- `{}` → Received by: {}\n",
+                pub_event, receiver_text
+            ));
+        }
+
+        Some(guide)
+    }
 }
 
 impl HatTopology {
@@ -38,20 +90,41 @@ impl HatTopology {
     pub fn from_registry(registry: &HatRegistry) -> Self {
         let hats = registry
             .all()
-            .map(|hat| HatInfo {
-                name: hat.name.clone(),
-                description: hat.description.clone(),
-                subscribes_to: hat
-                    .subscriptions
-                    .iter()
-                    .map(|t| t.as_str().to_string())
-                    .collect(),
-                publishes: hat
+            .map(|hat| {
+                // Compute who receives each event this hat publishes
+                let event_receivers: HashMap<String, Vec<EventReceiver>> = hat
                     .publishes
                     .iter()
-                    .map(|t| t.as_str().to_string())
-                    .collect(),
-                instructions: hat.instructions.clone(),
+                    .map(|pub_topic| {
+                        let receivers: Vec<EventReceiver> = registry
+                            .subscribers(pub_topic)
+                            .into_iter()
+                            .filter(|h| h.id != hat.id) // Exclude self
+                            .map(|h| EventReceiver {
+                                name: h.name.clone(),
+                                description: h.description.clone(),
+                            })
+                            .collect();
+                        (pub_topic.as_str().to_string(), receivers)
+                    })
+                    .collect();
+
+                HatInfo {
+                    name: hat.name.clone(),
+                    description: hat.description.clone(),
+                    subscribes_to: hat
+                        .subscriptions
+                        .iter()
+                        .map(|t| t.as_str().to_string())
+                        .collect(),
+                    publishes: hat
+                        .publishes
+                        .iter()
+                        .map(|t| t.as_str().to_string())
+                        .collect(),
+                    instructions: hat.instructions.clone(),
+                    event_receivers,
+                }
             })
             .collect();
 
@@ -455,75 +528,92 @@ The next iteration will continue with fresh context.
     }
 
     fn hats_section(&self, topology: &HatTopology, active_hats: &[&ralph_proto::Hat]) -> String {
-        let mut section = String::from("## HATS\n\nDelegate via events.\n\n");
+        let mut section = String::new();
 
-        // Include starting_event instruction if configured
-        if let Some(ref starting_event) = self.starting_event {
-            section.push_str(&format!(
-                "**After coordination, publish `{}` to start the workflow.**\n\n",
-                starting_event
-            ));
-        }
+        // When a specific hat is active, skip the topology overview (table + Mermaid)
+        // The hat just needs its instructions and publishing guide
+        if active_hats.is_empty() {
+            // Ralph is coordinating - show full topology for delegation decisions
+            section.push_str("## HATS\n\nDelegate via events.\n\n");
 
-        // Derive Ralph's triggers and publishes from topology
-        // Ralph triggers on: task.start + all hats' publishes (results Ralph handles)
-        // Ralph publishes: all hats' subscribes_to (events Ralph can emit to delegate)
-        let mut ralph_triggers: Vec<&str> = vec!["task.start"];
-        let mut ralph_publishes: Vec<&str> = Vec::new();
+            // Include starting_event instruction if configured
+            if let Some(ref starting_event) = self.starting_event {
+                section.push_str(&format!(
+                    "**After coordination, publish `{}` to start the workflow.**\n\n",
+                    starting_event
+                ));
+            }
 
-        for hat in &topology.hats {
-            for pub_event in &hat.publishes {
-                if !ralph_triggers.contains(&pub_event.as_str()) {
-                    ralph_triggers.push(pub_event.as_str());
+            // Derive Ralph's triggers and publishes from topology
+            // Ralph triggers on: task.start + all hats' publishes (results Ralph handles)
+            // Ralph publishes: all hats' subscribes_to (events Ralph can emit to delegate)
+            let mut ralph_triggers: Vec<&str> = vec!["task.start"];
+            let mut ralph_publishes: Vec<&str> = Vec::new();
+
+            for hat in &topology.hats {
+                for pub_event in &hat.publishes {
+                    if !ralph_triggers.contains(&pub_event.as_str()) {
+                        ralph_triggers.push(pub_event.as_str());
+                    }
+                }
+                for sub_event in &hat.subscribes_to {
+                    if !ralph_publishes.contains(&sub_event.as_str()) {
+                        ralph_publishes.push(sub_event.as_str());
+                    }
                 }
             }
-            for sub_event in &hat.subscribes_to {
-                if !ralph_publishes.contains(&sub_event.as_str()) {
-                    ralph_publishes.push(sub_event.as_str());
-                }
-            }
-        }
 
-        // Build hat table with Description column - ALWAYS shows ALL hats for context
-        section.push_str("| Hat | Triggers On | Publishes | Description |\n");
-        section.push_str("|-----|-------------|----------|-------------|\n");
+            // Build hat table with Description column
+            section.push_str("| Hat | Triggers On | Publishes | Description |\n");
+            section.push_str("|-----|-------------|----------|-------------|\n");
 
-        // Add Ralph coordinator row first
-        section.push_str(&format!(
-            "| Ralph | {} | {} | Coordinates workflow, delegates to specialized hats |\n",
-            ralph_triggers.join(", "),
-            ralph_publishes.join(", ")
-        ));
-
-        // Add all other hats
-        for hat in &topology.hats {
-            let subscribes = hat.subscribes_to.join(", ");
-            let publishes = hat.publishes.join(", ");
+            // Add Ralph coordinator row first
             section.push_str(&format!(
-                "| {} | {} | {} | {} |\n",
-                hat.name, subscribes, publishes, hat.description
+                "| Ralph | {} | {} | Coordinates workflow, delegates to specialized hats |\n",
+                ralph_triggers.join(", "),
+                ralph_publishes.join(", ")
             ));
-        }
 
-        section.push('\n');
+            // Add all other hats
+            for hat in &topology.hats {
+                let subscribes = hat.subscribes_to.join(", ");
+                let publishes = hat.publishes.join(", ");
+                section.push_str(&format!(
+                    "| {} | {} | {} | {} |\n",
+                    hat.name, subscribes, publishes, hat.description
+                ));
+            }
 
-        // Generate Mermaid topology diagram
-        section.push_str(&self.generate_mermaid_diagram(topology, &ralph_publishes));
-        section.push('\n');
+            section.push('\n');
 
-        // Validate topology and log warnings for unreachable hats
-        self.validate_topology_reachability(topology);
+            // Generate Mermaid topology diagram
+            section.push_str(&self.generate_mermaid_diagram(topology, &ralph_publishes));
+            section.push('\n');
 
-        // Add instructions sections ONLY for active hats
-        // If the slice is empty, no instructions are added (no active hats)
-        for active_hat in active_hats {
-            if !active_hat.instructions.trim().is_empty() {
-                section.push_str(&format!("### {} Instructions\n\n", active_hat.name));
-                section.push_str(&active_hat.instructions);
-                if !active_hat.instructions.ends_with('\n') {
+            // Validate topology and log warnings for unreachable hats
+            self.validate_topology_reachability(topology);
+        } else {
+            // Specific hat(s) active - minimal section with just instructions + guide
+            section.push_str("## ACTIVE HAT\n\n");
+
+            for active_hat in active_hats {
+                // Find matching HatInfo from topology to access event_receivers
+                let hat_info = topology.hats.iter().find(|h| h.name == active_hat.name);
+
+                if !active_hat.instructions.trim().is_empty() {
+                    section.push_str(&format!("### {} Instructions\n\n", active_hat.name));
+                    section.push_str(&active_hat.instructions);
+                    if !active_hat.instructions.ends_with('\n') {
+                        section.push('\n');
+                    }
                     section.push('\n');
                 }
-                section.push('\n');
+
+                // Add Event Publishing Guide after instructions (if hat publishes events)
+                if let Some(guide) = hat_info.and_then(|info| info.event_publishing_guide()) {
+                    section.push_str(&guide);
+                    section.push('\n');
+                }
             }
         }
 
@@ -1312,8 +1402,9 @@ hats:
     }
 
     #[test]
-    fn test_topology_table_always_present() {
-        // Scenario 7 from plan.md: Full hat topology table always shown
+    fn test_topology_table_only_when_ralph_coordinating() {
+        // Topology table + Mermaid shown only when Ralph is coordinating (no active hats)
+        // When a hat is active, skip the table to reduce token usage
         let yaml = r#"
 hats:
   security_reviewer:
@@ -1329,30 +1420,43 @@ hats:
         let registry = HatRegistry::from_config(&config);
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
-        // Only security_reviewer is active
+        // Test 1: No active hats (Ralph coordinating) - should show table + Mermaid
+        let prompt_coordinating = ralph.build_prompt("Events", &[]);
+
+        assert!(
+            prompt_coordinating.contains("## HATS"),
+            "Should have HATS section when coordinating"
+        );
+        assert!(
+            prompt_coordinating.contains("| Hat | Triggers On | Publishes |"),
+            "Should have topology table when coordinating"
+        );
+        assert!(
+            prompt_coordinating.contains("```mermaid"),
+            "Should have Mermaid diagram when coordinating"
+        );
+
+        // Test 2: Active hat - should NOT show table/Mermaid, just instructions
         let security_hat = registry
             .get(&ralph_proto::HatId::new("security_reviewer"))
             .unwrap();
-        let active_hats = vec![security_hat];
+        let prompt_active = ralph.build_prompt("Events", &[security_hat]);
 
-        let prompt = ralph.build_prompt("Events", &active_hats);
-
-        // Topology table should show ALL hats (not just active ones)
         assert!(
-            prompt.contains("| Security Reviewer |"),
-            "Topology table should include Security Reviewer"
+            prompt_active.contains("## ACTIVE HAT"),
+            "Should have ACTIVE HAT section when hat is active"
         );
         assert!(
-            prompt.contains("| Architecture Reviewer |"),
-            "Topology table should include Architecture Reviewer even though inactive"
+            !prompt_active.contains("| Hat | Triggers On | Publishes |"),
+            "Should NOT have topology table when hat is active"
         );
         assert!(
-            prompt.contains("review.security"),
-            "Topology table should show triggers"
+            !prompt_active.contains("```mermaid"),
+            "Should NOT have Mermaid diagram when hat is active"
         );
         assert!(
-            prompt.contains("review.architecture"),
-            "Topology table should show all triggers"
+            prompt_active.contains("### Security Reviewer Instructions"),
+            "Should still have the active hat's instructions"
         );
     }
 
@@ -1761,6 +1865,214 @@ hats:
         assert!(
             !prompt.contains("Remember your objective"),
             "Should NOT have objective reinforcement without task.start"
+        );
+    }
+
+    // === Event Publishing Guide Tests ===
+
+    #[test]
+    fn test_event_publishing_guide_with_receivers() {
+        // When a hat publishes events and other hats receive them,
+        // the guide should show who receives each event
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "Builds and tests code"
+    triggers: ["build.task"]
+    publishes: ["build.done", "build.blocked"]
+  confessor:
+    name: "Confessor"
+    description: "Produces a ConfessionReport; rewarded for honesty"
+    triggers: ["build.done"]
+    publishes: ["confession.done"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        // Get the builder hat as active
+        let builder = registry.get(&ralph_proto::HatId::new("builder")).unwrap();
+        let prompt = ralph.build_prompt("[build.task] Build the feature", &[builder]);
+
+        // Should include Event Publishing Guide
+        assert!(
+            prompt.contains("### Event Publishing Guide"),
+            "Should include Event Publishing Guide section"
+        );
+        assert!(
+            prompt.contains("When you publish:"),
+            "Guide should explain what happens when publishing"
+        );
+        // build.done has a receiver (Confessor)
+        assert!(
+            prompt.contains("`build.done` → Received by: Confessor"),
+            "Should show Confessor receives build.done"
+        );
+        assert!(
+            prompt.contains("Produces a ConfessionReport; rewarded for honesty"),
+            "Should include receiver's description"
+        );
+        // build.blocked has no receiver, so falls back to Ralph
+        assert!(
+            prompt.contains("`build.blocked` → Received by: Ralph (coordinates next steps)"),
+            "Should show Ralph receives orphan events"
+        );
+    }
+
+    #[test]
+    fn test_event_publishing_guide_no_publishes() {
+        // When a hat doesn't publish any events, no guide should appear
+        let yaml = r#"
+hats:
+  observer:
+    name: "Observer"
+    description: "Only observes"
+    triggers: ["events.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let observer = registry.get(&ralph_proto::HatId::new("observer")).unwrap();
+        let prompt = ralph.build_prompt("[events.start] Start", &[observer]);
+
+        // Should NOT include Event Publishing Guide
+        assert!(
+            !prompt.contains("### Event Publishing Guide"),
+            "Should NOT include Event Publishing Guide when hat has no publishes"
+        );
+    }
+
+    #[test]
+    fn test_event_publishing_guide_all_orphan_events() {
+        // When all published events have no receivers, all should show Ralph
+        let yaml = r#"
+hats:
+  solo:
+    name: "Solo"
+    triggers: ["solo.start"]
+    publishes: ["solo.done", "solo.failed"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let solo = registry.get(&ralph_proto::HatId::new("solo")).unwrap();
+        let prompt = ralph.build_prompt("[solo.start] Go", &[solo]);
+
+        assert!(
+            prompt.contains("### Event Publishing Guide"),
+            "Should include guide even for orphan events"
+        );
+        assert!(
+            prompt.contains("`solo.done` → Received by: Ralph (coordinates next steps)"),
+            "Orphan solo.done should go to Ralph"
+        );
+        assert!(
+            prompt.contains("`solo.failed` → Received by: Ralph (coordinates next steps)"),
+            "Orphan solo.failed should go to Ralph"
+        );
+    }
+
+    #[test]
+    fn test_event_publishing_guide_multiple_receivers() {
+        // When an event has multiple receivers, all should be listed
+        let yaml = r#"
+hats:
+  broadcaster:
+    name: "Broadcaster"
+    triggers: ["broadcast.start"]
+    publishes: ["signal.sent"]
+  listener1:
+    name: "Listener1"
+    description: "First listener"
+    triggers: ["signal.sent"]
+  listener2:
+    name: "Listener2"
+    description: "Second listener"
+    triggers: ["signal.sent"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let broadcaster = registry
+            .get(&ralph_proto::HatId::new("broadcaster"))
+            .unwrap();
+        let prompt = ralph.build_prompt("[broadcast.start] Go", &[broadcaster]);
+
+        assert!(
+            prompt.contains("### Event Publishing Guide"),
+            "Should include guide"
+        );
+        // Both listeners should be mentioned (order may vary due to HashMap iteration)
+        assert!(
+            prompt.contains("Listener1 (First listener)"),
+            "Should list Listener1 as receiver"
+        );
+        assert!(
+            prompt.contains("Listener2 (Second listener)"),
+            "Should list Listener2 as receiver"
+        );
+    }
+
+    #[test]
+    fn test_event_publishing_guide_excludes_self() {
+        // If a hat subscribes to its own event, it should NOT be listed as receiver
+        let yaml = r#"
+hats:
+  looper:
+    name: "Looper"
+    triggers: ["loop.continue", "loop.start"]
+    publishes: ["loop.continue"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let looper = registry.get(&ralph_proto::HatId::new("looper")).unwrap();
+        let prompt = ralph.build_prompt("[loop.start] Start", &[looper]);
+
+        assert!(
+            prompt.contains("### Event Publishing Guide"),
+            "Should include guide"
+        );
+        // Self-reference should be excluded, so should fall back to Ralph
+        assert!(
+            prompt.contains("`loop.continue` → Received by: Ralph (coordinates next steps)"),
+            "Self-subscription should be excluded, falling back to Ralph"
+        );
+    }
+
+    #[test]
+    fn test_event_publishing_guide_receiver_without_description() {
+        // When a receiver has no description, just show the name
+        let yaml = r#"
+hats:
+  sender:
+    name: "Sender"
+    triggers: ["send.start"]
+    publishes: ["message.sent"]
+  receiver:
+    name: "NoDescReceiver"
+    triggers: ["message.sent"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let sender = registry.get(&ralph_proto::HatId::new("sender")).unwrap();
+        let prompt = ralph.build_prompt("[send.start] Go", &[sender]);
+
+        assert!(
+            prompt.contains("`message.sent` → Received by: NoDescReceiver"),
+            "Should show receiver name without parentheses when no description"
+        );
+        // Should NOT have empty parentheses
+        assert!(
+            !prompt.contains("NoDescReceiver ()"),
+            "Should NOT have empty parentheses for receiver without description"
         );
     }
 }

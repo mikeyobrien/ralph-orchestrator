@@ -547,10 +547,9 @@ hats:
 }
 
 #[test]
-fn test_custom_hat_topology_visible_to_ralph() {
-    // Per "Hatless Ralph" architecture: Custom hats define topology,
-    // but Ralph handles all iterations. This test verifies hat topology
-    // is visible in Ralph's prompt.
+fn test_active_hat_with_instructions_and_publishing_guide() {
+    // When a hat is triggered by an event, show ACTIVE HAT section with
+    // instructions and Event Publishing Guide instead of full topology.
     let yaml = r#"
 hats:
   deployer:
@@ -562,7 +561,7 @@ hats:
     let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
     let mut event_loop = EventLoop::new(config);
 
-    // Publish an event that the deployer hat would conceptually handle
+    // Publish an event that triggers the deployer hat
     event_loop
         .bus
         .publish(Event::new("deploy.request", "Deploy to staging"));
@@ -575,28 +574,43 @@ hats:
         "Multi-hat mode routes to Ralph"
     );
 
-    // Build Ralph's prompt - it should include the event context
+    // Build Ralph's prompt - should include active hat info
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
-    // Ralph's prompt should include:
-    // 1. The event topic that was published (payload format: "Event: topic - payload")
+    // The event topic should be in PENDING EVENTS
     assert!(
         prompt.contains("deploy.request"),
-        "Ralph's prompt should include the event topic"
+        "Should include the event topic in pending events"
     );
 
-    // 2. The HATS section documenting the topology
+    // Should have ACTIVE HAT section (not HATS topology table)
     assert!(
-        prompt.contains("## HATS"),
-        "Ralph's prompt should include hat topology"
+        prompt.contains("## ACTIVE HAT"),
+        "Should have ACTIVE HAT section when hat is triggered"
     );
     assert!(
-        prompt.contains("Deployment Manager"),
-        "Hat topology should include hat name"
+        !prompt.contains("| Hat | Triggers On | Publishes |"),
+        "Should NOT have topology table when hat is active"
+    );
+
+    // Should include the hat's instructions
+    assert!(
+        prompt.contains("Handle deployment operations safely"),
+        "Should include active hat's instructions"
+    );
+
+    // Should have Event Publishing Guide
+    assert!(
+        prompt.contains("### Event Publishing Guide"),
+        "Should have Event Publishing Guide"
     );
     assert!(
-        prompt.contains("deploy.request"),
-        "Hat triggers should be in topology"
+        prompt.contains("`deploy.done`"),
+        "Guide should list deploy.done"
+    );
+    assert!(
+        prompt.contains("`deploy.failed`"),
+        "Guide should list deploy.failed"
     );
 }
 
@@ -1157,8 +1171,9 @@ fn test_always_hatless_solo_mode_unchanged() {
 }
 
 #[test]
-fn test_always_hatless_topology_preserved_in_prompt() {
-    // Per acceptance criteria #2 and #4: Hat topology preserved for coordination
+fn test_active_hat_gets_publishing_guide_not_topology() {
+    // When a hat is triggered, show its instructions + Event Publishing Guide
+    // Skip the topology table/Mermaid to reduce token usage
     let yaml = r#"
 hats:
   planner:
@@ -1167,38 +1182,40 @@ hats:
     publishes: ["build.task"]
   builder:
     name: "Builder"
+    description: "Builds code"
     triggers: ["build.task"]
     publishes: ["build.done", "build.blocked"]
 "#;
     let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
     let mut event_loop = EventLoop::new(config);
-    event_loop.initialize("Test");
+    event_loop.initialize("Test"); // Publishes task.start which triggers Planner
 
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
-    // Verify ## HATS section with topology table
-    assert!(prompt.contains("## HATS"), "Should have HATS section");
+    // Planner is active (triggered by task.start), so we get ACTIVE HAT section
     assert!(
-        prompt.contains("Delegate via events"),
-        "Should explain delegation"
-    );
-    assert!(
-        prompt.contains("| Hat | Triggers On | Publishes |"),
-        "Should have topology table"
+        prompt.contains("## ACTIVE HAT"),
+        "Should have ACTIVE HAT section when hat is triggered"
     );
 
-    // Verify both hats are documented
-    assert!(prompt.contains("Planner"), "Should include Planner hat");
-    assert!(prompt.contains("Builder"), "Should include Builder hat");
-
-    // Verify trigger and publish information
+    // Should NOT have topology table when a hat is active
     assert!(
-        prompt.contains("build.task"),
-        "Should document build.task event"
+        !prompt.contains("| Hat | Triggers On | Publishes |"),
+        "Should NOT have topology table when hat is active"
     );
     assert!(
-        prompt.contains("build.done"),
-        "Should document build.done event"
+        !prompt.contains("```mermaid"),
+        "Should NOT have Mermaid diagram when hat is active"
+    );
+
+    // Should have Event Publishing Guide showing who receives build.task
+    assert!(
+        prompt.contains("### Event Publishing Guide"),
+        "Should have Event Publishing Guide for active hat"
+    );
+    assert!(
+        prompt.contains("`build.task` → Received by: Builder"),
+        "Should show Builder receives build.task"
     );
 }
 
