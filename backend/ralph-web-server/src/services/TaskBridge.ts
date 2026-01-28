@@ -745,8 +745,8 @@ export class TaskBridge {
   }
 
   /**
-   * Resolve the loop ID for a task by matching its title against loop prompts
-   * in `.ralph/loops.json`.
+   * Resolve the loop ID for a task by matching its title against loop prompts.
+   * Checks both `.ralph/loops.json` (worktree loops) and `.ralph/loop.lock` (primary loop).
    *
    * @param taskTitle - The task title (used as the prompt when launching the loop)
    * @returns The loop ID or null if not found
@@ -754,31 +754,37 @@ export class TaskBridge {
   private resolveLoopId(taskTitle: string): string | null {
     try {
       const repoRoot = getGitRepoRoot(this.defaultCwd);
+
+      // Check worktree loops in loops.json
       const loopsPath = path.join(repoRoot, ".ralph", "loops.json");
+      if (fs.existsSync(loopsPath)) {
+        const loopsData = JSON.parse(fs.readFileSync(loopsPath, "utf-8"));
+        const loops: Array<{ id: string; prompt: string; started: string }> =
+          loopsData.loops ?? [];
 
-      if (!fs.existsSync(loopsPath)) {
-        return null;
+        const matches = loops.filter((loop) => loop.prompt === taskTitle);
+
+        if (matches.length > 0) {
+          // If multiple matches, pick the most recently started one
+          if (matches.length > 1) {
+            matches.sort(
+              (a, b) => new Date(b.started).getTime() - new Date(a.started).getTime()
+            );
+          }
+          return matches[0].id;
+        }
       }
 
-      const loopsData = JSON.parse(fs.readFileSync(loopsPath, "utf-8"));
-      const loops: Array<{ id: string; prompt: string; started: string }> =
-        loopsData.loops ?? [];
-
-      // Find loops whose prompt matches the task title
-      const matches = loops.filter((loop) => loop.prompt === taskTitle);
-
-      if (matches.length === 0) {
-        return null;
+      // Check primary loop via lock file
+      const lockPath = path.join(repoRoot, ".ralph", "loop.lock");
+      if (fs.existsSync(lockPath)) {
+        const lockData = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+        if (lockData.prompt === taskTitle) {
+          return "(primary)";
+        }
       }
 
-      // If multiple matches, pick the most recently started one
-      if (matches.length > 1) {
-        matches.sort(
-          (a, b) => new Date(b.started).getTime() - new Date(a.started).getTime()
-        );
-      }
-
-      return matches[0].id;
+      return null;
     } catch (err) {
       console.warn(`[TaskBridge] Failed to resolve loop ID: ${err}`);
       return null;

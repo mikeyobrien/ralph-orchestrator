@@ -15,7 +15,7 @@ This sop generates structured code task files from rough descriptions, ideas, or
 
 - **input** (required): Task description, file path, or PDD plan path. Can be a simple sentence, paragraph, detailed explanation, or path to a PDD implementation plan.
 - **step_number** (optional): For PDD plans only - specific step to process. If not provided, automatically determines the next uncompleted step from the checklist.
-- **output_dir** (optional, default: "tasks/"): Directory where the code task file will be created
+- **output_dir** (optional, default: ".ralph/tasks/"): Directory where the code task file will be created
 - **task_name** (optional): For descriptions only - specific task name. If not provided, will be generated from the description.
 
 **Constraints for parameter acquisition:**
@@ -267,14 +267,14 @@ The application currently accepts any string as an email address, leading to dat
 ### Example Input (Description Mode)
 ```
 input: "I need a function that validates email addresses and returns detailed error messages"
-output_dir: "tasks/"
+output_dir: ".ralph/tasks/"
 ```
 
 ### Example Output (Description Mode)
 ```
 Detected mode: description
 
-Generated code task: tasks/email-validator.code-task.md
+Generated code task: .ralph/tasks/email-validator.code-task.md
 
 Created task for email validation functionality with comprehensive acceptance criteria and implementation guidance.
 

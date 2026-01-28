@@ -55,5 +55,3 @@ hats:
       3. Run tests to confirm still passing
       4. If more tests needed for the feature: publish refactor.done
       5. If feature complete: publish cycle.complete
-
-      Output LOOP_COMPLETE when the entire feature is done.

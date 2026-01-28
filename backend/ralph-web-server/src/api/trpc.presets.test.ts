@@ -3,7 +3,7 @@
  *
  * Tests for the presets.list tRPC endpoint that returns available presets
  * from three sources:
- * 1. Builtin presets (from crates/ralph-cli/presets/*.yml)
+ * 1. Builtin presets (from presets/*.yml at repo root)
  * 2. Directory presets (from .ralph/hats/ or configured path)
  * 3. Database collections (created via Builder tool)
  */
@@ -14,7 +14,7 @@ import { appRouter, createContext } from "./trpc";
 import { initializeDatabase, getDatabase } from "../db/connection";
 
 describe("presets.list tRPC endpoint", () => {
-  test("returns builtin presets from crates/ralph-cli/presets/", async () => {
+  test("returns builtin presets from presets/ directory", async () => {
     // Given: A configured context with default settings
     initializeDatabase(getDatabase(":memory:"));
     const ctx = createContext(getDatabase());

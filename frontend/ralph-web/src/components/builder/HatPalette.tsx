@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Search, ChevronLeft, ChevronRight, GripVertical } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, GripVertical, Circle } from "lucide-react";
 import type { HatNodeData } from "./HatNode";
 
 /**
@@ -28,7 +28,7 @@ const HAT_TEMPLATES: HatNodeData[] = [
     key: "planner",
     name: "Planner",
     description: "Analyzes tasks and creates implementation plans",
-    triggersOn: ["task.start", "build.blocked"],
+    triggersOn: ["work.start", "build.blocked"],
     publishes: ["build.task"],
   },
   {
@@ -120,6 +120,35 @@ function PaletteItem({ template }: { template: HatNodeData }) {
 }
 
 /**
+ * RerouteItem - draggable reroute waypoint
+ */
+function RerouteItem() {
+  const onDragStart = (event: DragEvent<HTMLDivElement>) => {
+    event.dataTransfer.setData("application/reroute", "true");
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  return (
+    <div
+      draggable
+      onDragStart={onDragStart}
+      className={cn(
+        "group flex items-center gap-2 p-2 rounded-md border border-transparent",
+        "bg-muted/30 hover:bg-muted/50 hover:border-border",
+        "cursor-grab active:cursor-grabbing transition-colors"
+      )}
+    >
+      <GripVertical className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground" />
+      <Circle className="h-3 w-3 text-muted-foreground fill-muted-foreground" />
+      <div>
+        <span className="font-medium text-sm">Reroute</span>
+        <p className="text-xs text-muted-foreground">Waypoint for connection routing</p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * HatPalette - sidebar with draggable hat templates
  */
 export function HatPalette({ className }: HatPaletteProps) {
@@ -188,6 +217,12 @@ export function HatPalette({ className }: HatPaletteProps) {
             No matching templates
           </p>
         )}
+
+        {/* Utilities */}
+        <div className="border-t pt-2 mt-2">
+          <p className="text-xs text-muted-foreground mb-1.5">Utilities</p>
+          <RerouteItem />
+        </div>
       </CardContent>
     </Card>
   );

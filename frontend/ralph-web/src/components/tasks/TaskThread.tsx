@@ -97,7 +97,7 @@ const STATUS_MAP: Record<string, StatusConfig> = {
     label: "Pending",
   },
   running: {
-    icon: Loader2,
+    icon: Play,
     color: "text-blue-500",
     badgeVariant: "default",
     label: "Running",
@@ -302,7 +302,7 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
           {/* Row 1: Status icon + Title */}
           <div className="flex items-center gap-3">
             <StatusIcon
-              className={cn("h-5 w-5 shrink-0", statusConfig.color, isRunning && "animate-spin")}
+              className={cn("h-5 w-5 shrink-0", statusConfig.color)}
               aria-hidden="true"
             />
             <span className="font-medium text-foreground flex-1 truncate">

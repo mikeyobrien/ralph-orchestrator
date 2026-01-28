@@ -121,18 +121,23 @@ export function ThreadList({ pollingInterval = 5000, className }: ThreadListProp
   }, [loopsQuery.data]);
 
   // Helper to get loop for a task - checks loopId first, falls back to PID
+  // Guard: if task is terminal (failed/closed) but the loop slot shows "running",
+  // the loop was reused for a different run — don't show a stale association.
   const getLoopForTask = useCallback(
     (task: Task): LoopDetailData | undefined => {
+      let loop: LoopDetailData | undefined;
       // Prefer loopId (direct association)
       if (task.loopId) {
-        const loopById = loopIdToLoopMap.get(task.loopId);
-        if (loopById) return loopById;
+        loop = loopIdToLoopMap.get(task.loopId);
       }
       // Fallback to PID-based mapping
-      if (task.pid) {
-        return pidToLoopMap.get(task.pid);
+      if (!loop && task.pid) {
+        loop = pidToLoopMap.get(task.pid);
       }
-      return undefined;
+      if (!loop) return undefined;
+      const isTaskTerminal = task.status === "failed" || task.status === "closed";
+      if (isTaskTerminal && loop.status === "running") return undefined;
+      return loop;
     },
     [loopIdToLoopMap, pidToLoopMap]
   );

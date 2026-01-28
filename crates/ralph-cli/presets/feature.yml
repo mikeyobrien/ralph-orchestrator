@@ -22,7 +22,7 @@ core:
 hats:
   builder:
     name: "Builder"
-    description: "Implements one task with backpressure. One task, one commit."
+    description: "Implements one task with quality gates. One task, one commit."
     triggers: ["build.task"]
     publishes: ["build.done", "build.blocked"]
     default_publishes: "build.done"
@@ -46,7 +46,7 @@ hats:
 
       3. **IMPLEMENT** — Execute the plan
          - Write the code following existing patterns
-         - Run backpressure: `cargo check && cargo test && cargo clippy -- -D warnings`
+         - Run verification: `cargo check && cargo test && cargo clippy -- -D warnings`
          - Must pass before proceeding
 
       4. **COMMIT** — Document the change

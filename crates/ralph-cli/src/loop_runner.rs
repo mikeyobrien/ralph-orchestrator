@@ -538,15 +538,11 @@ pub async fn run_loop_impl(
                 process_pending_merges(ctx.repo_root());
             }
 
-            // Deregister from registry if terminated (not completed normally)
-            if matches!(
-                reason,
-                TerminationReason::Interrupted | TerminationReason::Stopped
-            ) {
-                let registry = LoopRegistry::new(ctx.repo_root());
-                if let Err(e) = registry.deregister_current_process() {
-                    warn!("Failed to deregister loop from registry: {}", e);
-                }
+            // Always deregister from registry — process is exiting regardless of reason.
+            // CompletionPromise loops are tracked by the merge queue from here on.
+            let registry = LoopRegistry::new(ctx.repo_root());
+            if let Err(e) = registry.deregister_current_process() {
+                warn!("Failed to deregister loop from registry: {}", e);
             }
         }
 

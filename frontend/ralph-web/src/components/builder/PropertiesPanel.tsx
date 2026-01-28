@@ -50,14 +50,22 @@ function TagEditor({
   variant: "input" | "output";
 }) {
   const [inputValue, setInputValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const addTag = useCallback(() => {
     const tag = inputValue.trim();
-    if (tag && !value.includes(tag)) {
-      onChange([...value, tag]);
-      setInputValue("");
+    if (!tag || value.includes(tag)) return;
+
+    // task.* events are reserved for the orchestrator (triggers only)
+    if (variant === "input" && tag.startsWith("task.")) {
+      setError("task.* events are reserved for the orchestrator");
+      return;
     }
-  }, [inputValue, value, onChange]);
+
+    setError(null);
+    onChange([...value, tag]);
+    setInputValue("");
+  }, [inputValue, value, onChange, variant]);
 
   const removeTag = useCallback(
     (tagToRemove: string) => {
@@ -87,7 +95,8 @@ function TagEditor({
       <div
         className={cn(
           "flex flex-wrap gap-1 p-1.5 rounded-md border bg-transparent min-h-[32px]",
-          "focus-within:ring-1 focus-within:ring-ring"
+          "focus-within:ring-1 focus-within:ring-ring",
+          error && "border-destructive"
         )}
       >
         {value.map((tag) => (
@@ -126,6 +135,7 @@ function TagEditor({
           <Plus className="h-3 w-3" />
         </Button>
       </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }

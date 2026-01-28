@@ -1454,3 +1454,288 @@ fn test_extract_prompt_id_from_xml_format() {
 // Note: Orphan event detection is now handled in loop_runner.rs::log_events_from_output()
 // which logs to events.jsonl. The `event.orphaned` system event appears in the events file
 // when an event has no subscriber hat, making it visible via `ralph events`.
+
+// === Objective Persistence Tests ===
+
+#[test]
+fn test_initialize_stores_objective_in_ralph() {
+    // initialize() should store the prompt as the objective in HatlessRalph
+    // so that subsequent iterations always see it, even after bus.take_pending() consumes the start event.
+    let yaml = r#"
+hats:
+  test_writer:
+    name: "Test Writer"
+    triggers: ["tdd.start"]
+    publishes: ["test.written"]
+    instructions: "Write failing tests."
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    event_loop.initialize("Implement a binary search tree with insert and search");
+
+    // Consume the start event (simulates iteration 1 completing)
+    let ralph_id = HatId::new("ralph");
+    let prompt1 = event_loop.build_prompt(&ralph_id).unwrap();
+    assert!(
+        prompt1.contains("## OBJECTIVE"),
+        "Iteration 1 should have OBJECTIVE section"
+    );
+    assert!(
+        prompt1.contains("Implement a binary search tree"),
+        "Iteration 1 should show the objective"
+    );
+
+    // Simulate iteration 2: hat publishes an event, start event is gone
+    event_loop
+        .bus
+        .publish(Event::new("test.written", "tests/bst_test.rs"));
+
+    let prompt2 = event_loop.build_prompt(&ralph_id).unwrap();
+
+    // Objective should STILL be present even though task.start was consumed
+    assert!(
+        prompt2.contains("## OBJECTIVE"),
+        "Iteration 2+ should still have OBJECTIVE section"
+    );
+    assert!(
+        prompt2.contains("Implement a binary search tree"),
+        "Objective should persist across iterations"
+    );
+}
+
+#[test]
+fn test_done_section_suppressed_for_active_hat_via_event_loop() {
+    // When a hat is active (triggered by an event), the DONE section should NOT appear.
+    // This prevents intermediate hats from seeing LOOP_COMPLETE instructions.
+    let yaml = r#"
+hats:
+  implementer:
+    name: "Implementer"
+    triggers: ["test.written"]
+    publishes: ["test.passing"]
+    instructions: "Make the failing test pass."
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Build a calculator");
+
+    // Consume the start event
+    let ralph_id = HatId::new("ralph");
+    let _ = event_loop.build_prompt(&ralph_id);
+
+    // Simulate implementer being triggered
+    event_loop
+        .bus
+        .publish(Event::new("test.written", "tests/calc_test.rs"));
+
+    let prompt = event_loop.build_prompt(&ralph_id).unwrap();
+
+    // Implementer hat is active — DONE section should be suppressed
+    assert!(
+        !prompt.contains("## DONE"),
+        "DONE section should be suppressed when a hat is active"
+    );
+    assert!(
+        !prompt.contains("You MUST output LOOP_COMPLETE"),
+        "LOOP_COMPLETE instruction should not appear for active hat"
+    );
+
+    // But the objective should still be visible
+    assert!(
+        prompt.contains("## OBJECTIVE"),
+        "OBJECTIVE should still be visible to active hat"
+    );
+    assert!(
+        prompt.contains("Build a calculator"),
+        "Objective content should be visible"
+    );
+}
+
+// === Mutant-killing tests ===
+
+#[test]
+fn test_consecutive_failures_increments_on_failed_output() {
+    // Kills: line 928 `+= 1` → `-=` / `*=`
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let ralph = HatId::new("ralph");
+
+    event_loop.process_output(&ralph, "output", false);
+    assert_eq!(event_loop.state.consecutive_failures, 1);
+
+    event_loop.process_output(&ralph, "output", false);
+    assert_eq!(event_loop.state.consecutive_failures, 2);
+}
+
+#[test]
+fn test_consecutive_failures_resets_on_success() {
+    // Kills: line 926 reset branch
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let ralph = HatId::new("ralph");
+
+    event_loop.process_output(&ralph, "output", false);
+    assert_eq!(event_loop.state.consecutive_failures, 1);
+
+    event_loop.process_output(&ralph, "output", true);
+    assert_eq!(event_loop.state.consecutive_failures, 0);
+}
+
+#[test]
+fn test_cost_based_termination() {
+    // Kills: line 383 `>=` → `<`, lines 987 `add_cost` noop / `-=` / `*=`
+    let yaml = r"
+event_loop:
+  max_cost_usd: 10.0
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    event_loop.add_cost(9.99);
+    assert_eq!(
+        event_loop.check_termination(),
+        None,
+        "Should NOT terminate below max cost"
+    );
+
+    event_loop.add_cost(0.01);
+    assert_eq!(
+        event_loop.check_termination(),
+        Some(TerminationReason::MaxCost),
+        "Should terminate at exactly max cost"
+    );
+}
+
+#[test]
+fn test_malformed_events_increment_counter() {
+    // Kills: line 1063 `+= 1` → `-=` / `*=`
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    // Write invalid JSONL
+    std::fs::write(&events_path, "not valid json\n").unwrap();
+    let _ = event_loop.process_events_from_jsonl();
+    assert_eq!(
+        event_loop.state.consecutive_malformed_events, 1,
+        "First malformed line should set counter to 1"
+    );
+
+    // Write another invalid line (append)
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&events_path)
+        .unwrap();
+    writeln!(file, "also not json").unwrap();
+    let _ = event_loop.process_events_from_jsonl();
+    assert_eq!(
+        event_loop.state.consecutive_malformed_events, 2,
+        "Second malformed line should set counter to 2"
+    );
+}
+
+#[test]
+fn test_malformed_counter_resets_on_valid_event() {
+    // Kills: line 1072 `!` deletion
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    // Write invalid JSONL
+    std::fs::write(&events_path, "not valid json\n").unwrap();
+    let _ = event_loop.process_events_from_jsonl();
+    assert_eq!(event_loop.state.consecutive_malformed_events, 1);
+
+    // Write a valid event
+    write_event_to_jsonl(&events_path, "build.done", "success");
+    let _ = event_loop.process_events_from_jsonl();
+    assert_eq!(
+        event_loop.state.consecutive_malformed_events, 0,
+        "Counter should reset when valid events are parsed"
+    );
+}
+
+#[test]
+fn test_validation_failure_termination_at_threshold() {
+    // Kills: line 1165 `>=` → `<` and `&&` → `||`
+    // (Note: line 1165 refers to validation threshold at line 398)
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+
+    event_loop.state.consecutive_malformed_events = 2;
+    assert_eq!(
+        event_loop.check_termination(),
+        None,
+        "Should NOT terminate at 2 malformed events (threshold is 3)"
+    );
+
+    event_loop.state.consecutive_malformed_events = 3;
+    assert_eq!(
+        event_loop.check_termination(),
+        Some(TerminationReason::ValidationFailure),
+        "Should terminate at 3 malformed events"
+    );
+}
+
+#[test]
+fn test_format_event_wraps_top_level_prompts() {
+    // Kills: line 761 `==` → `!=` and `||` → `&&`
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Build a web server");
+
+    let ralph = HatId::new("ralph");
+    let prompt = event_loop.build_prompt(&ralph).unwrap();
+
+    // task.start event should be wrapped in <top-level-prompt>
+    assert!(
+        prompt.contains("<top-level-prompt>"),
+        "task.start events should be wrapped in <top-level-prompt> tags"
+    );
+
+    // Consume the start event, publish a non-top-level event
+    event_loop
+        .bus
+        .publish(Event::new("build.done", "completed"));
+    let prompt2 = event_loop.build_prompt(&ralph).unwrap();
+
+    // build.done is NOT a top-level prompt, should NOT have the tag
+    assert!(
+        !prompt2.contains("<top-level-prompt>"),
+        "Non-top-level events should NOT be wrapped in <top-level-prompt> tags"
+    );
+}
+
+#[test]
+fn test_check_ralph_completion_detection() {
+    // Kills: line 1241 return `true` / `false`
+    let config = RalphConfig::default();
+    let event_loop = EventLoop::new(config);
+
+    assert!(
+        event_loop.check_ralph_completion("LOOP_COMPLETE"),
+        "Should detect LOOP_COMPLETE"
+    );
+    assert!(
+        !event_loop.check_ralph_completion("no match here"),
+        "Should not detect completion in unrelated text"
+    );
+}

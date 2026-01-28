@@ -1718,18 +1718,18 @@ hats:
     // === Objective Section Tests ===
 
     #[test]
-    fn test_objective_section_present_with_task_start() {
-        // When context contains [task.start], OBJECTIVE section should appear
+    fn test_objective_section_present_with_set_objective() {
+        // When objective is set via set_objective(), OBJECTIVE section should appear
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
-        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Implement user authentication with JWT tokens".to_string());
 
-        let context = "[task.start] Implement user authentication with JWT tokens";
-        let prompt = ralph.build_prompt(context, &[]);
+        let prompt = ralph.build_prompt("", &[]);
 
         assert!(
             prompt.contains("## OBJECTIVE"),
-            "Should have OBJECTIVE section when task.start present"
+            "Should have OBJECTIVE section when objective is set"
         );
         assert!(
             prompt.contains("Implement user authentication with JWT tokens"),
@@ -1744,12 +1744,13 @@ hats:
     #[test]
     fn test_objective_reinforced_in_done_section() {
         // The objective should be restated in the DONE section (bookend pattern)
+        // when Ralph is coordinating (no active hats)
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
-        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Fix the login bug in auth module".to_string());
 
-        let context = "[task.start] Fix the login bug in auth module";
-        let prompt = ralph.build_prompt(context, &[]);
+        let prompt = ralph.build_prompt("", &[]);
 
         // Check DONE section contains objective reinforcement
         let done_pos = prompt.find("## DONE").expect("Should have DONE section");
@@ -1770,9 +1771,10 @@ hats:
         // OBJECTIVE should appear BEFORE PENDING EVENTS for prominence
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
-        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Build feature X".to_string());
 
-        let context = "[task.start] Build feature X";
+        let context = "Event: task.start - Build feature X";
         let prompt = ralph.build_prompt(context, &[]);
 
         let objective_pos = prompt.find("## OBJECTIVE").expect("Should have OBJECTIVE");
@@ -1789,48 +1791,47 @@ hats:
     }
 
     #[test]
-    fn test_no_objective_without_task_start() {
-        // When context has no task.start, no OBJECTIVE section should appear
+    fn test_no_objective_when_not_set() {
+        // When no objective has been set, no OBJECTIVE section should appear
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
-        let context = "[build.done] Build completed successfully";
+        let context = "Event: build.done - Build completed successfully";
         let prompt = ralph.build_prompt(context, &[]);
 
         assert!(
             !prompt.contains("## OBJECTIVE"),
-            "Should NOT have OBJECTIVE section without task.start"
+            "Should NOT have OBJECTIVE section when objective not set"
         );
     }
 
     #[test]
-    fn test_objective_extracted_correctly() {
-        // Test that objective extraction handles various formats
+    fn test_objective_set_correctly() {
+        // Test that set_objective stores the objective and it appears in prompt
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
-        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Review this PR for security issues".to_string());
 
-        // Test with whitespace
-        let context = "  [task.start]   Review this PR for security issues  ";
-        let prompt = ralph.build_prompt(context, &[]);
+        let prompt = ralph.build_prompt("", &[]);
 
         assert!(
             prompt.contains("Review this PR for security issues"),
-            "Should extract objective with trimmed whitespace"
+            "Should show the stored objective"
         );
     }
 
     #[test]
-    fn test_objective_with_multiple_events() {
-        // When multiple events exist, objective is still extracted from task.start
+    fn test_objective_with_events_context() {
+        // Objective should appear even when context has other events (not task.start)
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
-        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Implement feature Y".to_string());
 
-        let context = r"[task.start] Implement feature Y
-[build.done] Previous build succeeded
-[test.passed] All tests green";
+        let context =
+            "Event: build.done - Previous build succeeded\nEvent: test.passed - All tests green";
         let prompt = ralph.build_prompt(context, &[]);
 
         assert!(
@@ -1839,14 +1840,7 @@ hats:
         );
         assert!(
             prompt.contains("Implement feature Y"),
-            "OBJECTIVE should contain the task.start payload"
-        );
-        // Should NOT include other events in objective
-        assert!(
-            !prompt.contains("## OBJECTIVE")
-                || !prompt[..prompt.find("## PENDING EVENTS").unwrap_or(prompt.len())]
-                    .contains("Previous build succeeded"),
-            "OBJECTIVE should NOT include other event payloads"
+            "OBJECTIVE should contain the stored objective"
         );
     }
 
@@ -1857,8 +1851,7 @@ hats:
         let registry = HatRegistry::new();
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
-        let context = "[build.done] Build completed";
-        let prompt = ralph.build_prompt(context, &[]);
+        let prompt = ralph.build_prompt("", &[]);
 
         assert!(prompt.contains("## DONE"), "Should have DONE section");
         assert!(
@@ -1867,7 +1860,119 @@ hats:
         );
         assert!(
             !prompt.contains("Remember your objective"),
-            "Should NOT have objective reinforcement without task.start"
+            "Should NOT have objective reinforcement without objective"
+        );
+    }
+
+    #[test]
+    fn test_objective_persists_across_iterations() {
+        // Objective is present in prompt even when context has no task.start event
+        // (simulating iteration 2+ where the start event has been consumed)
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Build a REST API with authentication".to_string());
+
+        // Simulate iteration 2: only non-start events present
+        let context = "Event: build.done - Build completed";
+        let prompt = ralph.build_prompt(context, &[]);
+
+        assert!(
+            prompt.contains("## OBJECTIVE"),
+            "OBJECTIVE should persist even without task.start in context"
+        );
+        assert!(
+            prompt.contains("Build a REST API with authentication"),
+            "Stored objective should appear in later iterations"
+        );
+    }
+
+    #[test]
+    fn test_done_section_suppressed_when_hat_active() {
+        // When active_hats is non-empty, prompt does NOT contain ## DONE
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+    instructions: "Build the code."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Implement feature X".to_string());
+
+        let builder = registry.get(&ralph_proto::HatId::new("builder")).unwrap();
+        let prompt = ralph.build_prompt("Event: build.task - Do the build", &[builder]);
+
+        assert!(
+            !prompt.contains("## DONE"),
+            "DONE section should be suppressed when a hat is active"
+        );
+        assert!(
+            !prompt.contains("LOOP_COMPLETE"),
+            "Completion promise should NOT appear when a hat is active"
+        );
+        // But objective should still be visible
+        assert!(
+            prompt.contains("## OBJECTIVE"),
+            "OBJECTIVE should still appear even when hat is active"
+        );
+        assert!(
+            prompt.contains("Implement feature X"),
+            "Objective content should be visible to active hat"
+        );
+    }
+
+    #[test]
+    fn test_done_section_present_when_coordinating() {
+        // When active_hats is empty, prompt contains ## DONE with objective reinforcement
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Complete the TDD cycle".to_string());
+
+        // No active hats - Ralph is coordinating
+        let prompt = ralph.build_prompt("Event: build.done - Build finished", &[]);
+
+        assert!(
+            prompt.contains("## DONE"),
+            "DONE section should appear when Ralph is coordinating"
+        );
+        assert!(
+            prompt.contains("LOOP_COMPLETE"),
+            "Completion promise should appear when coordinating"
+        );
+    }
+
+    #[test]
+    fn test_objective_in_done_section_when_coordinating() {
+        // DONE section includes "Remember your objective" when Ralph is coordinating
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Deploy the application".to_string());
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        let done_pos = prompt.find("## DONE").expect("Should have DONE section");
+        let after_done = &prompt[done_pos..];
+
+        assert!(
+            after_done.contains("Remember your objective"),
+            "DONE section should remind about objective when coordinating"
+        );
+        assert!(
+            after_done.contains("Deploy the application"),
+            "DONE section should contain the objective text"
         );
     }
 

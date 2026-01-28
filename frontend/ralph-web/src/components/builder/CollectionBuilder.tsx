@@ -24,6 +24,7 @@ import {
   applyEdgeChanges,
   type Node,
   type Edge,
+  type EdgeTypes,
   type OnNodesChange,
   type OnEdgesChange,
   type OnConnect,
@@ -33,6 +34,8 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { HatNode, type HatNodeData } from "./HatNode";
+import { RerouteNode } from "./RerouteNode";
+import { OffsetEdge } from "./OffsetEdge";
 import { HatPalette } from "./HatPalette";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { Button } from "@/components/ui/button";
@@ -45,6 +48,11 @@ import { v4 as uuidv4 } from "uuid";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: NodeTypes = {
   hatNode: HatNode as any,
+  reroute: RerouteNode as any,
+};
+
+const edgeTypes: EdgeTypes = {
+  offset: OffsetEdge,
 };
 
 interface CollectionBuilderProps {
@@ -91,11 +99,11 @@ function CollectionBuilderInner({
   const [edges, setEdges] = useState<Edge[]>(initialData?.edges ?? []);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // Get selected node with data
+  // Get selected node with data (only hat nodes have editable properties)
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) return null;
     const node = nodes.find((n) => n.id === selectedNodeId);
-    if (!node) return null;
+    if (!node || node.type !== "hatNode") return null;
     return { id: node.id, data: node.data as unknown as HatNodeData };
   }, [selectedNodeId, nodes]);
 
@@ -116,21 +124,42 @@ function CollectionBuilderInner({
     setEdges((eds) => applyEdgeChanges(changes, eds));
   }, []);
 
+  // Trace back through reroute nodes to find the original event name
+  const resolveEventLabel = useCallback(
+    (sourceId: string, sourceHandle: string | null, currentEdges: Edge[]): string => {
+      // If sourceHandle is a real event name (from a hat node), use it
+      if (sourceHandle && sourceHandle !== "default-out") return sourceHandle;
+      // Source is a reroute node — find any edge feeding into it
+      const incoming = currentEdges.find((e) => e.target === sourceId);
+      if (incoming) return String(incoming.label ?? "event");
+      return "event";
+    },
+    []
+  );
+
   // Handle new connections
-  const onConnect: OnConnect = useCallback((connection) => {
-    // Create edge with event label (use sourceHandle as the event name)
-    const newEdge: Edge = {
-      id: `edge-${uuidv4()}`,
-      source: connection.source!,
-      target: connection.target!,
-      sourceHandle: connection.sourceHandle,
-      targetHandle: connection.targetHandle,
-      label: connection.sourceHandle || "event",
-      animated: true,
-      style: { stroke: "#22c55e", strokeWidth: 2 },
-    };
-    setEdges((eds) => addEdge(newEdge, eds));
-  }, []);
+  const onConnect: OnConnect = useCallback(
+    (connection) => {
+      const sourceNode = nodes.find((n) => n.id === connection.source);
+      const isRerouteSource = sourceNode?.type === "reroute";
+
+      const label = isRerouteSource
+        ? resolveEventLabel(connection.source!, connection.sourceHandle ?? null, edges)
+        : connection.sourceHandle || "event";
+
+      const newEdge: Edge = {
+        id: `edge-${uuidv4()}`,
+        source: connection.source!,
+        target: connection.target!,
+        sourceHandle: connection.sourceHandle,
+        targetHandle: connection.targetHandle,
+        label,
+        type: "offset",
+      };
+      setEdges((eds) => addEdge(newEdge, eds));
+    },
+    [nodes, edges, resolveEventLabel]
+  );
 
   // Handle drop from palette
   const onDrop = useCallback(
@@ -139,6 +168,20 @@ function CollectionBuilderInner({
 
       const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
       if (!reactFlowBounds) return;
+
+      // Reroute node drop
+      if (event.dataTransfer.getData("application/reroute")) {
+        const position = {
+          x: event.clientX - reactFlowBounds.left - 8,
+          y: event.clientY - reactFlowBounds.top - 8,
+        };
+        const nodeId = `reroute-${uuidv4().slice(0, 8)}`;
+        setNodes((nds) => [
+          ...nds,
+          { id: nodeId, type: "reroute", position, data: {} },
+        ]);
+        return;
+      }
 
       const dataStr = event.dataTransfer.getData("application/reactflow");
       if (!dataStr) return;
@@ -246,19 +289,33 @@ function CollectionBuilderInner({
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             fitView
+            minZoom={0.1}
+            maxZoom={4}
             snapToGrid
             snapGrid={[15, 15]}
+            edgeTypes={edgeTypes}
             defaultEdgeOptions={{
-              animated: true,
-              style: { stroke: "#22c55e", strokeWidth: 2 },
+              type: "offset",
             }}
+            colorMode="dark"
             className="bg-muted/20"
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
             <Controls position="bottom-left" />
             <MiniMap
               position="bottom-right"
-              nodeColor={(node) => (node.selected ? "#3b82f6" : "#6b7280")}
+              nodeColor={(node) => {
+                const key = (node.data as unknown as HatNodeData)?.key ?? "";
+                const prefix = key.split("-")[0];
+                const colors: Record<string, string> = {
+                  planner: "#8b5cf6",
+                  builder: "#3b82f6",
+                  reviewer: "#22c55e",
+                  validator: "#f59e0b",
+                  confessor: "#ef4444",
+                };
+                return colors[prefix] ?? "#6b7280";
+              }}
               maskColor="rgba(0, 0, 0, 0.1)"
               className="!bg-background/80"
             />

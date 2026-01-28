@@ -3,6 +3,10 @@
 //! This module embeds all preset YAML files at compile time, making the
 //! binary self-contained. Users can initialize projects with presets
 //! without needing access to the source repository.
+//!
+//! Canonical presets live in the shared `presets/` directory at the repo root.
+//! The sync script (`scripts/sync-embedded-files.sh`) mirrors them into
+//! `crates/ralph-cli/presets/` for `include_str!` to work with crates.io publishing.
 
 /// An embedded preset with its name, description, and full content.
 #[derive(Debug, Clone)]

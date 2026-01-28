@@ -127,11 +127,11 @@ impl LoopEntry {
     /// Checks if the process for this loop is still running.
     #[cfg(unix)]
     pub fn is_alive(&self) -> bool {
-        use nix::sys::signal::{Signal, kill};
+        use nix::sys::signal::kill;
         use nix::unistd::Pid;
 
-        // Signal 0 checks if process exists without sending a signal
-        kill(Pid::from_raw(self.pid as i32), Signal::SIGCONT)
+        // Signal 0 (None) checks if process exists without sending a signal
+        kill(Pid::from_raw(self.pid as i32), None)
             .map(|_| true)
             .unwrap_or(false)
     }

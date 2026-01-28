@@ -23,8 +23,9 @@ core:
   scratchpad: ".ralph/agent/scratchpad.md"
   specs_dir: ".ralph/specs/"
   guardrails:
-    - "Never output LOOP_COMPLETE unless the Confession phase is clean and confidence >= 80."
-    - "Never print LOOP_COMPLETE inside examples or templates."
+    - "You MUST NOT output LOOP_COMPLETE unless the Confession phase is clean and confidence >= 80."
+    - "You MUST NOT print LOOP_COMPLETE inside examples or templates."
+    - "You MUST NOT close tasks unless you are the Confession Handler."
 
 hats:
   builder:
@@ -60,7 +61,7 @@ hats:
 
       3. **IMPLEMENT** — Execute the plan
          - Make changes according to your plan
-         - Run backpressure (tests/lints/builds)
+         - Run verification (tests/lints/builds)
          - Write what you did + evidence to scratchpad
 
       4. **COMMIT** — (handled by confession flow)
@@ -68,7 +69,7 @@ hats:
 
       ### Don't
       - Do not output the completion promise.
-      - Do not skip backpressure.
+      - Do not skip verification.
       - Do not skip the explore step.
 
       ### Event Format
@@ -92,6 +93,7 @@ hats:
       You are an internal auditor. Your ONLY job is to find issues.
       You are NOT rewarded for saying the work is good.
       You ARE rewarded for surfacing problems, uncertainties, and shortcuts.
+      You MUST review wholistically. Cross reference against the overall objective. 
 
       ### Read First
       1. The scratchpad's `## Internal Monologue`
@@ -143,7 +145,7 @@ hats:
     name: "Confession Handler"
     description: "Verifies one claim and decides whether to continue iterating or finish."
     triggers: ["confession.issues_found", "confession.clean"]
-    publishes: ["build.task", "escalate.human"]
+    publishes: ["build.task"]
     instructions: |
       ## HANDLER PHASE
 
@@ -153,14 +155,16 @@ hats:
       1. Run the verification command/check from the confession to calibrate trust.
       2. If the issue is real, the confession is trustworthy.
          - For minor issues: publish `build.task` with specific fixes.
-         - For major issues: publish `escalate.human`.
-      3. If the issue is NOT real, the confession is untrustworthy. Publish `escalate.human`.
+         - For major issues: add `ralph tasks` to unblock and resolve them.
+      3. If the issue is NOT real, the confession is untrustworthy. 
+
       Do not output the completion promise on this path.
+      You MUST cross reference the overall objective and add any missing or incomplete tasks.
 
       If you were triggered by `confession.clean`:
       1. Be skeptical. Verify at least one positive claim from the builder's work.
       2. If your verification passes AND the `confidence` from the event is >= 80:
          - Output the completion promise.
-      3. If your verification fails OR `confidence` < 80:
+      3. If your verification fails OR `confidence` < 90:
          - Publish `build.task` with instructions to fix the discrepancy (or redo the confession).
 

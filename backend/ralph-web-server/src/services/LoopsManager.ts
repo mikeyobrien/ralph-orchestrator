@@ -37,6 +37,8 @@ export interface LoopsManagerOptions {
   processIntervalMs?: number;
   /** Path to ralph executable (default: "ralph") */
   ralphPath?: string;
+  /** Workspace root directory (cwd for ralph subprocesses) */
+  workspaceRoot?: string;
 }
 
 /**
@@ -47,6 +49,7 @@ export class LoopsManager extends EventEmitter {
   private processingTimer?: NodeJS.Timeout;
   private readonly processIntervalMs: number;
   private readonly ralphPath: string;
+  private readonly workspaceRoot?: string;
 
   /** Event types emitted by LoopsManager */
   static readonly Events = {
@@ -59,6 +62,7 @@ export class LoopsManager extends EventEmitter {
     super();
     this.processIntervalMs = options.processIntervalMs ?? 30000; // Default: 30s
     this.ralphPath = options.ralphPath ?? "ralph";
+    this.workspaceRoot = options.workspaceRoot;
   }
 
   /**
@@ -219,6 +223,7 @@ export class LoopsManager extends EventEmitter {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.ralphPath, args, {
         stdio: ["ignore", "pipe", "pipe"],
+        ...(this.workspaceRoot ? { cwd: this.workspaceRoot } : {}),
       });
 
       let stdout = "";

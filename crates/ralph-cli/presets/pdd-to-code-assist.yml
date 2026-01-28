@@ -36,7 +36,7 @@ core:
   specs_dir: "./specs/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
-    - "Backpressure is law — tests/typecheck/lint must pass"
+    - "Verification is mandatory — tests/typecheck/lint must pass"
     - "YAGNI ruthlessly — no speculative features"
     - "KISS always — simplest solution that works"
     - "Preserve primary sources — all referenced files, research findings, code snippets, and external docs must be captured with source attribution"

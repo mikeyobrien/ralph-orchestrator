@@ -1154,9 +1154,9 @@ async fn run_command(
                     Some(worktree.path.to_string_lossy().to_string()),
                     worktree.path.to_string_lossy().to_string(),
                 );
-                if let Err(e) = registry.register(entry) {
-                    warn!("Failed to register loop in registry: {}", e);
-                }
+                registry
+                    .register(entry)
+                    .context("Failed to register loop in registry")?;
 
                 // Update config to use worktree paths
                 // The scratchpad and other paths should resolve to the worktree

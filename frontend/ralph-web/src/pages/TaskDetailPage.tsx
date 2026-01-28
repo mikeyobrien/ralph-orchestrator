@@ -57,11 +57,17 @@ export function TaskDetailPage() {
   );
 
   // Find the associated loop by loopId
+  // Guard: if task is terminal (failed/closed) but the loop slot shows "running",
+  // the loop was reused for a different run — don't show a stale association.
   const associatedLoop = useMemo(() => {
     if (!loopsQuery.data || !task?.loopId) return undefined;
     const loops = loopsQuery.data as LoopDetailData[];
-    return loops.find((loop) => loop.id === task.loopId);
-  }, [loopsQuery.data, task?.loopId]);
+    const loop = loops.find((l) => l.id === task.loopId);
+    if (!loop) return undefined;
+    const isTaskTerminal = task.status === "failed" || task.status === "closed";
+    if (isTaskTerminal && loop.status === "running") return undefined;
+    return loop;
+  }, [loopsQuery.data, task?.loopId, task?.status]);
 
   // User steering state for needs-review loops
   const [steeringInput, setSteeringInput] = useState("");

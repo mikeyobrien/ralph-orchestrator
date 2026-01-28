@@ -22,7 +22,7 @@ core:
   guardrails:
     - "Fresh context each iteration - save learnings to memories for next time"
     - "Don't assume 'not implemented' - search first"
-    - "Backpressure is law - tests/typecheck/lint must pass"
+    - "Verification is mandatory - tests/typecheck/lint must pass"
 
 hats:
   builder:
