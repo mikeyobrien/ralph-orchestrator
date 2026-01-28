@@ -68,7 +68,7 @@ console.log(
 const isTestMode = process.env.RALPH_TEST_MODE === "1";
 
 // Default config path for ralph runs (can be overridden by user preset)
-const defaultConfigPath = process.env.RALPH_CONFIG_PATH ?? path.resolve(REPO_ROOT, "configs/ralph.yml");
+const defaultConfigPath = process.env.RALPH_CONFIG_PATH ?? path.resolve(REPO_ROOT, "ralph.yml");
 
 if (isTestMode) {
   dispatcher.registerHandler("test.log", createTestLogTaskHandler());

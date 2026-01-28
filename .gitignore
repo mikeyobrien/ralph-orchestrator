@@ -54,6 +54,10 @@ frontend/**/dist/
 backend/**/dist/
 backend/**/target/
 
+# Ephemeral agent state
+.agent/
+IMPLEMENTATION_PLAN.md
+
 # Ralph specific
 .sop/
 .logs/

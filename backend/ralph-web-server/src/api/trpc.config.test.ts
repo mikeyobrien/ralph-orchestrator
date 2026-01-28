@@ -18,8 +18,8 @@ import { initializeDatabase, getDatabase } from "../db/connection";
 
 // Path to configs directory relative to this file (4 levels up to repo root)
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
-const TEST_CONFIG_DIR = path.join(REPO_ROOT, "configs");
-const TEST_CONFIG_PATH = path.join(TEST_CONFIG_DIR, "ralph.yml");
+const TEST_CONFIG_DIR = REPO_ROOT;
+const TEST_CONFIG_PATH = path.join(REPO_ROOT, "ralph.yml");
 
 describe("config.get tRPC endpoint", () => {
   beforeEach(() => {

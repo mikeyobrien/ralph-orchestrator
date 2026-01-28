@@ -897,7 +897,7 @@ export const collectionRouter = router({
  */
 // Path to configs directory relative to this file (4 levels up to repo root)
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
-const CONFIG_PATH = path.join(REPO_ROOT, "configs/ralph.yml");
+const CONFIG_PATH = path.join(REPO_ROOT, "ralph.yml");
 
 export const configRouter = router({
   /**
@@ -910,7 +910,7 @@ export const configRouter = router({
     if (!fs.existsSync(configPath)) {
       throw new TRPCError({
         code: "NOT_FOUND",
-        message: "Configuration file not found at configs/ralph.yml",
+        message: "Configuration file not found at ralph.yml",
       });
     }
 

@@ -79,7 +79,7 @@ export function SettingsPage() {
             Configure your Ralph orchestrator
           </p>
         </div>
-        <Badge variant="secondary">configs/ralph.yml</Badge>
+        <Badge variant="secondary">ralph.yml</Badge>
       </header>
 
       {/* Hat Collection Selector */}
