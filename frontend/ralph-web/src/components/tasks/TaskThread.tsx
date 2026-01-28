@@ -20,6 +20,7 @@ import {
   Play,
   RotateCcw,
   Archive,
+  GitMerge,
 } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -196,6 +197,11 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
       utils.task.list.invalidate();
     },
   });
+  const mergeMutation = trpc.loops.merge.useMutation({
+    onSuccess: () => {
+      utils.loops.list.invalidate();
+    },
+  });
 
   const handleRun = useCallback(
     (e: MouseEvent) => {
@@ -213,6 +219,16 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
     [task.id, retryMutation]
   );
 
+  const handleMerge = useCallback(
+    (e: MouseEvent) => {
+      e.stopPropagation();
+      if (loop) {
+        mergeMutation.mutate({ id: loop.id });
+      }
+    },
+    [loop, mergeMutation]
+  );
+
   const handleNavigate = useCallback(() => {
     navigate(`/tasks/${task.id}`);
   }, [task.id, navigate]);
@@ -222,7 +238,20 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
     [task.updatedAt]
   );
 
-  const isExecuting = runMutation.isPending || retryMutation.isPending;
+  const isExecuting = runMutation.isPending || retryMutation.isPending || mergeMutation.isPending;
+
+  // Determine if merge button should be shown
+  // Per spec: Show merge button for tasks with worktree loops that are in "queued" status
+  const isWorktreeLoop = loop && loop.location !== "(in-place)";
+  const canMerge = isWorktreeLoop && loop?.status === "queued";
+  const isMergeBlocked = canMerge && loop?.mergeButtonState?.state === "blocked";
+  const mergeTooltip = isMergeBlocked && loop?.mergeButtonState?.reason
+    ? loop.mergeButtonState.reason
+    : "Merge this branch into main";
+
+  // Visual distinction for merge-related loop tasks
+  // Shows when loop is in merging, needs-review, or merged state
+  const isMergeLoopTask = loop && ["merging", "needs-review", "merged"].includes(loop.status);
 
   return (
     <Card
@@ -230,6 +259,8 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
       className={cn(
         "transition-all duration-200 cursor-pointer hover:bg-accent/50",
         isFocused && "ring-2 ring-primary bg-accent/30",
+        // Visual distinction for merge loop tasks: green left border
+        isMergeLoopTask && "border-l-4 border-l-green-500/60",
         className
       )}
       onClick={handleNavigate}
@@ -263,6 +294,29 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
 
             {/* Loop badge - only shown when a loop match exists (spec line 150) */}
             {loop && <LoopBadge status={loop.status} className="shrink-0" />}
+
+            {/* Merge button for worktree tasks - per explicit-merge-loop-ux spec */}
+            {canMerge && (
+              <Button
+                size="sm"
+                variant={isMergeBlocked ? "ghost" : "default"}
+                className={cn(
+                  "shrink-0 h-7 px-2",
+                  !isMergeBlocked && "bg-green-600 hover:bg-green-700 text-white",
+                  isMergeBlocked && "opacity-50"
+                )}
+                onClick={handleMerge}
+                disabled={isExecuting || isMergeBlocked}
+                title={mergeTooltip}
+              >
+                {mergeMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <GitMerge className="h-4 w-4" />
+                )}
+                <span className="ml-1">Merge</span>
+              </Button>
+            )}
 
             {/* Run/Retry/Cancel buttons */}
             {canRun && (
@@ -335,6 +389,9 @@ const areTasksEqual = (prev: TaskThreadProps, next: TaskThreadProps): boolean =>
   // Compare loop props for re-render when loop state changes
   if (prev.loop?.id !== next.loop?.id) return false;
   if (prev.loop?.status !== next.loop?.status) return false;
+  // Compare mergeButtonState for merge button reactivity
+  if (prev.loop?.mergeButtonState?.state !== next.loop?.mergeButtonState?.state) return false;
+  if (prev.loop?.mergeButtonState?.reason !== next.loop?.mergeButtonState?.reason) return false;
 
   return true;
 };

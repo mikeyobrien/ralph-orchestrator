@@ -10,4 +10,3 @@ export { EnhancedLogViewer } from "./EnhancedLogViewer";
 export { LoopBadge, type LoopStatus } from "./LoopBadge";
 export { LoopDetail, type LoopDetailData } from "./LoopDetail";
 export { LoopActions, type LoopAction, type LoopActionCallbacks } from "./LoopActions";
-export { MergeQueuePanel } from "./MergeQueuePanel";

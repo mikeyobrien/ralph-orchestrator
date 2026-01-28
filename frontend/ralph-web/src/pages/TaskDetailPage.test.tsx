@@ -107,8 +107,24 @@ vi.mock("@/trpc", () => ({
         })),
       },
     },
+    loops: {
+      list: {
+        useQuery: vi.fn(() => ({
+          data: [],
+          isLoading: false,
+          isError: false,
+        })),
+      },
+      retry: {
+        useMutation: vi.fn(() => ({
+          mutate: vi.fn(),
+          isPending: false,
+        })),
+      },
+    },
     useUtils: vi.fn(() => ({
       task: { list: { invalidate: vi.fn() } },
+      loops: { list: { invalidate: vi.fn() } },
     })),
   },
 }));
@@ -525,6 +541,271 @@ describe("TaskDetailPage", () => {
 
       // Then: Should navigate back to tasks list
       expect(mockNavigate).toHaveBeenCalledWith("/tasks");
+    });
+  });
+
+  describe("user steering UI", () => {
+    it("shows user steering callout when associated loop is in needs-review status", async () => {
+      // Given: A task with a loop in needs-review status
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: mockTask,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-001",
+            status: "needs-review",
+            pid: 12345, // Matches mockTask.pid
+            location: "/some/worktree",
+            prompt: "Test prompt",
+            failureReason: "Merge conflict in file.ts",
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-001");
+
+      // Then: User steering callout should be shown
+      expect(screen.getByTestId("user-steering-callout")).toBeInTheDocument();
+      expect(screen.getByText(/merge needs your input/i)).toBeInTheDocument();
+      expect(screen.getByText(/merge conflict in file.ts/i)).toBeInTheDocument();
+    });
+
+    it("does not show user steering callout when loop is not in needs-review status", async () => {
+      // Given: A task with a loop in running status
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: mockTask,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-001",
+            status: "running",
+            pid: 12345,
+            location: "/some/worktree",
+            prompt: "Test prompt",
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-001");
+
+      // Then: User steering callout should not be shown
+      expect(screen.queryByTestId("user-steering-callout")).not.toBeInTheDocument();
+    });
+
+    it("does not show user steering callout when no associated loop exists", async () => {
+      // Given: A task without a matching loop
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: mockTask,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-002",
+            status: "needs-review",
+            pid: 99999, // Different PID, no match
+            location: "/some/worktree",
+            prompt: "Test prompt",
+            failureReason: "Some failure",
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-001");
+
+      // Then: User steering callout should not be shown
+      expect(screen.queryByTestId("user-steering-callout")).not.toBeInTheDocument();
+    });
+
+    it("shows loop badge when task has associated loop", async () => {
+      // Given: A task with an associated loop
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: mockTask,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-001",
+            status: "running",
+            pid: 12345,
+            location: "/some/worktree",
+            prompt: "Test prompt",
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-001");
+
+      // Then: Loop badge should be shown
+      // The LoopBadge component renders with "Loop:" prefix
+      expect(screen.getByText("Loop:")).toBeInTheDocument();
+    });
+
+    it("passes steering input when retrying merge", async () => {
+      // Given: A task with a loop in needs-review status
+      const user = userEvent.setup();
+      const mockMutate = vi.fn();
+      const { trpc } = await import("@/trpc");
+
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: mockTask,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-001",
+            status: "needs-review",
+            pid: 12345,
+            location: "/some/worktree",
+            prompt: "Test prompt",
+            failureReason: "Merge conflict in file.ts",
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+      vi.mocked(trpc.loops.retry.useMutation).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof trpc.loops.retry.useMutation>);
+
+      // When: The page is rendered and user enters steering input
+      renderWithRouter("task-001");
+      const textarea = screen.getByPlaceholderText(/keep my changes/i);
+      await user.type(textarea, "Keep the worktree changes");
+
+      // And clicks retry merge
+      const retryButton = screen.getByRole("button", { name: /retry merge/i });
+      await user.click(retryButton);
+
+      // Then: The mutation should be called with steering input
+      expect(mockMutate).toHaveBeenCalledWith({
+        id: "loop-001",
+        steeringInput: "Keep the worktree changes",
+      });
+    });
+  });
+
+  describe("execution summary component", () => {
+    it("displays execution summary with standard styling for non-merge tasks", async () => {
+      // Given: A completed task with execution summary but no associated loop
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: mockCompletedTask,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-002");
+
+      // Then: Execution summary should be displayed with standard header
+      expect(screen.getByTestId("execution-summary")).toBeInTheDocument();
+      expect(screen.getByText("Execution Summary")).toBeInTheDocument();
+    });
+
+    it("displays merge-specific styling and commit info for merged loops", async () => {
+      // Given: A completed task with execution summary and merged loop
+      const taskWithMerge = {
+        ...mockCompletedTask,
+        pid: 12345,
+      };
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: taskWithMerge,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-001",
+            status: "merged",
+            pid: 12345,
+            location: "/some/worktree",
+            prompt: "Test prompt",
+            mergeCommit: "abc123def456789",
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-002");
+
+      // Then: Merge-specific header and commit info should be shown
+      expect(screen.getByTestId("execution-summary")).toBeInTheDocument();
+      expect(screen.getByText("Merge Complete")).toBeInTheDocument();
+      expect(screen.getByTestId("merge-commit-info")).toBeInTheDocument();
+      expect(screen.getByText("abc123de")).toBeInTheDocument(); // Truncated to 8 chars
+    });
+
+    it("does not show merge commit info when loop has no mergeCommit", async () => {
+      // Given: A completed task with merged loop but no commit SHA
+      const taskWithMerge = {
+        ...mockCompletedTask,
+        pid: 12345,
+      };
+      const { trpc } = await import("@/trpc");
+      vi.mocked(trpc.task.get.useQuery).mockReturnValue({
+        data: taskWithMerge,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.task.get.useQuery>);
+      vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
+        data: [
+          {
+            id: "loop-001",
+            status: "merged",
+            pid: 12345,
+            location: "/some/worktree",
+            prompt: "Test prompt",
+            // No mergeCommit
+          },
+        ],
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof trpc.loops.list.useQuery>);
+
+      // When: The page is rendered
+      renderWithRouter("task-002");
+
+      // Then: Merge header should show but no commit info
+      expect(screen.getByText("Merge Complete")).toBeInTheDocument();
+      expect(screen.queryByTestId("merge-commit-info")).not.toBeInTheDocument();
     });
   });
 });

@@ -6,7 +6,7 @@
  * existing tasks with real-time polling updates.
  */
 
-import { TaskInput, ThreadList, MergeQueuePanel } from "@/components/tasks";
+import { TaskInput, ThreadList } from "@/components/tasks";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -35,7 +35,6 @@ export function TasksPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           <TaskInput />
-          <MergeQueuePanel />
           <ThreadList pollingInterval={5000} />
         </CardContent>
       </Card>

@@ -200,4 +200,58 @@ describe("TaskThread navigation behavior", () => {
       expect(mockNavigate).not.toHaveBeenCalled();
     });
   });
+
+  describe("merge loop visual distinction", () => {
+    it("shows green left border for merge loop tasks (merging status)", () => {
+      // Given: A task with a loop in "merging" status
+      const loop = {
+        id: "loop-123",
+        status: "merging" as const,
+        location: ".worktrees/ralph-test",
+        prompt: "Test merge loop",
+      };
+      render(<TaskThread task={mockTask} loop={loop} />, {
+        wrapper: createTestWrapper(),
+      });
+
+      // Then: The card should have the green left border class
+      const taskCard = getTaskCard();
+      expect(taskCard).toHaveClass("border-l-4");
+      expect(taskCard).toHaveClass("border-l-green-500/60");
+    });
+
+    it("shows green left border for tasks with needs-review status", () => {
+      // Given: A task with a loop in "needs-review" status
+      const loop = {
+        id: "loop-123",
+        status: "needs-review" as const,
+        location: ".worktrees/ralph-test",
+        prompt: "Test merge loop",
+      };
+      render(<TaskThread task={mockTask} loop={loop} />, {
+        wrapper: createTestWrapper(),
+      });
+
+      // Then: The card should have the green left border class
+      const taskCard = getTaskCard();
+      expect(taskCard).toHaveClass("border-l-4");
+    });
+
+    it("does not show green left border for regular running loops", () => {
+      // Given: A task with a loop in "running" status (not merge-related)
+      const loop = {
+        id: "loop-123",
+        status: "running" as const,
+        location: ".worktrees/ralph-test",
+        prompt: "Regular dev loop",
+      };
+      render(<TaskThread task={mockTask} loop={loop} />, {
+        wrapper: createTestWrapper(),
+      });
+
+      // Then: The card should NOT have the green left border class
+      const taskCard = getTaskCard();
+      expect(taskCard).not.toHaveClass("border-l-4");
+    });
+  });
 });

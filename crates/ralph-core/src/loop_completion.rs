@@ -33,6 +33,7 @@
 //! assert!(matches!(action, CompletionAction::Enqueued { .. }));
 //! ```
 
+use crate::git_ops::auto_commit_changes;
 use crate::landing::{LandingHandler, LandingResult};
 use crate::loop_context::LoopContext;
 use crate::merge_queue::{MergeQueue, MergeQueueError};
@@ -175,6 +176,27 @@ impl LoopCompletionHandler {
         let landing = landing_result.as_ref().map(CompletionLanding::from);
 
         if self.auto_merge {
+            // Auto-commit any uncommitted changes before enqueueing
+            match auto_commit_changes(context.workspace(), &loop_id) {
+                Ok(result) => {
+                    if result.committed {
+                        info!(
+                            loop_id = %loop_id,
+                            commit = ?result.commit_sha,
+                            files = result.files_staged,
+                            "Auto-committed changes before merge queue"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        loop_id = %loop_id,
+                        error = %e,
+                        "Auto-commit failed, proceeding with enqueue"
+                    );
+                }
+            }
+
             // Enqueue to merge queue for automatic merge-ralph processing
             let queue = MergeQueue::new(context.repo_root());
             queue.enqueue(&loop_id, prompt)?;

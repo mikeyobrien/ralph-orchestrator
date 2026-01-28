@@ -144,9 +144,18 @@ export class LoopsManager extends EventEmitter {
   }
 
   /**
-   * Retry a failed merge
+   * Retry a failed merge with optional user steering input.
+   * If steeringInput is provided, it's written to .ralph/merge-steering.txt
+   * for the merge-ralph process to read and incorporate into its strategy.
    */
-  async retryMerge(loopId: string): Promise<void> {
+  async retryMerge(loopId: string, steeringInput?: string): Promise<void> {
+    // Write steering input to file for merge-ralph to read
+    if (steeringInput?.trim()) {
+      const steeringPath = `${process.cwd()}/.ralph/merge-steering.txt`;
+      const fs = await import("fs/promises");
+      await fs.writeFile(steeringPath, steeringInput.trim(), "utf-8");
+    }
+
     await this.runRalphCommand(["loops", "retry", loopId]);
   }
 

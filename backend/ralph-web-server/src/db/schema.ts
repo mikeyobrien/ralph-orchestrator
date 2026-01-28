@@ -34,6 +34,8 @@ export const tasks = sqliteTable("tasks", {
   durationMs: integer("duration_ms"), // Total execution time in milliseconds
   // Archival fields
   archivedAt: integer("archived_at", { mode: "timestamp" }), // When the task was archived
+  // Merge loop tracking - stores the prompt used when this task triggered a merge loop
+  mergeLoopPrompt: text("merge_loop_prompt"),
 });
 
 /**

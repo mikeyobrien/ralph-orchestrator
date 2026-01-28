@@ -198,3 +198,140 @@ describe("loops.list includes mergeButtonState field", () => {
     );
   });
 });
+
+describe("loops.triggerMergeTask endpoint", () => {
+  // Helper to create a mock TaskBridge
+  function createMockTaskBridge(): any {
+    return {
+      enqueueTask: (task: any) => ({ success: true, queuedTaskId: `queued-${task.id}` }),
+    };
+  }
+
+  test("creates a merge task for worktree loop", async () => {
+    // Given: A loops manager with a worktree loop and a mock task bridge
+    const mockManager = new LoopsManager();
+    mockManager.listLoops = async () => [
+      {
+        id: "worktree-loop-123",
+        status: "queued",
+        location: ".worktrees/worktree-loop-123",
+        pid: 12345,
+        prompt: "Add user authentication feature",
+      },
+    ];
+
+    initializeDatabase(getDatabase(":memory:"));
+    const mockTaskBridge = createMockTaskBridge();
+    const ctx = createContext(getDatabase(), mockTaskBridge, mockManager);
+
+    // When: Triggering a merge task
+    const caller = loopsRouter.createCaller(ctx);
+    const result = await caller.triggerMergeTask({ loopId: "worktree-loop-123" });
+
+    // Then: Should create a task
+    assert.strictEqual(result.success, true);
+    assert.ok(result.taskId, "Should return task ID");
+    assert.ok(result.taskId.startsWith("merge-worktree-loop-123"), "Task ID should include loop ID");
+
+    // Verify task was created in database
+    const task = ctx.taskRepository.findById(result.taskId);
+    assert.ok(task, "Task should exist in database");
+    assert.ok(task.title.includes("Merge:"), "Task title should indicate merge");
+    assert.ok(task.mergeLoopPrompt, "Task should have merge loop prompt");
+    assert.ok(task.mergeLoopPrompt?.includes("worktree-loop-123"), "Prompt should include loop ID");
+  });
+
+  test("rejects merge task for in-place (primary) loop", async () => {
+    // Given: A loops manager with a primary loop
+    const mockManager = new LoopsManager();
+    mockManager.listLoops = async () => [
+      {
+        id: "primary-loop",
+        status: "running",
+        location: "(in-place)",
+        pid: 12345,
+        prompt: "Working on main",
+      },
+    ];
+
+    initializeDatabase(getDatabase(":memory:"));
+    const mockTaskBridge = createMockTaskBridge();
+    const ctx = createContext(getDatabase(), mockTaskBridge, mockManager);
+
+    // When/Then: Should reject merge for primary loop
+    const caller = loopsRouter.createCaller(ctx);
+    await assert.rejects(
+      () => caller.triggerMergeTask({ loopId: "primary-loop" }),
+      (err: any) => {
+        assert.strictEqual(err.code, "BAD_REQUEST");
+        assert.ok(err.message.includes("in-place"));
+        return true;
+      }
+    );
+  });
+
+  test("returns NOT_FOUND for non-existent loop", async () => {
+    // Given: A loops manager with no loops
+    const mockManager = new LoopsManager();
+    mockManager.listLoops = async () => [];
+
+    initializeDatabase(getDatabase(":memory:"));
+    const mockTaskBridge = createMockTaskBridge();
+    const ctx = createContext(getDatabase(), mockTaskBridge, mockManager);
+
+    // When/Then: Should return NOT_FOUND
+    const caller = loopsRouter.createCaller(ctx);
+    await assert.rejects(
+      () => caller.triggerMergeTask({ loopId: "non-existent-loop" }),
+      (err: any) => {
+        assert.strictEqual(err.code, "NOT_FOUND");
+        return true;
+      }
+    );
+  });
+
+  test("throws error when LoopsManager is not configured", async () => {
+    // Given: A context without a LoopsManager
+    initializeDatabase(getDatabase(":memory:"));
+    const ctx = createContext(getDatabase(), undefined, undefined);
+
+    // When/Then: Should throw INTERNAL_SERVER_ERROR
+    const caller = loopsRouter.createCaller(ctx);
+    await assert.rejects(
+      () => caller.triggerMergeTask({ loopId: "any-loop" }),
+      (err: any) => {
+        assert.strictEqual(err.code, "INTERNAL_SERVER_ERROR");
+        assert.ok(err.message.includes("LoopsManager"));
+        return true;
+      }
+    );
+  });
+
+  test("throws error when TaskBridge is not configured", async () => {
+    // Given: A context with LoopsManager but no TaskBridge
+    const mockManager = new LoopsManager();
+    mockManager.listLoops = async () => [
+      {
+        id: "worktree-loop",
+        status: "queued",
+        location: ".worktrees/worktree-loop",
+        pid: 12345,
+        prompt: "Some task",
+      },
+    ];
+
+    initializeDatabase(getDatabase(":memory:"));
+    const ctx = createContext(getDatabase(), undefined, mockManager);
+
+    // When/Then: Should throw INTERNAL_SERVER_ERROR about TaskBridge
+    const caller = loopsRouter.createCaller(ctx);
+    await assert.rejects(
+      () => caller.triggerMergeTask({ loopId: "worktree-loop" }),
+      (err: any) => {
+        assert.strictEqual(err.code, "INTERNAL_SERVER_ERROR");
+        assert.ok(err.message.includes("TaskBridge"));
+        return true;
+      }
+    );
+  });
+});

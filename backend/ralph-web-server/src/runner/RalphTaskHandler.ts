@@ -72,9 +72,11 @@ export function createRalphTaskHandler(
     const broadcastId = payload.dbTaskId || task.id;
 
     // Create a fresh runner for this task
+    // Pass dbTaskId as taskId so ProcessSupervisor can find the process for cancellation
     const runner = new RalphRunner({
       ...runnerOptions,
       cwd: payload.cwd ?? defaultCwd,
+      taskId: payload.dbTaskId,
     });
 
     // Create event parser to detect Ralph events from stdout
