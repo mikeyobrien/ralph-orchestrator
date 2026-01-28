@@ -122,14 +122,16 @@ describe("loops.list includes mergeButtonState field", () => {
     const loops = await caller.list();
 
     // Then: Should include mergeButtonState for worktree loops
-    const queuedLoop = loops.find((l: any) => l.id === "loop-001");
+    const queuedLoop = loops.find((l) => l.id === "loop-001");
     assert.ok(queuedLoop, "Should have the queued loop");
+    // Use type assertion since we know worktree loops get mergeButtonState
+    const loopWithState = queuedLoop as typeof queuedLoop & { mergeButtonState?: { state: string; reason?: string } };
     assert.ok(
-      queuedLoop.mergeButtonState !== undefined,
+      loopWithState.mergeButtonState !== undefined,
       "Queued loop should include mergeButtonState"
     );
     assert.strictEqual(
-      queuedLoop.mergeButtonState.state,
+      loopWithState.mergeButtonState?.state,
       "active",
       "Should show active merge button state"
     );
@@ -160,10 +162,12 @@ describe("loops.list includes mergeButtonState field", () => {
     const loops = await caller.list();
 
     // Then: Should include blocked mergeButtonState
-    const queuedLoop = loops.find((l: any) => l.id === "loop-002");
-    assert.strictEqual(queuedLoop?.mergeButtonState?.state, "blocked");
+    const queuedLoop = loops.find((l) => l.id === "loop-002");
+    // Use type assertion since we know worktree loops get mergeButtonState
+    const loopWithState = queuedLoop as typeof queuedLoop & { mergeButtonState?: { state: string; reason?: string } };
+    assert.strictEqual(loopWithState?.mergeButtonState?.state, "blocked");
     assert.strictEqual(
-      queuedLoop?.mergeButtonState?.reason,
+      loopWithState?.mergeButtonState?.reason,
       "Primary loop is busy"
     );
   });
@@ -189,10 +193,12 @@ describe("loops.list includes mergeButtonState field", () => {
     const loops = await caller.list();
 
     // Then: Primary loop should NOT have mergeButtonState (it's the primary, not a worktree)
-    const primaryLoop = loops.find((l: any) => l.id === "loop-primary");
+    const primaryLoop = loops.find((l) => l.id === "loop-primary");
     assert.ok(primaryLoop, "Should have the primary loop");
+    // Use type assertion to check that mergeButtonState is undefined for in-place loops
+    const loopWithState = primaryLoop as typeof primaryLoop & { mergeButtonState?: { state: string; reason?: string } };
     assert.strictEqual(
-      primaryLoop.mergeButtonState,
+      loopWithState.mergeButtonState,
       undefined,
       "Primary loop should not have mergeButtonState (only worktrees need merge buttons)"
     );

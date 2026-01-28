@@ -35,6 +35,9 @@ export interface LoopDetailData {
   failureReason?: string;
   isPrimary?: boolean;
   mergeButtonState?: MergeButtonState;
+  // Iteration tracking for two-row TaskCard layout
+  currentIteration?: number;
+  maxIterations?: number;
 }
 
 interface LoopDetailProps {

@@ -6,7 +6,7 @@
  * Navigation items use React Router NavLink for proper routing.
  */
 
-import { ListTodo, HardHat, History, PanelLeftClose, PanelLeft, Terminal, Lightbulb, Workflow } from "lucide-react";
+import { ListTodo, PanelLeftClose, PanelLeft, Terminal, Lightbulb, Workflow, Settings } from "lucide-react";
 import { NavItem } from "./NavItem";
 import { useUIStore } from "@/store";
 import { cn } from "@/lib/utils";
@@ -14,10 +14,9 @@ import { cn } from "@/lib/utils";
 /** Navigation items configuration with route paths */
 const NAV_ITEMS = [
   { to: "/tasks", icon: ListTodo, label: "Tasks" },
-  { to: "/hats", icon: HardHat, label: "Hats" },
   { to: "/builder", icon: Workflow, label: "Builder" },
-  { to: "/history", icon: History, label: "History" },
   { to: "/plan", icon: Lightbulb, label: "Plan" },
+  { to: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
 export function Sidebar() {

@@ -5,8 +5,7 @@
  */
 
 export { TasksPage } from "./TasksPage";
-export { HatsPage } from "./HatsPage";
-export { HistoryPage } from "./HistoryPage";
 export { PlanPage } from "./PlanPage";
 export { BuilderPage } from "./BuilderPage";
 export { TaskDetailPage } from "./TaskDetailPage";
+export { SettingsPage } from "./SettingsPage";

@@ -32,7 +32,7 @@ const mockTask = {
   exitCode: null,
   durationMs: null,
   archivedAt: null,
-  pid: 12345,
+  loopId: "loop-001",
 };
 
 const mockCompletedTask = {
@@ -69,7 +69,7 @@ const mockOpenTask = {
   id: "task-004",
   status: "open",
   startedAt: null,
-  pid: null,
+  loopId: null,
 };
 
 // Task with "closed" status - this is what the database actually uses
@@ -202,7 +202,7 @@ describe("TaskDetailPage", () => {
       expect(screen.getByRole("heading", { name: /implement user authentication/i })).toBeInTheDocument();
     });
 
-    it("renders back navigation link to task list", async () => {
+    it("renders back navigation button to task list", async () => {
       // Given: A task is loaded
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
@@ -214,8 +214,8 @@ describe("TaskDetailPage", () => {
       // When: The page is rendered
       renderWithRouter("task-001");
 
-      // Then: Back navigation should be present
-      expect(screen.getByRole("link", { name: /back to tasks/i })).toBeInTheDocument();
+      // Then: Back navigation should be present (now a button via TaskDetailHeader)
+      expect(screen.getByRole("button", { name: /back to tasks/i })).toBeInTheDocument();
     });
 
     it("shows loading state while fetching task", async () => {
@@ -230,8 +230,8 @@ describe("TaskDetailPage", () => {
       // When: The page is rendered
       renderWithRouter("task-001");
 
-      // Then: Loading indicator should be shown
-      expect(screen.getByText(/loading/i)).toBeInTheDocument();
+      // Then: Loading skeletons should be shown (multiple skeletons rendered)
+      expect(screen.getAllByTestId("task-card-skeleton").length).toBeGreaterThan(0);
     });
 
     it("uses TaskCardSkeleton component for loading state", async () => {
@@ -246,8 +246,8 @@ describe("TaskDetailPage", () => {
       // When: The page is rendered
       renderWithRouter("task-001");
 
-      // Then: TaskCardSkeleton should be rendered
-      expect(screen.getByTestId("task-card-skeleton")).toBeInTheDocument();
+      // Then: TaskCardSkeleton should be rendered (multiple for better loading UX)
+      expect(screen.getAllByTestId("task-card-skeleton").length).toBe(2);
     });
 
     it("shows error state when task fetch fails", async () => {
@@ -408,9 +408,9 @@ describe("TaskDetailPage", () => {
       // When: The page is rendered
       renderWithRouter("task-002");
 
-      // Then: Exit code should be displayed
+      // Then: Exit code should be displayed (via TaskMetadataGrid)
       expect(screen.getByText(/exit code/i)).toBeInTheDocument();
-      expect(screen.getByTestId("exit-code-value")).toHaveTextContent("0");
+      expect(screen.getByTestId("metadata-exit-code")).toHaveTextContent("0");
     });
 
     it("displays error message for failed tasks", async () => {
@@ -425,7 +425,8 @@ describe("TaskDetailPage", () => {
       // When: The page is rendered
       renderWithRouter("task-003");
 
-      // Then: Error message should be displayed
+      // Then: Error message should be displayed (via TaskMetadataGrid)
+      expect(screen.getByTestId("metadata-error")).toBeInTheDocument();
       expect(screen.getByText(/typescript compilation error/i)).toBeInTheDocument();
     });
 
@@ -651,16 +652,15 @@ describe("TaskDetailPage", () => {
       // Given: A task with a loop in needs-review status
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
-        data: mockTask,
+        data: mockTask, // mockTask.loopId = "loop-001"
         isLoading: false,
         isError: false,
       } as ReturnType<typeof trpc.task.get.useQuery>);
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-001",
+            id: "loop-001", // Matches mockTask.loopId
             status: "needs-review",
-            pid: 12345, // Matches mockTask.pid
             location: "/some/worktree",
             prompt: "Test prompt",
             failureReason: "Merge conflict in file.ts",
@@ -683,16 +683,15 @@ describe("TaskDetailPage", () => {
       // Given: A task with a loop in running status
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
-        data: mockTask,
+        data: mockTask, // mockTask.loopId = "loop-001"
         isLoading: false,
         isError: false,
       } as ReturnType<typeof trpc.task.get.useQuery>);
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-001",
+            id: "loop-001", // Matches mockTask.loopId
             status: "running",
-            pid: 12345,
             location: "/some/worktree",
             prompt: "Test prompt",
           },
@@ -712,16 +711,15 @@ describe("TaskDetailPage", () => {
       // Given: A task without a matching loop
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
-        data: mockTask,
+        data: mockTask, // mockTask.loopId = "loop-001"
         isLoading: false,
         isError: false,
       } as ReturnType<typeof trpc.task.get.useQuery>);
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-002",
+            id: "loop-002", // Different loop ID, no match with mockTask.loopId
             status: "needs-review",
-            pid: 99999, // Different PID, no match
             location: "/some/worktree",
             prompt: "Test prompt",
             failureReason: "Some failure",
@@ -742,16 +740,15 @@ describe("TaskDetailPage", () => {
       // Given: A task with an associated loop
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
-        data: mockTask,
+        data: mockTask, // mockTask.loopId = "loop-001"
         isLoading: false,
         isError: false,
       } as ReturnType<typeof trpc.task.get.useQuery>);
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-001",
+            id: "loop-001", // Matches mockTask.loopId
             status: "running",
-            pid: 12345,
             location: "/some/worktree",
             prompt: "Test prompt",
           },
@@ -775,16 +772,15 @@ describe("TaskDetailPage", () => {
       const { trpc } = await import("@/trpc");
 
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
-        data: mockTask,
+        data: mockTask, // mockTask.loopId = "loop-001"
         isLoading: false,
         isError: false,
       } as ReturnType<typeof trpc.task.get.useQuery>);
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-001",
+            id: "loop-001", // Matches mockTask.loopId
             status: "needs-review",
-            pid: 12345,
             location: "/some/worktree",
             prompt: "Test prompt",
             failureReason: "Merge conflict in file.ts",
@@ -842,7 +838,7 @@ describe("TaskDetailPage", () => {
       // Given: A completed task with execution summary and merged loop
       const taskWithMerge = {
         ...mockCompletedTask,
-        pid: 12345,
+        loopId: "loop-001",
       };
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
@@ -853,9 +849,8 @@ describe("TaskDetailPage", () => {
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-001",
+            id: "loop-001", // Matches taskWithMerge.loopId
             status: "merged",
-            pid: 12345,
             location: "/some/worktree",
             prompt: "Test prompt",
             mergeCommit: "abc123def456789",
@@ -879,7 +874,7 @@ describe("TaskDetailPage", () => {
       // Given: A completed task with merged loop but no commit SHA
       const taskWithMerge = {
         ...mockCompletedTask,
-        pid: 12345,
+        loopId: "loop-001",
       };
       const { trpc } = await import("@/trpc");
       vi.mocked(trpc.task.get.useQuery).mockReturnValue({
@@ -890,9 +885,8 @@ describe("TaskDetailPage", () => {
       vi.mocked(trpc.loops.list.useQuery).mockReturnValue({
         data: [
           {
-            id: "loop-001",
+            id: "loop-001", // Matches taskWithMerge.loopId
             status: "merged",
-            pid: 12345,
             location: "/some/worktree",
             prompt: "Test prompt",
             // No mergeCommit

@@ -5,11 +5,14 @@
  * Focuses on backlog delivery when subscribing to completed tasks.
  */
 
-import { test, describe, beforeEach, afterEach, mock } from "node:test";
+import { test, describe, beforeEach, afterEach, mock, Mock } from "node:test";
 import assert from "node:assert";
-import { LogBroadcaster, resetLogBroadcaster } from "./LogBroadcaster";
-import { TaskLogRepository } from "../repositories/TaskLogRepository";
+import { LogBroadcaster, resetLogBroadcaster } from "./LogBroadcaster.js";
+import { TaskLogRepository } from "../repositories/TaskLogRepository.js";
 import { WebSocket, OPEN } from "ws";
+
+// Helper type for mock function extraction
+type MockFn = Mock<(...args: unknown[]) => unknown>;
 
 /**
  * Create a mock WebSocket for testing.
@@ -74,7 +77,7 @@ describe("LogBroadcaster", () => {
       broadcaster.subscribe(clientId, taskId, {}); // No sinceId
 
       // Then: All 4 backlog logs should be sent to client
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       // First message is status: subscribed
@@ -115,7 +118,7 @@ describe("LogBroadcaster", () => {
       broadcaster.subscribe(clientId, taskId, { sinceId: 1 });
 
       // Then: Only logs after id=1 should be sent (logs 2 and 3)
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       const logMessages = sentMessages.filter((msg) => msg.type === "log");
@@ -137,7 +140,7 @@ describe("LogBroadcaster", () => {
       broadcaster.subscribe(clientId, taskId, {});
 
       // Then: Only the status message should be sent (no logs)
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       assert.strictEqual(sentMessages.length, 1, "Expected only status message");
@@ -156,7 +159,7 @@ describe("LogBroadcaster", () => {
       broadcaster.subscribe(clientId, "task-no-repo", {});
 
       // Then: Only the status message should be sent
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       assert.strictEqual(sentMessages.length, 1);
@@ -176,7 +179,7 @@ describe("LogBroadcaster", () => {
       const mockRepo = createMockLogRepository(persistedLogs);
 
       // Configure the singleton BEFORE any server usage (simulates serve.ts line 36)
-      const { configureLogBroadcaster, getLogBroadcaster } = await import("./LogBroadcaster");
+      const { configureLogBroadcaster, getLogBroadcaster } = await import("./LogBroadcaster.js");
       configureLogBroadcaster({ logRepository: mockRepo });
 
       // When: A client subscribes via the singleton (as server.ts would do)
@@ -186,7 +189,7 @@ describe("LogBroadcaster", () => {
       singleton.subscribe(clientId, taskId, {}); // No sinceId = new client
 
       // Then: Backlog should be sent from the repository
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       // Status + 3 log messages
@@ -200,7 +203,7 @@ describe("LogBroadcaster", () => {
     test("singleton broadcaster sends NO backlog when logRepository is NOT configured", async () => {
       // Given: Singleton without a configured log repository
       // (This is what happens if configureLogBroadcaster is not called)
-      const { getLogBroadcaster } = await import("./LogBroadcaster");
+      const { getLogBroadcaster } = await import("./LogBroadcaster.js");
       const singleton = getLogBroadcaster();
 
       // When: A client subscribes to a task that should have backlog
@@ -209,7 +212,7 @@ describe("LogBroadcaster", () => {
       singleton.subscribe(clientId, "some-completed-task", {});
 
       // Then: Only the status message is sent (no backlog!)
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       // BUG: This would pass even if there are logs in DB, because repo is undefined
@@ -230,14 +233,14 @@ describe("LogBroadcaster", () => {
      */
     test("new subscriber receives full log history from database for completed task", async () => {
       // Skip if running in CI without full deps
-      const { initializeTestDatabase, getTestDatabase, closeTestDatabase } = await import("../db/testUtils");
+      const { initializeTestDatabase, getTestDatabase, closeTestDatabase } = await import("../db/testUtils.js");
 
       // Given: A real database with persisted logs
       initializeTestDatabase();
       const db = getTestDatabase();
 
       // Import real repository
-      const { TaskLogRepository } = await import("../repositories/TaskLogRepository");
+      const { TaskLogRepository } = await import("../repositories/TaskLogRepository.js");
       const logRepo = new TaskLogRepository(db);
 
       // Simulate logs written during task execution (completed task)
@@ -257,7 +260,7 @@ describe("LogBroadcaster", () => {
       broadcaster.subscribe(clientId, taskId, {}); // No sinceId = first time viewing
 
       // Then: Client should receive ALL 5 log entries as backlog
-      const sendMock = mockSocket.send as ReturnType<typeof mock.fn>;
+      const sendMock = mockSocket.send as unknown as MockFn;
       const sentMessages = sendMock.mock.calls.map((call) => JSON.parse(call.arguments[0] as string));
 
       const logMessages = sentMessages.filter((msg) => msg.type === "log");

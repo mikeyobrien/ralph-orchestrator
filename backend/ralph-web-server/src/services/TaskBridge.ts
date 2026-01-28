@@ -28,6 +28,7 @@ import stripAnsi from "strip-ansi";
 import { TaskRepository } from "../repositories";
 import { ProcessSupervisor } from "../runner/ProcessSupervisor";
 import { FileOutputStreamer } from "../runner/FileOutputStreamer";
+import { CollectionService } from "./CollectionService";
 
 /**
  * Get the git repository root path from a given directory.
@@ -182,6 +183,10 @@ export interface TaskBridgeOptions {
   processSupervisor?: ProcessSupervisor;
   /** Output streamer for reconnection (optional) */
   outputStreamer?: FileOutputStreamer;
+  /** Default config path to use when no preset is specified */
+  defaultConfigPath?: string;
+  /** Collection service for exporting collection presets to YAML */
+  collectionService?: CollectionService;
 }
 
 /**
@@ -197,6 +202,8 @@ export class TaskBridge {
   private readonly taskType: string;
   private readonly processSupervisor?: ProcessSupervisor;
   private readonly outputStreamer?: FileOutputStreamer;
+  private readonly defaultConfigPath?: string;
+  private readonly collectionService?: CollectionService;
 
   /** Map from queuedTaskId to dbTaskId for correlation */
   private readonly taskIdMap: Map<string, string> = new Map();
@@ -217,6 +224,8 @@ export class TaskBridge {
     this.taskType = options.taskType ?? "ralph.run";
     this.processSupervisor = options.processSupervisor;
     this.outputStreamer = options.outputStreamer;
+    this.defaultConfigPath = options.defaultConfigPath;
+    this.collectionService = options.collectionService;
 
     // Subscribe to execution lifecycle events
     this.subscribeToEvents();
@@ -399,17 +408,52 @@ export class TaskBridge {
         return { success: false, error: "Task is already queued" };
       }
 
-      // Build additional args for preset
+      // Build additional args for config/preset
+      // The config (-c) flag determines which hat collection is used.
+      // User-selected presets override the default config.
       const args: string[] = [];
+      let configResolved = false;
+
       if (preset) {
         // Preset format: "builtin:name" or "directory:name" or collection UUID
-        // For builtin presets, use just the name (ralph -c feature)
-        // For collection presets, we'd need to export to a temp file (future enhancement)
-        const presetMatch = preset.match(/^(builtin|directory):(.+)$/);
-        if (presetMatch) {
-          args.push("-c", presetMatch[2]);
+        // - For builtin presets: Pass full ID "builtin:name" to ralph -c
+        // - For directory presets: Resolve to actual file path in .ralph/hats/<name>.yml
+        // - For collection presets (UUIDs): Export to temp file in .ralph/temp/
+        const builtinMatch = preset.match(/^builtin:(.+)$/);
+        const directoryMatch = preset.match(/^directory:(.+)$/);
+
+        if (builtinMatch) {
+          // Pass full builtin:name format - CLI will load from embedded presets
+          args.push("-c", preset);
+          configResolved = true;
+        } else if (directoryMatch) {
+          // Directory presets: resolve to actual file path in .ralph/hats/
+          const presetName = directoryMatch[1];
+          const presetPath = path.join(this.defaultCwd, ".ralph", "hats", `${presetName}.yml`);
+          args.push("-c", presetPath);
+          configResolved = true;
+        } else if (this.collectionService) {
+          // Collection presets (UUIDs): export to temp file and pass path
+          const yamlContent = this.collectionService.exportToYaml(preset);
+          if (yamlContent) {
+            // Ensure temp directory exists
+            const tempDir = path.join(this.defaultCwd, ".ralph", "temp");
+            if (!fs.existsSync(tempDir)) {
+              fs.mkdirSync(tempDir, { recursive: true });
+            }
+
+            // Write the collection config to a temp file
+            const tempPath = path.join(tempDir, `collection-${preset}.yml`);
+            fs.writeFileSync(tempPath, yamlContent, "utf-8");
+            args.push("-c", tempPath);
+            configResolved = true;
+          }
         }
-        // Collection presets (UUIDs) would need special handling - not implemented yet
+      }
+
+      // If no preset was resolved, use the default config
+      if (!configResolved && this.defaultConfigPath) {
+        args.push("-c", this.defaultConfigPath);
       }
 
       // Enqueue the task with the title as the prompt
@@ -645,6 +689,25 @@ export class TaskBridge {
     const stopResult = this.processSupervisor.stop(dbTaskId);
 
     if (!stopResult.success) {
+      // Special case: process already terminated means the task ended unexpectedly
+      // We should update the status to reflect reality and return success
+      if (stopResult.error === "Process already terminated") {
+        console.warn(`[TaskBridge] Task ${dbTaskId}: Process already terminated, marking as failed`);
+        this.taskRepository.update(dbTaskId, {
+          status: "failed",
+          completedAt: new Date(),
+          errorMessage: "Process terminated unexpectedly",
+          exitCode: -1,
+        });
+
+        // Clean up the mapping if it exists
+        if (dbTask.queuedTaskId) {
+          this.taskIdMap.delete(dbTask.queuedTaskId);
+        }
+
+        return { success: true };
+      }
+
       return { success: false, error: stopResult.error || "Failed to stop process" };
     }
 

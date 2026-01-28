@@ -253,11 +253,14 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
   // Shows when loop is in merging, needs-review, or merged state
   const isMergeLoopTask = loop && ["merging", "needs-review", "merged"].includes(loop.status);
 
+  // Check if iteration data is available from the loop
+  const hasIteration = loop?.currentIteration != null && loop?.maxIterations != null;
+
   return (
     <Card
       ref={ref}
       className={cn(
-        "transition-all duration-200 cursor-pointer hover:bg-accent/50",
+        "cursor-pointer hover:bg-accent/50 transition-colors duration-150",
         isFocused && "ring-2 ring-primary bg-accent/30",
         // Visual distinction for merge loop tasks: green left border
         isMergeLoopTask && "border-l-4 border-l-green-500/60",
@@ -274,26 +277,45 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
       }}
     >
       <CardHeader className="p-4">
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
+          {/* Row 1: Status icon + Title */}
           <div className="flex items-center gap-3">
-            {/* Status icon */}
             <StatusIcon
               className={cn("h-5 w-5 shrink-0", statusConfig.color, isRunning && "animate-spin")}
               aria-hidden="true"
             />
-
-            {/* Task title */}
-            <span className="font-medium flex-1 truncate">
+            <span className="font-medium text-foreground flex-1 truncate">
               {task.title}
             </span>
+          </div>
 
+          {/* Row 2: StatusBadge + IterationBadge? + dot + RelativeTime + ActionButton */}
+          <div className="flex items-center gap-2 ml-8 text-xs text-muted-foreground">
             {/* Status badge */}
             <Badge variant={statusConfig.badgeVariant} className="shrink-0">
               {statusConfig.label}
             </Badge>
 
-            {/* Loop badge - only shown when a loop match exists (spec line 150) */}
+            {/* Iteration badge - only shown when iteration data exists */}
+            {hasIteration && (
+              <span className="shrink-0 bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded text-xs tabular-nums">
+                {loop.currentIteration}/{loop.maxIterations}
+              </span>
+            )}
+
+            {/* Loop badge - only shown when a loop match exists */}
             {loop && <LoopBadge status={loop.status} className="shrink-0" />}
+
+            {/* Dot separator */}
+            <span className="text-muted-foreground/50" aria-hidden="true">•</span>
+
+            {/* Relative time */}
+            <span className="shrink-0 tabular-nums">
+              {relativeTime}
+            </span>
+
+            {/* Spacer to push action buttons right */}
+            <span className="flex-1" />
 
             {/* Merge button for worktree tasks - per explicit-merge-loop-ux spec */}
             {canMerge && (
@@ -301,7 +323,7 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
                 size="sm"
                 variant={isMergeBlocked ? "ghost" : "default"}
                 className={cn(
-                  "shrink-0 h-7 px-2",
+                  "shrink-0 h-6 px-2 text-xs",
                   !isMergeBlocked && "bg-green-600 hover:bg-green-700 text-white",
                   isMergeBlocked && "opacity-50"
                 )}
@@ -310,52 +332,49 @@ const TaskThreadComponent = forwardRef<HTMLDivElement, TaskThreadProps>(function
                 title={mergeTooltip}
               >
                 {mergeMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <GitMerge className="h-4 w-4" />
+                  <GitMerge className="h-3 w-3" />
                 )}
                 <span className="ml-1">Merge</span>
               </Button>
             )}
 
-            {/* Run/Retry/Cancel buttons */}
+            {/* Run button */}
             {canRun && (
               <Button
                 size="sm"
                 variant="ghost"
-                className="shrink-0 h-7 px-2"
+                className="shrink-0 h-6 px-2 text-xs"
                 onClick={handleRun}
                 disabled={isExecuting}
               >
                 {isExecuting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <Play className="h-4 w-4" />
+                  <Play className="h-3 w-3" />
                 )}
                 <span className="ml-1">Run</span>
               </Button>
             )}
+
+            {/* Retry button */}
             {canRetry && (
               <Button
                 size="sm"
                 variant="ghost"
-                className="shrink-0 h-7 px-2"
+                className="shrink-0 h-6 px-2 text-xs"
                 onClick={handleRetry}
                 disabled={isExecuting}
               >
                 {isExecuting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <RotateCcw className="h-4 w-4" />
+                  <RotateCcw className="h-3 w-3" />
                 )}
                 <span className="ml-1">Retry</span>
               </Button>
             )}
-
-            {/* Relative time */}
-            <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
-              {relativeTime}
-            </span>
           </div>
 
           {/* Live status for running tasks */}

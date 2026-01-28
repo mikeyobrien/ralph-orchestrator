@@ -75,7 +75,7 @@ describe("LoopsManager.getMergeButtonState", () => {
     const state = await manager.getMergeButtonState("test-loop-003");
 
     // Then: Blocked reason should describe what primary is doing
-    if (state.state === "blocked") {
+    if (state.state === "blocked" && state.reason) {
       assert.ok(
         state.reason.includes("primary") || state.reason.includes("loop"),
         `Blocked reason should explain why. Got: ${state.reason}`
@@ -193,11 +193,6 @@ describe("LoopsManager.retryMerge with steering input", () => {
       return "";
     };
 
-    // Mock fs.writeFile to capture what would be written
-    let writtenPath: string | null = null;
-    let writtenContent: string | null = null;
-    const originalImport = global.import;
-
     // We'll verify by checking the command was called
     // (steering file write is internal implementation detail)
 
@@ -255,12 +250,14 @@ describe("MergeButtonState type", () => {
   test("MergeButtonState interface exists and is exported", async () => {
     // This test verifies the type is properly exported
     // The actual type checking happens at compile time
+    // MergeButtonState is an interface, not a runtime value
 
-    // Given: We import the type (this would fail at compile if missing)
-    const { MergeButtonState } = await import("./LoopsManager");
+    // Given: We import the module (type checking happens at compile time)
+    const loopsModule = await import("./LoopsManager.js");
 
-    // Then: Type should be defined (at runtime this is just undefined for interface)
-    // This test mainly ensures the import doesn't error
+    // Then: Module should be importable, types are checked at compile time
+    assert.ok(loopsModule.LoopsManager, "LoopsManager class should be importable");
+    // MergeButtonState is a TypeScript interface and verified at compile time
     assert.ok(true, "MergeButtonState interface should be importable");
   });
 });

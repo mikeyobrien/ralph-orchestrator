@@ -1,30 +1,44 @@
 /**
  * TaskDetailPage Component
  *
- * Dedicated page for viewing task details.
- * Replaces the inline expansion pattern with a full-page view.
+ * Dedicated page for viewing task details with improved UX.
+ * Per spec: .sop/task-ux-improvements/design/detailed-design.md
  *
- * Features:
- * - Full prompt display (not truncated)
- * - Rich status metrics (duration, timestamps, exit code)
- * - Log viewer
- * - Action buttons (run, retry, cancel)
- * - Navigation back to task list
+ * Layout:
+ * - TaskDetailHeader: Back navigation + action buttons
+ * - Title: Full prompt display
+ * - TaskStatusBar: Status, iteration, loop, preset badges
+ * - TaskMetadataGrid: Two-column timing and execution details
+ * - ExecutionSummary: Collapsible execution results
+ * - User steering UI (for needs-review loops)
+ * - EnhancedLogViewer: Real-time log streaming
  */
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { trpc } from "@/trpc";
-import { formatDuration, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { EnhancedLogViewer } from "@/components/tasks/EnhancedLogViewer";
-import { AlertTriangle, Send, Loader2, GitMerge, CheckCircle2, FileText, GitCommit, AlertCircle, FileQuestion } from "lucide-react";
-import { TaskCardSkeleton } from "@/components/tasks/TaskCardSkeleton";
-import { EmptyState } from "@/components/tasks/EmptyState";
-import { type LoopDetailData } from "@/components/tasks/LoopDetail";
-import { LoopBadge } from "@/components/tasks/LoopBadge";
+import {
+  EnhancedLogViewer,
+  TaskCardSkeleton,
+  EmptyState,
+  TaskDetailHeader,
+  TaskStatusBar,
+  TaskMetadataGrid,
+  type LoopDetailData,
+} from "@/components/tasks";
+import {
+  AlertTriangle,
+  Loader2,
+  GitMerge,
+  CheckCircle2,
+  FileText,
+  GitCommit,
+  AlertCircle,
+  FileQuestion,
+} from "lucide-react";
+import type { TaskAction } from "@/components/tasks/TaskDetailHeader";
 
 /**
  * ExecutionSummary Component
@@ -45,7 +59,7 @@ function ExecutionSummary({
 
   return (
     <div
-      className={`mt-4 rounded-lg border ${
+      className={`rounded-lg border ${
         isMerged
           ? "border-green-500/30 bg-green-500/5"
           : "border-border bg-muted/50"
@@ -65,7 +79,9 @@ function ExecutionSummary({
         )}
         <h3
           className={`font-semibold ${
-            isMerged ? "text-green-700 dark:text-green-400" : "text-muted-foreground"
+            isMerged
+              ? "text-green-700 dark:text-green-400"
+              : "text-muted-foreground"
           }`}
         >
           {isMerged ? "Merge Complete" : "Execution Summary"}
@@ -94,48 +110,6 @@ function ExecutionSummary({
   );
 }
 
-/**
- * Reusable component for displaying a label-value metric pair
- */
-function MetricRow({
-  label,
-  value,
-  valueClassName,
-  testId,
-}: {
-  label: string;
-  value: React.ReactNode;
-  valueClassName?: string;
-  testId?: string;
-}) {
-  return (
-    <div>
-      <span className="text-muted-foreground">{label}: </span>
-      <span className={valueClassName} data-testid={testId}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-/**
- * Map task status to badge variant
- */
-function getStatusVariant(
-  status: string
-): "default" | "secondary" | "destructive" | "outline" {
-  switch (status) {
-    case "running":
-      return "default";
-    case "completed":
-      return "secondary";
-    case "failed":
-      return "destructive";
-    default:
-      return "outline";
-  }
-}
-
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -148,18 +122,18 @@ export function TaskDetailPage() {
     error,
   } = trpc.task.get.useQuery({ id: id! }, { enabled: !!id });
 
-  // Fetch loops for PID-based mapping to associate task with loop
+  // Fetch loops for loopId-based mapping to associate task with loop
   const loopsQuery = trpc.loops.list.useQuery(
     { includeTerminal: true },
     { refetchInterval: 5000 }
   );
 
-  // Create PID to loop map for task-loop association
+  // Find the associated loop by loopId
   const associatedLoop = useMemo(() => {
-    if (!loopsQuery.data || !task?.pid) return undefined;
+    if (!loopsQuery.data || !task?.loopId) return undefined;
     const loops = loopsQuery.data as LoopDetailData[];
-    return loops.find((loop) => loop.pid === task.pid);
-  }, [loopsQuery.data, task?.pid]);
+    return loops.find((loop) => loop.id === task.loopId);
+  }, [loopsQuery.data, task?.loopId]);
 
   // User steering state for needs-review loops
   const [steeringInput, setSteeringInput] = useState("");
@@ -175,6 +149,25 @@ export function TaskDetailPage() {
       setSteeringInput("");
     },
   });
+
+  // Handle actions from TaskDetailHeader
+  const handleAction = useCallback(
+    (action: TaskAction) => {
+      if (!task) return;
+      switch (action) {
+        case "run":
+          runMutation.mutate({ id: task.id });
+          break;
+        case "retry":
+          retryMutation.mutate({ id: task.id });
+          break;
+        case "cancel":
+          cancelMutation.mutate({ id: task.id });
+          break;
+      }
+    },
+    [task, runMutation, retryMutation, cancelMutation]
+  );
 
   // Handle retry merge with user steering input
   const handleRetryMerge = useCallback(() => {
@@ -197,11 +190,11 @@ export function TaskDetailPage() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [navigate]);
 
-  // Loading state
+  // Loading state with skeletons
   if (isLoading) {
     return (
-      <div className="p-6">
-        <p>Loading...</p>
+      <div className="p-6 space-y-4">
+        <TaskCardSkeleton />
         <TaskCardSkeleton />
       </div>
     );
@@ -233,11 +226,6 @@ export function TaskDetailPage() {
     );
   }
 
-  // Determine which action buttons to show
-  const showRunButton = task.status === "open";
-  const showCancelButton = task.status === "running";
-  const showRetryButton = task.status === "failed";
-
   // Determine if log viewer should be shown (for running or completed tasks)
   const showLogViewer =
     task.status === "running" ||
@@ -245,61 +233,51 @@ export function TaskDetailPage() {
     task.status === "closed" ||
     task.status === "failed";
 
+  // Check if any action is pending
+  const isActionPending =
+    runMutation.isPending ||
+    retryMutation.isPending ||
+    cancelMutation.isPending;
+
+  // Map task status for components
+  const taskStatus = task.status as
+    | "open"
+    | "running"
+    | "completed"
+    | "closed"
+    | "failed";
+
   return (
     <div className="p-6 space-y-6">
-      {/* Back navigation */}
-      <Link to="/tasks" className="text-blue-500 hover:underline">
-        Back to Tasks
-      </Link>
+      {/* Header with back navigation and action buttons */}
+      <TaskDetailHeader
+        status={taskStatus}
+        onBack={() => navigate("/tasks")}
+        onAction={handleAction}
+        isActionPending={isActionPending}
+      />
 
-      {/* Page title */}
-      <h1 className="text-2xl font-bold">{task.title}</h1>
+      {/* Page title - full prompt display */}
+      <h1 className="text-xl font-semibold">{task.title}</h1>
 
-      {/* Status metrics section */}
-      <div className="space-y-4">
-        {/* Status badge with loop badge */}
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Status: </span>
-          <Badge variant={getStatusVariant(task.status)} className="capitalize">
-            {task.status}
-          </Badge>
-          {associatedLoop && (
-            <LoopBadge status={associatedLoop.status} />
-          )}
-        </div>
+      {/* Status bar with badges */}
+      <TaskStatusBar
+        status={taskStatus}
+        loopId={associatedLoop?.id}
+        loopStatus={associatedLoop?.status}
+      />
 
-        {/* Timestamps */}
-        <MetricRow label="Created" value={formatDate(task.createdAt)} />
-        <MetricRow label="Updated" value={formatDate(task.updatedAt)} />
+      {/* Metadata grid - two column layout */}
+      <TaskMetadataGrid
+        task={task}
+        // Future: Pass metrics when backend supports token/cost tracking
+        // metrics={{ tokensIn: task.tokensIn, tokensOut: task.tokensOut, estimatedCost: task.estimatedCost }}
+      />
 
-        {/* Duration (for completed/failed tasks) */}
-        {task.durationMs && (
-          <MetricRow label="Duration" value={formatDuration(task.durationMs)} />
-        )}
-
-        {/* Exit code (for completed/failed tasks) */}
-        {task.exitCode !== null && task.exitCode !== undefined && (
-          <MetricRow
-            label="Exit Code"
-            value={task.exitCode}
-            testId="exit-code-value"
-          />
-        )}
-
-        {/* Error message (for failed tasks) */}
-        {task.errorMessage && (
-          <MetricRow
-            label="Error"
-            value={task.errorMessage}
-            valueClassName="text-red-500"
-          />
-        )}
-
-        {/* Execution summary (for completed tasks) */}
-        {task.executionSummary && (
-          <ExecutionSummary summary={task.executionSummary} loop={associatedLoop} />
-        )}
-      </div>
+      {/* Execution summary (for completed tasks) */}
+      {task.executionSummary && (
+        <ExecutionSummary summary={task.executionSummary} loop={associatedLoop} />
+      )}
 
       {/* User steering UI for needs-review loops */}
       {associatedLoop?.status === "needs-review" && (
@@ -358,36 +336,6 @@ export function TaskDetailPage() {
           </div>
         </div>
       )}
-
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        {showRunButton && (
-          <Button
-            onClick={() => runMutation.mutate({ id: task.id })}
-            disabled={runMutation.isPending}
-          >
-            Run
-          </Button>
-        )}
-        {showCancelButton && (
-          <Button
-            variant="destructive"
-            onClick={() => cancelMutation.mutate({ id: task.id })}
-            disabled={cancelMutation.isPending}
-          >
-            Cancel
-          </Button>
-        )}
-        {showRetryButton && (
-          <Button
-            variant="secondary"
-            onClick={() => retryMutation.mutate({ id: task.id })}
-            disabled={retryMutation.isPending}
-          >
-            Retry
-          </Button>
-        )}
-      </div>
 
       {/* Log viewer (for running/completed/failed tasks) */}
       {showLogViewer && (

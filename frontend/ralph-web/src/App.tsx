@@ -7,7 +7,7 @@
 
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "./components/layout";
-import { TasksPage, HatsPage, HistoryPage, PlanPage, BuilderPage, TaskDetailPage } from "./pages";
+import { TasksPage, PlanPage, BuilderPage, TaskDetailPage, SettingsPage } from "./pages";
 
 export function App() {
   return (
@@ -16,10 +16,9 @@ export function App() {
       <Route element={<AppShell />}>
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/tasks/:id" element={<TaskDetailPage />} />
-        <Route path="/hats" element={<HatsPage />} />
         <Route path="/builder" element={<BuilderPage />} />
-        <Route path="/history" element={<HistoryPage />} />
         <Route path="/plan" element={<PlanPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         {/* Redirect root to tasks */}
         <Route path="/" element={<Navigate to="/tasks" replace />} />
         {/* Catch-all redirect to tasks */}

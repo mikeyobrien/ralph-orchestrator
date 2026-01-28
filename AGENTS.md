@@ -194,3 +194,4 @@ ralph clean --diagnostics
 - Prefer replay-based smoke tests over live API calls for CI
 - Run python tests using a .venv
 - You MUST not commit ephemeral files
+- When I ask you to view something that means to use playwright/chrome tools to go view it.

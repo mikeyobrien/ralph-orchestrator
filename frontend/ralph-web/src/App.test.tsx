@@ -14,11 +14,10 @@ import { App } from "./App";
 // Mock all page components to isolate routing tests
 vi.mock("./pages", () => ({
   TasksPage: () => <div data-testid="tasks-page">Tasks Page</div>,
-  HatsPage: () => <div data-testid="hats-page">Hats Page</div>,
-  HistoryPage: () => <div data-testid="history-page">History Page</div>,
   PlanPage: () => <div data-testid="plan-page">Plan Page</div>,
   BuilderPage: () => <div data-testid="builder-page">Builder Page</div>,
   TaskDetailPage: () => <div data-testid="task-detail-page">Task Detail Page</div>,
+  SettingsPage: () => <div data-testid="settings-page">Settings Page</div>,
 }));
 
 // Mock the layout component - must render Outlet for routes to work
@@ -81,14 +80,6 @@ describe("App routing", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("tasks-page")).toBeInTheDocument();
-      });
-    });
-
-    it("renders HatsPage for /hats route", async () => {
-      renderWithRoute("/hats");
-
-      await waitFor(() => {
-        expect(screen.getByTestId("hats-page")).toBeInTheDocument();
       });
     });
 

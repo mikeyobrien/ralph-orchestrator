@@ -12,8 +12,8 @@ import { TaskQueueService, EventBus, Dispatcher } from "./queue";
 import { PersistentTaskQueueService } from "./queue/PersistentTaskQueueService";
 import { createRalphTaskHandler } from "./runner/RalphTaskHandler";
 import { createTestLogTaskHandler } from "./runner/TestLogTaskHandler";
-import { TaskBridge, LoopsManager, PlanningService } from "./services";
-import { TaskRepository, TaskLogRepository, QueuedTaskRepository } from "./repositories";
+import { TaskBridge, LoopsManager, PlanningService, CollectionService } from "./services";
+import { TaskRepository, TaskLogRepository, QueuedTaskRepository, CollectionRepository } from "./repositories";
 import { ProcessSupervisor } from "./runner/ProcessSupervisor";
 import { FileOutputStreamer } from "./runner/FileOutputStreamer";
 
@@ -67,23 +67,29 @@ console.log(
 
 const isTestMode = process.env.RALPH_TEST_MODE === "1";
 
+// Default config path for ralph runs (can be overridden by user preset)
+const defaultConfigPath = process.env.RALPH_CONFIG_PATH ?? path.resolve(REPO_ROOT, "configs/ralph.yml");
+
 if (isTestMode) {
   dispatcher.registerHandler("test.log", createTestLogTaskHandler());
 } else {
   // Register the ralph task handler
-  const configPath = process.env.RALPH_CONFIG_PATH ?? path.resolve(REPO_ROOT, "configs/ralph.yml");
-  console.log(`Using ralph config: ${configPath}`);
+  // Note: Config (-c) is NOT included in baseArgs - it's handled by TaskBridge
+  // to allow user-selected presets to override the default config
+  console.log(`Default ralph config: ${defaultConfigPath}`);
   dispatcher.registerHandler(
     "ralph.run",
     createRalphTaskHandler({
       defaultCwd: CWD,
-      baseArgs: ["run", "-c", configPath, "--no-tui"], // Disable TUI for streaming output to WebSocket
+      baseArgs: ["run", "--no-tui"], // Disable TUI for streaming output to WebSocket
     })
   );
 }
 
 // Create the TaskBridge to connect DB tasks with the execution queue
 const taskRepository = new TaskRepository(db);
+const collectionRepository = new CollectionRepository(db);
+const collectionService = new CollectionService(collectionRepository);
 const processSupervisor = new ProcessSupervisor();
 const outputStreamer = new FileOutputStreamer();
 const taskBridge = new TaskBridge(taskRepository, taskQueue, eventBus, {
@@ -91,6 +97,8 @@ const taskBridge = new TaskBridge(taskRepository, taskQueue, eventBus, {
   taskType: isTestMode ? "test.log" : "ralph.run",
   processSupervisor,
   outputStreamer,
+  defaultConfigPath: isTestMode ? undefined : defaultConfigPath,
+  collectionService,
 });
 
 // Make queue available globally for backward compatibility
