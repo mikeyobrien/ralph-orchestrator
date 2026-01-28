@@ -60,17 +60,24 @@ impl CliBackend {
     /// # Errors
     /// Returns `CustomBackendError` if backend is "custom" but no command is specified.
     pub fn from_config(config: &CliConfig) -> Result<Self, CustomBackendError> {
-        match config.backend.as_str() {
-            "claude" => Ok(Self::claude()),
-            "kiro" => Ok(Self::kiro()),
-            "gemini" => Ok(Self::gemini()),
-            "codex" => Ok(Self::codex()),
-            "amp" => Ok(Self::amp()),
-            "copilot" => Ok(Self::copilot()),
-            "opencode" => Ok(Self::opencode()),
-            "custom" => Self::custom(config),
-            _ => Ok(Self::claude()), // Default to claude
+        let mut backend = match config.backend.as_str() {
+            "claude" => Self::claude(),
+            "kiro" => Self::kiro(),
+            "gemini" => Self::gemini(),
+            "codex" => Self::codex(),
+            "amp" => Self::amp(),
+            "copilot" => Self::copilot(),
+            "opencode" => Self::opencode(),
+            "custom" => return Self::custom(config),
+            _ => Self::claude(), // Default to claude
+        };
+
+        // Honor command override for named backends (e.g., custom binary path)
+        if let Some(ref cmd) = config.command {
+            backend.command = cmd.clone();
         }
+
+        Ok(backend)
     }
 
     /// Creates the Claude backend.
@@ -700,6 +707,21 @@ mod tests {
         assert_eq!(backend.command, "claude");
         assert_eq!(backend.prompt_mode, PromptMode::Arg);
         assert_eq!(backend.prompt_flag, Some("-p".to_string()));
+    }
+
+    #[test]
+    fn test_from_config_command_override() {
+        let config = CliConfig {
+            backend: "claude".to_string(),
+            command: Some("my-custom-claude".to_string()),
+            prompt_mode: "arg".to_string(),
+            ..Default::default()
+        };
+        let backend = CliBackend::from_config(&config).unwrap();
+
+        assert_eq!(backend.command, "my-custom-claude");
+        assert_eq!(backend.prompt_flag, Some("-p".to_string()));
+        assert_eq!(backend.output_format, OutputFormat::StreamJson);
     }
 
     #[test]

@@ -670,7 +670,8 @@ pub struct CliConfig {
     #[serde(default = "default_backend")]
     pub backend: String,
 
-    /// Custom command (for backend: "custom").
+    /// Command override. Required for "custom" backend.
+    /// For named backends, overrides the default binary path.
     pub command: Option<String>,
 
     /// How to pass prompts: "arg" or "stdin".
