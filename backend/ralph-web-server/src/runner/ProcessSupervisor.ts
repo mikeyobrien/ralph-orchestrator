@@ -66,16 +66,23 @@ export class ProcessSupervisor {
     const stdoutLog = path.join(taskDir, "stdout.log");
     const stderrLog = path.join(taskDir, "stderr.log");
 
-    // Build command with shell redirection
-    const ralphCmd = `ralph ${args.join(" ")} > "${stdoutLog}" 2> "${stderrLog}"`;
+    // Open file descriptors for stdout/stderr redirection
+    // Using sync fs operations since we need the fds before spawn
+    const stdoutFd = fs.openSync(stdoutLog, "w");
+    const stderrFd = fs.openSync(stderrLog, "w");
 
-    // Spawn detached process with shell redirection
-    const child = spawn(ralphCmd, {
+    // Spawn detached process using array form (no shell injection)
+    // SECURITY: Using array form prevents command injection via shell metacharacters
+    const child = spawn("ralph", args, {
       cwd,
       detached: true,
-      stdio: "ignore",
-      shell: true,
+      stdio: ["ignore", stdoutFd, stderrFd],
     });
+
+    // Close file descriptors in parent process (child inherits them)
+    // IMPORTANT: Must close after spawn, not before
+    fs.closeSync(stdoutFd);
+    fs.closeSync(stderrFd);
 
     child.unref();
 

@@ -37,6 +37,7 @@ import {
   GitCommit,
   AlertCircle,
   FileQuestion,
+  Trash2,
 } from "lucide-react";
 import type { TaskAction } from "@/components/tasks/TaskDetailHeader";
 
@@ -143,6 +144,11 @@ export function TaskDetailPage() {
   const runMutation = trpc.task.run.useMutation();
   const retryMutation = trpc.task.retry.useMutation();
   const cancelMutation = trpc.task.cancel.useMutation();
+  const deleteMutation = trpc.task.delete.useMutation({
+    onSuccess: () => {
+      navigate("/tasks");
+    },
+  });
   const retryMergeMutation = trpc.loops.retry.useMutation({
     onSuccess: () => {
       utils.loops.list.invalidate();
@@ -177,6 +183,17 @@ export function TaskDetailPage() {
       steeringInput: steeringInput.trim() || undefined,
     });
   }, [associatedLoop, retryMergeMutation, steeringInput]);
+
+  // Handle task deletion with confirmation
+  const handleDelete = useCallback(() => {
+    if (!task) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to delete this task?\n\n"${task.title}"\n\nThis action cannot be undone.`
+    );
+    if (confirmed) {
+      deleteMutation.mutate({ id: task.id });
+    }
+  }, [task, deleteMutation]);
 
   // Keyboard navigation - Escape to go back
   useEffect(() => {
@@ -225,6 +242,9 @@ export function TaskDetailPage() {
       </div>
     );
   }
+
+  // Allow deletion only for terminal states (failed or closed)
+  const showDeleteButton = task.status === "failed" || task.status === "closed";
 
   // Determine if log viewer should be shown (for running or completed tasks)
   const showLogViewer =
@@ -334,6 +354,29 @@ export function TaskDetailPage() {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Delete button for terminal states */}
+      {showDeleteButton && (
+        <div className="flex gap-2">
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Deleting...
+              </>
+            ) : (
+              <>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </>
+            )}
+          </Button>
         </div>
       )}
 

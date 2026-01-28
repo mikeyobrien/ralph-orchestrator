@@ -94,3 +94,70 @@ test("ProcessSupervisor.getStatus returns status for existing task", () => {
   // Cleanup
   fs.rmSync(handle.taskDir, { recursive: true, force: true });
 });
+
+test("ProcessSupervisor.spawn treats shell metacharacters as literals (CVE regression)", () => {
+  // This test verifies the fix for command injection vulnerability.
+  // With shell: true, these metacharacters would be interpreted as shell commands.
+  // With array-form spawn, they are passed as literal arguments.
+  const supervisor = new ProcessSupervisor({ runDir: testRunDir });
+  const taskId = "test-injection-" + Date.now();
+
+  // These would execute arbitrary code with shell: true
+  const maliciousArgs = [
+    "--version",
+    "; echo INJECTED",      // Shell command separator
+    "| cat /etc/passwd",    // Pipe to another command
+    "$(whoami)",            // Command substitution
+    "`id`",                 // Backtick command substitution
+  ];
+
+  const handle = supervisor.spawn(taskId, "test prompt", maliciousArgs, process.cwd());
+
+  // If we got here without spawning additional processes, the injection was prevented
+  assert.ok(handle.pid > 0);
+  assert.strictEqual(handle.taskId, taskId);
+
+  // Verify stdout.log exists (proves spawn worked)
+  assert.ok(fs.existsSync(path.join(handle.taskDir, "stdout.log")));
+
+  // The key verification: stderr should contain an error about unrecognized args,
+  // NOT output from injected commands. With shell:true, echo INJECTED would write
+  // "INJECTED" to stdout. With array-form spawn, ralph sees "; echo INJECTED" as
+  // a literal invalid argument.
+
+  // Wait briefly for process to start and produce output
+  const maxWait = 500;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    // Poll for stderr content
+    const stderrPath = path.join(handle.taskDir, "stderr.log");
+    if (fs.existsSync(stderrPath)) {
+      const stderr = fs.readFileSync(stderrPath, "utf-8");
+      // If ralph received the malicious args as literal arguments, it will complain
+      // about unrecognized options. This is the expected safe behavior.
+      if (stderr.length > 0) {
+        break;
+      }
+    }
+  }
+
+  // Verify that shell metacharacters were NOT interpreted
+  const stdoutPath = path.join(handle.taskDir, "stdout.log");
+  const stdout = fs.readFileSync(stdoutPath, "utf-8");
+
+  // CRITICAL: With shell:true, "echo INJECTED" would write "INJECTED" to stdout
+  // With array-form spawn, no shell commands are executed
+  assert.ok(
+    !stdout.includes("INJECTED"),
+    "Shell command injection should NOT have executed"
+  );
+
+  // Verify passwd file wasn't read (cat /etc/passwd would have succeeded)
+  assert.ok(
+    !stdout.includes("root:"),
+    "Shell pipe injection should NOT have executed"
+  );
+
+  // Cleanup
+  fs.rmSync(handle.taskDir, { recursive: true, force: true });
+});

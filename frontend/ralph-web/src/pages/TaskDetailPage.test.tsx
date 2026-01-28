@@ -136,6 +136,12 @@ vi.mock("@/trpc", () => ({
           isPending: false,
         })),
       },
+      delete: {
+        useMutation: vi.fn(() => ({
+          mutate: vi.fn(),
+          isPending: false,
+        })),
+      },
     },
     loops: {
       list: {

@@ -316,13 +316,34 @@ export const taskRouter = router({
 
   /**
    * Delete a task
+   *
+   * Security: Only allows deletion of tasks in terminal states (failed, closed)
+   * to prevent accidental data loss from running or pending tasks.
    */
   delete: publicProcedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => {
-    const deleted = ctx.taskRepository.delete(input.id);
-    if (!deleted) {
+    // First verify the task exists and check its state
+    const task = ctx.taskRepository.findById(input.id);
+    if (!task) {
       throw new TRPCError({
         code: "NOT_FOUND",
         message: `Task with id '${input.id}' not found`,
+      });
+    }
+
+    // Only allow deletion of tasks in terminal states
+    const deletableStates = ["failed", "closed"];
+    if (!deletableStates.includes(task.status)) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Cannot delete task in '${task.status}' state. Only failed or closed tasks can be deleted.`,
+      });
+    }
+
+    const deleted = ctx.taskRepository.delete(input.id);
+    if (!deleted) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `Failed to delete task '${input.id}'`,
       });
     }
     return { success: true };
