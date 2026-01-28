@@ -25,8 +25,8 @@ use tracing::{debug, info, warn};
 ///
 /// This teaches the agent how to read and create memories.
 /// Skill injection is implicit when `memories.enabled: true`.
-/// Embedded from `.claude/skills/ralph-memories/SKILL.md` at compile time.
-const MEMORIES_SKILL: &str = include_str!("../../../../.claude/skills/ralph-memories/SKILL.md");
+/// Embedded from `data/memories-skill.md` at compile time.
+const MEMORIES_SKILL: &str = include_str!("../../data/memories-skill.md");
 
 /// Reason the event loop terminated.
 #[derive(Debug, Clone, PartialEq, Eq)]
