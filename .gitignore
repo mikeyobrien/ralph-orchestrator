@@ -116,3 +116,7 @@ PROMPT.md
 .ideation/input/prompt.md
 .ideation/output/ideas.yaml
 .ideation/PROMPT.md
+
+# Don't ignore bin/ directory or scripts
+!bin/
+!bin/*

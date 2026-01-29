@@ -1,0 +1,128 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+case $1 in
+  run)
+    shift
+    prompt="${1:-Generate content ideas}"
+
+    # Verify inputs exist
+    if [[ ! -f .ideation/input/avatar.yaml ]]; then
+      echo "Error: .ideation/input/avatar.yaml not found"
+      echo "Copy an avatar: cp .ideation/avatars/myla.yaml .ideation/input/avatar.yaml"
+      exit 1
+    fi
+
+    if [[ ! -f .ideation/input/prompt.md ]]; then
+      echo "Error: .ideation/input/prompt.md not found"
+      echo "Copy a template: cp .ideation/templates/late-night-techno.md .ideation/input/prompt.md"
+      exit 1
+    fi
+
+    # Run Ralph with content-ideation preset
+    ralph run -c presets/content-ideation.yml -p "$prompt"
+    ;;
+
+  show)
+    if [[ ! -f .ideation/output/ideas.yaml ]]; then
+      echo "No ideas generated yet. Run: ideate run"
+      exit 1
+    fi
+
+    # Show passing ideas with color
+    echo "=== Passing Ideas (avg >= 7.0) ==="
+    yq eval '.ideas[] | select(.status == "passing") |
+      "---\nTitle: " + .title +
+      "\nHook: " + .hook +
+      "\nScore: " + (.avg_score | tostring) +
+      "\nCreator: " + .creator +
+      "\n"' .ideation/output/ideas.yaml
+    ;;
+
+  stats)
+    if [[ ! -f .ideation/output/ideas.yaml ]]; then
+      echo "No ideas generated yet. Run: ideate run"
+      exit 1
+    fi
+
+    total=$(yq eval '.ideas | length' .ideation/output/ideas.yaml)
+    passing=$(yq eval '.ideas[] | select(.status == "passing") | .id' .ideation/output/ideas.yaml | wc -l)
+    failing=$((total - passing))
+    rounds=$(yq eval '.rounds' .ideation/output/ideas.yaml)
+
+    echo "=== Ideation Stats ==="
+    echo "Rounds: $rounds"
+    echo "Total ideas: $total"
+    echo "Passing (≥7.0): $passing"
+    echo "Failing (<7.0): $failing"
+    ;;
+
+  archive)
+    if [[ ! -f .ideation/output/ideas.yaml ]]; then
+      echo "No ideas to archive"
+      exit 1
+    fi
+
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    avatar=$(yq eval '.avatar' .ideation/output/ideas.yaml)
+    theme=$(yq eval '.theme' .ideation/output/ideas.yaml | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+
+    archive_name="${timestamp}-${avatar}-${theme}.yaml"
+    cp .ideation/output/ideas.yaml ".ideation/archive/${archive_name}"
+    echo "Archived to: .ideation/archive/${archive_name}"
+    ;;
+
+  clean)
+    rm -f .ideation/output/ideas.yaml
+    rm -f .ideation/PROMPT.md
+    echo "Cleared output files"
+    ;;
+
+  setup)
+    avatar="${2:-myla}"
+    template="${3:-late-night-techno}"
+
+    if [[ ! -f ".ideation/avatars/${avatar}.yaml" ]]; then
+      echo "Error: Avatar not found: .ideation/avatars/${avatar}.yaml"
+      exit 1
+    fi
+
+    if [[ ! -f ".ideation/templates/${template}.md" ]]; then
+      echo "Error: Template not found: .ideation/templates/${template}.md"
+      exit 1
+    fi
+
+    cp ".ideation/avatars/${avatar}.yaml" .ideation/input/avatar.yaml
+    cp ".ideation/templates/${template}.md" .ideation/input/prompt.md
+
+    echo "Setup complete:"
+    echo "  Avatar: ${avatar}"
+    echo "  Template: ${template}"
+    echo ""
+    echo "Edit prompt: \$EDITOR .ideation/input/prompt.md"
+    echo "Run ideation: ideate run"
+    ;;
+
+  *)
+    echo "Usage: ideate [command]"
+    echo ""
+    echo "Commands:"
+    echo "  setup [avatar] [template]  - Copy avatar and template to input/ (default: myla late-night-techno)"
+    echo "  run [prompt]               - Run ideation loop (default prompt: 'Generate content ideas')"
+    echo "  show                       - Show passing ideas"
+    echo "  stats                      - Show ideation statistics"
+    echo "  archive                    - Archive current ideas with timestamp"
+    echo "  clean                      - Clear output files"
+    echo ""
+    echo "Examples:"
+    echo "  ideate setup myla late-night-techno"
+    echo "  ideate run"
+    echo "  ideate show"
+    echo "  ideate archive"
+    exit 1
+    ;;
+esac
