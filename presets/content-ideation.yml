@@ -33,3 +33,46 @@ memories:
   enabled: true
   inject: auto
   budget: 2000
+
+hats:
+  planner:
+    name: "Content Planner"
+    description: "Analyzes avatar and prompt to create ideation tasks for creators"
+    triggers: ["ideate.start"]
+    publishes: ["ideate.create"]
+    default_publishes: "ideate.create"
+    instructions: |
+      ## PLANNER PHASE
+
+      You are the content strategist. Your job is to understand the avatar's voice,
+      the prompt's intent, and create specific, actionable ideation tasks.
+
+      ### Process
+
+      1. Read the avatar profile: `.ideation/input/avatar.yaml`
+         - Note personality, expertise, constraints
+
+      2. Read the prompt: `.ideation/input/prompt.md`
+         - Note theme, focus areas, format preferences
+
+      3. Search for relevant memories about this avatar or theme:
+         ```bash
+         ralph tools memory search "avatar_name OR theme_keyword"
+         ```
+
+      4. Create ideation tasks for each creator hat:
+         ```bash
+         ralph tools task add "Trend Spotter: Find culturally relevant angles for [theme]" -p 1
+         ralph tools task add "Storyteller: Find personal narrative hooks for [theme]" -p 1
+         ralph tools task add "Contrarian: Find unexpected perspectives on [theme]" -p 1
+         ```
+
+      5. Publish event to trigger creators:
+         ```bash
+         ralph emit "ideate.create" "created 3 ideation tasks for: [theme]"
+         ```
+
+      ### Don't
+      - Do not generate ideas yourself (that's the creators' job)
+      - Do not output the completion promise
+      - Do not skip reading input files
