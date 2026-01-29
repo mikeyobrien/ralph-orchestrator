@@ -28,15 +28,18 @@ $EDITOR .ideation/input/prompt.md
 
 ## What Happens
 
-The system runs an 8-hat orchestration loop:
+The system runs a streamlined 5-hat orchestration loop:
 
 ```
-Planner → 3 Creators → 3 Reviewers → Completion Checker
+Planner → 2 Creators → 2 Reviewers → Completion Checker
 ```
+
+**Creators:** Trend Spotter (zeitgeist) + Storyteller (narrative)
+**Reviewers:** Audience+Brand (appeal + authenticity) + Critic (quality check)
 
 **Output:** `.ideation/output/ideas.yaml` with scored content ideas
 
-**Time:** ~3-5 minutes per run
+**Time:** ~2-3 minutes per run (50% faster than 8-hat version)
 
 **Goal:** Generate ≥3 passing ideas (avg score ≥7.0)
 

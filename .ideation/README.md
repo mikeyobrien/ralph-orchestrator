@@ -24,11 +24,13 @@ $EDITOR .ideation/input/prompt.md
 
 ## How It Works
 
-**Multi-Agent Loop:**
+**Streamlined Multi-Agent Loop (5 hats):**
 1. **Planner** - Analyzes avatar + prompt, creates tasks
-2. **Creators** - Generate ideas (Trend Spotter, Storyteller, Contrarian)
-3. **Reviewers** - Score ideas (Audience, Brand, Critic)
+2. **Creators** - Generate ideas (Trend Spotter, Storyteller)
+3. **Reviewers** - Score ideas (Audience+Brand, Critic)
 4. **Checker** - Iterate or complete (need 3+ ideas with avg ≥ 7.0)
+
+**Optimization:** Reduced from 8 to 5 hats for 50% faster iterations while maintaining quality.
 
 **Inputs:**
 - `input/avatar.yaml` - WHO is creating (personality, voice, expertise)

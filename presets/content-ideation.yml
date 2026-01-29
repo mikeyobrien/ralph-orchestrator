@@ -1,7 +1,7 @@
-# Content Ideation Preset
+# Content Ideation Preset (Optimized)
 #
-# Multi-agent content ideation pipeline using Ralph's hat system.
-# Planner → Creators (Trend/Story/Contrarian) → Reviewers (Audience/Brand/Critic)
+# Streamlined 5-hat pipeline for faster iterations while maintaining quality.
+# Planner → Creators (Trend/Story) → Reviewers (Audience+Brand/Critic)
 #
 # Usage:
 #   1. cp .ideation/avatars/myla.yaml .ideation/input/avatar.yaml
@@ -64,12 +64,11 @@ hats:
          ```bash
          ralph tools task add "Trend Spotter: Find culturally relevant angles for [theme]" -p 1
          ralph tools task add "Storyteller: Find personal narrative hooks for [theme]" -p 1
-         ralph tools task add "Contrarian: Find unexpected perspectives on [theme]" -p 1
          ```
 
       5. Publish event to trigger creators:
          ```bash
-         ralph emit "ideate.create" "created 3 ideation tasks for: [theme]"
+         ralph emit "ideate.create" "created 2 ideation tasks for: [theme]"
          ```
 
       ### Don't
@@ -146,8 +145,8 @@ hats:
     name: "Storyteller"
     description: "Generates ideas based on narrative and emotional resonance"
     triggers: ["trend.done"]
-    publishes: ["story.done"]
-    default_publishes: "story.done"
+    publishes: ["ideas.generated"]
+    default_publishes: "ideas.generated"
     instructions: |
       ## STORYTELLER PHASE
 
@@ -176,7 +175,7 @@ hats:
 
       7. Publish event:
          ```bash
-         ralph emit "story.done" "storyteller: generated 3 ideas"
+         ralph emit "ideas.generated" "storyteller: generated 3 ideas"
          ```
 
       ### Quality Bar
@@ -185,135 +184,60 @@ hats:
       - Angle: Ground abstract concepts in lived experience
       - Rationale: Explain the emotional resonance
 
-  contrarian:
-    name: "Contrarian"
-    description: "Generates ideas based on unexpected takes and challenging assumptions"
-    triggers: ["story.done"]
-    publishes: ["ideas.generated"]
-    default_publishes: "ideas.generated"
-    instructions: |
-      ## CONTRARIAN PHASE
-
-      You challenge conventional wisdom and find uncomfortable truths.
-
-      ### Process
-
-      1. Read avatar: `.ideation/input/avatar.yaml`
-      2. Read prompt: `.ideation/input/prompt.md`
-      3. Search memories for contrarian patterns:
-         ```bash
-         ralph tools memory search "contrarian OR unexpected" --tags pattern
-         ```
-
-      4. Generate 2-3 content ideas based on:
-         - What does everyone get wrong?
-         - What's the uncomfortable truth?
-         - What assumption can we challenge?
-
-      5. Create ideas with same YAML structure:
-         - Use id prefix: "contra-001-[timestamp]"
-         - Set creator: "contrarian"
-         - Focus on provocative but authentic angles
-
-      6. Append to `.ideation/output/ideas.yaml`
-
-      7. Publish event:
-         ```bash
-         ralph emit "ideas.generated" "contrarian: generated 3 ideas"
-         ```
-
-      ### Quality Bar
-      - Title: Should challenge expectations
-      - Hook: Lead with the surprising take
-      - Angle: Must be contrarian but not trolling
-      - Rationale: Explain why the conventional view is incomplete
-
-  audience_reviewer:
-    name: "Audience Reviewer"
-    description: "Scores ideas from the target audience perspective"
+  audience_brand_reviewer:
+    name: "Audience & Brand Reviewer"
+    description: "Scores ideas on audience appeal and brand authenticity"
     triggers: ["ideas.generated"]
-    publishes: ["review.audience"]
-    default_publishes: "review.audience"
+    publishes: ["review.audience_brand"]
+    default_publishes: "review.audience_brand"
     instructions: |
-      ## AUDIENCE REVIEWER PHASE
+      ## AUDIENCE & BRAND REVIEWER PHASE
 
-      You are the target audience. Score ideas on immediate appeal.
+      You evaluate ideas from two perspectives: target audience appeal AND brand authenticity.
 
       ### Process
 
       1. Read avatar: `.ideation/input/avatar.yaml`
+         - Note personality, voice, constraints for brand alignment
       2. Read all ideas: `.ideation/output/ideas.yaml`
-      3. For EACH idea, score 1-10 based on:
-         - Would I stop scrolling for this? (3 points)
-         - Does the hook grab me in 2 seconds? (4 points)
-         - Is this relevant to me right now? (3 points)
+
+      3. For EACH idea, score 1-10 based on combined criteria:
+
+         **Audience Appeal (5 points):**
+         - Would I stop scrolling for this? (2 points)
+         - Does the hook grab me in 2 seconds? (2 points)
+         - Is this relevant to me right now? (1 point)
+
+         **Brand Authenticity (5 points):**
+         - Does this fit the avatar's voice and tone? (2 points)
+         - Is this authentic to the persona? (2 points)
+         - Would the avatar actually say this? (1 point)
 
       4. Update EACH idea's reviews array:
          ```yaml
          reviews:
-           - reviewer: "audience"
+           - reviewer: "audience_brand"
              score: 7.5
-             feedback: "Hook is strong but angle feels generic. Need more specificity."
+             feedback: "Hook grabs attention but tone feels slightly too hype for [avatar]'s calm style. Strong cultural relevance."
          ```
 
       5. Write updated YAML back to `.ideation/output/ideas.yaml`
 
       6. Publish event with count:
          ```bash
-         ralph emit "review.audience" "audience: reviewed [N] ideas"
+         ralph emit "review.audience_brand" "audience_brand: reviewed [N] ideas"
          ```
 
       ### Scoring Guide
-      - 8-10: Would definitely watch, share-worthy
-      - 6-7: Interesting but not compelling
-      - 4-5: Meh, keep scrolling
-      - 1-3: Skip or cringe
-
-  brand_reviewer:
-    name: "Brand Guardian"
-    description: "Scores ideas on brand authenticity and voice alignment"
-    triggers: ["review.audience"]
-    publishes: ["review.brand"]
-    default_publishes: "review.brand"
-    instructions: |
-      ## BRAND GUARDIAN PHASE
-
-      You protect the avatar's authentic voice and brand integrity.
-
-      ### Process
-
-      1. Read avatar: `.ideation/input/avatar.yaml`
-         - Deep understanding of personality, expertise, constraints
-      2. Read all ideas: `.ideation/output/ideas.yaml`
-      3. For EACH idea, score 1-10 based on:
-         - Does this fit the avatar's voice? (4 points)
-         - Is this authentic to the persona? (3 points)
-         - Would the avatar actually say this? (3 points)
-
-      4. Update EACH idea's reviews array:
-         ```yaml
-         reviews:
-           - reviewer: "brand"
-             score: 6.0
-             feedback: "Angle is good but tone is too hype for Myla's calm style."
-         ```
-
-      5. Write updated YAML back to `.ideation/output/ideas.yaml`
-
-      6. Publish event:
-         ```bash
-         ralph emit "review.brand" "brand: reviewed [N] ideas"
-         ```
-
-      ### Watch For
-      - Constraints violations (avatar.yaml)
-      - Tone mismatches (too hype / too technical / too generic)
-      - Expertise overreach (claiming knowledge outside domain)
+      - 8-10: Compelling + perfectly on-brand
+      - 6-7: Interesting but tone/voice needs adjustment
+      - 4-5: Generic or misaligned with avatar
+      - 1-3: Skip-worthy or brand violation
 
   critic_reviewer:
     name: "Critical Reviewer"
     description: "Scores ideas with skepticism, finds weaknesses and clichés"
-    triggers: ["review.brand"]
+    triggers: ["review.audience_brand"]
     publishes: ["review.complete"]
     default_publishes: "review.complete"
     instructions: |
@@ -338,7 +262,7 @@ hats:
          ```
 
       4. Calculate average score for EACH idea:
-         - avg_score = (audience + brand + critic) / 3
+         - avg_score = (audience_brand + critic) / 2
          - Round to 1 decimal place
 
       5. Set status for EACH idea:
