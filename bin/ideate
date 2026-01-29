@@ -82,16 +82,110 @@ case $1 in
     fi
 
     timestamp=$(date +%Y%m%d-%H%M%S)
-    avatar=$(yq eval '.avatar' .ideation/output/ideas.yaml)
-    theme=$(yq eval '.theme' .ideation/output/ideas.yaml | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
 
-    archive_name="${timestamp}-${avatar}-${theme}.yaml"
-    cp .ideation/output/ideas.yaml ".ideation/archive/${archive_name}"
-    echo "Archived to: .ideation/archive/${archive_name}"
+    # Extract metadata (without yq - use grep/sed for portability)
+    avatar=$(grep '^avatar:' .ideation/output/ideas.yaml | sed 's/avatar: *"\?\([^"]*\)"\?/\1/' | tr -d '"')
+    theme=$(grep '^theme:' .ideation/output/ideas.yaml | sed 's/theme: *"\?\([^"]*\)"\?/\1/' | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | tr -d '"')
+
+    # Create archive directory structure
+    mkdir -p ".ideation/archive/${timestamp}-${avatar}-${theme}"
+
+    # Copy full run
+    cp .ideation/output/ideas.yaml ".ideation/archive/${timestamp}-${avatar}-${theme}/all-ideas.yaml"
+
+    # Split passing and failing ideas using awk
+    awk '
+      BEGIN { in_ideas=0; in_idea=0; passing_count=0; failing_count=0; current_idea="" }
+      /^ideas:/ { in_ideas=1; next }
+      /^  - id:/ {
+        if (current_idea != "" && in_ideas) {
+          if (current_status == "passing") {
+            print current_idea > ".ideation/archive/'"${timestamp}-${avatar}-${theme}"'/passing-ideas.yaml"
+            passing_count++
+          } else if (current_status == "failing") {
+            print current_idea > ".ideation/archive/'"${timestamp}-${avatar}-${theme}"'/failing-ideas.yaml"
+            failing_count++
+          }
+        }
+        current_idea=$0; current_status=""; in_idea=1; next
+      }
+      in_idea && /^    status:/ {
+        current_status=$2; gsub(/"/, "", current_status)
+        current_idea=current_idea"\n"$0; next
+      }
+      in_idea { current_idea=current_idea"\n"$0 }
+      END {
+        if (current_idea != "" && in_ideas) {
+          if (current_status == "passing") {
+            print current_idea > ".ideation/archive/'"${timestamp}-${avatar}-${theme}"'/passing-ideas.yaml"
+            passing_count++
+          } else if (current_status == "failing") {
+            print current_idea > ".ideation/archive/'"${timestamp}-${avatar}-${theme}"'/failing-ideas.yaml"
+            failing_count++
+          }
+        }
+        print "Passing ideas: " passing_count > "/tmp/ideate-archive-stats"
+        print "Failing ideas: " failing_count >> "/tmp/ideate-archive-stats"
+      }
+    ' .ideation/output/ideas.yaml
+
+    # Read stats
+    passing=$(grep "Passing ideas:" /tmp/ideate-archive-stats | cut -d' ' -f3)
+    failing=$(grep "Failing ideas:" /tmp/ideate-archive-stats | cut -d' ' -f3)
+
+    echo "Archived to: .ideation/archive/${timestamp}-${avatar}-${theme}/"
+    echo "  - all-ideas.yaml (complete run)"
+    echo "  - passing-ideas.yaml (${passing} ideas)"
+    if [[ "$failing" -gt 0 ]]; then
+      echo "  - failing-ideas.yaml (${failing} ideas)"
+    fi
+    ;;
+
+  split)
+    if [[ ! -f .ideation/output/ideas.yaml ]]; then
+      echo "No ideas to split"
+      exit 1
+    fi
+
+    # Split passing and failing ideas
+    awk '
+      BEGIN { in_ideas=0; passing=""; failing=""; header="" }
+      /^ideas:/ { in_ideas=1; print > ".ideation/output/passing-ideas.yaml"; print > ".ideation/output/failing-ideas.yaml"; next }
+      !in_ideas { header=header $0 "\n"; print > ".ideation/output/passing-ideas.yaml"; print > ".ideation/output/failing-ideas.yaml"; next }
+      /^  - id:/ { current_idea=$0; current_status=""; next }
+      /^    status:/ { current_status=$2; gsub(/"/, "", current_status); current_idea=current_idea"\n"$0; next }
+      { current_idea=current_idea"\n"$0 }
+      /^$/ && current_idea != "" {
+        if (current_status == "passing") {
+          print current_idea > ".ideation/output/passing-ideas.yaml"
+        } else if (current_status == "failing") {
+          print current_idea > ".ideation/output/failing-ideas.yaml"
+        }
+        current_idea=""
+      }
+      END {
+        if (current_idea != "") {
+          if (current_status == "passing") {
+            print current_idea > ".ideation/output/passing-ideas.yaml"
+          } else if (current_status == "failing") {
+            print current_idea > ".ideation/output/failing-ideas.yaml"
+          }
+        }
+      }
+    ' .ideation/output/ideas.yaml
+
+    passing_count=$(grep -c "^  - id:" .ideation/output/passing-ideas.yaml 2>/dev/null || echo "0")
+    failing_count=$(grep -c "^  - id:" .ideation/output/failing-ideas.yaml 2>/dev/null || echo "0")
+
+    echo "Split ideas into separate files:"
+    echo "  - .ideation/output/passing-ideas.yaml (${passing_count} ideas)"
+    echo "  - .ideation/output/failing-ideas.yaml (${failing_count} ideas)"
     ;;
 
   clean)
     rm -f .ideation/output/ideas.yaml
+    rm -f .ideation/output/passing-ideas.yaml
+    rm -f .ideation/output/failing-ideas.yaml
     rm -f .ideation/PROMPT.md
     echo "Cleared output files"
     ;;
@@ -129,14 +223,16 @@ case $1 in
     echo "  run [prompt]               - Run ideation loop (default prompt: 'Generate content ideas')"
     echo "  show                       - Show passing ideas"
     echo "  stats                      - Show ideation statistics"
-    echo "  archive                    - Archive current ideas with timestamp"
+    echo "  split                      - Split ideas into passing and failing files"
+    echo "  archive                    - Archive current ideas with timestamp (auto-splits by status)"
     echo "  clean                      - Clear output files"
     echo ""
     echo "Examples:"
     echo "  ideate setup myla late-night-techno"
     echo "  ideate run"
     echo "  ideate show"
-    echo "  ideate archive"
+    echo "  ideate split               # Split into passing/failing files"
+    echo "  ideate archive             # Archive with automatic splitting"
     exit 1
     ;;
 esac
