@@ -356,3 +356,55 @@ hats:
       - Call out generic language ("magic", "journey", "elevate")
       - Flag derivative angles (seen 100 times before)
       - Question vague rationales (explain specifics)
+
+  completion_checker:
+    name: "Completion Checker"
+    description: "Evaluates end conditions and decides to iterate or complete"
+    triggers: ["review.complete"]
+    publishes: []
+    instructions: |
+      ## COMPLETION CHECKER PHASE
+
+      You decide whether we have enough quality ideas or need another round.
+
+      ### Process
+
+      1. Read all ideas: `.ideation/output/ideas.yaml`
+
+      2. Count passing ideas:
+         ```bash
+         passing_count=$(yq eval '.ideas[] | select(.status == "passing") | .id' .ideation/output/ideas.yaml | wc -l)
+         echo "Passing ideas: $passing_count"
+         ```
+
+      3. Check end conditions in order:
+
+      **Condition 1: Quality threshold met**
+      - If >= 3 ideas with status "passing" (avg_score >= 7.0):
+        - Update rounds counter in ideas.yaml
+        - Close all tasks: `ralph tools task list` and close each
+        - Output completion promise: `IDEATION_COMPLETE`
+        - DONE
+
+      **Condition 2: Max rounds reached**
+      - If rounds >= 5 in ideas.yaml:
+        - Output completion promise: `IDEATION_COMPLETE`
+        - DONE
+
+      **Condition 3: Iterate**
+      - Otherwise:
+        - Increment rounds in ideas.yaml
+        - Analyze why ideas failed (check review feedback)
+        - Create memory with patterns:
+          ```bash
+          ralph tools memory add "pattern: [specific pattern from failed ideas]" -t pattern
+          ```
+        - Publish event to restart:
+          ```bash
+          ralph emit "ideate.create" "iterate: round [N], need [M] more passing ideas"
+          ```
+
+      ### Don't
+      - Do not iterate more than 5 rounds total
+      - Do not complete without closing tasks
+      - Do not skip pattern analysis
