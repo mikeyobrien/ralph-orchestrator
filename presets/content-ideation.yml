@@ -81,8 +81,8 @@ hats:
     name: "Trend Spotter"
     description: "Generates ideas based on cultural relevance and current zeitgeist"
     triggers: ["ideate.create"]
-    publishes: ["ideas.generated"]
-    default_publishes: "ideas.generated"
+    publishes: ["trend.done"]
+    default_publishes: "trend.done"
     instructions: |
       ## TREND SPOTTER PHASE
 
@@ -133,7 +133,7 @@ hats:
 
       7. Publish event:
          ```bash
-         ralph emit "ideas.generated" "trend_spotter: generated 3 ideas"
+         ralph emit "trend.done" "trend_spotter: generated 3 ideas"
          ```
 
       ### Quality Bar
@@ -145,9 +145,9 @@ hats:
   storyteller:
     name: "Storyteller"
     description: "Generates ideas based on narrative and emotional resonance"
-    triggers: ["ideate.create"]
-    publishes: ["ideas.generated"]
-    default_publishes: "ideas.generated"
+    triggers: ["trend.done"]
+    publishes: ["story.done"]
+    default_publishes: "story.done"
     instructions: |
       ## STORYTELLER PHASE
 
@@ -176,7 +176,7 @@ hats:
 
       7. Publish event:
          ```bash
-         ralph emit "ideas.generated" "storyteller: generated 3 ideas"
+         ralph emit "story.done" "storyteller: generated 3 ideas"
          ```
 
       ### Quality Bar
@@ -188,7 +188,7 @@ hats:
   contrarian:
     name: "Contrarian"
     description: "Generates ideas based on unexpected takes and challenging assumptions"
-    triggers: ["ideate.create"]
+    triggers: ["story.done"]
     publishes: ["ideas.generated"]
     default_publishes: "ideas.generated"
     instructions: |
