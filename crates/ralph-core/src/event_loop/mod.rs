@@ -523,7 +523,8 @@ impl EventLoop {
     /// prompt documents the topology for coordination awareness.
     ///
     /// If memories are configured with `inject: auto`, this method also prepends
-    /// primed memories to the prompt context.
+    /// primed memories to the prompt context. If a scratchpad file exists and is
+    /// non-empty, its content is also prepended (before memories).
     pub fn build_prompt(&mut self, hat_id: &HatId) -> Option<String> {
         // Handle "ralph" hat - the constant coordinator
         // Per spec: "Hatless Ralph is constant — Cannot be replaced, overwritten, or configured away"
@@ -537,9 +538,10 @@ impl EventLoop {
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                // Build base prompt and prepend memories if enabled
+                // Build base prompt and prepend memories + scratchpad if available
                 let base_prompt = self.ralph.build_prompt(&events_context, &[]);
-                let final_prompt = self.prepend_memories(base_prompt);
+                let with_memories = self.prepend_memories(base_prompt);
+                let final_prompt = self.prepend_scratchpad(with_memories);
 
                 debug!("build_prompt: routing to HatlessRalph (solo mode)");
                 return Some(final_prompt);
@@ -589,9 +591,10 @@ impl EventLoop {
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                // Build base prompt and prepend memories if enabled
+                // Build base prompt and prepend memories + scratchpad if available
                 let base_prompt = self.ralph.build_prompt(&events_context, &active_hats);
-                let final_prompt = self.prepend_memories(base_prompt);
+                let with_memories = self.prepend_memories(base_prompt);
+                let final_prompt = self.prepend_scratchpad(with_memories);
 
                 // Build prompt with active hats - filters instructions to only active hats
                 debug!(
@@ -717,6 +720,66 @@ impl EventLoop {
         final_prompt.push_str("\n\n");
         final_prompt.push_str(&prompt);
 
+        final_prompt
+    }
+
+    /// Prepends scratchpad content to the prompt if the file exists and is non-empty.
+    ///
+    /// The scratchpad is the agent's working memory for the current objective.
+    /// Auto-injecting saves one tool call per iteration.
+    /// When the file exceeds the budget, the TAIL is kept (most recent entries).
+    fn prepend_scratchpad(&self, prompt: String) -> String {
+        let scratchpad_path = self.scratchpad_path();
+
+        let resolved_path = if scratchpad_path.is_relative() {
+            self.config.core.workspace_root.join(&scratchpad_path)
+        } else {
+            scratchpad_path
+        };
+
+        if !resolved_path.exists() {
+            debug!(
+                "Scratchpad not found at {:?}, skipping injection",
+                resolved_path
+            );
+            return prompt;
+        }
+
+        let content = match std::fs::read_to_string(&resolved_path) {
+            Ok(c) => c,
+            Err(e) => {
+                info!("Failed to read scratchpad for injection: {}", e);
+                return prompt;
+            }
+        };
+
+        if content.trim().is_empty() {
+            debug!("Scratchpad is empty, skipping injection");
+            return prompt;
+        }
+
+        // Budget: 4000 tokens ~16000 chars. Keep the TAIL (most recent content).
+        let char_budget = 4000 * 4;
+        let content = if content.len() > char_budget {
+            // Find a line boundary near the start of the tail
+            let start = content.len() - char_budget;
+            let line_start = content[start..].find('\n').map_or(start, |n| start + n + 1);
+            format!(
+                "<!-- earlier content truncated ({} chars omitted) -->\n\n{}",
+                line_start,
+                &content[line_start..]
+            )
+        } else {
+            content
+        };
+
+        info!("Injecting scratchpad ({} chars) into prompt", content.len());
+
+        let mut final_prompt = format!(
+            "## Scratchpad\n\nCurrent contents of `{}`:\n\n{}\n\n",
+            self.config.core.scratchpad, content
+        );
+        final_prompt.push_str(&prompt);
         final_prompt
     }
 

@@ -1739,3 +1739,159 @@ fn test_check_ralph_completion_detection() {
         "Should not detect completion in unrelated text"
     );
 }
+
+#[test]
+fn test_scratchpad_injection_with_content() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+    std::fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &scratchpad_path,
+        "## Progress\n- [x] Step 1\n- [ ] Step 2\n",
+    )
+    .unwrap();
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        prompt.contains("## Scratchpad"),
+        "Prompt should contain scratchpad header"
+    );
+    assert!(
+        prompt.contains("Step 1"),
+        "Prompt should contain scratchpad content"
+    );
+    assert!(
+        prompt.contains("Step 2"),
+        "Prompt should contain scratchpad content"
+    );
+}
+
+#[test]
+fn test_scratchpad_injection_no_file() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    // Do NOT create scratchpad file
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        !prompt.contains("## Scratchpad"),
+        "Prompt should NOT contain scratchpad header when file doesn't exist"
+    );
+}
+
+#[test]
+fn test_scratchpad_injection_empty_file() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+    std::fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
+    std::fs::write(&scratchpad_path, "   \n\n  ").unwrap();
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        !prompt.contains("## Scratchpad"),
+        "Prompt should NOT contain scratchpad header when file is empty/whitespace"
+    );
+}
+
+#[test]
+fn test_scratchpad_injection_ordering() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+    std::fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
+    std::fs::write(&scratchpad_path, "scratchpad marker content").unwrap();
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    let scratchpad_pos = prompt
+        .find("## Scratchpad")
+        .expect("Should contain scratchpad");
+    let orientation_pos = prompt
+        .find("### 0a. ORIENTATION")
+        .expect("Should contain orientation");
+
+    assert!(
+        scratchpad_pos < orientation_pos,
+        "Scratchpad should appear before ORIENTATION in the prompt"
+    );
+}
+
+#[test]
+fn test_scratchpad_injection_tail_truncation() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+    std::fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
+
+    // Create content exceeding 16000 chars (4000 tokens * 4 chars/token)
+    let mut large_content = String::new();
+    for i in 0..2000 {
+        large_content.push_str(&format!("Line {}: some padding content here\n", i));
+    }
+    assert!(
+        large_content.len() > 16000,
+        "Test content should exceed budget"
+    );
+    std::fs::write(&scratchpad_path, &large_content).unwrap();
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        prompt.contains("## Scratchpad"),
+        "Prompt should contain scratchpad header even when truncated"
+    );
+    assert!(
+        prompt.contains("earlier content truncated"),
+        "Prompt should indicate truncation occurred"
+    );
+    // The tail (most recent lines) should be kept
+    assert!(
+        prompt.contains("Line 1999"),
+        "Last line should be preserved (tail kept)"
+    );
+    // Early lines should be truncated
+    assert!(
+        !prompt.contains("Line 0:"),
+        "First line should be truncated (head removed)"
+    );
+}

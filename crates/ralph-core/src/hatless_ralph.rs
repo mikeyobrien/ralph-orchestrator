@@ -301,16 +301,14 @@ You MUST complete only one atomic task for the overall objective. Leave work for
         prompt.push_str(&format!(
             r"### 0b. SCRATCHPAD
 `{scratchpad}` is your working memory for THIS objective.
+Its content is auto-injected at the top of your context each iteration.
+
+**Always append** new entries to the end of the file (most recent = bottom).
 
 **Use for:**
 - Current objective understanding
 - Notes and reasoning for current work
 - Progress tracking and next steps
-
-Task markers:
-- `[ ]` pending
-- `[x]` done
-- `[~]` cancelled (with reason)
 
 ",
             scratchpad = self.core.scratchpad,
@@ -828,12 +826,10 @@ mod tests {
         assert!(prompt.contains("### 0a. ORIENTATION"));
         assert!(prompt.contains("MUST complete only one atomic task"));
 
-        // Scratchpad section with task markers
+        // Scratchpad section with auto-inject and append instructions
         assert!(prompt.contains("### 0b. SCRATCHPAD"));
-        assert!(prompt.contains("Task markers:"));
-        assert!(prompt.contains("- `[ ]` pending"));
-        assert!(prompt.contains("- `[x]` done"));
-        assert!(prompt.contains("- `[~]` cancelled"));
+        assert!(prompt.contains("auto-injected"));
+        assert!(prompt.contains("**Always append**"));
 
         // Workflow with numbered steps (solo mode) using RFC2119
         assert!(prompt.contains("## WORKFLOW"));
@@ -972,10 +968,9 @@ hats:
 
         let prompt = ralph.build_prompt("", &[]);
 
-        // Task marker format is documented
-        assert!(prompt.contains("- `[ ]` pending"));
-        assert!(prompt.contains("- `[x]` done"));
-        assert!(prompt.contains("- `[~]` cancelled (with reason)"));
+        // Auto-injection and append instructions are documented
+        assert!(prompt.contains("auto-injected"));
+        assert!(prompt.contains("**Always append**"));
     }
 
     #[test]
@@ -1497,8 +1492,8 @@ hats:
             "Scratchpad path should be referenced"
         );
         assert!(
-            prompt.contains("Task markers:"),
-            "Task markers should be documented"
+            prompt.contains("auto-injected"),
+            "Auto-injection should be documented"
         );
     }
 
@@ -1518,8 +1513,8 @@ hats:
             "Scratchpad section should be included even with memories enabled"
         );
         assert!(
-            prompt.contains("Task markers:"),
-            "Task markers should still be documented"
+            prompt.contains("**Always append**"),
+            "Append instruction should be documented"
         );
 
         // Tasks section should also be present
