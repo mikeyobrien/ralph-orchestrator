@@ -56,6 +56,30 @@ For simpler tasks, skip planning and run directly:
 ralph run -p "Add input validation to the /users endpoint"
 ```
 
+## Content Ideation System
+
+This repository includes a content ideation system built on Ralph's hat system.
+
+**Quick Start:**
+
+```bash
+# Setup inputs
+./bin/ideate setup myla late-night-techno
+
+# Edit prompt
+$EDITOR .ideation/input/prompt.md
+
+# Run ideation
+./bin/ideate run
+
+# View results
+./bin/ideate show
+```
+
+**See:** [.ideation/README.md](.ideation/README.md) for full documentation.
+
+**Configuration:** [specs/constitution.md](specs/constitution.md)
+
 ## Web Dashboard (Alpha)
 
 > **Alpha:** The web dashboard is under active development. Expect rough edges and breaking changes.
