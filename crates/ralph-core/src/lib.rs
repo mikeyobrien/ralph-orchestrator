@@ -38,6 +38,8 @@ pub mod merge_queue;
 pub mod planning_session;
 mod session_player;
 mod session_recorder;
+pub mod skill;
+pub mod skill_registry;
 mod summary_writer;
 pub mod task;
 pub mod task_definition;
@@ -53,7 +55,7 @@ pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
     ChaosModeConfig, ChaosOutput, CliConfig, CoreConfig, EventLoopConfig, EventMetadata,
     FeaturesConfig, HatBackend, HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig,
-    ResearchFocus,
+    ResearchFocus, SkillOverride, SkillsConfig,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
@@ -93,6 +95,8 @@ pub use planning_session::{
 };
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};
 pub use session_recorder::{Record, SessionRecorder};
+pub use skill::{SkillEntry, SkillFrontmatter, SkillSource, parse_frontmatter};
+pub use skill_registry::SkillRegistry;
 pub use summary_writer::SummaryWriter;
 pub use task::{Task, TaskStatus};
 pub use task_definition::{

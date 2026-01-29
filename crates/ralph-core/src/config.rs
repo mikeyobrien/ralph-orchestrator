@@ -6,7 +6,7 @@
 use ralph_proto::Topic;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::debug;
 
 /// Top-level configuration for Ralph Orchestrator.
@@ -122,6 +122,10 @@ pub struct RalphConfig {
     #[serde(default)]
     pub tasks: TasksConfig,
 
+    /// Skills configuration for the skill discovery and injection system.
+    #[serde(default)]
+    pub skills: SkillsConfig,
+
     /// Feature flags for optional capabilities.
     #[serde(default)]
     pub features: FeaturesConfig,
@@ -164,6 +168,8 @@ impl Default for RalphConfig {
             memories: MemoriesConfig::default(),
             // Tasks
             tasks: TasksConfig::default(),
+            // Skills
+            skills: SkillsConfig::default(),
             // Features
             features: FeaturesConfig::default(),
         }
@@ -857,6 +863,81 @@ impl Default for TasksConfig {
             enabled: true, // Tasks enabled by default
         }
     }
+}
+
+/// Skills configuration.
+///
+/// Controls the skill discovery and injection system that makes tool
+/// knowledge and domain expertise available to agents during loops.
+///
+/// Skills use a two-tier injection model: a compact skill index is always
+/// present in every prompt, and the agent loads full skill content on demand
+/// via `ralph tools skill load <name>`.
+///
+/// Example configuration:
+/// ```yaml
+/// skills:
+///   enabled: true
+///   dirs:
+///     - ".claude/skills"
+///   overrides:
+///     pdd:
+///       enabled: false
+///     memories:
+///       auto_inject: true
+///       hats: ["ralph"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsConfig {
+    /// Whether the skills system is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Directories to scan for skill files.
+    /// Relative paths resolved against workspace root.
+    #[serde(default)]
+    pub dirs: Vec<PathBuf>,
+
+    /// Per-skill overrides keyed by skill name.
+    #[serde(default)]
+    pub overrides: HashMap<String, SkillOverride>,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true, // Skills enabled by default
+            dirs: vec![],
+            overrides: HashMap::new(),
+        }
+    }
+}
+
+/// Per-skill configuration override.
+///
+/// Allows enabling/disabling individual skills and overriding their
+/// frontmatter fields (hats, backends, tags, auto_inject).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkillOverride {
+    /// Disable a discovered skill.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+
+    /// Restrict skill to specific hats.
+    #[serde(default)]
+    pub hats: Vec<String>,
+
+    /// Restrict skill to specific backends.
+    #[serde(default)]
+    pub backends: Vec<String>,
+
+    /// Tags for categorization.
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    /// Inject full content into prompt (not just index entry).
+    #[serde(default)]
+    pub auto_inject: Option<bool>,
 }
 
 /// Chaos mode configuration.
@@ -2038,5 +2119,81 @@ features:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(!config.features.parallel, "parallel should be false");
         assert!(config.features.auto_merge, "auto_merge should be true");
+    }
+
+    #[test]
+    fn test_skills_config_defaults_when_absent() {
+        // Configs without a skills: section should still parse (backwards compat)
+        let yaml = r"
+agent: claude
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.skills.enabled);
+        assert!(config.skills.dirs.is_empty());
+        assert!(config.skills.overrides.is_empty());
+    }
+
+    #[test]
+    fn test_skills_config_deserializes_all_fields() {
+        let yaml = r#"
+skills:
+  enabled: true
+  dirs:
+    - ".claude/skills"
+    - "/shared/skills"
+  overrides:
+    pdd:
+      enabled: false
+    memories:
+      auto_inject: true
+      hats: ["ralph"]
+      backends: ["claude"]
+      tags: ["core"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.skills.enabled);
+        assert_eq!(config.skills.dirs.len(), 2);
+        assert_eq!(
+            config.skills.dirs[0],
+            std::path::PathBuf::from(".claude/skills")
+        );
+        assert_eq!(config.skills.overrides.len(), 2);
+
+        let pdd = config.skills.overrides.get("pdd").unwrap();
+        assert_eq!(pdd.enabled, Some(false));
+
+        let memories = config.skills.overrides.get("memories").unwrap();
+        assert_eq!(memories.auto_inject, Some(true));
+        assert_eq!(memories.hats, vec!["ralph"]);
+        assert_eq!(memories.backends, vec!["claude"]);
+        assert_eq!(memories.tags, vec!["core"]);
+    }
+
+    #[test]
+    fn test_skills_config_disabled() {
+        let yaml = r"
+skills:
+  enabled: false
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.skills.enabled);
+        assert!(config.skills.dirs.is_empty());
+    }
+
+    #[test]
+    fn test_skill_override_partial_fields() {
+        let yaml = r#"
+skills:
+  overrides:
+    my-skill:
+      hats: ["builder", "reviewer"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let override_ = config.skills.overrides.get("my-skill").unwrap();
+        assert_eq!(override_.enabled, None);
+        assert_eq!(override_.auto_inject, None);
+        assert_eq!(override_.hats, vec!["builder", "reviewer"]);
+        assert!(override_.backends.is_empty());
+        assert!(override_.tags.is_empty());
     }
 }

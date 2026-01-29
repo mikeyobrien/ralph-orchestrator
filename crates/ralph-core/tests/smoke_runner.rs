@@ -848,3 +848,469 @@ mod kiro_smoke_tests {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SKILLS SYSTEM SMOKE TESTS
+// Tests that the skills system integrates correctly: discovery, index generation,
+// prompt injection, and backwards compatibility.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod skills_smoke_tests {
+    use ralph_core::{
+        HatRegistry, HatlessRalph, RalphConfig, SkillOverride, SkillRegistry, SkillsConfig,
+    };
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    /// Returns the path to the test skills fixtures directory.
+    fn skills_fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skills")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 1: Skills fixtures directory exists
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skills_fixtures_directory_exists() {
+        let dir = skills_fixtures_dir();
+        assert!(
+            dir.exists(),
+            "Skills fixtures directory should exist at {:?}",
+            dir
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 2: SkillRegistry discovers built-in skills
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_builtin_skills_present_in_registry() {
+        let config = SkillsConfig::default();
+        let registry = SkillRegistry::from_config(&config, std::path::Path::new("."), None)
+            .expect("Should build registry with defaults");
+
+        // Built-in memories and tasks skills should be present
+        assert!(
+            registry.get("ralph-memories").is_some(),
+            "Built-in memories skill should be registered"
+        );
+        assert!(
+            registry.get("tasks").is_some(),
+            "Built-in tasks skill should be registered"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 3: SkillRegistry discovers test skills from fixtures directory
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_registry_discovers_fixture_skills() {
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![skills_fixtures_dir()],
+            overrides: HashMap::new(),
+        };
+
+        let registry = SkillRegistry::from_config(&config, std::path::Path::new("."), None)
+            .expect("Should build registry with skills dir");
+
+        // Should find the single-file test skill
+        let test_skill = registry.get("test-skill");
+        assert!(
+            test_skill.is_some(),
+            "Should discover test-skill.md from fixtures"
+        );
+        let test_skill = test_skill.unwrap();
+        assert_eq!(
+            test_skill.description,
+            "A test skill for smoke testing the skills system"
+        );
+        assert!(test_skill.content.contains("# Test Skill"));
+
+        // Should find the directory-style test skill
+        let complex_skill = registry.get("complex-test-skill");
+        assert!(
+            complex_skill.is_some(),
+            "Should discover complex-test-skill/SKILL.md from fixtures"
+        );
+        let complex_skill = complex_skill.unwrap();
+        assert_eq!(
+            complex_skill.description,
+            "A directory-style test skill for smoke testing"
+        );
+        assert_eq!(complex_skill.hats, vec!["builder"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 4: Skill index contains built-in and user skills
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skill_index_lists_all_visible_skills() {
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![skills_fixtures_dir()],
+            overrides: HashMap::new(),
+        };
+
+        let registry =
+            SkillRegistry::from_config(&config, std::path::Path::new("."), None).unwrap();
+
+        let index = registry.build_index(None);
+
+        // Index should contain the section header
+        assert!(
+            index.contains("## SKILLS"),
+            "Index should contain ## SKILLS header"
+        );
+
+        // Index should list built-in skills
+        assert!(
+            index.contains("ralph-memories"),
+            "Index should list the memories skill"
+        );
+        assert!(index.contains("tasks"), "Index should list the tasks skill");
+
+        // Index should list user test skills
+        assert!(
+            index.contains("test-skill"),
+            "Index should list the test-skill from fixtures"
+        );
+        assert!(
+            index.contains("complex-test-skill"),
+            "Index should list the complex-test-skill from fixtures"
+        );
+
+        // Index should contain load commands
+        assert!(
+            index.contains("`ralph tools skill load test-skill`"),
+            "Index should contain load command for test-skill"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 5: Hat filtering works in skill index
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skill_index_hat_filtering() {
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![skills_fixtures_dir()],
+            overrides: HashMap::new(),
+        };
+
+        let registry =
+            SkillRegistry::from_config(&config, std::path::Path::new("."), None).unwrap();
+
+        // Builder hat should see complex-test-skill (hat-restricted to builder)
+        let builder_index = registry.build_index(Some("builder"));
+        assert!(
+            builder_index.contains("complex-test-skill"),
+            "Builder should see complex-test-skill"
+        );
+
+        // Reviewer hat should NOT see complex-test-skill
+        let reviewer_index = registry.build_index(Some("reviewer"));
+        assert!(
+            !reviewer_index.contains("complex-test-skill"),
+            "Reviewer should NOT see complex-test-skill (restricted to builder)"
+        );
+
+        // Both should see unrestricted skills
+        assert!(
+            builder_index.contains("test-skill"),
+            "Builder should see unrestricted test-skill"
+        );
+        assert!(
+            reviewer_index.contains("test-skill"),
+            "Reviewer should see unrestricted test-skill"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 6: Skill index appears in assembled prompt
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skill_index_injected_into_prompt() {
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![skills_fixtures_dir()],
+            overrides: HashMap::new(),
+        };
+
+        let registry =
+            SkillRegistry::from_config(&config, std::path::Path::new("."), None).unwrap();
+
+        let skill_index = registry.build_index(None);
+
+        // Build a prompt with HatlessRalph and inject the skill index
+        let ralph_config = RalphConfig::default();
+        let hat_registry = HatRegistry::new();
+        let ralph = HatlessRalph::new(
+            "LOOP_COMPLETE",
+            ralph_config.core.clone(),
+            &hat_registry,
+            None,
+        )
+        .with_skill_index(skill_index);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        // Skill index section should appear in the prompt
+        assert!(
+            prompt.contains("## SKILLS"),
+            "Assembled prompt should contain ## SKILLS section"
+        );
+        assert!(
+            prompt.contains("ralph-memories"),
+            "Assembled prompt should list memories skill"
+        );
+        assert!(
+            prompt.contains("test-skill"),
+            "Assembled prompt should list test-skill"
+        );
+
+        // Skill index should appear AFTER GUARDRAILS
+        let guardrails_pos = prompt.find("GUARDRAILS");
+        let skills_pos = prompt.find("## SKILLS");
+        assert!(
+            guardrails_pos.is_some() && skills_pos.is_some(),
+            "Both GUARDRAILS and SKILLS sections should exist"
+        );
+        if let (Some(g), Some(s)) = (guardrails_pos, skills_pos) {
+            assert!(
+                g < s,
+                "SKILLS section should appear after GUARDRAILS (guardrails at {}, skills at {})",
+                g,
+                s
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 7: Backwards compatibility — no skills section in config
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_backwards_compat_no_skills_in_config() {
+        // YAML with no skills section — should use defaults
+        let yaml = r#"
+core:
+  scratchpad: ".ralph/agent/scratchpad.md"
+  specs_dir: "./specs"
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 10
+"#;
+
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Skills should be enabled by default
+        assert!(config.skills.enabled, "Skills should be enabled by default");
+        assert!(
+            config.skills.dirs.is_empty(),
+            "Skills dirs should default to empty"
+        );
+        assert!(
+            config.skills.overrides.is_empty(),
+            "Skills overrides should default to empty"
+        );
+
+        // Registry should still work with just built-in skills
+        let registry =
+            SkillRegistry::from_config(&config.skills, std::path::Path::new("."), Some("claude"))
+                .unwrap();
+
+        assert!(registry.get("ralph-memories").is_some());
+        assert!(registry.get("tasks").is_some());
+
+        // Build index should work
+        let index = registry.build_index(None);
+        assert!(index.contains("## SKILLS"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 8: Skills config parses from YAML with all fields
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skills_config_yaml_parsing() {
+        let yaml = r#"
+skills:
+  enabled: true
+  dirs:
+    - ".claude/skills"
+    - "/path/to/shared/skills"
+  overrides:
+    pdd:
+      enabled: false
+    memories:
+      auto_inject: true
+      hats: ["ralph"]
+"#;
+
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(config.skills.enabled);
+        assert_eq!(config.skills.dirs.len(), 2);
+        assert_eq!(config.skills.dirs[0], PathBuf::from(".claude/skills"));
+
+        // Check overrides
+        let pdd = config.skills.overrides.get("pdd").expect("pdd override");
+        assert_eq!(pdd.enabled, Some(false));
+
+        let memories = config
+            .skills
+            .overrides
+            .get("memories")
+            .expect("memories override");
+        assert_eq!(memories.auto_inject, Some(true));
+        assert_eq!(memories.hats, vec!["ralph"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 9: Skills disabled in config produces empty index
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_skills_disabled_empty_index() {
+        let yaml = r"
+skills:
+  enabled: false
+";
+
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.skills.enabled);
+
+        // When skills are disabled, EventLoop would skip index generation
+        // and pass an empty string to HatlessRalph — no ## SKILLS section
+        let ralph_config = RalphConfig::default();
+        let hat_registry = HatRegistry::new();
+        let ralph = HatlessRalph::new(
+            "LOOP_COMPLETE",
+            ralph_config.core.clone(),
+            &hat_registry,
+            None,
+        )
+        .with_skill_index(String::new()); // Empty index = skills disabled
+
+        let prompt = ralph.build_prompt("", &[]);
+        assert!(
+            !prompt.contains("## SKILLS"),
+            "Disabled skills should not produce ## SKILLS section"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 10: Config override disables a discovered skill
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_override_disables_skill_in_index() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "test-skill".to_string(),
+            SkillOverride {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        );
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![skills_fixtures_dir()],
+            overrides,
+        };
+
+        let registry =
+            SkillRegistry::from_config(&config, std::path::Path::new("."), None).unwrap();
+
+        // test-skill should be removed by override
+        assert!(
+            registry.get("test-skill").is_none(),
+            "test-skill should be disabled by override"
+        );
+
+        // Other skills should still be present
+        assert!(registry.get("ralph-memories").is_some());
+        assert!(registry.get("complex-test-skill").is_some());
+
+        let index = registry.build_index(None);
+        assert!(
+            !index.contains("| test-skill |"),
+            "Disabled test-skill should not appear in index"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 11: Existing smoke tests still pass (backwards compat)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_existing_smoke_tests_backwards_compat() {
+        use ralph_core::testing::{SmokeRunner, SmokeTestConfig};
+
+        let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+
+        // Run the canonical basic session fixture
+        let basic = fixtures_dir.join("basic_session.jsonl");
+        let config = SmokeTestConfig::new(&basic);
+        let result = SmokeRunner::run(&config).expect("Basic session should still run");
+        assert!(
+            result.completed_successfully(),
+            "BACKWARDS COMPAT: Basic session fixture should still complete successfully"
+        );
+
+        // Run the canonical complex session fixture
+        let complex = fixtures_dir.join("claude_complex_session.jsonl");
+        let config = SmokeTestConfig::new(&complex);
+        let result = SmokeRunner::run(&config).expect("Complex session should still run");
+        assert!(
+            result.completed_successfully(),
+            "BACKWARDS COMPAT: Complex session fixture should still complete successfully"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Test 12: load_skill returns XML-wrapped content
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_load_skill_xml_wrapping() {
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![skills_fixtures_dir()],
+            overrides: HashMap::new(),
+        };
+
+        let registry =
+            SkillRegistry::from_config(&config, std::path::Path::new("."), None).unwrap();
+
+        let loaded = registry
+            .load_skill("test-skill")
+            .expect("Should load test-skill");
+
+        assert!(
+            loaded.starts_with("<test-skill-skill>"),
+            "Loaded skill should start with XML open tag"
+        );
+        assert!(
+            loaded.ends_with("</test-skill-skill>"),
+            "Loaded skill should end with XML close tag"
+        );
+        assert!(
+            loaded.contains("# Test Skill"),
+            "Loaded skill should contain body content"
+        );
+        // Frontmatter should be stripped
+        assert!(
+            !loaded.contains("name: test-skill"),
+            "Loaded skill should NOT contain frontmatter"
+        );
+    }
+}

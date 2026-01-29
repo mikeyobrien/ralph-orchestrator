@@ -243,22 +243,17 @@ tasks:
         "Prompt should include SCRATCHPAD section"
     );
 
-    // TASKS section should be present when memories enabled
+    // Tasks section is now injected via the skills pipeline, not in core_prompt
+    // The DONE section still requires task verification before completion
     assert!(
-        prompt.contains("### 0c. TASKS"),
-        "Prompt should include TASKS section when memories enabled"
+        !prompt.contains("### 0c. TASKS"),
+        "Tasks section should NOT be in core_prompt — injected via skills pipeline"
     );
 
-    // CRITICAL verification note in tasks section
-    assert!(
-        prompt.contains("CRITICAL"),
-        "Prompt should include CRITICAL verification note"
-    );
-
-    // Task CLI commands
+    // Task CLI commands are referenced in workflow and DONE sections
     assert!(
         prompt.contains("ralph tools task"),
-        "Prompt should include task CLI commands"
+        "Prompt should reference task CLI in workflow/done sections"
     );
 
     // VERIFY & COMMIT step in workflow

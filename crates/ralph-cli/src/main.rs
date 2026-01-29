@@ -19,6 +19,7 @@ mod loop_runner;
 mod loops;
 mod memory;
 mod presets;
+mod skill_cli;
 mod sop_runner;
 mod task_cli;
 mod tools;

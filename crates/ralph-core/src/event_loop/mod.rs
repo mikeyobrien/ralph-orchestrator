@@ -16,17 +16,11 @@ use crate::hatless_ralph::HatlessRalph;
 use crate::instructions::InstructionBuilder;
 use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
+use crate::skill_registry::SkillRegistry;
 use ralph_proto::{Event, EventBus, Hat, HatId};
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-
-/// Skill content injected when memories are enabled.
-///
-/// This teaches the agent how to read and create memories.
-/// Skill injection is implicit when `memories.enabled: true`.
-/// Embedded from `data/memories-skill.md` at compile time.
-const MEMORIES_SKILL: &str = include_str!("../../data/memories-skill.md");
 
 /// Reason the event loop terminated.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +122,8 @@ pub struct EventLoop {
     diagnostics: crate::diagnostics::DiagnosticsCollector,
     /// Loop context for path resolution (None for legacy single-loop mode).
     loop_context: Option<LoopContext>,
+    /// Skill registry for the current loop.
+    skill_registry: SkillRegistry,
 }
 
 impl EventLoop {
@@ -201,6 +197,30 @@ impl EventLoop {
             );
         }
 
+        // Build skill registry from config
+        let skill_registry = if config.skills.enabled {
+            SkillRegistry::from_config(
+                &config.skills,
+                context.workspace(),
+                Some(config.cli.backend.as_str()),
+            )
+            .unwrap_or_else(|e| {
+                warn!(
+                    "Failed to build skill registry: {}, using empty registry",
+                    e
+                );
+                SkillRegistry::new(Some(config.cli.backend.as_str()))
+            })
+        } else {
+            SkillRegistry::new(Some(config.cli.backend.as_str()))
+        };
+
+        let skill_index = if config.skills.enabled {
+            skill_registry.build_index(None)
+        } else {
+            String::new()
+        };
+
         // When memories are enabled, add tasks CLI instructions alongside scratchpad
         let ralph = HatlessRalph::new(
             config.event_loop.completion_promise.clone(),
@@ -208,7 +228,8 @@ impl EventLoop {
             &registry,
             config.event_loop.starting_event.clone(),
         )
-        .with_memories_enabled(config.memories.enabled);
+        .with_memories_enabled(config.memories.enabled)
+        .with_skill_index(skill_index);
 
         // Read timestamped events path from marker file, fall back to default
         // The marker file contains a relative path like ".ralph/events-20260127-123456.jsonl"
@@ -231,6 +252,7 @@ impl EventLoop {
             event_reader,
             diagnostics,
             loop_context: Some(context),
+            skill_registry,
         }
     }
 
@@ -269,6 +291,31 @@ impl EventLoop {
             );
         }
 
+        // Build skill registry from config
+        let workspace_root = std::path::Path::new(".");
+        let skill_registry = if config.skills.enabled {
+            SkillRegistry::from_config(
+                &config.skills,
+                workspace_root,
+                Some(config.cli.backend.as_str()),
+            )
+            .unwrap_or_else(|e| {
+                warn!(
+                    "Failed to build skill registry: {}, using empty registry",
+                    e
+                );
+                SkillRegistry::new(Some(config.cli.backend.as_str()))
+            })
+        } else {
+            SkillRegistry::new(Some(config.cli.backend.as_str()))
+        };
+
+        let skill_index = if config.skills.enabled {
+            skill_registry.build_index(None)
+        } else {
+            String::new()
+        };
+
         // When memories are enabled, add tasks CLI instructions alongside scratchpad
         let ralph = HatlessRalph::new(
             config.event_loop.completion_promise.clone(),
@@ -276,7 +323,8 @@ impl EventLoop {
             &registry,
             config.event_loop.starting_event.clone(),
         )
-        .with_memories_enabled(config.memories.enabled);
+        .with_memories_enabled(config.memories.enabled)
+        .with_skill_index(skill_index);
 
         // Read events path from marker file, fall back to default if not present
         // The marker file is written by run_loop_impl() at run startup
@@ -295,6 +343,7 @@ impl EventLoop {
             event_reader,
             diagnostics,
             loop_context: None,
+            skill_registry,
         }
     }
 
@@ -539,7 +588,7 @@ impl EventLoop {
 
                 // Build base prompt and prepend memories if enabled
                 let base_prompt = self.ralph.build_prompt(&events_context, &[]);
-                let final_prompt = self.prepend_memories(base_prompt);
+                let final_prompt = self.prepend_auto_inject_skills(base_prompt);
 
                 debug!("build_prompt: routing to HatlessRalph (solo mode)");
                 return Some(final_prompt);
@@ -591,7 +640,7 @@ impl EventLoop {
 
                 // Build base prompt and prepend memories if enabled
                 let base_prompt = self.ralph.build_prompt(&events_context, &active_hats);
-                let final_prompt = self.prepend_memories(base_prompt);
+                let final_prompt = self.prepend_auto_inject_skills(base_prompt);
 
                 // Build prompt with active hats - filters instructions to only active hats
                 debug!(
@@ -635,11 +684,42 @@ impl EventLoop {
         )
     }
 
-    /// Prepends memories and usage skill to the prompt if auto-injection is enabled.
+    /// Prepends auto-injected skill content to the prompt.
     ///
-    /// Per spec: When `memories.inject: auto` is configured, memories are loaded
-    /// from `.ralph/agent/memories.md` and prepended to every prompt.
-    fn prepend_memories(&self, prompt: String) -> String {
+    /// This generalizes the former `prepend_memories()` into a skill auto-injection
+    /// pipeline that handles memories, tasks, and any other auto-inject skills.
+    ///
+    /// Injection order:
+    /// 1. Memories skill (special case: loads memory data from store, applies budget)
+    /// 2. Tasks skill (gated by `tasks.enabled`)
+    /// 3. Other auto-inject skills from the registry (wrapped in XML tags)
+    fn prepend_auto_inject_skills(&self, prompt: String) -> String {
+        let mut prefix = String::new();
+
+        // 1. Memories skill — special case with data loading
+        self.inject_memories_skill(&mut prefix);
+
+        // 2. Tasks skill — gated by tasks.enabled
+        self.inject_tasks_skill(&mut prefix);
+
+        // 3. Other auto-inject skills from the registry
+        self.inject_custom_auto_skills(&mut prefix);
+
+        if prefix.is_empty() {
+            return prompt;
+        }
+
+        prefix.push_str("\n\n");
+        prefix.push_str(&prompt);
+        prefix
+    }
+
+    /// Injects memories content and skill into the prefix.
+    ///
+    /// Special case: loads memory entries from the store, applies budget
+    /// truncation, then appends the memories skill content.
+    /// Gated by `memories.enabled && memories.inject == Auto`.
+    fn inject_memories_skill(&self, prefix: &mut String) {
         let memories_config = &self.config.memories;
 
         info!(
@@ -647,16 +727,14 @@ impl EventLoop {
             memories_config.enabled, memories_config.inject, self.config.core.workspace_root
         );
 
-        // Only inject if enabled and set to auto mode
         if !memories_config.enabled || memories_config.inject != InjectMode::Auto {
             info!(
                 "Memory injection skipped: enabled={}, inject={:?}",
                 memories_config.enabled, memories_config.inject
             );
-            return prompt;
+            return;
         }
 
-        // Load memories from the store using workspace root for path resolution
         let workspace_root = &self.config.core.workspace_root;
         let store = MarkdownMemoryStore::with_default_path(workspace_root);
         let memories_path = workspace_root.join(".ralph/agent/memories.md");
@@ -677,19 +755,17 @@ impl EventLoop {
                     "Failed to load memories for injection: {} (path: {:?})",
                     e, memories_path
                 );
-                return prompt;
+                return;
             }
         };
 
         if memories.is_empty() {
             info!("Memory store is empty - no memories to inject");
-            return prompt;
+            return;
         }
 
-        // Format memories as markdown
         let mut memories_content = format_memories_as_markdown(&memories);
 
-        // Apply budget if configured
         if memories_config.budget > 0 {
             let original_len = memories_content.len();
             memories_content = truncate_to_budget(&memories_content, memories_config.budget);
@@ -707,17 +783,59 @@ impl EventLoop {
             memories_content.len()
         );
 
-        // Build final prompt with memories prefix
-        let mut final_prompt = memories_content;
+        prefix.push_str(&memories_content);
 
-        // Always add usage skill when memories are enabled (implicit skill injection)
-        final_prompt.push_str(MEMORIES_SKILL);
-        debug!("Added memory usage skill to prompt");
+        // Append the memories usage skill content
+        if let Some(skill) = self.skill_registry.get("ralph-memories") {
+            prefix.push_str(&skill.content);
+            debug!("Added memories skill from registry");
+        } else {
+            debug!("Memories skill not found in registry - skill content not injected");
+        }
+    }
 
-        final_prompt.push_str("\n\n");
-        final_prompt.push_str(&prompt);
+    /// Injects the tasks skill content into the prefix.
+    ///
+    /// Gated by `tasks.enabled`. The tasks skill provides CLI instructions
+    /// for runtime work tracking.
+    fn inject_tasks_skill(&self, prefix: &mut String) {
+        if !self.config.tasks.enabled {
+            debug!("Tasks injection skipped: tasks.enabled=false");
+            return;
+        }
 
-        final_prompt
+        if let Some(skill) = self.skill_registry.get("tasks") {
+            if !prefix.is_empty() {
+                prefix.push_str("\n\n");
+            }
+            prefix.push_str(&format!(
+                "<tasks-skill>\n{}\n</tasks-skill>",
+                skill.content.trim()
+            ));
+            debug!("Injected tasks skill from registry");
+        } else {
+            debug!("Tasks skill not found in registry - tasks content not injected");
+        }
+    }
+
+    /// Injects any user-configured auto-inject skills (excluding built-in memories/tasks).
+    fn inject_custom_auto_skills(&self, prefix: &mut String) {
+        for skill in self.skill_registry.auto_inject_skills(None) {
+            // Skip built-in skills handled above
+            if skill.name == "ralph-memories" || skill.name == "tasks" {
+                continue;
+            }
+
+            if !prefix.is_empty() {
+                prefix.push_str("\n\n");
+            }
+            prefix.push_str(&format!(
+                "<{name}-skill>\n{content}\n</{name}-skill>",
+                name = skill.name,
+                content = skill.content.trim()
+            ));
+            debug!("Injected auto-inject skill: {}", skill.name);
+        }
     }
 
     /// Builds the Ralph prompt (coordination mode).

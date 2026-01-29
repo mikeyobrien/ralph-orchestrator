@@ -21,6 +21,9 @@ pub struct HatlessRalph {
     /// The user's original objective, stored at initialization.
     /// Injected into every prompt so hats always see the goal.
     objective: Option<String>,
+    /// Pre-built skill index section for prompt injection.
+    /// Set by EventLoop after SkillRegistry is initialized.
+    skill_index: String,
 }
 
 /// Hat topology for multi-hat mode prompt generation.
@@ -162,6 +165,7 @@ impl HatlessRalph {
             starting_event,
             memories_enabled: false, // Default: scratchpad-only mode
             objective: None,
+            skill_index: String::new(),
         }
     }
 
@@ -171,6 +175,15 @@ impl HatlessRalph {
     /// Scratchpad is always included regardless of this setting.
     pub fn with_memories_enabled(mut self, enabled: bool) -> Self {
         self.memories_enabled = enabled;
+        self
+    }
+
+    /// Sets the pre-built skill index for prompt injection.
+    ///
+    /// The skill index is a compact table of available skills that appears
+    /// between GUARDRAILS and OBJECTIVE in the prompt.
+    pub fn with_skill_index(mut self, index: String) -> Self {
+        self.skill_index = index;
         self
     }
 
@@ -192,6 +205,12 @@ impl HatlessRalph {
     /// For solo mode (no hats), pass an empty slice: `&[]`
     pub fn build_prompt(&self, context: &str, active_hats: &[&ralph_proto::Hat]) -> String {
         let mut prompt = self.core_prompt();
+
+        // Inject skill index between GUARDRAILS and OBJECTIVE
+        if !self.skill_index.is_empty() {
+            prompt.push_str(&self.skill_index);
+            prompt.push('\n');
+        }
 
         // Add prominent OBJECTIVE section first (stored at initialization, persists across all iterations)
         if let Some(ref obj) = self.objective {
@@ -316,24 +335,8 @@ Task markers:
             scratchpad = self.core.scratchpad,
         ));
 
-        // TASKS section - only when memories enabled
-        if self.memories_enabled {
-            prompt.push_str(
-                "### 0c. TASKS
-Runtime work tracking via CLI (preferred over scratchpad markers):
-
-```bash
-ralph tools task add 'Title' -p 2           # Create (priority 1-5, 1=highest)
-ralph tools task add 'X' --blocked-by Y     # With dependency
-ralph tools task ready                       # Unblocked tasks only
-ralph tools task close <id>                  # Mark complete (ONLY after verification)
-```
-
-**CRITICAL:** Only close tasks after verification (tests pass, build succeeds).
-
-",
-            );
-        }
+        // TASKS section removed — now injected via skills auto-injection pipeline
+        // (see EventLoop::inject_tasks_skill)
 
         // Add task breakdown guidance
         prompt.push_str(
@@ -1522,31 +1525,26 @@ hats:
             "Task markers should still be documented"
         );
 
-        // Tasks section should also be present
+        // Tasks section is now injected via the skills pipeline (not in core_prompt)
         assert!(
-            prompt.contains("### 0c. TASKS"),
-            "Tasks section should be included when memories enabled"
-        );
-        assert!(
-            prompt.contains("ralph tools task"),
-            "Tasks CLI commands should be documented"
+            !prompt.contains("### 0c. TASKS"),
+            "Tasks section should NOT be in core_prompt — injected via skills pipeline"
         );
     }
 
     #[test]
-    fn test_no_tasks_section_without_memories() {
-        // When memories are NOT enabled, no tasks CLI section should appear
+    fn test_no_tasks_section_in_core_prompt() {
+        // Tasks section is now in the skills pipeline, not core_prompt
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
-        // memories_enabled defaults to false
 
         let prompt = ralph.build_prompt("", &[]);
 
-        // Should NOT have the tasks CLI section
+        // core_prompt no longer contains the tasks section (injected via skills)
         assert!(
             !prompt.contains("### 0c. TASKS"),
-            "Tasks section should NOT be included when memories disabled"
+            "Tasks section should NOT be in core_prompt — injected via skills pipeline"
         );
     }
 
@@ -1639,9 +1637,9 @@ hats:
     // === Task Completion Verification Tests ===
 
     #[test]
-    fn test_task_closure_verification_in_tasks_section() {
-        // When memories/tasks mode is enabled, the TASKS section should include
-        // verification requirements before closing tasks
+    fn test_task_closure_verification_in_done_section() {
+        // When memories/tasks mode is enabled, the DONE section should include
+        // task verification requirements
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
@@ -1649,18 +1647,15 @@ hats:
 
         let prompt = ralph.build_prompt("", &[]);
 
-        // Should contain task section with verification info
+        // The tasks CLI instructions are now injected via the skills pipeline,
+        // but the DONE section still requires task verification before completion
         assert!(
-            prompt.contains("### 0c. TASKS"),
-            "Should include TASKS section when memories enabled"
+            prompt.contains("ralph tools task ready"),
+            "Should reference task ready command in DONE section"
         );
         assert!(
-            prompt.contains("CRITICAL"),
-            "Should include CRITICAL verification note"
-        );
-        assert!(
-            prompt.contains("tests pass"),
-            "Should mention tests passing"
+            prompt.contains("MUST NOT output LOOP_COMPLETE while tasks remain open"),
+            "Should require tasks closed before completion"
         );
     }
 
