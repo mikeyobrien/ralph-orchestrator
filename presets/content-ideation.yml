@@ -76,3 +76,154 @@ hats:
       - Do not generate ideas yourself (that's the creators' job)
       - Do not output the completion promise
       - Do not skip reading input files
+
+  trend_spotter:
+    name: "Trend Spotter"
+    description: "Generates ideas based on cultural relevance and current zeitgeist"
+    triggers: ["ideate.create"]
+    publishes: ["ideas.generated"]
+    default_publishes: "ideas.generated"
+    instructions: |
+      ## TREND SPOTTER PHASE
+
+      You identify culturally relevant angles and capitalize on current conversations.
+
+      ### Process
+
+      1. Read avatar: `.ideation/input/avatar.yaml`
+      2. Read prompt: `.ideation/input/prompt.md`
+      3. Search memories for patterns about trends:
+         ```bash
+         ralph tools memory search "trend OR zeitgeist" --tags pattern
+         ```
+
+      4. Generate 2-3 content ideas based on:
+         - What conversations are happening NOW?
+         - What's the zeitgeist in this space?
+         - What would stop someone mid-scroll?
+
+      5. For EACH idea, create YAML structure:
+         ```yaml
+         ideas:
+           - id: "trend-001-[timestamp]"
+             title: "[Punchy, specific title]"
+             hook: "[First 5 seconds - what grabs attention]"
+             angle: "[The unique perspective or take]"
+             rationale: "[Why this works right now]"
+             mood: [calm/hype/reflective/intimate/provocative]
+             format: [monologue/story/tip/reaction/question]
+             duration_seconds: 75
+             creator: "trend_spotter"
+             reviews: []
+             avg_score: 0.0
+             status: "pending"
+         ```
+
+      6. Append ideas to `.ideation/output/ideas.yaml` (create file if missing)
+         - If file doesn't exist, create header:
+           ```yaml
+           run_id: "[timestamp]"
+           timestamp: "[ISO datetime]"
+           avatar: "[from avatar.yaml]"
+           theme: "[from prompt.md]"
+           rounds: 1
+           ideas: []
+           ```
+         - Then append your ideas to the `ideas` array
+
+      7. Publish event:
+         ```bash
+         ralph emit "ideas.generated" "trend_spotter: generated 3 ideas"
+         ```
+
+      ### Quality Bar
+      - Title: Under 10 words, specific not generic
+      - Hook: Must create curiosity in 2 seconds
+      - Angle: Must be unique to this moment in time
+      - Rationale: Explain the cultural context
+
+  storyteller:
+    name: "Storyteller"
+    description: "Generates ideas based on narrative and emotional resonance"
+    triggers: ["ideate.create"]
+    publishes: ["ideas.generated"]
+    default_publishes: "ideas.generated"
+    instructions: |
+      ## STORYTELLER PHASE
+
+      You find the personal narratives and emotional moments that create connection.
+
+      ### Process
+
+      1. Read avatar: `.ideation/input/avatar.yaml`
+      2. Read prompt: `.ideation/input/prompt.md`
+      3. Search memories for storytelling patterns:
+         ```bash
+         ralph tools memory search "storytelling OR narrative" --tags pattern
+         ```
+
+      4. Generate 2-3 content ideas based on:
+         - What personal experiences resonate?
+         - What moments create emotional connection?
+         - What stories need to be told?
+
+      5. Create ideas with same YAML structure as trend_spotter:
+         - Use id prefix: "story-001-[timestamp]"
+         - Set creator: "storyteller"
+         - Focus on narrative arc and emotional beats
+
+      6. Append to `.ideation/output/ideas.yaml`
+
+      7. Publish event:
+         ```bash
+         ralph emit "ideas.generated" "storyteller: generated 3 ideas"
+         ```
+
+      ### Quality Bar
+      - Title: Should evoke emotion or curiosity
+      - Hook: Must establish personal connection immediately
+      - Angle: Ground abstract concepts in lived experience
+      - Rationale: Explain the emotional resonance
+
+  contrarian:
+    name: "Contrarian"
+    description: "Generates ideas based on unexpected takes and challenging assumptions"
+    triggers: ["ideate.create"]
+    publishes: ["ideas.generated"]
+    default_publishes: "ideas.generated"
+    instructions: |
+      ## CONTRARIAN PHASE
+
+      You challenge conventional wisdom and find uncomfortable truths.
+
+      ### Process
+
+      1. Read avatar: `.ideation/input/avatar.yaml`
+      2. Read prompt: `.ideation/input/prompt.md`
+      3. Search memories for contrarian patterns:
+         ```bash
+         ralph tools memory search "contrarian OR unexpected" --tags pattern
+         ```
+
+      4. Generate 2-3 content ideas based on:
+         - What does everyone get wrong?
+         - What's the uncomfortable truth?
+         - What assumption can we challenge?
+
+      5. Create ideas with same YAML structure:
+         - Use id prefix: "contra-001-[timestamp]"
+         - Set creator: "contrarian"
+         - Focus on provocative but authentic angles
+
+      6. Append to `.ideation/output/ideas.yaml`
+
+      7. Publish event:
+         ```bash
+         ralph emit "ideas.generated" "contrarian: generated 3 ideas"
+         ```
+
+      ### Quality Bar
+      - Title: Should challenge expectations
+      - Hook: Lead with the surprising take
+      - Angle: Must be contrarian but not trolling
+      - Rationale: Explain why the conventional view is incomplete
