@@ -1,0 +1,35 @@
+# Content Ideation Preset
+#
+# Multi-agent content ideation pipeline using Ralph's hat system.
+# Planner → Creators (Trend/Story/Contrarian) → Reviewers (Audience/Brand/Critic)
+#
+# Usage:
+#   1. cp .ideation/avatars/myla.yaml .ideation/input/avatar.yaml
+#   2. cp .ideation/templates/late-night-techno.md .ideation/input/prompt.md
+#   3. ralph run -c presets/content-ideation.yml -p "Generate content ideas"
+#
+# Output: .ideation/output/ideas.yaml
+
+event_loop:
+  prompt_file: ".ideation/PROMPT.md"
+  completion_promise: "IDEATION_COMPLETE"
+  max_iterations: 25
+  max_runtime_seconds: 3600
+  checkpoint_interval: 5
+  starting_event: "ideate.start"
+
+cli:
+  backend: "claude"
+
+core:
+  specs_dir: "./specs/"
+
+# Tasks track ideation workflow
+tasks:
+  enabled: true
+
+# Memories accumulate what works across runs
+memories:
+  enabled: true
+  inject: auto
+  budget: 2000
