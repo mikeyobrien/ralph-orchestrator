@@ -5,6 +5,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Detect Ralph binary (prefer local build, fallback to PATH)
+if [[ -x "$REPO_ROOT/target/release/ralph" ]]; then
+  RALPH="$REPO_ROOT/target/release/ralph"
+elif [[ -x "$REPO_ROOT/target/debug/ralph" ]]; then
+  RALPH="$REPO_ROOT/target/debug/ralph"
+elif command -v ralph &> /dev/null; then
+  RALPH="ralph"
+else
+  echo "Error: Ralph binary not found"
+  echo "Build it with: cargo build --release"
+  echo "Or install globally: cargo install --path crates/ralph-cli"
+  exit 1
+fi
+
 case $1 in
   run)
     shift
@@ -24,7 +38,7 @@ case $1 in
     fi
 
     # Run Ralph with content-ideation preset
-    ralph run -c presets/content-ideation.yml -p "$prompt"
+    "$RALPH" run -c presets/content-ideation.yml -p "$prompt"
     ;;
 
   show)
