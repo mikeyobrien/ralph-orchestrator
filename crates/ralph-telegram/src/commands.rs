@@ -37,6 +37,16 @@ fn parse_command(text: &str) -> (&str, &str) {
     }
 }
 
+fn truncate_with_ellipsis(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        input.to_string()
+    } else {
+        let mut truncated: String = input.chars().take(max_chars).collect();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
 /// `/help` — List available commands.
 fn cmd_help() -> String {
     [
@@ -297,11 +307,7 @@ fn cmd_memories(workspace_root: &Path) -> String {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let preview = if preview.len() > 120 {
-            format!("{}...", &preview[..120])
-        } else {
-            preview
-        };
+        let preview = truncate_with_ellipsis(&preview, 120);
 
         lines.push(format!(
             "<code>{}</code>\n  {}",
@@ -393,11 +399,7 @@ fn cmd_tail(workspace_root: &Path) -> String {
             let hat = event.get("hat").and_then(|v| v.as_str()).unwrap_or("");
             let payload = event.get("payload").and_then(|v| v.as_str()).unwrap_or("");
 
-            let payload_preview = if payload.len() > 60 {
-                format!("{}...", &payload[..60])
-            } else {
-                payload.to_string()
-            };
+            let payload_preview = truncate_with_ellipsis(payload, 60);
 
             let hat_str = if hat.is_empty() {
                 String::new()
@@ -418,11 +420,7 @@ fn cmd_tail(workspace_root: &Path) -> String {
             ));
         } else {
             // Non-JSON line, show raw (truncated)
-            let preview = if event_line.len() > 80 {
-                format!("{}...", &event_line[..80])
-            } else {
-                event_line.to_string()
-            };
+            let preview = truncate_with_ellipsis(event_line, 80);
             lines.push(escape_html(&preview));
         }
     }

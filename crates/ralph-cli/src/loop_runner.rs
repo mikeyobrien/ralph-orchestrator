@@ -1621,11 +1621,7 @@ pub async fn start_loop(
 
     // Acquire the loop lock (primary loop)
     let prompt_summary = config.event_loop.prompt.as_deref().unwrap_or("[daemon]");
-    let prompt_summary = if prompt_summary.len() > 100 {
-        format!("{}...", &prompt_summary[..100])
-    } else {
-        prompt_summary.to_string()
-    };
+    let prompt_summary = ralph_core::truncate_with_ellipsis(prompt_summary, 100);
 
     let _lock_guard = ralph_core::LoopLock::try_acquire(&workspace_root, &prompt_summary)
         .context("Failed to acquire loop lock — another loop may be running")?;

@@ -41,6 +41,14 @@ ralph tools task show <task-id>
 ralph tools task ready    # What's open? Pick one. Don't create duplicates.
 ```
 
+## Interact Commands
+
+```bash
+ralph tools interact progress "message"
+```
+
+Send a non-blocking progress update via the configured RObot (Telegram).
+
 ## Memory Commands
 
 ```bash
