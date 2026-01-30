@@ -25,5 +25,7 @@ mod state;
 pub use bot::{BotApi, TelegramBot, escape_html, markdown_to_telegram_html};
 pub use error::{TelegramError, TelegramResult};
 pub use handler::MessageHandler;
-pub use service::{BASE_RETRY_DELAY, MAX_SEND_RETRIES, TelegramService, retry_with_backoff};
+pub use service::{
+    BASE_RETRY_DELAY, CheckinContext, MAX_SEND_RETRIES, TelegramService, retry_with_backoff,
+};
 pub use state::{PendingQuestion, StateManager, TelegramState};

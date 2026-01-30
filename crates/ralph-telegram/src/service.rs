@@ -61,6 +61,22 @@ where
     })
 }
 
+/// Additional context for enhanced check-in messages.
+///
+/// Provides richer information than the basic iteration + elapsed time,
+/// including current hat, task progress, and cost tracking.
+#[derive(Debug, Default)]
+pub struct CheckinContext {
+    /// The currently active hat name (e.g., "executor", "reviewer").
+    pub current_hat: Option<String>,
+    /// Number of open (non-terminal) tasks.
+    pub open_tasks: usize,
+    /// Number of closed tasks.
+    pub closed_tasks: usize,
+    /// Cumulative cost in USD.
+    pub cumulative_cost: f64,
+}
+
 /// Coordinates the Telegram bot lifecycle with the Ralph event loop.
 ///
 /// Manages startup, shutdown, message sending, and response waiting.
@@ -399,7 +415,15 @@ impl TelegramService {
     /// human knows the loop is still running. Skips silently if no chat ID
     /// is configured. Returns `Ok(0)` when skipped, or the message ID on
     /// success.
-    pub fn send_checkin(&self, iteration: u32, elapsed: Duration) -> TelegramResult<i32> {
+    ///
+    /// When a [`CheckinContext`] is provided, the message includes richer
+    /// details: current hat, task progress, and cumulative cost.
+    pub fn send_checkin(
+        &self,
+        iteration: u32,
+        elapsed: Duration,
+        context: Option<&CheckinContext>,
+    ) -> TelegramResult<i32> {
         let state = self.state_manager.load_or_default()?;
         let Some(chat_id) = state.chat_id else {
             debug!(
@@ -418,10 +442,38 @@ impl TelegramService {
             format!("{}s", seconds)
         };
 
-        let msg = format!(
-            "Still working — iteration <b>{}</b>, <code>{}</code> elapsed.",
-            iteration, elapsed_str
-        );
+        let msg = match context {
+            Some(ctx) => {
+                let mut lines = vec![format!(
+                    "Still working — iteration <b>{}</b>, <code>{}</code> elapsed.",
+                    iteration, elapsed_str
+                )];
+
+                if let Some(hat) = &ctx.current_hat {
+                    lines.push(format!(
+                        "Hat: <code>{}</code>",
+                        crate::bot::escape_html(hat)
+                    ));
+                }
+
+                if ctx.open_tasks > 0 || ctx.closed_tasks > 0 {
+                    lines.push(format!(
+                        "Tasks: <b>{}</b> open, {} closed",
+                        ctx.open_tasks, ctx.closed_tasks
+                    ));
+                }
+
+                if ctx.cumulative_cost > 0.0 {
+                    lines.push(format!("Cost: <code>${:.4}</code>", ctx.cumulative_cost));
+                }
+
+                lines.join("\n")
+            }
+            None => format!(
+                "Still working — iteration <b>{}</b>, <code>{}</code> elapsed.",
+                iteration, elapsed_str
+            ),
+        };
         self.send_with_retry(chat_id, &msg)
     }
 
@@ -1105,5 +1157,28 @@ mod tests {
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0], Duration::from_secs(1));
         assert_eq!(recorded[1], Duration::from_secs(2));
+    }
+
+    #[test]
+    fn checkin_context_default() {
+        let ctx = CheckinContext::default();
+        assert!(ctx.current_hat.is_none());
+        assert_eq!(ctx.open_tasks, 0);
+        assert_eq!(ctx.closed_tasks, 0);
+        assert!(ctx.cumulative_cost.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn checkin_context_with_hat_and_tasks() {
+        let ctx = CheckinContext {
+            current_hat: Some("executor".to_string()),
+            open_tasks: 3,
+            closed_tasks: 5,
+            cumulative_cost: 1.2345,
+        };
+        assert_eq!(ctx.current_hat.as_deref(), Some("executor"));
+        assert_eq!(ctx.open_tasks, 3);
+        assert_eq!(ctx.closed_tasks, 5);
+        assert!((ctx.cumulative_cost - 1.2345).abs() < f64::EPSILON);
     }
 }

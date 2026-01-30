@@ -1231,7 +1231,8 @@ impl EventLoop {
                 .unwrap_or(elapsed);
 
             if last >= interval {
-                match telegram_service.send_checkin(self.state.iteration, elapsed) {
+                let context = self.build_checkin_context(hat_id);
+                match telegram_service.send_checkin(self.state.iteration, elapsed, Some(&context)) {
                     Ok(_) => {
                         self.state.last_checkin_at = Some(std::time::Instant::now());
                         debug!(iteration = self.state.iteration, "Sent Telegram check-in");
@@ -1365,6 +1366,50 @@ impl EventLoop {
         Ok(!store.has_pending_tasks())
     }
 
+    /// Builds a [`CheckinContext`] with current loop state for enhanced Telegram check-ins.
+    fn build_checkin_context(&self, hat_id: &HatId) -> ralph_telegram::CheckinContext {
+        let (open_tasks, closed_tasks) = self.count_tasks();
+        ralph_telegram::CheckinContext {
+            current_hat: Some(hat_id.as_str().to_string()),
+            open_tasks,
+            closed_tasks,
+            cumulative_cost: self.state.cumulative_cost,
+        }
+    }
+
+    /// Counts open and closed tasks from the task store.
+    ///
+    /// Returns `(open_count, closed_count)`. "Open" means non-terminal tasks,
+    /// "closed" means tasks with `TaskStatus::Closed`.
+    fn count_tasks(&self) -> (usize, usize) {
+        use crate::task::TaskStatus;
+        use crate::task_store::TaskStore;
+
+        let tasks_path = self.tasks_path();
+        if !tasks_path.exists() {
+            return (0, 0);
+        }
+
+        match TaskStore::load(&tasks_path) {
+            Ok(store) => {
+                let total = store.all().len();
+                let open = store.open().len();
+                let closed = total - open;
+                // Verify: closed should match Closed status count
+                debug_assert_eq!(
+                    closed,
+                    store
+                        .all()
+                        .iter()
+                        .filter(|t| t.status == TaskStatus::Closed)
+                        .count()
+                );
+                (open, closed)
+            }
+            Err(_) => (0, 0),
+        }
+    }
+
     /// Returns a list of open task descriptions for logging purposes.
     fn get_open_task_list(&self) -> Vec<String> {
         use crate::task_store::TaskStore;
@@ -1472,8 +1517,54 @@ impl EventLoop {
                         "Missing backpressure evidence. Include 'tests: pass', 'lint: pass', 'typecheck: pass' in build.done payload.",
                     ));
                 }
+            } else if event.topic == "review.done" {
+                // Validate review.done events have verification evidence
+                if let Some(evidence) = EventParser::parse_review_evidence(&payload) {
+                    if evidence.is_verified() {
+                        validated_events.push(Event::new(event.topic.as_str(), &payload));
+                    } else {
+                        // Evidence present but checks failed - synthesize review.blocked
+                        warn!(
+                            tests = evidence.tests_passed,
+                            build = evidence.build_passed,
+                            "review.done rejected: verification checks failed"
+                        );
+
+                        self.diagnostics.log_orchestration(
+                            self.state.iteration,
+                            "jsonl",
+                            crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                                reason: format!(
+                                    "review verification failed: tests={}, build={}",
+                                    evidence.tests_passed, evidence.build_passed
+                                ),
+                            },
+                        );
+
+                        validated_events.push(Event::new(
+                            "review.blocked",
+                            "Review verification failed. Run tests and build before emitting review.done.",
+                        ));
+                    }
+                } else {
+                    // No evidence found - synthesize review.blocked
+                    warn!("review.done rejected: missing verification evidence");
+
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                            reason: "missing review verification evidence".to_string(),
+                        },
+                    );
+
+                    validated_events.push(Event::new(
+                        "review.blocked",
+                        "Missing verification evidence. Include 'tests: pass' and 'build: pass' in review.done payload.",
+                    ));
+                }
             } else {
-                // Non-build.done events pass through unchanged
+                // Non-build.done/review.done events pass through unchanged
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
             }
         }

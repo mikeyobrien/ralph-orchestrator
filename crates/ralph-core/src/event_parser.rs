@@ -80,6 +80,25 @@ impl BackpressureEvidence {
     }
 }
 
+/// Evidence of verification for review.done events.
+///
+/// Enforces that review hats actually ran verification commands rather
+/// than just asserting "looks good". At minimum, tests must have been run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewEvidence {
+    pub tests_passed: bool,
+    pub build_passed: bool,
+}
+
+impl ReviewEvidence {
+    /// Returns true if the review has sufficient verification.
+    ///
+    /// Both tests and build must pass to constitute a verified review.
+    pub fn is_verified(&self) -> bool {
+        self.tests_passed && self.build_passed
+    }
+}
+
 /// Parser for extracting events from CLI output.
 #[derive(Debug, Default)]
 pub struct EventParser {
@@ -193,6 +212,32 @@ impl EventParser {
                 tests_passed,
                 lint_passed,
                 typecheck_passed,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Parses review evidence from review.done event payload.
+    ///
+    /// Expected format (subset of backpressure evidence):
+    /// ```text
+    /// tests: pass
+    /// build: pass
+    /// ```
+    ///
+    /// Note: ANSI escape codes are stripped before parsing.
+    pub fn parse_review_evidence(payload: &str) -> Option<ReviewEvidence> {
+        let clean_payload = strip_ansi(payload);
+
+        let tests_passed = clean_payload.contains("tests: pass");
+        let build_passed = clean_payload.contains("build: pass");
+
+        // Only return evidence if at least one check is mentioned
+        if clean_payload.contains("tests:") || clean_payload.contains("build:") {
+            Some(ReviewEvidence {
+                tests_passed,
+                build_passed,
             })
         } else {
             None
@@ -488,6 +533,58 @@ Still working..."#;
         assert!(evidence.lint_passed);
         assert!(evidence.typecheck_passed);
         assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_review_evidence_all_pass() {
+        let payload = "tests: pass\nbuild: pass";
+        let evidence = EventParser::parse_review_evidence(payload).unwrap();
+        assert!(evidence.tests_passed);
+        assert!(evidence.build_passed);
+        assert!(evidence.is_verified());
+    }
+
+    #[test]
+    fn test_parse_review_evidence_tests_fail() {
+        let payload = "tests: fail\nbuild: pass";
+        let evidence = EventParser::parse_review_evidence(payload).unwrap();
+        assert!(!evidence.tests_passed);
+        assert!(evidence.build_passed);
+        assert!(!evidence.is_verified());
+    }
+
+    #[test]
+    fn test_parse_review_evidence_build_fail() {
+        let payload = "tests: pass\nbuild: fail";
+        let evidence = EventParser::parse_review_evidence(payload).unwrap();
+        assert!(evidence.tests_passed);
+        assert!(!evidence.build_passed);
+        assert!(!evidence.is_verified());
+    }
+
+    #[test]
+    fn test_parse_review_evidence_missing() {
+        let payload = "Looks good, approved!";
+        let evidence = EventParser::parse_review_evidence(payload);
+        assert!(evidence.is_none());
+    }
+
+    #[test]
+    fn test_parse_review_evidence_partial() {
+        let payload = "tests: pass\nLGTM";
+        let evidence = EventParser::parse_review_evidence(payload).unwrap();
+        assert!(evidence.tests_passed);
+        assert!(!evidence.build_passed);
+        assert!(!evidence.is_verified());
+    }
+
+    #[test]
+    fn test_parse_review_evidence_with_ansi_codes() {
+        let payload = "\x1b[32mtests: pass\x1b[0m\n\x1b[32mbuild: pass\x1b[0m";
+        let evidence = EventParser::parse_review_evidence(payload).unwrap();
+        assert!(evidence.tests_passed);
+        assert!(evidence.build_passed);
+        assert!(evidence.is_verified());
     }
 
     #[test]
