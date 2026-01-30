@@ -61,7 +61,7 @@ describe("GET /api/v1/tasks", () => {
   it("returns all tasks", async () => {
     // Seed tasks
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-1", title: "First", status: "open", priority: 1 });
     repo.create({ id: "task-2", title: "Second", status: "closed", priority: 2 });
@@ -74,7 +74,7 @@ describe("GET /api/v1/tasks", () => {
 
   it("filters by status query param", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-1", title: "Open task", status: "open", priority: 1 });
     repo.create({ id: "task-2", title: "Closed task", status: "closed", priority: 2 });
@@ -172,7 +172,7 @@ describe("GET /api/v1/tasks/:id", () => {
 
   it("returns a task by id", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-get", title: "Get me", status: "open", priority: 2 });
 
@@ -200,7 +200,7 @@ describe("PATCH /api/v1/tasks/:id", () => {
 
   it("updates task title", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-upd", title: "Original", status: "open", priority: 2 });
 
@@ -216,7 +216,7 @@ describe("PATCH /api/v1/tasks/:id", () => {
 
   it("updates task status", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-upd2", title: "Status test", status: "open", priority: 2 });
 
@@ -241,7 +241,7 @@ describe("PATCH /api/v1/tasks/:id", () => {
 
   it("returns 400 for invalid priority", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-badp", title: "Bad prio", status: "open", priority: 2 });
 
@@ -256,7 +256,7 @@ describe("PATCH /api/v1/tasks/:id", () => {
 
   it("returns 400 for empty title", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-empty", title: "Empty", status: "open", priority: 2 });
 
@@ -279,7 +279,7 @@ describe("DELETE /api/v1/tasks/:id", () => {
 
   it("deletes a closed task", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-del", title: "Delete me", status: "closed", priority: 2 });
 
@@ -289,7 +289,7 @@ describe("DELETE /api/v1/tasks/:id", () => {
 
   it("deletes a failed task", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-fail", title: "Failed task", status: "failed", priority: 2 });
 
@@ -299,7 +299,7 @@ describe("DELETE /api/v1/tasks/:id", () => {
 
   it("rejects deletion of running task (409)", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-run", title: "Running", status: "running", priority: 2 });
 
@@ -310,7 +310,7 @@ describe("DELETE /api/v1/tasks/:id", () => {
 
   it("rejects deletion of open task (409)", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-open", title: "Open", status: "open", priority: 2 });
 
@@ -333,7 +333,7 @@ describe("POST /api/v1/tasks/:id/run", () => {
 
   it("returns 503 when no task bridge configured", async () => {
     const db = getDatabase();
-    const { TaskRepository } = await import("../repositories.js");
+    const { TaskRepository } = await import("../repositories/index.js");
     const repo = new TaskRepository(db);
     repo.create({ id: "task-exec", title: "Exec me", status: "open", priority: 2 });
 
