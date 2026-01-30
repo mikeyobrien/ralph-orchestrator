@@ -1,6 +1,6 @@
 //! Integration tests for `ralph memory` CLI commands.
 //!
-//! Tests the memory subcommands per specs/ralph-memories/design.md section 8.
+//! Tests the memory subcommands per the ralph-tools skill specification.
 
 use anyhow::Result;
 use std::fs;

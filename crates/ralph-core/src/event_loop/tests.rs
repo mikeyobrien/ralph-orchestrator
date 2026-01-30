@@ -1762,7 +1762,7 @@ fn test_scratchpad_injection_with_content() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        prompt.contains("## Scratchpad"),
+        prompt.contains("<scratchpad"),
         "Prompt should contain scratchpad header"
     );
     assert!(
@@ -1791,8 +1791,8 @@ fn test_scratchpad_injection_no_file() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        !prompt.contains("## Scratchpad"),
-        "Prompt should NOT contain scratchpad header when file doesn't exist"
+        !prompt.contains("<scratchpad path="),
+        "Prompt should NOT contain scratchpad injection when file doesn't exist"
     );
 }
 
@@ -1814,8 +1814,8 @@ fn test_scratchpad_injection_empty_file() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        !prompt.contains("## Scratchpad"),
-        "Prompt should NOT contain scratchpad header when file is empty/whitespace"
+        !prompt.contains("<scratchpad path="),
+        "Prompt should NOT contain scratchpad injection when file is empty/whitespace"
     );
 }
 
@@ -1837,7 +1837,7 @@ fn test_scratchpad_injection_ordering() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     let scratchpad_pos = prompt
-        .find("## Scratchpad")
+        .find("<scratchpad")
         .expect("Should contain scratchpad");
     let orientation_pos = prompt
         .find("### 0a. ORIENTATION")
@@ -1877,7 +1877,7 @@ fn test_scratchpad_injection_tail_truncation() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        prompt.contains("## Scratchpad"),
+        prompt.contains("<scratchpad"),
         "Prompt should contain scratchpad header even when truncated"
     );
     assert!(
@@ -1893,5 +1893,167 @@ fn test_scratchpad_injection_tail_truncation() {
     assert!(
         !prompt.contains("Line 0:"),
         "First line should be truncated (head removed)"
+    );
+}
+
+#[test]
+fn test_review_done_backpressure_accepts_verified() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // Write a review.done event WITH verification evidence
+    write_event_to_jsonl(&events_path, "review.done", "tests: pass\nbuild: pass");
+    let _ = event_loop.process_events_from_jsonl();
+
+    // Should pass through as review.done (not blocked)
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"review.done".to_string()),
+        "Verified review.done should pass through. Got: {:?}",
+        pending_topics
+    );
+}
+
+#[test]
+fn test_review_done_backpressure_rejects_unverified() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // Write a review.done event WITHOUT verification evidence
+    write_event_to_jsonl(&events_path, "review.done", "Looks good, approved!");
+    let _ = event_loop.process_events_from_jsonl();
+
+    // Should be transformed into review.blocked
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"review.blocked".to_string()),
+        "Unverified review.done should be blocked. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"review.done".to_string()),
+        "review.done should not pass through without evidence"
+    );
+}
+
+#[test]
+fn test_review_done_backpressure_rejects_failed_checks() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // Write a review.done event with failed checks
+    write_event_to_jsonl(&events_path, "review.done", "tests: fail\nbuild: pass");
+    let _ = event_loop.process_events_from_jsonl();
+
+    // Should be transformed into review.blocked
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"review.blocked".to_string()),
+        "review.done with failed tests should be blocked. Got: {:?}",
+        pending_topics
+    );
+}
+
+// === RObot Interaction Skill Injection Tests ===
+
+#[test]
+fn test_inject_robot_skill_when_enabled() {
+    let yaml = r#"
+RObot:
+  enabled: true
+  telegram:
+    bot_token: "fake-token"
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        prompt.contains("<robot-skill>"),
+        "Prompt should contain <robot-skill> when RObot is enabled"
+    );
+    assert!(
+        prompt.contains("interact.human"),
+        "Robot skill should mention interact.human"
+    );
+    assert!(
+        prompt.contains("</robot-skill>"),
+        "Robot skill should have closing tag"
+    );
+}
+
+#[test]
+fn test_inject_robot_skill_skipped_when_disabled() {
+    let config = RalphConfig::default(); // RObot disabled by default
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        !prompt.contains("<robot-skill>"),
+        "Prompt should NOT contain <robot-skill> when RObot is disabled"
     );
 }

@@ -12,9 +12,11 @@
 //! - Code task generation via `ralph code-task`
 //! - Work item tracking via `ralph task`
 
+mod bot;
 mod display;
 mod hats;
 mod init;
+mod interact;
 mod loop_runner;
 mod loops;
 mod memory;
@@ -30,6 +32,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use ralph_adapters::detect_backend;
 use ralph_core::{
     EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry, RalphConfig,
+    TerminationReason,
     worktree::{WorktreeConfig, create_worktree, ensure_gitignore},
 };
 use std::fs;
@@ -285,7 +288,7 @@ fn apply_config_overrides(
 }
 
 /// Ensures the scratchpad's parent directory exists, creating it if needed.
-fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Result<()> {
+pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Result<()> {
     let scratchpad_path = config.core.resolve_path(&config.core.scratchpad);
     if let Some(parent) = scratchpad_path.parent()
         && !parent.exists()
@@ -302,7 +305,9 @@ fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Result<()> {
 /// For the full async path (including Remote URLs), see run_command.
 ///
 /// Returns the loaded config with overrides applied and workspace_root set.
-fn load_config_with_overrides(config_sources: &[ConfigSource]) -> anyhow::Result<RalphConfig> {
+pub(crate) fn load_config_with_overrides(
+    config_sources: &[ConfigSource],
+) -> anyhow::Result<RalphConfig> {
     // Partition sources: file sources vs overrides
     let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
         .iter()
@@ -407,6 +412,9 @@ enum Commands {
 
     /// Run the web dashboard
     Web(web::WebArgs),
+
+    /// Manage Telegram bot setup and testing
+    Bot(bot::BotArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -691,52 +699,45 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     if tui_enabled {
-        // TUI mode: logs would corrupt the display, so we suppress them entirely.
-        // For debugging TUI issues, set RALPH_DEBUG_LOG=1 to write to .ralph/agent/ralph.log
-        if std::env::var("RALPH_DEBUG_LOG").is_ok() {
-            let log_path = std::path::Path::new(".ralph")
-                .join("agent")
-                .join("ralph.log");
-            if let Ok(file) = std::fs::File::create(&log_path) {
-                if diagnostics_enabled {
-                    // TUI + diagnostics: logs to file + trace layer
-                    use ralph_core::diagnostics::DiagnosticTraceLayer;
-                    use tracing_subscriber::prelude::*;
+        // TUI mode: logs would corrupt the display, so write to a rotating log file
+        if let Ok((file, _log_path)) =
+            ralph_core::diagnostics::create_log_file(std::path::Path::new("."))
+        {
+            if diagnostics_enabled {
+                use ralph_core::diagnostics::DiagnosticTraceLayer;
+                use tracing_subscriber::prelude::*;
 
-                    if let Ok(collector) = ralph_core::diagnostics::DiagnosticsCollector::new(
-                        std::path::Path::new("."),
-                    ) && let Some(session_dir) = collector.session_dir()
-                    {
-                        if let Ok(trace_layer) = DiagnosticTraceLayer::new(session_dir) {
-                            tracing_subscriber::registry()
-                                .with(
-                                    tracing_subscriber::fmt::layer()
-                                        .with_writer(std::sync::Mutex::new(file))
-                                        .with_ansi(false),
-                                )
-                                .with(tracing_subscriber::EnvFilter::new(filter))
-                                .with(trace_layer)
-                                .init();
-                        } else {
-                            // Fallback: just file logging
-                            tracing_subscriber::fmt()
-                                .with_env_filter(filter)
-                                .with_writer(std::sync::Mutex::new(file))
-                                .with_ansi(false)
-                                .init();
-                        }
+                if let Ok(collector) =
+                    ralph_core::diagnostics::DiagnosticsCollector::new(std::path::Path::new("."))
+                    && let Some(session_dir) = collector.session_dir()
+                {
+                    if let Ok(trace_layer) = DiagnosticTraceLayer::new(session_dir) {
+                        tracing_subscriber::registry()
+                            .with(
+                                tracing_subscriber::fmt::layer()
+                                    .with_writer(std::sync::Mutex::new(file))
+                                    .with_ansi(false),
+                            )
+                            .with(tracing_subscriber::EnvFilter::new(filter))
+                            .with(trace_layer)
+                            .init();
+                    } else {
+                        tracing_subscriber::fmt()
+                            .with_env_filter(filter)
+                            .with_writer(std::sync::Mutex::new(file))
+                            .with_ansi(false)
+                            .init();
                     }
-                } else {
-                    // TUI without diagnostics: just file logging
-                    tracing_subscriber::fmt()
-                        .with_env_filter(filter)
-                        .with_writer(std::sync::Mutex::new(file))
-                        .with_ansi(false)
-                        .init();
                 }
+            } else {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_writer(std::sync::Mutex::new(file))
+                    .with_ansi(false)
+                    .init();
             }
         }
-        // If RALPH_DEBUG_LOG is not set or file creation fails, no logging (default)
+        // If log file creation fails, silently continue without logging
     } else {
         // Normal mode: logs go to stdout
         if diagnostics_enabled {
@@ -786,12 +787,13 @@ async fn main() -> Result<()> {
         Some(Commands::Plan(args)) => plan_command(&config_sources, cli.color, args),
         Some(Commands::CodeTask(args)) => code_task_command(&config_sources, cli.color, args),
         Some(Commands::Task(args)) => code_task_command(&config_sources, cli.color, args),
-        Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()),
+        Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
             hats::execute(&config_sources, args, cli.color.should_use_colors())
         }
         Some(Commands::Web(args)) => web::execute(args).await,
+        Some(Commands::Bot(args)) => bot::execute(args, cli.color.should_use_colors()).await,
         None => {
             // Default to run with TUI enabled (new default behavior)
             let args = RunArgs {
@@ -1205,6 +1207,7 @@ async fn run_command(
     } else {
         None
     };
+    let workspace_root = config.core.workspace_root.clone();
     let reason = loop_runner::run_loop_impl(
         config,
         color_mode,
@@ -1217,6 +1220,28 @@ async fn run_command(
         auto_merge_override,
     )
     .await?;
+
+    // Handle restart: exec-replace current process with same CLI args
+    if matches!(reason, TerminationReason::RestartRequested) {
+        let restart_path = std::path::Path::new(&workspace_root).join(".ralph/restart-requested");
+        let _ = std::fs::remove_file(&restart_path);
+        info!("Restart requested — exec-replacing process");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let args: Vec<String> = std::env::args().collect();
+            let err = std::process::Command::new(&args[0]).args(&args[1..]).exec();
+            // exec() only returns on error
+            anyhow::bail!("Failed to exec-replace process: {}", err);
+        }
+
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!("Restart via exec-replace is only supported on Unix");
+        }
+    }
+
     let exit_code = reason.exit_code();
 
     // Use explicit exit for non-zero codes to ensure proper exit status

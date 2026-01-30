@@ -57,25 +57,25 @@ This skill finds and displays all code tasks (`.code-task.md` files) in the repo
 
 ### 1. Run Task Status Script
 
-The script is colocated with this skill at `.claude/skills/find-code-.ralph/tasks/task-status.sh`.
+The script is colocated with this skill at `.claude/skills/find-code-tasks/task-status.sh`.
 
 Execute it with appropriate arguments:
 
 ```bash
 # Default: table format, all tasks
-.claude/skills/find-code-.ralph/tasks/task-status.sh
+.claude/skills/find-code-tasks/task-status.sh
 
 # With filter
-.claude/skills/find-code-.ralph/tasks/task-status.sh --pending
-.claude/skills/find-code-.ralph/tasks/task-status.sh --in_progress
-.claude/skills/find-code-.ralph/tasks/task-status.sh --completed
+.claude/skills/find-code-tasks/task-status.sh --pending
+.claude/skills/find-code-tasks/task-status.sh --in_progress
+.claude/skills/find-code-tasks/task-status.sh --completed
 
 # With format
-.claude/skills/find-code-.ralph/tasks/task-status.sh --json
-.claude/skills/find-code-.ralph/tasks/task-status.sh --summary
+.claude/skills/find-code-tasks/task-status.sh --json
+.claude/skills/find-code-tasks/task-status.sh --summary
 
 # Custom tasks directory
-TASKS_DIR=tools/ .claude/skills/find-code-.ralph/tasks/task-status.sh
+TASKS_DIR=tools/ .claude/skills/find-code-tasks/task-status.sh
 ```
 
 ### 2. Present Results
@@ -169,8 +169,8 @@ If no tasks are displayed:
 
 If the task-status.sh script is not found:
 - Ensure you're in the repository root
-- Check the script exists: `ls .claude/skills/find-code-.ralph/tasks/task-status.sh`
-- Make it executable: `chmod +x .claude/skills/find-code-.ralph/tasks/task-status.sh`
+- Check the script exists: `ls .claude/skills/find-code-tasks/task-status.sh`
+- Make it executable: `chmod +x .claude/skills/find-code-tasks/task-status.sh`
 
 ### Frontmatter Not Parsed
 

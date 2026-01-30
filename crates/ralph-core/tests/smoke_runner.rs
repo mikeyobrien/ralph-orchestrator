@@ -891,14 +891,10 @@ mod skills_smoke_tests {
         let registry = SkillRegistry::from_config(&config, std::path::Path::new("."), None)
             .expect("Should build registry with defaults");
 
-        // Built-in memories and tasks skills should be present
+        // Built-in ralph-tools skill should be present
         assert!(
-            registry.get("ralph-memories").is_some(),
-            "Built-in memories skill should be registered"
-        );
-        assert!(
-            registry.get("tasks").is_some(),
-            "Built-in tasks skill should be registered"
+            registry.get("ralph-tools").is_some(),
+            "Built-in ralph-tools skill should be registered"
         );
     }
 
@@ -969,10 +965,9 @@ mod skills_smoke_tests {
 
         // Index should list built-in skills
         assert!(
-            index.contains("ralph-memories"),
-            "Index should list the memories skill"
+            index.contains("ralph-tools"),
+            "Index should list the ralph-tools skill"
         );
-        assert!(index.contains("tasks"), "Index should list the tasks skill");
 
         // Index should list user test skills
         assert!(
@@ -1067,8 +1062,8 @@ mod skills_smoke_tests {
             "Assembled prompt should contain ## SKILLS section"
         );
         assert!(
-            prompt.contains("ralph-memories"),
-            "Assembled prompt should list memories skill"
+            prompt.contains("ralph-tools"),
+            "Assembled prompt should list ralph-tools skill"
         );
         assert!(
             prompt.contains("test-skill"),
@@ -1126,8 +1121,7 @@ event_loop:
             SkillRegistry::from_config(&config.skills, std::path::Path::new("."), Some("claude"))
                 .unwrap();
 
-        assert!(registry.get("ralph-memories").is_some());
-        assert!(registry.get("tasks").is_some());
+        assert!(registry.get("ralph-tools").is_some());
 
         // Build index should work
         let index = registry.build_index(None);
@@ -1237,7 +1231,7 @@ skills:
         );
 
         // Other skills should still be present
-        assert!(registry.get("ralph-memories").is_some());
+        assert!(registry.get("ralph-tools").is_some());
         assert!(registry.get("complex-test-skill").is_some());
 
         let index = registry.build_index(None);

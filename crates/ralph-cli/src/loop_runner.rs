@@ -144,6 +144,9 @@ pub async fn run_loop_impl(
     // Initialize event loop with context for proper path resolution
     let mut event_loop = EventLoop::with_context(config.clone(), ctx.clone());
 
+    // Capture the Telegram shutdown flag so signal handlers can interrupt wait_for_response()
+    let telegram_shutdown = event_loop.telegram_shutdown_flag();
+
     // For resume mode, we initialize with a different event topic
     // This tells the planner to read existing scratchpad rather than creating a new one
     if resume {
@@ -268,9 +271,13 @@ pub async fn run_loop_impl(
 
     // Spawn task to listen for SIGINT (Ctrl+C)
     let interrupt_tx_sigint = interrupt_tx.clone();
+    let telegram_shutdown_sigint = telegram_shutdown.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             debug!("Interrupt received (SIGINT), terminating immediately...");
+            if let Some(ref flag) = telegram_shutdown_sigint {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let _ = interrupt_tx_sigint.send(true);
         }
     });
@@ -279,12 +286,16 @@ pub async fn run_loop_impl(
     #[cfg(unix)]
     {
         let interrupt_tx_sigterm = interrupt_tx.clone();
+        let telegram_shutdown_sigterm = telegram_shutdown.clone();
         tokio::spawn(async move {
             let mut sigterm =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                     .expect("Failed to register SIGTERM handler");
             sigterm.recv().await;
             debug!("SIGTERM received, terminating immediately...");
+            if let Some(ref flag) = telegram_shutdown_sigterm {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let _ = interrupt_tx_sigterm.send(true);
         });
     }
@@ -293,11 +304,15 @@ pub async fn run_loop_impl(
     #[cfg(unix)]
     {
         let interrupt_tx_sighup = interrupt_tx.clone();
+        let telegram_shutdown_sighup = telegram_shutdown.clone();
         tokio::spawn(async move {
             let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
                 .expect("Failed to register SIGHUP handler");
             sighup.recv().await;
             warn!("SIGHUP received (terminal closed), terminating immediately...");
+            if let Some(ref flag) = telegram_shutdown_sighup {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let _ = interrupt_tx_sighup.send(true);
         });
     }
@@ -399,6 +414,7 @@ pub async fn run_loop_impl(
                 TerminationReason::Interrupted => "interrupted",
                 TerminationReason::ChaosModeComplete => "chaos_complete",
                 TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
+                TerminationReason::RestartRequested => "restart_requested",
             };
 
             if matches!(reason, TerminationReason::Interrupted) {
@@ -468,6 +484,7 @@ pub async fn run_loop_impl(
                     TerminationReason::CompletionPromise => unreachable!(),
                     TerminationReason::ChaosModeComplete => "chaos mode complete",
                     TerminationReason::ChaosModeMaxIterations => "chaos mode max iterations",
+                    TerminationReason::RestartRequested => "restart requested",
                 };
                 if let Err(e) = queue.mark_needs_review(loop_id, reason_str) {
                     warn!(loop_id = %loop_id, error = %e, "Failed to mark merge as needs-review");
@@ -1032,7 +1049,15 @@ pub async fn run_loop_impl(
             );
         }
 
-        // Note: Interrupt handling moved into tokio::select! above for immediate termination
+        // Cooldown delay between iterations (skip for human events)
+        let cooldown = config.event_loop.cooldown_delay_seconds;
+        if cooldown > 0 && !event_loop.has_pending_human_events() {
+            debug!(
+                delay_seconds = cooldown,
+                "Cooldown delay before next iteration"
+            );
+            tokio::time::sleep(Duration::from_secs(cooldown)).await;
+        }
     }
 }
 
@@ -1530,6 +1555,92 @@ fn process_pending_merges(repo_root: &Path) {
 /// Called by `ralph loops process` command to process the merge queue.
 pub fn process_pending_merges_cli(repo_root: &Path) {
     process_pending_merges(repo_root);
+}
+
+/// Start a loop from an external caller (e.g., the bot daemon).
+///
+/// Loads config from `ralph.yml`, applies the given prompt, acquires the
+/// loop lock, and runs the orchestration loop headlessly. The caller is
+/// responsible for Telegram interaction — the spawned loop has `robot.enabled`
+/// disabled to prevent a second Telegram poller from conflicting.
+///
+/// Returns `Ok(TerminationReason)` on completion or `Err` on fatal errors.
+pub async fn start_loop(
+    prompt: String,
+    workspace_root: PathBuf,
+    config_path: Option<PathBuf>,
+) -> Result<TerminationReason> {
+    use crate::{ColorMode, ConfigSource, load_config_with_overrides};
+
+    // Load config from file or defaults
+    let config_source = config_path.unwrap_or_else(|| workspace_root.join("ralph.yml"));
+    let sources = vec![ConfigSource::File(config_source)];
+    let mut config = load_config_with_overrides(&sources)?;
+
+    // Set workspace root to the provided path
+    config.core.workspace_root = workspace_root.clone();
+
+    // Apply the prompt
+    config.event_loop.prompt = Some(prompt);
+    config.event_loop.prompt_file = String::new();
+
+    // Keep robot.enabled as-is from config. When the daemon starts a loop,
+    // the loop's own TelegramService handles all Telegram interaction
+    // (commands, guidance, responses, check-ins). The daemon stops polling
+    // while the loop runs, so there's no conflict.
+
+    // Force autonomous headless mode (no TUI, no interactive)
+    config.cli.default_mode = "autonomous".to_string();
+
+    // Normalize and validate
+    config.normalize();
+    let warnings = config
+        .validate()
+        .context("Configuration validation failed")?;
+    for warning in &warnings {
+        tracing::warn!("{}", warning);
+    }
+
+    // Auto-detect backend if needed
+    if config.cli.backend == "auto" {
+        let priority = config.get_agent_priority();
+        let detected = ralph_adapters::detect_backend(&priority, |backend| {
+            config.adapter_settings(backend).enabled
+        });
+        match detected {
+            Ok(backend) => {
+                info!("Auto-detected backend: {}", backend);
+                config.cli.backend = backend;
+            }
+            Err(e) => return Err(anyhow::Error::new(e)),
+        }
+    }
+
+    // Ensure scratchpad directory exists
+    crate::ensure_scratchpad_directory(&config)?;
+
+    // Acquire the loop lock (primary loop)
+    let prompt_summary = config.event_loop.prompt.as_deref().unwrap_or("[daemon]");
+    let prompt_summary = ralph_core::truncate_with_ellipsis(prompt_summary, 100);
+
+    let _lock_guard = ralph_core::LoopLock::try_acquire(&workspace_root, &prompt_summary)
+        .context("Failed to acquire loop lock — another loop may be running")?;
+
+    let loop_context = ralph_core::LoopContext::primary(workspace_root);
+
+    // Run the loop headlessly
+    run_loop_impl(
+        config,
+        ColorMode::Never,
+        false, // not resume
+        false, // no TUI
+        Verbosity::Quiet,
+        None, // no session recording
+        Some(loop_context),
+        Vec::new(), // no custom args
+        None,       // default auto-merge
+    )
+    .await
 }
 
 #[cfg(test)]

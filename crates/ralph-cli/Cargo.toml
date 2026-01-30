@@ -22,6 +22,7 @@ path = "src/main.rs"
 ralph-proto.workspace = true
 ralph-core.workspace = true
 ralph-adapters.workspace = true
+ralph-telegram.workspace = true
 ralph-tui.workspace = true
 
 tokio.workspace = true
@@ -36,6 +37,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 regex.workspace = true
+keyring.workspace = true
 
 # For raw mode handling in PTY mode
 crossterm.workspace = true

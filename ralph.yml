@@ -130,6 +130,15 @@ hats:
       3. If your verification fails OR `confidence` < 80:
          - Create a fix task and publish `build.task`.
 
+# RObot (Ralph-Orchestrator bot) — enable Telegram bot for ask.human / human.guidance
+# Requires a Telegram bot token (create one via @BotFather).
+# Set RALPH_TELEGRAM_BOT_TOKEN env var or provide bot_token below.
+# RObot:
+#   enabled: true
+#   timeout_seconds: 300
+#   telegram:
+#     bot_token: "your-bot-token"
+
 # Task configuration - runtime work tracking
 tasks:
   enabled: true
@@ -160,3 +169,12 @@ memories:
 
     # Only include memories from the last N days (0 = no time limit)
     recent: 0
+
+# Skill configuration - knowledge injection for agents
+skills:
+  enabled: true
+  dirs:
+    - ".claude/skills"
+  overrides:
+    ralph-diagnostics:
+      auto_inject: true

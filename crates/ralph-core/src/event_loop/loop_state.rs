@@ -39,6 +39,10 @@ pub struct LoopState {
 
     /// Hats for which `<hat_id>.exhausted` has been emitted.
     pub exhausted_hats: HashSet<HatId>,
+
+    /// When the last Telegram check-in message was sent.
+    /// `None` means no check-in has been sent yet.
+    pub last_checkin_at: Option<Instant>,
 }
 
 impl Default for LoopState {
@@ -57,6 +61,7 @@ impl Default for LoopState {
             consecutive_malformed_events: 0,
             hat_activation_counts: HashMap::new(),
             exhausted_hats: HashSet::new(),
+            last_checkin_at: None,
         }
     }
 }

@@ -9,6 +9,8 @@ description: Use when bumping ralph-orchestrator version for a new release, afte
 
 Bump version and trigger release for ralph-orchestrator. All versions live in workspace `Cargo.toml` - individual crates inherit via `version.workspace = true`.
 
+Confirm the new version with the user. Once the bump commit is pushed, track progress of the release.
+
 ## Quick Reference
 
 | Step | Command/Action |
@@ -56,3 +58,4 @@ Once you push the tag, `.github/workflows/release.yml` triggers and:
 | Forgetting to run tests | Always `cargo test` before commit |
 | Creating release manually with `gh release create` | Just push the tag - CI creates the release with artifacts |
 | Pushing tag before main | Push main first, then push the tag |
+

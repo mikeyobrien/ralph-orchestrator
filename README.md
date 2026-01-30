@@ -102,6 +102,33 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 - **Memories & Tasks** — Persistent learning and runtime work tracking
 - **31 Presets** — TDD, spec-driven, debugging, and more
 
+## RObot (Human-in-the-Loop)
+
+Ralph supports human interaction during orchestration via Telegram. Agents can ask questions and block until answered; humans can send proactive guidance at any time.
+
+Quick onboarding (Telegram):
+
+```bash
+ralph bot onboard --telegram   # guided setup (token + chat id)
+ralph bot status               # verify config
+ralph bot test                 # send a test message
+```
+
+```yaml
+# ralph.yml
+RObot:
+  enabled: true
+  telegram:
+    bot_token: "your-token"  # Or RALPH_TELEGRAM_BOT_TOKEN env var
+```
+
+- **Agent questions** — Agents emit `interact.human` events; the loop blocks until a response arrives or times out
+- **Proactive guidance** — Send messages anytime to steer the agent mid-loop
+- **Parallel loop routing** — Messages route via reply-to, `@loop-id` prefix, or default to primary
+- **Telegram commands** — `/status`, `/tasks`, `/restart` for real-time loop visibility
+
+See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) for setup instructions.
+
 ## Documentation
 
 Full documentation is available at **[mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)**:

@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::warn;
 
-/// Built-in memories skill content.
-const MEMORIES_SKILL_RAW: &str = include_str!("../data/memories-skill.md");
+/// Built-in ralph-tools skill content (tasks + memories).
+const RALPH_TOOLS_SKILL_RAW: &str = include_str!("../data/ralph-tools.md");
 
-/// Built-in tasks skill content.
-const TASKS_SKILL_RAW: &str = include_str!("../data/tasks-skill.md");
+/// Built-in RObot interaction skill content.
+const ROBOT_INTERACTION_SKILL_RAW: &str = include_str!("../data/robot-interaction-skill.md");
 
 /// Registry of all available skills for the current loop.
 pub struct SkillRegistry {
@@ -58,10 +58,10 @@ impl SkillRegistry {
         Ok(())
     }
 
-    /// Register built-in skills (memories and tasks).
+    /// Register built-in skills (ralph-tools and robot-interaction).
     fn register_builtins(&mut self) -> Result<()> {
-        self.register_builtin("memories", MEMORIES_SKILL_RAW)?;
-        self.register_builtin("tasks", TASKS_SKILL_RAW)?;
+        self.register_builtin("ralph-tools", RALPH_TOOLS_SKILL_RAW)?;
+        self.register_builtin("robot-interaction", ROBOT_INTERACTION_SKILL_RAW)?;
         Ok(())
     }
 
@@ -302,18 +302,18 @@ mod tests {
     fn test_register_builtin_skill() {
         let mut registry = SkillRegistry::new(None);
         registry
-            .register_builtin("memories", MEMORIES_SKILL_RAW)
+            .register_builtin("ralph-tools", RALPH_TOOLS_SKILL_RAW)
             .unwrap();
 
-        // The memories-skill.md has name: ralph-memories in frontmatter
+        // The ralph-tools.md has name: ralph-tools in frontmatter
         let skill = registry
-            .get("ralph-memories")
+            .get("ralph-tools")
             .expect("should find built-in skill");
         assert!(matches!(skill.source, SkillSource::BuiltIn));
         assert!(!skill.description.is_empty());
-        assert!(skill.content.contains("# Ralph Memories"));
+        assert!(skill.content.contains("# Ralph Tools"));
         // Frontmatter fields should not be in content
-        assert!(!skill.content.contains("name: ralph-memories"));
+        assert!(!skill.content.contains("name: ralph-tools"));
     }
 
     #[test]
@@ -321,9 +321,9 @@ mod tests {
         let mut registry = SkillRegistry::new(None);
         registry.register_builtins().unwrap();
 
-        // Both memories and tasks should be registered
-        assert!(registry.get("ralph-memories").is_some());
-        assert!(registry.get("tasks").is_some());
+        // All built-in skills should be registered
+        assert!(registry.get("ralph-tools").is_some());
+        assert!(registry.get("robot-interaction").is_some());
     }
 
     #[test]
@@ -385,17 +385,18 @@ mod tests {
 
         // User skill with same name as built-in
         fs::write(
-            skill_dir.join("ralph-memories.md"),
-            "---\nname: ralph-memories\ndescription: Custom memories skill\n---\n\nCustom content.\n",
-        ).unwrap();
+            skill_dir.join("ralph-tools.md"),
+            "---\nname: ralph-tools\ndescription: Custom tools skill\n---\n\nCustom content.\n",
+        )
+        .unwrap();
 
         let mut registry = SkillRegistry::new(None);
         registry.register_builtins().unwrap();
         registry.scan_directory(&skill_dir).unwrap();
 
-        let skill = registry.get("ralph-memories").unwrap();
+        let skill = registry.get("ralph-tools").unwrap();
         assert!(matches!(skill.source, SkillSource::File(_)));
-        assert_eq!(skill.description, "Custom memories skill");
+        assert_eq!(skill.description, "Custom tools skill");
     }
 
     #[test]
@@ -429,11 +430,11 @@ mod tests {
     fn test_override_disables_skill() {
         let mut registry = SkillRegistry::new(None);
         registry.register_builtins().unwrap();
-        assert!(registry.get("ralph-memories").is_some());
+        assert!(registry.get("ralph-tools").is_some());
 
         let mut overrides = HashMap::new();
         overrides.insert(
-            "ralph-memories".to_string(),
+            "ralph-tools".to_string(),
             SkillOverride {
                 enabled: Some(false),
                 ..Default::default()
@@ -441,7 +442,7 @@ mod tests {
         );
         registry.apply_overrides(&overrides);
 
-        assert!(registry.get("ralph-memories").is_none());
+        assert!(registry.get("ralph-tools").is_none());
     }
 
     #[test]
@@ -451,7 +452,7 @@ mod tests {
 
         let mut overrides = HashMap::new();
         overrides.insert(
-            "ralph-memories".to_string(),
+            "ralph-tools".to_string(),
             SkillOverride {
                 hats: vec!["builder".to_string()],
                 ..Default::default()
@@ -459,7 +460,7 @@ mod tests {
         );
         registry.apply_overrides(&overrides);
 
-        let skill = registry.get("ralph-memories").unwrap();
+        let skill = registry.get("ralph-tools").unwrap();
         assert_eq!(skill.hats, vec!["builder"]);
     }
 
@@ -470,7 +471,7 @@ mod tests {
 
         let mut overrides = HashMap::new();
         overrides.insert(
-            "ralph-memories".to_string(),
+            "ralph-tools".to_string(),
             SkillOverride {
                 auto_inject: Some(true),
                 ..Default::default()
@@ -478,7 +479,7 @@ mod tests {
         );
         registry.apply_overrides(&overrides);
 
-        let skill = registry.get("ralph-memories").unwrap();
+        let skill = registry.get("ralph-tools").unwrap();
         assert!(skill.auto_inject);
     }
 
@@ -547,10 +548,10 @@ mod tests {
         let auto = registry.auto_inject_skills(None);
         assert!(auto.is_empty());
 
-        // Set memories to auto-inject
+        // Set ralph-tools to auto-inject
         let mut overrides = HashMap::new();
         overrides.insert(
-            "ralph-memories".to_string(),
+            "ralph-tools".to_string(),
             SkillOverride {
                 auto_inject: Some(true),
                 ..Default::default()
@@ -560,7 +561,7 @@ mod tests {
 
         let auto = registry.auto_inject_skills(None);
         assert_eq!(auto.len(), 1);
-        assert_eq!(auto[0].name, "ralph-memories");
+        assert_eq!(auto[0].name, "ralph-tools");
     }
 
     #[test]
@@ -571,8 +572,8 @@ mod tests {
         let index = registry.build_index(None);
         assert!(index.contains("## SKILLS"));
         assert!(index.contains("| Skill | Description | Load Command |"));
-        assert!(index.contains("ralph-memories"));
-        assert!(index.contains("tasks"));
+        assert!(index.contains("ralph-tools"));
+        assert!(index.contains("robot-interaction"));
         assert!(index.contains("`ralph tools skill load"));
     }
 
@@ -614,13 +615,13 @@ mod tests {
         registry.register_builtins().unwrap();
 
         let loaded = registry
-            .load_skill("ralph-memories")
+            .load_skill("ralph-tools")
             .expect("should load skill");
-        assert!(loaded.starts_with("<ralph-memories-skill>"));
-        assert!(loaded.ends_with("</ralph-memories-skill>"));
-        assert!(loaded.contains("# Ralph Memories"));
+        assert!(loaded.starts_with("<ralph-tools-skill>"));
+        assert!(loaded.ends_with("</ralph-tools-skill>"));
+        assert!(loaded.contains("# Ralph Tools"));
         // Frontmatter should not be in the output
-        assert!(!loaded.contains("name: ralph-memories"));
+        assert!(!loaded.contains("name: ralph-tools"));
     }
 
     #[test]
@@ -647,7 +648,7 @@ mod tests {
             overrides: {
                 let mut m = HashMap::new();
                 m.insert(
-                    "ralph-memories".to_string(),
+                    "ralph-tools".to_string(),
                     SkillOverride {
                         auto_inject: Some(true),
                         ..Default::default()
@@ -660,11 +661,10 @@ mod tests {
         let registry = SkillRegistry::from_config(&config, tmp.path(), Some("claude")).unwrap();
 
         // Built-ins present
-        assert!(registry.get("ralph-memories").is_some());
-        assert!(registry.get("tasks").is_some());
+        assert!(registry.get("ralph-tools").is_some());
         // User skill present
         assert!(registry.get("custom").is_some());
         // Override applied
-        assert!(registry.get("ralph-memories").unwrap().auto_inject);
+        assert!(registry.get("ralph-tools").unwrap().auto_inject);
     }
 }

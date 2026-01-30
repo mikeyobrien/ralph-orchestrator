@@ -129,6 +129,10 @@ pub struct RalphConfig {
     /// Feature flags for optional capabilities.
     #[serde(default)]
     pub features: FeaturesConfig,
+
+    /// RObot (Ralph-Orchestrator bot) configuration for Telegram-based interaction.
+    #[serde(default, rename = "RObot")]
+    pub robot: RobotConfig,
 }
 
 fn default_true() -> bool {
@@ -172,6 +176,8 @@ impl Default for RalphConfig {
             skills: SkillsConfig::default(),
             // Features
             features: FeaturesConfig::default(),
+            // RObot (Ralph-Orchestrator bot)
+            robot: RobotConfig::default(),
         }
     }
 }
@@ -402,6 +408,9 @@ impl RalphConfig {
             });
         }
 
+        // Validate RObot config
+        self.robot.validate()?;
+
         // Check for required description field on all hats
         for (hat_id, hat_config) in &self.hats {
             if hat_config
@@ -534,6 +543,11 @@ pub struct EventLoopConfig {
     #[serde(default = "default_max_failures")]
     pub max_consecutive_failures: u32,
 
+    /// Delay in seconds before starting the next iteration.
+    /// Skipped when the next iteration is triggered by a human event.
+    #[serde(default)]
+    pub cooldown_delay_seconds: u64,
+
     /// Starting hat for multi-hat mode (deprecated, use starting_event instead).
     pub starting_hat: Option<String>,
 
@@ -579,6 +593,7 @@ impl Default for EventLoopConfig {
             max_runtime_seconds: default_max_runtime(),
             max_cost_usd: None,
             max_consecutive_failures: default_max_failures(),
+            cooldown_delay_seconds: 0,
             starting_hat: None,
             starting_event: None,
         }
@@ -1282,6 +1297,96 @@ impl HatConfig {
     }
 }
 
+/// RObot (Ralph-Orchestrator bot) configuration.
+///
+/// Enables bidirectional communication between AI agents and humans
+/// during orchestration loops. When enabled, agents can emit `interact.human`
+/// events to request clarification (blocking the loop), and humans can
+/// send proactive guidance via Telegram.
+///
+/// Example configuration:
+/// ```yaml
+/// RObot:
+///   enabled: true
+///   timeout_seconds: 300
+///   checkin_interval_seconds: 120  # Optional: send status every 2 min
+///   telegram:
+///     bot_token: "..."  # Or set RALPH_TELEGRAM_BOT_TOKEN env var
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RobotConfig {
+    /// Whether the RObot is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Timeout in seconds for waiting on human responses.
+    /// Required when enabled (no default — must be explicit).
+    pub timeout_seconds: Option<u64>,
+
+    /// Interval in seconds between periodic check-in messages sent via Telegram.
+    /// When set, Ralph sends a status message every N seconds so the human
+    /// knows it's still working. If `None`, no check-ins are sent.
+    pub checkin_interval_seconds: Option<u64>,
+
+    /// Telegram bot configuration.
+    #[serde(default)]
+    pub telegram: Option<TelegramBotConfig>,
+}
+
+impl RobotConfig {
+    /// Validates the RObot config. Returns an error if enabled but misconfigured.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.timeout_seconds.is_none() {
+            return Err(ConfigError::RobotMissingField {
+                field: "RObot.timeout_seconds".to_string(),
+                hint: "timeout_seconds is required when RObot is enabled".to_string(),
+            });
+        }
+
+        // Bot token must be available from config, keychain, or env var
+        if self.resolve_bot_token().is_none() {
+            return Err(ConfigError::RobotMissingField {
+                field: "RObot.telegram.bot_token".to_string(),
+                hint: "Run `ralph bot onboard --telegram`, set RALPH_TELEGRAM_BOT_TOKEN env var, or set RObot.telegram.bot_token in config"
+                    .to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Resolves the bot token from multiple sources.
+    ///
+    /// Resolution order (highest to lowest priority):
+    /// 1. `RALPH_TELEGRAM_BOT_TOKEN` environment variable
+    /// 2. OS keychain (service: "ralph", user: "telegram-bot-token")
+    /// 3. `RObot.telegram.bot_token` in config file (legacy fallback)
+    pub fn resolve_bot_token(&self) -> Option<String> {
+        // 1. Env var (highest priority)
+        std::env::var("RALPH_TELEGRAM_BOT_TOKEN")
+            .ok()
+            // 2. OS keychain
+            .or_else(|| {
+                keyring::Entry::new("ralph", "telegram-bot-token")
+                    .ok()
+                    .and_then(|e| e.get_password().ok())
+            })
+            // 3. Config file (legacy fallback)
+            .or_else(|| self.telegram.as_ref()?.bot_token.clone())
+    }
+}
+
+/// Telegram bot configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramBotConfig {
+    /// Bot token. Optional if `RALPH_TELEGRAM_BOT_TOKEN` env var is set.
+    pub bot_token: Option<String>,
+}
+
 /// Configuration errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -1313,6 +1418,9 @@ pub enum ConfigError {
         "Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose"
     )]
     MissingDescription { hat: String },
+
+    #[error("RObot config error: {field} - {hint}")]
+    RobotMissingField { field: String, hint: String },
 }
 
 #[cfg(test)]
@@ -2195,5 +2303,203 @@ skills:
         assert_eq!(override_.hats, vec!["builder", "reviewer"]);
         assert!(override_.backends.is_empty());
         assert!(override_.tags.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ROBOT CONFIG TESTS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_robot_config_defaults_disabled() {
+        let config = RalphConfig::default();
+        assert!(!config.robot.enabled);
+        assert!(config.robot.timeout_seconds.is_none());
+        assert!(config.robot.telegram.is_none());
+    }
+
+    #[test]
+    fn test_robot_config_absent_parses_as_default() {
+        // Existing configs without RObot: section should still parse
+        let yaml = r"
+agent: claude
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.robot.enabled);
+        assert!(config.robot.timeout_seconds.is_none());
+    }
+
+    #[test]
+    fn test_robot_config_valid_full() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  timeout_seconds: 300
+  telegram:
+    bot_token: "123456:ABC-DEF"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.robot.enabled);
+        assert_eq!(config.robot.timeout_seconds, Some(300));
+        let telegram = config.robot.telegram.as_ref().unwrap();
+        assert_eq!(telegram.bot_token, Some("123456:ABC-DEF".to_string()));
+
+        // Validation should pass
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_disabled_skips_validation() {
+        // Disabled RObot config should pass validation even with missing fields
+        let yaml = r"
+RObot:
+  enabled: false
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.robot.enabled);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_enabled_missing_timeout_fails() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  telegram:
+    bot_token: "123456:ABC-DEF"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.timeout_seconds"),
+            "Expected RobotMissingField for timeout_seconds, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_robot_config_enabled_missing_timeout_and_token_fails_on_timeout_first() {
+        // Both timeout and token are missing, but timeout is checked first
+        let robot = RobotConfig {
+            enabled: true,
+            timeout_seconds: None,
+            checkin_interval_seconds: None,
+            telegram: None,
+        };
+        let result = robot.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.timeout_seconds"),
+            "Expected timeout validation failure first, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_robot_config_resolve_bot_token_from_config() {
+        // Config has a token — resolve_bot_token returns it
+        // (env var behavior is tested separately via integration tests since
+        // forbid(unsafe_code) prevents env var manipulation in unit tests)
+        let config = RobotConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            checkin_interval_seconds: None,
+            telegram: Some(TelegramBotConfig {
+                bot_token: Some("config-token".to_string()),
+            }),
+        };
+
+        // When RALPH_TELEGRAM_BOT_TOKEN is not set, config token is returned
+        // (Can't set/unset env vars in tests due to forbid(unsafe_code))
+        let resolved = config.resolve_bot_token();
+        // The result depends on whether RALPH_TELEGRAM_BOT_TOKEN is set in the
+        // test environment. We can at least assert it's Some.
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn test_robot_config_resolve_bot_token_none_without_config() {
+        // No config token and no telegram section
+        let config = RobotConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            checkin_interval_seconds: None,
+            telegram: None,
+        };
+
+        // Without env var AND without config token, resolve returns None
+        // (unless RALPH_TELEGRAM_BOT_TOKEN happens to be set in test env)
+        let resolved = config.resolve_bot_token();
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_err() {
+            assert!(resolved.is_none());
+        }
+    }
+
+    #[test]
+    fn test_robot_config_validate_with_config_token() {
+        // Validation passes when bot_token is in config
+        let robot = RobotConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            checkin_interval_seconds: None,
+            telegram: Some(TelegramBotConfig {
+                bot_token: Some("test-token".to_string()),
+            }),
+        };
+        assert!(robot.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_validate_missing_telegram_section() {
+        // No telegram section at all and no env var → fails
+        // (Skip if env var happens to be set)
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() {
+            return;
+        }
+
+        let robot = RobotConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            checkin_interval_seconds: None,
+            telegram: None,
+        };
+        let result = robot.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.telegram.bot_token"),
+            "Expected bot_token validation failure, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_robot_config_validate_empty_bot_token() {
+        // telegram section present but bot_token is None
+        // (Skip if env var happens to be set)
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() {
+            return;
+        }
+
+        let robot = RobotConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            checkin_interval_seconds: None,
+            telegram: Some(TelegramBotConfig { bot_token: None }),
+        };
+        let result = robot.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.telegram.bot_token"),
+            "Expected bot_token validation failure, got: {:?}",
+            err
+        );
     }
 }

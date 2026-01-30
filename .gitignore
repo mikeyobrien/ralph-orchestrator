@@ -1,6 +1,9 @@
 # Rust
 /target/
 
+# Test configs with secrets
+ralph.test.yml
+
 # Python
 __pycache__/
 *.py[cod]
@@ -75,6 +78,7 @@ pbcopy
 .claude/settings.json
 .claude/*.local.md
 .kiro/
+.envrc
 
 # Playwright screenshots
 .playwright-mcp/

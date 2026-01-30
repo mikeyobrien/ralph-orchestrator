@@ -24,6 +24,9 @@ pub struct HatlessRalph {
     /// Pre-built skill index section for prompt injection.
     /// Set by EventLoop after SkillRegistry is initialized.
     skill_index: String,
+    /// Collected robot guidance messages for injection into prompts.
+    /// Set by EventLoop before build_prompt(), cleared after injection.
+    robot_guidance: Vec<String>,
 }
 
 /// Hat topology for multi-hat mode prompt generation.
@@ -166,6 +169,7 @@ impl HatlessRalph {
             memories_enabled: false, // Default: scratchpad-only mode
             objective: None,
             skill_index: String::new(),
+            robot_guidance: Vec::new(),
         }
     }
 
@@ -196,6 +200,46 @@ impl HatlessRalph {
         self.objective = Some(objective);
     }
 
+    /// Sets robot guidance messages collected from `human.guidance` events.
+    ///
+    /// Called by `EventLoop::build_prompt()` before `HatlessRalph::build_prompt()`.
+    /// Multiple guidance messages are squashed into a numbered list and injected
+    /// as a `## ROBOT GUIDANCE` section in the prompt.
+    pub fn set_robot_guidance(&mut self, guidance: Vec<String>) {
+        self.robot_guidance = guidance;
+    }
+
+    /// Clears stored robot guidance after it has been injected into a prompt.
+    ///
+    /// Called by `EventLoop::build_prompt()` after `HatlessRalph::build_prompt()`.
+    pub fn clear_robot_guidance(&mut self) {
+        self.robot_guidance.clear();
+    }
+
+    /// Collects robot guidance and returns the formatted prompt section.
+    ///
+    /// Squashes multiple guidance messages into a numbered list format.
+    /// Returns an empty string if no guidance is pending.
+    fn collect_robot_guidance(&self) -> String {
+        if self.robot_guidance.is_empty() {
+            return String::new();
+        }
+
+        let mut section = String::from("## ROBOT GUIDANCE\n\n");
+
+        if self.robot_guidance.len() == 1 {
+            section.push_str(&self.robot_guidance[0]);
+        } else {
+            for (i, guidance) in self.robot_guidance.iter().enumerate() {
+                section.push_str(&format!("{}. {}\n", i + 1, guidance));
+            }
+        }
+
+        section.push_str("\n\n");
+
+        section
+    }
+
     /// Builds Ralph's prompt with filtered instructions for only active hats.
     ///
     /// This method reduces token usage by including instructions only for hats
@@ -215,6 +259,12 @@ impl HatlessRalph {
         // Add prominent OBJECTIVE section first (stored at initialization, persists across all iterations)
         if let Some(ref obj) = self.objective {
             prompt.push_str(&self.objective_section(obj));
+        }
+
+        // Inject robot guidance (collected from human.guidance events, cleared after injection)
+        let guidance = self.collect_robot_guidance();
+        if !guidance.is_empty() {
+            prompt.push_str(&guidance);
         }
 
         // Include pending events BEFORE workflow so Ralph sees the task first
@@ -309,49 +359,63 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut prompt = r"
+        let mut prompt = if self.memories_enabled {
+            r"
+### 0a. ORIENTATION
+You are Ralph. You are running in a loop. You have fresh context each iteration.
+You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
+
+**First thing every iteration:**
+1. Review your `<scratchpad>` (auto-injected above) for context on your thinking
+2. Review your `<ready-tasks>` (auto-injected above) to see what work exists
+3. If tasks exist, pick one. If not, create them from your plan.
+"
+        } else {
+            r"
 ### 0a. ORIENTATION
 You are Ralph. You are running in a loop. You have fresh context each iteration.
 You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
 "
+        }
         .to_string();
 
         // SCRATCHPAD section - ALWAYS present
         prompt.push_str(&format!(
             r"### 0b. SCRATCHPAD
-`{scratchpad}` is your working memory for THIS objective.
-Its content is auto-injected at the top of your context each iteration.
+`{scratchpad}` is your thinking journal for THIS objective.
+Its content is auto-injected in `<scratchpad>` tags at the top of your context each iteration.
 
 **Always append** new entries to the end of the file (most recent = bottom).
 
 **Use for:**
-- Current objective understanding
-- Notes and reasoning for current work
-- Progress tracking and next steps
+- Current understanding and reasoning
+- Analysis notes and decisions
+- Plan narrative (the 'why' behind your approach)
+
+**Do NOT use for:**
+- Tracking what tasks exist or their status (use `ralph tools task`)
+- Checklists or todo lists (use `ralph tools task add`)
 
 ",
             scratchpad = self.core.scratchpad,
         ));
 
         // TASKS section removed — now injected via skills auto-injection pipeline
-        // (see EventLoop::inject_tasks_skill)
-
-        // Add task breakdown guidance
-        prompt.push_str(
-            "### TASK BREAKDOWN\n\n\
-- One task = one testable unit of work\n\
-- Tasks should be completable in 1-2 iterations\n\
-- Break large features into smaller tasks\n\
-\n",
-        );
+        // (see EventLoop::inject_memories_and_tools_skill)
+        // TASK BREAKDOWN guidance moved into ralph-tools.md
 
         // Add state management guidance
         prompt.push_str(&format!(
             "### STATE MANAGEMENT\n\n\
-**Scratchpad** (`{scratchpad}`) — Objective working memory:\n\
-- Current objective and immediate plan\n\
-- Notes and reasoning for current work\n\
-- Progress tracking (ephemeral)\n\
+**Tasks** (`ralph tools task`) — What needs to be done:\n\
+- Work items, their status, priorities, and dependencies\n\
+- Source of truth for progress across iterations\n\
+- Auto-injected in `<ready-tasks>` tags at the top of your context\n\
+\n\
+**Scratchpad** (`{scratchpad}`) — Your thinking:\n\
+- Current understanding and reasoning\n\
+- Analysis notes, decisions, plan narrative\n\
+- NOT for checklists or status tracking\n\
 \n\
 **Memories** (`.ralph/agent/memories.md`) — Persistent learning:\n\
 - Codebase patterns and conventions\n\
@@ -362,7 +426,7 @@ Its content is auto-injected at the top of your context each iteration.
 - Analysis and temporary notes\n\
 - Read when relevant\n\
 \n\
-**Rule:** Notes for current objective go in scratchpad. Learnings for future objectives go in memories.\n\
+**Rule:** Work items go in tasks. Thinking goes in scratchpad. Learnings go in memories.\n\
 \n",
             scratchpad = self.core.scratchpad,
         ));
@@ -433,7 +497,7 @@ You MUST NOT plan or analyze — delegate now.
 
 ### 1. PLAN
 You MUST update `{scratchpad}` with your understanding and plan.
-You SHOULD create tasks with `ralph tools task add` for trackable work items.
+You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).
 
 ### 2. DELEGATE
 You MUST publish exactly ONE event to hand off to specialized hats.
@@ -470,18 +534,18 @@ You MUST study, explore, and research what needs to be done.
 
 ### 2. PLAN
 You MUST update `{scratchpad}` with your understanding and plan.
-You SHOULD create tasks with `ralph tools task add` for trackable work items.
+You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).
 
 ### 3. IMPLEMENT
-You MUST pick exactly ONE task to implement.
+You MUST pick exactly ONE task from `<ready-tasks>` to implement.
 
 ### 4. VERIFY & COMMIT
 You MUST run tests and verify the implementation works.
 You MUST commit after verification passes - one commit per task.
 You SHOULD run `git diff --cached` to review staged changes before committing.
-You MUST close the task with `ralph tools task close` AFTER commit.
+You MUST close the task with `ralph tools task close <id>` AFTER commit.
 You SHOULD save learnings to memories with `ralph tools memory add`.
-You MUST update scratchpad to reflect progress.
+You MUST update scratchpad with what you learned (tasks track what remains).
 
 ### 5. EXIT
 You MUST exit after completing ONE task.
@@ -2263,6 +2327,139 @@ hats:
         assert!(
             !prompt.contains("**CONSTRAINT:**"),
             "Solo mode should NOT have CONSTRAINT"
+        );
+    }
+
+    // === Human Guidance Injection Tests ===
+
+    #[test]
+    fn test_single_guidance_injection() {
+        // Single human.guidance message should be injected as-is (no numbered list)
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_robot_guidance(vec!["Focus on error handling first".to_string()]);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            prompt.contains("## ROBOT GUIDANCE"),
+            "Should include ROBOT GUIDANCE section"
+        );
+        assert!(
+            prompt.contains("Focus on error handling first"),
+            "Should contain the guidance message"
+        );
+        // Single message should NOT be numbered
+        assert!(
+            !prompt.contains("1. Focus on error handling first"),
+            "Single guidance should not be numbered"
+        );
+    }
+
+    #[test]
+    fn test_multiple_guidance_squashing() {
+        // Multiple human.guidance messages should be squashed into a numbered list
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_robot_guidance(vec![
+            "Focus on error handling".to_string(),
+            "Use the existing retry pattern".to_string(),
+            "Check edge cases for empty input".to_string(),
+        ]);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            prompt.contains("## ROBOT GUIDANCE"),
+            "Should include ROBOT GUIDANCE section"
+        );
+        assert!(
+            prompt.contains("1. Focus on error handling"),
+            "First guidance should be numbered 1"
+        );
+        assert!(
+            prompt.contains("2. Use the existing retry pattern"),
+            "Second guidance should be numbered 2"
+        );
+        assert!(
+            prompt.contains("3. Check edge cases for empty input"),
+            "Third guidance should be numbered 3"
+        );
+    }
+
+    #[test]
+    fn test_guidance_appears_in_prompt_before_events() {
+        // ROBOT GUIDANCE should appear after OBJECTIVE but before PENDING EVENTS
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_objective("Build feature X".to_string());
+        ralph.set_robot_guidance(vec!["Use the new API".to_string()]);
+
+        let prompt = ralph.build_prompt("Event: build.task - Do the work", &[]);
+
+        let objective_pos = prompt.find("## OBJECTIVE").expect("Should have OBJECTIVE");
+        let guidance_pos = prompt
+            .find("## ROBOT GUIDANCE")
+            .expect("Should have ROBOT GUIDANCE");
+        let events_pos = prompt
+            .find("## PENDING EVENTS")
+            .expect("Should have PENDING EVENTS");
+
+        assert!(
+            objective_pos < guidance_pos,
+            "OBJECTIVE ({}) should come before ROBOT GUIDANCE ({})",
+            objective_pos,
+            guidance_pos
+        );
+        assert!(
+            guidance_pos < events_pos,
+            "ROBOT GUIDANCE ({}) should come before PENDING EVENTS ({})",
+            guidance_pos,
+            events_pos
+        );
+    }
+
+    #[test]
+    fn test_guidance_cleared_after_injection() {
+        // After build_prompt consumes guidance, clear_robot_guidance should leave it empty
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+        ralph.set_robot_guidance(vec!["First guidance".to_string()]);
+
+        // First prompt should include guidance
+        let prompt1 = ralph.build_prompt("", &[]);
+        assert!(
+            prompt1.contains("## ROBOT GUIDANCE"),
+            "First prompt should have guidance"
+        );
+
+        // Clear guidance (as EventLoop would)
+        ralph.clear_robot_guidance();
+
+        // Second prompt should NOT include guidance
+        let prompt2 = ralph.build_prompt("", &[]);
+        assert!(
+            !prompt2.contains("## ROBOT GUIDANCE"),
+            "After clearing, prompt should not have guidance"
+        );
+    }
+
+    #[test]
+    fn test_no_injection_when_no_guidance() {
+        // When no guidance events, prompt should not have ROBOT GUIDANCE section
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let prompt = ralph.build_prompt("Event: build.task - Do the work", &[]);
+
+        assert!(
+            !prompt.contains("## ROBOT GUIDANCE"),
+            "Should NOT include ROBOT GUIDANCE when no guidance set"
         );
     }
 }

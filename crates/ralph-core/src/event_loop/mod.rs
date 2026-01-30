@@ -18,7 +18,10 @@ use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use crate::skill_registry::SkillRegistry;
 use ralph_proto::{Event, EventBus, Hat, HatId};
+use ralph_telegram::TelegramService;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -47,6 +50,8 @@ pub enum TerminationReason {
     ChaosModeComplete,
     /// Chaos mode max iterations reached.
     ChaosModeMaxIterations,
+    /// Restart requested via Telegram `/restart` command.
+    RestartRequested,
 }
 
 impl TerminationReason {
@@ -69,6 +74,8 @@ impl TerminationReason {
             | TerminationReason::MaxCost
             | TerminationReason::ChaosModeMaxIterations => 2,
             TerminationReason::Interrupted => 130,
+            // Restart uses exit code 3 to signal the caller to exec-replace
+            TerminationReason::RestartRequested => 3,
         }
     }
 
@@ -89,6 +96,7 @@ impl TerminationReason {
             TerminationReason::Interrupted => "interrupted",
             TerminationReason::ChaosModeComplete => "chaos_complete",
             TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
+            TerminationReason::RestartRequested => "restart_requested",
         }
     }
 
@@ -124,6 +132,9 @@ pub struct EventLoop {
     loop_context: Option<LoopContext>,
     /// Skill registry for the current loop.
     skill_registry: SkillRegistry,
+    /// Telegram service for human-in-the-loop communication.
+    /// Only initialized when `human.enabled` is true and this is the primary loop.
+    telegram_service: Option<TelegramService>,
 }
 
 impl EventLoop {
@@ -242,6 +253,10 @@ impl EventLoop {
             .unwrap_or_else(|_| context.events_path());
         let event_reader = EventReader::new(&events_path);
 
+        // Initialize Telegram service if human-in-the-loop is enabled
+        // and this is the primary loop (has a loop context with is_primary).
+        let telegram_service = Self::create_telegram_service(&config, Some(&context));
+
         Self {
             config,
             registry,
@@ -253,6 +268,7 @@ impl EventLoop {
             diagnostics,
             loop_context: Some(context),
             skill_registry,
+            telegram_service,
         }
     }
 
@@ -333,6 +349,10 @@ impl EventLoop {
             .unwrap_or_else(|_| ".ralph/events.jsonl".to_string());
         let event_reader = EventReader::new(&events_path);
 
+        // Initialize Telegram service if human-in-the-loop is enabled.
+        // Legacy single-loop mode (no context) is treated as primary.
+        let telegram_service = Self::create_telegram_service(&config, None);
+
         Self {
             config,
             registry,
@@ -344,6 +364,65 @@ impl EventLoop {
             diagnostics,
             loop_context: None,
             skill_registry,
+            telegram_service,
+        }
+    }
+
+    /// Attempts to create and start a `TelegramService` if human-in-the-loop is enabled.
+    ///
+    /// The service is only created when:
+    /// - `human.enabled` is `true` in config
+    /// - This is the primary loop (holds `.ralph/loop.lock`), or no context is provided
+    ///   (legacy single-loop mode, treated as primary)
+    ///
+    /// Returns `None` if the service should not be started or if startup fails.
+    fn create_telegram_service(
+        config: &RalphConfig,
+        context: Option<&LoopContext>,
+    ) -> Option<TelegramService> {
+        if !config.robot.enabled {
+            return None;
+        }
+
+        // Only the primary loop starts the Telegram service.
+        // If we have a context, check is_primary. No context = legacy single-loop = primary.
+        if let Some(ctx) = context
+            && !ctx.is_primary()
+        {
+            debug!(
+                workspace = %ctx.workspace().display(),
+                "Skipping Telegram service: not the primary loop"
+            );
+            return None;
+        }
+
+        let workspace_root = context
+            .map(|ctx| ctx.workspace().to_path_buf())
+            .unwrap_or_else(|| config.core.workspace_root.clone());
+
+        let bot_token = config.robot.resolve_bot_token();
+        let timeout_secs = config.robot.timeout_seconds.unwrap_or(300);
+        let loop_id = context
+            .and_then(|ctx| ctx.loop_id().map(String::from))
+            .unwrap_or_else(|| "main".to_string());
+
+        match TelegramService::new(workspace_root, bot_token, timeout_secs, loop_id) {
+            Ok(service) => {
+                if let Err(e) = service.start() {
+                    warn!(error = %e, "Failed to start Telegram service");
+                    return None;
+                }
+                info!(
+                    bot_token = %service.bot_token_masked(),
+                    timeout_secs = service.timeout_secs(),
+                    "Telegram human-in-the-loop service active"
+                );
+                Some(service)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to create Telegram service");
+                None
+            }
         }
     }
 
@@ -448,6 +527,13 @@ impl EventLoop {
             return Some(TerminationReason::ValidationFailure);
         }
 
+        // Check for restart signal from Telegram /restart command
+        let restart_path =
+            std::path::Path::new(&self.config.core.workspace_root).join(".ralph/restart-requested");
+        if restart_path.exists() {
+            return Some(TerminationReason::RestartRequested);
+        }
+
         None
     }
 
@@ -518,6 +604,24 @@ impl EventLoop {
         self.bus.next_hat_with_pending().is_some()
     }
 
+    /// Checks if any pending events are human-related (human.response, human.guidance).
+    ///
+    /// Used to skip cooldown delays when a human event is next, since we don't
+    /// want to artificially delay the response to a human interaction.
+    pub fn has_pending_human_events(&self) -> bool {
+        self.bus.hat_ids().any(|hat_id| {
+            self.bus
+                .peek_pending(hat_id)
+                .map(|events| {
+                    events.iter().any(|e| {
+                        let topic = e.topic.as_str();
+                        topic == "human.response" || topic == "human.guidance"
+                    })
+                })
+                .unwrap_or(false)
+        })
+    }
+
     /// Gets the topics a hat is allowed to publish.
     ///
     /// Used to build retry prompts when the LLM forgets to publish an event.
@@ -581,16 +685,31 @@ impl EventLoop {
             if self.registry.is_empty() {
                 // Solo mode - just Ralph's events, no hats to filter
                 let events = self.bus.take_pending(&hat_id.clone());
-                let events_context = events
+
+                // Separate human.guidance events from regular events
+                let (guidance_events, regular_events): (Vec<_>, Vec<_>) = events
+                    .into_iter()
+                    .partition(|e| e.topic.as_str() == "human.guidance");
+
+                let events_context = regular_events
                     .iter()
                     .map(|e| Self::format_event(e))
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                // Build base prompt and prepend memories + scratchpad if available
+                // Inject human guidance into prompt if present
+                if !guidance_events.is_empty() {
+                    let guidance: Vec<String> =
+                        guidance_events.into_iter().map(|e| e.payload).collect();
+                    self.ralph.set_robot_guidance(guidance);
+                }
+
+                // Build base prompt and prepend memories + scratchpad + ready tasks
                 let base_prompt = self.ralph.build_prompt(&events_context, &[]);
+                self.ralph.clear_robot_guidance();
                 let with_skills = self.prepend_auto_inject_skills(base_prompt);
-                let final_prompt = self.prepend_scratchpad(with_skills);
+                let with_scratchpad = self.prepend_scratchpad(with_skills);
+                let final_prompt = self.prepend_ready_tasks(with_scratchpad);
 
                 debug!("build_prompt: routing to HatlessRalph (solo mode)");
                 return Some(final_prompt);
@@ -628,13 +747,26 @@ impl EventLoop {
                     self.bus.publish(event);
                 }
 
-                // Determine which hats are active based on events
-                let active_hat_ids = self.determine_active_hat_ids(&all_events);
+                // Separate human.guidance events from regular events
+                let (guidance_events, regular_events): (Vec<_>, Vec<_>) = all_events
+                    .into_iter()
+                    .partition(|e| e.topic.as_str() == "human.guidance");
+
+                // Inject human guidance before building prompt (must happen before
+                // immutable borrows from determine_active_hats)
+                if !guidance_events.is_empty() {
+                    let guidance: Vec<String> =
+                        guidance_events.into_iter().map(|e| e.payload).collect();
+                    self.ralph.set_robot_guidance(guidance);
+                }
+
+                // Determine which hats are active based on regular events
+                let active_hat_ids = self.determine_active_hat_ids(&regular_events);
                 self.record_hat_activations(&active_hat_ids);
-                let active_hats = self.determine_active_hats(&all_events);
+                let active_hats = self.determine_active_hats(&regular_events);
 
                 // Format events for context
-                let events_context = all_events
+                let events_context = regular_events
                     .iter()
                     .map(|e| Self::format_event(e))
                     .collect::<Vec<_>>()
@@ -642,8 +774,6 @@ impl EventLoop {
 
                 // Build base prompt and prepend memories + scratchpad if available
                 let base_prompt = self.ralph.build_prompt(&events_context, &active_hats);
-                let with_skills = self.prepend_auto_inject_skills(base_prompt);
-                let final_prompt = self.prepend_scratchpad(with_skills);
 
                 // Build prompt with active hats - filters instructions to only active hats
                 debug!(
@@ -653,6 +783,13 @@ impl EventLoop {
                         .map(|h| h.id.as_str())
                         .collect::<Vec<_>>()
                 );
+
+                // Clear guidance after active_hats references are no longer needed
+                self.ralph.clear_robot_guidance();
+                let with_skills = self.prepend_auto_inject_skills(base_prompt);
+                let with_scratchpad = self.prepend_scratchpad(with_skills);
+                let final_prompt = self.prepend_ready_tasks(with_scratchpad);
+
                 return Some(final_prompt);
             }
         }
@@ -690,20 +827,20 @@ impl EventLoop {
     /// Prepends auto-injected skill content to the prompt.
     ///
     /// This generalizes the former `prepend_memories()` into a skill auto-injection
-    /// pipeline that handles memories, tasks, and any other auto-inject skills.
+    /// pipeline that handles memories, tools, and any other auto-inject skills.
     ///
     /// Injection order:
-    /// 1. Memories skill (special case: loads memory data from store, applies budget)
-    /// 2. Tasks skill (gated by `tasks.enabled`)
+    /// 1. Memory data + ralph-tools skill (special case: loads memory data from store, applies budget)
+    /// 2. RObot interaction skill (gated by `robot.enabled`)
     /// 3. Other auto-inject skills from the registry (wrapped in XML tags)
     fn prepend_auto_inject_skills(&self, prompt: String) -> String {
         let mut prefix = String::new();
 
-        // 1. Memories skill — special case with data loading
-        self.inject_memories_skill(&mut prefix);
+        // 1. Memory data + ralph-tools skill — special case with data loading
+        self.inject_memories_and_tools_skill(&mut prefix);
 
-        // 2. Tasks skill — gated by tasks.enabled
-        self.inject_tasks_skill(&mut prefix);
+        // 2. RObot interaction skill — gated by robot.enabled
+        self.inject_robot_skill(&mut prefix);
 
         // 3. Other auto-inject skills from the registry
         self.inject_custom_auto_skills(&mut prefix);
@@ -717,115 +854,117 @@ impl EventLoop {
         prefix
     }
 
-    /// Injects memories content and skill into the prefix.
+    /// Injects memory data and the ralph-tools skill into the prefix.
     ///
     /// Special case: loads memory entries from the store, applies budget
-    /// truncation, then appends the memories skill content.
-    /// Gated by `memories.enabled && memories.inject == Auto`.
-    fn inject_memories_skill(&self, prefix: &mut String) {
+    /// truncation, then appends the ralph-tools skill content (which covers
+    /// both tasks and memories CLI usage).
+    /// Memory data is gated by `memories.enabled && memories.inject == Auto`.
+    /// The ralph-tools skill is injected when either memories or tasks are enabled.
+    fn inject_memories_and_tools_skill(&self, prefix: &mut String) {
         let memories_config = &self.config.memories;
 
-        info!(
-            "Memory injection check: enabled={}, inject={:?}, workspace_root={:?}",
-            memories_config.enabled, memories_config.inject, self.config.core.workspace_root
-        );
-
-        if !memories_config.enabled || memories_config.inject != InjectMode::Auto {
+        // Inject memory DATA if memories are enabled with auto-inject
+        if memories_config.enabled && memories_config.inject == InjectMode::Auto {
             info!(
-                "Memory injection skipped: enabled={}, inject={:?}",
-                memories_config.enabled, memories_config.inject
+                "Memory injection check: enabled={}, inject={:?}, workspace_root={:?}",
+                memories_config.enabled, memories_config.inject, self.config.core.workspace_root
             );
-            return;
-        }
 
-        let workspace_root = &self.config.core.workspace_root;
-        let store = MarkdownMemoryStore::with_default_path(workspace_root);
-        let memories_path = workspace_root.join(".ralph/agent/memories.md");
+            let workspace_root = &self.config.core.workspace_root;
+            let store = MarkdownMemoryStore::with_default_path(workspace_root);
+            let memories_path = workspace_root.join(".ralph/agent/memories.md");
 
-        info!(
-            "Looking for memories at: {:?} (exists: {})",
-            memories_path,
-            memories_path.exists()
-        );
+            info!(
+                "Looking for memories at: {:?} (exists: {})",
+                memories_path,
+                memories_path.exists()
+            );
 
-        let memories = match store.load() {
-            Ok(memories) => {
-                info!("Successfully loaded {} memories from store", memories.len());
-                memories
-            }
-            Err(e) => {
+            let memories = match store.load() {
+                Ok(memories) => {
+                    info!("Successfully loaded {} memories from store", memories.len());
+                    memories
+                }
+                Err(e) => {
+                    info!(
+                        "Failed to load memories for injection: {} (path: {:?})",
+                        e, memories_path
+                    );
+                    Vec::new()
+                }
+            };
+
+            if memories.is_empty() {
+                info!("Memory store is empty - no memories to inject");
+            } else {
+                let mut memories_content = format_memories_as_markdown(&memories);
+
+                if memories_config.budget > 0 {
+                    let original_len = memories_content.len();
+                    memories_content =
+                        truncate_to_budget(&memories_content, memories_config.budget);
+                    debug!(
+                        "Applied budget: {} chars -> {} chars (budget: {})",
+                        original_len,
+                        memories_content.len(),
+                        memories_config.budget
+                    );
+                }
+
                 info!(
-                    "Failed to load memories for injection: {} (path: {:?})",
-                    e, memories_path
+                    "Injecting {} memories ({} chars) into prompt",
+                    memories.len(),
+                    memories_content.len()
                 );
-                return;
+
+                prefix.push_str(&memories_content);
             }
-        };
-
-        if memories.is_empty() {
-            info!("Memory store is empty - no memories to inject");
-            return;
         }
 
-        let mut memories_content = format_memories_as_markdown(&memories);
-
-        if memories_config.budget > 0 {
-            let original_len = memories_content.len();
-            memories_content = truncate_to_budget(&memories_content, memories_config.budget);
-            debug!(
-                "Applied budget: {} chars -> {} chars (budget: {})",
-                original_len,
-                memories_content.len(),
-                memories_config.budget
-            );
-        }
-
-        info!(
-            "Injecting {} memories ({} chars) into prompt",
-            memories.len(),
-            memories_content.len()
-        );
-
-        prefix.push_str(&memories_content);
-
-        // Append the memories usage skill content
-        if let Some(skill) = self.skill_registry.get("ralph-memories") {
-            prefix.push_str(&skill.content);
-            debug!("Added memories skill from registry");
-        } else {
-            debug!("Memories skill not found in registry - skill content not injected");
+        // Inject the ralph-tools skill when either memories or tasks are enabled
+        if memories_config.enabled || self.config.tasks.enabled {
+            if let Some(skill) = self.skill_registry.get("ralph-tools") {
+                if !prefix.is_empty() {
+                    prefix.push_str("\n\n");
+                }
+                prefix.push_str(&format!(
+                    "<ralph-tools-skill>\n{}\n</ralph-tools-skill>",
+                    skill.content.trim()
+                ));
+                debug!("Injected ralph-tools skill from registry");
+            } else {
+                debug!("ralph-tools skill not found in registry - skill content not injected");
+            }
         }
     }
 
-    /// Injects the tasks skill content into the prefix.
+    /// Injects the RObot interaction skill content into the prefix.
     ///
-    /// Gated by `tasks.enabled`. The tasks skill provides CLI instructions
-    /// for runtime work tracking.
-    fn inject_tasks_skill(&self, prefix: &mut String) {
-        if !self.config.tasks.enabled {
-            debug!("Tasks injection skipped: tasks.enabled=false");
+    /// Gated by `robot.enabled`. Teaches agents how and when to interact
+    /// with humans via `interact.human` events.
+    fn inject_robot_skill(&self, prefix: &mut String) {
+        if !self.config.robot.enabled {
             return;
         }
 
-        if let Some(skill) = self.skill_registry.get("tasks") {
+        if let Some(skill) = self.skill_registry.get("robot-interaction") {
             if !prefix.is_empty() {
                 prefix.push_str("\n\n");
             }
             prefix.push_str(&format!(
-                "<tasks-skill>\n{}\n</tasks-skill>",
+                "<robot-skill>\n{}\n</robot-skill>",
                 skill.content.trim()
             ));
-            debug!("Injected tasks skill from registry");
-        } else {
-            debug!("Tasks skill not found in registry - tasks content not injected");
+            debug!("Injected robot interaction skill from registry");
         }
     }
 
-    /// Injects any user-configured auto-inject skills (excluding built-in memories/tasks).
+    /// Injects any user-configured auto-inject skills (excluding built-in ralph-tools/robot-interaction).
     fn inject_custom_auto_skills(&self, prefix: &mut String) {
         for skill in self.skill_registry.auto_inject_skills(None) {
             // Skip built-in skills handled above
-            if skill.name == "ralph-memories" || skill.name == "tasks" {
+            if skill.name == "ralph-tools" || skill.name == "robot-interaction" {
                 continue;
             }
 
@@ -894,9 +1033,103 @@ impl EventLoop {
         info!("Injecting scratchpad ({} chars) into prompt", content.len());
 
         let mut final_prompt = format!(
-            "## Scratchpad\n\nCurrent contents of `{}`:\n\n{}\n\n",
+            "<scratchpad path=\"{}\">\n{}\n</scratchpad>\n\n",
             self.config.core.scratchpad, content
         );
+        final_prompt.push_str(&prompt);
+        final_prompt
+    }
+
+    /// Prepends ready tasks to the prompt if tasks are enabled and any exist.
+    ///
+    /// Loads the task store and formats ready (unblocked, open) tasks into
+    /// a `<ready-tasks>` XML block. This saves the agent a tool call per
+    /// iteration and puts tasks at the same prominence as the scratchpad.
+    fn prepend_ready_tasks(&self, prompt: String) -> String {
+        if !self.config.tasks.enabled {
+            return prompt;
+        }
+
+        use crate::task::TaskStatus;
+        use crate::task_store::TaskStore;
+
+        let tasks_path = self.tasks_path();
+        let resolved_path = if tasks_path.is_relative() {
+            self.config.core.workspace_root.join(&tasks_path)
+        } else {
+            tasks_path
+        };
+
+        if !resolved_path.exists() {
+            return prompt;
+        }
+
+        let store = match TaskStore::load(&resolved_path) {
+            Ok(s) => s,
+            Err(e) => {
+                info!("Failed to load task store for injection: {}", e);
+                return prompt;
+            }
+        };
+
+        let ready = store.ready();
+        let open = store.open();
+        let closed_count = store.all().len() - open.len();
+
+        if open.is_empty() && closed_count == 0 {
+            return prompt;
+        }
+
+        let mut section = String::from("<ready-tasks>\n");
+        if ready.is_empty() && open.is_empty() {
+            section.push_str("No open tasks. Create tasks with `ralph tools task add`.\n");
+        } else {
+            section.push_str(&format!(
+                "## Tasks: {} ready, {} open, {} closed\n\n",
+                ready.len(),
+                open.len(),
+                closed_count
+            ));
+            for task in &ready {
+                let status_icon = match task.status {
+                    TaskStatus::Open => "[ ]",
+                    TaskStatus::InProgress => "[~]",
+                    _ => "[?]",
+                };
+                section.push_str(&format!(
+                    "- {} [P{}] {} ({})\n",
+                    status_icon, task.priority, task.title, task.id
+                ));
+            }
+            // Show blocked tasks separately so agent knows they exist
+            let ready_ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+            let blocked: Vec<_> = open
+                .iter()
+                .filter(|t| !ready_ids.contains(&t.id.as_str()))
+                .collect();
+            if !blocked.is_empty() {
+                section.push_str("\nBlocked:\n");
+                for task in blocked {
+                    section.push_str(&format!(
+                        "- [blocked] [P{}] {} ({}) — blocked by: {}\n",
+                        task.priority,
+                        task.title,
+                        task.id,
+                        task.blocked_by.join(", ")
+                    ));
+                }
+            }
+        }
+        section.push_str("</ready-tasks>\n\n");
+
+        info!(
+            "Injecting ready tasks ({} ready, {} open, {} closed) into prompt",
+            ready.len(),
+            open.len(),
+            closed_count
+        );
+
+        let mut final_prompt = section;
         final_prompt.push_str(&prompt);
         final_prompt
     }
@@ -1085,6 +1318,32 @@ impl EventLoop {
         self.state.iteration += 1;
         self.state.last_hat = Some(hat_id.clone());
 
+        // Periodic Telegram check-in
+        if let Some(interval_secs) = self.config.robot.checkin_interval_seconds
+            && let Some(ref telegram_service) = self.telegram_service
+        {
+            let elapsed = self.state.elapsed();
+            let interval = std::time::Duration::from_secs(interval_secs);
+            let last = self
+                .state
+                .last_checkin_at
+                .map(|t| t.elapsed())
+                .unwrap_or(elapsed);
+
+            if last >= interval {
+                let context = self.build_checkin_context(hat_id);
+                match telegram_service.send_checkin(self.state.iteration, elapsed, Some(&context)) {
+                    Ok(_) => {
+                        self.state.last_checkin_at = Some(std::time::Instant::now());
+                        debug!(iteration = self.state.iteration, "Sent Telegram check-in");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to send Telegram check-in");
+                    }
+                }
+            }
+        }
+
         // Log iteration started
         self.diagnostics.log_orchestration(
             self.state.iteration,
@@ -1207,6 +1466,50 @@ impl EventLoop {
         Ok(!store.has_pending_tasks())
     }
 
+    /// Builds a [`CheckinContext`] with current loop state for enhanced Telegram check-ins.
+    fn build_checkin_context(&self, hat_id: &HatId) -> ralph_telegram::CheckinContext {
+        let (open_tasks, closed_tasks) = self.count_tasks();
+        ralph_telegram::CheckinContext {
+            current_hat: Some(hat_id.as_str().to_string()),
+            open_tasks,
+            closed_tasks,
+            cumulative_cost: self.state.cumulative_cost,
+        }
+    }
+
+    /// Counts open and closed tasks from the task store.
+    ///
+    /// Returns `(open_count, closed_count)`. "Open" means non-terminal tasks,
+    /// "closed" means tasks with `TaskStatus::Closed`.
+    fn count_tasks(&self) -> (usize, usize) {
+        use crate::task::TaskStatus;
+        use crate::task_store::TaskStore;
+
+        let tasks_path = self.tasks_path();
+        if !tasks_path.exists() {
+            return (0, 0);
+        }
+
+        match TaskStore::load(&tasks_path) {
+            Ok(store) => {
+                let total = store.all().len();
+                let open = store.open().len();
+                let closed = total - open;
+                // Verify: closed should match Closed status count
+                debug_assert_eq!(
+                    closed,
+                    store
+                        .all()
+                        .iter()
+                        .filter(|t| t.status == TaskStatus::Closed)
+                        .count()
+                );
+                (open, closed)
+            }
+            Err(_) => (0, 0),
+        }
+    }
+
     /// Returns a list of open task descriptions for logging purposes.
     fn get_open_task_list(&self) -> Vec<String> {
         use crate::task_store::TaskStore;
@@ -1314,8 +1617,54 @@ impl EventLoop {
                         "Missing backpressure evidence. Include 'tests: pass', 'lint: pass', 'typecheck: pass' in build.done payload.",
                     ));
                 }
+            } else if event.topic == "review.done" {
+                // Validate review.done events have verification evidence
+                if let Some(evidence) = EventParser::parse_review_evidence(&payload) {
+                    if evidence.is_verified() {
+                        validated_events.push(Event::new(event.topic.as_str(), &payload));
+                    } else {
+                        // Evidence present but checks failed - synthesize review.blocked
+                        warn!(
+                            tests = evidence.tests_passed,
+                            build = evidence.build_passed,
+                            "review.done rejected: verification checks failed"
+                        );
+
+                        self.diagnostics.log_orchestration(
+                            self.state.iteration,
+                            "jsonl",
+                            crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                                reason: format!(
+                                    "review verification failed: tests={}, build={}",
+                                    evidence.tests_passed, evidence.build_passed
+                                ),
+                            },
+                        );
+
+                        validated_events.push(Event::new(
+                            "review.blocked",
+                            "Review verification failed. Run tests and build before emitting review.done.",
+                        ));
+                    }
+                } else {
+                    // No evidence found - synthesize review.blocked
+                    warn!("review.done rejected: missing verification evidence");
+
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                            reason: "missing review verification evidence".to_string(),
+                        },
+                    );
+
+                    validated_events.push(Event::new(
+                        "review.blocked",
+                        "Missing verification evidence. Include 'tests: pass' and 'build: pass' in review.done payload.",
+                    ));
+                }
             } else {
-                // Non-build.done events pass through unchanged
+                // Non-build.done/review.done events pass through unchanged
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
             }
         }
@@ -1384,9 +1733,90 @@ impl EventLoop {
             self.state.last_blocked_hat = None;
         }
 
-        // Publish validated events
+        // Handle interact.human blocking behavior:
+        // When an interact.human event is detected and Telegram service is active,
+        // send the question and block until human.response or timeout.
+        let mut response_event = None;
+        let ask_human_idx = validated_events
+            .iter()
+            .position(|e| e.topic == "interact.human".into());
+
+        if let Some(idx) = ask_human_idx {
+            let ask_event = &validated_events[idx];
+            let payload = ask_event.payload.clone();
+
+            if let Some(ref telegram_service) = self.telegram_service {
+                info!(
+                    payload = %payload,
+                    "interact.human event detected — sending question via Telegram"
+                );
+
+                // Send the question (includes retry with exponential backoff)
+                let send_ok = match telegram_service.send_question(&payload) {
+                    Ok(_message_id) => true,
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "Failed to send interact.human question after retries — treating as timeout"
+                        );
+                        // Log to diagnostics
+                        self.diagnostics.log_error(
+                            self.state.iteration,
+                            "telegram",
+                            crate::diagnostics::DiagnosticError::TelegramSendError {
+                                operation: "send_question".to_string(),
+                                error: e.to_string(),
+                                retry_count: ralph_telegram::MAX_SEND_RETRIES,
+                            },
+                        );
+                        false
+                    }
+                };
+
+                // Block: poll events file for human.response
+                // Per spec, even on send failure we treat as timeout (continue without blocking)
+                if send_ok {
+                    let events_path = self
+                        .loop_context
+                        .as_ref()
+                        .map(|ctx| ctx.events_path())
+                        .unwrap_or_else(|| PathBuf::from(".ralph/events.jsonl"));
+
+                    match telegram_service.wait_for_response(&events_path) {
+                        Ok(Some(response)) => {
+                            info!(
+                                response = %response,
+                                "Received human.response — continuing loop"
+                            );
+                            // Create a human.response event to inject into the bus
+                            response_event = Some(Event::new("human.response", &response));
+                        }
+                        Ok(None) => {
+                            warn!(
+                                timeout_secs = telegram_service.timeout_secs(),
+                                "Human response timeout — continuing without response"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "Error waiting for human response — continuing without response"
+                            );
+                        }
+                    }
+                }
+            } else {
+                debug!(
+                    "interact.human event detected but no Telegram service active — passing through"
+                );
+            }
+        }
+
+        // Publish validated events to the bus.
+        // Ralph is always registered with subscribe("*"), so every event has at least
+        // one subscriber. Events without a specific hat subscriber are "orphaned" —
+        // Ralph handles them as the universal fallback.
         for event in validated_events {
-            // Log all events from JSONL (whether orphaned or not)
             self.diagnostics.log_orchestration(
                 self.state.iteration,
                 "jsonl",
@@ -1395,21 +1825,24 @@ impl EventLoop {
                 },
             );
 
-            // Check if any hat subscribes to this event
-            if self.registry.has_subscriber(event.topic.as_str()) {
-                debug!(
-                    topic = %event.topic,
-                    "Publishing event from JSONL"
-                );
-                self.bus.publish(event);
-            } else {
-                // Orphaned event - Ralph will handle it
-                debug!(
-                    topic = %event.topic,
-                    "Event has no subscriber - will be handled by Ralph"
-                );
+            if !self.registry.has_subscriber(event.topic.as_str()) {
                 has_orphans = true;
             }
+
+            debug!(
+                topic = %event.topic,
+                "Publishing event from JSONL"
+            );
+            self.bus.publish(event);
+        }
+
+        // Publish human.response event if one was received during blocking
+        if let Some(response) = response_event {
+            info!(
+                topic = %response.topic,
+                "Publishing human.response event from Telegram"
+            );
+            self.bus.publish(response);
         }
 
         Ok(has_orphans)
@@ -1429,6 +1862,9 @@ impl EventLoop {
     ///
     /// Returns the event for logging purposes.
     pub fn publish_terminate_event(&mut self, reason: &TerminationReason) -> Event {
+        // Stop the Telegram service if it was running
+        self.stop_telegram_service();
+
         let elapsed = self.state.elapsed();
         let duration_str = format_duration(elapsed);
 
@@ -1457,6 +1893,33 @@ impl EventLoop {
         );
 
         event
+    }
+
+    /// Returns the Telegram service's shutdown flag, if active.
+    ///
+    /// Signal handlers can set this flag to interrupt `wait_for_response()`
+    /// without waiting for the full timeout.
+    pub fn telegram_shutdown_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.telegram_service.as_ref().map(|s| s.shutdown_flag())
+    }
+
+    /// Returns a reference to the Telegram service, if active.
+    pub fn telegram_service(&self) -> Option<&TelegramService> {
+        self.telegram_service.as_ref()
+    }
+
+    /// Returns a mutable reference to the Telegram service, if active.
+    pub fn telegram_service_mut(&mut self) -> Option<&mut TelegramService> {
+        self.telegram_service.as_mut()
+    }
+
+    /// Stops the Telegram service if it's running.
+    ///
+    /// Called during loop termination to cleanly shut down the bot.
+    fn stop_telegram_service(&mut self) {
+        if let Some(service) = self.telegram_service.take() {
+            service.stop();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1678,5 +2141,6 @@ fn termination_status_text(reason: &TerminationReason) -> &'static str {
         TerminationReason::Interrupted => "Interrupted by signal.",
         TerminationReason::ChaosModeComplete => "Chaos mode exploration complete.",
         TerminationReason::ChaosModeMaxIterations => "Chaos mode stopped at iteration limit.",
+        TerminationReason::RestartRequested => "Restarting by human request.",
     }
 }

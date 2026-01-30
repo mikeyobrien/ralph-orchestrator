@@ -38,6 +38,11 @@ pub enum DiagnosticError {
         line: String,
         error: String,
     },
+    TelegramSendError {
+        operation: String,
+        error: String,
+        retry_count: u32,
+    },
 }
 
 impl DiagnosticError {
@@ -48,6 +53,7 @@ impl DiagnosticError {
             Self::BackendError { .. } => "backend_error",
             Self::Timeout { .. } => "timeout",
             Self::MalformedEvent { .. } => "malformed_event",
+            Self::TelegramSendError { .. } => "telegram_send_error",
         }
     }
 
@@ -58,6 +64,7 @@ impl DiagnosticError {
             Self::BackendError { message, .. } => message.clone(),
             Self::Timeout { operation, .. } => format!("Operation timed out: {}", operation),
             Self::MalformedEvent { error, .. } => error.clone(),
+            Self::TelegramSendError { error, .. } => error.clone(),
         }
     }
 
@@ -94,6 +101,14 @@ impl DiagnosticError {
             }),
             Self::MalformedEvent { line, error: _ } => serde_json::json!({
                 "line": line,
+            }),
+            Self::TelegramSendError {
+                operation,
+                error: _,
+                retry_count,
+            } => serde_json::json!({
+                "operation": operation,
+                "retry_count": retry_count,
             }),
         }
     }

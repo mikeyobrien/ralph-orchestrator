@@ -9,6 +9,7 @@
 //! - Topic matching for event routing
 //! - Common error types
 
+pub mod daemon;
 mod error;
 mod event;
 mod event_bus;
@@ -16,6 +17,7 @@ mod hat;
 mod topic;
 mod ux_event;
 
+pub use daemon::{DaemonAdapter, StartLoopFn};
 pub use error::{Error, Result};
 pub use event::Event;
 pub use event_bus::EventBus;

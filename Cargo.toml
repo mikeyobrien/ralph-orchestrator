@@ -8,6 +8,7 @@ members = [
     "crates/ralph-cli",
     "crates/ralph-bench",
     "crates/ralph-e2e",
+    "crates/ralph-telegram",
 ]
 exclude = [
     ".eval-sandbox",  # Evaluation sandbox - should never be in workspace
@@ -93,11 +94,14 @@ clap = { version = "4", features = ["derive"] }
 regex = "1"
 
 # HTTP client for remote presets
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Error handling
 thiserror = "2"
 anyhow = "1"
+
+# OS keychain for secure credential storage
+keyring = { version = "3", features = ["apple-native", "sync-secret-service"] }
 
 # Logging/tracing
 tracing = "0.1"
@@ -136,6 +140,10 @@ ralph-tui = { version = "2.3.1", path = "crates/ralph-tui" }
 ralph-cli = { version = "2.3.1", path = "crates/ralph-cli" }
 ralph-bench = { version = "2.3.1", path = "crates/ralph-bench" }
 ralph-e2e = { version = "2.3.1", path = "crates/ralph-e2e" }
+ralph-telegram = { version = "2.3.1", path = "crates/ralph-telegram" }
+
+# Telegram bot framework
+teloxide = { version = "0.13", features = ["macros"] }
 
 # Config for 'dist'
 [workspace.metadata.dist]

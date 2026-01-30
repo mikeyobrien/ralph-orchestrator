@@ -221,6 +221,7 @@ impl SummaryWriter {
             TerminationReason::Interrupted => "Interrupted by signal",
             TerminationReason::ChaosModeComplete => "Chaos mode: exploration complete",
             TerminationReason::ChaosModeMaxIterations => "Chaos mode: max iterations reached",
+            TerminationReason::RestartRequested => "Restarting by human request",
         }
     }
 
@@ -318,6 +319,7 @@ mod tests {
             consecutive_malformed_events: 0,
             hat_activation_counts: std::collections::HashMap::new(),
             exhausted_hats: std::collections::HashSet::new(),
+            last_checkin_at: None,
         }
     }
 
