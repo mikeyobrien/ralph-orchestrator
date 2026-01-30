@@ -228,11 +228,14 @@ hats:
          ralph emit "review.audience_brand" "audience_brand: reviewed [N] ideas"
          ```
 
-      ### Scoring Guide
-      - 8-10: Compelling + perfectly on-brand
-      - 6-7: Interesting but tone/voice needs adjustment
-      - 4-5: Generic or misaligned with avatar
-      - 1-3: Skip-worthy or brand violation
+      ### Scoring Guide (Be Harsh)
+      - 9-10: Exceptional. Stops thumbs mid-scroll + perfect brand fit. Rare.
+      - 7-8: Strong hook, good alignment, but not extraordinary
+      - 5-6: Decent but forgettable. Tone issues or generic angle.
+      - 3-4: Weak hook or brand misalignment
+      - 1-2: Skip-worthy or brand violation
+
+      Default to 6-7 range. Reserve 8+ for truly outstanding ideas.
 
   critic_reviewer:
     name: "Critical Reviewer"
@@ -243,22 +246,22 @@ hats:
     instructions: |
       ## CRITICAL REVIEWER PHASE
 
-      You are the harsh but fair critic. Find what's weak, derivative, or cliché.
+      You are the ruthless critic. Assume every idea is mediocre until proven exceptional.
 
       ### Process
 
       1. Read all ideas: `.ideation/output/ideas.yaml`
-      2. For EACH idea, score 1-10 based on:
-         - Is this original or derivative? (4 points)
-         - Is this cringe or compelling? (3 points)
-         - Would this actually work? (3 points)
+      2. For EACH idea, score 1-10 with extreme skepticism:
+         - Is this truly original? (Not just "slightly different") (4 points)
+         - Is this cringe, derivative, or genuinely fresh? (3 points)
+         - Would this actually stop someone scrolling? Be honest. (3 points)
 
       3. Update EACH idea's reviews array:
          ```yaml
          reviews:
            - reviewer: "critic"
-             score: 5.5
-             feedback: "Hook is cliché ('late-night magic'). Angle has been done before. Needs fresh take."
+             score: 5.0
+             feedback: "Hook uses tired pattern ('Everyone talks about X, nobody talks about Y'). Seen this 1000 times. Angle lacks specificity. Why would I care?"
          ```
 
       4. Calculate average score for EACH idea:
@@ -266,20 +269,23 @@ hats:
          - Round to 1 decimal place
 
       5. Set status for EACH idea:
-         - status: "passing" if avg_score >= 7.0
-         - status: "failing" if avg_score < 7.0
+         - status: "passing" if avg_score >= 8.0
+         - status: "failing" if avg_score < 8.0
 
       6. Write updated YAML back to `.ideation/output/ideas.yaml`
 
       7. Count passing ideas and publish event:
          ```bash
-         ralph emit "review.complete" "critic: reviewed [N] ideas, [M] passing (avg >= 7.0)"
+         ralph emit "review.complete" "critic: reviewed [N] ideas, [M] passing (avg >= 8.0)"
          ```
 
-      ### Be Ruthless
-      - Call out generic language ("magic", "journey", "elevate")
-      - Flag derivative angles (seen 100 times before)
-      - Question vague rationales (explain specifics)
+      ### Be EXTREMELY Ruthless
+      - Default score: 5-6. Make them earn 7+. Reserve 8+ for rare brilliance.
+      - Call out ALL generic language ("magic", "journey", "elevate", "authentic", "game-changer")
+      - Flag overused patterns ("Everyone says X, but Y", "The truth about Z", "What nobody tells you")
+      - Reject vague hooks that could apply to anything
+      - Question every rationale: "So what? Why does this matter RIGHT NOW?"
+      - If you've seen the angle before, say so explicitly
 
   completion_checker:
     name: "Completion Checker"
@@ -304,7 +310,7 @@ hats:
       3. Check end conditions in order:
 
       **Condition 1: Quality threshold met**
-      - If >= 3 ideas with status "passing" (avg_score >= 7.0):
+      - If >= 3 ideas with status "passing" (avg_score >= 8.0):
         - Update rounds counter in ideas.yaml
         - Close all tasks: `ralph tools task list` and close each
         - Output completion promise: `IDEATION_COMPLETE`

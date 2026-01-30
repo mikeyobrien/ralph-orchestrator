@@ -40,40 +40,116 @@ case $1 in
 
     # Run Ralph with content-ideation preset
     "$RALPH" run -c .ideation/preset.yml -p "$prompt"
+
+    # Auto-archive if run completed successfully
+    if [[ $? -eq 0 && -f .ideation/output/ideas.yaml ]]; then
+      echo ""
+      echo "Run completed. Auto-archiving results..."
+      "$0" archive
+    fi
+    ;;
+
+  continue)
+    shift
+    more="${1:-3}"  # How many MORE passing ideas to generate (default: 3)
+
+    if [[ ! -f .ideation/output/ideas.yaml ]]; then
+      echo "Error: No existing ideas found. Use 'ideate run' first."
+      exit 1
+    fi
+
+    # Count current passing ideas
+    current_passing=$(grep -c 'status: "passing"' .ideation/output/ideas.yaml 2>/dev/null || echo "0")
+    new_threshold=$((current_passing + more))
+
+    echo "=== Continue Mode ==="
+    echo "Current passing ideas: $current_passing"
+    echo "Target: $new_threshold passing ideas (need $more more)"
+    echo ""
+
+    # Create temporary preset with higher threshold
+    tmp_preset="/tmp/ideate-continue-$$.yml"
+    cp .ideation/preset.yml "$tmp_preset"
+
+    # Update the completion threshold in temp preset (portable sed)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s/If >= [0-9]* ideas with status \"passing\"/If >= $new_threshold ideas with status \"passing\"/" "$tmp_preset"
+    else
+      sed -i "s/If >= [0-9]* ideas with status \"passing\"/If >= $new_threshold ideas with status \"passing\"/" "$tmp_preset"
+    fi
+
+    # Update the prompt to emphasize generating DIFFERENT ideas
+    prompt="Generate $more NEW content ideas that are DIFFERENT from existing ones. Review .ideation/output/ideas.yaml first to avoid duplicates. Focus on unexplored angles and fresh perspectives."
+
+    echo "Running with adjusted threshold ($new_threshold ideas)..."
+    "$RALPH" run -c "$tmp_preset" -p "$prompt"
+
+    # Cleanup
+    rm -f "$tmp_preset"
+
+    # Auto-archive if successful
+    if [[ $? -eq 0 ]]; then
+      echo ""
+      echo "Continue run completed. Auto-archiving results..."
+      "$0" archive
+    fi
     ;;
 
   show)
     if [[ ! -f .ideation/output/ideas.yaml ]]; then
-      echo "No ideas generated yet. Run: ideate run"
+      echo "No ideas generated yet. Run: ./.ideation/ideate run"
       exit 1
     fi
 
-    # Show passing ideas with color
-    echo "=== Passing Ideas (avg >= 7.0) ==="
-    yq eval '.ideas[] | select(.status == "passing") |
-      "---\nTitle: " + .title +
-      "\nHook: " + .hook +
-      "\nScore: " + (.avg_score | tostring) +
-      "\nCreator: " + .creator +
-      "\n"' .ideation/output/ideas.yaml
+    # Show passing ideas using awk (no yq dependency)
+    echo "=== Passing Ideas (avg >= 8.0) ==="
+    awk '
+      BEGIN { in_idea=0; status=""; title=""; hook=""; score=""; creator="" }
+      /^  - id:/ {
+        if (in_idea && status == "passing") {
+          print "---"
+          print "Title: " title
+          print "Hook: " hook
+          print "Score: " score
+          print "Creator: " creator
+          print ""
+        }
+        in_idea=1; status=""; title=""; hook=""; score=""; creator=""
+      }
+      in_idea && /^    title:/ { gsub(/^    title: "|"$/, ""); title=$0 }
+      in_idea && /^    hook:/ { gsub(/^    hook: "|"$/, ""); hook=$0 }
+      in_idea && /^    avg_score:/ { score=$2 }
+      in_idea && /^    creator:/ { gsub(/^    creator: "|"$/, ""); creator=$0 }
+      in_idea && /^    status:/ { gsub(/^    status: "|"$/, ""); status=$0 }
+      END {
+        if (in_idea && status == "passing") {
+          print "---"
+          print "Title: " title
+          print "Hook: " hook
+          print "Score: " score
+          print "Creator: " creator
+        }
+      }
+    ' .ideation/output/ideas.yaml
     ;;
 
   stats)
     if [[ ! -f .ideation/output/ideas.yaml ]]; then
-      echo "No ideas generated yet. Run: ideate run"
+      echo "No ideas generated yet. Run: ./.ideation/ideate run"
       exit 1
     fi
 
-    total=$(yq eval '.ideas | length' .ideation/output/ideas.yaml)
-    passing=$(yq eval '.ideas[] | select(.status == "passing") | .id' .ideation/output/ideas.yaml | wc -l)
+    # Calculate stats using grep (no yq dependency)
+    total=$(grep -c "^  - id:" .ideation/output/ideas.yaml 2>/dev/null || echo "0")
+    passing=$(grep -c 'status: "passing"' .ideation/output/ideas.yaml 2>/dev/null || echo "0")
     failing=$((total - passing))
-    rounds=$(yq eval '.rounds' .ideation/output/ideas.yaml)
+    rounds=$(grep "^rounds:" .ideation/output/ideas.yaml | sed 's/rounds: //')
 
     echo "=== Ideation Stats ==="
     echo "Rounds: $rounds"
     echo "Total ideas: $total"
-    echo "Passing (≥7.0): $passing"
-    echo "Failing (<7.0): $failing"
+    echo "Passing (≥8.0): $passing"
+    echo "Failing (<8.0): $failing"
     ;;
 
   archive)
@@ -221,19 +297,21 @@ case $1 in
     echo ""
     echo "Commands:"
     echo "  setup [avatar] [template]  - Copy avatar and template to input/ (default: myla late-night-techno)"
-    echo "  run [prompt]               - Run ideation loop (default prompt: 'Generate content ideas')"
+    echo "  run [prompt]               - Run ideation loop (auto-archives on success)"
+    echo "  continue [N]               - Generate N MORE ideas (default: 3) on top of existing ones"
     echo "  show                       - Show passing ideas"
     echo "  stats                      - Show ideation statistics"
     echo "  split                      - Split ideas into passing and failing files"
-    echo "  archive                    - Archive current ideas with timestamp (auto-splits by status)"
+    echo "  archive                    - Manually archive current ideas (called automatically after runs)"
     echo "  clean                      - Clear output files"
     echo ""
     echo "Examples:"
     echo "  ideate setup myla late-night-techno"
-    echo "  ideate run"
+    echo "  ideate run                 # Runs and auto-archives on success"
+    echo "  ideate continue            # Generate 3 more passing ideas"
+    echo "  ideate continue 5          # Generate 5 more passing ideas"
     echo "  ideate show"
     echo "  ideate split               # Split into passing/failing files"
-    echo "  ideate archive             # Archive with automatic splitting"
     exit 1
     ;;
 esac
