@@ -1,203 +1,142 @@
 # Content Ideation System
 
-AI-driven content idea generation using Ralph orchestrator's multi-agent collaboration.
+AI-driven content idea generator using Ralph orchestrator's multi-agent pipeline.
+
+## What It Does
+
+Generates scored content ideas using a 5-agent pipeline:
+
+1. **Planner** - Reads your avatar + prompt, creates tasks
+2. **Trend Spotter** - Generates culturally relevant ideas
+3. **Storyteller** - Generates narrative-driven ideas
+4. **Audience & Brand Reviewer** - Scores on appeal + authenticity
+5. **Critic** - Ruthlessly scores on originality + quality
+
+**Completion:** Loop runs until you have 3+ passing ideas (avg score ≥ 8.0).
+
+**Output:** `.ideation/output/ideas.yaml` with scored ideas + reviews
 
 ## Quick Start
 
 ```bash
-# 1. Setup inputs (copies avatar + template)
+# 1. Setup (copies avatar + prompt templates)
 ./.ideation/ideate setup myla late-night-techno
 
-# 2. Edit prompt with specifics
+# 2. Edit prompt with your specifics
 nano .ideation/input/prompt.md
 
-# 3. Run ideation
+# 3. Generate ideas (auto-archives on completion)
 ./.ideation/ideate run
 
 # 4. View results
 ./.ideation/ideate show
 ./.ideation/ideate stats
-
-# 5. Archive good runs
-./.ideation/ideate archive
 ```
 
-## How It Works
+## Commands
 
-**Streamlined Multi-Agent Loop (5 hats):**
-1. **Planner** - Analyzes avatar + prompt, creates tasks
-2. **Creators** - Generate ideas (Trend Spotter, Storyteller)
-3. **Reviewers** - Score ideas (Audience+Brand, Critic)
-4. **Checker** - Iterate or complete (need 3+ ideas with avg ≥ 7.0)
+| Command | Description |
+|---------|-------------|
+| `setup [avatar] [template]` | Copy avatar + prompt to input/ (default: myla late-night-techno) |
+| `run [prompt]` | Generate ideas (auto-archives on success) |
+| `continue [N]` | Generate N MORE ideas (default: 3) on top of existing ones |
+| `show` | Display passing ideas (≥8.0) |
+| `stats` | Show round count, passing/failing breakdown |
+| `archive` | Manually archive current run (auto-called after runs) |
+| `clean` | Clear output files |
 
-**Optimization:** Reduced from 8 to 5 hats for 50% faster iterations while maintaining quality.
+## Typical Workflow
 
-**Inputs:**
-- `input/avatar.yaml` - WHO is creating (personality, voice, expertise)
-- `input/prompt.md` - WHAT to create (theme, angles, constraints)
+```bash
+# Initial run
+./.ideation/ideate setup myla late-night-techno
+nano .ideation/input/prompt.md
+./.ideation/ideate run
 
-**Outputs:**
-- `output/ideas.yaml` - Scored content ideas with reviews
+# View results
+./.ideation/ideate show
+
+# Need more ideas?
+./.ideation/ideate continue      # Generate 3 more
+./.ideation/ideate continue 5    # Generate 5 more
+```
 
 ## Directory Structure
 
 ```
 .ideation/
-├── input/           # Per-run inputs
-│   ├── avatar.yaml  # Copy from templates/
-│   └── prompt.md    # Copy from templates/
-│
+├── ideate              # Main executable
+├── preset.yml          # Ralph configuration
+├── templates/          # Avatar profiles + prompt templates
+│   ├── myla.yaml
+│   ├── avatar-schema.md
+│   ├── late-night-techno.md
+│   └── trend-analysis.md
+├── input/              # Working directory (your edits)
+│   ├── avatar.yaml
+│   └── prompt.md
 ├── output/
-│   └── ideas.yaml   # Generated ideas with scores
-│
-├── templates/       # Reusable templates (avatars + prompts)
-│   ├── myla.yaml              # Avatar profiles
-│   ├── avatar-schema.md       # Avatar schema docs
-│   ├── late-night-techno.md   # Prompt templates
-│   ├── trend-analysis.md
-│   └── README.md
-│
-└── archive/         # Historical runs
-    └── 20260129-120000-myla-late-night.yaml
+│   └── ideas.yaml      # Generated ideas
+└── archive/            # Timestamped archives
+    └── 20260130-102000-myla-theme/
+        ├── all-ideas.yaml
+        ├── passing-ideas.yaml
+        └── failing-ideas.yaml
 ```
 
-## Using the CLI Wrapper
+## Customization
+
+### Create New Avatar
 
 ```bash
-# Setup with defaults (myla + late-night-techno)
-./.ideation/ideate setup
-
-# Setup with specific avatar and template
-./.ideation/ideate setup myla trend-analysis
-
-# Run with custom prompt
-./.ideation/ideate run "Generate festival season content ideas"
-
-# View only passing ideas
-./.ideation/ideate show
-
-# View statistics
-./.ideation/ideate stats
-
-# Archive results
-./.ideation/ideate archive
-
-# Clear outputs
-./.ideation/ideate clean
+cp .ideation/templates/myla.yaml .ideation/templates/your-avatar.yaml
+nano .ideation/templates/your-avatar.yaml
+./.ideation/ideate setup your-avatar late-night-techno
 ```
 
-## Using Ralph Directly
+See `templates/avatar-schema.md` for schema.
+
+### Create New Prompt Template
 
 ```bash
-# More control over Ralph configuration
-ralph run -c .ideation/preset.yml -p "Generate ideas" --max-iterations 30
-
-# View diagnostics
-RALPH_DIAGNOSTICS=1 ralph run -c .ideation/preset.yml -p "Generate ideas"
-
-# Use memories from previous runs
-ralph tools memory search "myla OR techno"
+cp .ideation/templates/trend-analysis.md .ideation/templates/your-template.md
+nano .ideation/templates/your-template.md
+./.ideation/ideate setup myla your-template
 ```
 
-## Creating Custom Avatars
+### Adjust Scoring
 
-Copy and edit:
-```bash
-cp .ideation/templates/avatar/myla.yaml .ideation/templates/custom.yaml
-nano .ideation/templates/custom.yaml
-```
+Edit `.ideation/preset.yml`:
+- Change passing threshold (line 269, 276, 307): `avg_score >= 8.0`
+- Modify reviewer scoring criteria
+- Adjust completion threshold (default: 3 passing ideas)
 
-Schema: see `templates/avatar/avatar-schema.md`
-
-## Creating Custom Prompts
-
-Copy and edit:
-```bash
-cp .ideation/templates/trend-analysis.md .ideation/templates/custom.md
-nano .ideation/templates/custom.md
-```
-
-## Output Schema
+## Output Format
 
 ```yaml
-run_id: "20260129-120000"
-timestamp: "2026-01-29T12:00:00Z"
+run_id: "20260130-102000"
+timestamp: "2026-01-30T10:20:00Z"
 avatar: "Myla"
-theme: "Late-night melodic techno"
+theme: "How to become an influencer"
 rounds: 2
 
 ideas:
-  - id: "trend-001-1738152000"
-    title: "The 3am Shift"
-    hook: "Everyone talks about peak time. Nobody talks about what happens at 3am."
-    angle: "The dancefloor transforms after midnight - energy drops but connection deepens"
-    rationale: "Taps into insider knowledge and emotional authenticity"
-
-    mood: reflective
-    format: monologue
+  - id: "trend-001-1738234800"
+    title: "Your niche isn't a genre - it's a perspective"
+    hook: "Stop trying to be 'the melodic techno person.' That's not a niche."
+    angle: "Reframe niche as unique perspective, not category"
+    rationale: "Addresses common misconception, actionable reframe"
+    mood: provocative
+    format: tip
     duration_seconds: 75
     creator: "trend_spotter"
-
     reviews:
-      - reviewer: "audience"
-        score: 8.5
-        feedback: "Hook is strong, immediately creates curiosity"
-      - reviewer: "brand"
-        score: 9.0
-        feedback: "Perfect Myla voice - calm, insider, authentic"
+      - reviewer: "audience_brand"
+        score: 7.5
+        feedback: "Strong hook, slightly generic angle"
       - reviewer: "critic"
-        score: 7.0
-        feedback: "Good but angle could be more specific"
-
-    avg_score: 8.2
+        score: 8.5
+        feedback: "Fresh perspective on tired advice"
+    avg_score: 8.0
     status: "passing"
 ```
-
-## Memory System
-
-Ralph remembers patterns across runs:
-
-```bash
-# Add patterns manually
-ralph tools memory add "pattern: Hooks with questions score +1.5 higher" -t pattern
-
-# Search patterns
-ralph tools memory search "myla" --tags pattern
-
-# View all memories
-ralph tools memory list
-```
-
-Memories are injected automatically into agent context.
-
-## Troubleshooting
-
-**No ideas generated:**
-- Check inputs exist: `ls -la .ideation/input/`
-- Check preset loads: `yq eval . .ideation/preset.yml`
-- Run with diagnostics: `RALPH_DIAGNOSTICS=1 ./.ideation/ideate run`
-
-**Low scores:**
-- Check avatar constraints alignment
-- Search memories for patterns: `ralph tools memory search "low score"`
-- Iterate with more specific prompt
-
-**Loop doesn't complete:**
-- Check max_iterations: `yq eval '.event_loop.max_iterations' .ideation/preset.yml`
-- Monitor progress: `ralph tools task list`
-- Check completion threshold: need 3+ ideas with avg ≥ 7.0
-
-## Configuration
-
-Edit `.ideation/preset.yml`:
-
-- `max_iterations: 25` - Maximum loop iterations
-- `max_runtime_seconds: 3600` - Maximum runtime (1 hour)
-- Completion threshold in completion_checker hat instructions
-- Creator/reviewer scoring logic in hat instructions
-
-## References
-
-- [Constitution](../specs/constitution.md) - Full system design
-- [Ralph Docs](https://mikeyobrien.github.io/ralph-orchestrator/)
-- [Hat System](https://mikeyobrien.github.io/ralph-orchestrator/concepts/hats-and-events/)

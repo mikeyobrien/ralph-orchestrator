@@ -112,6 +112,7 @@ PROMPT.md
 !.ralph/agent/tasks.jsonl
 
 # Content ideation runtime files
+.ideation/archive/*
 .ideation/input/avatar.yaml
 .ideation/input/prompt.md
 .ideation/output/ideas.yaml
