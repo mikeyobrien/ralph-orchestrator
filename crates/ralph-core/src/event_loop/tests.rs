@@ -1762,7 +1762,7 @@ fn test_scratchpad_injection_with_content() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        prompt.contains("## Scratchpad"),
+        prompt.contains("<scratchpad"),
         "Prompt should contain scratchpad header"
     );
     assert!(
@@ -1791,8 +1791,8 @@ fn test_scratchpad_injection_no_file() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        !prompt.contains("## Scratchpad"),
-        "Prompt should NOT contain scratchpad header when file doesn't exist"
+        !prompt.contains("<scratchpad path="),
+        "Prompt should NOT contain scratchpad injection when file doesn't exist"
     );
 }
 
@@ -1814,8 +1814,8 @@ fn test_scratchpad_injection_empty_file() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        !prompt.contains("## Scratchpad"),
-        "Prompt should NOT contain scratchpad header when file is empty/whitespace"
+        !prompt.contains("<scratchpad path="),
+        "Prompt should NOT contain scratchpad injection when file is empty/whitespace"
     );
 }
 
@@ -1837,7 +1837,7 @@ fn test_scratchpad_injection_ordering() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     let scratchpad_pos = prompt
-        .find("## Scratchpad")
+        .find("<scratchpad")
         .expect("Should contain scratchpad");
     let orientation_pos = prompt
         .find("### 0a. ORIENTATION")
@@ -1877,7 +1877,7 @@ fn test_scratchpad_injection_tail_truncation() {
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
     assert!(
-        prompt.contains("## Scratchpad"),
+        prompt.contains("<scratchpad"),
         "Prompt should contain scratchpad header even when truncated"
     );
     assert!(
@@ -2011,5 +2011,49 @@ fn test_review_done_backpressure_rejects_failed_checks() {
         pending_topics.contains(&"review.blocked".to_string()),
         "review.done with failed tests should be blocked. Got: {:?}",
         pending_topics
+    );
+}
+
+// === RObot Interaction Skill Injection Tests ===
+
+#[test]
+fn test_inject_robot_skill_when_enabled() {
+    let yaml = r#"
+RObot:
+  enabled: true
+  telegram:
+    bot_token: "fake-token"
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        prompt.contains("<robot-skill>"),
+        "Prompt should contain <robot-skill> when RObot is enabled"
+    );
+    assert!(
+        prompt.contains("interact.human"),
+        "Robot skill should mention interact.human"
+    );
+    assert!(
+        prompt.contains("</robot-skill>"),
+        "Robot skill should have closing tag"
+    );
+}
+
+#[test]
+fn test_inject_robot_skill_skipped_when_disabled() {
+    let config = RalphConfig::default(); // RObot disabled by default
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test prompt");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        !prompt.contains("<robot-skill>"),
+        "Prompt should NOT contain <robot-skill> when RObot is disabled"
     );
 }

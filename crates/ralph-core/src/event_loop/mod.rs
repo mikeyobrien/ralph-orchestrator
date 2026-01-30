@@ -20,6 +20,8 @@ use crate::skill_registry::SkillRegistry;
 use ralph_proto::{Event, EventBus, Hat, HatId};
 use ralph_telegram::TelegramService;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -378,7 +380,7 @@ impl EventLoop {
         config: &RalphConfig,
         context: Option<&LoopContext>,
     ) -> Option<TelegramService> {
-        if !config.human.enabled {
+        if !config.robot.enabled {
             return None;
         }
 
@@ -398,8 +400,8 @@ impl EventLoop {
             .map(|ctx| ctx.workspace().to_path_buf())
             .unwrap_or_else(|| config.core.workspace_root.clone());
 
-        let bot_token = config.human.resolve_bot_token();
-        let timeout_secs = config.human.timeout_seconds.unwrap_or(300);
+        let bot_token = config.robot.resolve_bot_token();
+        let timeout_secs = config.robot.timeout_seconds.unwrap_or(300);
         let loop_id = context
             .and_then(|ctx| ctx.loop_id().map(String::from))
             .unwrap_or_else(|| "main".to_string());
@@ -699,14 +701,15 @@ impl EventLoop {
                 if !guidance_events.is_empty() {
                     let guidance: Vec<String> =
                         guidance_events.into_iter().map(|e| e.payload).collect();
-                    self.ralph.set_human_guidance(guidance);
+                    self.ralph.set_robot_guidance(guidance);
                 }
 
-                // Build base prompt and prepend memories + scratchpad if available
+                // Build base prompt and prepend memories + scratchpad + ready tasks
                 let base_prompt = self.ralph.build_prompt(&events_context, &[]);
-                self.ralph.clear_human_guidance();
+                self.ralph.clear_robot_guidance();
                 let with_skills = self.prepend_auto_inject_skills(base_prompt);
-                let final_prompt = self.prepend_scratchpad(with_skills);
+                let with_scratchpad = self.prepend_scratchpad(with_skills);
+                let final_prompt = self.prepend_ready_tasks(with_scratchpad);
 
                 debug!("build_prompt: routing to HatlessRalph (solo mode)");
                 return Some(final_prompt);
@@ -754,7 +757,7 @@ impl EventLoop {
                 if !guidance_events.is_empty() {
                     let guidance: Vec<String> =
                         guidance_events.into_iter().map(|e| e.payload).collect();
-                    self.ralph.set_human_guidance(guidance);
+                    self.ralph.set_robot_guidance(guidance);
                 }
 
                 // Determine which hats are active based on regular events
@@ -782,9 +785,10 @@ impl EventLoop {
                 );
 
                 // Clear guidance after active_hats references are no longer needed
-                self.ralph.clear_human_guidance();
+                self.ralph.clear_robot_guidance();
                 let with_skills = self.prepend_auto_inject_skills(base_prompt);
-                let final_prompt = self.prepend_scratchpad(with_skills);
+                let with_scratchpad = self.prepend_scratchpad(with_skills);
+                let final_prompt = self.prepend_ready_tasks(with_scratchpad);
 
                 return Some(final_prompt);
             }
@@ -838,7 +842,10 @@ impl EventLoop {
         // 2. Tasks skill — gated by tasks.enabled
         self.inject_tasks_skill(&mut prefix);
 
-        // 3. Other auto-inject skills from the registry
+        // 3. RObot interaction skill — gated by robot.enabled
+        self.inject_robot_skill(&mut prefix);
+
+        // 4. Other auto-inject skills from the registry
         self.inject_custom_auto_skills(&mut prefix);
 
         if prefix.is_empty() {
@@ -954,11 +961,35 @@ impl EventLoop {
         }
     }
 
-    /// Injects any user-configured auto-inject skills (excluding built-in memories/tasks).
+    /// Injects the RObot interaction skill content into the prefix.
+    ///
+    /// Gated by `robot.enabled`. Teaches agents how and when to interact
+    /// with humans via `interact.human` events.
+    fn inject_robot_skill(&self, prefix: &mut String) {
+        if !self.config.robot.enabled {
+            return;
+        }
+
+        if let Some(skill) = self.skill_registry.get("robot-interaction") {
+            if !prefix.is_empty() {
+                prefix.push_str("\n\n");
+            }
+            prefix.push_str(&format!(
+                "<robot-skill>\n{}\n</robot-skill>",
+                skill.content.trim()
+            ));
+            debug!("Injected robot interaction skill from registry");
+        }
+    }
+
+    /// Injects any user-configured auto-inject skills (excluding built-in memories/tasks/robot-interaction).
     fn inject_custom_auto_skills(&self, prefix: &mut String) {
         for skill in self.skill_registry.auto_inject_skills(None) {
             // Skip built-in skills handled above
-            if skill.name == "ralph-memories" || skill.name == "tasks" {
+            if skill.name == "ralph-memories"
+                || skill.name == "tasks"
+                || skill.name == "robot-interaction"
+            {
                 continue;
             }
 
@@ -1027,9 +1058,103 @@ impl EventLoop {
         info!("Injecting scratchpad ({} chars) into prompt", content.len());
 
         let mut final_prompt = format!(
-            "## Scratchpad\n\nCurrent contents of `{}`:\n\n{}\n\n",
+            "<scratchpad path=\"{}\">\n{}\n</scratchpad>\n\n",
             self.config.core.scratchpad, content
         );
+        final_prompt.push_str(&prompt);
+        final_prompt
+    }
+
+    /// Prepends ready tasks to the prompt if tasks are enabled and any exist.
+    ///
+    /// Loads the task store and formats ready (unblocked, open) tasks into
+    /// a `<ready-tasks>` XML block. This saves the agent a tool call per
+    /// iteration and puts tasks at the same prominence as the scratchpad.
+    fn prepend_ready_tasks(&self, prompt: String) -> String {
+        if !self.config.tasks.enabled {
+            return prompt;
+        }
+
+        use crate::task::TaskStatus;
+        use crate::task_store::TaskStore;
+
+        let tasks_path = self.tasks_path();
+        let resolved_path = if tasks_path.is_relative() {
+            self.config.core.workspace_root.join(&tasks_path)
+        } else {
+            tasks_path
+        };
+
+        if !resolved_path.exists() {
+            return prompt;
+        }
+
+        let store = match TaskStore::load(&resolved_path) {
+            Ok(s) => s,
+            Err(e) => {
+                info!("Failed to load task store for injection: {}", e);
+                return prompt;
+            }
+        };
+
+        let ready = store.ready();
+        let open = store.open();
+        let closed_count = store.all().len() - open.len();
+
+        if open.is_empty() && closed_count == 0 {
+            return prompt;
+        }
+
+        let mut section = String::from("<ready-tasks>\n");
+        if ready.is_empty() && open.is_empty() {
+            section.push_str("No open tasks. Create tasks with `ralph tools task add`.\n");
+        } else {
+            section.push_str(&format!(
+                "## Tasks: {} ready, {} open, {} closed\n\n",
+                ready.len(),
+                open.len(),
+                closed_count
+            ));
+            for task in &ready {
+                let status_icon = match task.status {
+                    TaskStatus::Open => "[ ]",
+                    TaskStatus::InProgress => "[~]",
+                    _ => "[?]",
+                };
+                section.push_str(&format!(
+                    "- {} [P{}] {} ({})\n",
+                    status_icon, task.priority, task.title, task.id
+                ));
+            }
+            // Show blocked tasks separately so agent knows they exist
+            let ready_ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+            let blocked: Vec<_> = open
+                .iter()
+                .filter(|t| !ready_ids.contains(&t.id.as_str()))
+                .collect();
+            if !blocked.is_empty() {
+                section.push_str("\nBlocked:\n");
+                for task in blocked {
+                    section.push_str(&format!(
+                        "- [blocked] [P{}] {} ({}) — blocked by: {}\n",
+                        task.priority,
+                        task.title,
+                        task.id,
+                        task.blocked_by.join(", ")
+                    ));
+                }
+            }
+        }
+        section.push_str("</ready-tasks>\n\n");
+
+        info!(
+            "Injecting ready tasks ({} ready, {} open, {} closed) into prompt",
+            ready.len(),
+            open.len(),
+            closed_count
+        );
+
+        let mut final_prompt = section;
         final_prompt.push_str(&prompt);
         final_prompt
     }
@@ -1219,7 +1344,7 @@ impl EventLoop {
         self.state.last_hat = Some(hat_id.clone());
 
         // Periodic Telegram check-in
-        if let Some(interval_secs) = self.config.human.checkin_interval_seconds
+        if let Some(interval_secs) = self.config.robot.checkin_interval_seconds
             && let Some(ref telegram_service) = self.telegram_service
         {
             let elapsed = self.state.elapsed();
@@ -1793,6 +1918,14 @@ impl EventLoop {
         );
 
         event
+    }
+
+    /// Returns the Telegram service's shutdown flag, if active.
+    ///
+    /// Signal handlers can set this flag to interrupt `wait_for_response()`
+    /// without waiting for the full timeout.
+    pub fn telegram_shutdown_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.telegram_service.as_ref().map(|s| s.shutdown_flag())
     }
 
     /// Returns a reference to the Telegram service, if active.

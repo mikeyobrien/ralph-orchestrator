@@ -16,6 +16,9 @@ const MEMORIES_SKILL_RAW: &str = include_str!("../data/memories-skill.md");
 /// Built-in tasks skill content.
 const TASKS_SKILL_RAW: &str = include_str!("../data/tasks-skill.md");
 
+/// Built-in RObot interaction skill content.
+const ROBOT_INTERACTION_SKILL_RAW: &str = include_str!("../data/robot-interaction-skill.md");
+
 /// Registry of all available skills for the current loop.
 pub struct SkillRegistry {
     /// All skills indexed by name.
@@ -58,10 +61,11 @@ impl SkillRegistry {
         Ok(())
     }
 
-    /// Register built-in skills (memories and tasks).
+    /// Register built-in skills (memories, tasks, and robot-interaction).
     fn register_builtins(&mut self) -> Result<()> {
         self.register_builtin("memories", MEMORIES_SKILL_RAW)?;
         self.register_builtin("tasks", TASKS_SKILL_RAW)?;
+        self.register_builtin("robot-interaction", ROBOT_INTERACTION_SKILL_RAW)?;
         Ok(())
     }
 
@@ -321,9 +325,10 @@ mod tests {
         let mut registry = SkillRegistry::new(None);
         registry.register_builtins().unwrap();
 
-        // Both memories and tasks should be registered
+        // All built-in skills should be registered
         assert!(registry.get("ralph-memories").is_some());
         assert!(registry.get("tasks").is_some());
+        assert!(registry.get("robot-interaction").is_some());
     }
 
     #[test]
@@ -573,6 +578,7 @@ mod tests {
         assert!(index.contains("| Skill | Description | Load Command |"));
         assert!(index.contains("ralph-memories"));
         assert!(index.contains("tasks"));
+        assert!(index.contains("robot-interaction"));
         assert!(index.contains("`ralph tools skill load"));
     }
 
