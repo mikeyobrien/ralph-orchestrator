@@ -253,4 +253,3 @@ rm .ralph/loop.lock
 | `RALPH_MERGE_LOOP_ID` | Set by auto-merge to identify which loop to merge |
 | `RALPH_DIAGNOSTICS=1` | Enable detailed diagnostic logging |
 | `RALPH_VERBOSE=1` | Verbose output mode |
-| `RALPH_DEBUG_LOG=1` | Write debug logs to `.agent/ralph.log` |

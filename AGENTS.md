@@ -211,6 +211,8 @@ See `crates/ralph-telegram/README.md` for setup instructions.
 
 ## Diagnostics
 
+TUI mode always logs to `.ralph/diagnostics/logs/ralph-{timestamp}.log` (last 5 kept automatically).
+
 ```bash
 RALPH_DIAGNOSTICS=1 ralph run -p "your prompt"
 ```
