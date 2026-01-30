@@ -8,6 +8,7 @@ members = [
     "crates/ralph-cli",
     "crates/ralph-bench",
     "crates/ralph-e2e",
+    "crates/ralph-heygen",
 ]
 exclude = [
     ".eval-sandbox",  # Evaluation sandbox - should never be in workspace
@@ -109,6 +110,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # Testing
 tempfile = "3"
 
+# Environment variables
+dotenvy = "0.15"
+
 # Terminal markdown rendering
 termimad = "0.31"
 
@@ -136,6 +140,7 @@ ralph-tui = { version = "2.3.1", path = "crates/ralph-tui" }
 ralph-cli = { version = "2.3.1", path = "crates/ralph-cli" }
 ralph-bench = { version = "2.3.1", path = "crates/ralph-bench" }
 ralph-e2e = { version = "2.3.1", path = "crates/ralph-e2e" }
+ralph-heygen = { version = "2.3.1", path = "crates/ralph-heygen" }
 
 # Config for 'dist'
 [workspace.metadata.dist]
