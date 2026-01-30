@@ -129,6 +129,10 @@ pub struct RalphConfig {
     /// Feature flags for optional capabilities.
     #[serde(default)]
     pub features: FeaturesConfig,
+
+    /// Human-in-the-loop configuration for Telegram-based interaction.
+    #[serde(default)]
+    pub human: HumanConfig,
 }
 
 fn default_true() -> bool {
@@ -172,6 +176,8 @@ impl Default for RalphConfig {
             skills: SkillsConfig::default(),
             // Features
             features: FeaturesConfig::default(),
+            // Human-in-the-loop
+            human: HumanConfig::default(),
         }
     }
 }
@@ -401,6 +407,9 @@ impl RalphConfig {
                 reason: "CLI tool manages its own permissions".to_string(),
             });
         }
+
+        // Validate human-in-the-loop config
+        self.human.validate()?;
 
         // Check for required description field on all hats
         for (hat_id, hat_config) in &self.hats {
@@ -1282,6 +1291,77 @@ impl HatConfig {
     }
 }
 
+/// Human-in-the-loop configuration.
+///
+/// Enables bidirectional communication between AI agents and humans
+/// during orchestration loops. When enabled, agents can emit `ask.human`
+/// events to request clarification (blocking the loop), and humans can
+/// send proactive guidance via Telegram.
+///
+/// Example configuration:
+/// ```yaml
+/// human:
+///   enabled: true
+///   timeout_seconds: 300
+///   telegram:
+///     bot_token: "..."  # Or set RALPH_TELEGRAM_BOT_TOKEN env var
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HumanConfig {
+    /// Whether human-in-the-loop is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Timeout in seconds for waiting on human responses.
+    /// Required when enabled (no default — must be explicit).
+    pub timeout_seconds: Option<u64>,
+
+    /// Telegram bot configuration.
+    #[serde(default)]
+    pub telegram: Option<TelegramBotConfig>,
+}
+
+impl HumanConfig {
+    /// Validates the human config. Returns an error if enabled but misconfigured.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.timeout_seconds.is_none() {
+            return Err(ConfigError::HumanMissingField {
+                field: "human.timeout_seconds".to_string(),
+                hint: "timeout_seconds is required when human-in-the-loop is enabled".to_string(),
+            });
+        }
+
+        // Bot token must be available from config or env var
+        if self.resolve_bot_token().is_none() {
+            return Err(ConfigError::HumanMissingField {
+                field: "human.telegram.bot_token".to_string(),
+                hint: "Set RALPH_TELEGRAM_BOT_TOKEN env var or human.telegram.bot_token in config"
+                    .to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Resolves the bot token, with env var taking precedence over config.
+    pub fn resolve_bot_token(&self) -> Option<String> {
+        std::env::var("RALPH_TELEGRAM_BOT_TOKEN")
+            .ok()
+            .or_else(|| self.telegram.as_ref()?.bot_token.clone())
+    }
+}
+
+/// Telegram bot configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramBotConfig {
+    /// Bot token. Optional if `RALPH_TELEGRAM_BOT_TOKEN` env var is set.
+    pub bot_token: Option<String>,
+}
+
 /// Configuration errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -1313,6 +1393,9 @@ pub enum ConfigError {
         "Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose"
     )]
     MissingDescription { hat: String },
+
+    #[error("Human-in-the-loop config error: {field} - {hint}")]
+    HumanMissingField { field: String, hint: String },
 }
 
 #[cfg(test)]
@@ -2195,5 +2278,197 @@ skills:
         assert_eq!(override_.hats, vec!["builder", "reviewer"]);
         assert!(override_.backends.is_empty());
         assert!(override_.tags.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HUMAN-IN-THE-LOOP CONFIG TESTS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_human_config_defaults_disabled() {
+        let config = RalphConfig::default();
+        assert!(!config.human.enabled);
+        assert!(config.human.timeout_seconds.is_none());
+        assert!(config.human.telegram.is_none());
+    }
+
+    #[test]
+    fn test_human_config_absent_parses_as_default() {
+        // Existing configs without human: section should still parse
+        let yaml = r"
+agent: claude
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.human.enabled);
+        assert!(config.human.timeout_seconds.is_none());
+    }
+
+    #[test]
+    fn test_human_config_valid_full() {
+        let yaml = r#"
+human:
+  enabled: true
+  timeout_seconds: 300
+  telegram:
+    bot_token: "123456:ABC-DEF"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.human.enabled);
+        assert_eq!(config.human.timeout_seconds, Some(300));
+        let telegram = config.human.telegram.as_ref().unwrap();
+        assert_eq!(telegram.bot_token, Some("123456:ABC-DEF".to_string()));
+
+        // Validation should pass
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_human_config_disabled_skips_validation() {
+        // Disabled human config should pass validation even with missing fields
+        let yaml = r"
+human:
+  enabled: false
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.human.enabled);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_human_config_enabled_missing_timeout_fails() {
+        let yaml = r#"
+human:
+  enabled: true
+  telegram:
+    bot_token: "123456:ABC-DEF"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::HumanMissingField { field, .. }
+                if field == "human.timeout_seconds"),
+            "Expected HumanMissingField for timeout_seconds, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_human_config_enabled_missing_timeout_and_token_fails_on_timeout_first() {
+        // Both timeout and token are missing, but timeout is checked first
+        let human = HumanConfig {
+            enabled: true,
+            timeout_seconds: None,
+            telegram: None,
+        };
+        let result = human.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::HumanMissingField { field, .. }
+                if field == "human.timeout_seconds"),
+            "Expected timeout validation failure first, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_human_config_resolve_bot_token_from_config() {
+        // Config has a token — resolve_bot_token returns it
+        // (env var behavior is tested separately via integration tests since
+        // forbid(unsafe_code) prevents env var manipulation in unit tests)
+        let config = HumanConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            telegram: Some(TelegramBotConfig {
+                bot_token: Some("config-token".to_string()),
+            }),
+        };
+
+        // When RALPH_TELEGRAM_BOT_TOKEN is not set, config token is returned
+        // (Can't set/unset env vars in tests due to forbid(unsafe_code))
+        let resolved = config.resolve_bot_token();
+        // The result depends on whether RALPH_TELEGRAM_BOT_TOKEN is set in the
+        // test environment. We can at least assert it's Some.
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn test_human_config_resolve_bot_token_none_without_config() {
+        // No config token and no telegram section
+        let config = HumanConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            telegram: None,
+        };
+
+        // Without env var AND without config token, resolve returns None
+        // (unless RALPH_TELEGRAM_BOT_TOKEN happens to be set in test env)
+        let resolved = config.resolve_bot_token();
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_err() {
+            assert!(resolved.is_none());
+        }
+    }
+
+    #[test]
+    fn test_human_config_validate_with_config_token() {
+        // Validation passes when bot_token is in config
+        let human = HumanConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            telegram: Some(TelegramBotConfig {
+                bot_token: Some("test-token".to_string()),
+            }),
+        };
+        assert!(human.validate().is_ok());
+    }
+
+    #[test]
+    fn test_human_config_validate_missing_telegram_section() {
+        // No telegram section at all and no env var → fails
+        // (Skip if env var happens to be set)
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() {
+            return;
+        }
+
+        let human = HumanConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            telegram: None,
+        };
+        let result = human.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::HumanMissingField { field, .. }
+                if field == "human.telegram.bot_token"),
+            "Expected bot_token validation failure, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_human_config_validate_empty_bot_token() {
+        // telegram section present but bot_token is None
+        // (Skip if env var happens to be set)
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() {
+            return;
+        }
+
+        let human = HumanConfig {
+            enabled: true,
+            timeout_seconds: Some(300),
+            telegram: Some(TelegramBotConfig { bot_token: None }),
+        };
+        let result = human.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::HumanMissingField { field, .. }
+                if field == "human.telegram.bot_token"),
+            "Expected bot_token validation failure, got: {:?}",
+            err
+        );
     }
 }
