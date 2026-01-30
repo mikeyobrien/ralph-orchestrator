@@ -39,6 +39,7 @@ nano .ideation/input/prompt.md
 |---------|-------------|
 | `setup [avatar] [template]` | Copy avatar + prompt to input/ (default: myla late-night-techno) |
 | `run [prompt]` | Generate ideas (auto-archives on success) |
+| `run-with-images <dir> [prompt]` | Generate ideas with images directory (each idea linked to specific images) |
 | `continue [N]` | Generate N MORE ideas (default: 3) on top of existing ones |
 | `show` | Display passing ideas (≥8.0) |
 | `stats` | Show round count, passing/failing breakdown |
@@ -48,10 +49,15 @@ nano .ideation/input/prompt.md
 ## Typical Workflow
 
 ```bash
-# Initial run
+# Initial run (text-based)
 ./.ideation/ideate setup myla late-night-techno
 nano .ideation/input/prompt.md
 ./.ideation/ideate run
+
+# Run with images (video content)
+./.ideation/ideate setup myla late-night-techno
+nano .ideation/input/prompt.md
+./.ideation/ideate run-with-images ./path/to/images
 
 # View results
 ./.ideation/ideate show
@@ -111,7 +117,31 @@ Edit `.ideation/preset.yml`:
 - Modify reviewer scoring criteria
 - Adjust completion threshold (default: 3 passing ideas)
 
+## Image-Based Ideation
+
+When using `run-with-images`, each idea is linked to specific images for video generation:
+
+```bash
+# Prepare images directory with your visual assets
+mkdir -p ./content-images
+cp ~/photos/dj-set/*.jpg ./content-images/
+
+# Run image-based ideation
+./.ideation/ideate run-with-images ./content-images "Late-night DJ content"
+```
+
+**What happens:**
+1. Images are indexed from the directory
+2. Image Analyzer hat examines each image (visual content, mood, themes)
+3. Creators generate ideas paired with appropriate images
+4. Each idea includes `image_files` and `image_usage` fields
+5. Reviewers score visual coherence alongside other criteria
+
+**Supported formats:** jpg, jpeg, png, gif, webp
+
 ## Output Format
+
+### Standard Ideas
 
 ```yaml
 run_id: "20260130-102000"
@@ -138,5 +168,33 @@ ideas:
         score: 8.5
         feedback: "Fresh perspective on tired advice"
     avg_score: 8.0
+    status: "passing"
+```
+
+### Image-Based Ideas
+
+```yaml
+ideas:
+  - id: "trend-001-1738234800"
+    title: "The moment the crowd connects with the track"
+    hook: "You can feel it - that split second when everyone just gets it."
+    angle: "Capturing the invisible connection between DJ and crowd"
+    rationale: "Visual storytelling of an intangible moment"
+    mood: intimate
+    format: story
+    duration_seconds: 60
+    creator: "trend_spotter"
+    image_files:
+      - "./content-images/crowd-hands-01.jpg"
+      - "./content-images/mixer-closeup-02.jpg"
+    image_usage: "crowd-hands as opening (0-15s), mixer-closeup during 'and then I drop it' moment (30-35s)"
+    reviews:
+      - reviewer: "audience_brand"
+        score: 8.5
+        feedback: "Images perfectly capture the emotional beat. Visual flow is strong."
+      - reviewer: "critic"
+        score: 8.0
+        feedback: "Not groundbreaking but execution idea is solid. Images elevate the narrative."
+    avg_score: 8.25
     status: "passing"
 ```

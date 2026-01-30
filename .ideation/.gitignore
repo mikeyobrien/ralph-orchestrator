@@ -1,0 +1,12 @@
+# Generated files
+output/
+PROMPT.md
+
+# Input files (user-specific)
+input/images-index.md
+input/prompt.md
+input/prompt-*.md
+
+# Keep templates and avatar files
+!input/avatar.yaml
+!input/.gitkeep
