@@ -50,7 +50,7 @@ export async function createServer(options: ServerOptions = {}): Promise<Fastify
   // Register CORS
   await server.register(cors, {
     origin: true, // Allow all origins in development
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   });
 

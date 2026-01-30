@@ -812,6 +812,48 @@ hats:
 
 ---
 
+## 14. `executive-ceo.yml` - Executive Team with CEO Escalation
+
+**Pattern**: Hierarchical + Supervisor-Worker  
+**Philosophy**: Exec leads collaborate and only pull in the CEO when a decision truly needs it.
+
+```yaml
+hats:
+  chief_of_staff:
+    triggers: ["task.start", "product.ready", "tech.ready", "ops.ready", "execution.blocked", "quality.issues", "improvement.findings", "ceo.decision"]
+    publishes: ["product.request", "tech.request", "ops.request", "execution.request", "interact.human"]
+
+  product_lead:
+    triggers: ["product.request"]
+    publishes: ["product.ready"]
+
+  tech_lead:
+    triggers: ["tech.request"]
+    publishes: ["tech.ready"]
+
+  ops_lead:
+    triggers: ["ops.request"]
+    publishes: ["ops.ready"]
+
+  execution_lead:
+    triggers: ["execution.request"]
+    publishes: ["execution.done", "execution.blocked"]
+
+  quality_auditor:
+    triggers: ["execution.done"]
+    publishes: ["quality.passed", "quality.issues"]
+
+  retrospective:
+    triggers: ["quality.passed"]
+    publishes: ["improvement.findings"]
+
+  ceo_bridge:
+    triggers: ["interact.human", "human.response"]
+    publishes: ["ceo.decision"]
+```
+
+---
+
 ## Quick Reference: When to Use Each Preset
 
 | Preset | Use When |
@@ -829,6 +871,7 @@ hats:
 | `incident-response` | Production incidents |
 | `migration-safety` | Database/system migrations |
 | `confession-loop` | Confidence-gated completion via self-assessment |
+| `executive-ceo` | Executive-level coordination with selective CEO escalation |
 
 ---
 

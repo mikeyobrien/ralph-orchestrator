@@ -32,6 +32,7 @@ EMBEDDED_FILES=(
     "presets/deploy.yml:crates/ralph-cli/presets/deploy.yml"
     "presets/docs.yml:crates/ralph-cli/presets/docs.yml"
     "presets/documentation-first.yml:crates/ralph-cli/presets/documentation-first.yml"
+    "presets/executive-ceo.yml:crates/ralph-cli/presets/executive-ceo.yml"
     "presets/feature-minimal.yml:crates/ralph-cli/presets/feature-minimal.yml"
     "presets/feature.yml:crates/ralph-cli/presets/feature.yml"
     "presets/gap-analysis.yml:crates/ralph-cli/presets/gap-analysis.yml"

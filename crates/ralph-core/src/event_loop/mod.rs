@@ -1609,9 +1609,11 @@ impl EventLoop {
             }
         }
 
-        // Publish validated events
+        // Publish validated events to the bus.
+        // Ralph is always registered with subscribe("*"), so every event has at least
+        // one subscriber. Events without a specific hat subscriber are "orphaned" —
+        // Ralph handles them as the universal fallback.
         for event in validated_events {
-            // Log all events from JSONL (whether orphaned or not)
             self.diagnostics.log_orchestration(
                 self.state.iteration,
                 "jsonl",
@@ -1620,21 +1622,15 @@ impl EventLoop {
                 },
             );
 
-            // Check if any hat subscribes to this event
-            if self.registry.has_subscriber(event.topic.as_str()) {
-                debug!(
-                    topic = %event.topic,
-                    "Publishing event from JSONL"
-                );
-                self.bus.publish(event);
-            } else {
-                // Orphaned event - Ralph will handle it
-                debug!(
-                    topic = %event.topic,
-                    "Event has no subscriber - will be handled by Ralph"
-                );
+            if !self.registry.has_subscriber(event.topic.as_str()) {
                 has_orphans = true;
             }
+
+            debug!(
+                topic = %event.topic,
+                "Publishing event from JSONL"
+            );
+            self.bus.publish(event);
         }
 
         // Publish human.response event if one was received during blocking

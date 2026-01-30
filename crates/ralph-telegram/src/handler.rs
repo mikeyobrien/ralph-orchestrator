@@ -56,8 +56,8 @@ impl MessageHandler {
             "payload": text,
             "ts": timestamp,
         });
-        let event_line = serde_json::to_string(&event_json)
-            .expect("event JSON serialization should not fail");
+        let event_line =
+            serde_json::to_string(&event_json).expect("event JSON serialization should not fail");
 
         self.append_event(&events_path, &event_line)?;
 

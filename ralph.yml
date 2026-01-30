@@ -169,3 +169,12 @@ memories:
 
     # Only include memories from the last N days (0 = no time limit)
     recent: 0
+
+# Skill configuration - knowledge injection for agents
+skills:
+  enabled: true
+  dirs:
+    - ".claude/skills"
+  overrides:
+    ralph-diagnostics:
+      auto_inject: true

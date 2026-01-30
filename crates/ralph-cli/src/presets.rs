@@ -62,6 +62,11 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/documentation-first.yml"),
     },
     EmbeddedPreset {
+        name: "executive-ceo",
+        description: "Executive team workflow with CEO escalation as needed",
+        content: include_str!("../presets/executive-ceo.yml"),
+    },
+    EmbeddedPreset {
         name: "feature",
         description: "Feature Development with integrated code review",
         content: include_str!("../presets/feature.yml"),
@@ -172,7 +177,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 25, "Expected 25 presets");
+        assert_eq!(presets.len(), 26, "Expected 26 presets");
     }
 
     #[test]
@@ -271,8 +276,9 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 25);
+        assert_eq!(names.len(), 26);
         assert!(names.contains(&"confession-loop"));
+        assert!(names.contains(&"executive-ceo"));
         assert!(names.contains(&"tdd-red-green"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"merge-loop"));
