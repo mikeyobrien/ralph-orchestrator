@@ -3,6 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+IDEATION_DIR="$SCRIPT_DIR"
 cd "$REPO_ROOT"
 
 # Detect Ralph binary (prefer local build, fallback to PATH)
@@ -27,7 +28,7 @@ case $1 in
     # Verify inputs exist
     if [[ ! -f .ideation/input/avatar.yaml ]]; then
       echo "Error: .ideation/input/avatar.yaml not found"
-      echo "Copy an avatar: cp .ideation/avatars/myla.yaml .ideation/input/avatar.yaml"
+      echo "Copy an avatar: cp .ideation/templates/avatar/myla.yaml .ideation/input/avatar.yaml"
       exit 1
     fi
 
@@ -38,7 +39,7 @@ case $1 in
     fi
 
     # Run Ralph with content-ideation preset
-    "$RALPH" run -c presets/content-ideation.yml -p "$prompt"
+    "$RALPH" run -c .ideation/preset.yml -p "$prompt"
     ;;
 
   show)
@@ -194,8 +195,8 @@ case $1 in
     avatar="${2:-myla}"
     template="${3:-late-night-techno}"
 
-    if [[ ! -f ".ideation/avatars/${avatar}.yaml" ]]; then
-      echo "Error: Avatar not found: .ideation/avatars/${avatar}.yaml"
+    if [[ ! -f ".ideation/templates/${avatar}.yaml" ]]; then
+      echo "Error: Avatar not found: .ideation/templates/${avatar}.yaml"
       exit 1
     fi
 
@@ -204,7 +205,7 @@ case $1 in
       exit 1
     fi
 
-    cp ".ideation/avatars/${avatar}.yaml" .ideation/input/avatar.yaml
+    cp ".ideation/templates/${avatar}.yaml" .ideation/input/avatar.yaml
     cp ".ideation/templates/${template}.md" .ideation/input/prompt.md
 
     echo "Setup complete:"

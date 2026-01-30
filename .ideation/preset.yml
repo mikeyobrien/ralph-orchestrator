@@ -4,7 +4,7 @@
 # Planner → Creators (Trend/Story) → Reviewers (Audience+Brand/Critic)
 #
 # Usage:
-#   1. cp .ideation/avatars/myla.yaml .ideation/input/avatar.yaml
+#   1. cp .ideation/templates/avatar/myla.yaml .ideation/input/avatar.yaml
 #   2. cp .ideation/templates/late-night-techno.md .ideation/input/prompt.md
 #   3. ralph run -c presets/content-ideation.yml -p "Generate content ideas"
 #

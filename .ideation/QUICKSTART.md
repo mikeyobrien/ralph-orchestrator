@@ -13,17 +13,17 @@ cargo build --release
 
 ```bash
 # 1. Setup inputs (avatar + prompt)
-./bin/ideate setup myla late-night-techno
+./.ideation/ideate setup myla late-night-techno
 
 # 2. (Optional) Customize the prompt
 $EDITOR .ideation/input/prompt.md
 
 # 3. Generate ideas
-./bin/ideate run
+./.ideation/ideate run
 
 # 4. View results
-./bin/ideate show     # See passing ideas (avg >= 7.0)
-./bin/ideate stats    # View statistics
+./.ideation/ideate show     # See passing ideas (avg >= 7.0)
+./.ideation/ideate stats    # View statistics
 ```
 
 ## What Happens
@@ -68,8 +68,8 @@ Planner → 2 Creators → 2 Reviewers → Completion Checker
 
 **New Avatar:**
 ```bash
-cp .ideation/avatars/myla.yaml .ideation/avatars/your-avatar.yaml
-$EDITOR .ideation/avatars/your-avatar.yaml
+cp .ideation/templates/avatar/myla.yaml .ideation/templates/your-avatar.yaml
+$EDITOR .ideation/templates/your-avatar.yaml
 ```
 
 **New Template:**
@@ -82,16 +82,16 @@ $EDITOR .ideation/templates/your-template.md
 
 ```bash
 # Generate ideas for different scenarios
-./bin/ideate setup myla late-night-techno
-./bin/ideate run
+./.ideation/ideate setup myla late-night-techno
+./.ideation/ideate run
 
 # Archive results
-./bin/ideate archive
+./.ideation/ideate archive
 
 # Try different angle
-./bin/ideate setup myla trend-analysis
+./.ideation/ideate setup myla trend-analysis
 $EDITOR .ideation/input/prompt.md  # Customize
-./bin/ideate run
+./.ideation/ideate run
 ```
 
 ## Output Structure
@@ -154,4 +154,4 @@ Memories are automatically injected into future runs to improve quality.
 
 ---
 
-**Ready?** Run `./bin/ideate setup && ./bin/ideate run` 🚀
+**Ready?** Run `./.ideation/ideate setup && ./.ideation/ideate run` 🚀

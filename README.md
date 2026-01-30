@@ -64,16 +64,16 @@ This repository includes a content ideation system built on Ralph's hat system.
 
 ```bash
 # Setup inputs
-./bin/ideate setup myla late-night-techno
+./.ideation/ideate setup myla late-night-techno
 
 # Edit prompt
 $EDITOR .ideation/input/prompt.md
 
 # Run ideation
-./bin/ideate run
+./.ideation/ideate run
 
 # View results
-./bin/ideate show
+./.ideation/ideate show
 ```
 
 **See:** [.ideation/README.md](.ideation/README.md) for full documentation.

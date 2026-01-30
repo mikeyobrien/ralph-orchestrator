@@ -301,7 +301,7 @@ Create ideas about the late-night dancefloor experience.
 EOF
 
 # 2. Run ideation
-ralph run -c presets/content-ideation.yml -p "Generate content ideas"
+ralph run -c .ideation/preset.yml -p "Generate content ideas"
 
 # 3. Review output
 cat .ideation/output/ideas.yaml
@@ -324,7 +324,7 @@ Take the existing idea and develop it further with:
 - Visual suggestions
 EOF
 
-ralph run -c presets/content-ideation.yml -p "Refine idea"
+ralph run -c .ideation/preset.yml -p "Refine idea"
 ```
 
 **Batch generation:**
@@ -332,8 +332,8 @@ ralph run -c presets/content-ideation.yml -p "Refine idea"
 ```bash
 # Multiple avatars
 for avatar in myla techno_dad festival_sage; do
-  cp configs/avatars/${avatar}.yaml .ideation/input/avatar.yaml
-  ralph run -c presets/content-ideation.yml -p "Generate ideas"
+  cp .ideation/templates/${avatar}.yaml .ideation/input/avatar.yaml
+  ralph run -c .ideation/preset.yml -p "Generate ideas"
   mv .ideation/output/ideas.yaml outputs/${avatar}-ideas-$(date +%s).yaml
 done
 ```
@@ -351,13 +351,12 @@ Store reusable configs:
 
 ```
 .ideation/
-├── avatars/              # Reusable avatar profiles
-│   ├── myla.yaml
+├── templates/            # Reusable templates (avatars + prompts)
+│   ├── myla.yaml              # Avatar profiles
 │   ├── techno-dad.yaml
-│   └── festival-sage.yaml
-│
-├── templates/            # Prompt templates
-│   ├── trend-analysis.md
+│   ├── festival-sage.yaml
+│   ├── avatar-schema.md       # Avatar schema docs
+│   ├── trend-analysis.md      # Prompt templates
 │   ├── seasonal-content.md
 │   └── reaction-videos.md
 │
@@ -369,14 +368,14 @@ Store reusable configs:
 
 ```bash
 # Copy from library
-cp .ideation/avatars/myla.yaml .ideation/input/avatar.yaml
+cp .ideation/templates/avatar/myla.yaml .ideation/input/avatar.yaml
 cp .ideation/templates/seasonal-content.md .ideation/input/prompt.md
 
 # Edit prompt with specifics
 $EDITOR .ideation/input/prompt.md
 
 # Run
-ralph run -c presets/content-ideation.yml -p "Generate ideas"
+ralph run -c .ideation/preset.yml -p "Generate ideas"
 
 # Archive
 cp .ideation/output/ideas.yaml .ideation/archive/$(date +%s)-ideas.yaml
@@ -395,7 +394,7 @@ set -e
 
 case $1 in
   run)
-    ralph run -c presets/content-ideation.yml -p "${2:-Generate content ideas}"
+    ralph run -c .ideation/preset.yml -p "${2:-Generate content ideas}"
     ;;
 
   show)

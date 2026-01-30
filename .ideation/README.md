@@ -6,20 +6,20 @@ AI-driven content idea generation using Ralph orchestrator's multi-agent collabo
 
 ```bash
 # 1. Setup inputs (copies avatar + template)
-./bin/ideate setup myla late-night-techno
+./.ideation/ideate setup myla late-night-techno
 
 # 2. Edit prompt with specifics
-$EDITOR .ideation/input/prompt.md
+nano .ideation/input/prompt.md
 
 # 3. Run ideation
-./bin/ideate run
+./.ideation/ideate run
 
 # 4. View results
-./bin/ideate show
-./bin/ideate stats
+./.ideation/ideate show
+./.ideation/ideate stats
 
 # 5. Archive good runs
-./bin/ideate archive
+./.ideation/ideate archive
 ```
 
 ## How It Works
@@ -44,18 +44,16 @@ $EDITOR .ideation/input/prompt.md
 ```
 .ideation/
 ├── input/           # Per-run inputs
-│   ├── avatar.yaml  # Copy from avatars/
-│   └── prompt.md    # Copy from templates/ or write custom
+│   ├── avatar.yaml  # Copy from templates/
+│   └── prompt.md    # Copy from templates/
 │
 ├── output/
 │   └── ideas.yaml   # Generated ideas with scores
 │
-├── avatars/         # Reusable avatar profiles
-│   ├── myla.yaml
-│   └── README.md
-│
-├── templates/       # Reusable prompt templates
-│   ├── late-night-techno.md
+├── templates/       # Reusable templates (avatars + prompts)
+│   ├── myla.yaml              # Avatar profiles
+│   ├── avatar-schema.md       # Avatar schema docs
+│   ├── late-night-techno.md   # Prompt templates
 │   ├── trend-analysis.md
 │   └── README.md
 │
@@ -67,35 +65,35 @@ $EDITOR .ideation/input/prompt.md
 
 ```bash
 # Setup with defaults (myla + late-night-techno)
-./bin/ideate setup
+./.ideation/ideate setup
 
 # Setup with specific avatar and template
-./bin/ideate setup myla trend-analysis
+./.ideation/ideate setup myla trend-analysis
 
 # Run with custom prompt
-./bin/ideate run "Generate festival season content ideas"
+./.ideation/ideate run "Generate festival season content ideas"
 
 # View only passing ideas
-./bin/ideate show
+./.ideation/ideate show
 
 # View statistics
-./bin/ideate stats
+./.ideation/ideate stats
 
 # Archive results
-./bin/ideate archive
+./.ideation/ideate archive
 
 # Clear outputs
-./bin/ideate clean
+./.ideation/ideate clean
 ```
 
 ## Using Ralph Directly
 
 ```bash
 # More control over Ralph configuration
-ralph run -c presets/content-ideation.yml -p "Generate ideas" --max-iterations 30
+ralph run -c .ideation/preset.yml -p "Generate ideas" --max-iterations 30
 
 # View diagnostics
-RALPH_DIAGNOSTICS=1 ralph run -c presets/content-ideation.yml -p "Generate ideas"
+RALPH_DIAGNOSTICS=1 ralph run -c .ideation/preset.yml -p "Generate ideas"
 
 # Use memories from previous runs
 ralph tools memory search "myla OR techno"
@@ -105,18 +103,18 @@ ralph tools memory search "myla OR techno"
 
 Copy and edit:
 ```bash
-cp .ideation/avatars/myla.yaml .ideation/avatars/custom.yaml
-$EDITOR .ideation/avatars/custom.yaml
+cp .ideation/templates/avatar/myla.yaml .ideation/templates/custom.yaml
+nano .ideation/templates/custom.yaml
 ```
 
-Schema: see `avatars/README.md`
+Schema: see `templates/avatar/avatar-schema.md`
 
 ## Creating Custom Prompts
 
 Copy and edit:
 ```bash
 cp .ideation/templates/trend-analysis.md .ideation/templates/custom.md
-$EDITOR .ideation/templates/custom.md
+nano .ideation/templates/custom.md
 ```
 
 ## Output Schema
@@ -176,8 +174,8 @@ Memories are injected automatically into agent context.
 
 **No ideas generated:**
 - Check inputs exist: `ls -la .ideation/input/`
-- Check preset loads: `yq eval . presets/content-ideation.yml`
-- Run with diagnostics: `RALPH_DIAGNOSTICS=1 ./bin/ideate run`
+- Check preset loads: `yq eval . .ideation/preset.yml`
+- Run with diagnostics: `RALPH_DIAGNOSTICS=1 ./.ideation/ideate run`
 
 **Low scores:**
 - Check avatar constraints alignment
@@ -185,13 +183,13 @@ Memories are injected automatically into agent context.
 - Iterate with more specific prompt
 
 **Loop doesn't complete:**
-- Check max_iterations: `yq eval '.event_loop.max_iterations' presets/content-ideation.yml`
+- Check max_iterations: `yq eval '.event_loop.max_iterations' .ideation/preset.yml`
 - Monitor progress: `ralph tools task list`
 - Check completion threshold: need 3+ ideas with avg ≥ 7.0
 
 ## Configuration
 
-Edit `presets/content-ideation.yml`:
+Edit `.ideation/preset.yml`:
 
 - `max_iterations: 25` - Maximum loop iterations
 - `max_runtime_seconds: 3600` - Maximum runtime (1 hour)
