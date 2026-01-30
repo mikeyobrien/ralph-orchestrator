@@ -152,6 +152,7 @@ pub fn print_termination(
         TerminationReason::ChaosModeMaxIterations => {
             (YELLOW, "?", "Chaos mode max iterations reached")
         }
+        TerminationReason::RestartRequested => (CYAN, "↻", "Restarting by human request"),
     };
 
     let separator = "-".repeat(58);

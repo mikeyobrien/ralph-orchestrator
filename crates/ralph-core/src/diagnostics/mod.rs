@@ -5,6 +5,7 @@
 
 mod agent_output;
 mod errors;
+mod log_rotation;
 mod orchestration;
 mod performance;
 mod stream_handler;
@@ -15,6 +16,7 @@ mod integration_tests;
 
 pub use agent_output::{AgentOutputContent, AgentOutputEntry, AgentOutputLogger};
 pub use errors::{DiagnosticError, ErrorLogger};
+pub use log_rotation::{create_log_file, rotate_logs};
 pub use orchestration::{OrchestrationEvent, OrchestrationLogger};
 pub use performance::{PerformanceLogger, PerformanceMetric};
 pub use stream_handler::DiagnosticStreamHandler;

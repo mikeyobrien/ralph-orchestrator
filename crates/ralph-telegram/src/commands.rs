@@ -20,6 +20,7 @@ pub fn handle_command(text: &str, workspace_root: &Path) -> Option<String> {
         "/tasks" => Some(cmd_tasks(workspace_root)),
         "/memories" => Some(cmd_memories(workspace_root)),
         "/tail" => Some(cmd_tail(workspace_root)),
+        "/restart" => Some(cmd_restart(workspace_root)),
         _ => None,
     }
 }
@@ -45,6 +46,7 @@ fn cmd_help() -> String {
         "/tasks — Open tasks",
         "/memories — Recent memories",
         "/tail — Last 20 events",
+        "/restart — Restart the orchestration loop",
         "/help — This message",
     ]
     .join("\n")
@@ -309,6 +311,31 @@ fn cmd_memories(workspace_root: &Path) -> String {
     }
 
     lines.join("\n")
+}
+
+/// `/restart` — Request a restart of the orchestration loop.
+///
+/// Writes a signal file (`.ralph/restart-requested`) that the event loop
+/// checks at each iteration boundary. When detected, the loop terminates
+/// and the process exec-replaces itself with the same CLI arguments.
+fn cmd_restart(workspace_root: &Path) -> String {
+    let restart_path = workspace_root.join(".ralph/restart-requested");
+
+    // Check if a loop is actually running
+    let lock_path = workspace_root.join(".ralph/loop.lock");
+    if !lock_path.exists() {
+        return "No active loop to restart.".to_string();
+    }
+
+    match std::fs::write(&restart_path, "") {
+        Ok(()) => {
+            "Restart requested. The loop will restart at the next iteration boundary.".to_string()
+        }
+        Err(e) => format!(
+            "Failed to write restart signal: {}",
+            escape_html(&e.to_string())
+        ),
+    }
 }
 
 /// `/tail` — Last 20 lines of the current events file.
@@ -641,5 +668,48 @@ mod tests {
         let result = cmd_tail(dir.path());
         assert!(result.contains("..."));
         assert!(result.len() < 300); // Truncated, not full 200 chars
+    }
+
+    #[test]
+    fn cmd_restart_no_active_loop() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+        let result = cmd_restart(dir.path());
+        assert!(result.contains("No active loop"));
+    }
+
+    #[test]
+    fn cmd_restart_writes_signal_file() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+
+        // Create lock file to simulate active loop
+        let lock = serde_json::json!({
+            "pid": 12345,
+            "started": "2026-01-30T10:00:00Z",
+            "prompt": "Test prompt"
+        });
+        let lock_path = dir.path().join(".ralph/loop.lock");
+        std::fs::write(&lock_path, serde_json::to_string(&lock).unwrap()).unwrap();
+
+        let result = cmd_restart(dir.path());
+        assert!(result.contains("Restart requested"));
+
+        // Verify signal file was created
+        let restart_path = dir.path().join(".ralph/restart-requested");
+        assert!(restart_path.exists());
+    }
+
+    #[test]
+    fn handle_command_recognizes_restart() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+        assert!(handle_command("/restart", dir.path()).is_some());
+    }
+
+    #[test]
+    fn cmd_help_lists_restart() {
+        let result = cmd_help();
+        assert!(result.contains("/restart"));
     }
 }

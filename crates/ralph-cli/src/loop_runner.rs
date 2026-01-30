@@ -399,6 +399,7 @@ pub async fn run_loop_impl(
                 TerminationReason::Interrupted => "interrupted",
                 TerminationReason::ChaosModeComplete => "chaos_complete",
                 TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
+                TerminationReason::RestartRequested => "restart_requested",
             };
 
             if matches!(reason, TerminationReason::Interrupted) {
@@ -468,6 +469,7 @@ pub async fn run_loop_impl(
                     TerminationReason::CompletionPromise => unreachable!(),
                     TerminationReason::ChaosModeComplete => "chaos mode complete",
                     TerminationReason::ChaosModeMaxIterations => "chaos mode max iterations",
+                    TerminationReason::RestartRequested => "restart requested",
                 };
                 if let Err(e) = queue.mark_needs_review(loop_id, reason_str) {
                     warn!(loop_id = %loop_id, error = %e, "Failed to mark merge as needs-review");

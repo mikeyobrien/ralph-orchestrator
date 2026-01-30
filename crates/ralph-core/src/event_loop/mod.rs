@@ -48,6 +48,8 @@ pub enum TerminationReason {
     ChaosModeComplete,
     /// Chaos mode max iterations reached.
     ChaosModeMaxIterations,
+    /// Restart requested via Telegram `/restart` command.
+    RestartRequested,
 }
 
 impl TerminationReason {
@@ -70,6 +72,8 @@ impl TerminationReason {
             | TerminationReason::MaxCost
             | TerminationReason::ChaosModeMaxIterations => 2,
             TerminationReason::Interrupted => 130,
+            // Restart uses exit code 3 to signal the caller to exec-replace
+            TerminationReason::RestartRequested => 3,
         }
     }
 
@@ -90,6 +94,7 @@ impl TerminationReason {
             TerminationReason::Interrupted => "interrupted",
             TerminationReason::ChaosModeComplete => "chaos_complete",
             TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
+            TerminationReason::RestartRequested => "restart_requested",
         }
     }
 
@@ -518,6 +523,13 @@ impl EventLoop {
         // Check for validation failures: too many consecutive malformed JSONL lines
         if self.state.consecutive_malformed_events >= 3 {
             return Some(TerminationReason::ValidationFailure);
+        }
+
+        // Check for restart signal from Telegram /restart command
+        let restart_path =
+            std::path::Path::new(&self.config.core.workspace_root).join(".ralph/restart-requested");
+        if restart_path.exists() {
+            return Some(TerminationReason::RestartRequested);
         }
 
         None
@@ -1930,5 +1942,6 @@ fn termination_status_text(reason: &TerminationReason) -> &'static str {
         TerminationReason::Interrupted => "Interrupted by signal.",
         TerminationReason::ChaosModeComplete => "Chaos mode exploration complete.",
         TerminationReason::ChaosModeMaxIterations => "Chaos mode stopped at iteration limit.",
+        TerminationReason::RestartRequested => "Restarting by human request.",
     }
 }
