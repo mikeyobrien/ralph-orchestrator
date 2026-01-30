@@ -16,6 +16,7 @@ mod bot;
 mod display;
 mod hats;
 mod init;
+mod interact;
 mod loop_runner;
 mod loops;
 mod memory;
@@ -784,7 +785,7 @@ async fn main() -> Result<()> {
         Some(Commands::Plan(args)) => plan_command(&config_sources, cli.color, args),
         Some(Commands::CodeTask(args)) => code_task_command(&config_sources, cli.color, args),
         Some(Commands::Task(args)) => code_task_command(&config_sources, cli.color, args),
-        Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()),
+        Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
             hats::execute(&config_sources, args, cli.color.should_use_colors())

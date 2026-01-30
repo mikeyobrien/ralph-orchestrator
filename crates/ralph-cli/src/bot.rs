@@ -512,7 +512,7 @@ async fn telegram_get_updates(token: &str, timeout_secs: u64) -> Result<UpdateIn
 }
 
 /// Send a message to a Telegram chat.
-async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
+pub(crate) async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
     let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
     let client = reqwest::Client::new();
 
@@ -666,7 +666,7 @@ fn is_robot_enabled() -> bool {
 }
 
 /// Resolve token from all sources (env > keychain > config).
-fn resolve_token() -> Option<String> {
+pub(crate) fn resolve_token() -> Option<String> {
     std::env::var("RALPH_TELEGRAM_BOT_TOKEN")
         .ok()
         .or_else(load_bot_token)
@@ -674,7 +674,7 @@ fn resolve_token() -> Option<String> {
 }
 
 /// Resolve chat_id from telegram state.
-fn resolve_chat_id() -> Option<i64> {
+pub(crate) fn resolve_chat_id() -> Option<i64> {
     let content = std::fs::read_to_string(".ralph/telegram-state.json").ok()?;
     let state: serde_json::Value = serde_json::from_str(&content).ok()?;
     state.get("chat_id").and_then(|v| v.as_i64())
