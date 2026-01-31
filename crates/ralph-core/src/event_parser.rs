@@ -73,6 +73,9 @@ pub struct BackpressureEvidence {
     pub typecheck_passed: bool,
     pub audit_passed: bool,
     pub coverage_passed: bool,
+    pub complexity_score: Option<f64>,
+    pub duplication_passed: bool,
+    pub performance_regression: Option<bool>,
     pub mutants: Option<MutationEvidence>,
 }
 
@@ -86,6 +89,11 @@ impl BackpressureEvidence {
             && self.typecheck_passed
             && self.audit_passed
             && self.coverage_passed
+            && self
+                .complexity_score
+                .is_some_and(|value| value <= QualityReport::COMPLEXITY_THRESHOLD)
+            && self.duplication_passed
+            && !matches!(self.performance_regression, Some(true))
     }
 }
 
@@ -284,6 +292,9 @@ impl EventParser {
     /// typecheck: pass
     /// audit: pass
     /// coverage: pass
+    /// complexity: 7           # required (<=10)
+    /// duplication: pass       # required
+    /// performance: pass       # optional (regression blocks)
     /// mutants: pass (82%)   # optional, warning-only
     /// ```
     ///
@@ -298,6 +309,9 @@ impl EventParser {
         let typecheck_passed = clean_payload.contains("typecheck: pass");
         let audit_passed = clean_payload.contains("audit: pass");
         let coverage_passed = clean_payload.contains("coverage: pass");
+        let complexity_score = Self::parse_complexity_evidence(&clean_payload);
+        let duplication_passed = Self::parse_duplication_evidence(&clean_payload).unwrap_or(false);
+        let performance_regression = Self::parse_performance_regression(&clean_payload);
         let mutants = Self::parse_mutation_evidence(&clean_payload);
 
         // Only return evidence if at least one check is mentioned
@@ -306,6 +320,10 @@ impl EventParser {
             || clean_payload.contains("typecheck:")
             || clean_payload.contains("audit:")
             || clean_payload.contains("coverage:")
+            || clean_payload.contains("complexity:")
+            || clean_payload.contains("duplication:")
+            || clean_payload.contains("performance:")
+            || clean_payload.contains("perf:")
             || clean_payload.contains("mutants:")
         {
             Some(BackpressureEvidence {
@@ -314,6 +332,9 @@ impl EventParser {
                 typecheck_passed,
                 audit_passed,
                 coverage_passed,
+                complexity_score,
+                duplication_passed,
+                performance_regression,
                 mutants,
             })
         } else {
@@ -344,6 +365,53 @@ impl EventParser {
             status,
             score_percent,
         })
+    }
+
+    fn parse_complexity_evidence(clean_payload: &str) -> Option<f64> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.to_lowercase().starts_with("complexity:"))?;
+
+        Self::extract_first_number(segment)
+    }
+
+    fn parse_duplication_evidence(clean_payload: &str) -> Option<bool> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.to_lowercase().starts_with("duplication:"))?;
+
+        let normalized = segment.to_lowercase();
+        if normalized.contains("duplication: pass") {
+            Some(true)
+        } else if normalized.contains("duplication: fail") {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn parse_performance_regression(clean_payload: &str) -> Option<bool> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| {
+                let normalized = segment.to_lowercase();
+                normalized.starts_with("performance:") || normalized.starts_with("perf:")
+            })?;
+
+        let normalized = segment.to_lowercase();
+        if normalized.contains("regression") || normalized.contains("fail") {
+            Some(true)
+        } else if normalized.contains("pass")
+            || normalized.contains("ok")
+            || normalized.contains("improved")
+        {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     fn extract_percentage(segment: &str) -> Option<f64> {
@@ -765,25 +833,32 @@ Still working..."#;
 
     #[test]
     fn test_parse_backpressure_evidence_all_pass() {
-        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass";
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(evidence.tests_passed);
         assert!(evidence.lint_passed);
         assert!(evidence.typecheck_passed);
         assert!(evidence.audit_passed);
         assert!(evidence.coverage_passed);
+        assert_eq!(evidence.complexity_score, Some(7.0));
+        assert!(evidence.duplication_passed);
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(evidence.all_passed());
     }
 
     #[test]
     fn test_parse_backpressure_evidence_some_fail() {
-        let payload = "tests: pass\nlint: fail\ntypecheck: pass\naudit: pass\ncoverage: pass";
+        let payload =
+            "tests: pass\nlint: fail\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(evidence.tests_passed);
         assert!(!evidence.lint_passed);
         assert!(evidence.typecheck_passed);
         assert!(evidence.audit_passed);
         assert!(evidence.coverage_passed);
+        assert_eq!(evidence.complexity_score, Some(7.0));
+        assert!(evidence.duplication_passed);
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(!evidence.all_passed());
     }
 
@@ -803,24 +878,30 @@ Still working..."#;
         assert!(!evidence.typecheck_passed);
         assert!(!evidence.audit_passed);
         assert!(!evidence.coverage_passed);
+        assert!(evidence.complexity_score.is_none());
+        assert!(!evidence.duplication_passed);
+        assert!(evidence.performance_regression.is_none());
         assert!(!evidence.all_passed());
     }
 
     #[test]
     fn test_parse_backpressure_evidence_with_ansi_codes() {
-        let payload = "\x1b[0mtests: pass\x1b[0m\n\x1b[32mlint: pass\x1b[0m\ntypecheck: pass\n\x1b[34maudit: pass\x1b[0m\n\x1b[35mcoverage: pass\x1b[0m";
+        let payload = "\x1b[0mtests: pass\x1b[0m\n\x1b[32mlint: pass\x1b[0m\ntypecheck: pass\n\x1b[34maudit: pass\x1b[0m\n\x1b[35mcoverage: pass\x1b[0m\n\x1b[36mcomplexity: 7\x1b[0m\n\x1b[31mduplication: pass\x1b[0m\n\x1b[33mperformance: pass\x1b[0m";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(evidence.tests_passed);
         assert!(evidence.lint_passed);
         assert!(evidence.typecheck_passed);
         assert!(evidence.audit_passed);
         assert!(evidence.coverage_passed);
+        assert_eq!(evidence.complexity_score, Some(7.0));
+        assert!(evidence.duplication_passed);
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(evidence.all_passed());
     }
 
     #[test]
     fn test_parse_backpressure_evidence_with_mutants_pass() {
-        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\nmutants: pass (82%)";
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass\nmutants: pass (82%)";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         let mutants = evidence
             .mutants
@@ -828,12 +909,13 @@ Still working..."#;
             .expect("mutants evidence should parse");
         assert_eq!(mutants.status, MutationStatus::Pass);
         assert_eq!(mutants.score_percent, Some(82.0));
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(evidence.all_passed());
     }
 
     #[test]
     fn test_parse_backpressure_evidence_with_mutants_warn() {
-        let payload = "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: warn (65%)";
+        let payload = "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, complexity: 7, duplication: pass, performance: pass, mutants: warn (65%)";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         let mutants = evidence
             .mutants
@@ -841,7 +923,17 @@ Still working..."#;
             .expect("mutants evidence should parse");
         assert_eq!(mutants.status, MutationStatus::Warn);
         assert_eq!(mutants.score_percent, Some(65.0));
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_performance_regression() {
+        let payload =
+            "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: regression";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.performance_regression, Some(true));
+        assert!(!evidence.all_passed());
     }
 
     #[test]
