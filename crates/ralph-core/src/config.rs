@@ -1366,20 +1366,33 @@ impl RobotConfig {
     ///
     /// Resolution order (highest to lowest priority):
     /// 1. `RALPH_TELEGRAM_BOT_TOKEN` environment variable
-    /// 2. OS keychain (service: "ralph", user: "telegram-bot-token")
-    /// 3. `RObot.telegram.bot_token` in config file (legacy fallback)
+    /// 2. `RObot.telegram.bot_token` in config file (explicit project override)
+    /// 3. OS keychain (service: "ralph", user: "telegram-bot-token")
     pub fn resolve_bot_token(&self) -> Option<String> {
         // 1. Env var (highest priority)
-        std::env::var("RALPH_TELEGRAM_BOT_TOKEN")
-            .ok()
-            // 2. OS keychain
+        let env_token = std::env::var("RALPH_TELEGRAM_BOT_TOKEN").ok();
+        let config_token = self
+            .telegram
+            .as_ref()
+            .and_then(|telegram| telegram.bot_token.clone());
+
+        if cfg!(test) {
+            return env_token.or(config_token);
+        }
+
+        env_token
+            // 2. Config file (explicit override)
+            .or(config_token)
+            // 3. OS keychain (best effort)
             .or_else(|| {
-                keyring::Entry::new("ralph", "telegram-bot-token")
-                    .ok()
-                    .and_then(|e| e.get_password().ok())
+                std::panic::catch_unwind(|| {
+                    keyring::Entry::new("ralph", "telegram-bot-token")
+                        .ok()
+                        .and_then(|e| e.get_password().ok())
+                })
+                .ok()
+                .flatten()
             })
-            // 3. Config file (legacy fallback)
-            .or_else(|| self.telegram.as_ref()?.bot_token.clone())
     }
 }
 

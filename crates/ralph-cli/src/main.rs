@@ -21,6 +21,7 @@ mod loop_runner;
 mod loops;
 mod memory;
 mod presets;
+mod preflight;
 mod skill_cli;
 mod sop_runner;
 mod task_cli;
@@ -258,7 +259,7 @@ const KNOWN_CORE_FIELDS: &[&str] = &["scratchpad", "specs_dir"];
 ///
 /// Overrides are in the format `core.field=value` and take precedence
 /// over values from the config file.
-fn apply_config_overrides(
+pub(crate) fn apply_config_overrides(
     config: &mut RalphConfig,
     sources: &[ConfigSource],
 ) -> anyhow::Result<()> {
@@ -374,6 +375,9 @@ struct Cli {
 enum Commands {
     /// Run the orchestration loop (default if no subcommand given)
     Run(RunArgs),
+
+    /// Run preflight checks to validate configuration and environment
+    Preflight(preflight::PreflightArgs),
 
     /// DEPRECATED: Use `ralph run --continue` instead.
     /// Resume a previously interrupted loop from existing scratchpad.
@@ -776,6 +780,9 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Run(args)) => {
             run_command(&config_sources, cli.verbose, cli.color, args).await
+        }
+        Some(Commands::Preflight(args)) => {
+            preflight::execute(&config_sources, args, cli.color.should_use_colors()).await
         }
         Some(Commands::Resume(args)) => {
             resume_command(&config_sources, cli.verbose, cli.color, args).await

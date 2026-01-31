@@ -378,6 +378,11 @@ impl EventLoop {
         config: &RalphConfig,
         context: Option<&LoopContext>,
     ) -> Option<TelegramService> {
+        if cfg!(test) {
+            debug!("Skipping Telegram service initialization in tests");
+            return None;
+        }
+
         if !config.robot.enabled {
             return None;
         }

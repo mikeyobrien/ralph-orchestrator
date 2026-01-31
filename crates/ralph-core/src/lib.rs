@@ -36,6 +36,7 @@ pub mod memory_parser;
 mod memory_store;
 pub mod merge_queue;
 pub mod planning_session;
+pub mod preflight;
 mod session_player;
 mod session_recorder;
 pub mod skill;
@@ -93,6 +94,7 @@ pub use planning_session::{
     ConversationEntry, ConversationType, PlanningSession, PlanningSessionError, SessionMetadata,
     SessionStatus,
 };
+pub use preflight::{CheckResult, CheckStatus, PreflightCheck, PreflightReport, PreflightRunner};
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};
 pub use session_recorder::{Record, SessionRecorder};
 pub use skill::{SkillEntry, SkillFrontmatter, SkillSource, parse_frontmatter};

@@ -43,8 +43,18 @@ pub struct TelegramBot {
 impl TelegramBot {
     /// Create a new TelegramBot from a bot token.
     pub fn new(token: &str) -> Self {
-        Self {
-            bot: teloxide::Bot::new(token),
+        if cfg!(test) {
+            let client = teloxide::net::default_reqwest_settings()
+                .no_proxy()
+                .build()
+                .expect("Client creation failed");
+            Self {
+                bot: teloxide::Bot::with_client(token, client),
+            }
+        } else {
+            Self {
+                bot: teloxide::Bot::new(token),
+            }
         }
     }
 
