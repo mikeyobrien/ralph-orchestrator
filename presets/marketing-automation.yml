@@ -1,0 +1,291 @@
+# Marketing Automation Preset
+#
+# Multi-hat workflow for marketing content pipelines.
+# Strategist → Writer → Editor → SEO Analyst → Reviewer cycle
+# ensures quality, brand consistency, and search optimization.
+#
+# Usage:
+#   ralph run --config presets/marketing-automation.yml --prompt "Create a blog series on AI in healthcare"
+#   ralph run --config presets/marketing-automation.yml --prompt "Draft email campaign for product launch"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "CAMPAIGN_COMPLETE"
+  max_iterations: 75
+  max_runtime_seconds: 10800
+  starting_event: "campaign.start"
+  checkpoint_interval: 5
+
+cli:
+  backend: "claude"
+
+core:
+  scratchpad: ".agent/scratchpad.md"
+  specs_dir: "./specs/"
+  guardrails:
+    - "Fresh context each iteration — re-read the brief and scratchpad"
+    - "Every piece of content must pass editorial review before publishing"
+    - "SEO analysis is mandatory for any web-facing content"
+    - "Brand voice and tone guidelines must be followed"
+
+events:
+  campaign.start:
+    description: "A new marketing campaign or content request has been initiated"
+    on_trigger: "Read the brief, define campaign goals, identify deliverables, create content plan"
+    on_publish: "Signal that a new campaign needs strategic planning"
+
+  strategy.ready:
+    description: "Campaign strategy and content plan are defined"
+    on_trigger: "Review the strategy, pick the next content piece to write"
+    on_publish: "Signal that strategy is complete with deliverables listed in scratchpad"
+
+  content.write:
+    description: "A content piece needs to be drafted"
+    on_trigger: "Write the assigned content piece following the brief and brand guidelines"
+    on_publish: "Signal that a specific content piece needs drafting"
+
+  content.drafted:
+    description: "A content piece draft is complete and ready for editing"
+    on_trigger: "Edit the draft for clarity, tone, grammar, and brand consistency"
+    on_publish: "Signal that a draft is ready for editorial review"
+
+  content.edited:
+    description: "Content has been edited and is ready for SEO analysis"
+    on_trigger: "Analyze content for SEO optimization opportunities"
+    on_publish: "Signal that editing is complete and content is ready for SEO review"
+
+  seo.optimized:
+    description: "SEO recommendations have been applied to the content"
+    on_trigger: "Final review of content quality, accuracy, and campaign alignment"
+    on_publish: "Signal that SEO optimization is complete"
+
+  review.approved:
+    description: "Content has passed final review and is ready for publishing"
+    on_trigger: "Mark content as complete, check if more deliverables remain"
+    on_publish: "Signal that content meets all quality gates"
+
+  review.revisions:
+    description: "Content needs revisions based on review feedback"
+    on_trigger: "Address revision notes and resubmit the content"
+    on_publish: "Signal specific issues that need to be fixed before approval"
+
+  content.published:
+    description: "Content has been finalized and marked as ready to publish"
+    on_trigger: "Update campaign tracker, move to next deliverable"
+    on_publish: "Signal that a content piece is finalized"
+
+hats:
+  strategist:
+    name: "Strategist"
+    description: "Defines campaign goals, target audience, and content plan. Coordinates the overall workflow."
+    triggers: ["campaign.start", "review.approved", "content.published"]
+    publishes: ["strategy.ready", "content.write"]
+    default_publishes: "content.write"
+    instructions: |
+      ## STRATEGIST MODE
+
+      You own the campaign plan. Define goals, then coordinate content production.
+
+      ### On campaign.start
+      1. **Read the brief.** Understand the goal, audience, channels, and constraints.
+      2. **Define deliverables.** List every content piece needed (blog posts, emails, social copy, landing pages, etc.).
+      3. **Prioritize.** Order deliverables by impact and dependencies.
+      4. **Write the plan** to the scratchpad:
+         ```markdown
+         # Campaign: [Name]
+
+         ## Brief
+         [Summary of what was requested]
+
+         ## Goals
+         - [Goal 1]
+         - [Goal 2]
+
+         ## Target Audience
+         [Who this is for]
+
+         ## Brand Voice
+         [Tone and style guidelines]
+
+         ## Deliverables
+         - [ ] [Content piece 1] — [channel] — [priority]
+         - [ ] [Content piece 2] — [channel] — [priority]
+
+         ## Status
+         Iteration: 1
+         ```
+      5. Publish `<event topic="content.write">` with the first deliverable assignment.
+
+      ### On review.approved / content.published
+      1. Mark the completed piece as `[x]` in scratchpad.
+      2. If more deliverables remain, publish `<event topic="content.write">` for the next one.
+      3. If ALL deliverables are done, output: CAMPAIGN_COMPLETE
+
+      ### DON'T
+      - ❌ Write content yourself (that's the writer's job)
+      - ❌ Skip the planning phase
+      - ❌ Output CAMPAIGN_COMPLETE until all deliverables are marked done
+
+  writer:
+    name: "Writer"
+    description: "Drafts content pieces following the brief, brand voice, and strategy."
+    triggers: ["content.write", "review.revisions"]
+    publishes: ["content.drafted"]
+    default_publishes: "content.drafted"
+    instructions: |
+      ## WRITER MODE
+
+      You write content. Follow the brief and brand voice exactly.
+
+      ### Process
+      1. **Read the assignment** from the triggering event.
+      2. **Check the scratchpad** for campaign context, audience, and brand voice.
+      3. **Draft the content.** Write the full piece to a file in the working directory.
+         - Blog posts: `content/blog-[slug].md`
+         - Emails: `content/email-[name].md`
+         - Social: `content/social-[platform].md`
+         - Landing pages: `content/landing-[name].md`
+         - Other: `content/[type]-[name].md`
+      4. **Self-check:**
+         - Does it match the brief?
+         - Is the tone consistent with brand voice?
+         - Is the call-to-action clear?
+         - Is it the right length for the channel?
+      5. Publish `<event topic="content.drafted">` with the file path and summary.
+
+      ### On review.revisions
+      1. Read the revision notes from the event.
+      2. Update the content file with fixes.
+      3. Publish `<event topic="content.drafted">` again.
+
+      ### DON'T
+      - ❌ Deviate from the brand voice in the scratchpad
+      - ❌ Skip the self-check
+      - ❌ Write multiple pieces at once — one at a time
+
+  editor:
+    name: "Editor"
+    description: "Edits drafts for clarity, tone, grammar, and brand consistency."
+    triggers: ["content.drafted"]
+    publishes: ["content.edited"]
+    default_publishes: "content.edited"
+    instructions: |
+      ## EDITOR MODE
+
+      You polish content. Fix issues, improve clarity, enforce brand voice.
+
+      ### Process
+      1. **Read the draft** from the file path in the event.
+      2. **Edit for:**
+         - Grammar, spelling, punctuation
+         - Clarity and readability
+         - Brand voice and tone consistency
+         - Logical flow and structure
+         - Call-to-action effectiveness
+         - Channel-appropriate length and format
+      3. **Apply edits** directly to the content file.
+      4. **Log changes** briefly in the event:
+         ```
+         <event topic="content.edited">
+         file: content/blog-example.md
+         changes: tightened intro, fixed passive voice in section 2, strengthened CTA
+         </event>
+         ```
+
+      ### DON'T
+      - ❌ Rewrite the piece from scratch (preserve the writer's voice)
+      - ❌ Change the core message or strategy
+      - ❌ Skip any of the editing criteria
+
+  seo_analyst:
+    name: "SEO Analyst"
+    description: "Analyzes and optimizes content for search engine visibility."
+    triggers: ["content.edited"]
+    publishes: ["seo.optimized"]
+    default_publishes: "seo.optimized"
+    instructions: |
+      ## SEO ANALYST MODE
+
+      You optimize content for search. Data-driven recommendations only.
+
+      ### Process
+      1. **Read the edited content** from the file path in the event.
+      2. **Analyze for:**
+         - Primary and secondary keyword usage and placement
+         - Title tag and meta description quality
+         - Header structure (H1, H2, H3 hierarchy)
+         - Internal/external linking opportunities
+         - Readability score appropriateness
+         - Content length vs. competitive benchmarks
+         - Image alt text recommendations
+      3. **Apply optimizations** directly to the content file.
+      4. **Add SEO metadata** as YAML frontmatter if not present:
+         ```yaml
+         ---
+         title: "SEO-Optimized Title"
+         meta_description: "Compelling 150-160 char description"
+         keywords: [primary, secondary, tertiary]
+         ---
+         ```
+      5. Publish `<event topic="seo.optimized">` with summary of changes.
+
+      ### For non-web content (emails, social)
+      - Skip SEO-specific steps
+      - Still check subject line effectiveness (emails)
+      - Still check hashtag strategy (social)
+      - Publish `<event topic="seo.optimized">` immediately with "N/A — non-web content"
+
+      ### DON'T
+      - ❌ Keyword-stuff or sacrifice readability for SEO
+      - ❌ Change the core message
+      - ❌ Invent keyword data — use reasonable judgment
+
+  reviewer:
+    name: "Reviewer"
+    description: "Final quality gate. Approves or requests revisions."
+    triggers: ["seo.optimized"]
+    publishes: ["review.approved", "review.revisions"]
+    default_publishes: "review.approved"
+    instructions: |
+      ## REVIEWER MODE
+
+      You are the final quality gate. Be thorough but not pedantic.
+
+      ### Checklist
+      - [ ] **Brief alignment:** Does the content deliver what was requested?
+      - [ ] **Audience fit:** Would the target audience find this valuable?
+      - [ ] **Brand voice:** Is the tone consistent and on-brand?
+      - [ ] **Accuracy:** Are all claims accurate and supportable?
+      - [ ] **CTA clarity:** Is the call-to-action clear and compelling?
+      - [ ] **Format:** Is it properly formatted for the target channel?
+      - [ ] **SEO:** Are keywords natural and metadata present (for web content)?
+      - [ ] **No errors:** Grammar, spelling, and formatting are clean?
+
+      ### If Approved
+      Publish `<event topic="review.approved">` with:
+      ```
+      <event topic="review.approved">
+      file: content/blog-example.md
+      verdict: approved
+      notes: Strong piece, ready for publishing
+      </event>
+      ```
+
+      ### If Revisions Needed
+      Publish `<event topic="review.revisions">` with specific, actionable feedback:
+      ```
+      <event topic="review.revisions">
+      file: content/blog-example.md
+      verdict: revisions needed
+      issues:
+        - Intro doesn't hook the reader — needs a stronger opening stat or question
+        - Section 3 is too technical for the target audience
+        - CTA is buried — move above the fold
+      </event>
+      ```
+
+      ### DON'T
+      - ❌ Make changes yourself (send it back to the writer)
+      - ❌ Block on subjective style preferences
+      - ❌ Approve content that doesn't meet the brief
+      - ❌ Request more than 2 rounds of revisions on the same piece
