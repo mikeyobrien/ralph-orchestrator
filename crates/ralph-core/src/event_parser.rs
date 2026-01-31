@@ -207,6 +207,9 @@ impl EventParser {
     ///    (prevents accidental completion when agents discuss the promise)
     /// 2. Otherwise, checks for the promise in the stripped output
     pub fn contains_promise(output: &str, promise: &str) -> bool {
+        if promise.trim().is_empty() {
+            return false;
+        }
         // Safety check: if promise appears inside any event tag, never complete
         if Self::promise_in_event_tags(output, promise) {
             return false;
@@ -357,6 +360,10 @@ Working on implementation...
         assert!(!EventParser::contains_promise(
             "No promise here",
             "LOOP_COMPLETE"
+        ));
+        assert!(!EventParser::contains_promise(
+            "LOOP_COMPLETE",
+            ""
         ));
     }
 

@@ -925,6 +925,7 @@ pub async fn run_loop_impl(
 
         let output = outcome.output;
         let success = outcome.success;
+        let output_for_parsing = strip_prompt_echo(&output, &prompt);
 
         // Note: TUI lines are now written directly to IterationBuffer during streaming,
         // so no post-execution transfer is needed.
@@ -934,12 +935,12 @@ pub async fn run_loop_impl(
             &mut event_logger,
             iteration,
             &hat_id,
-            &output,
+            &output_for_parsing,
             event_loop.registry(),
         );
 
         // Process output
-        if let Some(reason) = event_loop.process_output(&hat_id, &output, success) {
+        if let Some(reason) = event_loop.process_output(&hat_id, &output_for_parsing, success) {
             // Per spec: Log "All done! {promise} detected." when completion promise found
             if reason == TerminationReason::CompletionPromise {
                 info!(
@@ -1033,6 +1034,30 @@ pub async fn run_loop_impl(
         }
 
         // Note: Interrupt handling moved into tokio::select! above for immediate termination
+    }
+}
+
+fn strip_prompt_echo(output: &str, prompt: &str) -> String {
+    if prompt.is_empty() {
+        return output.to_string();
+    }
+    if let Some(idx) = output.find(prompt) {
+        let mut cleaned = String::with_capacity(output.len().saturating_sub(prompt.len()));
+        cleaned.push_str(&output[..idx]);
+        cleaned.push_str(&output[idx + prompt.len()..]);
+        cleaned
+    } else {
+        let output_norm = output.replace("\r\n", "\n");
+        let prompt_norm = prompt.replace("\r\n", "\n");
+        if let Some(idx) = output_norm.find(&prompt_norm) {
+            let mut cleaned =
+                String::with_capacity(output_norm.len().saturating_sub(prompt_norm.len()));
+            cleaned.push_str(&output_norm[..idx]);
+            cleaned.push_str(&output_norm[idx + prompt_norm.len()..]);
+            cleaned
+        } else {
+            output.to_string()
+        }
     }
 }
 
@@ -1271,6 +1296,7 @@ fn log_events_from_output(
         }
     }
 }
+
 
 /// Logs the loop.terminate system event to the event history.
 ///
@@ -1581,6 +1607,15 @@ mod tests {
             result.is_none(),
             "Interactive mode idle timeout should return None to allow iteration progression"
         );
+    }
+
+    #[test]
+    fn test_strip_prompt_echo_removes_first_occurrence() {
+        let prompt = "Prompt line 1\nPrompt line 2\nLOOP_COMPLETE";
+        let output = format!("user\n{}\nassistant\nok\n", prompt);
+        let cleaned = strip_prompt_echo(&output, prompt);
+        assert!(!cleaned.contains(prompt));
+        assert!(cleaned.contains("assistant"));
     }
 
     #[test]
