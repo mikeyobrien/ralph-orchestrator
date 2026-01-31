@@ -2069,6 +2069,8 @@ fn list_directory_contents(path: &Path, use_colors: bool, indent: usize) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
 
     fn safe_current_dir() -> std::path::PathBuf {
         std::env::current_dir().unwrap_or_else(|_| {
@@ -2076,6 +2078,31 @@ mod tests {
             std::env::set_current_dir(&fallback).expect("set fallback cwd");
             fallback
         })
+    }
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set(path: &Path) -> Self {
+            let original = safe_current_dir();
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
     }
 
     #[test]
@@ -2647,6 +2674,50 @@ core:
 
         assert_eq!(config.core.scratchpad, ".custom/scratch.md");
         assert_eq!(config.core.workspace_root, safe_current_dir());
+    }
+
+    #[test]
+    fn test_load_config_with_overrides_only_overrides_uses_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let sources = vec![ConfigSource::Override {
+            key: "core.specs_dir".to_string(),
+            value: "custom-specs".to_string(),
+        }];
+
+        let config = load_config_with_overrides(&sources).unwrap();
+
+        assert_eq!(config.core.specs_dir, "custom-specs");
+        let expected_root =
+            std::fs::canonicalize(temp_dir.path()).unwrap_or_else(|_| temp_dir.path().to_path_buf());
+        let actual_root =
+            std::fs::canonicalize(&config.core.workspace_root).unwrap_or_else(|_| {
+                config.core.workspace_root.clone()
+            });
+        assert_eq!(actual_root, expected_root);
+    }
+
+    #[test]
+    fn test_load_config_with_overrides_missing_file_falls_back_to_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];
+
+        let config = load_config_with_overrides(&sources).unwrap();
+
+        let default = RalphConfig::default();
+        assert_eq!(config.core.scratchpad, default.core.scratchpad);
+        let expected_root =
+            std::fs::canonicalize(temp_dir.path()).unwrap_or_else(|_| temp_dir.path().to_path_buf());
+        let actual_root =
+            std::fs::canonicalize(&config.core.workspace_root).unwrap_or_else(|_| {
+                config.core.workspace_root.clone()
+            });
+        assert_eq!(actual_root, expected_root);
     }
 
     #[test]

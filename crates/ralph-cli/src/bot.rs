@@ -1535,6 +1535,27 @@ mod tests {
         assert!(!is_robot_enabled());
     }
 
+    #[test]
+    fn test_is_robot_enabled_invalid_yaml_returns_false() {
+        let _lock = test_lock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::write(temp_dir.path().join("ralph.yml"), "not: [valid").unwrap();
+
+        assert!(!is_robot_enabled());
+    }
+
+    #[test]
+    fn test_resolve_chat_id_invalid_json_returns_none() {
+        let _lock = test_lock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::create_dir_all(".ralph").unwrap();
+        std::fs::write(".ralph/telegram-state.json", "not-json").unwrap();
+
+        assert_eq!(resolve_chat_id(), None);
+    }
+
 
     #[test]
     fn test_load_config_bot_token_from_missing_file_returns_none() {
