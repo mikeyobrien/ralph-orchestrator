@@ -7,7 +7,7 @@ Ralph supports multiple AI CLI backends. This guide covers setup and selection.
 | Backend | CLI Tool | Notes |
 |---------|----------|-------|
 | Claude Code | `claude` | Recommended, primary support |
-| Kiro | `kiro` | Amazon/AWS |
+| Kiro | `kiro-cli` | Amazon/AWS |
 | Gemini CLI | `gemini` | Google |
 | Codex | `codex` | OpenAI |
 | Amp | `amp` | Sourcegraph |
@@ -49,7 +49,15 @@ cli:
 
 ## Backend Setup
 
-### Claude Code
+Each backend below includes:
+- **Install** instructions
+- **Auth & env vars** (API keys or login)
+- **Hat YAML** configuration
+- **`ralph doctor`** validation notes
+
+Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`.
+
+### Claude Code (`claude`)
 
 The recommended backend with full feature support.
 
@@ -61,15 +69,30 @@ npm install -g @anthropic-ai/claude-code
 claude login
 
 # Verify
-claude -p "Hello"
+claude --version
 ```
+
+**Auth & env vars:**
+- `claude login` (preferred)
+- `ANTHROPIC_API_KEY` (used by `ralph doctor` auth hints)
+
+**Hat YAML:**
+```yaml
+hats:
+  planner:
+    backend: "claude"
+```
+
+**Doctor checks:**
+- `claude --version` must succeed
+- Warns if `ANTHROPIC_API_KEY` is missing
 
 **Features:**
 - Full streaming support
 - All hat features
 - Memory integration
 
-### Kiro
+### Kiro (`kiro`)
 
 Amazon/AWS AI assistant.
 
@@ -78,14 +101,34 @@ Amazon/AWS AI assistant.
 # Visit https://kiro.dev/
 
 # Verify
-kiro -p "Hello"
+kiro-cli --version
 ```
 
-**Notes:**
-- May require AWS credentials
-- Supports streaming
+**Auth & env vars:**
+- Complete Kiro CLI authentication (AWS/SSO) per Kiro docs
+- `KIRO_API_KEY` (optional; used by `ralph doctor` auth hints)
 
-### Gemini CLI
+**Hat YAML:**
+```yaml
+hats:
+  coder:
+    backend: "kiro"
+```
+
+**Kiro agent selection (optional):**
+```yaml
+hats:
+  reviewer:
+    backend:
+      type: "kiro"
+      agent: "codex"
+```
+
+**Doctor checks:**
+- `kiro-cli --version` must succeed
+- Warns if `KIRO_API_KEY` is missing (OK if you authenticated via CLI)
+
+### Gemini CLI (`gemini`)
 
 Google's AI CLI.
 
@@ -94,13 +137,27 @@ Google's AI CLI.
 npm install -g @google/gemini-cli
 
 # Configure API key
-export GOOGLE_API_KEY=your-key
+export GEMINI_API_KEY=your-key
 
 # Verify
-gemini -p "Hello"
+gemini --version
 ```
 
-### Codex
+**Auth & env vars:**
+- `GEMINI_API_KEY` (used by `ralph doctor` auth hints)
+
+**Hat YAML:**
+```yaml
+hats:
+  analyst:
+    backend: "gemini"
+```
+
+**Doctor checks:**
+- `gemini --version` must succeed
+- Warns if `GEMINI_API_KEY` is missing
+
+### Codex (`codex`)
 
 OpenAI's code-focused model.
 
@@ -112,10 +169,24 @@ OpenAI's code-focused model.
 export OPENAI_API_KEY=your-key
 
 # Verify
-codex -p "Hello"
+codex --version
 ```
 
-### Amp
+**Auth & env vars:**
+- `OPENAI_API_KEY` or `CODEX_API_KEY` (either satisfies `ralph doctor` auth hints)
+
+**Hat YAML:**
+```yaml
+hats:
+  coder:
+    backend: "codex"
+```
+
+**Doctor checks:**
+- `codex --version` must succeed
+- Warns if neither `OPENAI_API_KEY` nor `CODEX_API_KEY` is set
+
+### Amp (`amp`)
 
 Sourcegraph's AI assistant.
 
@@ -124,10 +195,24 @@ Sourcegraph's AI assistant.
 # Visit https://github.com/sourcegraph/amp
 
 # Verify
-amp -p "Hello"
+amp --version
 ```
 
-### Copilot CLI
+**Auth & env vars:**
+- Authenticate via `amp` CLI per Sourcegraph docs
+- No auth env vars are checked by `ralph doctor` for Amp
+
+**Hat YAML:**
+```yaml
+hats:
+  helper:
+    backend: "amp"
+```
+
+**Doctor checks:**
+- `amp --version` must succeed
+
+### Copilot CLI (`copilot`)
 
 GitHub's AI assistant.
 
@@ -139,10 +224,24 @@ npm install -g @github/copilot
 copilot auth login
 
 # Verify
-copilot -p "Hello"
+copilot --version
 ```
 
-### OpenCode
+**Auth & env vars:**
+- Authenticate via Copilot CLI (`copilot auth login` or `gh auth login`)
+- No auth env vars are checked by `ralph doctor` for Copilot
+
+**Hat YAML:**
+```yaml
+hats:
+  reviewer:
+    backend: "copilot"
+```
+
+**Doctor checks:**
+- `copilot --version` must succeed
+
+### OpenCode (`opencode`)
 
 Community AI CLI.
 
@@ -151,8 +250,23 @@ Community AI CLI.
 curl -fsSL https://opencode.ai/install | bash
 
 # Verify
-opencode -p "Hello"
+opencode --version
 ```
+
+**Auth & env vars:**
+- Set one of: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
+- OpenCode can proxy multiple providers; use the env var matching your provider
+
+**Hat YAML:**
+```yaml
+hats:
+  strategist:
+    backend: "opencode"
+```
+
+**Doctor checks:**
+- `opencode --version` must succeed
+- Warns if none of `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` are set
 
 ## Per-Hat Backend Override
 
@@ -227,8 +341,11 @@ claude login
 copilot auth login
 
 # Gemini - set API key
-export GOOGLE_API_KEY=your-key
+export GEMINI_API_KEY=your-key
 ```
+
+If the CLI is already authenticated but `ralph doctor` still warns, ensure the
+expected env vars above are set (doctor checks are hints, not hard failures).
 
 ### Wrong Backend Used
 
