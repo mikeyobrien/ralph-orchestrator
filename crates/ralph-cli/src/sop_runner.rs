@@ -233,6 +233,39 @@ fn spawn_interactive(backend: &CliBackend, prompt: &str) -> Result<(), SopRunErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock")
+    }
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set(path: &Path) -> Self {
+            let original = safe_current_dir();
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    fn safe_current_dir() -> PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| {
+            let fallback = std::env::temp_dir();
+            std::env::set_current_dir(&fallback).expect("set fallback cwd");
+            fallback
+        })
+    }
 
     #[test]
     fn test_sop_content_pdd() {
@@ -310,5 +343,75 @@ mod tests {
         } else {
             panic!("Expected UnknownBackend error");
         }
+    }
+
+    #[test]
+    fn test_resolve_backend_from_flag() {
+        let backend = resolve_backend(Some("claude"), None).expect("backend");
+        assert_eq!(backend, "claude");
+    }
+
+    #[test]
+    fn test_resolve_backend_invalid_flag() {
+        let err = resolve_backend(Some("unknown"), None).expect_err("invalid backend");
+        if let SopRunError::UnknownBackend(name) = err {
+            assert_eq!(name, "unknown");
+        } else {
+            panic!("expected UnknownBackend");
+        }
+    }
+
+    #[test]
+    fn test_resolve_backend_from_config_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let config_path = temp_dir.path().join("ralph.yml");
+        std::fs::write(&config_path, "cli:\n  backend: gemini\n").expect("write config");
+
+        let backend = resolve_backend(None, Some(&config_path)).expect("backend");
+        assert_eq!(backend, "gemini");
+    }
+
+    #[test]
+    fn test_run_sop_custom_args_missing_errors() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let config = SopRunConfig {
+            sop: Sop::Pdd,
+            user_input: None,
+            backend_override: Some("custom".to_string()),
+            config_path: None,
+            custom_args: None,
+        };
+
+        let err = run_sop(config).expect_err("expected error");
+        if let SopRunError::UnknownBackend(msg) = err {
+            assert!(msg.contains("configuration file not found"));
+        } else {
+            panic!("expected UnknownBackend");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_run_sop_custom_args_executes() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let config = SopRunConfig {
+            sop: Sop::Pdd,
+            user_input: Some("Build a REST API".to_string()),
+            backend_override: Some("custom".to_string()),
+            config_path: None,
+            custom_args: Some(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "exit 0".to_string(),
+            ]),
+        };
+
+        run_sop(config).expect("run sop");
     }
 }

@@ -999,6 +999,40 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::loop_registry::LoopEntry;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock")
+    }
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set(path: &Path) -> Self {
+            let original = safe_current_dir();
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    fn safe_current_dir() -> PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| {
+            let fallback = std::env::temp_dir();
+            std::env::set_current_dir(&fallback).expect("set fallback cwd");
+            fallback
+        })
+    }
 
     #[test]
     fn test_truncate() {
@@ -1020,5 +1054,47 @@ mod tests {
     fn test_shorten_path() {
         assert_eq!(shorten_path("/foo/bar/baz"), "baz");
         assert_eq!(shorten_path("./worktrees/ralph-abc"), "ralph-abc");
+    }
+
+    #[test]
+    fn test_format_age_boundaries() {
+        assert_eq!(format_age(chrono::Duration::seconds(59)), "59s");
+        assert_eq!(format_age(chrono::Duration::seconds(60)), "1m");
+        assert_eq!(format_age(chrono::Duration::seconds(3599)), "59m");
+        assert_eq!(format_age(chrono::Duration::seconds(3600)), "1h");
+        assert_eq!(format_age(chrono::Duration::seconds(86399)), "23h");
+        assert_eq!(format_age(chrono::Duration::seconds(86400)), "1d");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_process_alive_current_pid() {
+        let pid = std::process::id();
+        assert!(is_process_alive(pid));
+    }
+
+    #[test]
+    fn test_list_loops_includes_registry_entry_json() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-test-1234",
+            "test prompt",
+            Some("worktrees/loop-test-1234"),
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        list_loops(
+            ListArgs {
+                json: true,
+                all: true,
+            },
+            false,
+        )
+        .expect("list loops");
     }
 }
