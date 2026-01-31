@@ -206,18 +206,8 @@ pub fn format_preset_list() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use crate::test_support::CwdGuard;
     use tempfile::TempDir;
-
-    static CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn safe_current_dir() -> std::path::PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| {
-            let fallback = std::env::temp_dir();
-            std::env::set_current_dir(&fallback).expect("set fallback cwd");
-            fallback
-        })
-    }
 
     #[test]
     fn test_generate_template_claude() {
@@ -259,23 +249,8 @@ mod tests {
 
     #[test]
     fn test_init_from_preset_confession_loop_writes_config() {
-        struct RestoreDir(std::path::PathBuf);
-        impl Drop for RestoreDir {
-            fn drop(&mut self) {
-                let _ = std::env::set_current_dir(&self.0);
-            }
-        }
-
-        let _guard = CWD_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("cwd lock poisoned");
-
-        let original_dir = safe_current_dir();
-        let _restore = RestoreDir(original_dir);
-
         let temp_dir = TempDir::new().expect("create temp dir");
-        std::env::set_current_dir(temp_dir.path()).expect("set current dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
 
         init_from_preset("confession-loop", None, false).expect("init_from_preset succeeds");
 

@@ -28,6 +28,8 @@ mod sop_runner;
 mod task_cli;
 mod tools;
 mod web;
+#[cfg(test)]
+mod test_support;
 
 use anyhow::{Context, Result};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
@@ -2069,41 +2071,8 @@ fn list_directory_contents(path: &Path, use_colors: bool, indent: usize) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn safe_current_dir() -> std::path::PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| {
-            let fallback = std::env::temp_dir();
-            std::env::set_current_dir(&fallback).expect("set fallback cwd");
-            fallback
-        })
-    }
-
-    fn test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-    }
-
-    struct CwdGuard {
-        original: PathBuf,
-    }
-
-    impl CwdGuard {
-        fn set(path: &Path) -> Self {
-            let original = safe_current_dir();
-            std::env::set_current_dir(path).expect("set current dir");
-            Self { original }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original);
-        }
-    }
+    use crate::test_support::{CwdGuard, safe_current_dir};
+    use std::path::PathBuf;
 
     #[test]
     fn test_verbosity_cli_quiet() {
@@ -2679,7 +2648,6 @@ core:
     #[test]
     fn test_load_config_with_overrides_only_overrides_uses_defaults() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let sources = vec![ConfigSource::Override {
@@ -2702,7 +2670,6 @@ core:
     #[test]
     fn test_load_config_with_overrides_missing_file_falls_back_to_defaults() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];

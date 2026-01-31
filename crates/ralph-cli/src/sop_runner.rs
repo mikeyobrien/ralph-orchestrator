@@ -233,39 +233,7 @@ fn spawn_interactive(backend: &CliBackend, prompt: &str) -> Result<(), SopRunErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock")
-    }
-
-    struct CwdGuard {
-        original: PathBuf,
-    }
-
-    impl CwdGuard {
-        fn set(path: &Path) -> Self {
-            let original = safe_current_dir();
-            std::env::set_current_dir(path).expect("set current dir");
-            Self { original }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original);
-        }
-    }
-
-    fn safe_current_dir() -> PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| {
-            let fallback = std::env::temp_dir();
-            std::env::set_current_dir(&fallback).expect("set fallback cwd");
-            fallback
-        })
-    }
+    use crate::test_support::CwdGuard;
 
     #[test]
     fn test_sop_content_pdd() {
@@ -374,7 +342,6 @@ mod tests {
     #[test]
     fn test_run_sop_custom_args_missing_errors() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let config = SopRunConfig {
@@ -397,7 +364,6 @@ mod tests {
     #[test]
     fn test_run_sop_custom_args_executes() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let config = SopRunConfig {

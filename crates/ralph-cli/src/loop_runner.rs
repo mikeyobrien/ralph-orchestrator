@@ -1721,6 +1721,7 @@ pub async fn start_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
     use ralph_core::HatRegistry;
     use ralph_core::planning_session::{ConversationEntry, ConversationType};
     use ralph_proto::{Hat, Topic};
@@ -1768,36 +1769,6 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod");
         path
-    }
-
-    #[cfg(unix)]
-    struct CwdGuard {
-        original: std::path::PathBuf,
-    }
-
-    #[cfg(unix)]
-    impl CwdGuard {
-        fn set(path: &Path) -> Self {
-            let original = safe_current_dir();
-            std::env::set_current_dir(path).expect("set cwd");
-            Self { original }
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original);
-        }
-    }
-
-    #[cfg(unix)]
-    fn safe_current_dir() -> std::path::PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| {
-            let fallback = std::env::temp_dir();
-            std::env::set_current_dir(&fallback).expect("set fallback cwd");
-            fallback
-        })
     }
 
     #[test]

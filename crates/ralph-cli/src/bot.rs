@@ -1034,39 +1034,8 @@ fn print_status(use_colors: bool, msg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock")
-    }
-
-    struct CwdGuard {
-        original: PathBuf,
-    }
-
-    impl CwdGuard {
-        fn set(path: &Path) -> Self {
-            let original = safe_current_dir();
-            std::env::set_current_dir(path).expect("set current dir");
-            Self { original }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original);
-        }
-    }
-
-    fn safe_current_dir() -> PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| {
-            let fallback = std::env::temp_dir();
-            std::env::set_current_dir(&fallback).expect("set fallback cwd");
-            fallback
-        })
-    }
+    use crate::test_support::CwdGuard;
+    use std::path::PathBuf;
 
     #[test]
     fn test_normalize_token_trims_and_discards_empty() {
@@ -1127,7 +1096,6 @@ mod tests {
     #[tokio::test]
     async fn test_run_daemon_errors_on_missing_config_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];
@@ -1144,7 +1112,6 @@ mod tests {
     #[test]
     fn test_save_telegram_state_creates_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         save_telegram_state(123_456_789).expect("save telegram state");
@@ -1167,7 +1134,6 @@ mod tests {
     #[test]
     fn test_save_robot_config_creates_minimal_config_without_token() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         save_robot_config(180, None).expect("save robot config");
@@ -1336,7 +1302,6 @@ mod tests {
     #[test]
     fn test_save_robot_config_with_token_writes_bot_token() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         save_robot_config(300, Some("test-token")).unwrap();
@@ -1355,7 +1320,6 @@ mod tests {
     #[test]
     fn test_save_robot_config_updates_existing_config() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let _lock = test_lock();
         let _cwd = CwdGuard::set(temp_dir.path());
 
         std::fs::write("ralph.yml", "cli:\n  backend: claude\n").unwrap();
@@ -1454,7 +1418,6 @@ mod tests {
 
     #[test]
     fn test_load_config_bot_token_reads_legacy_config() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
         std::fs::write(
@@ -1468,7 +1431,6 @@ mod tests {
 
     #[test]
     fn test_is_robot_enabled_reads_config() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
         std::fs::write(temp_dir.path().join("ralph.yml"), "RObot:\n  enabled: true\n")
@@ -1487,7 +1449,6 @@ mod tests {
 
     #[test]
     fn test_resolve_chat_id_reads_state_file() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
         std::fs::create_dir_all(".ralph").unwrap();
@@ -1502,7 +1463,6 @@ mod tests {
 
     #[test]
     fn test_resolve_chat_id_missing_file_returns_none() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
 
@@ -1544,7 +1504,6 @@ mod tests {
 
     #[test]
     fn test_is_robot_enabled_missing_config_returns_false() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
 
@@ -1553,7 +1512,6 @@ mod tests {
 
     #[test]
     fn test_is_robot_enabled_invalid_yaml_returns_false() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
         std::fs::write(temp_dir.path().join("ralph.yml"), "not: [valid").unwrap();
@@ -1563,7 +1521,6 @@ mod tests {
 
     #[test]
     fn test_resolve_chat_id_invalid_json_returns_none() {
-        let _lock = test_lock();
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
         std::fs::create_dir_all(".ralph").unwrap();
