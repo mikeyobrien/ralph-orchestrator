@@ -207,6 +207,11 @@ impl EventParser {
     ///    (prevents accidental completion when agents discuss the promise)
     /// 2. Otherwise, checks for the promise in the stripped output
     pub fn contains_promise(output: &str, promise: &str) -> bool {
+        // Treat empty/whitespace-only promise as "disabled".
+        //
+        // This matters because `str::contains("")` is always true, which would
+        // otherwise cause immediate termination when users pass e.g.
+        // `--completion-promise ""`.
         if promise.trim().is_empty() {
             return false;
         }
@@ -361,10 +366,7 @@ Working on implementation...
             "No promise here",
             "LOOP_COMPLETE"
         ));
-        assert!(!EventParser::contains_promise(
-            "LOOP_COMPLETE",
-            ""
-        ));
+        assert!(!EventParser::contains_promise("LOOP_COMPLETE", ""));
     }
 
     #[test]

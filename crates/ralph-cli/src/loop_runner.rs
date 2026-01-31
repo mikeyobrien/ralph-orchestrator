@@ -1038,27 +1038,53 @@ pub async fn run_loop_impl(
 }
 
 fn strip_prompt_echo(output: &str, prompt: &str) -> String {
-    if prompt.is_empty() {
-        return output.to_string();
+    // Some backends (notably Codex) echo the *entire prompt* back in their transcript.
+    //
+    // The prompt includes Ralph instructions that mention the completion promise
+    // (e.g. "output LOOP_COMPLETE"), so if we parse promises against raw output we can
+    // falsely detect completion immediately after a normal event emission.
+    //
+    // To avoid this, we strip a single echoed prompt instance *only when* it looks
+    // like a transcript echo (at the start of output, or preceded by a user marker).
+    //
+    // Note: This function is for parsing only; it does not affect what the user sees
+    // in the streaming UI.
+    let output_norm = output.replace("\r\n", "\n");
+    let prompt_norm = prompt.replace("\r\n", "\n");
+    if prompt_norm.is_empty() {
+        return output_norm;
     }
-    if let Some(idx) = output.find(prompt) {
-        let mut cleaned = String::with_capacity(output.len().saturating_sub(prompt.len()));
-        cleaned.push_str(&output[..idx]);
-        cleaned.push_str(&output[idx + prompt.len()..]);
-        cleaned
+
+    // Only strip if the prompt appears "early". This reduces the risk of stripping
+    // a legitimate assistant response that happens to repeat parts of the prompt.
+    const MAX_ECHO_SEARCH: usize = 64 * 1024;
+    let haystack = if output_norm.len() > MAX_ECHO_SEARCH {
+        &output_norm[..MAX_ECHO_SEARCH]
     } else {
-        let output_norm = output.replace("\r\n", "\n");
-        let prompt_norm = prompt.replace("\r\n", "\n");
-        if let Some(idx) = output_norm.find(&prompt_norm) {
-            let mut cleaned =
-                String::with_capacity(output_norm.len().saturating_sub(prompt_norm.len()));
-            cleaned.push_str(&output_norm[..idx]);
-            cleaned.push_str(&output_norm[idx + prompt_norm.len()..]);
-            cleaned
-        } else {
-            output.to_string()
-        }
+        &output_norm
+    };
+
+    let Some(idx) = haystack.find(&prompt_norm) else {
+        return output_norm;
+    };
+
+    // Accept prompt-at-start, or prompt preceded by a transcript-ish "user" marker.
+    //
+    // Different backends format transcripts differently; we keep this intentionally
+    // conservative and only match common, low-risk prefixes.
+    let prefix = &output_norm[..idx];
+    let looks_like_echo = idx == 0
+        || prefix.ends_with("\nuser\n")
+        || prefix == "user\n"
+        || (output_norm.starts_with("user\n") && idx == "user\n".len());
+    if !looks_like_echo {
+        return output_norm;
     }
+
+    let mut cleaned = String::with_capacity(output_norm.len().saturating_sub(prompt_norm.len()));
+    cleaned.push_str(&output_norm[..idx]);
+    cleaned.push_str(&output_norm[idx + prompt_norm.len()..]);
+    cleaned
 }
 
 /// Executes a prompt in PTY mode with raw terminal handling.
@@ -1296,7 +1322,6 @@ fn log_events_from_output(
         }
     }
 }
-
 
 /// Logs the loop.terminate system event to the event history.
 ///
@@ -1616,6 +1641,32 @@ mod tests {
         let cleaned = strip_prompt_echo(&output, prompt);
         assert!(!cleaned.contains(prompt));
         assert!(cleaned.contains("assistant"));
+    }
+
+    #[test]
+    fn test_strip_prompt_echo_does_not_strip_mid_output() {
+        // If the assistant repeats the prompt content, we don't want to strip it
+        // unless it appears as a transcript echo (at start / after "\nuser\n").
+        let prompt = "P1\nP2\nLOOP_COMPLETE";
+        let output = format!("assistant\nprefix\n{prompt}\nsuffix\n");
+        let cleaned = strip_prompt_echo(&output, prompt);
+        assert!(cleaned.contains(prompt));
+    }
+
+    #[test]
+    fn test_strip_prompt_echo_prevents_false_completion_detection() {
+        // Repro of issue #139: backend echoes the prompt (which contains LOOP_COMPLETE),
+        // then the assistant emits a normal event. Without stripping, completion promise
+        // detection can fire just because the prompt mentions the token.
+        use ralph_core::EventParser;
+
+        let prompt = "Some instructions...\nYou MUST choose exactly one:\n- If task is complete: output LOOP_COMPLETE and nothing else.\n";
+        let output = format!("user\n{prompt}\nassistant\nEvent emitted: direction.set\n");
+
+        assert!(EventParser::contains_promise(&output, "LOOP_COMPLETE"));
+
+        let cleaned = strip_prompt_echo(&output, prompt);
+        assert!(!EventParser::contains_promise(&cleaned, "LOOP_COMPLETE"));
     }
 
     #[test]
