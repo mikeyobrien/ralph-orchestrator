@@ -1738,4 +1738,26 @@ mod tests {
             "tui_mode should be false after set_tui_mode(false)"
         );
     }
+
+    #[test]
+    fn test_build_result_populates_fields() {
+        let output = b"\x1b[31mHello\x1b[0m\n";
+        let extracted = "extracted text".to_string();
+
+        let result = build_result(
+            output,
+            true,
+            Some(0),
+            TerminationType::Natural,
+            extracted.clone(),
+        );
+
+        assert_eq!(result.output, String::from_utf8_lossy(output));
+        assert!(result.stripped_output.contains("Hello"));
+        assert!(!result.stripped_output.contains("\x1b["));
+        assert_eq!(result.extracted_text, extracted);
+        assert!(result.success);
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.termination, TerminationType::Natural);
+    }
 }

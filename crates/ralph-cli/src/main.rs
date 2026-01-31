@@ -2531,4 +2531,82 @@ core:
         // Assert: returns "[no prompt]" for missing file
         assert_eq!(prompt_summary, "[no prompt]");
     }
+
+    #[test]
+    fn test_format_preflight_summary_with_failures() {
+        let report = PreflightReport {
+            passed: false,
+            warnings: 1,
+            failures: 1,
+            checks: vec![
+                ralph_core::CheckResult::pass("config", "Config"),
+                ralph_core::CheckResult::warn("backend", "Backend", "Missing"),
+                ralph_core::CheckResult::fail("paths", "Paths", "Missing path"),
+            ],
+        };
+
+        let summary = format_preflight_summary(&report);
+
+        assert!(summary.contains("✓"));
+        assert!(summary.contains("⚠"));
+        assert!(summary.contains("✗"));
+        assert!(summary.contains("(1 failure)"));
+    }
+
+    #[test]
+    fn test_format_preflight_summary_no_checks() {
+        let report = PreflightReport {
+            passed: true,
+            warnings: 0,
+            failures: 0,
+            checks: Vec::new(),
+        };
+
+        let summary = format_preflight_summary(&report);
+
+        assert_eq!(summary, "no checks");
+    }
+
+    #[test]
+    fn test_preflight_failure_detail_strict_includes_warnings() {
+        let report = PreflightReport {
+            passed: false,
+            warnings: 2,
+            failures: 1,
+            checks: Vec::new(),
+        };
+
+        assert_eq!(preflight_failure_detail(&report, false), "1 failure");
+        assert_eq!(
+            preflight_failure_detail(&report, true),
+            "1 failure, 2 warnings"
+        );
+    }
+
+    #[test]
+    fn test_load_config_with_overrides_applies_override_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("ralph.yml");
+        std::fs::write(
+            &config_path,
+            "core:\n  scratchpad: .agent/scratchpad.md\n",
+        )
+        .unwrap();
+
+        let sources = vec![
+            ConfigSource::File(config_path),
+            ConfigSource::Override {
+                key: "core.scratchpad".to_string(),
+                value: ".custom/scratch.md".to_string(),
+            },
+        ];
+
+        let config = load_config_with_overrides(&sources).unwrap();
+
+        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(
+            config.core.workspace_root,
+            std::env::current_dir().unwrap()
+        );
+    }
 }

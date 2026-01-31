@@ -1012,6 +1012,31 @@ fn print_status(use_colors: bool, msg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock")
+    }
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn set(path: &Path) -> Self {
+            let original = std::env::current_dir().expect("current dir");
+            std::env::set_current_dir(path).expect("set current dir");
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
 
     #[test]
     fn test_save_telegram_state_creates_file() {
@@ -1256,5 +1281,53 @@ mod tests {
             .and_then(|t| t.get("bot_token"))
             .and_then(|v| v.as_str());
         assert_eq!(token, Some("new-token"));
+    }
+
+    #[test]
+    fn test_load_config_bot_token_reads_legacy_config() {
+        let _lock = test_lock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::write(
+            temp_dir.path().join("ralph.yml"),
+            "RObot:\n  telegram:\n    bot_token: legacy-token\n",
+        )
+        .unwrap();
+
+        assert_eq!(load_config_bot_token().as_deref(), Some("legacy-token"));
+    }
+
+    #[test]
+    fn test_is_robot_enabled_reads_config() {
+        let _lock = test_lock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::write(temp_dir.path().join("ralph.yml"), "RObot:\n  enabled: true\n")
+            .unwrap();
+
+        assert!(is_robot_enabled());
+
+        std::fs::write(
+            temp_dir.path().join("ralph.yml"),
+            "RObot:\n  enabled: false\n",
+        )
+        .unwrap();
+
+        assert!(!is_robot_enabled());
+    }
+
+    #[test]
+    fn test_resolve_chat_id_reads_state_file() {
+        let _lock = test_lock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::create_dir_all(".ralph").unwrap();
+        std::fs::write(
+            ".ralph/telegram-state.json",
+            r#"{"chat_id": 4242, "pending_questions": {}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(resolve_chat_id(), Some(4242));
     }
 }
