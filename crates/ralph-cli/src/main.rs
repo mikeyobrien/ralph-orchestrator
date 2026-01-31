@@ -32,9 +32,9 @@ use anyhow::{Context, Result};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use ralph_adapters::detect_backend;
 use ralph_core::{
-    EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry, RalphConfig,
-    TerminationReason,
-    worktree::{WorktreeConfig, create_worktree, ensure_gitignore},
+    CheckStatus, EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry,
+    PreflightReport, PreflightRunner, RalphConfig, TerminationReason,
+    worktree::{WorktreeConfig, create_worktree, ensure_gitignore, remove_worktree},
 };
 use std::fs;
 use std::io::{IsTerminal, Write, stdout};
@@ -521,6 +521,14 @@ struct RunArgs {
     chaos_max_iterations: Option<u32>,
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Preflight Options
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Skip preflight checks before loop start.
+    /// Overrides features.preflight.enabled from config.
+    #[arg(long)]
+    skip_preflight: bool,
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Verbosity Options
     // ─────────────────────────────────────────────────────────────────────────
     /// Enable verbose output (show tool results and session summary)
@@ -820,12 +828,164 @@ async fn main() -> Result<()> {
                 no_auto_merge: false,
                 chaos: false,
                 chaos_max_iterations: None,
+                skip_preflight: false,
                 verbose: false,
                 quiet: false,
                 record_session: None,
                 custom_args: Vec::new(),
             };
             run_command(&config_sources, cli.verbose, cli.color, args).await
+        }
+    }
+}
+
+fn format_preflight_summary(report: &PreflightReport) -> String {
+    let icons: Vec<String> = report
+        .checks
+        .iter()
+        .map(|check| {
+            let icon = match check.status {
+                CheckStatus::Pass => "✓",
+                CheckStatus::Warn => "⚠",
+                CheckStatus::Fail => "✗",
+            };
+            format!("{icon} {}", check.name)
+        })
+        .collect();
+
+    let summary = if icons.is_empty() {
+        "no checks".to_string()
+    } else {
+        icons.join(" ")
+    };
+
+    let suffix = if report.failures > 0 {
+        format!(
+            " ({} failure{})",
+            report.failures,
+            if report.failures == 1 { "" } else { "s" }
+        )
+    } else if report.warnings > 0 {
+        format!(
+            " ({} warning{})",
+            report.warnings,
+            if report.warnings == 1 { "" } else { "s" }
+        )
+    } else {
+        String::new()
+    };
+
+    format!("{summary}{suffix}")
+}
+
+enum AutoPreflightMode {
+    DryRun,
+    Run,
+}
+
+fn preflight_failure_detail(report: &PreflightReport, strict: bool) -> String {
+    if strict && report.warnings > 0 {
+        format!(
+            "{} failure{}, {} warning{}",
+            report.failures,
+            if report.failures == 1 { "" } else { "s" },
+            report.warnings,
+            if report.warnings == 1 { "" } else { "s" }
+        )
+    } else {
+        format!(
+            "{} failure{}",
+            report.failures,
+            if report.failures == 1 { "" } else { "s" }
+        )
+    }
+}
+
+async fn run_auto_preflight(
+    config: &RalphConfig,
+    skip_preflight: bool,
+    verbose: bool,
+    mode: AutoPreflightMode,
+) -> Result<Option<PreflightReport>> {
+    if skip_preflight || !config.features.preflight.enabled {
+        return Ok(None);
+    }
+
+    let runner = PreflightRunner::default_checks();
+    let mut report = if config.features.preflight.skip.is_empty() {
+        runner.run_all(config).await
+    } else {
+        let skip_lower: std::collections::HashSet<String> = config
+            .features
+            .preflight
+            .skip
+            .iter()
+            .map(|name| name.to_lowercase())
+            .collect();
+        let selected: Vec<String> = runner
+            .check_names()
+            .into_iter()
+            .filter(|name| !skip_lower.contains(&name.to_lowercase()))
+            .map(|name| name.to_string())
+            .collect();
+        runner.run_selected(config, &selected).await
+    };
+
+    let effective_passed = if config.features.preflight.strict {
+        report.failures == 0 && report.warnings == 0
+    } else {
+        report.failures == 0
+    };
+    report.passed = effective_passed;
+
+    match mode {
+        AutoPreflightMode::DryRun => Ok(Some(report)),
+        AutoPreflightMode::Run => {
+            print_preflight_summary(&report, verbose, "Preflight: ", false);
+            if !effective_passed {
+                let detail = preflight_failure_detail(&report, config.features.preflight.strict);
+                anyhow::bail!(
+                    "Preflight checks failed ({}). Fix the issues above or use --skip-preflight to bypass.",
+                    detail
+                );
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn print_preflight_summary(
+    report: &PreflightReport,
+    verbose: bool,
+    prefix: &str,
+    use_stdout: bool,
+) {
+    let summary = format_preflight_summary(report);
+    if use_stdout {
+        println!("{prefix}{summary}");
+    } else {
+        eprintln!("{prefix}{summary}");
+    }
+
+    let emit = |line: String| {
+        if use_stdout {
+            println!("{line}");
+        } else {
+            eprintln!("{line}");
+        }
+    };
+
+    for check in &report.checks {
+        if check.status == CheckStatus::Fail && let Some(message) = &check.message {
+            emit(format!("  ✗ {}: {}", check.name, message));
+        }
+    }
+
+    if verbose {
+        for check in &report.checks {
+            if check.status == CheckStatus::Warn && let Some(message) = &check.message {
+                emit(format!("  ⚠ {}: {}", check.name, message));
+            }
         }
     }
 }
@@ -1000,7 +1160,16 @@ async fn run_command(
         }
     }
 
+    let preflight_verbose = verbose || args.verbose;
+
     if args.dry_run {
+        let preflight_report = run_auto_preflight(
+            &config,
+            args.skip_preflight,
+            preflight_verbose,
+            AutoPreflightMode::DryRun,
+        )
+        .await?;
         println!("Dry run mode - configuration:");
         println!(
             "  Hats: {}",
@@ -1041,6 +1210,9 @@ async fn run_command(
         if !warnings.is_empty() {
             println!("  Warnings: {}", warnings.len());
         }
+        if let Some(report) = preflight_report.as_ref() {
+            print_preflight_summary(report, preflight_verbose, "  Preflight: ", true);
+        }
         return Ok(());
     }
 
@@ -1075,6 +1247,8 @@ async fn run_command(
             }
         })
         .unwrap_or_else(|| "[no prompt]".to_string());
+
+    let mut pending_worktree_registration: Option<LoopEntry> = None;
 
     // Try to acquire the loop lock for multi-loop concurrency support
     // This implements the lock detection flow from the multi-loop spec
@@ -1157,18 +1331,15 @@ async fn run_command(
                     .generate_context_file(&worktree.branch, &prompt_summary)
                     .context("Failed to generate context file in worktree")?;
 
-                // Register this loop in the registry with the SAME loop_id
-                // This ensures registry ID matches worktree path and branch name
-                let registry = LoopRegistry::new(workspace_root);
+                // Register this loop after preflight succeeds so failed runs
+                // don't leave stale registry entries behind.
                 let entry = LoopEntry::with_id(
                     &loop_id,
                     &prompt_summary,
                     Some(worktree.path.to_string_lossy().to_string()),
                     worktree.path.to_string_lossy().to_string(),
                 );
-                registry
-                    .register(entry)
-                    .context("Failed to register loop in registry")?;
+                pending_worktree_registration = Some(entry);
 
                 // Update config to use worktree paths
                 // The scratchpad and other paths should resolve to the worktree
@@ -1204,6 +1375,34 @@ async fn run_command(
     loop_context
         .ensure_directories()
         .context("Failed to create loop directories")?;
+
+    if let Err(err) = run_auto_preflight(
+        &config,
+        args.skip_preflight,
+        preflight_verbose,
+        AutoPreflightMode::Run,
+    )
+    .await
+    {
+        if !loop_context.is_primary()
+            && let Err(clean_err) =
+                remove_worktree(loop_context.repo_root(), loop_context.workspace())
+        {
+            warn!(
+                "Preflight failed; unable to remove worktree {}: {}",
+                loop_context.workspace().display(),
+                clean_err
+            );
+        }
+        return Err(err);
+    }
+
+    if let Some(entry) = pending_worktree_registration {
+        let registry = LoopRegistry::new(loop_context.repo_root());
+        registry
+            .register(entry)
+            .context("Failed to register loop in registry")?;
+    }
 
     // Run the orchestration loop and exit with proper exit code
     // TUI is enabled by default (unless --no-tui or --autonomous is specified)
@@ -2063,6 +2262,54 @@ mod tests {
         // Should succeed without error (no-op)
         let result = ensure_scratchpad_directory(&config);
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auto_preflight_dry_run_returns_report() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        config.features.preflight.enabled = true;
+        config.features.preflight.skip = vec!["git".to_string(), "tools".to_string()];
+        config.cli.backend = "custom".to_string();
+        config.cli.command = Some("definitely-missing-12345".to_string());
+
+        let report = run_auto_preflight(
+            &config,
+            false,
+            false,
+            AutoPreflightMode::DryRun,
+        )
+        .await
+        .unwrap();
+
+        let report = report.expect("expected preflight report in dry-run mode");
+        assert!(!report.passed);
+        assert!(report.failures >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_auto_preflight_run_fails_on_check_failure() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        config.features.preflight.enabled = true;
+        config.features.preflight.skip = vec!["git".to_string(), "tools".to_string()];
+        config.cli.backend = "custom".to_string();
+        config.cli.command = Some("definitely-missing-12345".to_string());
+
+        let err = run_auto_preflight(
+            &config,
+            false,
+            false,
+            AutoPreflightMode::Run,
+        )
+        .await
+        .expect_err("expected preflight failure in run mode");
+
+        assert!(err
+            .to_string()
+            .contains("Preflight checks failed"));
     }
 
     #[test]

@@ -1066,6 +1066,32 @@ pub enum ChaosOutput {
     Specs,
 }
 
+/// Preflight check configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreflightConfig {
+    /// Whether to run preflight checks before `ralph run`.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Whether to treat warnings as failures.
+    #[serde(default)]
+    pub strict: bool,
+
+    /// Specific checks to skip (by name). Empty = run all checks.
+    #[serde(default)]
+    pub skip: Vec<String>,
+}
+
+impl Default for PreflightConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            strict: false,
+            skip: Vec::new(),
+        }
+    }
+}
+
 /// Feature flags for optional Ralph capabilities.
 ///
 /// Example configuration:
@@ -1073,6 +1099,10 @@ pub enum ChaosOutput {
 /// features:
 ///   parallel: true  # Enable parallel loops via git worktrees
 ///   auto_merge: false  # Auto-merge worktree branches on completion
+///   preflight:
+///     enabled: true       # Run preflight checks before `ralph run`
+///     strict: false       # Treat warnings as failures
+///     skip: ["telegram"]  # Skip specific checks by name
 ///   loop_naming:
 ///     format: human-readable  # or "timestamp" for legacy format
 ///     max_length: 50
@@ -1111,6 +1141,10 @@ pub struct FeaturesConfig {
     /// improvements and learnings based on the original objective.
     #[serde(default)]
     pub chaos_mode: ChaosModeConfig,
+
+    /// Preflight check configuration.
+    #[serde(default)]
+    pub preflight: PreflightConfig,
 }
 
 impl Default for FeaturesConfig {
@@ -1120,6 +1154,7 @@ impl Default for FeaturesConfig {
             auto_merge: false, // Auto-merge disabled by default for safety
             loop_naming: crate::loop_name::LoopNamingConfig::default(),
             chaos_mode: ChaosModeConfig::default(),
+            preflight: PreflightConfig::default(),
         }
     }
 }
@@ -1453,6 +1488,9 @@ mod tests {
         assert!(config.hats.is_empty());
         assert_eq!(config.event_loop.max_iterations, 100);
         assert!(!config.verbose);
+        assert!(config.features.preflight.enabled);
+        assert!(!config.features.preflight.strict);
+        assert!(config.features.preflight.skip.is_empty());
     }
 
     #[test]
@@ -1478,6 +1516,23 @@ hats:
 
         let hat = config.hats.get("implementer").unwrap();
         assert_eq!(hat.triggers.len(), 2);
+    }
+
+    #[test]
+    fn test_preflight_config_deserialize() {
+        let yaml = r#"
+features:
+  preflight:
+    strict: true
+    skip: ["telegram", "git"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.features.preflight.enabled);
+        assert!(config.features.preflight.strict);
+        assert_eq!(
+            config.features.preflight.skip,
+            vec!["telegram".to_string(), "git".to_string()]
+        );
     }
 
     #[test]

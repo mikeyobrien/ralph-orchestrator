@@ -31,6 +31,10 @@ cli:
 
 core:
   scratchpad: ".ralph/agent/scratchpad.md"
+
+features:
+  preflight:
+    enabled: false
 "#;
     fs::write(temp_path.join("ralph.yml"), config)?;
     fs::write(temp_path.join("PROMPT.md"), "Test task")?;
