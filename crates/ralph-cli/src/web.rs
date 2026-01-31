@@ -608,6 +608,14 @@ mod tests {
         assert!(msg.contains("Failed to run `npm --version`"), "msg: {msg}");
     }
 
+    #[test]
+    fn check_npm_reports_missing_binary() {
+        let err =
+            check_npm_with(OsStr::new("definitely-missing-npm-12345")).expect_err("missing");
+        let msg = format!("{err}");
+        assert!(msg.contains("npm is not installed"), "msg: {msg}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn check_tsx_version_blocks_known_bad_release() {
@@ -712,6 +720,41 @@ exit 1",
         .await
         .expect("preflight");
         assert!(!root.join("npm_install_called").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preflight_reports_bad_tsx_version() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let node_path = write_fake_executable(&bin_dir, "node", "echo v20.1.0");
+        let npx_path = write_fake_executable(&bin_dir, "npx", "echo 4.20.0");
+        let npm_path = write_fake_executable(
+            &bin_dir,
+            "npm",
+            "if [ \"$1\" = \"--version\" ]; then echo 9.6.0; exit 0; fi",
+        );
+
+        let root = temp_dir.path().join("workspace");
+        let backend_dir = root.join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+        std::fs::create_dir_all(root.join("node_modules")).expect("node_modules dir");
+        std::fs::write(root.join("node_modules/.package-lock.json"), "")
+            .expect("lockfile");
+
+        let err = preflight_with(
+            &root,
+            &backend_dir,
+            node_path.as_os_str(),
+            npm_path.as_os_str(),
+            npx_path.as_os_str(),
+        )
+        .await
+        .expect_err("preflight should fail on bad tsx");
+        let msg = format!("{err}");
+        assert!(msg.contains("tsx 4.20.0"), "msg: {msg}");
     }
 
     #[cfg(unix)]

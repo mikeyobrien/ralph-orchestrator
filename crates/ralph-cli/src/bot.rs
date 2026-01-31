@@ -1144,18 +1144,15 @@ mod tests {
     #[test]
     fn test_save_telegram_state_creates_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let state_dir = temp_dir.path().join(".ralph");
-        let state_path = state_dir.join("telegram-state.json");
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
 
-        // Use the temp dir as working directory for the state
-        std::fs::create_dir_all(&state_dir).unwrap();
-        let state = serde_json::json!({
-            "chat_id": 123_456_789_i64,
-            "last_seen": null,
-            "pending_questions": {}
-        });
-        let content = serde_json::to_string_pretty(&state).unwrap();
-        std::fs::write(&state_path, format!("{}\n", content)).unwrap();
+        save_telegram_state(123_456_789).expect("save telegram state");
+
+        let state_path = temp_dir
+            .path()
+            .join(".ralph")
+            .join("telegram-state.json");
 
         // Verify the file was created with correct content
         let read_content = std::fs::read_to_string(&state_path).unwrap();
@@ -1165,6 +1162,25 @@ mod tests {
             123_456_789
         );
         assert!(parsed.get("pending_questions").unwrap().is_object());
+    }
+
+    #[test]
+    fn test_save_robot_config_creates_minimal_config_without_token() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _lock = test_lock();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        save_robot_config(180, None).expect("save robot config");
+
+        let content = std::fs::read_to_string("ralph.yml").unwrap();
+        let config: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        let robot = config.get("RObot").unwrap();
+        assert!(robot.get("enabled").unwrap().as_bool().unwrap());
+        assert_eq!(
+            robot.get("timeout_seconds").and_then(|v| v.as_u64()),
+            Some(180)
+        );
+        assert!(robot.get("telegram").is_none());
     }
 
     #[test]

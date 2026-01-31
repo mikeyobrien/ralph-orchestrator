@@ -1971,6 +1971,27 @@ mod tests {
     }
 
     #[test]
+    fn test_process_pending_merges_missing_command_keeps_queue() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        let queue = ralph_core::merge_queue::MergeQueue::new(repo_root);
+        queue.enqueue("loop-9999", "merge prompt").expect("enqueue");
+
+        process_pending_merges_with_command(
+            repo_root,
+            OsStr::new("ralph-command-missing-12345"),
+        );
+
+        let config_path = repo_root.join(".ralph/merge-loop-config.yml");
+        assert!(config_path.exists());
+        let entries = queue
+            .list_by_state(ralph_core::merge_queue::MergeState::Queued)
+            .expect("list queued");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].loop_id, "loop-9999");
+    }
+
+    #[test]
     fn test_process_pending_merges_with_empty_queue_no_config_written() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let repo_root = temp_dir.path();
