@@ -9,7 +9,7 @@ mod tests;
 pub use loop_state::LoopState;
 
 use crate::config::{HatBackend, InjectMode, RalphConfig};
-use crate::event_parser::EventParser;
+use crate::event_parser::{EventParser, MutationEvidence, MutationStatus};
 use crate::event_reader::EventReader;
 use crate::hat_registry::HatRegistry;
 use crate::hatless_ralph::HatlessRalph;
@@ -1653,6 +1653,68 @@ impl EventLoop {
         vec![]
     }
 
+    fn warn_on_mutation_evidence(&self, evidence: &crate::event_parser::BackpressureEvidence) {
+        let threshold = self.config.event_loop.mutation_score_warn_threshold;
+
+        match &evidence.mutants {
+            Some(mutants) => {
+                if let Some(reason) = Self::mutation_warning_reason(mutants, threshold) {
+                    warn!(
+                        reason = %reason,
+                        mutants_status = ?mutants.status,
+                        mutants_score = mutants.score_percent,
+                        mutants_threshold = threshold,
+                        "Mutation testing warning"
+                    );
+                }
+            }
+            None => {
+                if let Some(threshold) = threshold {
+                    warn!(
+                        mutants_threshold = threshold,
+                        "Mutation testing warning: missing mutation evidence in build.done payload"
+                    );
+                }
+            }
+        }
+    }
+
+    fn mutation_warning_reason(
+        mutants: &MutationEvidence,
+        threshold: Option<f64>,
+    ) -> Option<String> {
+        match mutants.status {
+            MutationStatus::Fail => Some("mutation testing failed".to_string()),
+            MutationStatus::Warn => Some(Self::format_mutation_message(
+                "mutation score below threshold",
+                mutants.score_percent,
+            )),
+            MutationStatus::Unknown => Some("mutation testing status unknown".to_string()),
+            MutationStatus::Pass => {
+                let threshold = threshold?;
+
+                match mutants.score_percent {
+                    Some(score) if score < threshold => Some(format!(
+                        "mutation score {:.2}% below threshold {:.2}%",
+                        score, threshold
+                    )),
+                    Some(_) => None,
+                    None => Some(format!(
+                        "mutation score missing (threshold {:.2}%)",
+                        threshold
+                    )),
+                }
+            }
+        }
+    }
+
+    fn format_mutation_message(message: &str, score: Option<f64>) -> String {
+        match score {
+            Some(score) => format!("{message} ({score:.2}%)"),
+            None => message.to_string(),
+        }
+    }
+
     /// Processes events from JSONL and routes orphaned events to Ralph.
     ///
     /// Also handles backpressure for malformed JSONL lines by:
@@ -1717,6 +1779,7 @@ impl EventLoop {
                 // Validate build.done events have backpressure evidence
                 if let Some(evidence) = EventParser::parse_backpressure_evidence(&payload) {
                     if evidence.all_passed() {
+                        self.warn_on_mutation_evidence(&evidence);
                         validated_events.push(Event::new(event.topic.as_str(), &payload));
                     } else {
                         // Evidence present but checks failed - synthesize build.blocked
@@ -1812,8 +1875,60 @@ impl EventLoop {
                         "Missing verification evidence. Include 'tests: pass' and 'build: pass' in review.done payload.",
                     ));
                 }
+            } else if event.topic == "verify.passed" {
+                if let Some(report) = EventParser::parse_quality_report(&payload) {
+                    if report.meets_thresholds() {
+                        validated_events.push(Event::new(event.topic.as_str(), &payload));
+                    } else {
+                        let failed = report.failed_dimensions();
+                        let reason = if failed.is_empty() {
+                            "quality thresholds failed".to_string()
+                        } else {
+                            format!("quality thresholds failed: {}", failed.join(", "))
+                        };
+
+                        warn!(
+                            failed_dimensions = ?failed,
+                            "verify.passed rejected: quality thresholds failed"
+                        );
+
+                        self.diagnostics.log_orchestration(
+                            self.state.iteration,
+                            "jsonl",
+                            crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                                reason,
+                            },
+                        );
+
+                        validated_events.push(Event::new(
+                            "verify.failed",
+                            "Quality thresholds failed. Include quality.tests, quality.coverage, quality.lint, quality.audit, quality.mutation, quality.complexity with thresholds in verify.passed payload.",
+                        ));
+                    }
+                } else {
+                    // No quality report found - synthesize verify.failed
+                    warn!("verify.passed rejected: missing quality report");
+
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                            reason: "missing quality report".to_string(),
+                        },
+                    );
+
+                    validated_events.push(Event::new(
+                        "verify.failed",
+                        "Missing quality report. Include quality.tests, quality.coverage, quality.lint, quality.audit, quality.mutation, quality.complexity in verify.passed payload.",
+                    ));
+                }
+            } else if event.topic == "verify.failed" {
+                if EventParser::parse_quality_report(&payload).is_none() {
+                    warn!("verify.failed missing quality report");
+                }
+                validated_events.push(Event::new(event.topic.as_str(), &payload));
             } else {
-                // Non-build.done/review.done events pass through unchanged
+                // Non-backpressure events pass through unchanged
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
             }
         }

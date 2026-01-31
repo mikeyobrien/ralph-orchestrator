@@ -73,10 +73,13 @@ pub struct BackpressureEvidence {
     pub typecheck_passed: bool,
     pub audit_passed: bool,
     pub coverage_passed: bool,
+    pub mutants: Option<MutationEvidence>,
 }
 
 impl BackpressureEvidence {
-    /// Returns true if all checks passed.
+    /// Returns true if all required checks passed.
+    ///
+    /// Mutation testing evidence is warning-only and does not affect this result.
     pub fn all_passed(&self) -> bool {
         self.tests_passed
             && self.lint_passed
@@ -84,6 +87,22 @@ impl BackpressureEvidence {
             && self.audit_passed
             && self.coverage_passed
     }
+}
+
+/// Status of mutation testing evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutationStatus {
+    Pass,
+    Warn,
+    Fail,
+    Unknown,
+}
+
+/// Evidence of mutation testing for build.done payloads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MutationEvidence {
+    pub status: MutationStatus,
+    pub score_percent: Option<f64>,
 }
 
 /// Evidence of verification for review.done events.
@@ -102,6 +121,72 @@ impl ReviewEvidence {
     /// Both tests and build must pass to constitute a verified review.
     pub fn is_verified(&self) -> bool {
         self.tests_passed && self.build_passed
+    }
+}
+
+/// Structured quality report for verifier events.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityReport {
+    pub tests_passed: Option<bool>,
+    pub lint_passed: Option<bool>,
+    pub audit_passed: Option<bool>,
+    pub coverage_percent: Option<f64>,
+    pub mutation_percent: Option<f64>,
+    pub complexity_score: Option<f64>,
+}
+
+impl QualityReport {
+    pub const COVERAGE_THRESHOLD: f64 = 80.0;
+    pub const MUTATION_THRESHOLD: f64 = 70.0;
+    pub const COMPLEXITY_THRESHOLD: f64 = 10.0;
+
+    pub fn meets_thresholds(&self) -> bool {
+        self.tests_passed == Some(true)
+            && self.lint_passed == Some(true)
+            && self.audit_passed == Some(true)
+            && self
+                .coverage_percent
+                .is_some_and(|value| value >= Self::COVERAGE_THRESHOLD)
+            && self
+                .mutation_percent
+                .is_some_and(|value| value >= Self::MUTATION_THRESHOLD)
+            && self
+                .complexity_score
+                .is_some_and(|value| value <= Self::COMPLEXITY_THRESHOLD)
+    }
+
+    pub fn failed_dimensions(&self) -> Vec<&'static str> {
+        let mut failed = Vec::new();
+
+        if self.tests_passed != Some(true) {
+            failed.push("tests");
+        }
+        if self.lint_passed != Some(true) {
+            failed.push("lint");
+        }
+        if self.audit_passed != Some(true) {
+            failed.push("audit");
+        }
+        if self
+            .coverage_percent
+            .is_none_or(|value| value < Self::COVERAGE_THRESHOLD)
+        {
+            failed.push("coverage");
+        }
+        if self
+            .mutation_percent
+            .is_none_or(|value| value < Self::MUTATION_THRESHOLD)
+        {
+            failed.push("mutation");
+        }
+        if self
+            .complexity_score
+            .is_none_or(|value| value > Self::COMPLEXITY_THRESHOLD)
+        {
+            failed.push("complexity");
+        }
+
+        failed
     }
 }
 
@@ -199,6 +284,7 @@ impl EventParser {
     /// typecheck: pass
     /// audit: pass
     /// coverage: pass
+    /// mutants: pass (82%)   # optional, warning-only
     /// ```
     ///
     /// Note: ANSI escape codes are stripped before parsing to handle
@@ -212,6 +298,7 @@ impl EventParser {
         let typecheck_passed = clean_payload.contains("typecheck: pass");
         let audit_passed = clean_payload.contains("audit: pass");
         let coverage_passed = clean_payload.contains("coverage: pass");
+        let mutants = Self::parse_mutation_evidence(&clean_payload);
 
         // Only return evidence if at least one check is mentioned
         if clean_payload.contains("tests:")
@@ -219,6 +306,7 @@ impl EventParser {
             || clean_payload.contains("typecheck:")
             || clean_payload.contains("audit:")
             || clean_payload.contains("coverage:")
+            || clean_payload.contains("mutants:")
         {
             Some(BackpressureEvidence {
                 tests_passed,
@@ -226,7 +314,87 @@ impl EventParser {
                 typecheck_passed,
                 audit_passed,
                 coverage_passed,
+                mutants,
             })
+        } else {
+            None
+        }
+    }
+
+    fn parse_mutation_evidence(clean_payload: &str) -> Option<MutationEvidence> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.contains("mutants:"))?;
+
+        let normalized = segment.to_lowercase();
+        let status = if normalized.contains("mutants: pass") {
+            MutationStatus::Pass
+        } else if normalized.contains("mutants: warn") {
+            MutationStatus::Warn
+        } else if normalized.contains("mutants: fail") {
+            MutationStatus::Fail
+        } else {
+            MutationStatus::Unknown
+        };
+
+        let score_percent = Self::extract_percentage(segment);
+
+        Some(MutationEvidence {
+            status,
+            score_percent,
+        })
+    }
+
+    fn extract_percentage(segment: &str) -> Option<f64> {
+        let percent_idx = segment.find('%')?;
+        let bytes = segment.as_bytes();
+        let mut start = percent_idx;
+
+        while start > 0 {
+            let prev = bytes[start - 1];
+            if prev.is_ascii_digit() || prev == b'.' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+
+        if start == percent_idx {
+            return None;
+        }
+
+        segment[start..percent_idx].trim().parse::<f64>().ok()
+    }
+
+    fn extract_first_number(segment: &str) -> Option<f64> {
+        let bytes = segment.as_bytes();
+        let mut start = None;
+        let mut end = None;
+
+        for (idx, &byte) in bytes.iter().enumerate() {
+            if byte.is_ascii_digit() {
+                if start.is_none() {
+                    start = Some(idx);
+                }
+                end = Some(idx + 1);
+            } else if byte == b'.' && start.is_some() {
+                end = Some(idx + 1);
+            } else if start.is_some() {
+                break;
+            }
+        }
+
+        let start = start?;
+        let end = end?;
+        segment[start..end].trim().parse::<f64>().ok()
+    }
+
+    fn parse_quality_pass_fail(segment: &str) -> Option<bool> {
+        if segment.contains("pass") {
+            Some(true)
+        } else if segment.contains("fail") {
+            Some(false)
         } else {
             None
         }
@@ -253,6 +421,70 @@ impl EventParser {
                 tests_passed,
                 build_passed,
             })
+        } else {
+            None
+        }
+    }
+
+    /// Parses quality report evidence from verify.* event payloads.
+    ///
+    /// Expected format:
+    /// ```text
+    /// quality.tests: pass
+    /// quality.coverage: 82%
+    /// quality.lint: pass
+    /// quality.audit: pass
+    /// quality.mutation: 71%
+    /// quality.complexity: 7
+    /// ```
+    ///
+    /// Note: ANSI escape codes are stripped before parsing.
+    pub fn parse_quality_report(payload: &str) -> Option<QualityReport> {
+        let clean_payload = strip_ansi(payload);
+        let mut report = QualityReport {
+            tests_passed: None,
+            lint_passed: None,
+            audit_passed: None,
+            coverage_percent: None,
+            mutation_percent: None,
+            complexity_score: None,
+        };
+        let mut seen = false;
+
+        for segment in clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+        {
+            if segment.is_empty() {
+                continue;
+            }
+            let normalized = segment.to_lowercase();
+
+            if normalized.starts_with("quality.tests:") {
+                report.tests_passed = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            } else if normalized.starts_with("quality.lint:") {
+                report.lint_passed = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            } else if normalized.starts_with("quality.audit:") {
+                report.audit_passed = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            } else if normalized.starts_with("quality.coverage:") {
+                report.coverage_percent =
+                    Self::extract_percentage(segment).or_else(|| Self::extract_first_number(segment));
+                seen = true;
+            } else if normalized.starts_with("quality.mutation:") {
+                report.mutation_percent =
+                    Self::extract_percentage(segment).or_else(|| Self::extract_first_number(segment));
+                seen = true;
+            } else if normalized.starts_with("quality.complexity:") {
+                report.complexity_score = Self::extract_first_number(segment);
+                seen = true;
+            }
+        }
+
+        if seen {
+            Some(report)
         } else {
             None
         }
@@ -587,6 +819,32 @@ Still working..."#;
     }
 
     #[test]
+    fn test_parse_backpressure_evidence_with_mutants_pass() {
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\nmutants: pass (82%)";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        let mutants = evidence
+            .mutants
+            .as_ref()
+            .expect("mutants evidence should parse");
+        assert_eq!(mutants.status, MutationStatus::Pass);
+        assert_eq!(mutants.score_percent, Some(82.0));
+        assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_mutants_warn() {
+        let payload = "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: warn (65%)";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        let mutants = evidence
+            .mutants
+            .as_ref()
+            .expect("mutants evidence should parse");
+        assert_eq!(mutants.status, MutationStatus::Warn);
+        assert_eq!(mutants.score_percent, Some(65.0));
+        assert!(evidence.all_passed());
+    }
+
+    #[test]
     fn test_parse_review_evidence_all_pass() {
         let payload = "tests: pass\nbuild: pass";
         let evidence = EventParser::parse_review_evidence(payload).unwrap();
@@ -636,6 +894,39 @@ Still working..."#;
         assert!(evidence.tests_passed);
         assert!(evidence.build_passed);
         assert!(evidence.is_verified());
+    }
+
+    #[test]
+    fn test_parse_quality_report_passes_thresholds() {
+        let payload = "quality.tests: pass\nquality.coverage: 82% (>=80%)\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 71% (>=70%)\nquality.complexity: 7 (<=10)";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert_eq!(report.tests_passed, Some(true));
+        assert_eq!(report.lint_passed, Some(true));
+        assert_eq!(report.audit_passed, Some(true));
+        assert_eq!(report.coverage_percent, Some(82.0));
+        assert_eq!(report.mutation_percent, Some(71.0));
+        assert_eq!(report.complexity_score, Some(7.0));
+        assert!(report.meets_thresholds());
+    }
+
+    #[test]
+    fn test_parse_quality_report_fails_thresholds() {
+        let payload = "quality.tests: pass\nquality.coverage: 60%\nquality.lint: fail\nquality.audit: pass\nquality.mutation: 50%\nquality.complexity: 12";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert!(!report.meets_thresholds());
+    }
+
+    #[test]
+    fn test_parse_quality_report_missing() {
+        let payload = "Looks good, approved!";
+        let report = EventParser::parse_quality_report(payload);
+        assert!(report.is_none());
+    }
+
+    #[test]
+    fn test_extract_first_number_quality_line() {
+        let value = EventParser::extract_first_number("quality.complexity: 7 (<=10)");
+        assert_eq!(value, Some(7.0));
     }
 
     #[test]
