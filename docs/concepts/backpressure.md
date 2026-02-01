@@ -21,6 +21,7 @@ Backpressure approach:
 ```
 Implement the feature.
 Evidence required: tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass
+Optional (warning-only): mutants: pass (>=70%)
 ```
 
 The AI figures out the "how" — it's smart enough. Your job is defining "what success looks like."
@@ -43,10 +44,11 @@ hats:
       - typecheck: pass (run `cargo check`)
       - audit: pass (run `cargo audit`)
       - coverage: pass (run `cargo tarpaulin` or equivalent)
+      - mutants: pass (run `git diff > /tmp/changes.diff && cargo mutants --in-diff /tmp/changes.diff`) # warning-only
 
       Include evidence in your event:
       ```
-      ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+      ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: pass (82%)"
       ```
 ```
 
@@ -56,7 +58,7 @@ Events carry evidence of backpressure satisfaction:
 
 ```bash
 # Good: Evidence included
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: pass (82%)"
 
 # Bad: No evidence
 ralph emit "build.done" "I think it works"
@@ -94,6 +96,7 @@ hats:
 | Audit | `cargo audit`, `npm audit` | Known vulnerabilities |
 | Format | `cargo fmt --check` | Style violations |
 | Build | `cargo build` | Compilation errors |
+| Mutation | `cargo mutants --in-diff <diff>` | Untested logic gaps (warning-only) |
 
 ### Behavioral Gates
 

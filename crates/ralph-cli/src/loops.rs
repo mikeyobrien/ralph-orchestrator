@@ -1407,4 +1407,92 @@ mod tests {
             .to_string()
             .contains("Branch 'ralph/loop-missing-branch' not found"));
     }
+
+    #[test]
+    fn test_execute_defaults_to_list_when_no_subcommand() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        execute(LoopsArgs { command: None }, false).expect("execute default");
+    }
+
+    #[test]
+    fn test_get_merge_button_state_active_when_idle() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        get_merge_button_state(MergeButtonStateArgs {
+            loop_id: "loop-idle-1".to_string(),
+        })
+        .expect("merge button state");
+    }
+
+    #[test]
+    fn test_merge_loop_rejects_already_merged() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-merged-1", "prompt")
+            .expect("enqueue");
+        queue
+            .mark_merging("loop-merged-1", 4242)
+            .expect("mark merging");
+        queue
+            .mark_merged("loop-merged-1", "abc123")
+            .expect("mark merged");
+
+        let err = merge_loop(MergeArgs {
+            loop_id: "loop-merged-1".to_string(),
+            force: false,
+        })
+        .expect_err("merge should fail for merged loop");
+
+        assert!(err.to_string().contains("already merged"));
+    }
+
+    #[test]
+    fn test_merge_loop_rejects_discarded() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-discarded-1", "prompt")
+            .expect("enqueue");
+        queue
+            .discard("loop-discarded-1", Some("no longer needed"))
+            .expect("discard");
+
+        let err = merge_loop(MergeArgs {
+            loop_id: "loop-discarded-1".to_string(),
+            force: false,
+        })
+        .expect_err("merge should fail for discarded loop");
+
+        assert!(err.to_string().contains("discarded"));
+    }
+
+    #[test]
+    fn test_merge_loop_rejects_merging_without_force() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-merging-1", "prompt")
+            .expect("enqueue");
+        queue
+            .mark_merging("loop-merging-1", 4242)
+            .expect("mark merging");
+
+        let err = merge_loop(MergeArgs {
+            loop_id: "loop-merging-1".to_string(),
+            force: false,
+        })
+        .expect_err("merge should fail for merging loop without force");
+
+        assert!(err.to_string().contains("currently merging"));
+    }
 }

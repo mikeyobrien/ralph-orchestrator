@@ -415,6 +415,31 @@ fn test_completion_promise_with_pending_tasks_in_task_store() {
 }
 
 #[test]
+fn test_completion_promise_requires_last_event() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // Completion should be ignored if it is not the last event in the JSONL batch.
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
+    write_event_to_jsonl(&events_path, "task.resume", "Continue");
+    let _ = event_loop.process_events_from_jsonl();
+    let reason = event_loop.check_completion_event();
+    assert_eq!(
+        reason,
+        None,
+        "Completion should be ignored when it is not the last event"
+    );
+}
+
+#[test]
 fn test_builder_cannot_terminate_loop() {
     // Per spec: completion requires an emitted event; output-only tokens are ignored
     let config = RalphConfig::default();

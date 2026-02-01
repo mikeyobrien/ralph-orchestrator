@@ -243,6 +243,9 @@ impl PreflightCheck for GitCleanCheck {
 
     async fn run(&self, config: &RalphConfig) -> CheckResult {
         let root = &config.core.workspace_root;
+        if !is_git_workspace(root) {
+            return CheckResult::pass(self.name(), "Not a git repository (skipping)");
+        }
 
         let branch = match git_ops::get_current_branch(root) {
             Ok(branch) => branch,
@@ -339,10 +342,7 @@ impl ToolsInPathCheck {
 
 impl Default for ToolsInPathCheck {
     fn default() -> Self {
-        Self::new_with_optional(
-            vec!["git".to_string(), "cargo-audit".to_string()],
-            vec!["cargo-tarpaulin".to_string()],
-        )
+        Self::new_with_optional(vec!["git".to_string()], Vec::new())
     }
 }
 
@@ -352,7 +352,11 @@ impl PreflightCheck for ToolsInPathCheck {
         "tools"
     }
 
-    async fn run(&self, _config: &RalphConfig) -> CheckResult {
+    async fn run(&self, config: &RalphConfig) -> CheckResult {
+        if !is_git_workspace(&config.core.workspace_root) {
+            return CheckResult::pass(self.name(), "Not a git repository (skipping)");
+        }
+
         let missing_required: Vec<String> = self
             .required
             .iter()
@@ -607,6 +611,11 @@ fn executable_extensions() -> Vec<OsString> {
     }
 }
 
+fn is_git_workspace(path: &Path) -> bool {
+    let git_dir = path.join(".git");
+    git_dir.is_dir() || git_dir.is_file()
+}
+
 fn format_config_warnings(warnings: &[ConfigWarning]) -> String {
     warnings
         .iter()
@@ -649,8 +658,11 @@ mod tests {
 
     #[tokio::test]
     async fn tools_check_reports_missing_tools() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".git")).expect("create .git");
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp.path().to_path_buf();
         let check = ToolsInPathCheck::new(vec!["definitely-not-a-tool".to_string()]);
-        let config = RalphConfig::default();
 
         let result = check.run(&config).await;
 
@@ -660,11 +672,14 @@ mod tests {
 
     #[tokio::test]
     async fn tools_check_warns_on_missing_optional_tools() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".git")).expect("create .git");
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp.path().to_path_buf();
         let check = ToolsInPathCheck::new_with_optional(
             Vec::new(),
             vec!["definitely-not-a-tool".to_string()],
         );
-        let config = RalphConfig::default();
 
         let result = check.run(&config).await;
 
@@ -695,6 +710,32 @@ mod tests {
         let config = RalphConfig::default();
         let check = TelegramTokenCheck;
 
+        let result = check.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(result.label.contains("skipping"));
+    }
+
+    #[tokio::test]
+    async fn git_check_skips_outside_repo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp.path().to_path_buf();
+
+        let check = GitCleanCheck;
+        let result = check.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(result.label.contains("skipping"));
+    }
+
+    #[tokio::test]
+    async fn tools_check_skips_outside_repo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp.path().to_path_buf();
+
+        let check = ToolsInPathCheck::new(vec!["definitely-not-a-tool".to_string()]);
         let result = check.run(&config).await;
 
         assert_eq!(result.status, CheckStatus::Pass);

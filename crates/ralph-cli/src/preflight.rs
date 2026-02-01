@@ -271,3 +271,51 @@ pub(crate) fn config_source_label(config_sources: &[ConfigSource]) -> String {
         Some(ConfigSource::Override { .. }) | None => "ralph.yml".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_checks_lowercases() {
+        let checks = vec!["Config".to_string(), "BaCkEnD".to_string()];
+        let normalized = normalize_checks(&checks);
+        assert_eq!(normalized, vec!["config", "backend"]);
+    }
+
+    #[test]
+    fn validate_checks_accepts_known() {
+        let runner = PreflightRunner::default_checks();
+        let checks = vec!["config".to_string(), "backend".to_string()];
+        assert!(validate_checks(&runner, &checks).is_ok());
+    }
+
+    #[test]
+    fn validate_checks_rejects_unknown() {
+        let runner = PreflightRunner::default_checks();
+        let checks = vec!["nope".to_string()];
+        let err = validate_checks(&runner, &checks).unwrap_err();
+        assert!(err.to_string().contains("Unknown check(s)"));
+    }
+
+    #[test]
+    fn config_source_label_handles_sources() {
+        let file_label =
+            config_source_label(&[ConfigSource::File(PathBuf::from("/tmp/ralph.yml"))]);
+        assert_eq!(file_label, "/tmp/ralph.yml");
+
+        let builtin_label = config_source_label(&[ConfigSource::Builtin("starter".to_string())]);
+        assert_eq!(builtin_label, "builtin:starter");
+
+        let remote_label = config_source_label(&[ConfigSource::Remote(
+            "https://example.com/ralph.yml".to_string(),
+        )]);
+        assert_eq!(remote_label, "https://example.com/ralph.yml");
+
+        let override_label = config_source_label(&[ConfigSource::Override {
+            key: "core.scratchpad".to_string(),
+            value: "x".to_string(),
+        }]);
+        assert_eq!(override_label, "ralph.yml");
+    }
+}

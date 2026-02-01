@@ -1162,8 +1162,11 @@ impl EventLoop {
         // Budget: 4000 tokens ~16000 chars. Keep the TAIL (most recent content).
         let char_budget = 4000 * 4;
         let content = if content.len() > char_budget {
-            // Find a line boundary near the start of the tail
-            let start = content.len() - char_budget;
+            // Find a line boundary near the start of the tail (ensure UTF-8 boundary)
+            let mut start = content.len() - char_budget;
+            while start < content.len() && !content.is_char_boundary(start) {
+                start += 1;
+            }
             let line_start = content[start..].find('\n').map_or(start, |n| start + n + 1);
             let discarded = &content[..line_start];
 
@@ -1756,22 +1759,32 @@ impl EventLoop {
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();
         let completion_topic = self.config.event_loop.completion_promise.as_str();
-        for event in result.events {
+        let total_events = result.events.len();
+        for (index, event) in result.events.into_iter().enumerate() {
             let payload = event.payload.clone().unwrap_or_default();
 
             if event.topic == completion_topic {
-                self.state.completion_requested = true;
-                self.diagnostics.log_orchestration(
-                    self.state.iteration,
-                    "jsonl",
-                    crate::diagnostics::OrchestrationEvent::EventPublished {
-                        topic: event.topic.clone(),
-                    },
-                );
-                info!(
-                    topic = %event.topic,
-                    "Completion event detected in JSONL"
-                );
+                if index + 1 == total_events {
+                    self.state.completion_requested = true;
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::EventPublished {
+                            topic: event.topic.clone(),
+                        },
+                    );
+                    info!(
+                        topic = %event.topic,
+                        "Completion event detected in JSONL"
+                    );
+                } else {
+                    warn!(
+                        topic = %event.topic,
+                        index = index,
+                        total_events = total_events,
+                        "Completion event ignored because it was not the last event"
+                    );
+                }
                 continue;
             }
 

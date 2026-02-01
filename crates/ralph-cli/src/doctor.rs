@@ -420,7 +420,18 @@ fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or(command);
 
-    match basename {
+    let mut normalized = basename.to_string();
+    let normalized_lower = normalized.to_lowercase();
+    for ext in [".exe", ".cmd", ".bat", ".com"] {
+        if normalized_lower.ends_with(ext) {
+            let new_len = normalized.len().saturating_sub(ext.len());
+            normalized.truncate(new_len);
+            break;
+        }
+    }
+
+    let normalized_lower = normalized.to_lowercase();
+    match normalized_lower.as_str() {
         "kiro-cli" => "kiro".to_string(),
         "claude" => "claude".to_string(),
         "gemini" => "gemini".to_string(),
@@ -428,7 +439,7 @@ fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
         "amp" => "amp".to_string(),
         "copilot" => "copilot".to_string(),
         "opencode" => "opencode".to_string(),
-        other => other.to_string(),
+        _ => normalized,
     }
 }
 
@@ -672,5 +683,21 @@ mod tests {
         });
 
         assert_eq!(check.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn canonical_backend_name_strips_exe_extension() {
+        assert_eq!(
+            canonical_backend_name("custom", Some("claude.exe")),
+            "claude"
+        );
+    }
+
+    #[test]
+    fn canonical_backend_name_strips_extension_for_unknown_command() {
+        assert_eq!(
+            canonical_backend_name("custom", Some("my-cli.exe")),
+            "my-cli"
+        );
     }
 }

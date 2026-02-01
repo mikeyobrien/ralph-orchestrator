@@ -139,6 +139,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 #[allow(clippy::derivable_impls)] // Cannot derive due to serde default functions
 impl Default for RalphConfig {
     fn default() -> Self {
@@ -1097,7 +1101,7 @@ pub enum ChaosOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreflightConfig {
     /// Whether to run preflight checks before `ralph run`.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub enabled: bool,
 
     /// Whether to treat warnings as failures.
@@ -1112,7 +1116,7 @@ pub struct PreflightConfig {
 impl Default for PreflightConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             strict: false,
             skip: Vec::new(),
         }
@@ -1127,7 +1131,7 @@ impl Default for PreflightConfig {
 ///   parallel: true  # Enable parallel loops via git worktrees
 ///   auto_merge: false  # Auto-merge worktree branches on completion
 ///   preflight:
-///     enabled: true       # Run preflight checks before `ralph run`
+///     enabled: false      # Opt-in: run preflight checks before `ralph run`
 ///     strict: false       # Treat warnings as failures
 ///     skip: ["telegram"]  # Skip specific checks by name
 ///   loop_naming:
@@ -1523,7 +1527,7 @@ mod tests {
         assert!(config.hats.is_empty());
         assert_eq!(config.event_loop.max_iterations, 100);
         assert!(!config.verbose);
-        assert!(config.features.preflight.enabled);
+        assert!(!config.features.preflight.enabled);
         assert!(!config.features.preflight.strict);
         assert!(config.features.preflight.skip.is_empty());
     }
@@ -1558,6 +1562,7 @@ hats:
         let yaml = r#"
 features:
   preflight:
+    enabled: true
     strict: true
     skip: ["telegram", "git"]
 "#;

@@ -28,6 +28,18 @@ core:
     - "You MUST NOT close tasks unless you are the Confession Handler."
     - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
 
+events:
+  build.task.abandoned:
+    description: "Task repeatedly blocked, needs recovery"
+  recovery.applied:
+    description: "Self-healer successfully recovered"
+  recovery.failed:
+    description: "Recovery attempt failed, retry or escalate"
+  recovery.escalate:
+    description: "All recovery strategies exhausted, needs human"
+  recovery.needed:
+    description: "Explicit recovery request from any hat"
+
 hats:
   builder:
     name: "Builder"
@@ -178,3 +190,108 @@ hats:
          - Output the completion promise.
       3. If your verification fails OR `confidence` < 90:
          - Publish `build.task` with instructions to fix the discrepancy (or redo the confession).
+
+  healer:
+    name: "🩹 Self-Healer"
+    description: "Diagnoses failure root cause and attempts automated recovery."
+    triggers:
+      - "build.task.abandoned"
+      - "*.exhausted"
+      - "recovery.needed"
+    publishes:
+      - "recovery.applied"
+      - "recovery.failed"
+      - "recovery.escalate"
+    default_publishes: "recovery.applied"
+    max_activations: 3
+    instructions: |
+      ## SELF-HEALER MODE
+
+      The loop is in trouble. A task has been repeatedly blocked or a hat is exhausted.
+      Your job: diagnose and recover before the loop terminates.
+
+      ### Step 1: Diagnose (30 seconds max)
+
+      Gather signals FAST:
+
+      ```bash
+      # What failed?
+      ralph tools task list --status open    # See what's stuck
+      ralph tools memory search -t fix       # Any known fixes?
+
+      # What's the git state?
+      git log --oneline -5                   # Recent commits
+      git diff --stat HEAD~1                 # Last change scope
+
+      # What do the logs say?
+      tail -50 .ralph/diagnostics/logs/ralph-*.log  # Recent orchestrator logs
+      ```
+
+      Classify the failure:
+      - **Code breakage** — tests/build fail after a code change
+      - **Stuck loop** — same task keeps blocking, no progress
+      - **Backend failure** — CLI tool crashes, timeout, or rate limit
+      - **Scope overreach** — task is too complex for single iteration
+
+      ### Step 2: Recover (ordered strategy chain)
+
+      Try strategies in order. Stop at the first that works.
+
+      #### Strategy A: Git Rollback (for code breakage)
+      If the last commit introduced failures:
+      ```bash
+      git stash                            # Save any uncommitted work
+      git log --oneline -3                 # Identify the breaking commit
+      git revert --no-edit HEAD            # Revert last commit
+      # Run verification
+      cargo test 2>&1 | tail -20           # Or appropriate test command
+      ```
+      If tests pass after revert → publish `recovery.applied` with "rolled back breaking commit [hash]"
+
+      #### Strategy B: Skip Blocked Work (for stuck loops)
+      If a specific task keeps blocking:
+      ```bash
+      ralph tools task close <stuck-task-id>   # Close the stuck task
+      ralph tools task add "DEFERRED: <original task>" -p 5  # Re-add at lowest priority
+      ```
+      Then publish `recovery.applied` with "deferred stuck task, continuing with remaining work"
+
+      #### Strategy C: Reduce Scope (for scope overreach)
+      If the task is too complex:
+      ```bash
+      # Break the task into smaller pieces
+      ralph tools task add "Part 1: <simplest piece>" -p 1
+      ralph tools task add "Part 2: <next piece>" -p 2
+      ralph tools task close <original-complex-task>
+      ```
+      Then publish `recovery.applied` with "decomposed complex task into smaller subtasks"
+
+      #### Strategy D: Backend Fallback (for backend failures)
+      If the CLI backend itself is failing:
+      - Note the failure in a memory for future reference:
+        ```bash
+        ralph tools memory add "Backend failure: <backend> failed at <time>, switched approach" -t fix
+        ```
+      - Publish `recovery.applied` with "backend issue noted, simplified approach for next attempt"
+
+      #### Strategy E: Escalate (last resort)
+      If none of the above work:
+      ```bash
+      ralph emit "recovery.escalate" "Exhausted recovery options. Diagnosis: <what failed>. Tried: <strategies attempted>. Recommendation: <what a human should do>"
+      ```
+
+      ### Step 3: Return to Normal Flow
+
+      After successful recovery, publish:
+      ```bash
+      ralph emit "recovery.applied" "Strategy: <A/B/C/D>. Action: <what was done>. Next: <what should happen now>"
+      ```
+
+      This event should route back to a hat that can continue normal work.
+
+      ### Rules
+      - NEVER spend more than 2 minutes diagnosing. Speed > completeness.
+      - NEVER attempt the same strategy twice in one activation.
+      - ALWAYS record what you tried as a memory (type: fix).
+      - ALWAYS produce output (default_publishes prevents silent failure).
+      - If in doubt, choose Strategy B (skip) — it's the most reversible.
