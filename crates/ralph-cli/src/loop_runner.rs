@@ -413,8 +413,6 @@ pub async fn run_loop_impl(
                 TerminationReason::ValidationFailure => "validation_failure",
                 TerminationReason::Stopped => "stopped",
                 TerminationReason::Interrupted => "interrupted",
-                TerminationReason::ChaosModeComplete => "chaos_complete",
-                TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
                 TerminationReason::RestartRequested => "restart_requested",
             };
 
@@ -483,8 +481,6 @@ pub async fn run_loop_impl(
                     TerminationReason::Stopped => "manually stopped",
                     TerminationReason::Interrupted => "interrupted by signal",
                     TerminationReason::CompletionPromise => unreachable!(),
-                    TerminationReason::ChaosModeComplete => "chaos mode complete",
-                    TerminationReason::ChaosModeMaxIterations => "chaos mode max iterations",
                     TerminationReason::RestartRequested => "restart requested",
                 };
                 if let Err(e) = queue.mark_needs_review(loop_id, reason_str) {
@@ -964,44 +960,6 @@ pub async fn run_loop_impl(
                     "All done! {} detected.",
                     config.event_loop.completion_promise
                 );
-
-                // Chaos mode activates ONLY after LOOP_COMPLETE
-                if config.features.chaos_mode.enabled && reason.triggers_chaos_mode() {
-                    info!(
-                        "Chaos mode enabled: exploring {} related improvements",
-                        config.features.chaos_mode.max_iterations
-                    );
-                    // TODO: Implement chaos mode loop iterations
-                    // For now, log the prompt content as the "seed" for chaos mode
-                    debug!(
-                        seed = %prompt_content,
-                        max_iterations = config.features.chaos_mode.max_iterations,
-                        cooldown_seconds = config.features.chaos_mode.cooldown_seconds,
-                        "Chaos mode would use original objective as seed"
-                    );
-                    // Return ChaosModeComplete for now to indicate chaos mode was triggered
-                    // Full implementation would loop here with chaos iterations
-                    let chaos_reason = TerminationReason::ChaosModeComplete;
-                    let terminate_event = event_loop.publish_terminate_event(&chaos_reason);
-                    log_terminate_event(
-                        &mut event_logger,
-                        event_loop.state().iteration,
-                        &terminate_event,
-                    );
-                    handle_termination(
-                        &chaos_reason,
-                        event_loop.state(),
-                        &config.core.scratchpad,
-                        &loop_history,
-                        &loop_context,
-                        auto_merge,
-                        &prompt_content,
-                    );
-                    if let Some(handle) = tui_handle.take() {
-                        let _ = handle.await;
-                    }
-                    return Ok(chaos_reason);
-                }
             }
             // Per spec: Publish loop.terminate event to observers
             let terminate_event = event_loop.publish_terminate_event(&reason);
@@ -1041,39 +999,6 @@ pub async fn run_loop_impl(
                 "Completion event {} detected.",
                 config.event_loop.completion_promise
             );
-
-            if config.features.chaos_mode.enabled && reason.triggers_chaos_mode() {
-                info!(
-                    "Chaos mode enabled: exploring {} related improvements",
-                    config.features.chaos_mode.max_iterations
-                );
-                debug!(
-                    seed = %prompt_content,
-                    max_iterations = config.features.chaos_mode.max_iterations,
-                    cooldown_seconds = config.features.chaos_mode.cooldown_seconds,
-                    "Chaos mode would use original objective as seed"
-                );
-                let chaos_reason = TerminationReason::ChaosModeComplete;
-                let terminate_event = event_loop.publish_terminate_event(&chaos_reason);
-                log_terminate_event(
-                    &mut event_logger,
-                    event_loop.state().iteration,
-                    &terminate_event,
-                );
-                handle_termination(
-                    &chaos_reason,
-                    event_loop.state(),
-                    &config.core.scratchpad,
-                    &loop_history,
-                    &loop_context,
-                    auto_merge,
-                    &prompt_content,
-                );
-                if let Some(handle) = tui_handle.take() {
-                    let _ = handle.await;
-                }
-                return Ok(chaos_reason);
-            }
 
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(

@@ -219,8 +219,6 @@ impl SummaryWriter {
             TerminationReason::ValidationFailure => "Failed: too many malformed JSONL events",
             TerminationReason::Stopped => "Stopped manually",
             TerminationReason::Interrupted => "Interrupted by signal",
-            TerminationReason::ChaosModeComplete => "Chaos mode: exploration complete",
-            TerminationReason::ChaosModeMaxIterations => "Chaos mode: max iterations reached",
             TerminationReason::RestartRequested => "Restarting by human request",
         }
     }

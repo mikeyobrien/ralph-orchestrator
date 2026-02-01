@@ -46,10 +46,6 @@ pub enum TerminationReason {
     Stopped,
     /// Interrupted by signal (SIGINT/SIGTERM).
     Interrupted,
-    /// Chaos mode completion promise detected.
-    ChaosModeComplete,
-    /// Chaos mode max iterations reached.
-    ChaosModeMaxIterations,
     /// Restart requested via Telegram `/restart` command.
     RestartRequested,
 }
@@ -64,15 +60,14 @@ impl TerminationReason {
     /// - 130: User interrupt (SIGINT = 128 + 2)
     pub fn exit_code(&self) -> i32 {
         match self {
-            TerminationReason::CompletionPromise | TerminationReason::ChaosModeComplete => 0,
+            TerminationReason::CompletionPromise => 0,
             TerminationReason::ConsecutiveFailures
             | TerminationReason::LoopThrashing
             | TerminationReason::ValidationFailure
             | TerminationReason::Stopped => 1,
             TerminationReason::MaxIterations
             | TerminationReason::MaxRuntime
-            | TerminationReason::MaxCost
-            | TerminationReason::ChaosModeMaxIterations => 2,
+            | TerminationReason::MaxCost => 2,
             TerminationReason::Interrupted => 130,
             // Restart uses exit code 3 to signal the caller to exec-replace
             TerminationReason::RestartRequested => 3,
@@ -94,24 +89,12 @@ impl TerminationReason {
             TerminationReason::ValidationFailure => "validation_failure",
             TerminationReason::Stopped => "stopped",
             TerminationReason::Interrupted => "interrupted",
-            TerminationReason::ChaosModeComplete => "chaos_complete",
-            TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
             TerminationReason::RestartRequested => "restart_requested",
         }
     }
 
     /// Returns true if this is a successful completion (not an error or limit).
     pub fn is_success(&self) -> bool {
-        matches!(
-            self,
-            TerminationReason::CompletionPromise | TerminationReason::ChaosModeComplete
-        )
-    }
-
-    /// Returns true if this termination triggers chaos mode.
-    ///
-    /// Chaos mode ONLY activates after LOOP_COMPLETE - not on other termination reasons.
-    pub fn triggers_chaos_mode(&self) -> bool {
         matches!(self, TerminationReason::CompletionPromise)
     }
 }
@@ -2327,8 +2310,6 @@ fn termination_status_text(reason: &TerminationReason) -> &'static str {
         TerminationReason::ValidationFailure => "Too many consecutive malformed JSONL events.",
         TerminationReason::Stopped => "Manually stopped.",
         TerminationReason::Interrupted => "Interrupted by signal.",
-        TerminationReason::ChaosModeComplete => "Chaos mode exploration complete.",
-        TerminationReason::ChaosModeMaxIterations => "Chaos mode stopped at iteration limit.",
         TerminationReason::RestartRequested => "Restarting by human request.",
     }
 }

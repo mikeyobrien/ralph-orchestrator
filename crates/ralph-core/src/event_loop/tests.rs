@@ -2672,67 +2672,37 @@ event_loop:
 #[test]
 fn test_termination_reason_mappings() {
     let cases = vec![
-        (
-            TerminationReason::CompletionPromise,
-            "completed",
-            0,
-            true,
-            true,
-        ),
-        (
-            TerminationReason::MaxIterations,
-            "max_iterations",
-            2,
-            false,
-            false,
-        ),
-        (TerminationReason::MaxRuntime, "max_runtime", 2, false, false),
-        (TerminationReason::MaxCost, "max_cost", 2, false, false),
+        (TerminationReason::CompletionPromise, "completed", 0, true),
+        (TerminationReason::MaxIterations, "max_iterations", 2, false),
+        (TerminationReason::MaxRuntime, "max_runtime", 2, false),
+        (TerminationReason::MaxCost, "max_cost", 2, false),
         (
             TerminationReason::ConsecutiveFailures,
             "consecutive_failures",
             1,
             false,
-            false,
         ),
-        (TerminationReason::LoopThrashing, "loop_thrashing", 1, false, false),
+        (TerminationReason::LoopThrashing, "loop_thrashing", 1, false),
         (
             TerminationReason::ValidationFailure,
             "validation_failure",
             1,
             false,
-            false,
         ),
-        (TerminationReason::Stopped, "stopped", 1, false, false),
-        (TerminationReason::Interrupted, "interrupted", 130, false, false),
-        (
-            TerminationReason::ChaosModeComplete,
-            "chaos_complete",
-            0,
-            true,
-            false,
-        ),
-        (
-            TerminationReason::ChaosModeMaxIterations,
-            "chaos_max_iterations",
-            2,
-            false,
-            false,
-        ),
+        (TerminationReason::Stopped, "stopped", 1, false),
+        (TerminationReason::Interrupted, "interrupted", 130, false),
         (
             TerminationReason::RestartRequested,
             "restart_requested",
             3,
             false,
-            false,
         ),
     ];
 
-    for (reason, expected_str, expected_code, is_success, triggers_chaos) in cases {
+    for (reason, expected_str, expected_code, is_success) in cases {
         assert_eq!(reason.as_str(), expected_str);
         assert_eq!(reason.exit_code(), expected_code);
         assert_eq!(reason.is_success(), is_success);
-        assert_eq!(reason.triggers_chaos_mode(), triggers_chaos);
     }
 }
 
@@ -2760,14 +2730,6 @@ fn test_termination_status_texts() {
         ),
         (TerminationReason::Stopped, "Manually stopped."),
         (TerminationReason::Interrupted, "Interrupted by signal."),
-        (
-            TerminationReason::ChaosModeComplete,
-            "Chaos mode exploration complete.",
-        ),
-        (
-            TerminationReason::ChaosModeMaxIterations,
-            "Chaos mode stopped at iteration limit.",
-        ),
         (
             TerminationReason::RestartRequested,
             "Restarting by human request.",
@@ -2970,7 +2932,6 @@ fn test_verify_scratchpad_complete_variants() {
 fn test_termination_reason_exit_codes() {
     let cases = [
         (TerminationReason::CompletionPromise, 0),
-        (TerminationReason::ChaosModeComplete, 0),
         (TerminationReason::ConsecutiveFailures, 1),
         (TerminationReason::LoopThrashing, 1),
         (TerminationReason::ValidationFailure, 1),
@@ -2978,7 +2939,6 @@ fn test_termination_reason_exit_codes() {
         (TerminationReason::MaxIterations, 2),
         (TerminationReason::MaxRuntime, 2),
         (TerminationReason::MaxCost, 2),
-        (TerminationReason::ChaosModeMaxIterations, 2),
         (TerminationReason::Interrupted, 130),
         (TerminationReason::RestartRequested, 3),
     ];
@@ -2991,58 +2951,33 @@ fn test_termination_reason_exit_codes() {
 #[test]
 fn test_termination_reason_strings_and_flags() {
     let cases = [
-        (
-            TerminationReason::CompletionPromise,
-            "completed",
-            true,
-            true,
-        ),
-        (
-            TerminationReason::MaxIterations,
-            "max_iterations",
-            false,
-            false,
-        ),
-        (TerminationReason::MaxRuntime, "max_runtime", false, false),
-        (TerminationReason::MaxCost, "max_cost", false, false),
+        (TerminationReason::CompletionPromise, "completed", true),
+        (TerminationReason::MaxIterations, "max_iterations", false),
+        (TerminationReason::MaxRuntime, "max_runtime", false),
+        (TerminationReason::MaxCost, "max_cost", false),
         (
             TerminationReason::ConsecutiveFailures,
             "consecutive_failures",
             false,
-            false,
         ),
-        (TerminationReason::LoopThrashing, "loop_thrashing", false, false),
+        (TerminationReason::LoopThrashing, "loop_thrashing", false),
         (
             TerminationReason::ValidationFailure,
             "validation_failure",
             false,
-            false,
         ),
-        (TerminationReason::Stopped, "stopped", false, false),
-        (TerminationReason::Interrupted, "interrupted", false, false),
-        (TerminationReason::ChaosModeComplete, "chaos_complete", true, false),
-        (
-            TerminationReason::ChaosModeMaxIterations,
-            "chaos_max_iterations",
-            false,
-            false,
-        ),
+        (TerminationReason::Stopped, "stopped", false),
+        (TerminationReason::Interrupted, "interrupted", false),
         (
             TerminationReason::RestartRequested,
             "restart_requested",
             false,
-            false,
         ),
     ];
 
-    for (reason, expected_str, is_success, triggers_chaos) in cases {
+    for (reason, expected_str, is_success) in cases {
         assert_eq!(reason.as_str(), expected_str, "{reason:?} as_str mismatch");
         assert_eq!(reason.is_success(), is_success, "{reason:?} success mismatch");
-        assert_eq!(
-            reason.triggers_chaos_mode(),
-            triggers_chaos,
-            "{reason:?} chaos flag mismatch"
-        );
     }
 }
 

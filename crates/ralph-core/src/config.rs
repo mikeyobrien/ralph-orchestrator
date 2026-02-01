@@ -989,114 +989,6 @@ pub struct SkillOverride {
     pub auto_inject: Option<bool>,
 }
 
-/// Chaos mode configuration.
-///
-/// Chaos mode activates after LOOP_COMPLETE to grow the original objective
-/// into related improvements and learnings.
-///
-/// Example configuration:
-/// ```yaml
-/// features:
-///   chaos_mode:
-///     enabled: false              # Disabled by default (opt-in via --chaos)
-///     max_iterations: 5           # Max chaos iterations (default: 5)
-///     cooldown_seconds: 30        # Cooldown between chaos iterations (default: 30)
-///     completion_promise: "CHAOS_COMPLETE"  # Exit token
-///     research_focus:             # Configurable focus areas
-///       - domain_best_practices   # Web search for domain patterns
-///       - codebase_patterns       # Internal code analysis
-///       - self_improvement        # Meta-prompt and event loop study
-///     outputs:                    # What chaos mode can create
-///       - memories                # Always enabled
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChaosModeConfig {
-    /// Whether chaos mode is enabled.
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Maximum iterations in chaos mode.
-    #[serde(default = "default_chaos_max_iterations")]
-    pub max_iterations: u32,
-
-    /// Cooldown period between chaos iterations (seconds).
-    #[serde(default = "default_chaos_cooldown")]
-    pub cooldown_seconds: u64,
-
-    /// Completion promise for chaos mode exit.
-    #[serde(default = "default_chaos_completion")]
-    pub completion_promise: String,
-
-    /// Configurable research focus areas.
-    #[serde(default = "default_research_focus")]
-    pub research_focus: Vec<ResearchFocus>,
-
-    /// What outputs chaos mode can create.
-    #[serde(default = "default_chaos_outputs")]
-    pub outputs: Vec<ChaosOutput>,
-}
-
-fn default_chaos_max_iterations() -> u32 {
-    5
-}
-
-fn default_chaos_cooldown() -> u64 {
-    30 // 30 seconds between iterations
-}
-
-fn default_chaos_completion() -> String {
-    "CHAOS_COMPLETE".to_string()
-}
-
-fn default_research_focus() -> Vec<ResearchFocus> {
-    vec![
-        ResearchFocus::DomainBestPractices,
-        ResearchFocus::CodebasePatterns,
-        ResearchFocus::SelfImprovement,
-    ]
-}
-
-fn default_chaos_outputs() -> Vec<ChaosOutput> {
-    vec![ChaosOutput::Memories] // Only memories by default
-}
-
-impl Default for ChaosModeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_iterations: default_chaos_max_iterations(),
-            cooldown_seconds: default_chaos_cooldown(),
-            completion_promise: default_chaos_completion(),
-            research_focus: default_research_focus(),
-            outputs: default_chaos_outputs(),
-        }
-    }
-}
-
-/// Research focus area for chaos mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchFocus {
-    /// Web search for domain patterns and best practices.
-    DomainBestPractices,
-    /// Internal codebase analysis for patterns and antipatterns.
-    CodebasePatterns,
-    /// Meta-prompt and event loop study for self-improvement.
-    SelfImprovement,
-}
-
-/// Output type that chaos mode can create.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaosOutput {
-    /// Persistent learning memories.
-    Memories,
-    /// Create tasks for concrete work.
-    Tasks,
-    /// Create specs for larger improvements.
-    Specs,
-}
-
 /// Preflight check configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreflightConfig {
@@ -1137,9 +1029,6 @@ impl Default for PreflightConfig {
 ///   loop_naming:
 ///     format: human-readable  # or "timestamp" for legacy format
 ///     max_length: 50
-///   chaos_mode:
-///     enabled: false
-///     max_iterations: 5
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeaturesConfig {
@@ -1166,13 +1055,6 @@ pub struct FeaturesConfig {
     #[serde(default)]
     pub loop_naming: crate::loop_name::LoopNamingConfig,
 
-    /// Chaos mode configuration.
-    ///
-    /// Chaos mode activates after LOOP_COMPLETE to explore related
-    /// improvements and learnings based on the original objective.
-    #[serde(default)]
-    pub chaos_mode: ChaosModeConfig,
-
     /// Preflight check configuration.
     #[serde(default)]
     pub preflight: PreflightConfig,
@@ -1184,7 +1066,6 @@ impl Default for FeaturesConfig {
             parallel: true,    // Parallel loops enabled by default
             auto_merge: false, // Auto-merge disabled by default for safety
             loop_naming: crate::loop_name::LoopNamingConfig::default(),
-            chaos_mode: ChaosModeConfig::default(),
             preflight: PreflightConfig::default(),
         }
     }

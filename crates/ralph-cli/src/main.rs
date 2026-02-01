@@ -529,19 +529,6 @@ struct RunArgs {
     no_auto_merge: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Chaos Mode Options
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Enable chaos mode: after LOOP_COMPLETE, explore related improvements.
-    /// Activates ONLY after successful completion, not on other termination.
-    #[arg(long)]
-    chaos: bool,
-
-    /// Maximum chaos mode iterations (default: 5).
-    /// Only relevant when --chaos is enabled.
-    #[arg(long, requires = "chaos")]
-    chaos_max_iterations: Option<u32>,
-
-    // ─────────────────────────────────────────────────────────────────────────
     // Preflight Options
     // ─────────────────────────────────────────────────────────────────────────
     /// Skip preflight checks before loop start.
@@ -859,8 +846,6 @@ async fn main() -> Result<()> {
                 idle_timeout: None,
                 exclusive: false,
                 no_auto_merge: false,
-                chaos: false,
-                chaos_max_iterations: None,
                 skip_preflight: false,
                 verbose: false,
                 quiet: false,
@@ -2904,8 +2889,6 @@ core:
             idle_timeout: None,
             exclusive: false,
             no_auto_merge: false,
-            chaos: false,
-            chaos_max_iterations: None,
             skip_preflight: true,
             verbose: false,
             quiet: false,
