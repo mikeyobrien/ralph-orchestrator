@@ -55,7 +55,7 @@ Files on disk are the only persistent state:
 - The prompt file (`PROMPT.md`)
 - The codebase itself
 - Git history
-- Memory files (`.agent/memories.md`)
+- Memory files (`.ralph/agent/memories.md`)
 
 ### 3. Eventual Consistency
 

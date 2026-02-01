@@ -80,8 +80,8 @@ Plans are cheap to regenerate. Don't fight to save a failing plan — just make 
 
 All persistent state lives on disk:
 
-- `.agent/memories.md` — Accumulated wisdom
-- `.agent/tasks.jsonl` — Runtime work tracking
+- `.ralph/agent/memories.md` — Accumulated wisdom
+- `.ralph/agent/tasks.jsonl` — Runtime work tracking
 - The codebase itself
 - Git history
 

@@ -6,8 +6,8 @@ Ralph uses two complementary systems for persistent state: memories for cross-se
 
 | System | Storage | Purpose |
 |--------|---------|---------|
-| **Memories** | `.agent/memories.md` | Accumulated wisdom across sessions |
-| **Tasks** | `.agent/tasks.jsonl` | Runtime work items |
+| **Memories** | `.ralph/agent/memories.md` | Accumulated wisdom across sessions |
+| **Tasks** | `.ralph/agent/tasks.jsonl` | Runtime work items |
 
 Both are enabled by default and work together to replace the legacy scratchpad.
 

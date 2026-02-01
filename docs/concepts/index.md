@@ -78,8 +78,8 @@ Events flow between hats, each contributing to the task.
 | **Hat** | Specialized Ralph persona with specific triggers and behaviors |
 | **Event** | Typed message that triggers hats and carries state |
 | **Backpressure** | Quality gate (tests, lint, typecheck) that rejects bad work |
-| **Memory** | Persistent learning stored in `.agent/memories.md` |
-| **Task** | Runtime work item stored in `.agent/tasks.jsonl` |
+| **Memory** | Persistent learning stored in `.ralph/agent/memories.md` |
+| **Task** | Runtime work item stored in `.ralph/agent/tasks.jsonl` |
 
 ## Next Steps
 
