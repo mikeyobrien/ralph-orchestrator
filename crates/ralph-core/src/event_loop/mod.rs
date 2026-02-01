@@ -2076,11 +2076,27 @@ impl EventLoop {
                 // Block: poll events file for human.response
                 // Per spec, even on send failure we treat as timeout (continue without blocking)
                 if send_ok {
+                    // Read the active events path from the current-events marker,
+                    // falling back to the default events.jsonl if not available.
                     let events_path = self
                         .loop_context
                         .as_ref()
-                        .map(|ctx| ctx.events_path())
-                        .unwrap_or_else(|| PathBuf::from(".ralph/events.jsonl"));
+                        .and_then(|ctx| {
+                            std::fs::read_to_string(ctx.current_events_marker())
+                                .ok()
+                                .map(|s| ctx.workspace().join(s.trim()))
+                        })
+                        .or_else(|| {
+                            std::fs::read_to_string(".ralph/current-events")
+                                .ok()
+                                .map(|s| PathBuf::from(s.trim()))
+                        })
+                        .unwrap_or_else(|| {
+                            self.loop_context
+                                .as_ref()
+                                .map(|ctx| ctx.events_path())
+                                .unwrap_or_else(|| PathBuf::from(".ralph/events.jsonl"))
+                        });
 
                     match telegram_service.wait_for_response(&events_path) {
                         Ok(Some(response)) => {

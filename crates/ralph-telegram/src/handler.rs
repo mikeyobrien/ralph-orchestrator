@@ -106,17 +106,39 @@ impl MessageHandler {
         "main".to_string()
     }
 
-    /// Get the events.jsonl path for a given loop.
+    /// Get the active events file path for a given loop.
+    ///
+    /// Reads the `current-events` marker to find the timestamped events file.
+    /// Falls back to the default `events.jsonl` if the marker doesn't exist.
     fn get_events_path(&self, loop_id: &str) -> PathBuf {
-        if loop_id == "main" {
-            self.workspace_root.join(".ralph").join("events.jsonl")
+        let ralph_dir = if loop_id == "main" {
+            self.workspace_root.join(".ralph")
         } else {
             self.workspace_root
                 .join(".worktrees")
                 .join(loop_id)
                 .join(".ralph")
-                .join("events.jsonl")
+        };
+
+        let marker_path = ralph_dir.join("current-events");
+        if let Ok(contents) = std::fs::read_to_string(&marker_path) {
+            let relative = contents.trim();
+            if !relative.is_empty() {
+                // Marker contains a path relative to workspace root
+                // (e.g., ".ralph/events-20260201-210033.jsonl")
+                if loop_id == "main" {
+                    return self.workspace_root.join(relative);
+                } else {
+                    return self
+                        .workspace_root
+                        .join(".worktrees")
+                        .join(loop_id)
+                        .join(relative);
+                }
+            }
         }
+
+        ralph_dir.join("events.jsonl")
     }
 
     /// Append an event line to the given file atomically.
@@ -245,5 +267,42 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.chat_id, Some(999));
+    }
+
+    #[test]
+    fn writes_to_timestamped_events_file_when_marker_exists() {
+        let (handler, dir, mut state) = setup();
+
+        // Create the .ralph dir and a current-events marker pointing to a timestamped file
+        let ralph_dir = dir.path().join(".ralph");
+        std::fs::create_dir_all(&ralph_dir).unwrap();
+        std::fs::write(
+            ralph_dir.join("current-events"),
+            ".ralph/events-20260201-210033.jsonl",
+        )
+        .unwrap();
+
+        handler
+            .handle_message(&mut state, "progress update", 123, None)
+            .unwrap();
+
+        // Event should be written to the timestamped file, not events.jsonl
+        let timestamped_path = dir.path().join(".ralph/events-20260201-210033.jsonl");
+        assert!(
+            timestamped_path.exists(),
+            "event should be written to timestamped events file"
+        );
+
+        let contents = std::fs::read_to_string(&timestamped_path).unwrap();
+        let event: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(event["topic"], "human.guidance");
+        assert_eq!(event["payload"], "progress update");
+
+        // The old default events.jsonl should NOT exist
+        let default_path = dir.path().join(".ralph/events.jsonl");
+        assert!(
+            !default_path.exists(),
+            "event should NOT be written to default events.jsonl when marker exists"
+        );
     }
 }
