@@ -17,6 +17,7 @@ use crate::instructions::InstructionBuilder;
 use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use crate::skill_registry::SkillRegistry;
+use crate::text::floor_char_boundary;
 use ralph_proto::{Event, EventBus, Hat, HatId};
 use ralph_telegram::TelegramService;
 use std::path::PathBuf;
@@ -1136,6 +1137,8 @@ impl EventLoop {
         let content = if content.len() > char_budget {
             // Find a line boundary near the start of the tail
             let start = content.len() - char_budget;
+            // Ensure we start at a valid UTF-8 character boundary
+            let start = floor_char_boundary(&content, start);
             let line_start = content[start..].find('\n').map_or(start, |n| start + n + 1);
             let discarded = &content[..line_start];
 

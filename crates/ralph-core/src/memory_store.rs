@@ -18,6 +18,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::text::floor_char_boundary;
+
 use crate::file_lock::FileLock;
 use crate::memory::{Memory, MemoryType};
 use crate::memory_parser::parse_memories;
@@ -341,8 +343,11 @@ pub fn truncate_to_budget(content: &str, budget: usize) -> String {
         return content.to_string();
     }
 
+    // Ensure we truncate at a valid UTF-8 character boundary
+    let safe_budget = floor_char_boundary(content, char_budget);
+
     // Find a good break point (end of a memory block)
-    let truncated = &content[..char_budget];
+    let truncated = &content[..safe_budget];
 
     // Try to find the last complete memory block (ends with -->)
     if let Some(last_complete) = truncated.rfind("-->") {

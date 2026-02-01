@@ -103,7 +103,7 @@ pub use task_definition::{
     TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
 };
 pub use task_store::TaskStore;
-pub use text::truncate_with_ellipsis;
+pub use text::{floor_char_boundary, truncate_with_ellipsis};
 pub use workspace::{
     CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,
     WorkspaceManager,

@@ -3,6 +3,38 @@
 //! This module provides common text manipulation functions used throughout
 //! the codebase, including UTF-8 safe string truncation.
 
+/// Finds the largest byte index <= `index` that is a valid UTF-8 character boundary.
+///
+/// This is needed because Rust strings cannot be sliced at arbitrary byte positions -
+/// only at valid character boundaries. Multi-byte characters (emojis, etc.) would cause
+/// a panic if sliced in the middle.
+///
+/// This is a stable Rust implementation of `str::floor_char_boundary` (nightly-only).
+///
+/// # Examples
+///
+/// ```
+/// use ralph_core::floor_char_boundary;
+///
+/// let s = "Hello 🦀 World";  // 🦀 is at bytes 6-9
+/// assert_eq!(floor_char_boundary(s, 6), 6);   // At start of emoji - valid boundary
+/// assert_eq!(floor_char_boundary(s, 7), 6);   // Inside emoji - returns start
+/// assert_eq!(floor_char_boundary(s, 8), 6);   // Inside emoji - returns start
+/// assert_eq!(floor_char_boundary(s, 10), 10); // After emoji - valid boundary
+/// ```
+#[must_use]
+pub fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    // Walk backwards from index until we find a valid char boundary
+    let mut boundary = index;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    boundary
+}
+
 /// Truncates a string to a maximum number of characters, adding "..." if truncated.
 ///
 /// This function is UTF-8 safe: it uses character boundaries, not byte boundaries,
@@ -50,6 +82,42 @@ pub fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_floor_char_boundary_ascii() {
+        let s = "hello";
+        assert_eq!(floor_char_boundary(s, 0), 0);
+        assert_eq!(floor_char_boundary(s, 3), 3);
+        assert_eq!(floor_char_boundary(s, 5), 5);
+        assert_eq!(floor_char_boundary(s, 10), 5); // Beyond string length
+    }
+
+    #[test]
+    fn test_floor_char_boundary_emoji() {
+        // 🦀 is 4 bytes (U+1F980)
+        let s = "hi🦀ok"; // h=0, i=1, 🦀=2-5, o=6, k=7
+        assert_eq!(floor_char_boundary(s, 2), 2); // Start of emoji
+        assert_eq!(floor_char_boundary(s, 3), 2); // Inside emoji
+        assert_eq!(floor_char_boundary(s, 4), 2); // Inside emoji
+        assert_eq!(floor_char_boundary(s, 5), 2); // Inside emoji
+        assert_eq!(floor_char_boundary(s, 6), 6); // After emoji
+    }
+
+    #[test]
+    fn test_floor_char_boundary_checkmark() {
+        // ✅ is 3 bytes (U+2705)
+        let s = "a✅b"; // a=0, ✅=1-3, b=4
+        assert_eq!(floor_char_boundary(s, 1), 1); // Start of checkmark
+        assert_eq!(floor_char_boundary(s, 2), 1); // Inside checkmark
+        assert_eq!(floor_char_boundary(s, 3), 1); // Inside checkmark
+        assert_eq!(floor_char_boundary(s, 4), 4); // At 'b'
+    }
+
+    #[test]
+    fn test_floor_char_boundary_empty() {
+        assert_eq!(floor_char_boundary("", 0), 0);
+        assert_eq!(floor_char_boundary("", 5), 0);
+    }
 
     #[test]
     fn test_short_string_unchanged() {
