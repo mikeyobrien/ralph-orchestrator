@@ -32,7 +32,7 @@ pub struct CheckinContext {
 /// Implementors handle platform-specific concerns: sending messages,
 /// waiting for responses, and periodic check-ins. The event loop holds
 /// an `Option<Box<dyn RobotService>>` and calls these methods when
-/// `interact.human` events are detected.
+/// `human.interact` events are detected.
 pub trait RobotService: Send + Sync {
     /// Send a question to the human and store it as pending.
     ///

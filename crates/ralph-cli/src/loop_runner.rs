@@ -275,6 +275,13 @@ pub async fn run_loop_impl(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    // Seed max_iterations into TUI state for accurate iteration display.
+    if let Some(ref state) = tui_state {
+        if let Ok(mut s) = state.lock() {
+            s.max_iterations = Some(config.event_loop.max_iterations);
+        }
+    }
+
     // Spawn signal handlers AFTER TUI initialization to avoid deadlock
     // (TUI must enter raw mode and create EventStream before signal handlers are registered)
 
@@ -850,17 +857,23 @@ pub async fn run_loop_impl(
         // For TUI mode, get the shared lines buffer for this iteration.
         // The buffer is owned by TuiState's IterationBuffer, so writes from
         // TuiStreamHandler appear immediately in the TUI (real-time streaming).
+        let hat_display = event_loop
+            .registry()
+            .get(&display_hat)
+            .map(|hat| hat.name.clone())
+            .unwrap_or_else(|| display_hat.as_str().to_string());
+
         let tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>> =
             if let Some(ref state) = tui_state {
                 // Start new iteration and get handle to the LATEST iteration's lines buffer.
                 // We must use latest_iteration_lines_handle() instead of current_iteration_lines_handle()
                 // because the user may be viewing an older iteration while a new one executes.
-                if let Ok(mut s) = state.lock() {
-                    s.start_new_iteration();
-                    s.latest_iteration_lines_handle()
-                } else {
-                    None
-                }
+                prepare_tui_iteration(
+                    state,
+                    hat_display.clone(),
+                    backend_name_for_timeout.clone(),
+                    config.event_loop.max_iterations,
+                )
             } else {
                 None
             };
@@ -950,6 +963,11 @@ pub async fn run_loop_impl(
 
         // Note: TUI lines are now written directly to IterationBuffer during streaming,
         // so no post-execution transfer is needed.
+        if let Some(ref state) = tui_state {
+            if let Ok(mut s) = state.lock() {
+                s.finish_latest_iteration();
+            }
+        }
 
         // Log events from output before processing
         log_events_from_output(
@@ -1088,6 +1106,22 @@ fn convert_termination_type(
         ralph_adapters::TerminationType::UserInterrupt
         | ralph_adapters::TerminationType::ForceKill => Some(TerminationReason::Interrupted),
     }
+}
+
+fn prepare_tui_iteration(
+    tui_state: &Arc<std::sync::Mutex<ralph_tui::TuiState>>,
+    hat_display: String,
+    backend: String,
+    max_iterations: u32,
+) -> Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>> {
+    let Ok(mut state) = tui_state.lock() else {
+        return None;
+    };
+    // Ensure max_iterations is always available for header display, even if
+    // state was reset by earlier events.
+    state.max_iterations = Some(max_iterations);
+    state.start_new_iteration_with_metadata(Some(hat_display), Some(backend));
+    state.latest_iteration_lines_handle()
 }
 
 async fn execute_pty(
@@ -1695,6 +1729,7 @@ mod tests {
     use ralph_core::planning_session::{ConversationEntry, ConversationType};
     use ralph_proto::{Hat, Topic};
     use std::ffi::OsStr;
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     #[test]
@@ -1726,6 +1761,23 @@ mod tests {
             interactive_with_tty,
             "Interactive mode with TTY should forward user input"
         );
+    }
+
+    #[test]
+    fn test_prepare_tui_iteration_seeds_max_iterations() {
+        let state = Arc::new(Mutex::new(ralph_tui::TuiState::new()));
+
+        let lines = prepare_tui_iteration(
+            &state,
+            "Planner".to_string(),
+            "claude".to_string(),
+            42,
+        );
+
+        assert!(lines.is_some(), "should return a lines handle");
+        let state = state.lock().expect("state lock");
+        assert_eq!(state.max_iterations, Some(42));
+        assert_eq!(state.total_iterations(), 1);
     }
 
     #[cfg(unix)]

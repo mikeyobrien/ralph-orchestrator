@@ -123,7 +123,7 @@ RObot:
     bot_token: "your-token"  # Or RALPH_TELEGRAM_BOT_TOKEN env var
 ```
 
-- **Agent questions** — Agents emit `interact.human` events; the loop blocks until a response arrives or times out
+- **Agent questions** — Agents emit `human.interact` events; the loop blocks until a response arrives or times out
 - **Proactive guidance** — Send messages anytime to steer the agent mid-loop
 - **Parallel loop routing** — Messages route via reply-to, `@loop-id` prefix, or default to primary
 - **Telegram commands** — `/status`, `/tasks`, `/restart` for real-time loop visibility

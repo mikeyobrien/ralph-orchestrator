@@ -2555,8 +2555,8 @@ RObot:
         "Prompt should contain <robot-skill> when RObot is enabled"
     );
     assert!(
-        prompt.contains("interact.human"),
-        "Robot skill should mention interact.human"
+        prompt.contains("human.interact"),
+        "Robot skill should mention human.interact"
     );
     assert!(
         prompt.contains("</robot-skill>"),

@@ -5,7 +5,7 @@
 //! This crate provides bidirectional communication between AI agents and humans
 //! during orchestration loops via Telegram:
 //!
-//! - **AI → Human**: Agents emit `interact.human` events; the bot sends questions to Telegram
+//! - **AI → Human**: Agents emit `human.interact` events; the bot sends questions to Telegram
 //! - **Human → AI**: Humans reply or send proactive guidance via Telegram messages
 //!
 //! ## Key Components

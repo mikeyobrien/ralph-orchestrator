@@ -398,7 +398,7 @@ impl TelegramService {
 
     /// Send a question to the human via Telegram and store it as a pending question.
     ///
-    /// The question payload is extracted from the `interact.human` event. A pending
+    /// The question payload is extracted from the `human.interact` event. A pending
     /// question is stored in the state manager so that incoming replies can be
     /// routed back to the correct loop.
     ///
@@ -413,7 +413,7 @@ impl TelegramService {
         } else {
             warn!(
                 loop_id = %self.loop_id,
-                "No chat ID configured — interact.human question logged but not sent: {}",
+                "No chat ID configured — human.interact question logged but not sent: {}",
                 payload
             );
             0

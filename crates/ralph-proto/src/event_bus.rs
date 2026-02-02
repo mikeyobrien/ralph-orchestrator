@@ -19,6 +19,9 @@ pub struct EventBus {
     /// Pending events for each hat.
     pending: HashMap<HatId, Vec<Event>>,
 
+    /// Pending human interaction events (human.*).
+    human_pending: Vec<Event>,
+
     /// Observers that receive all published events.
     /// Multiple observers can be registered (e.g., session recorder + TUI).
     observers: Vec<Observer>,
@@ -79,6 +82,11 @@ impl EventBus {
             observer(&event);
         }
 
+        if event.topic.as_str().starts_with("human.") {
+            self.human_pending.push(event);
+            return Vec::new();
+        }
+
         let mut recipients = Vec::new();
 
         // If there's a direct target, route only to that hat
@@ -134,14 +142,29 @@ impl EventBus {
         self.pending.remove(hat_id).unwrap_or_default()
     }
 
+    /// Takes all pending human interaction events.
+    pub fn take_human_pending(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.human_pending)
+    }
+
     /// Returns a reference to pending events for a hat without consuming them.
     pub fn peek_pending(&self, hat_id: &HatId) -> Option<&Vec<Event>> {
         self.pending.get(hat_id)
     }
 
+    /// Returns a reference to pending human interaction events without consuming them.
+    pub fn peek_human_pending(&self) -> &[Event] {
+        &self.human_pending
+    }
+
     /// Checks if there are any pending events for any hat.
     pub fn has_pending(&self) -> bool {
-        self.pending.values().any(|events| !events.is_empty())
+        !self.human_pending.is_empty() || self.pending.values().any(|events| !events.is_empty())
+    }
+
+    /// Checks if there are any pending human interaction events.
+    pub fn has_human_pending(&self) -> bool {
+        !self.human_pending.is_empty()
     }
 
     /// Returns the next hat with pending events.
@@ -226,6 +249,30 @@ mod tests {
 
         assert_eq!(events.len(), 2);
         assert!(bus.take_pending(&hat_id).is_empty());
+    }
+
+    #[test]
+    fn test_human_events_use_separate_queue() {
+        let mut bus = EventBus::new();
+
+        let hat = Hat::new("ralph", "Ralph").subscribe("*");
+        bus.register(hat);
+
+        bus.publish(Event::new("human.interact", "question"));
+        bus.publish(Event::new("human.response", "hello"));
+        bus.publish(Event::new("human.guidance", "note"));
+
+        assert_eq!(bus.peek_human_pending().len(), 3);
+        assert_eq!(
+            bus.peek_pending(&HatId::new("ralph"))
+                .map(|events| events.len())
+                .unwrap_or(0),
+            0
+        );
+
+        let taken = bus.take_human_pending();
+        assert_eq!(taken.len(), 3);
+        assert!(!bus.has_human_pending());
     }
 
     #[test]

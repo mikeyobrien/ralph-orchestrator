@@ -1269,7 +1269,7 @@ impl HatConfig {
 /// RObot (Ralph-Orchestrator bot) configuration.
 ///
 /// Enables bidirectional communication between AI agents and humans
-/// during orchestration loops. When enabled, agents can emit `interact.human`
+/// during orchestration loops. When enabled, agents can emit `human.interact`
 /// events to request clarification (blocking the loop), and humans can
 /// send proactive guidance via Telegram.
 ///

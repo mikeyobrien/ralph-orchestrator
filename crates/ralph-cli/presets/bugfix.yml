@@ -124,8 +124,8 @@ hats:
          - You MUST document decisions when confidence <= 80 or when choosing a safe default.
 
       4. **Never block on human input** for implementation decisions.
-         - `interact.human` is reserved for scope/direction questions from the Chief of Staff only.
-         - This hat MUST NOT use `interact.human`.
+         - `human.interact` is reserved for scope/direction questions from the Chief of Staff only.
+         - This hat MUST NOT use `human.interact`.
 
   verifier:
     name: "✅ Verifier"

@@ -342,7 +342,7 @@ impl EventLoop {
 
     /// Injects a robot service for human-in-the-loop communication.
     ///
-    /// Call this after construction to enable `interact.human` event handling,
+    /// Call this after construction to enable `human.interact` event handling,
     /// periodic check-ins, and question/response flow. The service is typically
     /// created by the CLI layer (e.g., `TelegramService`) and injected here,
     /// keeping the core event loop decoupled from any specific communication
@@ -575,6 +575,11 @@ impl EventLoop {
     pub fn next_hat(&self) -> Option<&HatId> {
         let next = self.bus.next_hat_with_pending();
 
+        // If no pending hat events but human interactions are pending, route to Ralph.
+        if next.is_none() && self.bus.has_human_pending() {
+            return self.bus.hat_ids().find(|id| id.as_str() == "ralph");
+        }
+
         // If no pending events, return None
         next.as_ref()?;
 
@@ -595,7 +600,7 @@ impl EventLoop {
     /// Use this after `process_output` to detect if the LLM failed to publish an event.
     /// If false after processing, the loop will terminate on the next iteration.
     pub fn has_pending_events(&self) -> bool {
-        self.bus.next_hat_with_pending().is_some()
+        self.bus.next_hat_with_pending().is_some() || self.bus.has_human_pending()
     }
 
     /// Checks if any pending events are human-related (human.response, human.guidance).
@@ -603,17 +608,7 @@ impl EventLoop {
     /// Used to skip cooldown delays when a human event is next, since we don't
     /// want to artificially delay the response to a human interaction.
     pub fn has_pending_human_events(&self) -> bool {
-        self.bus.hat_ids().any(|hat_id| {
-            self.bus
-                .peek_pending(hat_id)
-                .map(|events| {
-                    events.iter().any(|e| {
-                        let topic = e.topic.as_str();
-                        topic == "human.response" || topic == "human.guidance"
-                    })
-                })
-                .unwrap_or(false)
-        })
+        self.bus.has_human_pending()
     }
 
     /// Gets the topics a hat is allowed to publish.
@@ -678,7 +673,9 @@ impl EventLoop {
         if hat_id.as_str() == "ralph" {
             if self.registry.is_empty() {
                 // Solo mode - just Ralph's events, no hats to filter
-                let events = self.bus.take_pending(&hat_id.clone());
+                let mut events = self.bus.take_pending(&hat_id.clone());
+                let mut human_events = self.bus.take_human_pending();
+                events.append(&mut human_events);
 
                 // Separate human.guidance events from regular events
                 let (guidance_events, regular_events): (Vec<_>, Vec<_>) = events
@@ -731,6 +728,9 @@ impl EventLoop {
 
                     all_events.extend(pending);
                 }
+
+                let mut human_events = self.bus.take_human_pending();
+                all_events.append(&mut human_events);
 
                 // Publish orchestrator-generated system events after consuming pending events,
                 // so they become visible in the event log and can be handled next iteration.
@@ -1008,7 +1008,7 @@ impl EventLoop {
     /// Injects the RObot interaction skill content into the prefix.
     ///
     /// Gated by `robot.enabled`. Teaches agents how and when to interact
-    /// with humans via `interact.human` events.
+    /// with humans via `human.interact` events.
     fn inject_robot_skill(&self, prefix: &mut String) {
         if !self.config.robot.enabled {
             return;
@@ -1955,13 +1955,13 @@ impl EventLoop {
             self.state.last_blocked_hat = None;
         }
 
-        // Handle interact.human blocking behavior:
-        // When an interact.human event is detected and robot service is active,
+        // Handle human.interact blocking behavior:
+        // When a human.interact event is detected and robot service is active,
         // send the question and block until human.response or timeout.
         let mut response_event = None;
         let ask_human_idx = validated_events
             .iter()
-            .position(|e| e.topic == "interact.human".into());
+            .position(|e| e.topic == "human.interact".into());
 
         if let Some(idx) = ask_human_idx {
             let ask_event = &validated_events[idx];
@@ -1970,7 +1970,7 @@ impl EventLoop {
             if let Some(ref robot_service) = self.robot_service {
                 info!(
                     payload = %payload,
-                    "interact.human event detected — sending question via robot service"
+                    "human.interact event detected — sending question via robot service"
                 );
 
                 // Send the question (includes retry with exponential backoff)
@@ -1979,7 +1979,7 @@ impl EventLoop {
                     Err(e) => {
                         warn!(
                             error = %e,
-                            "Failed to send interact.human question after retries — treating as timeout"
+                            "Failed to send human.interact question after retries — treating as timeout"
                         );
                         // Log to diagnostics
                         self.diagnostics.log_error(
@@ -2045,7 +2045,7 @@ impl EventLoop {
                 }
             } else {
                 debug!(
-                    "interact.human event detected but no robot service active — passing through"
+                    "human.interact event detected but no robot service active — passing through"
                 );
             }
         }
