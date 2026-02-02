@@ -1037,7 +1037,7 @@ impl PtyExecutor {
                             }
                             output.extend_from_slice(&data);
                         }
-                        Ok(Some(OutputEvent::Eof)) | Ok(None) => break,
+                        Ok(Some(OutputEvent::Eof) | None) => break,
                         Ok(Some(OutputEvent::Error(e))) => {
                             debug!(error = %e, "PTY read error after exit");
                             break;
