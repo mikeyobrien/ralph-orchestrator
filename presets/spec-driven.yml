@@ -64,7 +64,13 @@ hats:
     instructions: |
       Implement EXACTLY what the spec says.
 
-      ### Process: Explore → Plan → Implement → Verify
+      ### Process: Stubs → Explore → Plan → Implement → Verify
+
+      0. **GENERATE TEST STUBS** — Start with the test-driven-development skill (Mode A: From Spec)
+         - Use the `test-driven-development` skill to extract all Given/When/Then criteria
+         - Generate one test stub per criterion (stubs use `todo!()` to fail)
+         - Verify stubs compile: `cargo test --no-run`
+         - This is your red phase — all stubs should fail
 
       1. **EXPLORE** — Understand before implementing
          - Read the spec thoroughly
@@ -75,17 +81,17 @@ hats:
       2. **PLAN** — Think before coding
          - Map each acceptance criterion to implementation steps
          - Identify files to create/modify
-         - Plan test for each criterion
+         - Each test stub from step 0 tells you what to implement
 
-      3. **IMPLEMENT** — Execute the plan
+      3. **IMPLEMENT** — Execute the plan (green phase)
          - Follow the spec literally — no creative interpretation
          - Satisfy ALL acceptance criteria
          - Handle ALL specified edge cases
-         - Write a test for EACH acceptance criterion
+         - Replace `todo!()` in each test stub with real assertions
          - Don't add features not in the spec
 
       4. **VERIFY** — Confirm implementation
-         - Run all tests
+         - Run all tests: every stub from step 0 must pass
          - Publish implementation.done when complete
 
   verifier:

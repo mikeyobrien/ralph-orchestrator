@@ -49,6 +49,15 @@ ralph tools interact progress "message"
 
 Send a non-blocking progress update via the configured RObot (Telegram).
 
+## Skill Commands
+
+```bash
+ralph tools skill list
+ralph tools skill load <name>
+```
+
+List available skills or load a specific skill by name.
+
 ## Memory Commands
 
 ```bash
@@ -93,11 +102,26 @@ ralph tools memory delete <mem-id>
 - You make or learn why an architectural choice was made (decision)
 - You solve a problem that might recur (fix)
 - You learn project-specific knowledge others need (context)
+- Any non-zero command, missing dependency/skill, or blocked step (fix + task if unresolved)
 
 **Do NOT create memories for:**
 - Session-specific state (use tasks instead)
 - Obvious/universal practices
 - Temporary workarounds
+
+### Failure Capture (Generic Rule)
+
+If any command fails (non-zero exit), or you hit a missing dependency/skill, or you are blocked:
+1. **Record a fix memory** with the exact command, error, and intended fix.
+2. **Open a task** if it won't be resolved in the same iteration.
+
+```bash
+ralph tools memory add \
+  "failure: cmd=<command>, exit=<code>, error=<message>, next=<intended fix>" \
+  -t fix --tags tooling,error-handling
+
+ralph tools task add "Fix: <short description>" -p 2
+```
 
 ### Discover Available Tags
 
@@ -119,6 +143,26 @@ Reuse existing tags for consistency. Common tag patterns:
 2. **Include why**: "Chose X because Y" not just "Uses X"
 3. **One concept per memory**: Split complex learnings
 4. **Tag consistently**: Reuse existing tags when possible
+
+## Decision Journal
+
+Use `.ralph/agent/decisions.md` to capture consequential decisions and their
+confidence scores. Follow the template at the top of the file and keep IDs
+sequential (DEC-001, DEC-002, ...).
+
+Confidence thresholds:
+- **>80**: Proceed autonomously.
+- **50-80**: Proceed, but document the decision in `.ralph/agent/decisions.md`.
+- **<50**: Choose the safest default and document the decision in `.ralph/agent/decisions.md`.
+
+Template fields:
+- Decision
+- Chosen Option
+- Confidence (0-100)
+- Alternatives Considered
+- Reasoning
+- Reversibility
+- Timestamp (UTC ISO 8601)
 
 ## Output Formats
 

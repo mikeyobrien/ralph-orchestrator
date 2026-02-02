@@ -676,7 +676,7 @@ Events are **routing signals**, not data transport. Keep payloads brief.
 Agents write events to the run's events file (`.ralph/events-YYYYMMDD-HHMMSS.jsonl`):
 
 ```json
-{"topic":"build.done","payload":"tests: pass, lint: pass","ts":"2026-01-14T19:30:00Z"}
+{"topic":"build.done","payload":"tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass","ts":"2026-01-14T19:30:00Z"}
 {"topic":"build.blocked","payload":"Missing dependency","ts":"2026-01-14T19:31:15Z"}
 ```
 
@@ -709,7 +709,7 @@ For detailed output, write to `.agent/scratchpad.md` and emit a brief event.
 
 ```bash
 # Preferred: Use ralph emit for safe JSON formatting
-ralph emit build.done "tests: pass"
+ralph emit build.done "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # Structured object payload
 ralph emit review.done --json '{"status":"approved","files":3}'
@@ -726,7 +726,7 @@ Each run creates a unique timestamped events file (e.g., `.ralph/events-20260120
 **Deprecated**: v1.x used XML events in agent output:
 ```xml
 <event topic="build.done">
-tests: pass
+tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass
 </event>
 ```
 

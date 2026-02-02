@@ -97,6 +97,8 @@ impl SearchState {
 pub struct TuiState {
     /// Which hat will process next event (ID + display name).
     pub pending_hat: Option<(HatId, String)>,
+    /// Backend expected for the next iteration (used when metadata is missing).
+    pub pending_backend: Option<String>,
     /// Current iteration number (0-indexed, display as +1).
     pub iteration: u32,
     /// Previous iteration number (for detecting changes).
@@ -152,6 +154,8 @@ pub struct TuiState {
     pub loop_completed: bool,
     /// Frozen elapsed time when loop completed (timer stops at this value).
     pub final_iteration_elapsed: Option<Duration>,
+    /// Frozen total elapsed time when loop completed (footer timer stops).
+    pub final_loop_elapsed: Option<Duration>,
 
     // ========================================================================
     // Task Tracking State
@@ -167,6 +171,7 @@ impl TuiState {
     pub fn new() -> Self {
         Self {
             pending_hat: None,
+            pending_backend: None,
             iteration: 0,
             prev_iteration: 0,
             loop_started: Some(Instant::now()),
@@ -190,6 +195,7 @@ impl TuiState {
             // Completion state
             loop_completed: false,
             final_iteration_elapsed: None,
+            final_loop_elapsed: None,
             // Task tracking state
             task_counts: TaskCounts::default(),
             active_task: None,
@@ -201,6 +207,7 @@ impl TuiState {
     pub fn with_hat_map(hat_map: HashMap<String, (HatId, String)>) -> Self {
         Self {
             pending_hat: None,
+            pending_backend: None,
             iteration: 0,
             prev_iteration: 0,
             loop_started: Some(Instant::now()),
@@ -224,6 +231,7 @@ impl TuiState {
             // Completion state
             loop_completed: false,
             final_iteration_elapsed: None,
+            final_loop_elapsed: None,
             // Task tracking state
             task_counts: TaskCounts::default(),
             active_task: None,
@@ -238,14 +246,13 @@ impl TuiState {
         self.last_event = Some(topic.to_string());
         self.last_event_at = Some(now);
 
-        // First, check if we have a custom hat mapping for this topic
-        if let Some((hat_id, hat_display)) = self.hat_map.get(topic) {
-            self.pending_hat = Some((hat_id.clone(), hat_display.clone()));
+        let custom_hat = self.hat_map.get(topic).cloned();
+        if let Some((hat_id, hat_display)) = custom_hat.clone() {
+            self.pending_hat = Some((hat_id, hat_display));
             // Handle iteration timing for custom hats
             if topic.starts_with("build.") {
                 self.iteration_started = Some(now);
             }
-            return;
         }
 
         // Fall back to hardcoded mappings for backward compatibility
@@ -254,34 +261,68 @@ impl TuiState {
                 // Save state we want to preserve across reset
                 let saved_hat_map = std::mem::take(&mut self.hat_map);
                 let saved_loop_started = self.loop_started; // Preserve timer from TUI init
+                let saved_max_iterations = self.max_iterations;
+                // Preserve iteration buffers so TUI history survives across task restarts
+                let saved_iterations = std::mem::take(&mut self.iterations);
+                let saved_current_view = self.current_view;
+                let saved_following_latest = self.following_latest;
+                let saved_new_iteration_alert = self.new_iteration_alert.take();
+                let saved_pending_backend = self.pending_backend.clone();
                 *self = Self::new();
                 self.hat_map = saved_hat_map;
                 self.loop_started = saved_loop_started; // Keep original timer
-                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                self.max_iterations = saved_max_iterations;
+                self.iterations = saved_iterations;
+                self.current_view = saved_current_view;
+                self.following_latest = saved_following_latest;
+                self.new_iteration_alert = saved_new_iteration_alert;
+                self.pending_backend = saved_pending_backend;
+                if let Some((hat_id, hat_display)) = custom_hat.clone() {
+                    self.pending_hat = Some((hat_id, hat_display));
+                } else {
+                    self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                }
                 self.last_event = Some(topic.to_string());
                 self.last_event_at = Some(now);
             }
             "task.resume" => {
                 // Don't reset timer on resume - keep counting from TUI init
-                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                if custom_hat.is_none() {
+                    self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                }
             }
             "build.task" => {
-                self.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
+                if custom_hat.is_none() {
+                    self.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
+                }
+                // Resume the loop timer if a new iteration starts after a freeze.
+                self.final_loop_elapsed = None;
                 self.iteration_started = Some(now);
             }
             "build.done" => {
-                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                if custom_hat.is_none() {
+                    self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                }
                 self.prev_iteration = self.iteration;
                 self.iteration += 1;
+                self.finish_latest_iteration();
+                self.freeze_loop_elapsed();
             }
             "build.blocked" => {
-                self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                if custom_hat.is_none() {
+                    self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
+                }
+                self.finish_latest_iteration();
+                self.freeze_loop_elapsed();
             }
             "loop.terminate" => {
                 self.pending_hat = None;
                 self.loop_completed = true;
                 // Freeze the iteration timer at its current value
                 self.final_iteration_elapsed = self.iteration_started.map(|start| start.elapsed());
+                // Freeze the total loop timer for the footer display
+                self.freeze_loop_elapsed();
+                self.finish_latest_iteration();
             }
             _ => {
                 // Unknown topic - don't change pending_hat
@@ -298,12 +339,22 @@ impl TuiState {
 
     /// Time since loop started.
     pub fn get_loop_elapsed(&self) -> Option<Duration> {
+        if let Some(final_elapsed) = self.final_loop_elapsed {
+            return Some(final_elapsed);
+        }
         self.loop_started.map(|start| start.elapsed())
     }
 
     /// Time since iteration started, or frozen value if loop completed.
     pub fn get_iteration_elapsed(&self) -> Option<Duration> {
-        // Return frozen elapsed time if loop has completed
+        if let Some(buffer) = self.current_iteration() {
+            if let Some(elapsed) = buffer.elapsed {
+                return Some(elapsed);
+            }
+            if let Some(started_at) = buffer.started_at {
+                return Some(started_at.elapsed());
+            }
+        }
         if let Some(final_elapsed) = self.final_iteration_elapsed {
             return Some(final_elapsed);
         }
@@ -370,8 +421,30 @@ impl TuiState {
     /// If following_latest is true, current_view is updated to the new iteration.
     /// If not following, sets the new_iteration_alert to notify the user.
     pub fn start_new_iteration(&mut self) {
+        self.start_new_iteration_with_metadata(None, None);
+    }
+
+    /// Starts a new iteration with optional metadata for hat and backend display.
+    pub fn start_new_iteration_with_metadata(
+        &mut self,
+        hat_display: Option<String>,
+        backend: Option<String>,
+    ) {
+        let hat_display = hat_display.or_else(|| {
+            self.pending_hat
+                .as_ref()
+                .map(|(_, display)| display.clone())
+        });
+        let backend = backend.or_else(|| self.pending_backend.clone());
         let number = (self.iterations.len() + 1) as u32;
-        self.iterations.push(IterationBuffer::new(number));
+        let mut buffer = IterationBuffer::new(number);
+        buffer.hat_display = hat_display;
+        buffer.backend = backend;
+        buffer.started_at = Some(Instant::now());
+        if buffer.backend.is_some() {
+            self.pending_backend = buffer.backend.clone();
+        }
+        self.iterations.push(buffer);
 
         // Auto-follow if enabled
         if self.following_latest {
@@ -380,6 +453,39 @@ impl TuiState {
             // Alert user about new iteration when reviewing history
             self.new_iteration_alert = Some(number as usize);
         }
+    }
+
+    /// Finalizes the latest iteration's elapsed time if it isn't already set.
+    pub fn finish_latest_iteration(&mut self) {
+        let Some(buffer) = self.iterations.last_mut() else {
+            return;
+        };
+        if buffer.elapsed.is_some() {
+            return;
+        }
+        if let Some(started_at) = buffer.started_at {
+            buffer.elapsed = Some(started_at.elapsed());
+        }
+    }
+
+    /// Freeze total loop elapsed time for the footer if it is still ticking.
+    fn freeze_loop_elapsed(&mut self) {
+        if self.final_loop_elapsed.is_some() {
+            return;
+        }
+        self.final_loop_elapsed = self.loop_started.map(|start| start.elapsed());
+    }
+
+    /// Returns the hat display for the currently viewed iteration, if available.
+    pub fn current_iteration_hat_display(&self) -> Option<&str> {
+        self.current_iteration()
+            .and_then(|buffer| buffer.hat_display.as_deref())
+    }
+
+    /// Returns the backend display for the currently viewed iteration, if available.
+    pub fn current_iteration_backend(&self) -> Option<&str> {
+        self.current_iteration()
+            .and_then(|buffer| buffer.backend.as_deref())
     }
 
     /// Returns a reference to the currently viewed iteration buffer.
@@ -582,6 +688,14 @@ pub struct IterationBuffer {
     /// Starts true, becomes false when user scrolls up, restored when user
     /// scrolls to bottom (G key) or manually scrolls down to reach bottom.
     pub following_bottom: bool,
+    /// Hat display name (emoji + name) for this iteration.
+    pub hat_display: Option<String>,
+    /// Backend used for this iteration (e.g., "claude", "kiro").
+    pub backend: Option<String>,
+    /// When this iteration started (for elapsed time calculation).
+    pub started_at: Option<Instant>,
+    /// Frozen elapsed duration for this iteration (set when completed).
+    pub elapsed: Option<Duration>,
 }
 
 impl IterationBuffer {
@@ -592,6 +706,10 @@ impl IterationBuffer {
             lines: Arc::new(Mutex::new(Vec::new())),
             scroll_offset: 0,
             following_bottom: true, // Start following bottom for auto-scroll
+            hat_display: None,
+            backend: None,
+            started_at: None,
+            elapsed: None,
         }
     }
 
@@ -1109,6 +1227,45 @@ mod tests {
     }
 
     #[test]
+    fn task_start_preserves_iterations_across_reset() {
+        // Regression test: task.start used to do *self = Self::new() which wiped
+        // iteration buffers, causing the header to show "iter 1/0" and losing all
+        // previous iteration output.
+        let mut state = TuiState::new();
+
+        // Create 3 iterations with content
+        state.start_new_iteration();
+        state.start_new_iteration();
+        state.start_new_iteration();
+        assert_eq!(state.total_iterations(), 3);
+        assert_eq!(state.current_view, 2); // following latest
+
+        // Navigate back to review history
+        state.navigate_prev();
+        assert_eq!(state.current_view, 1);
+        assert!(!state.following_latest);
+
+        // When task.start fires (e.g., new task planning session)
+        let event = Event::new("task.start", "New task");
+        state.update(&event);
+
+        // Then iterations are preserved
+        assert_eq!(
+            state.total_iterations(),
+            3,
+            "task.start should not wipe iteration buffers"
+        );
+        assert_eq!(
+            state.current_view, 1,
+            "task.start should preserve current_view position"
+        );
+        assert!(
+            !state.following_latest,
+            "task.start should preserve following_latest state"
+        );
+    }
+
+    #[test]
     fn loop_terminate_freezes_iteration_timer() {
         // Given a running iteration with elapsed time
         let mut state = TuiState::new();
@@ -1136,6 +1293,81 @@ mod tests {
         assert_eq!(
             frozen_elapsed, elapsed_after_sleep,
             "Timer should be frozen after loop.terminate"
+        );
+    }
+
+    #[test]
+    fn loop_terminate_freezes_total_timer() {
+        let mut state = TuiState::new();
+        state.loop_started = Some(
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(90))
+                .unwrap(),
+        );
+
+        let before = state.get_loop_elapsed().unwrap();
+        assert!(before.as_secs() >= 90);
+
+        let terminate_event = Event::new("loop.terminate", "");
+        state.update(&terminate_event);
+
+        let frozen = state.get_loop_elapsed().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let after = state.get_loop_elapsed().unwrap();
+
+        assert_eq!(
+            frozen, after,
+            "Loop elapsed time should be frozen after termination"
+        );
+    }
+
+    #[test]
+    fn build_done_freezes_total_timer() {
+        let mut state = TuiState::new();
+        state.loop_started = Some(
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(42))
+                .unwrap(),
+        );
+
+        let before = state.get_loop_elapsed().unwrap();
+        assert!(before.as_secs() >= 42);
+
+        let done_event = Event::new("build.done", "");
+        state.update(&done_event);
+
+        let frozen = state.get_loop_elapsed().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let after = state.get_loop_elapsed().unwrap();
+
+        assert_eq!(
+            frozen, after,
+            "Loop elapsed time should be frozen after build.done"
+        );
+    }
+
+    #[test]
+    fn build_blocked_freezes_total_timer() {
+        let mut state = TuiState::new();
+        state.loop_started = Some(
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(7))
+                .unwrap(),
+        );
+
+        let before = state.get_loop_elapsed().unwrap();
+        assert!(before.as_secs() >= 7);
+
+        let blocked_event = Event::new("build.blocked", "");
+        state.update(&blocked_event);
+
+        let frozen = state.get_loop_elapsed().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let after = state.get_loop_elapsed().unwrap();
+
+        assert_eq!(
+            frozen, after,
+            "Loop elapsed time should be frozen after build.blocked"
         );
     }
 

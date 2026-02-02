@@ -98,13 +98,17 @@ If the builder completes without writing any events, Ralph automatically injects
 ```xml
 <event topic="build.done">
 tests: pass
+lint: pass
+typecheck: pass
+audit: pass
+coverage: pass
 </event>
 ```
 
 **After (v2.0)**: JSONL in `.ralph/events-YYYYMMDD-HHMMSS.jsonl`
 ```bash
 # Preferred: Use ralph emit for safe JSON formatting
-ralph emit build.done "tests: pass"
+ralph emit build.done "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ```
 
 Each run creates a unique timestamped events file. Use `ralph emit` to write events safely.

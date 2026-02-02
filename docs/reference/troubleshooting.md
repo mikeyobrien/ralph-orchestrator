@@ -41,8 +41,195 @@
 **Solution**:
 
 ```bash
-chmod +x ralph ralph_orchestrator.py
+chmod +x ralph
 ```
+
+### Configuration Issues
+
+#### Config File Exists
+
+**Problem**: `ralph.yml already exists. Use --force to overwrite.`
+
+**Solutions**:
+
+1. Overwrite the existing file:
+
+   ```bash
+   ralph init --backend claude --force
+   ```
+
+2. Move or rename the existing config:
+
+   ```bash
+   mv ralph.yml ralph.yml.bak
+   ```
+
+3. Use a different config file:
+
+   ```bash
+   ralph run -c path/to/other.yml
+   ```
+
+#### Config Not Found
+
+**Problem**: `Config file not found: ralph.yml`
+
+**Solutions**:
+
+1. Verify the path:
+
+   ```bash
+   ls -la ralph.yml
+   ```
+
+2. Generate a config:
+
+   ```bash
+   ralph init --backend claude
+   ```
+
+3. Use defaults by omitting the config flag:
+
+   ```bash
+   ralph run
+   ```
+
+#### Unknown Backend
+
+**Problem**: `Unknown backend 'foo'`
+
+**Solutions**:
+
+1. Use a supported backend:
+
+   ```bash
+   ralph init --backend claude
+   ralph init --backend gemini
+   ralph init --backend codex
+   ```
+
+2. List presets (includes backend hints):
+
+   ```bash
+   ralph init --list-presets
+   ```
+
+#### Unknown Preset
+
+**Problem**: `Unknown preset 'foo'`
+
+**Solutions**:
+
+1. List presets:
+
+   ```bash
+   ralph init --list-presets
+   ```
+
+2. Use a known preset:
+
+   ```bash
+   ralph init --preset confession-loop
+   ```
+
+#### Custom Backend Command
+
+**Problem**: `Custom backend requires a command`
+
+**Solutions**:
+
+1. Add a command to your config:
+
+   ```yaml
+   cli:
+     backend: "custom"
+     command: "my-agent"
+     prompt_mode: "stdin" # or "arg"
+   ```
+
+2. Generate a template:
+
+   ```bash
+   ralph init --backend custom
+   ```
+
+#### Ambiguous Routing
+
+**Problem**: `Ambiguous routing: trigger 'build.done' is claimed by both 'builder' and 'reviewer'`
+
+**Solutions**:
+
+1. Ensure only one hat claims each trigger:
+
+   ```yaml
+   hats:
+     builder:
+       triggers: ["build.task"]
+       publishes: ["build.done"]
+     reviewer:
+       triggers: ["review.request"]
+       publishes: ["review.done"]
+   ```
+
+2. Use delegated events (e.g., `work.start`) instead of reusing core events.
+
+#### Reserved Trigger
+
+**Problem**: `Reserved trigger 'task.start' used by hat 'builder'`
+
+**Solutions**:
+
+1. Replace reserved triggers with custom events:
+
+   ```yaml
+   hats:
+     builder:
+       triggers: ["work.start"]
+       publishes: ["work.done"]
+   ```
+
+#### Missing Hat Description
+
+**Problem**: `Hat 'builder' is missing required 'description' field`
+
+**Solution**:
+
+```yaml
+hats:
+  builder:
+    description: "Implements code changes for assigned tasks"
+```
+
+#### Mutually Exclusive Fields
+
+**Problem**: `Mutually exclusive fields: 'prompt' and 'prompt_file' cannot both be specified`
+
+**Solution**:
+
+- Use either `prompt` **or** `prompt_file` in `event_loop`, not both.
+
+#### RObot Config
+
+**Problem**: `RObot config error: RObot.timeout_seconds - timeout_seconds is required when RObot is enabled`
+
+**Solutions**:
+
+1. Set the required fields:
+
+   ```yaml
+   RObot:
+     enabled: true
+     timeout_seconds: 300
+     telegram:
+       bot_token: "..." # or set RALPH_TELEGRAM_BOT_TOKEN
+   ```
+
+2. Or disable RObot if you don't need human-in-the-loop:
+
+   ```yaml
+   RObot:
+     enabled: false
+   ```
 
 ### Execution Issues
 
@@ -91,11 +278,11 @@ chmod +x ralph ralph_orchestrator.py
 
 1. Increase timeout:
 
-   ```python
-   # In ralph.json
-   {
-     "timeout_per_iteration": 600
-   }
+   ```yaml
+   # In ralph.yml
+   adapters:
+     claude:
+       timeout: 600
    ```
 
 2. Reduce prompt complexity:

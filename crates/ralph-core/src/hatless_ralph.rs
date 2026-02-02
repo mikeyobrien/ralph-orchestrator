@@ -813,7 +813,7 @@ Events are routing signals, not data transport. You SHOULD keep payloads brief.
 
 You MUST use `ralph emit` to write events (handles JSON escaping correctly):
 ```bash
-ralph emit "build.done" "tests: pass, lint: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ralph emit "review.done" --json '{{"status": "approved", "issues": 0}}'
 ```
 

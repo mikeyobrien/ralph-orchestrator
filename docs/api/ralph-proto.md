@@ -36,7 +36,7 @@ let event = Event::new("build.done");
 
 // With payload
 let event = Event::new("build.done")
-    .with_payload("tests: pass, lint: pass");
+    .with_payload("tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass");
 
 // With source hat
 let event = Event::new("build.done")

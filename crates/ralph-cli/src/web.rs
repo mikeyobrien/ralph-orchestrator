@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::env;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -44,8 +45,8 @@ pub struct WebArgs {
 }
 
 /// Check that Node.js is installed and >= 18. Returns the version string.
-fn check_node() -> Result<String> {
-    let output = Command::new("node")
+fn check_node_with(node_cmd: &OsStr) -> Result<String> {
+    let output = Command::new(node_cmd)
         .arg("--version")
         .output()
         .map_err(|_| {
@@ -84,13 +85,16 @@ fn check_node() -> Result<String> {
 }
 
 /// Check that npm is installed and working. Returns the version string.
-fn check_npm() -> Result<String> {
-    let output = Command::new("npm").arg("--version").output().map_err(|_| {
-        anyhow::anyhow!(
-            "npm is not installed or not in PATH.\n\
+fn check_npm_with(npm_cmd: &OsStr) -> Result<String> {
+    let output = Command::new(npm_cmd)
+        .arg("--version")
+        .output()
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "npm is not installed or not in PATH.\n\
              npm should come with Node.js. Try reinstalling Node: https://nodejs.org/"
-        )
-    })?;
+            )
+        })?;
 
     if !output.status.success() {
         anyhow::bail!(
@@ -108,7 +112,7 @@ fn needs_install(root: &Path) -> bool {
 }
 
 /// Run npm install (or npm ci if lockfile present) with a spinner.
-async fn run_npm_install(root: &Path) -> Result<()> {
+async fn run_npm_install_with(root: &Path, npm_cmd: &OsStr) -> Result<()> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
@@ -122,7 +126,7 @@ async fn run_npm_install(root: &Path) -> Result<()> {
     spinner.set_message(format!("Running npm {}...", install_cmd));
     spinner.enable_steady_tick(Duration::from_millis(100));
 
-    let output = AsyncCommand::new("npm")
+    let output = AsyncCommand::new(npm_cmd)
         .arg(install_cmd)
         .current_dir(root)
         .output()
@@ -157,15 +161,17 @@ fn check_port_available(port: u16) -> Result<()> {
 }
 
 /// Check for tsx 4.20.0 which has known issues.
-fn check_tsx_version(backend_dir: &Path) -> Result<()> {
-    let output = Command::new("npx")
+fn check_tsx_version_with(backend_dir: &Path, npx_cmd: &OsStr) -> Result<()> {
+    let output = Command::new(npx_cmd)
         .args(["tsx", "--version"])
         .current_dir(backend_dir)
         .output();
 
     if let Ok(output) = output {
         let version = String::from_utf8_lossy(&output.stdout);
-        if version.trim() == "4.20.0" {
+        let token = version.split_whitespace().last().unwrap_or("");
+        let cleaned = token.trim_start_matches('v');
+        if cleaned == "4.20.0" {
             anyhow::bail!(
                 "tsx 4.20.0 has known issues that affect the web server.\n\
                  Fix: npm install tsx@^4.21.0 -w @ralph-web/server"
@@ -177,9 +183,15 @@ fn check_tsx_version(backend_dir: &Path) -> Result<()> {
 }
 
 /// Run pre-flight checks: verify Node.js/npm, check tsx, and auto-install dependencies.
-async fn preflight(root: &Path, backend_dir: &Path) -> Result<()> {
-    let node_version = check_node()?;
-    let npm_version = check_npm()?;
+async fn preflight_with(
+    root: &Path,
+    backend_dir: &Path,
+    node_cmd: &OsStr,
+    npm_cmd: &OsStr,
+    npx_cmd: &OsStr,
+) -> Result<()> {
+    let node_version = check_node_with(node_cmd)?;
+    let npm_version = check_npm_with(npm_cmd)?;
     println!(
         "Using Node {} with npm {}",
         node_version.trim_start_matches('v'),
@@ -188,12 +200,23 @@ async fn preflight(root: &Path, backend_dir: &Path) -> Result<()> {
 
     if needs_install(root) {
         println!("node_modules not found — installing dependencies...");
-        run_npm_install(root).await?;
+        run_npm_install_with(root, npm_cmd).await?;
     }
 
-    check_tsx_version(backend_dir)?;
+    check_tsx_version_with(backend_dir, npx_cmd)?;
 
     Ok(())
+}
+
+async fn preflight(root: &Path, backend_dir: &Path) -> Result<()> {
+    preflight_with(
+        root,
+        backend_dir,
+        OsStr::new("node"),
+        OsStr::new("npm"),
+        OsStr::new("npx"),
+    )
+    .await
 }
 
 /// Forward output from a child process, prefixing each line with a label.
@@ -479,4 +502,399 @@ async fn terminate_gracefully(child: &mut Child, grace_period: Duration) {
 async fn terminate_gracefully(child: &mut Child, _grace_period: Duration) {
     let _ = child.start_kill();
     let _ = child.wait().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[cfg(unix)]
+    fn write_fake_executable(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        let script = format!("#!/bin/sh\n{}\n", body);
+        std::fs::write(&path, script).expect("write script");
+        let mut perms = std::fs::metadata(&path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod");
+        path
+    }
+
+    #[test]
+    fn needs_install_detects_missing_node_modules() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path();
+
+        assert!(needs_install(root));
+
+        let node_modules = root.join("node_modules");
+        std::fs::create_dir_all(&node_modules).expect("create node_modules");
+        std::fs::write(node_modules.join(".package-lock.json"), "").expect("write lock");
+
+        assert!(!needs_install(root));
+    }
+
+    #[test]
+    fn check_port_available_detects_in_use() {
+        match TcpListener::bind(("127.0.0.1", 0)) {
+            Ok(listener) => {
+                let port = listener.local_addr().expect("addr").port();
+                assert!(check_port_available(port).is_err());
+                drop(listener);
+                assert!(check_port_available(port).is_ok());
+            }
+            Err(err) => {
+                // Some sandboxes disallow binding; ensure we handle that path gracefully.
+                assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(check_port_available(0).is_err());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_node_accepts_supported_version() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let node_path = write_fake_executable(temp_dir.path(), "node", "echo v18.17.0");
+        let version = check_node_with(node_path.as_os_str()).expect("check node");
+        assert_eq!(version.trim(), "v18.17.0");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_node_rejects_old_version() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let node_path = write_fake_executable(temp_dir.path(), "node", "echo v16.5.0");
+        let err = check_node_with(node_path.as_os_str()).expect_err("expected version error");
+        let msg = format!("{err}");
+        assert!(msg.contains("too old"), "msg: {msg}");
+    }
+
+    #[test]
+    fn check_node_reports_missing_binary() {
+        let err =
+            check_node_with(OsStr::new("definitely-missing-node-12345")).expect_err("missing");
+        let msg = format!("{err}");
+        assert!(msg.contains("Node.js is not installed"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_node_reports_failed_command() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let node_path = write_fake_executable(temp_dir.path(), "node", "exit 1");
+        let err = check_node_with(node_path.as_os_str()).expect_err("node failure");
+        let msg = format!("{err}");
+        assert!(msg.contains("Failed to run `node --version`"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_npm_reads_version() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let npm_path = write_fake_executable(temp_dir.path(), "npm", "echo 9.1.0");
+        let version = check_npm_with(npm_path.as_os_str()).expect("check npm");
+        assert_eq!(version.trim(), "9.1.0");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_npm_reports_failed_command() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let npm_path = write_fake_executable(temp_dir.path(), "npm", "exit 1");
+        let err = check_npm_with(npm_path.as_os_str()).expect_err("npm failure");
+        let msg = format!("{err}");
+        assert!(msg.contains("Failed to run `npm --version`"), "msg: {msg}");
+    }
+
+    #[test]
+    fn check_npm_reports_missing_binary() {
+        let err = check_npm_with(OsStr::new("definitely-missing-npm-12345")).expect_err("missing");
+        let msg = format!("{err}");
+        assert!(msg.contains("npm is not installed"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_tsx_version_blocks_known_bad_release() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend_dir = temp_dir.path().join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+        let npx_path = write_fake_executable(temp_dir.path(), "npx", "echo 4.20.0");
+        let err =
+            check_tsx_version_with(&backend_dir, npx_path.as_os_str()).expect_err("tsx error");
+        let msg = format!("{err}");
+        assert!(msg.contains("tsx 4.20.0"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_tsx_version_blocks_known_bad_release_with_v_prefix() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend_dir = temp_dir.path().join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+        let npx_path = write_fake_executable(temp_dir.path(), "npx", "echo v4.20.0");
+        let err =
+            check_tsx_version_with(&backend_dir, npx_path.as_os_str()).expect_err("tsx error");
+        let msg = format!("{err}");
+        assert!(msg.contains("tsx 4.20.0"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_tsx_version_blocks_known_bad_release_with_label() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend_dir = temp_dir.path().join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+        let npx_path = write_fake_executable(temp_dir.path(), "npx", "echo tsx v4.20.0");
+        let err =
+            check_tsx_version_with(&backend_dir, npx_path.as_os_str()).expect_err("tsx error");
+        let msg = format!("{err}");
+        assert!(msg.contains("tsx 4.20.0"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preflight_runs_install_with_fake_tools() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let node_path = write_fake_executable(&bin_dir, "node", "echo v20.1.0");
+        let npx_path = write_fake_executable(&bin_dir, "npx", "echo 4.21.0");
+        let npm_path = write_fake_executable(
+            &bin_dir,
+            "npm",
+            "if [ \"$1\" = \"--version\" ]; then echo 9.6.0; else touch npm_install_called; fi",
+        );
+
+        let root = temp_dir.path().join("workspace");
+        let backend_dir = root.join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+
+        preflight_with(
+            &root,
+            &backend_dir,
+            node_path.as_os_str(),
+            npm_path.as_os_str(),
+            npx_path.as_os_str(),
+        )
+        .await
+        .expect("preflight");
+        assert!(root.join("npm_install_called").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preflight_skips_install_when_node_modules_present() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let node_path = write_fake_executable(&bin_dir, "node", "echo v20.1.0");
+        let npx_path = write_fake_executable(&bin_dir, "npx", "echo 4.21.0");
+        let npm_path = write_fake_executable(
+            &bin_dir,
+            "npm",
+            "if [ \"$1\" = \"--version\" ]; then echo 9.6.0; exit 0; fi\n\
+if [ \"$1\" = \"ci\" ] || [ \"$1\" = \"install\" ]; then touch npm_install_called; exit 0; fi\n\
+exit 1",
+        );
+
+        let root = temp_dir.path().join("workspace");
+        let backend_dir = root.join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+        std::fs::create_dir_all(root.join("node_modules")).expect("node_modules dir");
+        std::fs::write(root.join("node_modules/.package-lock.json"), "").expect("lockfile");
+
+        preflight_with(
+            &root,
+            &backend_dir,
+            node_path.as_os_str(),
+            npm_path.as_os_str(),
+            npx_path.as_os_str(),
+        )
+        .await
+        .expect("preflight");
+        assert!(!root.join("npm_install_called").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preflight_reports_bad_tsx_version() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let node_path = write_fake_executable(&bin_dir, "node", "echo v20.1.0");
+        let npx_path = write_fake_executable(&bin_dir, "npx", "echo 4.20.0");
+        let npm_path = write_fake_executable(
+            &bin_dir,
+            "npm",
+            "if [ \"$1\" = \"--version\" ]; then echo 9.6.0; exit 0; fi",
+        );
+
+        let root = temp_dir.path().join("workspace");
+        let backend_dir = root.join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+        std::fs::create_dir_all(root.join("node_modules")).expect("node_modules dir");
+        std::fs::write(root.join("node_modules/.package-lock.json"), "").expect("lockfile");
+
+        let err = preflight_with(
+            &root,
+            &backend_dir,
+            node_path.as_os_str(),
+            npm_path.as_os_str(),
+            npx_path.as_os_str(),
+        )
+        .await
+        .expect_err("preflight should fail on bad tsx");
+        let msg = format!("{err}");
+        assert!(msg.contains("tsx 4.20.0"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_npm_install_uses_ci_with_lockfile() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let root = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&root).expect("workspace dir");
+        std::fs::write(root.join("package-lock.json"), "{}").expect("lockfile");
+
+        let npm_path = write_fake_executable(&bin_dir, "npm", r#"echo "$1" > "$PWD/command.txt""#);
+
+        run_npm_install_with(&root, npm_path.as_os_str())
+            .await
+            .expect("npm ci");
+
+        let command = std::fs::read_to_string(root.join("command.txt")).expect("read command");
+        assert_eq!(command.trim(), "ci");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_npm_install_uses_install_without_lockfile() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let root = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&root).expect("workspace dir");
+
+        let npm_path = write_fake_executable(&bin_dir, "npm", r#"echo "$1" > "$PWD/command.txt""#);
+
+        run_npm_install_with(&root, npm_path.as_os_str())
+            .await
+            .expect("npm install");
+
+        let command = std::fs::read_to_string(root.join("command.txt")).expect("read command");
+        assert_eq!(command.trim(), "install");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_npm_install_reports_failure() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let root = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&root).expect("workspace dir");
+
+        let npm_path = write_fake_executable(&bin_dir, "npm", r#"echo "boom" 1>&2; exit 1"#);
+
+        let err = run_npm_install_with(&root, npm_path.as_os_str())
+            .await
+            .expect_err("npm install failure");
+        let msg = format!("{err}");
+        assert!(msg.contains("npm install failed"), "msg: {msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_tsx_version_with_missing_binary_is_ok() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend_dir = temp_dir.path().join("server");
+        std::fs::create_dir_all(&backend_dir).expect("backend dir");
+
+        assert!(check_tsx_version_with(&backend_dir, OsStr::new("missing-npx-123")).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn forward_output_notifies_on_stdout_pattern() {
+        let mut child = AsyncCommand::new("sh")
+            .arg("-c")
+            .arg("echo READY")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+
+        let stdout = child.stdout.take().expect("stdout");
+        let stderr = child.stderr.take().expect("stderr");
+        let ready = std::sync::Arc::new(Notify::new());
+        let ready_clone = ready.clone();
+
+        let forward_task = tokio::spawn(async move {
+            forward_output(stdout, stderr, "test", "READY", ready_clone).await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), ready.notified())
+            .await
+            .expect("ready notification");
+
+        let _ = child.wait().await;
+        forward_task.await.expect("forward task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn forward_output_notifies_on_stderr_pattern() {
+        let mut child = AsyncCommand::new("sh")
+            .arg("-c")
+            .arg("echo READY 1>&2")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+
+        let stdout = child.stdout.take().expect("stdout");
+        let stderr = child.stderr.take().expect("stderr");
+        let ready = std::sync::Arc::new(Notify::new());
+        let ready_clone = ready.clone();
+
+        let forward_task = tokio::spawn(async move {
+            forward_output(stdout, stderr, "test", "READY", ready_clone).await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), ready.notified())
+            .await
+            .expect("ready notification");
+
+        let _ = child.wait().await;
+        forward_task.await.expect("forward task");
+    }
+
+    #[tokio::test]
+    async fn execute_invalid_workspace_returns_error() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let missing = temp_dir.path().join("missing");
+        let args = WebArgs {
+            backend_port: 3000,
+            frontend_port: 5173,
+            workspace: Some(missing),
+            no_open: true,
+        };
+
+        let err = execute(args).await.expect_err("invalid workspace");
+        assert!(err.to_string().contains("Invalid workspace path"));
+    }
 }

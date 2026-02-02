@@ -7,7 +7,7 @@ description: Human-in-the-loop interaction via RObot
 
 A human is available via Telegram. You can ask blocking questions or send non-blocking progress updates.
 
-**Hard rule:** Do NOT send `progress` and `interact.human` in the same turn.  
+**Hard rule:** Do NOT send `progress` and `human.interact` in the same turn.  
 If you need to ask, include the status in the question and skip the progress update.
 
 ## Progress updates (non-blocking)
@@ -22,10 +22,10 @@ Use for: phase transitions, milestone completions, status updates, FYI messages.
 
 ## Asking questions (blocking)
 
-Emit `interact.human` with your question — the loop blocks until the human replies or timeout:
+Emit `human.interact` with your question — the loop blocks until the human replies or timeout:
 
 ```bash
-ralph emit "interact.human" "Decision needed: [1 sentence]. Options: (A) ... (B) ... Default if no response: [what you'll do]"
+ralph emit "human.interact" "Decision needed: [1 sentence]. Options: (A) ... (B) ... Default if no response: [what you'll do]"
 ```
 
 Always include:
@@ -51,4 +51,4 @@ The human may also send proactive guidance at any time (appears as `## ROBOT GUI
 - One question at a time — batch related concerns into a single message
 - After receiving a response, act on it — don't re-ask
 - If guidance contradicts your plan, follow the guidance
-- Prefer `progress` for FYI messages; reserve `interact.human` for decisions that need input
+- Prefer `progress` for FYI messages; reserve `human.interact` for decisions that need input

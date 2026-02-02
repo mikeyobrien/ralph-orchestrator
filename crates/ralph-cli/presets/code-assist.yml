@@ -37,9 +37,10 @@ core:
   specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
-    - "Verification is mandatory — tests/typecheck/lint must pass"
+    - "Verification is mandatory — tests/typecheck/lint/audit must pass"
     - "YAGNI ruthlessly — no speculative features"
     - "KISS always — simplest solution that works"
+    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
 
 hats:
   planner:
@@ -171,6 +172,31 @@ hats:
       - You MUST NOT skip the explore step
       - You MUST follow codebase patterns when available
 
+      ### Confidence-Based Decision Protocol
+
+      When you encounter ambiguity or must choose between approaches:
+
+      1. **Score your confidence** on the decision (0-100):
+         - **>80**: Proceed autonomously.
+         - **50-80**: Proceed, but document the decision in `.ralph/agent/decisions.md`.
+         - **<50**: Choose the safest default and document the decision in `.ralph/agent/decisions.md`.
+
+      2. **Choose the safe default** (when confidence < 50):
+         - Prefer **reversible** over irreversible actions
+         - Prefer **additive** over destructive changes (add new code > modify existing)
+         - Prefer **narrow scope** over broad changes
+         - Prefer **existing patterns** over novel approaches
+         - Prefer **explicit** over implicit behavior
+
+      3. **Document the decision:**
+         - Append a structured entry to `.ralph/agent/decisions.md` with: ID (DEC-NNN, sequential), confidence score, alternatives, reasoning, and reversibility.
+         - Briefly note the decision in your scratchpad for iteration context.
+         - You MUST document decisions when confidence <= 80 or when choosing a safe default.
+
+      4. **Never block on human input** for implementation decisions.
+         - `human.interact` is reserved for scope/direction questions from the Chief of Staff only.
+         - This hat MUST NOT use `human.interact`.
+
   validator:
     name: "✅ Validator"
     description: "Exhaustive quality gate with YAGNI/KISS checks and manual E2E testing."
@@ -254,6 +280,31 @@ hats:
       - You MUST NOT approve with "minor issues to fix later"
       - You MUST NOT trust Builder's claims without verification
       - You MUST run tests/build/lint yourself
+
+      ### Confidence-Based Decision Protocol
+
+      When you encounter ambiguity or must choose between approaches:
+
+      1. **Score your confidence** on the decision (0-100):
+         - **>80**: Proceed autonomously.
+         - **50-80**: Proceed, but document the decision in `.ralph/agent/decisions.md`.
+         - **<50**: Choose the safest default and document the decision in `.ralph/agent/decisions.md`.
+
+      2. **Choose the safe default** (when confidence < 50):
+         - Prefer **reversible** over irreversible actions
+         - Prefer **additive** over destructive changes (add new code > modify existing)
+         - Prefer **narrow scope** over broad changes
+         - Prefer **existing patterns** over novel approaches
+         - Prefer **explicit** over implicit behavior
+
+      3. **Document the decision:**
+         - Append a structured entry to `.ralph/agent/decisions.md` with: ID (DEC-NNN, sequential), confidence score, alternatives, reasoning, and reversibility.
+         - Briefly note the decision in your scratchpad for iteration context.
+         - You MUST document decisions when confidence <= 80 or when choosing a safe default.
+
+      4. **Never block on human input** for implementation decisions.
+         - `human.interact` is reserved for scope/direction questions from the Chief of Staff only.
+         - This hat MUST NOT use `human.interact`.
 
   committer:
     name: "📦 Committer"

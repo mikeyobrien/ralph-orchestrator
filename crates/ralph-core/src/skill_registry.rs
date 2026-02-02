@@ -7,7 +7,7 @@ use crate::config::{SkillOverride, SkillsConfig};
 use crate::skill::{SkillEntry, SkillSource, parse_frontmatter};
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 /// Built-in ralph-tools skill content (tasks + memories).
@@ -194,11 +194,7 @@ impl SkillRegistry {
 
         // 2. Scan configured directories
         for dir in &config.dirs {
-            let resolved = if dir.is_relative() {
-                workspace_root.join(dir)
-            } else {
-                dir.clone()
-            };
+            let resolved = Self::resolve_skill_dir(workspace_root, dir);
             registry.scan_directory(&resolved)?;
         }
 
@@ -206,6 +202,28 @@ impl SkillRegistry {
         registry.apply_overrides(&config.overrides);
 
         Ok(registry)
+    }
+
+    fn resolve_skill_dir(workspace_root: &Path, dir: &Path) -> PathBuf {
+        if dir.is_absolute() {
+            return dir.to_path_buf();
+        }
+
+        let candidate = workspace_root.join(dir);
+        if candidate.is_dir() {
+            return candidate;
+        }
+
+        let mut current = workspace_root.parent();
+        while let Some(parent) = current {
+            let candidate = parent.join(dir);
+            if candidate.is_dir() {
+                return candidate;
+            }
+            current = parent.parent();
+        }
+
+        candidate
     }
 
     /// Get a skill by name.
@@ -666,5 +684,33 @@ mod tests {
         assert!(registry.get("custom").is_some());
         // Override applied
         assert!(registry.get("ralph-tools").unwrap().auto_inject);
+    }
+
+    #[test]
+    fn test_from_config_resolves_parent_skills_dir_for_relative_path() {
+        let tmp = TempDir::new().unwrap();
+        let repo_dir = tmp.path().join("repo");
+        let workspace_dir = repo_dir.join("ralph-orchestrator");
+        fs::create_dir_all(&workspace_dir).unwrap();
+
+        let skill_dir = repo_dir
+            .join(".claude")
+            .join("skills")
+            .join("test-driven-development");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: test-driven-development\ndescription: Test generation skill\n---\n\nSkill content.\n",
+        )
+        .unwrap();
+
+        let config = SkillsConfig {
+            enabled: true,
+            dirs: vec![std::path::PathBuf::from(".claude/skills")],
+            overrides: HashMap::new(),
+        };
+
+        let registry = SkillRegistry::from_config(&config, &workspace_dir, None).unwrap();
+        assert!(registry.get("test-driven-development").is_some());
     }
 }

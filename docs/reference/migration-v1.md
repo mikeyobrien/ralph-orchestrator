@@ -103,7 +103,7 @@ hats:
 Typed communication between hats:
 
 ```bash
-ralph emit "build.done" "tests: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ralph events  # View history
 ```
 

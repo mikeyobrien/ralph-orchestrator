@@ -174,6 +174,9 @@ impl CliBackend {
     ) -> Result<Self, CustomBackendError> {
         let mut backend = Self::from_name(name)?;
         backend.args.extend(extra_args.iter().cloned());
+        if backend.command == "codex" {
+            Self::reconcile_codex_args(&mut backend.args);
+        }
         Ok(backend)
     }
 
@@ -232,7 +235,7 @@ impl CliBackend {
     pub fn codex() -> Self {
         Self {
             command: "codex".to_string(),
-            args: vec!["exec".to_string(), "--full-auto".to_string()],
+            args: vec!["exec".to_string(), "--yolo".to_string()],
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
@@ -544,6 +547,44 @@ impl CliBackend {
             _ => args, // claude, gemini, opencode unchanged
         }
     }
+
+    fn reconcile_codex_args(args: &mut Vec<String>) {
+        let had_dangerous_bypass = args
+            .iter()
+            .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox");
+        if had_dangerous_bypass {
+            args.retain(|arg| arg != "--dangerously-bypass-approvals-and-sandbox");
+            if !args.iter().any(|arg| arg == "--yolo") {
+                if let Some(pos) = args.iter().position(|arg| arg == "exec") {
+                    args.insert(pos + 1, "--yolo".to_string());
+                } else {
+                    args.push("--yolo".to_string());
+                }
+            }
+        }
+
+        if args.iter().any(|arg| arg == "--yolo") {
+            args.retain(|arg| arg != "--full-auto");
+            // Collapse duplicate --yolo entries to a single flag.
+            let mut seen_yolo = false;
+            args.retain(|arg| {
+                if arg == "--yolo" {
+                    if seen_yolo {
+                        return false;
+                    }
+                    seen_yolo = true;
+                }
+                true
+            });
+            if !seen_yolo {
+                if let Some(pos) = args.iter().position(|arg| arg == "exec") {
+                    args.insert(pos + 1, "--yolo".to_string());
+                } else {
+                    args.push("--yolo".to_string());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -654,7 +695,7 @@ mod tests {
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "codex");
-        assert_eq!(args, vec!["exec", "--full-auto", "test prompt"]);
+        assert_eq!(args, vec!["exec", "--yolo", "test prompt"]);
         assert!(stdin.is_none());
     }
 
@@ -740,7 +781,7 @@ mod tests {
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "codex");
-        assert_eq!(args, vec!["exec", "test prompt"]);
+        assert_eq!(args, vec!["exec", "--yolo", "test prompt"]);
         assert!(stdin.is_none());
         assert!(!args.contains(&"--full-auto".to_string()));
     }
@@ -1009,6 +1050,32 @@ mod tests {
         assert_eq!(backend.command, "claude");
         assert!(backend.args.contains(&"--model".to_string()));
         assert!(backend.args.contains(&"claude-sonnet-4".to_string()));
+    }
+
+    #[test]
+    fn test_codex_named_with_args_dangerous_bypass_normalizes_to_yolo() {
+        let hat_backend = HatBackend::NamedWithArgs {
+            backend_type: "codex".to_string(),
+            args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
+        };
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        let (cmd, args, _, _) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "codex");
+        assert_eq!(args, vec!["exec", "--yolo", "test prompt"]);
+    }
+
+    #[test]
+    fn test_codex_named_with_args_yolo_removes_full_auto() {
+        let hat_backend = HatBackend::NamedWithArgs {
+            backend_type: "codex".to_string(),
+            args: vec!["--yolo".to_string()],
+        };
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        let (cmd, args, _, _) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "codex");
+        assert_eq!(args, vec!["exec", "--yolo", "test prompt"]);
     }
 
     #[test]

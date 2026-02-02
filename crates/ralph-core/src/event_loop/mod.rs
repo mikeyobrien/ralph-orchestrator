@@ -9,7 +9,7 @@ mod tests;
 pub use loop_state::LoopState;
 
 use crate::config::{HatBackend, InjectMode, RalphConfig};
-use crate::event_parser::EventParser;
+use crate::event_parser::{EventParser, MutationEvidence, MutationStatus};
 use crate::event_reader::EventReader;
 use crate::hat_registry::HatRegistry;
 use crate::hatless_ralph::HatlessRalph;
@@ -18,8 +18,7 @@ use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use crate::skill_registry::SkillRegistry;
 use crate::text::floor_char_boundary;
-use ralph_proto::{Event, EventBus, Hat, HatId};
-use ralph_telegram::TelegramService;
+use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -47,10 +46,6 @@ pub enum TerminationReason {
     Stopped,
     /// Interrupted by signal (SIGINT/SIGTERM).
     Interrupted,
-    /// Chaos mode completion promise detected.
-    ChaosModeComplete,
-    /// Chaos mode max iterations reached.
-    ChaosModeMaxIterations,
     /// Restart requested via Telegram `/restart` command.
     RestartRequested,
 }
@@ -65,15 +60,14 @@ impl TerminationReason {
     /// - 130: User interrupt (SIGINT = 128 + 2)
     pub fn exit_code(&self) -> i32 {
         match self {
-            TerminationReason::CompletionPromise | TerminationReason::ChaosModeComplete => 0,
+            TerminationReason::CompletionPromise => 0,
             TerminationReason::ConsecutiveFailures
             | TerminationReason::LoopThrashing
             | TerminationReason::ValidationFailure
             | TerminationReason::Stopped => 1,
             TerminationReason::MaxIterations
             | TerminationReason::MaxRuntime
-            | TerminationReason::MaxCost
-            | TerminationReason::ChaosModeMaxIterations => 2,
+            | TerminationReason::MaxCost => 2,
             TerminationReason::Interrupted => 130,
             // Restart uses exit code 3 to signal the caller to exec-replace
             TerminationReason::RestartRequested => 3,
@@ -95,24 +89,12 @@ impl TerminationReason {
             TerminationReason::ValidationFailure => "validation_failure",
             TerminationReason::Stopped => "stopped",
             TerminationReason::Interrupted => "interrupted",
-            TerminationReason::ChaosModeComplete => "chaos_complete",
-            TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
             TerminationReason::RestartRequested => "restart_requested",
         }
     }
 
     /// Returns true if this is a successful completion (not an error or limit).
     pub fn is_success(&self) -> bool {
-        matches!(
-            self,
-            TerminationReason::CompletionPromise | TerminationReason::ChaosModeComplete
-        )
-    }
-
-    /// Returns true if this termination triggers chaos mode.
-    ///
-    /// Chaos mode ONLY activates after LOOP_COMPLETE - not on other termination reasons.
-    pub fn triggers_chaos_mode(&self) -> bool {
         matches!(self, TerminationReason::CompletionPromise)
     }
 }
@@ -135,9 +117,9 @@ pub struct EventLoop {
     loop_context: Option<LoopContext>,
     /// Skill registry for the current loop.
     skill_registry: SkillRegistry,
-    /// Telegram service for human-in-the-loop communication.
-    /// Only initialized when `human.enabled` is true and this is the primary loop.
-    telegram_service: Option<TelegramService>,
+    /// Robot service for human-in-the-loop communication.
+    /// Injected externally when `human.enabled` is true and this is the primary loop.
+    robot_service: Option<Box<dyn RobotService>>,
 }
 
 impl EventLoop {
@@ -253,10 +235,6 @@ impl EventLoop {
             .unwrap_or_else(|_| context.events_path());
         let event_reader = EventReader::new(&events_path);
 
-        // Initialize Telegram service if human-in-the-loop is enabled
-        // and this is the primary loop (has a loop context with is_primary).
-        let telegram_service = Self::create_telegram_service(&config, Some(&context));
-
         Self {
             config,
             registry,
@@ -269,7 +247,7 @@ impl EventLoop {
             diagnostics,
             loop_context: Some(context),
             skill_registry,
-            telegram_service,
+            robot_service: None,
         }
     }
 
@@ -347,10 +325,6 @@ impl EventLoop {
             .unwrap_or_else(|_| ".ralph/events.jsonl".to_string());
         let event_reader = EventReader::new(&events_path);
 
-        // Initialize Telegram service if human-in-the-loop is enabled.
-        // Legacy single-loop mode (no context) is treated as primary.
-        let telegram_service = Self::create_telegram_service(&config, None);
-
         Self {
             config,
             registry,
@@ -363,66 +337,19 @@ impl EventLoop {
             diagnostics,
             loop_context: None,
             skill_registry,
-            telegram_service,
+            robot_service: None,
         }
     }
 
-    /// Attempts to create and start a `TelegramService` if human-in-the-loop is enabled.
+    /// Injects a robot service for human-in-the-loop communication.
     ///
-    /// The service is only created when:
-    /// - `human.enabled` is `true` in config
-    /// - This is the primary loop (holds `.ralph/loop.lock`), or no context is provided
-    ///   (legacy single-loop mode, treated as primary)
-    ///
-    /// Returns `None` if the service should not be started or if startup fails.
-    fn create_telegram_service(
-        config: &RalphConfig,
-        context: Option<&LoopContext>,
-    ) -> Option<TelegramService> {
-        if !config.robot.enabled {
-            return None;
-        }
-
-        // Only the primary loop starts the Telegram service.
-        // If we have a context, check is_primary. No context = legacy single-loop = primary.
-        if let Some(ctx) = context
-            && !ctx.is_primary()
-        {
-            debug!(
-                workspace = %ctx.workspace().display(),
-                "Skipping Telegram service: not the primary loop"
-            );
-            return None;
-        }
-
-        let workspace_root = context
-            .map(|ctx| ctx.workspace().to_path_buf())
-            .unwrap_or_else(|| config.core.workspace_root.clone());
-
-        let bot_token = config.robot.resolve_bot_token();
-        let timeout_secs = config.robot.timeout_seconds.unwrap_or(300);
-        let loop_id = context
-            .and_then(|ctx| ctx.loop_id().map(String::from))
-            .unwrap_or_else(|| "main".to_string());
-
-        match TelegramService::new(workspace_root, bot_token, timeout_secs, loop_id) {
-            Ok(service) => {
-                if let Err(e) = service.start() {
-                    warn!(error = %e, "Failed to start Telegram service");
-                    return None;
-                }
-                info!(
-                    bot_token = %service.bot_token_masked(),
-                    timeout_secs = service.timeout_secs(),
-                    "Telegram human-in-the-loop service active"
-                );
-                Some(service)
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to create Telegram service");
-                None
-            }
-        }
+    /// Call this after construction to enable `human.interact` event handling,
+    /// periodic check-ins, and question/response flow. The service is typically
+    /// created by the CLI layer (e.g., `TelegramService`) and injected here,
+    /// keeping the core event loop decoupled from any specific communication
+    /// platform.
+    pub fn set_robot_service(&mut self, service: Box<dyn RobotService>) {
+        self.robot_service = Some(service);
     }
 
     /// Returns the loop context, if one was provided.
@@ -554,6 +481,29 @@ impl EventLoop {
 
         self.state.completion_requested = false;
 
+        // In persistent mode, suppress completion and keep the loop alive
+        if self.config.event_loop.persistent {
+            info!("Completion event suppressed - persistent mode active, loop staying alive");
+
+            self.diagnostics.log_orchestration(
+                self.state.iteration,
+                "loop",
+                crate::diagnostics::OrchestrationEvent::LoopTerminated {
+                    reason: "completion_event_suppressed_persistent".to_string(),
+                },
+            );
+
+            // Inject a task.resume event so the loop continues with an idle prompt
+            let resume_event = Event::new(
+                "task.resume",
+                "Persistent mode: loop staying alive after completion signal. \
+                 Check for new tasks or await human guidance.",
+            );
+            self.bus.publish(resume_event);
+
+            return None;
+        }
+
         // Log warning if tasks remain open (informational only)
         if self.config.memories.enabled {
             if let Ok(false) = self.verify_tasks_complete() {
@@ -626,6 +576,11 @@ impl EventLoop {
     pub fn next_hat(&self) -> Option<&HatId> {
         let next = self.bus.next_hat_with_pending();
 
+        // If no pending hat events but human interactions are pending, route to Ralph.
+        if next.is_none() && self.bus.has_human_pending() {
+            return self.bus.hat_ids().find(|id| id.as_str() == "ralph");
+        }
+
         // If no pending events, return None
         next.as_ref()?;
 
@@ -646,7 +601,7 @@ impl EventLoop {
     /// Use this after `process_output` to detect if the LLM failed to publish an event.
     /// If false after processing, the loop will terminate on the next iteration.
     pub fn has_pending_events(&self) -> bool {
-        self.bus.next_hat_with_pending().is_some()
+        self.bus.next_hat_with_pending().is_some() || self.bus.has_human_pending()
     }
 
     /// Checks if any pending events are human-related (human.response, human.guidance).
@@ -654,17 +609,7 @@ impl EventLoop {
     /// Used to skip cooldown delays when a human event is next, since we don't
     /// want to artificially delay the response to a human interaction.
     pub fn has_pending_human_events(&self) -> bool {
-        self.bus.hat_ids().any(|hat_id| {
-            self.bus
-                .peek_pending(hat_id)
-                .map(|events| {
-                    events.iter().any(|e| {
-                        let topic = e.topic.as_str();
-                        topic == "human.response" || topic == "human.guidance"
-                    })
-                })
-                .unwrap_or(false)
-        })
+        self.bus.has_human_pending()
     }
 
     /// Gets the topics a hat is allowed to publish.
@@ -729,7 +674,9 @@ impl EventLoop {
         if hat_id.as_str() == "ralph" {
             if self.registry.is_empty() {
                 // Solo mode - just Ralph's events, no hats to filter
-                let events = self.bus.take_pending(&hat_id.clone());
+                let mut events = self.bus.take_pending(&hat_id.clone());
+                let mut human_events = self.bus.take_human_pending();
+                events.append(&mut human_events);
 
                 // Separate human.guidance events from regular events
                 let (guidance_events, regular_events): (Vec<_>, Vec<_>) = events
@@ -782,6 +729,9 @@ impl EventLoop {
 
                     all_events.extend(pending);
                 }
+
+                let mut human_events = self.bus.take_human_pending();
+                all_events.append(&mut human_events);
 
                 // Publish orchestrator-generated system events after consuming pending events,
                 // so they become visible in the event log and can be handled next iteration.
@@ -1059,7 +1009,7 @@ impl EventLoop {
     /// Injects the RObot interaction skill content into the prefix.
     ///
     /// Gated by `robot.enabled`. Teaches agents how and when to interact
-    /// with humans via `interact.human` events.
+    /// with humans via `human.interact` events.
     fn inject_robot_skill(&self, prefix: &mut String) {
         if !self.config.robot.enabled {
             return;
@@ -1454,9 +1404,9 @@ impl EventLoop {
         self.state.iteration += 1;
         self.state.last_hat = Some(hat_id.clone());
 
-        // Periodic Telegram check-in
+        // Periodic robot check-in
         if let Some(interval_secs) = self.config.robot.checkin_interval_seconds
-            && let Some(ref telegram_service) = self.telegram_service
+            && let Some(ref robot_service) = self.robot_service
         {
             let elapsed = self.state.elapsed();
             let interval = std::time::Duration::from_secs(interval_secs);
@@ -1468,13 +1418,13 @@ impl EventLoop {
 
             if last >= interval {
                 let context = self.build_checkin_context(hat_id);
-                match telegram_service.send_checkin(self.state.iteration, elapsed, Some(&context)) {
+                match robot_service.send_checkin(self.state.iteration, elapsed, Some(&context)) {
                     Ok(_) => {
                         self.state.last_checkin_at = Some(std::time::Instant::now());
-                        debug!(iteration = self.state.iteration, "Sent Telegram check-in");
+                        debug!(iteration = self.state.iteration, "Sent robot check-in");
                     }
                     Err(e) => {
-                        warn!(error = %e, "Failed to send Telegram check-in");
+                        warn!(error = %e, "Failed to send robot check-in");
                     }
                 }
             }
@@ -1569,10 +1519,10 @@ impl EventLoop {
         Ok(!store.has_pending_tasks())
     }
 
-    /// Builds a [`CheckinContext`] with current loop state for enhanced Telegram check-ins.
-    fn build_checkin_context(&self, hat_id: &HatId) -> ralph_telegram::CheckinContext {
+    /// Builds a [`CheckinContext`] with current loop state for robot check-ins.
+    fn build_checkin_context(&self, hat_id: &HatId) -> CheckinContext {
         let (open_tasks, closed_tasks) = self.count_tasks();
-        ralph_telegram::CheckinContext {
+        CheckinContext {
             current_hat: Some(hat_id.as_str().to_string()),
             open_tasks,
             closed_tasks,
@@ -1628,6 +1578,68 @@ impl EventLoop {
         vec![]
     }
 
+    fn warn_on_mutation_evidence(&self, evidence: &crate::event_parser::BackpressureEvidence) {
+        let threshold = self.config.event_loop.mutation_score_warn_threshold;
+
+        match &evidence.mutants {
+            Some(mutants) => {
+                if let Some(reason) = Self::mutation_warning_reason(mutants, threshold) {
+                    warn!(
+                        reason = %reason,
+                        mutants_status = ?mutants.status,
+                        mutants_score = mutants.score_percent,
+                        mutants_threshold = threshold,
+                        "Mutation testing warning"
+                    );
+                }
+            }
+            None => {
+                if let Some(threshold) = threshold {
+                    warn!(
+                        mutants_threshold = threshold,
+                        "Mutation testing warning: missing mutation evidence in build.done payload"
+                    );
+                }
+            }
+        }
+    }
+
+    fn mutation_warning_reason(
+        mutants: &MutationEvidence,
+        threshold: Option<f64>,
+    ) -> Option<String> {
+        match mutants.status {
+            MutationStatus::Fail => Some("mutation testing failed".to_string()),
+            MutationStatus::Warn => Some(Self::format_mutation_message(
+                "mutation score below threshold",
+                mutants.score_percent,
+            )),
+            MutationStatus::Unknown => Some("mutation testing status unknown".to_string()),
+            MutationStatus::Pass => {
+                let threshold = threshold?;
+
+                match mutants.score_percent {
+                    Some(score) if score < threshold => Some(format!(
+                        "mutation score {:.2}% below threshold {:.2}%",
+                        score, threshold
+                    )),
+                    Some(_) => None,
+                    None => Some(format!(
+                        "mutation score missing (threshold {:.2}%)",
+                        threshold
+                    )),
+                }
+            }
+        }
+    }
+
+    fn format_mutation_message(message: &str, score: Option<f64>) -> String {
+        match score {
+            Some(score) => format!("{message} ({score:.2}%)"),
+            None => message.to_string(),
+        }
+    }
+
     /// Processes events from JSONL and routes orphaned events to Ralph.
     ///
     /// Also handles backpressure for malformed JSONL lines by:
@@ -1669,22 +1681,32 @@ impl EventLoop {
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();
         let completion_topic = self.config.event_loop.completion_promise.as_str();
-        for event in result.events {
+        let total_events = result.events.len();
+        for (index, event) in result.events.into_iter().enumerate() {
             let payload = event.payload.clone().unwrap_or_default();
 
             if event.topic == completion_topic {
-                self.state.completion_requested = true;
-                self.diagnostics.log_orchestration(
-                    self.state.iteration,
-                    "jsonl",
-                    crate::diagnostics::OrchestrationEvent::EventPublished {
-                        topic: event.topic.clone(),
-                    },
-                );
-                info!(
-                    topic = %event.topic,
-                    "Completion event detected in JSONL"
-                );
+                if index + 1 == total_events {
+                    self.state.completion_requested = true;
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::EventPublished {
+                            topic: event.topic.clone(),
+                        },
+                    );
+                    info!(
+                        topic = %event.topic,
+                        "Completion event detected in JSONL"
+                    );
+                } else {
+                    warn!(
+                        topic = %event.topic,
+                        index = index,
+                        total_events = total_events,
+                        "Completion event ignored because it was not the last event"
+                    );
+                }
                 continue;
             }
 
@@ -1692,6 +1714,7 @@ impl EventLoop {
                 // Validate build.done events have backpressure evidence
                 if let Some(evidence) = EventParser::parse_backpressure_evidence(&payload) {
                     if evidence.all_passed() {
+                        self.warn_on_mutation_evidence(&evidence);
                         validated_events.push(Event::new(event.topic.as_str(), &payload));
                     } else {
                         // Evidence present but checks failed - synthesize build.blocked
@@ -1699,25 +1722,52 @@ impl EventLoop {
                             tests = evidence.tests_passed,
                             lint = evidence.lint_passed,
                             typecheck = evidence.typecheck_passed,
+                            audit = evidence.audit_passed,
+                            coverage = evidence.coverage_passed,
+                            complexity = evidence.complexity_score,
+                            duplication = evidence.duplication_passed,
+                            performance = evidence.performance_regression,
+                            specs = evidence.specs_verified,
                             "build.done rejected: backpressure checks failed"
                         );
+
+                        let complexity = evidence
+                            .complexity_score
+                            .map(|value| format!("{value:.2}"))
+                            .unwrap_or_else(|| "missing".to_string());
+                        let performance = match evidence.performance_regression {
+                            Some(true) => "regression".to_string(),
+                            Some(false) => "pass".to_string(),
+                            None => "missing".to_string(),
+                        };
+                        let specs = match evidence.specs_verified {
+                            Some(true) => "pass".to_string(),
+                            Some(false) => "fail".to_string(),
+                            None => "not reported".to_string(),
+                        };
 
                         self.diagnostics.log_orchestration(
                             self.state.iteration,
                             "jsonl",
                             crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
                                 reason: format!(
-                                    "backpressure checks failed: tests={}, lint={}, typecheck={}",
+                                    "backpressure checks failed: tests={}, lint={}, typecheck={}, audit={}, coverage={}, complexity={}, duplication={}, performance={}, specs={}",
                                     evidence.tests_passed,
                                     evidence.lint_passed,
-                                    evidence.typecheck_passed
+                                    evidence.typecheck_passed,
+                                    evidence.audit_passed,
+                                    evidence.coverage_passed,
+                                    complexity,
+                                    evidence.duplication_passed,
+                                    performance,
+                                    specs
                                 ),
                             },
                         );
 
                         validated_events.push(Event::new(
                             "build.blocked",
-                            "Backpressure checks failed. Fix tests/lint/typecheck before emitting build.done.",
+                            "Backpressure checks failed. Fix tests/lint/typecheck/audit/coverage/complexity/duplication/specs before emitting build.done.",
                         ));
                     }
                 } else {
@@ -1734,7 +1784,7 @@ impl EventLoop {
 
                     validated_events.push(Event::new(
                         "build.blocked",
-                        "Missing backpressure evidence. Include 'tests: pass', 'lint: pass', 'typecheck: pass' in build.done payload.",
+                        "Missing backpressure evidence. Include 'tests: pass', 'lint: pass', 'typecheck: pass', 'audit: pass', 'coverage: pass', 'complexity: <score>', 'duplication: pass', 'performance: pass' (optional), 'specs: pass' (optional) in build.done payload.",
                     ));
                 }
             } else if event.topic == "review.done" {
@@ -1783,8 +1833,60 @@ impl EventLoop {
                         "Missing verification evidence. Include 'tests: pass' and 'build: pass' in review.done payload.",
                     ));
                 }
+            } else if event.topic == "verify.passed" {
+                if let Some(report) = EventParser::parse_quality_report(&payload) {
+                    if report.meets_thresholds() {
+                        validated_events.push(Event::new(event.topic.as_str(), &payload));
+                    } else {
+                        let failed = report.failed_dimensions();
+                        let reason = if failed.is_empty() {
+                            "quality thresholds failed".to_string()
+                        } else {
+                            format!("quality thresholds failed: {}", failed.join(", "))
+                        };
+
+                        warn!(
+                            failed_dimensions = ?failed,
+                            "verify.passed rejected: quality thresholds failed"
+                        );
+
+                        self.diagnostics.log_orchestration(
+                            self.state.iteration,
+                            "jsonl",
+                            crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                                reason,
+                            },
+                        );
+
+                        validated_events.push(Event::new(
+                            "verify.failed",
+                            "Quality thresholds failed. Include quality.tests, quality.coverage, quality.lint, quality.audit, quality.mutation, quality.complexity with thresholds in verify.passed payload.",
+                        ));
+                    }
+                } else {
+                    // No quality report found - synthesize verify.failed
+                    warn!("verify.passed rejected: missing quality report");
+
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::BackpressureTriggered {
+                            reason: "missing quality report".to_string(),
+                        },
+                    );
+
+                    validated_events.push(Event::new(
+                        "verify.failed",
+                        "Missing quality report. Include quality.tests, quality.coverage, quality.lint, quality.audit, quality.mutation, quality.complexity in verify.passed payload.",
+                    ));
+                }
+            } else if event.topic == "verify.failed" {
+                if EventParser::parse_quality_report(&payload).is_none() {
+                    warn!("verify.failed missing quality report");
+                }
+                validated_events.push(Event::new(event.topic.as_str(), &payload));
             } else {
-                // Non-build.done/review.done events pass through unchanged
+                // Non-backpressure events pass through unchanged
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
             }
         }
@@ -1853,31 +1955,31 @@ impl EventLoop {
             self.state.last_blocked_hat = None;
         }
 
-        // Handle interact.human blocking behavior:
-        // When an interact.human event is detected and Telegram service is active,
+        // Handle human.interact blocking behavior:
+        // When a human.interact event is detected and robot service is active,
         // send the question and block until human.response or timeout.
         let mut response_event = None;
         let ask_human_idx = validated_events
             .iter()
-            .position(|e| e.topic == "interact.human".into());
+            .position(|e| e.topic == "human.interact".into());
 
         if let Some(idx) = ask_human_idx {
             let ask_event = &validated_events[idx];
             let payload = ask_event.payload.clone();
 
-            if let Some(ref telegram_service) = self.telegram_service {
+            if let Some(ref robot_service) = self.robot_service {
                 info!(
                     payload = %payload,
-                    "interact.human event detected — sending question via Telegram"
+                    "human.interact event detected — sending question via robot service"
                 );
 
                 // Send the question (includes retry with exponential backoff)
-                let send_ok = match telegram_service.send_question(&payload) {
+                let send_ok = match robot_service.send_question(&payload) {
                     Ok(_message_id) => true,
                     Err(e) => {
                         warn!(
                             error = %e,
-                            "Failed to send interact.human question after retries — treating as timeout"
+                            "Failed to send human.interact question after retries — treating as timeout"
                         );
                         // Log to diagnostics
                         self.diagnostics.log_error(
@@ -1886,7 +1988,7 @@ impl EventLoop {
                             crate::diagnostics::DiagnosticError::TelegramSendError {
                                 operation: "send_question".to_string(),
                                 error: e.to_string(),
-                                retry_count: ralph_telegram::MAX_SEND_RETRIES,
+                                retry_count: 3,
                             },
                         );
                         false
@@ -1896,13 +1998,29 @@ impl EventLoop {
                 // Block: poll events file for human.response
                 // Per spec, even on send failure we treat as timeout (continue without blocking)
                 if send_ok {
+                    // Read the active events path from the current-events marker,
+                    // falling back to the default events.jsonl if not available.
                     let events_path = self
                         .loop_context
                         .as_ref()
-                        .map(|ctx| ctx.events_path())
-                        .unwrap_or_else(|| PathBuf::from(".ralph/events.jsonl"));
+                        .and_then(|ctx| {
+                            std::fs::read_to_string(ctx.current_events_marker())
+                                .ok()
+                                .map(|s| ctx.workspace().join(s.trim()))
+                        })
+                        .or_else(|| {
+                            std::fs::read_to_string(".ralph/current-events")
+                                .ok()
+                                .map(|s| PathBuf::from(s.trim()))
+                        })
+                        .unwrap_or_else(|| {
+                            self.loop_context
+                                .as_ref()
+                                .map(|ctx| ctx.events_path())
+                                .unwrap_or_else(|| PathBuf::from(".ralph/events.jsonl"))
+                        });
 
-                    match telegram_service.wait_for_response(&events_path) {
+                    match robot_service.wait_for_response(&events_path) {
                         Ok(Some(response)) => {
                             info!(
                                 response = %response,
@@ -1913,7 +2031,7 @@ impl EventLoop {
                         }
                         Ok(None) => {
                             warn!(
-                                timeout_secs = telegram_service.timeout_secs(),
+                                timeout_secs = robot_service.timeout_secs(),
                                 "Human response timeout — continuing without response"
                             );
                         }
@@ -1927,7 +2045,7 @@ impl EventLoop {
                 }
             } else {
                 debug!(
-                    "interact.human event detected but no Telegram service active — passing through"
+                    "human.interact event detected but no robot service active — passing through"
                 );
             }
         }
@@ -1960,7 +2078,7 @@ impl EventLoop {
         if let Some(response) = response_event {
             info!(
                 topic = %response.topic,
-                "Publishing human.response event from Telegram"
+                "Publishing human.response event from robot service"
             );
             self.bus.publish(response);
         }
@@ -1985,8 +2103,8 @@ impl EventLoop {
     ///
     /// Returns the event for logging purposes.
     pub fn publish_terminate_event(&mut self, reason: &TerminationReason) -> Event {
-        // Stop the Telegram service if it was running
-        self.stop_telegram_service();
+        // Stop the robot service if it was running
+        self.stop_robot_service();
 
         let elapsed = self.state.elapsed();
         let duration_str = format_duration(elapsed);
@@ -2018,29 +2136,19 @@ impl EventLoop {
         event
     }
 
-    /// Returns the Telegram service's shutdown flag, if active.
+    /// Returns the robot service's shutdown flag, if active.
     ///
     /// Signal handlers can set this flag to interrupt `wait_for_response()`
     /// without waiting for the full timeout.
-    pub fn telegram_shutdown_flag(&self) -> Option<Arc<AtomicBool>> {
-        self.telegram_service.as_ref().map(|s| s.shutdown_flag())
+    pub fn robot_shutdown_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.robot_service.as_ref().map(|s| s.shutdown_flag())
     }
 
-    /// Returns a reference to the Telegram service, if active.
-    pub fn telegram_service(&self) -> Option<&TelegramService> {
-        self.telegram_service.as_ref()
-    }
-
-    /// Returns a mutable reference to the Telegram service, if active.
-    pub fn telegram_service_mut(&mut self) -> Option<&mut TelegramService> {
-        self.telegram_service.as_mut()
-    }
-
-    /// Stops the Telegram service if it's running.
+    /// Stops the robot service if it's running.
     ///
-    /// Called during loop termination to cleanly shut down the bot.
-    fn stop_telegram_service(&mut self) {
-        if let Some(service) = self.telegram_service.take() {
+    /// Called during loop termination to cleanly shut down the communication backend.
+    fn stop_robot_service(&mut self) {
+        if let Some(service) = self.robot_service.take() {
             service.stop();
         }
     }
@@ -2131,8 +2239,6 @@ fn termination_status_text(reason: &TerminationReason) -> &'static str {
         TerminationReason::ValidationFailure => "Too many consecutive malformed JSONL events.",
         TerminationReason::Stopped => "Manually stopped.",
         TerminationReason::Interrupted => "Interrupted by signal.",
-        TerminationReason::ChaosModeComplete => "Chaos mode exploration complete.",
-        TerminationReason::ChaosModeMaxIterations => "Chaos mode stopped at iteration limit.",
         TerminationReason::RestartRequested => "Restarting by human request.",
     }
 }

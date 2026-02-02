@@ -20,3 +20,4 @@ core:
   specs_dir: "./specs/"
   guardrails:
     - "Fresh context each iteration - save learnings to memories for next time"
+    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."

@@ -71,13 +71,55 @@ pub struct BackpressureEvidence {
     pub tests_passed: bool,
     pub lint_passed: bool,
     pub typecheck_passed: bool,
+    pub audit_passed: bool,
+    pub coverage_passed: bool,
+    pub complexity_score: Option<f64>,
+    pub duplication_passed: bool,
+    pub performance_regression: Option<bool>,
+    pub mutants: Option<MutationEvidence>,
+    /// Whether spec acceptance criteria have been verified against passing tests.
+    ///
+    /// `None` means specs evidence was not included in the payload (optional gate).
+    /// `Some(true)` means all spec criteria are satisfied.
+    /// `Some(false)` means some spec criteria are unsatisfied — blocks build.done.
+    pub specs_verified: Option<bool>,
 }
 
 impl BackpressureEvidence {
-    /// Returns true if all checks passed.
+    /// Returns true if all required checks passed.
+    ///
+    /// Mutation testing evidence is warning-only and does not affect this result.
+    /// Spec verification blocks when explicitly reported as failed (`Some(false)`),
+    /// but is optional — omitting it (`None`) does not block.
     pub fn all_passed(&self) -> bool {
-        self.tests_passed && self.lint_passed && self.typecheck_passed
+        self.tests_passed
+            && self.lint_passed
+            && self.typecheck_passed
+            && self.audit_passed
+            && self.coverage_passed
+            && self
+                .complexity_score
+                .is_some_and(|value| value <= QualityReport::COMPLEXITY_THRESHOLD)
+            && self.duplication_passed
+            && !matches!(self.performance_regression, Some(true))
+            && !matches!(self.specs_verified, Some(false))
     }
+}
+
+/// Status of mutation testing evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutationStatus {
+    Pass,
+    Warn,
+    Fail,
+    Unknown,
+}
+
+/// Evidence of mutation testing for build.done payloads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MutationEvidence {
+    pub status: MutationStatus,
+    pub score_percent: Option<f64>,
 }
 
 /// Evidence of verification for review.done events.
@@ -96,6 +138,81 @@ impl ReviewEvidence {
     /// Both tests and build must pass to constitute a verified review.
     pub fn is_verified(&self) -> bool {
         self.tests_passed && self.build_passed
+    }
+}
+
+/// Structured quality report for verifier events.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityReport {
+    pub tests_passed: Option<bool>,
+    pub lint_passed: Option<bool>,
+    pub audit_passed: Option<bool>,
+    pub coverage_percent: Option<f64>,
+    pub mutation_percent: Option<f64>,
+    pub complexity_score: Option<f64>,
+    /// Whether spec acceptance criteria are satisfied by passing tests.
+    ///
+    /// `None` means not reported (optional — does not fail thresholds).
+    /// `Some(false)` means spec criteria are unsatisfied — fails thresholds.
+    pub specs_verified: Option<bool>,
+}
+
+impl QualityReport {
+    pub const COVERAGE_THRESHOLD: f64 = 80.0;
+    pub const MUTATION_THRESHOLD: f64 = 70.0;
+    pub const COMPLEXITY_THRESHOLD: f64 = 10.0;
+
+    pub fn meets_thresholds(&self) -> bool {
+        self.tests_passed == Some(true)
+            && self.lint_passed == Some(true)
+            && self.audit_passed == Some(true)
+            && self
+                .coverage_percent
+                .is_some_and(|value| value >= Self::COVERAGE_THRESHOLD)
+            && self
+                .mutation_percent
+                .is_some_and(|value| value >= Self::MUTATION_THRESHOLD)
+            && self
+                .complexity_score
+                .is_some_and(|value| value <= Self::COMPLEXITY_THRESHOLD)
+            && !matches!(self.specs_verified, Some(false))
+    }
+
+    pub fn failed_dimensions(&self) -> Vec<&'static str> {
+        let mut failed = Vec::new();
+
+        if self.tests_passed != Some(true) {
+            failed.push("tests");
+        }
+        if self.lint_passed != Some(true) {
+            failed.push("lint");
+        }
+        if self.audit_passed != Some(true) {
+            failed.push("audit");
+        }
+        if self
+            .coverage_percent
+            .is_none_or(|value| value < Self::COVERAGE_THRESHOLD)
+        {
+            failed.push("coverage");
+        }
+        if self
+            .mutation_percent
+            .is_none_or(|value| value < Self::MUTATION_THRESHOLD)
+        {
+            failed.push("mutation");
+        }
+        if self
+            .complexity_score
+            .is_none_or(|value| value > Self::COMPLEXITY_THRESHOLD)
+        {
+            failed.push("complexity");
+        }
+        if matches!(self.specs_verified, Some(false)) {
+            failed.push("specs");
+        }
+
+        failed
     }
 }
 
@@ -191,6 +308,13 @@ impl EventParser {
     /// tests: pass
     /// lint: pass
     /// typecheck: pass
+    /// audit: pass
+    /// coverage: pass
+    /// complexity: 7           # required (<=10)
+    /// duplication: pass       # required
+    /// performance: pass       # optional (regression blocks)
+    /// mutants: pass (82%)   # optional, warning-only
+    /// specs: pass            # optional (fail blocks)
     /// ```
     ///
     /// Note: ANSI escape codes are stripped before parsing to handle
@@ -202,17 +326,185 @@ impl EventParser {
         let tests_passed = clean_payload.contains("tests: pass");
         let lint_passed = clean_payload.contains("lint: pass");
         let typecheck_passed = clean_payload.contains("typecheck: pass");
+        let audit_passed = clean_payload.contains("audit: pass");
+        let coverage_passed = clean_payload.contains("coverage: pass");
+        let complexity_score = Self::parse_complexity_evidence(&clean_payload);
+        let duplication_passed = Self::parse_duplication_evidence(&clean_payload).unwrap_or(false);
+        let performance_regression = Self::parse_performance_regression(&clean_payload);
+        let mutants = Self::parse_mutation_evidence(&clean_payload);
+        let specs_verified = Self::parse_specs_evidence(&clean_payload);
 
         // Only return evidence if at least one check is mentioned
         if clean_payload.contains("tests:")
             || clean_payload.contains("lint:")
             || clean_payload.contains("typecheck:")
+            || clean_payload.contains("audit:")
+            || clean_payload.contains("coverage:")
+            || clean_payload.contains("complexity:")
+            || clean_payload.contains("duplication:")
+            || clean_payload.contains("performance:")
+            || clean_payload.contains("perf:")
+            || clean_payload.contains("mutants:")
+            || clean_payload.contains("specs:")
         {
             Some(BackpressureEvidence {
                 tests_passed,
                 lint_passed,
                 typecheck_passed,
+                audit_passed,
+                coverage_passed,
+                complexity_score,
+                duplication_passed,
+                performance_regression,
+                mutants,
+                specs_verified,
             })
+        } else {
+            None
+        }
+    }
+
+    fn parse_mutation_evidence(clean_payload: &str) -> Option<MutationEvidence> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.contains("mutants:"))?;
+
+        let normalized = segment.to_lowercase();
+        let status = if normalized.contains("mutants: pass") {
+            MutationStatus::Pass
+        } else if normalized.contains("mutants: warn") {
+            MutationStatus::Warn
+        } else if normalized.contains("mutants: fail") {
+            MutationStatus::Fail
+        } else {
+            MutationStatus::Unknown
+        };
+
+        let score_percent = Self::extract_percentage(segment);
+
+        Some(MutationEvidence {
+            status,
+            score_percent,
+        })
+    }
+
+    fn parse_complexity_evidence(clean_payload: &str) -> Option<f64> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.to_lowercase().starts_with("complexity:"))?;
+
+        Self::extract_first_number(segment)
+    }
+
+    fn parse_duplication_evidence(clean_payload: &str) -> Option<bool> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.to_lowercase().starts_with("duplication:"))?;
+
+        let normalized = segment.to_lowercase();
+        if normalized.contains("duplication: pass") {
+            Some(true)
+        } else if normalized.contains("duplication: fail") {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn parse_performance_regression(clean_payload: &str) -> Option<bool> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| {
+                let normalized = segment.to_lowercase();
+                normalized.starts_with("performance:") || normalized.starts_with("perf:")
+            })?;
+
+        let normalized = segment.to_lowercase();
+        if normalized.contains("regression") || normalized.contains("fail") {
+            Some(true)
+        } else if normalized.contains("pass")
+            || normalized.contains("ok")
+            || normalized.contains("improved")
+        {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    /// Parses spec acceptance criteria verification evidence.
+    ///
+    /// Returns `Some(true)` for `specs: pass`, `Some(false)` for `specs: fail`,
+    /// and `None` if no specs evidence is present.
+    fn parse_specs_evidence(clean_payload: &str) -> Option<bool> {
+        let segment = clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+            .find(|segment| segment.to_lowercase().starts_with("specs:"))?;
+
+        let normalized = segment.to_lowercase();
+        if normalized.contains("specs: pass") {
+            Some(true)
+        } else if normalized.contains("specs: fail") {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn extract_percentage(segment: &str) -> Option<f64> {
+        let percent_idx = segment.find('%')?;
+        let bytes = segment.as_bytes();
+        let mut start = percent_idx;
+
+        while start > 0 {
+            let prev = bytes[start - 1];
+            if prev.is_ascii_digit() || prev == b'.' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+
+        if start == percent_idx {
+            return None;
+        }
+
+        segment[start..percent_idx].trim().parse::<f64>().ok()
+    }
+
+    fn extract_first_number(segment: &str) -> Option<f64> {
+        let bytes = segment.as_bytes();
+        let mut start = None;
+        let mut end = None;
+
+        for (idx, &byte) in bytes.iter().enumerate() {
+            if byte.is_ascii_digit() {
+                if start.is_none() {
+                    start = Some(idx);
+                }
+                end = Some(idx + 1);
+            } else if byte == b'.' && start.is_some() {
+                end = Some(idx + 1);
+            } else if start.is_some() {
+                break;
+            }
+        }
+
+        let start = start?;
+        let end = end?;
+        segment[start..end].trim().parse::<f64>().ok()
+    }
+
+    fn parse_quality_pass_fail(segment: &str) -> Option<bool> {
+        if segment.contains("pass") {
+            Some(true)
+        } else if segment.contains("fail") {
+            Some(false)
         } else {
             None
         }
@@ -242,6 +534,71 @@ impl EventParser {
         } else {
             None
         }
+    }
+
+    /// Parses quality report evidence from verify.* event payloads.
+    ///
+    /// Expected format:
+    /// ```text
+    /// quality.tests: pass
+    /// quality.coverage: 82%
+    /// quality.lint: pass
+    /// quality.audit: pass
+    /// quality.mutation: 71%
+    /// quality.complexity: 7
+    /// quality.specs: pass         # optional (fail blocks)
+    /// ```
+    ///
+    /// Note: ANSI escape codes are stripped before parsing.
+    pub fn parse_quality_report(payload: &str) -> Option<QualityReport> {
+        let clean_payload = strip_ansi(payload);
+        let mut report = QualityReport {
+            tests_passed: None,
+            lint_passed: None,
+            audit_passed: None,
+            coverage_percent: None,
+            mutation_percent: None,
+            complexity_score: None,
+            specs_verified: None,
+        };
+        let mut seen = false;
+
+        for segment in clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+        {
+            if segment.is_empty() {
+                continue;
+            }
+            let normalized = segment.to_lowercase();
+
+            if normalized.starts_with("quality.tests:") {
+                report.tests_passed = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            } else if normalized.starts_with("quality.lint:") {
+                report.lint_passed = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            } else if normalized.starts_with("quality.audit:") {
+                report.audit_passed = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            } else if normalized.starts_with("quality.coverage:") {
+                report.coverage_percent = Self::extract_percentage(segment)
+                    .or_else(|| Self::extract_first_number(segment));
+                seen = true;
+            } else if normalized.starts_with("quality.mutation:") {
+                report.mutation_percent = Self::extract_percentage(segment)
+                    .or_else(|| Self::extract_first_number(segment));
+                seen = true;
+            } else if normalized.starts_with("quality.complexity:") {
+                report.complexity_score = Self::extract_first_number(segment);
+                seen = true;
+            } else if normalized.starts_with("quality.specs:") {
+                report.specs_verified = Self::parse_quality_pass_fail(&normalized);
+                seen = true;
+            }
+        }
+
+        if seen { Some(report) } else { None }
     }
 
     /// Checks if output contains the completion promise.
@@ -519,21 +876,31 @@ Still working..."#;
 
     #[test]
     fn test_parse_backpressure_evidence_all_pass() {
-        let payload = "tests: pass\nlint: pass\ntypecheck: pass";
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(evidence.tests_passed);
         assert!(evidence.lint_passed);
         assert!(evidence.typecheck_passed);
+        assert!(evidence.audit_passed);
+        assert!(evidence.coverage_passed);
+        assert_eq!(evidence.complexity_score, Some(7.0));
+        assert!(evidence.duplication_passed);
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(evidence.all_passed());
     }
 
     #[test]
     fn test_parse_backpressure_evidence_some_fail() {
-        let payload = "tests: pass\nlint: fail\ntypecheck: pass";
+        let payload = "tests: pass\nlint: fail\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(evidence.tests_passed);
         assert!(!evidence.lint_passed);
         assert!(evidence.typecheck_passed);
+        assert!(evidence.audit_passed);
+        assert!(evidence.coverage_passed);
+        assert_eq!(evidence.complexity_score, Some(7.0));
+        assert!(evidence.duplication_passed);
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(!evidence.all_passed());
     }
 
@@ -551,17 +918,63 @@ Still working..."#;
         assert!(evidence.tests_passed);
         assert!(!evidence.lint_passed);
         assert!(!evidence.typecheck_passed);
+        assert!(!evidence.audit_passed);
+        assert!(!evidence.coverage_passed);
+        assert!(evidence.complexity_score.is_none());
+        assert!(!evidence.duplication_passed);
+        assert!(evidence.performance_regression.is_none());
         assert!(!evidence.all_passed());
     }
 
     #[test]
     fn test_parse_backpressure_evidence_with_ansi_codes() {
-        let payload = "\x1b[0mtests: pass\x1b[0m\n\x1b[32mlint: pass\x1b[0m\ntypecheck: pass";
+        let payload = "\x1b[0mtests: pass\x1b[0m\n\x1b[32mlint: pass\x1b[0m\ntypecheck: pass\n\x1b[34maudit: pass\x1b[0m\n\x1b[35mcoverage: pass\x1b[0m\n\x1b[36mcomplexity: 7\x1b[0m\n\x1b[31mduplication: pass\x1b[0m\n\x1b[33mperformance: pass\x1b[0m";
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(evidence.tests_passed);
         assert!(evidence.lint_passed);
         assert!(evidence.typecheck_passed);
+        assert!(evidence.audit_passed);
+        assert!(evidence.coverage_passed);
+        assert_eq!(evidence.complexity_score, Some(7.0));
+        assert!(evidence.duplication_passed);
+        assert_eq!(evidence.performance_regression, Some(false));
         assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_mutants_pass() {
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass\nmutants: pass (82%)";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        let mutants = evidence
+            .mutants
+            .as_ref()
+            .expect("mutants evidence should parse");
+        assert_eq!(mutants.status, MutationStatus::Pass);
+        assert_eq!(mutants.score_percent, Some(82.0));
+        assert_eq!(evidence.performance_regression, Some(false));
+        assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_mutants_warn() {
+        let payload = "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, complexity: 7, duplication: pass, performance: pass, mutants: warn (65%)";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        let mutants = evidence
+            .mutants
+            .as_ref()
+            .expect("mutants evidence should parse");
+        assert_eq!(mutants.status, MutationStatus::Warn);
+        assert_eq!(mutants.score_percent, Some(65.0));
+        assert_eq!(evidence.performance_regression, Some(false));
+        assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_performance_regression() {
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: regression";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.performance_regression, Some(true));
+        assert!(!evidence.all_passed());
     }
 
     #[test]
@@ -617,6 +1030,118 @@ Still working..."#;
     }
 
     #[test]
+    fn test_parse_quality_report_passes_thresholds() {
+        let payload = "quality.tests: pass\nquality.coverage: 82% (>=80%)\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 71% (>=70%)\nquality.complexity: 7 (<=10)";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert_eq!(report.tests_passed, Some(true));
+        assert_eq!(report.lint_passed, Some(true));
+        assert_eq!(report.audit_passed, Some(true));
+        assert_eq!(report.coverage_percent, Some(82.0));
+        assert_eq!(report.mutation_percent, Some(71.0));
+        assert_eq!(report.complexity_score, Some(7.0));
+        assert!(report.meets_thresholds());
+    }
+
+    #[test]
+    fn test_parse_quality_report_fails_thresholds() {
+        let payload = "quality.tests: pass\nquality.coverage: 60%\nquality.lint: fail\nquality.audit: pass\nquality.mutation: 50%\nquality.complexity: 12";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert!(!report.meets_thresholds());
+    }
+
+    #[test]
+    fn test_parse_quality_report_missing() {
+        let payload = "Looks good, approved!";
+        let report = EventParser::parse_quality_report(payload);
+        assert!(report.is_none());
+    }
+
+    #[test]
+    fn test_extract_first_number_quality_line() {
+        let value = EventParser::extract_first_number("quality.complexity: 7 (<=10)");
+        assert_eq!(value, Some(7.0));
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_specs_pass() {
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass\nspecs: pass";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.specs_verified, Some(true));
+        assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_with_specs_fail() {
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass\nspecs: fail";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.specs_verified, Some(false));
+        assert!(
+            !evidence.all_passed(),
+            "specs: fail should block build.done"
+        );
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_specs_omitted_does_not_block() {
+        // When specs evidence is not included, it should not block
+        let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.specs_verified, None);
+        assert!(
+            evidence.all_passed(),
+            "missing specs should not block build.done"
+        );
+    }
+
+    #[test]
+    fn test_parse_backpressure_evidence_specs_comma_separated() {
+        let payload = "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, complexity: 7, duplication: pass, performance: pass, specs: pass";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.specs_verified, Some(true));
+        assert!(evidence.all_passed());
+    }
+
+    #[test]
+    fn test_parse_specs_evidence_only() {
+        // specs: alone should be recognized as evidence
+        let payload = "specs: pass";
+        let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
+        assert_eq!(evidence.specs_verified, Some(true));
+    }
+
+    #[test]
+    fn test_quality_report_with_specs_pass() {
+        let payload = "quality.tests: pass\nquality.coverage: 82%\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 71%\nquality.complexity: 7\nquality.specs: pass";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert_eq!(report.specs_verified, Some(true));
+        assert!(report.meets_thresholds());
+    }
+
+    #[test]
+    fn test_quality_report_with_specs_fail() {
+        let payload = "quality.tests: pass\nquality.coverage: 82%\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 71%\nquality.complexity: 7\nquality.specs: fail";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert_eq!(report.specs_verified, Some(false));
+        assert!(
+            !report.meets_thresholds(),
+            "specs: fail should fail quality thresholds"
+        );
+        assert!(report.failed_dimensions().contains(&"specs"));
+    }
+
+    #[test]
+    fn test_quality_report_specs_omitted_passes() {
+        let payload = "quality.tests: pass\nquality.coverage: 82%\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 71%\nquality.complexity: 7";
+        let report = EventParser::parse_quality_report(payload).unwrap();
+        assert_eq!(report.specs_verified, None);
+        assert!(
+            report.meets_thresholds(),
+            "missing specs should not fail quality thresholds"
+        );
+        assert!(!report.failed_dimensions().contains(&"specs"));
+    }
+
+    #[test]
     fn test_strip_ansi_function() {
         // Test the internal strip_ansi function via parse_backpressure_evidence
         // Simple CSI reset sequence
@@ -634,5 +1159,6 @@ Still working..."#;
         let evidence = EventParser::parse_backpressure_evidence(payload).unwrap();
         assert!(!evidence.tests_passed); // "tests: fail" not "tests: pass"
         assert!(evidence.lint_passed);
+        assert!(!evidence.coverage_passed);
     }
 }

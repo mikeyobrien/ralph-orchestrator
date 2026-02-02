@@ -148,6 +148,110 @@ fn get_tasks_path(root: Option<&PathBuf>) -> PathBuf {
     base.join(".ralph").join("agent").join("tasks.jsonl")
 }
 
+fn status_matches_filter(status: TaskStatus, filter: &str) -> bool {
+    let normalized = filter.to_lowercase().replace(['_', '-'], "");
+    match status {
+        TaskStatus::Open => normalized == "open",
+        TaskStatus::InProgress => normalized == "inprogress",
+        TaskStatus::Closed => normalized == "closed",
+        TaskStatus::Failed => normalized == "failed",
+    }
+}
+
+fn filter_tasks_for_list(store: &TaskStore, args: &ListArgs) -> Vec<Task> {
+    let mut tasks: Vec<_> = if let Some(status_str) = args.status.as_deref() {
+        store
+            .all()
+            .iter()
+            .filter(|t| status_matches_filter(t.status, status_str))
+            .cloned()
+            .collect()
+    } else if args.all {
+        store.all().to_vec()
+    } else {
+        store
+            .all()
+            .iter()
+            .filter(|t| !matches!(t.status, TaskStatus::Closed | TaskStatus::Failed))
+            .cloned()
+            .collect()
+    };
+
+    if let Some(days) = args.days {
+        let cutoff = Utc::now() - chrono::Duration::days(days);
+        tasks.retain(|t| {
+            if DateTime::parse_from_rfc3339(&t.created)
+                .map(|c| c.with_timezone(&Utc) > cutoff)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+
+            if t.closed.as_ref().is_some_and(|closed_str| {
+                DateTime::parse_from_rfc3339(closed_str)
+                    .map(|c| c.with_timezone(&Utc) > cutoff)
+                    .unwrap_or(false)
+            }) {
+                return true;
+            }
+            false
+        });
+    }
+
+    tasks.sort_by(|a, b| {
+        let status_rank = |s: TaskStatus| match s {
+            TaskStatus::InProgress => 0,
+            TaskStatus::Open => 1,
+            TaskStatus::Closed => 2,
+            TaskStatus::Failed => 3,
+        };
+
+        let rank_a = status_rank(a.status);
+        let rank_b = status_rank(b.status);
+
+        if rank_a != rank_b {
+            return rank_a.cmp(&rank_b);
+        }
+
+        if a.priority != b.priority {
+            return a.priority.cmp(&b.priority);
+        }
+
+        a.created.cmp(&b.created)
+    });
+
+    if let Some(limit) = args.limit {
+        tasks.truncate(limit);
+    }
+
+    tasks
+}
+
+fn filter_tasks_for_ready(
+    store: &TaskStore,
+    args: &ReadyArgs,
+    root: Option<&PathBuf>,
+) -> Vec<Task> {
+    let mut ready: Vec<Task> = store.ready().into_iter().cloned().collect();
+
+    if !args.all {
+        let loop_id_marker = get_tasks_path(root)
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("current-loop-id"));
+        if let Some(marker_path) = loop_id_marker
+            && let Ok(current_loop_id) = std::fs::read_to_string(&marker_path)
+        {
+            let current_loop_id = current_loop_id.trim().to_string();
+            if !current_loop_id.is_empty() {
+                ready.retain(|t| t.loop_id.as_ref() == Some(&current_loop_id));
+            }
+        }
+    }
+
+    ready
+}
+
 /// Executes task CLI commands.
 pub fn execute(args: TaskArgs, use_colors: bool) -> Result<()> {
     let root = args.root.clone();
@@ -224,81 +328,7 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
     let path = get_tasks_path(root);
     let store = TaskStore::load(&path).context("Failed to load tasks")?;
 
-    let mut tasks: Vec<_> = if let Some(status_str) = args.status {
-        // When filtering by specific status, show all matching tasks
-        store
-            .all()
-            .iter()
-            .filter(|t| format!("{:?}", t.status).to_lowercase() == status_str.to_lowercase())
-            .cloned()
-            .collect()
-    } else if args.all {
-        // Show all tasks including closed and failed
-        store.all().to_vec()
-    } else {
-        // Default: hide closed and failed tasks
-        store
-            .all()
-            .iter()
-            .filter(|t| !matches!(t.status, TaskStatus::Closed | TaskStatus::Failed))
-            .cloned()
-            .collect()
-    };
-
-    // Filter by days
-    if let Some(days) = args.days {
-        let cutoff = Utc::now() - chrono::Duration::days(days);
-        tasks.retain(|t| {
-            // Check created date
-            if DateTime::parse_from_rfc3339(&t.created)
-                .map(|c| c.with_timezone(&Utc) > cutoff)
-                .unwrap_or(false)
-            {
-                return true;
-            }
-
-            // Check closed date if present
-            if t.closed.as_ref().is_some_and(|closed_str| {
-                DateTime::parse_from_rfc3339(closed_str)
-                    .map(|c| c.with_timezone(&Utc) > cutoff)
-                    .unwrap_or(false)
-            }) {
-                return true;
-            }
-            false
-        });
-    }
-
-    // Sort tasks:
-    // 1. Status: InProgress > Open > Closed > Failed
-    // 2. Priority: 1 (High) > 5 (Low)
-    // 3. Created: Oldest first
-    tasks.sort_by(|a, b| {
-        let status_rank = |s: TaskStatus| match s {
-            TaskStatus::InProgress => 0,
-            TaskStatus::Open => 1,
-            TaskStatus::Closed => 2,
-            TaskStatus::Failed => 3,
-        };
-
-        let rank_a = status_rank(a.status);
-        let rank_b = status_rank(b.status);
-
-        if rank_a != rank_b {
-            return rank_a.cmp(&rank_b);
-        }
-
-        if a.priority != b.priority {
-            return a.priority.cmp(&b.priority);
-        }
-
-        a.created.cmp(&b.created)
-    });
-
-    // Apply limit after sorting
-    if let Some(limit) = args.limit {
-        tasks.truncate(limit);
-    }
+    let tasks = filter_tasks_for_list(&store, &args);
 
     match args.format {
         OutputFormat::Table => {
@@ -384,25 +414,7 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
     let path = get_tasks_path(root);
     let store = TaskStore::load(&path).context("Failed to load tasks")?;
 
-    let mut ready = store.ready();
-
-    // Filter by current loop ID unless --all is specified
-    if !args.all {
-        // Read loop ID from marker file
-        let loop_id_marker = get_tasks_path(root)
-            .parent()
-            .and_then(|p| p.parent()) // .ralph/agent -> .ralph
-            .map(|p| p.join("current-loop-id"));
-        if let Some(marker_path) = loop_id_marker
-            && let Ok(current_loop_id) = std::fs::read_to_string(&marker_path)
-        {
-            let current_loop_id = current_loop_id.trim().to_string();
-            if !current_loop_id.is_empty() {
-                ready.retain(|t| t.loop_id.as_ref() == Some(&current_loop_id));
-            }
-        }
-        // If marker file doesn't exist, show all tasks (backward compatibility)
-    }
+    let ready = filter_tasks_for_ready(&store, &args, root);
 
     match args.format {
         OutputFormat::Table => {
@@ -606,4 +618,70 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_tasks(root: &Path, tasks: Vec<Task>) -> TaskStore {
+        let root_buf = root.to_path_buf();
+        let path = get_tasks_path(Some(&root_buf));
+        let mut store = TaskStore::load(&path).expect("load task store");
+        for task in tasks {
+            store.add(task);
+        }
+        store.save().expect("save task store");
+        TaskStore::load(&path).expect("reload task store")
+    }
+
+    #[test]
+    fn test_list_status_filter_accepts_in_progress() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut open_task = Task::new("Open".to_string(), 2);
+        open_task.status = TaskStatus::Open;
+        let mut in_progress = Task::new("In progress".to_string(), 2);
+        in_progress.status = TaskStatus::InProgress;
+
+        let store = write_tasks(temp_dir.path(), vec![open_task, in_progress]);
+
+        let args = ListArgs {
+            status: Some("in_progress".to_string()),
+            days: None,
+            limit: None,
+            all: true,
+            format: OutputFormat::Quiet,
+        };
+
+        let filtered = filter_tasks_for_list(&store, &args);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn test_ready_filters_by_loop_id_marker() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path().to_path_buf();
+
+        let mut task_loop_a = Task::new("Loop A task".to_string(), 1);
+        task_loop_a.loop_id = Some("loop-a".to_string());
+        let mut task_loop_b = Task::new("Loop B task".to_string(), 1);
+        task_loop_b.loop_id = Some("loop-b".to_string());
+
+        let store = write_tasks(temp_dir.path(), vec![task_loop_a, task_loop_b]);
+
+        let marker_dir = root.join(".ralph");
+        std::fs::create_dir_all(&marker_dir).expect("marker dir");
+        std::fs::write(marker_dir.join("current-loop-id"), "loop-a").expect("write marker");
+
+        let args = ReadyArgs {
+            all: false,
+            format: OutputFormat::Quiet,
+        };
+
+        let ready = filter_tasks_for_ready(&store, &args, Some(&root));
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].loop_id.as_deref(), Some("loop-a"));
+    }
 }

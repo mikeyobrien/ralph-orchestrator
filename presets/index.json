@@ -1,33 +1,13 @@
 [
   {
-    "name": "adversarial-review",
-    "description": "One agent builds, another actively tries to break it",
-    "category": "review"
-  },
-  {
-    "name": "api-design",
-    "description": "Design APIs from the consumer's perspective",
-    "category": "workflow"
-  },
-  {
     "name": "bugfix",
     "description": "Systematic bug reproduction, fix, verification, and commit workflow",
     "category": "development"
   },
   {
-    "name": "code-archaeology",
-    "description": "Understand before you change",
-    "category": "research"
-  },
-  {
     "name": "code-assist",
     "description": "Implements from PDD output, code tasks, or rough descriptions using TDD",
     "category": "development"
-  },
-  {
-    "name": "confession-loop",
-    "description": "Confidence-aware completion via structured self-assessment (\"Confession\" phase).",
-    "category": "review"
   },
   {
     "name": "debug",
@@ -45,16 +25,6 @@
     "category": "documentation"
   },
   {
-    "name": "documentation-first",
-    "description": "If you can't explain it simply, you don't understand it",
-    "category": "documentation"
-  },
-{
-    "name": "feature-minimal",
-    "description": "Same as feature.yml but using auto-derived instructions.",
-    "category": "development"
-  },
-  {
     "name": "feature",
     "description": "Enhanced default workflow with integrated code review.",
     "category": "development"
@@ -67,12 +37,7 @@
   {
     "name": "hatless-baseline",
     "description": "A control preset with NO hats - tests core Ralph loop without hat delegation.",
-    "category": "workflow"
-  },
-  {
-    "name": "incident-response",
-    "description": "Fast, structured response to production issues",
-    "category": "infrastructure"
+    "category": "testing"
   },
   {
     "name": "merge-loop",
@@ -80,29 +45,9 @@
     "category": "infrastructure"
   },
   {
-    "name": "migration-safety",
-    "description": "Never break production during migrations",
-    "category": "infrastructure"
-  },
-  {
-    "name": "mob-programming",
-    "description": "Multiple perspectives on the same code",
-    "category": "workflow"
-  },
-  {
     "name": "pdd-to-code-assist",
     "description": "Ralph debates with himself from rough idea to committed, tested code",
     "category": "development"
-  },
-  {
-    "name": "performance-optimization",
-    "description": "No optimization without measurement",
-    "category": "workflow"
-  },
-  {
-    "name": "planning",
-    "description": "A web-based planning workflow that enables interactive design development through chat-style Q&A.",
-    "category": "workflow"
   },
   {
     "name": "pr-review",
@@ -125,23 +70,8 @@
     "category": "review"
   },
   {
-    "name": "scientific-method",
-    "description": "Debug like a scientist—hypothesize, experiment, conclude",
-    "category": "research"
-  },
-  {
-    "name": "socratic-learning",
-    "description": "Learn by being questioned, not lectured",
-    "category": "research"
-  },
-  {
     "name": "spec-driven",
     "description": "The spec is the contract. Implementation follows.",
     "category": "workflow"
-  },
-  {
-    "name": "tdd-red-green",
-    "description": "Forces discipline: failing test → implementation → refactor",
-    "category": "development"
   }
 ]

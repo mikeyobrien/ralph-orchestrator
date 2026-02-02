@@ -33,6 +33,7 @@ hats:
       3. Run verification (tests/lints/builds).
       4. Record what you did as a memory with evidence.
       5. Close the task: `ralph tools task close <id>`.
+      6. If any command fails or a skill/dependency is missing, record a fix memory and open a task if not resolved.
       ### Don't
       - Do not output the completion promise.
       - Do not skip verification.
@@ -130,7 +131,7 @@ skills:
   dirs:
   - .claude/skills
   overrides:
-    ralph-diagnostics:
+    ralph-operations:
       auto_inject: true
 RObot:
   enabled: true

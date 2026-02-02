@@ -11,7 +11,6 @@ workspace = true
 [dependencies]
 ralph-core.workspace = true
 ralph-proto.workspace = true
-ralph-adapters.workspace = true
 
 tokio.workspace = true
 ratatui.workspace = true
@@ -20,6 +19,7 @@ futures.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 scopeguard.workspace = true
+unicode-width = "0.2"
 
 [dev-dependencies]
 insta = { version = "1.40", features = ["yaml", "filters"] }

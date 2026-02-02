@@ -1,0 +1,64 @@
+name: "Feature request"
+description: "Suggest an improvement to Ralph"
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We love ideas that make Ralph more effective at orchestrating multi-backend AI workflows.
+  - type: textarea
+    id: use_case
+    attributes:
+      label: "Use case"
+      description: "What problem are you trying to solve?"
+      placeholder: "As a user, I want ... so that ..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Proposed solution"
+      description: "Describe the feature or change you'd like to see."
+      placeholder: "Add a command/flag/preset that ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area"
+      description: "Which part of Ralph does this relate to?"
+      options:
+        - "CLI"
+        - "Hat presets / workflows"
+        - "Backend integrations"
+        - "Quality gates / scoring"
+        - "RObot / human-in-the-loop"
+        - "Docs"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: backend
+    attributes:
+      label: "Backend(s) impacted"
+      description: "If relevant, list any AI backends involved."
+      placeholder: "Claude Code, Gemini CLI"
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives considered"
+      description: "Any workarounds or alternative approaches you've tried."
+      placeholder: "I tried ... but ..."
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: "Additional context"
+      description: "Screenshots, examples, or references that help us understand the request."
+    validations:
+      required: false

@@ -243,7 +243,7 @@ ralph emit <TOPIC> [PAYLOAD] [OPTIONS]
 
 ```bash
 # Simple event
-ralph emit "build.done" "tests: pass, lint: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # JSON payload
 ralph emit "review.done" --json '{"status": "approved", "issues": 0}'

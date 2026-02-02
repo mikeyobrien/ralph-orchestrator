@@ -324,6 +324,20 @@ impl RalphConfig {
             normalized_count += 1;
         }
 
+        // Merge extra_instructions into instructions for each hat
+        for (hat_id, hat) in &mut self.hats {
+            if !hat.extra_instructions.is_empty() {
+                for fragment in hat.extra_instructions.drain(..) {
+                    if !hat.instructions.ends_with('\n') {
+                        hat.instructions.push('\n');
+                    }
+                    hat.instructions.push_str(&fragment);
+                }
+                debug!(hat = %hat_id, "Merged extra_instructions into hat instructions");
+                normalized_count += 1;
+            }
+        }
+
         if normalized_count > 0 {
             debug!(
                 fields_normalized = normalized_count,
@@ -396,6 +410,15 @@ impl RalphConfig {
             warnings.push(ConfigWarning::DroppedField {
                 field: "retry_delay".to_string(),
                 reason: "Retry logic handled differently in v2".to_string(),
+            });
+        }
+
+        if let Some(threshold) = self.event_loop.mutation_score_warn_threshold
+            && !(0.0..=100.0).contains(&threshold)
+        {
+            warnings.push(ConfigWarning::InvalidValue {
+                field: "event_loop.mutation_score_warn_threshold".to_string(),
+                message: "Value must be between 0 and 100".to_string(),
             });
         }
 
@@ -564,6 +587,21 @@ pub struct EventLoopConfig {
     /// If not specified and hats are defined, Ralph will determine the appropriate
     /// event from the hat topology.
     pub starting_event: Option<String>,
+
+    /// Warn when mutation testing score drops below this percentage (0-100).
+    ///
+    /// Warning-only: build.done is still accepted even if below threshold.
+    #[serde(default)]
+    pub mutation_score_warn_threshold: Option<f64>,
+
+    /// When true, LOOP_COMPLETE does not terminate the loop.
+    ///
+    /// Instead of exiting, the loop injects a `task.resume` event and continues
+    /// idling until new work arrives (human guidance, Telegram commands, etc.).
+    /// The loop will only terminate on hard limits (max_iterations, max_runtime,
+    /// max_cost), consecutive failures, or explicit interrupt/stop.
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 fn default_prompt_file() -> String {
@@ -599,6 +637,8 @@ impl Default for EventLoopConfig {
             cooldown_delay_seconds: 0,
             starting_hat: None,
             starting_event: None,
+            mutation_score_warn_threshold: None,
+            persistent: false,
         }
     }
 }
@@ -644,7 +684,8 @@ fn default_guardrails() -> Vec<String> {
     vec![
         "Fresh context each iteration - scratchpad is memory".to_string(),
         "Don't assume 'not implemented' - search first".to_string(),
-        "Backpressure is law - tests/typecheck/lint must pass".to_string(),
+        "Backpressure is law - tests/typecheck/lint/audit must pass".to_string(),
+        "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document".to_string(),
         "Commit atomically - one logical change per commit, capture the why".to_string(),
     ]
 }
@@ -958,112 +999,20 @@ pub struct SkillOverride {
     pub auto_inject: Option<bool>,
 }
 
-/// Chaos mode configuration.
-///
-/// Chaos mode activates after LOOP_COMPLETE to grow the original objective
-/// into related improvements and learnings.
-///
-/// Example configuration:
-/// ```yaml
-/// features:
-///   chaos_mode:
-///     enabled: false              # Disabled by default (opt-in via --chaos)
-///     max_iterations: 5           # Max chaos iterations (default: 5)
-///     cooldown_seconds: 30        # Cooldown between chaos iterations (default: 30)
-///     completion_promise: "CHAOS_COMPLETE"  # Exit token
-///     research_focus:             # Configurable focus areas
-///       - domain_best_practices   # Web search for domain patterns
-///       - codebase_patterns       # Internal code analysis
-///       - self_improvement        # Meta-prompt and event loop study
-///     outputs:                    # What chaos mode can create
-///       - memories                # Always enabled
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChaosModeConfig {
-    /// Whether chaos mode is enabled.
+/// Preflight check configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PreflightConfig {
+    /// Whether to run preflight checks before `ralph run`.
     #[serde(default)]
     pub enabled: bool,
 
-    /// Maximum iterations in chaos mode.
-    #[serde(default = "default_chaos_max_iterations")]
-    pub max_iterations: u32,
+    /// Whether to treat warnings as failures.
+    #[serde(default)]
+    pub strict: bool,
 
-    /// Cooldown period between chaos iterations (seconds).
-    #[serde(default = "default_chaos_cooldown")]
-    pub cooldown_seconds: u64,
-
-    /// Completion promise for chaos mode exit.
-    #[serde(default = "default_chaos_completion")]
-    pub completion_promise: String,
-
-    /// Configurable research focus areas.
-    #[serde(default = "default_research_focus")]
-    pub research_focus: Vec<ResearchFocus>,
-
-    /// What outputs chaos mode can create.
-    #[serde(default = "default_chaos_outputs")]
-    pub outputs: Vec<ChaosOutput>,
-}
-
-fn default_chaos_max_iterations() -> u32 {
-    5
-}
-
-fn default_chaos_cooldown() -> u64 {
-    30 // 30 seconds between iterations
-}
-
-fn default_chaos_completion() -> String {
-    "CHAOS_COMPLETE".to_string()
-}
-
-fn default_research_focus() -> Vec<ResearchFocus> {
-    vec![
-        ResearchFocus::DomainBestPractices,
-        ResearchFocus::CodebasePatterns,
-        ResearchFocus::SelfImprovement,
-    ]
-}
-
-fn default_chaos_outputs() -> Vec<ChaosOutput> {
-    vec![ChaosOutput::Memories] // Only memories by default
-}
-
-impl Default for ChaosModeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_iterations: default_chaos_max_iterations(),
-            cooldown_seconds: default_chaos_cooldown(),
-            completion_promise: default_chaos_completion(),
-            research_focus: default_research_focus(),
-            outputs: default_chaos_outputs(),
-        }
-    }
-}
-
-/// Research focus area for chaos mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchFocus {
-    /// Web search for domain patterns and best practices.
-    DomainBestPractices,
-    /// Internal codebase analysis for patterns and antipatterns.
-    CodebasePatterns,
-    /// Meta-prompt and event loop study for self-improvement.
-    SelfImprovement,
-}
-
-/// Output type that chaos mode can create.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChaosOutput {
-    /// Persistent learning memories.
-    Memories,
-    /// Create tasks for concrete work.
-    Tasks,
-    /// Create specs for larger improvements.
-    Specs,
+    /// Specific checks to skip (by name). Empty = run all checks.
+    #[serde(default)]
+    pub skip: Vec<String>,
 }
 
 /// Feature flags for optional Ralph capabilities.
@@ -1073,12 +1022,13 @@ pub enum ChaosOutput {
 /// features:
 ///   parallel: true  # Enable parallel loops via git worktrees
 ///   auto_merge: false  # Auto-merge worktree branches on completion
+///   preflight:
+///     enabled: false      # Opt-in: run preflight checks before `ralph run`
+///     strict: false       # Treat warnings as failures
+///     skip: ["telegram"]  # Skip specific checks by name
 ///   loop_naming:
 ///     format: human-readable  # or "timestamp" for legacy format
 ///     max_length: 50
-///   chaos_mode:
-///     enabled: false
-///     max_iterations: 5
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeaturesConfig {
@@ -1105,12 +1055,9 @@ pub struct FeaturesConfig {
     #[serde(default)]
     pub loop_naming: crate::loop_name::LoopNamingConfig,
 
-    /// Chaos mode configuration.
-    ///
-    /// Chaos mode activates after LOOP_COMPLETE to explore related
-    /// improvements and learnings based on the original objective.
+    /// Preflight check configuration.
     #[serde(default)]
-    pub chaos_mode: ChaosModeConfig,
+    pub preflight: PreflightConfig,
 }
 
 impl Default for FeaturesConfig {
@@ -1119,7 +1066,7 @@ impl Default for FeaturesConfig {
             parallel: true,    // Parallel loops enabled by default
             auto_merge: false, // Auto-merge disabled by default for safety
             loop_naming: crate::loop_name::LoopNamingConfig::default(),
-            chaos_mode: ChaosModeConfig::default(),
+            preflight: PreflightConfig::default(),
         }
     }
 }
@@ -1273,6 +1220,25 @@ pub struct HatConfig {
     #[serde(default)]
     pub instructions: String,
 
+    /// Additional instruction fragments appended to `instructions`.
+    ///
+    /// Use with YAML anchors to share common instruction blocks across hats:
+    /// ```yaml
+    /// _confidence_protocol: &confidence_protocol |
+    ///   ### Confidence-Based Decision Protocol
+    ///   ...
+    ///
+    /// hats:
+    ///   architect:
+    ///     instructions: |
+    ///       ## ARCHITECT MODE
+    ///       ...
+    ///     extra_instructions:
+    ///       - *confidence_protocol
+    /// ```
+    #[serde(default)]
+    pub extra_instructions: Vec<String>,
+
     /// Backend to use for this hat (inherits from cli.backend if not specified).
     #[serde(default)]
     pub backend: Option<HatBackend>,
@@ -1303,7 +1269,7 @@ impl HatConfig {
 /// RObot (Ralph-Orchestrator bot) configuration.
 ///
 /// Enables bidirectional communication between AI agents and humans
-/// during orchestration loops. When enabled, agents can emit `interact.human`
+/// during orchestration loops. When enabled, agents can emit `human.interact`
 /// events to request clarification (blocking the loop), and humans can
 /// send proactive guidance via Telegram.
 ///
@@ -1366,20 +1332,33 @@ impl RobotConfig {
     ///
     /// Resolution order (highest to lowest priority):
     /// 1. `RALPH_TELEGRAM_BOT_TOKEN` environment variable
-    /// 2. OS keychain (service: "ralph", user: "telegram-bot-token")
-    /// 3. `RObot.telegram.bot_token` in config file (legacy fallback)
+    /// 2. `RObot.telegram.bot_token` in config file (explicit project override)
+    /// 3. OS keychain (service: "ralph", user: "telegram-bot-token")
     pub fn resolve_bot_token(&self) -> Option<String> {
         // 1. Env var (highest priority)
-        std::env::var("RALPH_TELEGRAM_BOT_TOKEN")
-            .ok()
-            // 2. OS keychain
+        let env_token = std::env::var("RALPH_TELEGRAM_BOT_TOKEN").ok();
+        let config_token = self
+            .telegram
+            .as_ref()
+            .and_then(|telegram| telegram.bot_token.clone());
+
+        if cfg!(test) {
+            return env_token.or(config_token);
+        }
+
+        env_token
+            // 2. Config file (explicit override)
+            .or(config_token)
+            // 3. OS keychain (best effort)
             .or_else(|| {
-                keyring::Entry::new("ralph", "telegram-bot-token")
-                    .ok()
-                    .and_then(|e| e.get_password().ok())
+                std::panic::catch_unwind(|| {
+                    keyring::Entry::new("ralph", "telegram-bot-token")
+                        .ok()
+                        .and_then(|e| e.get_password().ok())
+                })
+                .ok()
+                .flatten()
             })
-            // 3. Config file (legacy fallback)
-            .or_else(|| self.telegram.as_ref()?.bot_token.clone())
     }
 }
 
@@ -1399,33 +1378,41 @@ pub enum ConfigError {
     #[error("YAML parse error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
-    #[error("Ambiguous routing: trigger '{trigger}' is claimed by both '{hat1}' and '{hat2}'")]
+    #[error(
+        "Ambiguous routing: trigger '{trigger}' is claimed by both '{hat1}' and '{hat2}'.\nFix: ensure only one hat claims this trigger or delegate with a new event.\nSee: docs/reference/troubleshooting.md#ambiguous-routing"
+    )]
     AmbiguousRouting {
         trigger: String,
         hat1: String,
         hat2: String,
     },
 
-    #[error("Mutually exclusive fields: '{field1}' and '{field2}' cannot both be specified")]
+    #[error(
+        "Mutually exclusive fields: '{field1}' and '{field2}' cannot both be specified.\nFix: remove one field or split into separate configs.\nSee: docs/reference/troubleshooting.md#mutually-exclusive-fields"
+    )]
     MutuallyExclusive { field1: String, field2: String },
 
     #[error("Invalid completion_promise: must be non-empty and non-whitespace")]
     InvalidCompletionPromise,
 
-    #[error("Custom backend requires a command - set 'cli.command' in config")]
+    #[error(
+        "Custom backend requires a command.\nFix: set 'cli.command' in your config (or run `ralph init --backend custom`).\nSee: docs/reference/troubleshooting.md#custom-backend-command"
+    )]
     CustomBackendRequiresCommand,
 
     #[error(
-        "Reserved trigger '{trigger}' used by hat '{hat}' - task.start and task.resume are reserved for Ralph (the coordinator). Use a delegated event like 'work.start' instead."
+        "Reserved trigger '{trigger}' used by hat '{hat}' - task.start and task.resume are reserved for Ralph (the coordinator). Use a delegated event like 'work.start' instead.\nSee: docs/reference/troubleshooting.md#reserved-trigger"
     )]
     ReservedTrigger { trigger: String, hat: String },
 
     #[error(
-        "Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose"
+        "Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose.\nSee: docs/reference/troubleshooting.md#missing-hat-description"
     )]
     MissingDescription { hat: String },
 
-    #[error("RObot config error: {field} - {hint}")]
+    #[error(
+        "RObot config error: {field} - {hint}\nSee: docs/reference/troubleshooting.md#robot-config"
+    )]
     RobotMissingField { field: String, hint: String },
 }
 
@@ -1440,6 +1427,9 @@ mod tests {
         assert!(config.hats.is_empty());
         assert_eq!(config.event_loop.max_iterations, 100);
         assert!(!config.verbose);
+        assert!(!config.features.preflight.enabled);
+        assert!(!config.features.preflight.strict);
+        assert!(config.features.preflight.skip.is_empty());
     }
 
     #[test]
@@ -1465,6 +1455,24 @@ hats:
 
         let hat = config.hats.get("implementer").unwrap();
         assert_eq!(hat.triggers.len(), 2);
+    }
+
+    #[test]
+    fn test_preflight_config_deserialize() {
+        let yaml = r#"
+features:
+  preflight:
+    enabled: true
+    strict: true
+    skip: ["telegram", "git"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.features.preflight.enabled);
+        assert!(config.features.preflight.strict);
+        assert_eq!(
+            config.features.preflight.skip,
+            vec!["telegram".to_string(), "git".to_string()]
+        );
     }
 
     #[test]
@@ -1754,11 +1762,12 @@ hats:
         assert_eq!(config.core.scratchpad, ".ralph/agent/scratchpad.md");
         assert_eq!(config.core.specs_dir, ".ralph/specs/");
         // Default guardrails per spec
-        assert_eq!(config.core.guardrails.len(), 4);
+        assert_eq!(config.core.guardrails.len(), 5);
         assert!(config.core.guardrails[0].contains("Fresh context"));
         assert!(config.core.guardrails[1].contains("search first"));
         assert!(config.core.guardrails[2].contains("Backpressure"));
-        assert!(config.core.guardrails[3].contains("Commit atomically"));
+        assert!(config.core.guardrails[3].contains("Confidence protocol"));
+        assert!(config.core.guardrails[4].contains("Commit atomically"));
     }
 
     #[test]
@@ -1772,7 +1781,7 @@ core:
         assert_eq!(config.core.scratchpad, ".workspace/plan.md");
         assert_eq!(config.core.specs_dir, "./specifications/");
         // Guardrails should use defaults when not specified
-        assert_eq!(config.core.guardrails.len(), 4);
+        assert_eq!(config.core.guardrails.len(), 5);
     }
 
     #[test]
@@ -1903,6 +1912,26 @@ cli:
             "Should allow custom backend with command: {:?}",
             result.unwrap_err()
         );
+    }
+
+    #[test]
+    fn test_custom_backend_requires_command_message_actionable() {
+        let err = ConfigError::CustomBackendRequiresCommand;
+        let msg = err.to_string();
+        assert!(msg.contains("cli.command"));
+        assert!(msg.contains("ralph init --backend custom"));
+        assert!(msg.contains("docs/reference/troubleshooting.md#custom-backend-command"));
+    }
+
+    #[test]
+    fn test_reserved_trigger_message_actionable() {
+        let err = ConfigError::ReservedTrigger {
+            trigger: "task.start".to_string(),
+            hat: "builder".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Reserved trigger"));
+        assert!(msg.contains("docs/reference/troubleshooting.md#reserved-trigger"));
     }
 
     #[test]
@@ -2525,5 +2554,54 @@ RObot:
             "Expected bot_token validation failure, got: {:?}",
             err
         );
+    }
+
+    #[test]
+    fn test_extra_instructions_merged_during_normalize() {
+        let yaml = r#"
+_fragments:
+  shared_protocol: &shared_protocol |
+    ### Shared Protocol
+    Follow this protocol.
+
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    instructions: |
+      ## BUILDER MODE
+      Build things.
+    extra_instructions:
+      - *shared_protocol
+"#;
+        let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("builder").unwrap();
+
+        // Before normalize: extra_instructions has content, instructions does not include it
+        assert_eq!(hat.extra_instructions.len(), 1);
+        assert!(!hat.instructions.contains("Shared Protocol"));
+
+        config.normalize();
+
+        let hat = config.hats.get("builder").unwrap();
+        // After normalize: extra_instructions drained, instructions includes the fragment
+        assert!(hat.extra_instructions.is_empty());
+        assert!(hat.instructions.contains("## BUILDER MODE"));
+        assert!(hat.instructions.contains("### Shared Protocol"));
+        assert!(hat.instructions.contains("Follow this protocol."));
+    }
+
+    #[test]
+    fn test_extra_instructions_empty_by_default() {
+        let yaml = r#"
+hats:
+  simple:
+    name: "Simple"
+    triggers: ["start"]
+    instructions: "Do the thing."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("simple").unwrap();
+        assert!(hat.extra_instructions.is_empty());
     }
 }

@@ -113,9 +113,9 @@ ralph --help
 ralph init --list-presets
 ```
 
-## Migrating from v1 (Python)
+## Migrating from v1 (Legacy)
 
-If you have the old Python-based Ralph v1 installed, uninstall it first:
+If you have the legacy Ralph v1 installed, uninstall it first:
 
 ```bash
 # If installed via pip
@@ -131,7 +131,7 @@ uv tool uninstall ralph-orchestrator
 which ralph  # Should return nothing or point to new Rust version
 ```
 
-The v1 Python version is no longer maintained. See [Migration from v1](../reference/migration-v1.md) for details.
+The v1 release is no longer maintained. See [Migration from v1](../reference/migration-v1.md) for details.
 
 ## Troubleshooting
 

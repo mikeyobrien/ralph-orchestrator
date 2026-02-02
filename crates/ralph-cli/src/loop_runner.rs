@@ -16,6 +16,7 @@ use ralph_core::{
 };
 use ralph_proto::{Event, HatId};
 use ralph_tui::Tui;
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{BufWriter, IsTerminal, stdin, stdout};
 use std::path::{Path, PathBuf};
@@ -144,8 +145,16 @@ pub async fn run_loop_impl(
     // Initialize event loop with context for proper path resolution
     let mut event_loop = EventLoop::with_context(config.clone(), ctx.clone());
 
-    // Capture the Telegram shutdown flag so signal handlers can interrupt wait_for_response()
-    let telegram_shutdown = event_loop.telegram_shutdown_flag();
+    // Inject robot service (Telegram) for human-in-the-loop communication
+    if config.robot.enabled
+        && ctx.is_primary()
+        && let Some(service) = create_robot_service(&config, &ctx)
+    {
+        event_loop.set_robot_service(service);
+    }
+
+    // Capture the robot service shutdown flag so signal handlers can interrupt wait_for_response()
+    let robot_shutdown = event_loop.robot_shutdown_flag();
 
     // For resume mode, we initialize with a different event topic
     // This tells the planner to read existing scratchpad rather than creating a new one
@@ -266,16 +275,21 @@ pub async fn run_loop_impl(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    // Seed max_iterations into TUI state for accurate iteration display.
+    if let Some(mut s) = tui_state.as_ref().and_then(|state| state.lock().ok()) {
+        s.max_iterations = Some(config.event_loop.max_iterations);
+    }
+
     // Spawn signal handlers AFTER TUI initialization to avoid deadlock
     // (TUI must enter raw mode and create EventStream before signal handlers are registered)
 
     // Spawn task to listen for SIGINT (Ctrl+C)
     let interrupt_tx_sigint = interrupt_tx.clone();
-    let telegram_shutdown_sigint = telegram_shutdown.clone();
+    let robot_shutdown_sigint = robot_shutdown.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             debug!("Interrupt received (SIGINT), terminating immediately...");
-            if let Some(ref flag) = telegram_shutdown_sigint {
+            if let Some(ref flag) = robot_shutdown_sigint {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             let _ = interrupt_tx_sigint.send(true);
@@ -286,14 +300,14 @@ pub async fn run_loop_impl(
     #[cfg(unix)]
     {
         let interrupt_tx_sigterm = interrupt_tx.clone();
-        let telegram_shutdown_sigterm = telegram_shutdown.clone();
+        let robot_shutdown_sigterm = robot_shutdown.clone();
         tokio::spawn(async move {
             let mut sigterm =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                     .expect("Failed to register SIGTERM handler");
             sigterm.recv().await;
             debug!("SIGTERM received, terminating immediately...");
-            if let Some(ref flag) = telegram_shutdown_sigterm {
+            if let Some(ref flag) = robot_shutdown_sigterm {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             let _ = interrupt_tx_sigterm.send(true);
@@ -304,13 +318,13 @@ pub async fn run_loop_impl(
     #[cfg(unix)]
     {
         let interrupt_tx_sighup = interrupt_tx.clone();
-        let telegram_shutdown_sighup = telegram_shutdown.clone();
+        let robot_shutdown_sighup = robot_shutdown.clone();
         tokio::spawn(async move {
             let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
                 .expect("Failed to register SIGHUP handler");
             sighup.recv().await;
             warn!("SIGHUP received (terminal closed), terminating immediately...");
-            if let Some(ref flag) = telegram_shutdown_sighup {
+            if let Some(ref flag) = robot_shutdown_sighup {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             let _ = interrupt_tx_sighup.send(true);
@@ -412,8 +426,6 @@ pub async fn run_loop_impl(
                 TerminationReason::ValidationFailure => "validation_failure",
                 TerminationReason::Stopped => "stopped",
                 TerminationReason::Interrupted => "interrupted",
-                TerminationReason::ChaosModeComplete => "chaos_complete",
-                TerminationReason::ChaosModeMaxIterations => "chaos_max_iterations",
                 TerminationReason::RestartRequested => "restart_requested",
             };
 
@@ -482,8 +494,6 @@ pub async fn run_loop_impl(
                     TerminationReason::Stopped => "manually stopped",
                     TerminationReason::Interrupted => "interrupted by signal",
                     TerminationReason::CompletionPromise => unreachable!(),
-                    TerminationReason::ChaosModeComplete => "chaos mode complete",
-                    TerminationReason::ChaosModeMaxIterations => "chaos mode max iterations",
                     TerminationReason::RestartRequested => "restart requested",
                 };
                 if let Err(e) = queue.mark_needs_review(loop_id, reason_str) {
@@ -845,17 +855,23 @@ pub async fn run_loop_impl(
         // For TUI mode, get the shared lines buffer for this iteration.
         // The buffer is owned by TuiState's IterationBuffer, so writes from
         // TuiStreamHandler appear immediately in the TUI (real-time streaming).
+        let hat_display = event_loop
+            .registry()
+            .get(&display_hat)
+            .map(|hat| hat.name.clone())
+            .unwrap_or_else(|| display_hat.as_str().to_string());
+
         let tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>> =
             if let Some(ref state) = tui_state {
                 // Start new iteration and get handle to the LATEST iteration's lines buffer.
                 // We must use latest_iteration_lines_handle() instead of current_iteration_lines_handle()
                 // because the user may be viewing an older iteration while a new one executes.
-                if let Ok(mut s) = state.lock() {
-                    s.start_new_iteration();
-                    s.latest_iteration_lines_handle()
-                } else {
-                    None
-                }
+                prepare_tui_iteration(
+                    state,
+                    hat_display.clone(),
+                    backend_name_for_timeout.clone(),
+                    config.event_loop.max_iterations,
+                )
             } else {
                 None
             };
@@ -945,6 +961,9 @@ pub async fn run_loop_impl(
 
         // Note: TUI lines are now written directly to IterationBuffer during streaming,
         // so no post-execution transfer is needed.
+        if let Some(mut s) = tui_state.as_ref().and_then(|state| state.lock().ok()) {
+            s.finish_latest_iteration();
+        }
 
         // Log events from output before processing
         log_events_from_output(
@@ -963,44 +982,6 @@ pub async fn run_loop_impl(
                     "All done! {} detected.",
                     config.event_loop.completion_promise
                 );
-
-                // Chaos mode activates ONLY after LOOP_COMPLETE
-                if config.features.chaos_mode.enabled && reason.triggers_chaos_mode() {
-                    info!(
-                        "Chaos mode enabled: exploring {} related improvements",
-                        config.features.chaos_mode.max_iterations
-                    );
-                    // TODO: Implement chaos mode loop iterations
-                    // For now, log the prompt content as the "seed" for chaos mode
-                    debug!(
-                        seed = %prompt_content,
-                        max_iterations = config.features.chaos_mode.max_iterations,
-                        cooldown_seconds = config.features.chaos_mode.cooldown_seconds,
-                        "Chaos mode would use original objective as seed"
-                    );
-                    // Return ChaosModeComplete for now to indicate chaos mode was triggered
-                    // Full implementation would loop here with chaos iterations
-                    let chaos_reason = TerminationReason::ChaosModeComplete;
-                    let terminate_event = event_loop.publish_terminate_event(&chaos_reason);
-                    log_terminate_event(
-                        &mut event_logger,
-                        event_loop.state().iteration,
-                        &terminate_event,
-                    );
-                    handle_termination(
-                        &chaos_reason,
-                        event_loop.state(),
-                        &config.core.scratchpad,
-                        &loop_history,
-                        &loop_context,
-                        auto_merge,
-                        &prompt_content,
-                    );
-                    if let Some(handle) = tui_handle.take() {
-                        let _ = handle.await;
-                    }
-                    return Ok(chaos_reason);
-                }
             }
             // Per spec: Publish loop.terminate event to observers
             let terminate_event = event_loop.publish_terminate_event(&reason);
@@ -1040,39 +1021,6 @@ pub async fn run_loop_impl(
                 "Completion event {} detected.",
                 config.event_loop.completion_promise
             );
-
-            if config.features.chaos_mode.enabled && reason.triggers_chaos_mode() {
-                info!(
-                    "Chaos mode enabled: exploring {} related improvements",
-                    config.features.chaos_mode.max_iterations
-                );
-                debug!(
-                    seed = %prompt_content,
-                    max_iterations = config.features.chaos_mode.max_iterations,
-                    cooldown_seconds = config.features.chaos_mode.cooldown_seconds,
-                    "Chaos mode would use original objective as seed"
-                );
-                let chaos_reason = TerminationReason::ChaosModeComplete;
-                let terminate_event = event_loop.publish_terminate_event(&chaos_reason);
-                log_terminate_event(
-                    &mut event_logger,
-                    event_loop.state().iteration,
-                    &terminate_event,
-                );
-                handle_termination(
-                    &chaos_reason,
-                    event_loop.state(),
-                    &config.core.scratchpad,
-                    &loop_history,
-                    &loop_context,
-                    auto_merge,
-                    &prompt_content,
-                );
-                if let Some(handle) = tui_handle.take() {
-                    let _ = handle.await;
-                }
-                return Ok(chaos_reason);
-            }
 
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(
@@ -1154,6 +1102,22 @@ fn convert_termination_type(
         ralph_adapters::TerminationType::UserInterrupt
         | ralph_adapters::TerminationType::ForceKill => Some(TerminationReason::Interrupted),
     }
+}
+
+fn prepare_tui_iteration(
+    tui_state: &Arc<std::sync::Mutex<ralph_tui::TuiState>>,
+    hat_display: String,
+    backend: String,
+    max_iterations: u32,
+) -> Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>> {
+    let Ok(mut state) = tui_state.lock() else {
+        return None;
+    };
+    // Ensure max_iterations is always available for header display, even if
+    // state was reset by earlier events.
+    state.max_iterations = Some(max_iterations);
+    state.start_new_iteration_with_metadata(Some(hat_display), Some(backend));
+    state.latest_iteration_lines_handle()
 }
 
 async fn execute_pty(
@@ -1371,8 +1335,8 @@ fn log_terminate_event(logger: &mut EventLogger, iteration: u32, event: &Event) 
 }
 
 /// Gets the last commit info (short SHA and subject) for the summary file.
-fn get_last_commit_info() -> Option<String> {
-    let output = Command::new("git")
+fn get_last_commit_info_with_cmd(git_cmd: &OsStr) -> Option<String> {
+    let output = Command::new(git_cmd)
         .args(["log", "-1", "--format=%h: %s"])
         .output()
         .ok()?;
@@ -1383,6 +1347,10 @@ fn get_last_commit_info() -> Option<String> {
     } else {
         None
     }
+}
+
+fn get_last_commit_info() -> Option<String> {
+    get_last_commit_info_with_cmd(OsStr::new("git"))
 }
 
 /// Resolves prompt content with proper precedence.
@@ -1445,14 +1413,20 @@ fn check_planning_session_responses(event_loop: &mut EventLoop) -> Result<()> {
         Ok(id) => id,
         Err(_) => return Ok(()), // Not in planning mode
     };
+    check_planning_session_responses_for_session(event_loop, &session_id)
+}
 
+fn check_planning_session_responses_for_session(
+    event_loop: &mut EventLoop,
+    session_id: &str,
+) -> Result<()> {
     // Get loop context to find the conversation file path
     let ctx = match event_loop.loop_context() {
         Some(ctx) => ctx,
         None => return Ok(()), // No context, can't find conversation file
     };
 
-    let conversation_path = ctx.planning_conversation_path(&session_id);
+    let conversation_path = ctx.planning_conversation_path(session_id);
 
     // Read conversation entries and look for new responses
     // We track which response IDs we've already processed to avoid duplicates
@@ -1531,7 +1505,7 @@ fn check_planning_session_responses(event_loop: &mut EventLoop) -> Result<()> {
 ///
 /// Called when the primary loop completes successfully. Spawns merge-ralph
 /// processes for each queued loop in FIFO order.
-fn process_pending_merges(repo_root: &Path) {
+fn process_pending_merges_with_command(repo_root: &Path, ralph_cmd: &OsStr) {
     let queue = MergeQueue::new(repo_root);
 
     // Get all pending merges
@@ -1578,7 +1552,7 @@ fn process_pending_merges(repo_root: &Path) {
 
         info!(loop_id = %loop_id, "Spawning merge-ralph process");
 
-        match Command::new("ralph")
+        match Command::new(ralph_cmd)
             .current_dir(repo_root)
             .args([
                 "run",
@@ -1608,6 +1582,10 @@ fn process_pending_merges(repo_root: &Path) {
             }
         }
     }
+}
+
+fn process_pending_merges(repo_root: &Path) {
+    process_pending_merges_with_command(repo_root, OsStr::new("ralph"));
 }
 
 /// Public wrapper for CLI invocation of process_pending_merges.
@@ -1703,9 +1681,52 @@ pub async fn start_loop(
     .await
 }
 
+/// Creates a robot service (Telegram) for human-in-the-loop communication.
+///
+/// Called by `run_loop_impl` when `robot.enabled` is true and this is the primary loop.
+/// Returns `None` if the service cannot be created or started.
+fn create_robot_service(
+    config: &RalphConfig,
+    context: &LoopContext,
+) -> Option<Box<dyn ralph_proto::RobotService>> {
+    let workspace_root = context.workspace().to_path_buf();
+    let bot_token = config.robot.resolve_bot_token();
+    let timeout_secs = config.robot.timeout_seconds.unwrap_or(300);
+    let loop_id = context
+        .loop_id()
+        .map(String::from)
+        .unwrap_or_else(|| "main".to_string());
+
+    match ralph_telegram::TelegramService::new(workspace_root, bot_token, timeout_secs, loop_id) {
+        Ok(service) => {
+            if let Err(e) = service.start() {
+                warn!(error = %e, "Failed to start robot service");
+                return None;
+            }
+            info!(
+                bot_token = %service.bot_token_masked(),
+                timeout_secs = service.timeout_secs(),
+                "Robot human-in-the-loop service active"
+            );
+            Some(Box::new(service))
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to create robot service");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
+    use ralph_core::HatRegistry;
+    use ralph_core::planning_session::{ConversationEntry, ConversationType};
+    use ralph_proto::{Hat, Topic};
+    use std::ffi::OsStr;
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
     #[test]
     fn test_pty_always_enabled_for_streaming() {
@@ -1736,6 +1757,30 @@ mod tests {
             interactive_with_tty,
             "Interactive mode with TTY should forward user input"
         );
+    }
+
+    #[test]
+    fn test_prepare_tui_iteration_seeds_max_iterations() {
+        let state = Arc::new(Mutex::new(ralph_tui::TuiState::new()));
+
+        let lines = prepare_tui_iteration(&state, "Planner".to_string(), "claude".to_string(), 42);
+
+        assert!(lines.is_some(), "should return a lines handle");
+        let state = state.lock().expect("state lock");
+        assert_eq!(state.max_iterations, Some(42));
+        assert_eq!(state.total_iterations(), 1);
+    }
+
+    #[cfg(unix)]
+    fn write_fake_executable(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        let script = format!("#!/bin/sh\n{}\n", body);
+        std::fs::write(&path, script).expect("write script");
+        let mut perms = std::fs::metadata(&path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod");
+        path
     }
 
     #[test]
@@ -1821,5 +1866,353 @@ mod tests {
             Some(TerminationReason::Interrupted),
             "ForceKill should terminate in autonomous mode"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_get_last_commit_info_returns_none_without_git() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+        let missing_git = temp_dir.path().join("git");
+        assert!(get_last_commit_info_with_cmd(missing_git.as_os_str()).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_get_last_commit_info_reads_last_commit() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(repo_root)
+            .status()
+            .expect("git init");
+
+        std::fs::write(repo_root.join("README.md"), "hello").expect("write file");
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(repo_root)
+            .status()
+            .expect("git add");
+
+        Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial commit",
+                "--quiet",
+            ])
+            .current_dir(repo_root)
+            .status()
+            .expect("git commit");
+
+        let _cwd = CwdGuard::set(repo_root);
+        let info = get_last_commit_info_with_cmd(OsStr::new("git")).expect("commit info");
+        assert!(
+            info.contains("Initial commit"),
+            "unexpected commit info: {info}"
+        );
+    }
+
+    #[test]
+    fn test_process_pending_merges_handles_missing_preset() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        std::fs::create_dir_all(repo_root.join(".ralph/merge-queue")).expect("queue dir");
+
+        process_pending_merges(repo_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_process_pending_merges_spawns_for_queue_entry() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        std::fs::create_dir_all(repo_root.join(".ralph/merge-queue")).expect("queue dir");
+
+        let queue_file = repo_root.join(".ralph/merge-queue/loop-1234.json");
+        std::fs::write(
+            &queue_file,
+            r#"{"loop_id":"1234","state":"queued","created_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .expect("queue file");
+
+        let bin_dir = repo_root.join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+        let ralph_path = write_fake_executable(&bin_dir, "ralph", "exit 0");
+
+        process_pending_merges_with_command(repo_root, ralph_path.as_os_str());
+    }
+
+    #[test]
+    fn test_process_pending_merges_missing_command_keeps_queue() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        let queue = ralph_core::merge_queue::MergeQueue::new(repo_root);
+        queue.enqueue("loop-9999", "merge prompt").expect("enqueue");
+
+        process_pending_merges_with_command(repo_root, OsStr::new("ralph-command-missing-12345"));
+
+        let config_path = repo_root.join(".ralph/merge-loop-config.yml");
+        assert!(config_path.exists());
+        let entries = queue
+            .list_by_state(ralph_core::merge_queue::MergeState::Queued)
+            .expect("list queued");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].loop_id, "loop-9999");
+    }
+
+    #[test]
+    fn test_process_pending_merges_with_empty_queue_no_config_written() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        std::fs::create_dir_all(repo_root.join(".ralph/merge-queue")).expect("queue dir");
+
+        let config_path = repo_root.join(".ralph/merge-loop-config.yml");
+        assert!(!config_path.exists());
+
+        process_pending_merges_with_command(repo_root, OsStr::new("ralph"));
+
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn test_resolve_prompt_content_inline_precedence() {
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt = Some("inline prompt".to_string());
+        config.event_loop.prompt_file = "missing.md".to_string();
+
+        let resolved = resolve_prompt_content(&config.event_loop).expect("inline prompt");
+        assert_eq!(resolved, "inline prompt");
+    }
+
+    #[test]
+    fn test_resolve_prompt_content_from_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let prompt_path = temp_dir.path().join("PROMPT.md");
+        std::fs::write(&prompt_path, "file prompt").expect("write prompt");
+
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt = None;
+        config.event_loop.prompt_file = prompt_path.to_string_lossy().to_string();
+
+        let resolved = resolve_prompt_content(&config.event_loop).expect("file prompt");
+        assert_eq!(resolved, "file prompt");
+    }
+
+    #[test]
+    fn test_resolve_prompt_content_missing_file_errors() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let missing_path = temp_dir.path().join("missing.md");
+
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt = None;
+        config.event_loop.prompt_file = missing_path.to_string_lossy().to_string();
+
+        let err = resolve_prompt_content(&config.event_loop).expect_err("missing prompt");
+        assert!(
+            err.to_string().contains("Prompt file"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_prompt_content_no_prompt_errors() {
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt = None;
+        config.event_loop.prompt_file = String::new();
+
+        let err = resolve_prompt_content(&config.event_loop).expect_err("missing prompt");
+        assert!(
+            err.to_string().contains("No prompt specified"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_log_events_from_output_records_orphan_event() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("events.jsonl");
+        let mut logger = EventLogger::new(&log_path);
+
+        let mut registry = HatRegistry::new();
+        let mut hat = Hat::new("planner", "Planner");
+        hat.subscriptions.push(Topic::new("task.start"));
+        registry.register(hat);
+
+        let output = "<event topic=\"task.start\">start</event>\n\
+<event topic=\"unknown.event\">oops</event>";
+        let hat_id = HatId::new("tester");
+
+        log_events_from_output(&mut logger, 1, &hat_id, output, &registry);
+
+        let content = std::fs::read_to_string(&log_path).expect("read events");
+        let records: Vec<EventRecord> = content
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record"))
+            .collect();
+
+        let topics: std::collections::HashSet<String> =
+            records.iter().map(|record| record.topic.clone()).collect();
+        assert!(topics.contains("task.start"));
+        assert!(topics.contains("unknown.event"));
+        assert!(topics.contains("event.orphaned"));
+
+        let triggered = records
+            .iter()
+            .find(|record| record.topic == "task.start")
+            .and_then(|record| record.triggered.clone());
+        assert_eq!(triggered.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn test_log_terminate_event_writes_record() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("events.jsonl");
+        let mut logger = EventLogger::new(&log_path);
+
+        let event = Event::new("loop.terminate", "done");
+        log_terminate_event(&mut logger, 7, &event);
+
+        let content = std::fs::read_to_string(&log_path).expect("read events");
+        let records: Vec<EventRecord> = content
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record"))
+            .collect();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].topic, "loop.terminate");
+        assert_eq!(records[0].hat, "loop");
+        assert_eq!(records[0].iteration, 7);
+    }
+
+    #[test]
+    fn test_check_planning_session_responses_publishes_user_response() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let session_id = format!(
+            "session-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        );
+
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        let ctx = ralph_core::LoopContext::primary(temp_dir.path().to_path_buf());
+        let mut event_loop = EventLoop::with_context(config, ctx.clone());
+
+        let conversation_path = ctx.planning_conversation_path(&session_id);
+        std::fs::create_dir_all(conversation_path.parent().expect("parent"))
+            .expect("create conversation dir");
+
+        let prompt_entry = ConversationEntry {
+            entry_type: ConversationType::UserPrompt,
+            id: "prompt-1".to_string(),
+            text: "Which option?".to_string(),
+            ts: "2026-01-31T00:00:00Z".to_string(),
+        };
+        let response_entry = ConversationEntry {
+            entry_type: ConversationType::UserResponse,
+            id: "response-1".to_string(),
+            text: "Option A".to_string(),
+            ts: "2026-01-31T00:00:01Z".to_string(),
+        };
+        let conversation = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&prompt_entry).expect("serialize prompt"),
+            serde_json::to_string(&response_entry).expect("serialize response")
+        );
+        std::fs::write(&conversation_path, conversation).expect("write conversation");
+
+        let published = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let published_clone = std::sync::Arc::clone(&published);
+        event_loop
+            .bus()
+            .add_observer(move |event| published_clone.lock().unwrap().push(event.clone()));
+
+        check_planning_session_responses_for_session(&mut event_loop, &session_id)
+            .expect("check responses");
+        {
+            let events = published.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].topic.as_str(), "user.response");
+            assert!(events[0].payload.contains("response-1"));
+        }
+
+        check_planning_session_responses_for_session(&mut event_loop, &session_id)
+            .expect("dedup responses");
+        let events = published.lock().unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn test_check_planning_session_responses_for_session_no_context_is_ok() {
+        let config = RalphConfig::default();
+        let mut event_loop = EventLoop::new(config);
+
+        let published = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let published_clone = std::sync::Arc::clone(&published);
+        event_loop
+            .bus()
+            .add_observer(move |event| published_clone.lock().unwrap().push(event.clone()));
+
+        check_planning_session_responses_for_session(&mut event_loop, "session-no-context")
+            .expect("check responses");
+
+        assert!(published.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_check_planning_session_responses_skips_invalid_json() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let session_id = format!(
+            "session-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        );
+
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        let ctx = ralph_core::LoopContext::primary(temp_dir.path().to_path_buf());
+        let mut event_loop = EventLoop::with_context(config, ctx.clone());
+
+        let conversation_path = ctx.planning_conversation_path(&session_id);
+        std::fs::create_dir_all(conversation_path.parent().expect("parent"))
+            .expect("create conversation dir");
+
+        let prompt_entry = ConversationEntry {
+            entry_type: ConversationType::UserPrompt,
+            id: "prompt-1".to_string(),
+            text: "Choose one".to_string(),
+            ts: "2026-01-31T00:00:00Z".to_string(),
+        };
+        let conversation = format!(
+            "not-json\n{}\n",
+            serde_json::to_string(&prompt_entry).expect("serialize prompt")
+        );
+        std::fs::write(&conversation_path, conversation).expect("write conversation");
+
+        let published = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let published_clone = std::sync::Arc::clone(&published);
+        event_loop
+            .bus()
+            .add_observer(move |event| published_clone.lock().unwrap().push(event.clone()));
+
+        check_planning_session_responses_for_session(&mut event_loop, &session_id)
+            .expect("check responses");
+
+        assert!(published.lock().unwrap().is_empty());
     }
 }

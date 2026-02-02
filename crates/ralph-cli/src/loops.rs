@@ -984,6 +984,20 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
         return Ok((entry.loop_id.clone(), wt_path));
     }
 
+    // Try partial match in merge queue
+    if let Ok(entries) = merge_queue.list() {
+        for entry in entries {
+            if entry.loop_id.ends_with(id) || entry.loop_id.contains(id) {
+                let worktrees = list_ralph_worktrees(cwd).unwrap_or_default();
+                let wt_path = worktrees
+                    .iter()
+                    .find(|wt| wt.branch.ends_with(&entry.loop_id))
+                    .map(|wt| wt.path.to_string_lossy().to_string());
+                return Ok((entry.loop_id.clone(), wt_path));
+            }
+        }
+    }
+
     // Try worktrees directly
     let worktrees = list_ralph_worktrees(cwd).unwrap_or_default();
     for wt in worktrees {
@@ -999,6 +1013,10 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
+    use ralph_core::LoopLock;
+    use ralph_core::loop_registry::LoopEntry;
+    use std::process::Command;
 
     #[test]
     fn test_truncate() {
@@ -1020,5 +1038,457 @@ mod tests {
     fn test_shorten_path() {
         assert_eq!(shorten_path("/foo/bar/baz"), "baz");
         assert_eq!(shorten_path("./worktrees/ralph-abc"), "ralph-abc");
+    }
+
+    #[test]
+    fn test_format_age_boundaries() {
+        assert_eq!(format_age(chrono::Duration::seconds(59)), "59s");
+        assert_eq!(format_age(chrono::Duration::seconds(60)), "1m");
+        assert_eq!(format_age(chrono::Duration::seconds(3599)), "59m");
+        assert_eq!(format_age(chrono::Duration::seconds(3600)), "1h");
+        assert_eq!(format_age(chrono::Duration::seconds(86399)), "23h");
+        assert_eq!(format_age(chrono::Duration::seconds(86400)), "1d");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_process_alive_current_pid() {
+        let pid = std::process::id();
+        assert!(is_process_alive(pid));
+    }
+
+    #[test]
+    fn test_list_loops_includes_registry_entry_json() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-test-1234",
+            "test prompt",
+            Some("worktrees/loop-test-1234"),
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        list_loops(
+            ListArgs {
+                json: true,
+                all: true,
+            },
+            false,
+        )
+        .expect("list loops");
+    }
+
+    #[test]
+    fn test_resolve_loop_exact_match_registry() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-test-9999",
+            "resolve me",
+            Some("worktrees/loop-test-9999"),
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let (id, worktree) = resolve_loop(temp_dir.path(), "loop-test-9999").expect("resolve");
+        assert_eq!(id, "loop-test-9999");
+        assert_eq!(worktree, Some("worktrees/loop-test-9999".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_loop_partial_match_registry_suffix() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-test-8888",
+            "resolve suffix",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let (id, worktree) = resolve_loop(temp_dir.path(), "8888").expect("resolve");
+        assert_eq!(id, "loop-test-8888");
+        assert_eq!(worktree, None);
+    }
+
+    #[test]
+    fn test_resolve_loop_from_merge_queue_entry() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-queue-1234", "merge prompt")
+            .expect("enqueue");
+
+        let (id, worktree) = resolve_loop(temp_dir.path(), "loop-queue-1234").expect("resolve");
+        assert_eq!(id, "loop-queue-1234");
+        assert_eq!(worktree, None);
+    }
+
+    #[test]
+    fn test_resolve_loop_partial_match_merge_queue_suffix() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-queue-5678", "merge prompt")
+            .expect("enqueue");
+
+        let (id, worktree) = resolve_loop(temp_dir.path(), "5678").expect("resolve");
+        assert_eq!(id, "loop-queue-5678");
+        assert_eq!(worktree, None);
+    }
+
+    #[test]
+    fn test_resolve_loop_missing_returns_error() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let err = resolve_loop(temp_dir.path(), "does-not-exist").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_list_loops_handles_merge_queue_states() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-review-1234", "merge prompt")
+            .expect("enqueue");
+        queue
+            .mark_merging("loop-review-1234", 4242)
+            .expect("mark merging");
+        queue
+            .mark_needs_review("loop-review-1234", "conflicts")
+            .expect("needs review");
+
+        queue
+            .enqueue("loop-merged-5678", "merge prompt")
+            .expect("enqueue");
+        queue
+            .mark_merging("loop-merged-5678", 9001)
+            .expect("mark merging");
+        queue
+            .mark_merged("loop-merged-5678", "abc123")
+            .expect("merged");
+
+        list_loops(
+            ListArgs {
+                json: false,
+                all: false,
+            },
+            false,
+        )
+        .expect("list loops");
+    }
+
+    #[test]
+    fn test_get_merge_button_state_blocked_when_merging() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-merge-9999", "merge prompt")
+            .expect("enqueue");
+        queue
+            .mark_merging("loop-merge-9999", 4242)
+            .expect("mark merging");
+
+        get_merge_button_state(MergeButtonStateArgs {
+            loop_id: "loop-merge-9999".to_string(),
+        })
+        .expect("merge button state");
+    }
+
+    #[test]
+    fn test_show_logs_falls_back_to_history() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        std::fs::create_dir_all(".ralph").expect("create .ralph");
+        std::fs::write(
+            ".ralph/history.jsonl",
+            r#"{"ts":"2026-01-01T00:00:00Z","type":"event","data":{"ok":true}}"#,
+        )
+        .expect("write history");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-log-1234",
+            "test prompt",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        show_logs(LogsArgs {
+            loop_id: "loop-log-1234".to_string(),
+            follow: false,
+        })
+        .expect("show logs");
+    }
+
+    #[test]
+    fn test_show_history_formats_table() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        std::fs::create_dir_all(".ralph").expect("create .ralph");
+        std::fs::write(
+            ".ralph/history.jsonl",
+            r#"{"ts":"2026-01-01T00:00:00Z","type":"event","data":{"ok":true}}"#,
+        )
+        .expect("write history");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-hist-5678",
+            "test prompt",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        show_history(HistoryArgs {
+            loop_id: "loop-hist-5678".to_string(),
+            json: false,
+        })
+        .expect("show history");
+    }
+
+    #[test]
+    fn test_retry_merge_rejects_non_needs_review_state() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-queue-1", "prompt").expect("enqueue");
+
+        let err = retry_merge(RetryArgs {
+            loop_id: "loop-queue-1".to_string(),
+        })
+        .expect_err("retry should fail for non-needs-review");
+
+        assert!(err.to_string().contains("can only retry"));
+    }
+
+    #[test]
+    fn test_discard_loop_marks_discarded_and_deregisters() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-discard-1",
+            "discard me",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-discard-1", "prompt").expect("enqueue");
+
+        discard_loop(DiscardArgs {
+            loop_id: "loop-discard-1".to_string(),
+            yes: true,
+        })
+        .expect("discard loop");
+
+        let entry = queue
+            .get_entry("loop-discard-1")
+            .expect("get entry")
+            .expect("entry exists");
+        assert_eq!(entry.state, MergeState::Discarded);
+
+        assert!(registry.get("loop-discard-1").unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_stop_loop_writes_stop_requested_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let _lock = LoopLock::try_acquire(temp_dir.path(), "test prompt").expect("lock");
+
+        stop_loop(StopArgs {
+            loop_id: None,
+            force: false,
+        })
+        .expect("stop loop");
+
+        assert!(temp_dir.path().join(".ralph/stop-requested").exists());
+    }
+
+    #[test]
+    fn test_attach_to_loop_requires_worktree() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-inplace-1",
+            "no worktree",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let err = attach_to_loop(AttachArgs {
+            loop_id: "loop-inplace-1".to_string(),
+        })
+        .expect_err("attach should fail for in-place loop");
+
+        assert!(err.to_string().contains("not a worktree-based loop"));
+    }
+
+    #[test]
+    fn test_show_diff_missing_branch_errors() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .status()
+            .expect("git init");
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .expect("git config email");
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .status()
+            .expect("git config name");
+        std::fs::write("README.md", "# Test").expect("write README");
+        Command::new("git")
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        Command::new("git")
+            .args(["commit", "-m", "Initial commit", "--quiet"])
+            .status()
+            .expect("git commit");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            "loop-missing-branch",
+            "diff me",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let err = show_diff(DiffArgs {
+            loop_id: "loop-missing-branch".to_string(),
+            stat: false,
+        })
+        .expect_err("missing branch should error");
+
+        assert!(
+            err.to_string()
+                .contains("Branch 'ralph/loop-missing-branch' not found")
+        );
+    }
+
+    #[test]
+    fn test_execute_defaults_to_list_when_no_subcommand() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        execute(LoopsArgs { command: None }, false).expect("execute default");
+    }
+
+    #[test]
+    fn test_get_merge_button_state_active_when_idle() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        get_merge_button_state(MergeButtonStateArgs {
+            loop_id: "loop-idle-1".to_string(),
+        })
+        .expect("merge button state");
+    }
+
+    #[test]
+    fn test_merge_loop_rejects_already_merged() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-merged-1", "prompt").expect("enqueue");
+        queue
+            .mark_merging("loop-merged-1", 4242)
+            .expect("mark merging");
+        queue
+            .mark_merged("loop-merged-1", "abc123")
+            .expect("mark merged");
+
+        let err = merge_loop(MergeArgs {
+            loop_id: "loop-merged-1".to_string(),
+            force: false,
+        })
+        .expect_err("merge should fail for merged loop");
+
+        assert!(err.to_string().contains("already merged"));
+    }
+
+    #[test]
+    fn test_merge_loop_rejects_discarded() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-discarded-1", "prompt")
+            .expect("enqueue");
+        queue
+            .discard("loop-discarded-1", Some("no longer needed"))
+            .expect("discard");
+
+        let err = merge_loop(MergeArgs {
+            loop_id: "loop-discarded-1".to_string(),
+            force: false,
+        })
+        .expect_err("merge should fail for discarded loop");
+
+        assert!(err.to_string().contains("discarded"));
+    }
+
+    #[test]
+    fn test_merge_loop_rejects_merging_without_force() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-merging-1", "prompt").expect("enqueue");
+        queue
+            .mark_merging("loop-merging-1", 4242)
+            .expect("mark merging");
+
+        let err = merge_loop(MergeArgs {
+            loop_id: "loop-merging-1".to_string(),
+            force: false,
+        })
+        .expect_err("merge should fail for merging loop without force");
+
+        assert!(err.to_string().contains("currently merging"));
     }
 }

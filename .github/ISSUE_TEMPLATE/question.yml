@@ -1,0 +1,50 @@
+name: "Question"
+description: "Ask a question about using Ralph"
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For general questions about usage, presets, or backend setup. If you're unsure it's a bug, start here.
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area"
+      description: "What part of Ralph is your question about?"
+      options:
+        - "Getting started"
+        - "Installation"
+        - "CLI usage"
+        - "Hat presets / workflows"
+        - "Backend configuration"
+        - "Quality gates / scoring"
+        - "RObot / human-in-the-loop"
+        - "Other"
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: "Question"
+      description: "What would you like help with?"
+      placeholder: "How do I ...?"
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: "What have you tried?"
+      description: "Links to docs, commands run, or configuration you attempted."
+      placeholder: "I tried `ralph run ...` and read ..."
+    validations:
+      required: false
+  - type: input
+    id: ralph_version
+    attributes:
+      label: "Ralph version"
+      description: "Run `ralph --version` if relevant."
+      placeholder: "ralph 0.9.1"
+    validations:
+      required: false

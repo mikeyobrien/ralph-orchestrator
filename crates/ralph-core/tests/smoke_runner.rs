@@ -1,3 +1,4 @@
+#![cfg(feature = "recording")]
 //! Integration tests for the smoke test replay runner.
 
 use ralph_core::testing::{SmokeRunner, SmokeTestConfig, TerminationReason, list_fixtures};
@@ -304,6 +305,8 @@ Working on implementation...
 tests: pass
 lint: pass
 typecheck: pass
+audit: pass
+coverage: pass
 </event>
 Finishing up"#;
 

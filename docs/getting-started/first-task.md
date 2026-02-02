@@ -30,20 +30,19 @@ ralph init --backend claude
 Create `PROMPT.md`:
 
 ```markdown
-# Task: Build a Simple Calculator
+# Task: Build a Simple Calculator (Rust)
 
-Create a Python calculator module with:
+Create a Rust calculator module with:
 
 ## Requirements
 - Functions: add, subtract, multiply, divide
 - Handle division by zero gracefully
-- Include type hints
-- Write pytest unit tests
+- Include unit tests
 
 ## Acceptance Criteria
 - All functions work correctly
-- Tests pass with 100% coverage
-- Code follows PEP 8
+- Tests pass with `cargo test`
+- Code is formatted with `cargo fmt`
 ```
 
 ### 3. Run Ralph
@@ -65,12 +64,12 @@ When Ralph completes, check your directory:
 
 ```bash
 ls -la
-# calculator.py
-# test_calculator.py
+# src/lib.rs
+# tests/calculator.rs
 # etc.
 
 # Run the tests
-pytest
+cargo test
 ```
 
 ## Hat-Based Mode Example
@@ -85,9 +84,9 @@ ralph init --preset tdd-red-green
 
 This creates a configuration with specialized hats:
 
-- **Tester** — Writes failing tests first
-- **Implementer** — Makes tests pass
-- **Refactorer** — Cleans up the code
+- **Tester** - Writes failing tests first
+- **Implementer** - Makes tests pass
+- **Refactorer** - Cleans up the code
 
 ### 2. Create Your Prompt
 
@@ -116,7 +115,7 @@ ralph run
 The TUI shows which hat is active:
 
 ```
-[iter 3] 00:02:15 🧪 Tester
+[iter 3] 00:02:15 Tester
 ```
 
 ### 4. View Event History
@@ -128,10 +127,10 @@ ralph events
 Shows the event flow between hats:
 
 ```
-task.start → Tester
-test.written → Implementer
-test.passed → Refactorer
-refactor.done → Tester
+task.start -> Tester
+test.written -> Implementer
+test.passed -> Refactorer
+refactor.done -> Tester
 ...
 ```
 
@@ -144,7 +143,7 @@ refactor.done → Tester
 Make a web app.
 
 # Good
-Create a Flask web app with:
+Create an Axum web app with:
 - GET /health endpoint returning {"status": "ok"}
 - POST /users accepting JSON {name, email}
 - SQLite database for persistence
@@ -163,8 +162,8 @@ Create a Flask web app with:
 
 ```markdown
 ## Constraints
-- Use Flask (not Django)
-- Python 3.11+
+- Use Axum (not Actix)
+- Rust 1.75+
 - No external API calls
 ```
 
@@ -174,10 +173,10 @@ Create a Flask web app with:
 
 The TUI shows real-time progress. Key information:
 
-- **Iteration count** — How many cycles Ralph has run
-- **Elapsed time** — Total runtime
-- **Active hat** — Which persona is working (hat-based mode)
-- **Agent output** — What the AI is doing
+- **Iteration count** - How many cycles Ralph has run
+- **Elapsed time** - Total runtime
+- **Active hat** - Which persona is working (hat-based mode)
+- **Agent output** - What the AI is doing
 
 ### Stop Early
 
@@ -193,9 +192,9 @@ ralph run --continue
 
 After completion, check `.agent/` for:
 
-- `scratchpad.md` — Shared memory (legacy mode)
-- `memories.md` — Persistent learning
-- `tasks.jsonl` — Task tracking
+- `scratchpad.md` - Shared memory (legacy mode)
+- `memories.md` - Persistent learning
+- `tasks.jsonl` - Task tracking
 
 ## Common Issues
 

@@ -415,6 +415,30 @@ fn test_completion_promise_with_pending_tasks_in_task_store() {
 }
 
 #[test]
+fn test_completion_promise_requires_last_event() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // Completion should be ignored if it is not the last event in the JSONL batch.
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
+    write_event_to_jsonl(&events_path, "task.resume", "Continue");
+    let _ = event_loop.process_events_from_jsonl();
+    let reason = event_loop.check_completion_event();
+    assert_eq!(
+        reason, None,
+        "Completion should be ignored when it is not the last event"
+    );
+}
+
+#[test]
 fn test_builder_cannot_terminate_loop() {
     // Per spec: completion requires an emitted event; output-only tokens are ignored
     let config = RalphConfig::default();
@@ -1016,6 +1040,7 @@ fn test_default_publishes_injects_when_no_events() {
             triggers: vec!["task.start".to_string()],
             publishes: vec!["task.done".to_string()],
             instructions: "Test hat".to_string(),
+            extra_instructions: vec![],
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
@@ -1064,6 +1089,7 @@ fn test_default_publishes_not_injected_when_events_written() {
             triggers: vec!["task.start".to_string()],
             publishes: vec!["task.done".to_string()],
             instructions: "Test hat".to_string(),
+            extra_instructions: vec![],
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
@@ -1114,6 +1140,7 @@ fn test_default_publishes_not_injected_when_not_configured() {
             triggers: vec!["task.start".to_string()],
             publishes: vec!["task.done".to_string()],
             instructions: "Test hat".to_string(),
+            extra_instructions: vec![],
             backend: None,
             default_publishes: None, // No default configured
             max_activations: None,
@@ -2101,6 +2128,170 @@ fn test_scratchpad_injection_tail_truncation() {
 }
 
 #[test]
+fn test_build_done_backpressure_accepts_mutants_warning() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: pass\nmutants: warn (65%)";
+    write_event_to_jsonl(&events_path, "build.done", payload);
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"build.done".to_string()),
+        "build.done with mutants warning should pass through. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"build.blocked".to_string()),
+        "build.done should not be blocked by mutation warnings"
+    );
+}
+
+#[test]
+fn test_build_done_backpressure_rejects_high_complexity() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 12\nduplication: pass";
+    write_event_to_jsonl(&events_path, "build.done", payload);
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"build.blocked".to_string()),
+        "build.done with high complexity should be blocked. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"build.done".to_string()),
+        "build.done should not pass through when complexity is too high"
+    );
+}
+
+#[test]
+fn test_build_done_backpressure_rejects_duplication() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: fail";
+    write_event_to_jsonl(&events_path, "build.done", payload);
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"build.blocked".to_string()),
+        "build.done with duplication should be blocked. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"build.done".to_string()),
+        "build.done should not pass through when duplication fails"
+    );
+}
+
+#[test]
+fn test_build_done_backpressure_rejects_performance_regression() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    let payload = "tests: pass\nlint: pass\ntypecheck: pass\naudit: pass\ncoverage: pass\ncomplexity: 7\nduplication: pass\nperformance: regression";
+    write_event_to_jsonl(&events_path, "build.done", payload);
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"build.blocked".to_string()),
+        "build.done with performance regression should be blocked. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"build.done".to_string()),
+        "build.done should not pass through when performance regresses"
+    );
+}
+
+#[test]
 fn test_review_done_backpressure_accepts_verified() {
     use tempfile::tempdir;
 
@@ -2218,6 +2409,128 @@ fn test_review_done_backpressure_rejects_failed_checks() {
     );
 }
 
+#[test]
+fn test_verify_passed_backpressure_accepts_quality_report() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    let payload = "quality.tests: pass\nquality.coverage: 82%\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 72%\nquality.complexity: 7";
+    write_event_to_jsonl(&events_path, "verify.passed", payload);
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"verify.passed".to_string()),
+        "verify.passed with quality report should pass through. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"verify.failed".to_string()),
+        "verify.passed should not be blocked by quality report"
+    );
+}
+
+#[test]
+fn test_verify_passed_backpressure_rejects_missing_quality_report() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    write_event_to_jsonl(&events_path, "verify.passed", "All good");
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"verify.failed".to_string()),
+        "verify.passed without quality report should be blocked. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"verify.passed".to_string()),
+        "verify.passed should not pass through without quality report"
+    );
+}
+
+#[test]
+fn test_verify_passed_backpressure_rejects_failed_thresholds() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    let payload = "quality.tests: pass\nquality.coverage: 60%\nquality.lint: pass\nquality.audit: pass\nquality.mutation: 50%\nquality.complexity: 12";
+    write_event_to_jsonl(&events_path, "verify.passed", payload);
+    let _ = event_loop.process_events_from_jsonl();
+
+    let empty = Vec::new();
+    let pending_topics: Vec<String> = event_loop
+        .bus
+        .hat_ids()
+        .flat_map(|id| {
+            event_loop
+                .bus
+                .peek_pending(id)
+                .unwrap_or(&empty)
+                .iter()
+                .map(|e| e.topic.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        pending_topics.contains(&"verify.failed".to_string()),
+        "verify.passed with failing thresholds should be blocked. Got: {:?}",
+        pending_topics
+    );
+    assert!(
+        !pending_topics.contains(&"verify.passed".to_string()),
+        "verify.passed should not pass through with failing thresholds"
+    );
+}
+
 // === RObot Interaction Skill Injection Tests ===
 
 #[test]
@@ -2239,8 +2552,8 @@ RObot:
         "Prompt should contain <robot-skill> when RObot is enabled"
     );
     assert!(
-        prompt.contains("interact.human"),
-        "Robot skill should mention interact.human"
+        prompt.contains("human.interact"),
+        "Robot skill should mention human.interact"
     );
     assert!(
         prompt.contains("</robot-skill>"),
@@ -2260,4 +2573,596 @@ fn test_inject_robot_skill_skipped_when_disabled() {
         !prompt.contains("<robot-skill>"),
         "Prompt should NOT contain <robot-skill> when RObot is disabled"
     );
+}
+
+#[test]
+fn test_persistent_mode_suppresses_loop_complete() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    let agent_dir = temp_dir.path().join(".agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    let scratchpad_path = agent_dir.join("scratchpad.md");
+    fs::write(&scratchpad_path, "## Tasks\n- [x] All done\n").unwrap();
+
+    let mut config = RalphConfig::default();
+    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.event_loop.persistent = true;
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let events_path = temp_dir.path().join("events.jsonl");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // LOOP_COMPLETE should NOT terminate in persistent mode
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
+    let _ = event_loop.process_events_from_jsonl();
+    let reason = event_loop.check_completion_event();
+    assert_eq!(
+        reason, None,
+        "Persistent mode should suppress LOOP_COMPLETE termination"
+    );
+
+    // Verify a task.resume event was injected so the loop continues
+    let ralph_id = HatId::new("ralph");
+    let pending = event_loop.bus.peek_pending(&ralph_id);
+    assert!(
+        pending.is_some_and(|events| events
+            .iter()
+            .any(|e| e.topic.as_str() == "task.resume" && e.payload.contains("Persistent mode"))),
+        "A task.resume event should be injected after suppressed LOOP_COMPLETE"
+    );
+}
+
+#[test]
+fn test_non_persistent_mode_terminates_on_loop_complete() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    let agent_dir = temp_dir.path().join(".agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    let scratchpad_path = agent_dir.join("scratchpad.md");
+    fs::write(&scratchpad_path, "## Tasks\n- [x] All done\n").unwrap();
+
+    let mut config = RalphConfig::default();
+    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    // persistent defaults to false, but be explicit
+    config.event_loop.persistent = false;
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let events_path = temp_dir.path().join("events.jsonl");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // LOOP_COMPLETE should terminate normally when not persistent
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
+    let _ = event_loop.process_events_from_jsonl();
+    let reason = event_loop.check_completion_event();
+    assert_eq!(
+        reason,
+        Some(TerminationReason::CompletionPromise),
+        "Non-persistent mode should terminate on LOOP_COMPLETE"
+    );
+}
+
+#[test]
+fn test_persistent_mode_still_respects_hard_limits() {
+    let yaml = r"
+event_loop:
+  max_iterations: 2
+  persistent: true
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.state.iteration = 2;
+
+    // Hard limits should still terminate even in persistent mode
+    assert_eq!(
+        event_loop.check_termination(),
+        Some(TerminationReason::MaxIterations),
+        "Persistent mode should still respect max_iterations"
+    );
+}
+
+#[test]
+fn test_termination_reason_mappings() {
+    let cases = vec![
+        (TerminationReason::CompletionPromise, "completed", 0, true),
+        (TerminationReason::MaxIterations, "max_iterations", 2, false),
+        (TerminationReason::MaxRuntime, "max_runtime", 2, false),
+        (TerminationReason::MaxCost, "max_cost", 2, false),
+        (
+            TerminationReason::ConsecutiveFailures,
+            "consecutive_failures",
+            1,
+            false,
+        ),
+        (TerminationReason::LoopThrashing, "loop_thrashing", 1, false),
+        (
+            TerminationReason::ValidationFailure,
+            "validation_failure",
+            1,
+            false,
+        ),
+        (TerminationReason::Stopped, "stopped", 1, false),
+        (TerminationReason::Interrupted, "interrupted", 130, false),
+        (
+            TerminationReason::RestartRequested,
+            "restart_requested",
+            3,
+            false,
+        ),
+    ];
+
+    for (reason, expected_str, expected_code, is_success) in cases {
+        assert_eq!(reason.as_str(), expected_str);
+        assert_eq!(reason.exit_code(), expected_code);
+        assert_eq!(reason.is_success(), is_success);
+    }
+}
+
+#[test]
+fn test_termination_status_texts() {
+    let cases = vec![
+        (
+            TerminationReason::CompletionPromise,
+            "All tasks completed successfully.",
+        ),
+        (
+            TerminationReason::MaxIterations,
+            "Stopped at iteration limit.",
+        ),
+        (TerminationReason::MaxRuntime, "Stopped at runtime limit."),
+        (TerminationReason::MaxCost, "Stopped at cost limit."),
+        (
+            TerminationReason::ConsecutiveFailures,
+            "Too many consecutive failures.",
+        ),
+        (
+            TerminationReason::LoopThrashing,
+            "Loop thrashing detected - same hat repeatedly blocked.",
+        ),
+        (
+            TerminationReason::ValidationFailure,
+            "Too many consecutive malformed JSONL events.",
+        ),
+        (TerminationReason::Stopped, "Manually stopped."),
+        (TerminationReason::Interrupted, "Interrupted by signal."),
+        (
+            TerminationReason::RestartRequested,
+            "Restarting by human request.",
+        ),
+    ];
+
+    for (reason, expected) in cases {
+        assert_eq!(termination_status_text(&reason), expected);
+    }
+}
+
+#[test]
+fn test_format_duration_variants() {
+    use std::time::Duration;
+
+    assert_eq!(format_duration(Duration::from_secs(45)), "45s");
+    assert_eq!(format_duration(Duration::from_secs(61)), "1m 1s");
+    assert_eq!(format_duration(Duration::from_secs(3600)), "1h 0m 0s");
+    assert_eq!(format_duration(Duration::from_secs(3661)), "1h 1m 1s");
+}
+
+#[test]
+fn test_extract_task_id_first_line_and_default() {
+    assert_eq!(
+        EventLoop::extract_task_id(" task-123 \nMore details"),
+        "task-123"
+    );
+    assert_eq!(EventLoop::extract_task_id(""), "unknown");
+}
+
+#[test]
+fn test_mutation_warning_reason_variants() {
+    let fail = MutationEvidence {
+        status: MutationStatus::Fail,
+        score_percent: Some(12.5),
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&fail, Some(80.0)).unwrap(),
+        "mutation testing failed"
+    );
+
+    let warn = MutationEvidence {
+        status: MutationStatus::Warn,
+        score_percent: Some(65.5),
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&warn, Some(80.0)).unwrap(),
+        "mutation score below threshold (65.50%)"
+    );
+
+    let unknown = MutationEvidence {
+        status: MutationStatus::Unknown,
+        score_percent: None,
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&unknown, Some(80.0)).unwrap(),
+        "mutation testing status unknown"
+    );
+
+    let pass_low = MutationEvidence {
+        status: MutationStatus::Pass,
+        score_percent: Some(70.0),
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&pass_low, Some(80.0)).unwrap(),
+        "mutation score 70.00% below threshold 80.00%"
+    );
+
+    let pass_missing = MutationEvidence {
+        status: MutationStatus::Pass,
+        score_percent: None,
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&pass_missing, Some(80.0)).unwrap(),
+        "mutation score missing (threshold 80.00%)"
+    );
+
+    let pass_high = MutationEvidence {
+        status: MutationStatus::Pass,
+        score_percent: Some(95.0),
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&pass_high, Some(80.0)),
+        None
+    );
+
+    let pass_no_threshold = MutationEvidence {
+        status: MutationStatus::Pass,
+        score_percent: Some(10.0),
+    };
+    assert_eq!(
+        EventLoop::mutation_warning_reason(&pass_no_threshold, None),
+        None
+    );
+}
+
+#[test]
+fn test_extract_prompt_id_prefers_xml_id() {
+    let payload = r#"<event topic="user.prompt" id="q42">Question?</event>"#;
+    assert_eq!(EventLoop::extract_prompt_id(payload), "q42");
+}
+
+#[test]
+fn test_extract_prompt_id_fallback_prefix() {
+    let id = EventLoop::extract_prompt_id("Plain question");
+    assert!(id.starts_with('q'));
+    assert!(id.len() > 1);
+}
+
+#[test]
+fn test_check_for_user_prompt_extracts_id_and_text() {
+    let event_loop = EventLoop::new(RalphConfig::default());
+    let payload = r#"<event topic="user.prompt" id="q7">Need input</event>"#;
+    let events = vec![
+        Event::new("build.done", "ok"),
+        Event::new("user.prompt", payload),
+    ];
+
+    let prompt = event_loop.check_for_user_prompt(&events).expect("prompt");
+    assert_eq!(prompt.id, "q7");
+    assert_eq!(prompt.text, payload);
+}
+
+#[test]
+fn test_task_counts_and_open_task_list() {
+    use crate::loop_context::LoopContext;
+    use crate::task::{Task, TaskStatus};
+    use crate::task_store::TaskStore;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_context = LoopContext::primary(temp_dir.path().to_path_buf());
+    let event_loop = EventLoop::with_context(RalphConfig::default(), loop_context);
+
+    let tasks_path = temp_dir.path().join(".ralph/agent/tasks.jsonl");
+    let mut store = TaskStore::load(&tasks_path).unwrap();
+    let mut closed = Task::new("Closed task".to_string(), 1);
+    closed.status = TaskStatus::Closed;
+    let open = Task::new("Open task".to_string(), 1);
+    let open_id = open.id.clone();
+    store.add(closed);
+    store.add(open);
+    store.save().unwrap();
+
+    let (open_count, closed_count) = event_loop.count_tasks();
+    assert_eq!(open_count, 1);
+    assert_eq!(closed_count, 1);
+
+    let open_list = event_loop.get_open_task_list();
+    assert_eq!(open_list.len(), 1);
+    assert!(open_list[0].contains(&open_id));
+    assert!(open_list[0].contains("Open task"));
+}
+
+#[test]
+fn test_verify_tasks_complete_missing_and_pending() {
+    use crate::loop_context::LoopContext;
+    use crate::task::Task;
+    use crate::task_store::TaskStore;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_context = LoopContext::primary(temp_dir.path().to_path_buf());
+    let event_loop = EventLoop::with_context(RalphConfig::default(), loop_context);
+
+    // Missing tasks file should be treated as complete.
+    assert!(event_loop.verify_tasks_complete().unwrap());
+
+    let tasks_path = temp_dir.path().join(".ralph/agent/tasks.jsonl");
+    let mut store = TaskStore::load(&tasks_path).unwrap();
+    store.add(Task::new("Open task".to_string(), 1));
+    store.save().unwrap();
+
+    assert!(!event_loop.verify_tasks_complete().unwrap());
+}
+
+#[test]
+fn test_verify_scratchpad_complete_variants() {
+    use crate::loop_context::LoopContext;
+    use std::fs;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_context = LoopContext::primary(temp_dir.path().to_path_buf());
+    let event_loop = EventLoop::with_context(RalphConfig::default(), loop_context);
+
+    assert!(event_loop.verify_scratchpad_complete().is_err());
+
+    let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+    fs::create_dir_all(scratchpad_path.parent().unwrap()).unwrap();
+    fs::write(&scratchpad_path, "## Tasks\n- [ ] Pending\n").unwrap();
+    assert!(!event_loop.verify_scratchpad_complete().unwrap());
+
+    fs::write(&scratchpad_path, "## Tasks\n- [x] Done\n- [~] Cancelled\n").unwrap();
+    assert!(event_loop.verify_scratchpad_complete().unwrap());
+}
+
+#[test]
+fn test_termination_reason_exit_codes() {
+    let cases = [
+        (TerminationReason::CompletionPromise, 0),
+        (TerminationReason::ConsecutiveFailures, 1),
+        (TerminationReason::LoopThrashing, 1),
+        (TerminationReason::ValidationFailure, 1),
+        (TerminationReason::Stopped, 1),
+        (TerminationReason::MaxIterations, 2),
+        (TerminationReason::MaxRuntime, 2),
+        (TerminationReason::MaxCost, 2),
+        (TerminationReason::Interrupted, 130),
+        (TerminationReason::RestartRequested, 3),
+    ];
+
+    for (reason, code) in cases {
+        assert_eq!(reason.exit_code(), code, "{reason:?} exit code mismatch");
+    }
+}
+
+#[test]
+fn test_termination_reason_strings_and_flags() {
+    let cases = [
+        (TerminationReason::CompletionPromise, "completed", true),
+        (TerminationReason::MaxIterations, "max_iterations", false),
+        (TerminationReason::MaxRuntime, "max_runtime", false),
+        (TerminationReason::MaxCost, "max_cost", false),
+        (
+            TerminationReason::ConsecutiveFailures,
+            "consecutive_failures",
+            false,
+        ),
+        (TerminationReason::LoopThrashing, "loop_thrashing", false),
+        (
+            TerminationReason::ValidationFailure,
+            "validation_failure",
+            false,
+        ),
+        (TerminationReason::Stopped, "stopped", false),
+        (TerminationReason::Interrupted, "interrupted", false),
+        (
+            TerminationReason::RestartRequested,
+            "restart_requested",
+            false,
+        ),
+    ];
+
+    for (reason, expected_str, is_success) in cases {
+        assert_eq!(reason.as_str(), expected_str, "{reason:?} as_str mismatch");
+        assert_eq!(
+            reason.is_success(),
+            is_success,
+            "{reason:?} success mismatch"
+        );
+    }
+}
+
+#[test]
+fn test_has_pending_human_events_detects_guidance() {
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop
+        .bus
+        .publish(Event::new("human.guidance", "Please focus on tests"));
+
+    assert!(event_loop.has_pending_human_events());
+}
+
+#[test]
+fn test_has_pending_human_events_ignores_non_human() {
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop.bus.publish(Event::new("task.start", "Do work"));
+
+    assert!(!event_loop.has_pending_human_events());
+}
+
+#[test]
+fn test_get_hat_publishes_returns_configured_topics() {
+    let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start"]
+    publishes: ["task.plan", "build.done"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let event_loop = EventLoop::new(config);
+
+    let publishes = event_loop.get_hat_publishes(&HatId::new("planner"));
+    assert_eq!(
+        publishes,
+        vec!["task.plan".to_string(), "build.done".to_string()]
+    );
+
+    let missing = event_loop.get_hat_publishes(&HatId::new("missing"));
+    assert!(missing.is_empty());
+}
+
+#[test]
+fn test_inject_fallback_event_targets_last_hat() {
+    let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.resume"]
+    publishes: ["task.plan"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    let planner_id = HatId::new("planner");
+
+    event_loop.state.last_hat = Some(planner_id.clone());
+    assert!(event_loop.inject_fallback_event());
+
+    let pending = event_loop
+        .bus
+        .peek_pending(&planner_id)
+        .expect("planner pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].topic.as_str(), "task.resume");
+    assert_eq!(
+        pending[0].target.as_ref().map(|id| id.as_str()),
+        Some("planner")
+    );
+
+    let ralph_id = HatId::new("ralph");
+    let ralph_pending = event_loop.bus.peek_pending(&ralph_id);
+    assert!(ralph_pending.is_none_or(|events| events.is_empty()));
+}
+
+#[test]
+fn test_inject_fallback_event_defaults_to_ralph() {
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop.state.last_hat = None;
+
+    assert!(event_loop.inject_fallback_event());
+
+    let ralph_id = HatId::new("ralph");
+    let pending = event_loop
+        .bus
+        .peek_pending(&ralph_id)
+        .expect("ralph pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].topic.as_str(), "task.resume");
+    assert!(pending[0].target.is_none());
+}
+
+#[test]
+fn test_paths_use_loop_context_when_present() {
+    use crate::loop_context::LoopContext;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_context = LoopContext::primary(temp_dir.path().to_path_buf());
+    let event_loop = EventLoop::with_context(RalphConfig::default(), loop_context);
+
+    assert_eq!(
+        event_loop.tasks_path(),
+        temp_dir.path().join(".ralph/agent/tasks.jsonl")
+    );
+    assert_eq!(
+        event_loop.scratchpad_path(),
+        temp_dir.path().join(".ralph/agent/scratchpad.md")
+    );
+}
+
+#[test]
+fn test_paths_fallback_to_config_when_no_context() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let scratchpad_path = temp_dir.path().join("scratchpad.md");
+    let mut config = RalphConfig::default();
+    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+
+    let event_loop = EventLoop::new(config);
+
+    assert_eq!(
+        event_loop.tasks_path(),
+        std::path::PathBuf::from(".ralph/agent/tasks.jsonl")
+    );
+    assert_eq!(event_loop.scratchpad_path(), scratchpad_path);
+}
+
+#[test]
+fn test_record_hat_activations_increments_counts() {
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    let planner = HatId::new("planner");
+    let reviewer = HatId::new("reviewer");
+
+    event_loop.record_hat_activations(&[planner.clone(), reviewer.clone()]);
+    event_loop.record_hat_activations(std::slice::from_ref(&planner));
+
+    assert_eq!(
+        event_loop.state.hat_activation_counts.get(&planner),
+        Some(&2)
+    );
+    assert_eq!(
+        event_loop.state.hat_activation_counts.get(&reviewer),
+        Some(&1)
+    );
+}
+
+#[test]
+fn test_check_hat_exhaustion_emits_once_at_limit() {
+    let yaml = r#"
+hats:
+  reviewer:
+    name: "Reviewer"
+    triggers: ["review.done"]
+    publishes: ["review.blocked"]
+    max_activations: 2
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    let hat_id = HatId::new("reviewer");
+    let dropped = vec![
+        Event::new("review.done", "ok"),
+        Event::new("build.done", "ok"),
+    ];
+
+    event_loop
+        .state
+        .hat_activation_counts
+        .insert(hat_id.clone(), 1);
+    let (drop, event) = event_loop.check_hat_exhaustion(&hat_id, &dropped);
+    assert!(!drop);
+    assert!(event.is_none());
+
+    event_loop
+        .state
+        .hat_activation_counts
+        .insert(hat_id.clone(), 2);
+    let (drop, event) = event_loop.check_hat_exhaustion(&hat_id, &dropped);
+    assert!(drop);
+    let exhausted = event.expect("exhausted event");
+    assert_eq!(exhausted.topic.as_str(), "reviewer.exhausted");
+    assert!(exhausted.payload.contains("max_activations: 2"));
+    assert!(exhausted.payload.contains("activations: 2"));
+
+    let (drop_again, event_again) = event_loop.check_hat_exhaustion(&hat_id, &dropped);
+    assert!(drop_again);
+    assert!(event_again.is_none());
 }

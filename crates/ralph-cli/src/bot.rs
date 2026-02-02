@@ -932,12 +932,34 @@ fn is_robot_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn normalize_token(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn resolve_token_from(
+    env_token: Option<String>,
+    keychain_token: Option<String>,
+    config_token: Option<String>,
+) -> Option<String> {
+    normalize_token(env_token)
+        .or_else(|| normalize_token(keychain_token))
+        .or_else(|| normalize_token(config_token))
+}
+
 /// Resolve token from all sources (env > keychain > config).
 pub(crate) fn resolve_token() -> Option<String> {
-    std::env::var("RALPH_TELEGRAM_BOT_TOKEN")
-        .ok()
-        .or_else(load_bot_token)
-        .or_else(load_config_bot_token)
+    resolve_token_from(
+        std::env::var("RALPH_TELEGRAM_BOT_TOKEN").ok(),
+        load_bot_token(),
+        load_config_bot_token(),
+    )
 }
 
 /// Resolve chat_id from telegram state.
@@ -1012,22 +1034,90 @@ fn print_status(use_colors: bool, msg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_normalize_token_trims_and_discards_empty() {
+        assert_eq!(normalize_token(None), None);
+        assert_eq!(
+            normalize_token(Some("  token-123  ".to_string())),
+            Some("token-123".to_string())
+        );
+        assert_eq!(normalize_token(Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn test_resolve_token_from_prefers_env_then_keychain_then_config() {
+        let resolved = resolve_token_from(
+            Some("  env-token  ".to_string()),
+            Some("key-token".to_string()),
+            Some("config-token".to_string()),
+        );
+        assert_eq!(resolved.as_deref(), Some("env-token"));
+
+        let resolved = resolve_token_from(
+            Some("   ".to_string()),
+            Some("  key-token  ".to_string()),
+            Some("config-token".to_string()),
+        );
+        assert_eq!(resolved.as_deref(), Some("key-token"));
+
+        let resolved = resolve_token_from(None, None, Some("  cfg  ".to_string()));
+        assert_eq!(resolved.as_deref(), Some("cfg"));
+    }
+
+    #[tokio::test]
+    async fn test_run_daemon_rejects_builtin_config() {
+        let sources = vec![ConfigSource::Builtin("tdd".to_string())];
+        let err = run_daemon(DaemonArgs {}, &sources, false)
+            .await
+            .expect_err("expected builtin config error");
+        assert!(
+            err.to_string()
+                .contains("Builtin presets are not supported"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_daemon_rejects_remote_config() {
+        let sources = vec![ConfigSource::Remote(
+            "https://example.com/ralph.yml".to_string(),
+        )];
+        let err = run_daemon(DaemonArgs {}, &sources, false)
+            .await
+            .expect_err("expected remote config error");
+        assert!(
+            err.to_string()
+                .contains("Remote config URLs are not supported"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_daemon_errors_on_missing_config_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];
+        let err = run_daemon(DaemonArgs {}, &sources, false)
+            .await
+            .expect_err("expected missing config error");
+        assert!(
+            err.to_string().contains("Config file not found"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[test]
     fn test_save_telegram_state_creates_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let state_dir = temp_dir.path().join(".ralph");
-        let state_path = state_dir.join("telegram-state.json");
+        let _cwd = CwdGuard::set(temp_dir.path());
 
-        // Use the temp dir as working directory for the state
-        std::fs::create_dir_all(&state_dir).unwrap();
-        let state = serde_json::json!({
-            "chat_id": 123_456_789_i64,
-            "last_seen": null,
-            "pending_questions": {}
-        });
-        let content = serde_json::to_string_pretty(&state).unwrap();
-        std::fs::write(&state_path, format!("{}\n", content)).unwrap();
+        save_telegram_state(123_456_789).expect("save telegram state");
+
+        let state_path = temp_dir.path().join(".ralph").join("telegram-state.json");
 
         // Verify the file was created with correct content
         let read_content = std::fs::read_to_string(&state_path).unwrap();
@@ -1037,6 +1127,24 @@ mod tests {
             123_456_789
         );
         assert!(parsed.get("pending_questions").unwrap().is_object());
+    }
+
+    #[test]
+    fn test_save_robot_config_creates_minimal_config_without_token() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        save_robot_config(180, None).expect("save robot config");
+
+        let content = std::fs::read_to_string("ralph.yml").unwrap();
+        let config: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        let robot = config.get("RObot").unwrap();
+        assert!(robot.get("enabled").unwrap().as_bool().unwrap());
+        assert_eq!(
+            robot.get("timeout_seconds").and_then(|v| v.as_u64()),
+            Some(180)
+        );
+        assert!(robot.get("telegram").is_none());
     }
 
     #[test]
@@ -1192,8 +1300,7 @@ mod tests {
     #[test]
     fn test_save_robot_config_with_token_writes_bot_token() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let prev_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
 
         save_robot_config(300, Some("test-token")).unwrap();
 
@@ -1205,8 +1312,25 @@ mod tests {
             .and_then(|t| t.get("bot_token"))
             .and_then(|v| v.as_str());
         assert_eq!(token, Some("test-token"));
+    }
 
-        std::env::set_current_dir(prev_dir).unwrap();
+    #[test]
+    fn test_save_robot_config_updates_existing_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        std::fs::write("ralph.yml", "cli:\n  backend: claude\n").unwrap();
+
+        save_robot_config(120, None).unwrap();
+
+        let content = std::fs::read_to_string("ralph.yml").unwrap();
+        let config: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        assert!(config.get("cli").is_some());
+        let robot = config.get("RObot").unwrap();
+        assert_eq!(
+            robot.get("timeout_seconds").and_then(|v| v.as_u64()),
+            Some(120)
+        );
     }
 
     #[test]
@@ -1218,6 +1342,17 @@ mod tests {
 
         let token = load_config_bot_token_from(&config_path);
         assert_eq!(token.as_deref(), Some("token-123"));
+    }
+
+    #[test]
+    fn test_load_config_bot_token_from_reads_lowercase_robot() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("custom.yml");
+        let yaml = "robot:\n  telegram:\n    bot_token: token-lower\n";
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let token = load_config_bot_token_from(&config_path);
+        assert_eq!(token.as_deref(), Some("token-lower"));
     }
 
     #[test]
@@ -1256,5 +1391,149 @@ mod tests {
             .and_then(|t| t.get("bot_token"))
             .and_then(|v| v.as_str());
         assert_eq!(token, Some("new-token"));
+    }
+
+    #[test]
+    fn test_save_bot_token_config_updates_lowercase_robot_key() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yml");
+        let yaml = "robot:\n  enabled: true\n";
+        std::fs::write(&config_path, yaml).unwrap();
+
+        save_bot_token_config(&config_path, "token-xyz").unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let config: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        let token = config
+            .get("robot")
+            .and_then(|r| r.get("telegram"))
+            .and_then(|t| t.get("bot_token"))
+            .and_then(|v| v.as_str());
+        assert_eq!(token, Some("token-xyz"));
+        assert!(config.get("RObot").is_none());
+    }
+
+    #[test]
+    fn test_load_config_bot_token_reads_legacy_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::write(
+            temp_dir.path().join("ralph.yml"),
+            "RObot:\n  telegram:\n    bot_token: legacy-token\n",
+        )
+        .unwrap();
+
+        assert_eq!(load_config_bot_token().as_deref(), Some("legacy-token"));
+    }
+
+    #[test]
+    fn test_is_robot_enabled_reads_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::write(
+            temp_dir.path().join("ralph.yml"),
+            "RObot:\n  enabled: true\n",
+        )
+        .unwrap();
+
+        assert!(is_robot_enabled());
+
+        std::fs::write(
+            temp_dir.path().join("ralph.yml"),
+            "RObot:\n  enabled: false\n",
+        )
+        .unwrap();
+
+        assert!(!is_robot_enabled());
+    }
+
+    #[test]
+    fn test_resolve_chat_id_reads_state_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::create_dir_all(".ralph").unwrap();
+        std::fs::write(
+            ".ralph/telegram-state.json",
+            r#"{"chat_id": 4242, "pending_questions": {}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(resolve_chat_id(), Some(4242));
+    }
+
+    #[test]
+    fn test_resolve_chat_id_missing_file_returns_none() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        assert_eq!(resolve_chat_id(), None);
+    }
+
+    #[test]
+    fn test_resolve_token_from_prefers_env_and_trims() {
+        let resolved = resolve_token_from(
+            Some("  env-token  ".to_string()),
+            Some("keychain-token".to_string()),
+            Some("config-token".to_string()),
+        );
+
+        assert_eq!(resolved.as_deref(), Some("env-token"));
+    }
+
+    #[test]
+    fn test_resolve_token_from_skips_empty_values() {
+        let resolved = resolve_token_from(
+            Some("   ".to_string()),
+            Some(String::new()),
+            Some(" config-token ".to_string()),
+        );
+
+        assert_eq!(resolved.as_deref(), Some("config-token"));
+    }
+
+    #[test]
+    fn test_resolve_token_from_returns_none_when_all_empty() {
+        let resolved = resolve_token_from(
+            Some("   ".to_string()),
+            Some(String::new()),
+            Some("   ".to_string()),
+        );
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_is_robot_enabled_missing_config_returns_false() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        assert!(!is_robot_enabled());
+    }
+
+    #[test]
+    fn test_is_robot_enabled_invalid_yaml_returns_false() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::write(temp_dir.path().join("ralph.yml"), "not: [valid").unwrap();
+
+        assert!(!is_robot_enabled());
+    }
+
+    #[test]
+    fn test_resolve_chat_id_invalid_json_returns_none() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        std::fs::create_dir_all(".ralph").unwrap();
+        std::fs::write(".ralph/telegram-state.json", "not-json").unwrap();
+
+        assert_eq!(resolve_chat_id(), None);
+    }
+
+    #[test]
+    fn test_load_config_bot_token_from_missing_file_returns_none() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let missing_path = temp_dir.path().join("missing.yml");
+
+        assert_eq!(load_config_bot_token_from(&missing_path), None);
     }
 }

@@ -25,10 +25,11 @@ mod colors {
 
 /// Format a date string as a human-readable relative time.
 fn format_relative_date(date_str: &str) -> String {
-    use chrono::{NaiveDate, Utc};
+    format_relative_date_with_today(date_str, chrono::Utc::now().date_naive())
+}
 
-    let today = Utc::now().date_naive();
-    let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+fn format_relative_date_with_today(date_str: &str, today: chrono::NaiveDate) -> String {
+    let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
         return date_str.to_string();
     };
 
@@ -746,5 +747,132 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         format!("{}…", &s[..max_len - 1])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, NaiveDate};
+
+    fn fixed_today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date")
+    }
+
+    fn date_days_ago(days: i64) -> String {
+        (fixed_today() - Duration::days(days))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    #[test]
+    fn format_relative_date_with_today_handles_ranges() {
+        let today = fixed_today();
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(0), today),
+            "today"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(1), today),
+            "yesterday"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(2), today),
+            "2 days ago"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(7), today),
+            "1 week ago"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(14), today),
+            "2 weeks ago"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(21), today),
+            "3 weeks ago"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(28), today),
+            "1 month ago"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(45), today),
+            "2 months ago"
+        );
+        assert_eq!(
+            format_relative_date_with_today(&date_days_ago(90), today),
+            "3 months ago"
+        );
+    }
+
+    #[test]
+    fn format_relative_date_with_today_returns_input_on_invalid() {
+        let today = fixed_today();
+        let value = "not-a-date";
+        assert_eq!(format_relative_date_with_today(value, today), "not-a-date");
+    }
+
+    #[test]
+    fn format_relative_date_with_today_returns_date_for_old_entries() {
+        let today = fixed_today();
+        let date_str = date_days_ago(400);
+        assert_eq!(format_relative_date_with_today(&date_str, today), date_str);
+    }
+
+    #[test]
+    fn truncate_to_budget_prefers_complete_memory_blocks() {
+        let content = "### mem-1\n> hi\n<!-- tags: a | created: 2026-01-31 -->\n\n\
+### mem-2\n> more\n<!-- tags: b | created: 2026-01-31 -->\n"
+            .to_string();
+        let first_end = content.find("-->").expect("marker") + 3;
+        let budget = (first_end + 6).div_ceil(4);
+        let truncated = truncate_to_budget(&content, budget);
+
+        assert!(truncated.contains("mem-1"));
+        assert!(!truncated.contains("mem-2"));
+        assert!(truncated.contains("<!-- truncated: budget"));
+    }
+
+    #[test]
+    fn truncate_to_budget_falls_back_without_marker() {
+        let content = "abcdefghijklmnopqrstuvwxyz";
+        let truncated = truncate_to_budget(content, 1);
+        assert!(truncated.starts_with("abcd"));
+        assert!(truncated.contains("truncated: budget 1 tokens exceeded"));
+    }
+
+    #[test]
+    fn truncate_str_handles_short_and_long_values() {
+        assert_eq!(truncate_str("short", 10), "short");
+        assert_eq!(truncate_str("1234567890", 5), "1234…");
+    }
+
+    #[test]
+    fn format_memories_as_markdown_groups_by_type() {
+        let memories = vec![
+            Memory {
+                id: "mem-1".to_string(),
+                memory_type: MemoryType::Pattern,
+                content: "alpha".to_string(),
+                tags: vec!["tag1".to_string()],
+                created: "2026-01-31".to_string(),
+            },
+            Memory {
+                id: "mem-2".to_string(),
+                memory_type: MemoryType::Fix,
+                content: "beta".to_string(),
+                tags: vec![],
+                created: "2026-01-31".to_string(),
+            },
+        ];
+
+        let output = format_memories_as_markdown(&memories);
+        assert!(output.contains("# Memories"));
+        assert!(output.contains("## Patterns"));
+        assert!(output.contains("## Fixes"));
+        assert!(!output.contains("## Decisions"));
+        assert!(output.contains("mem-1"));
+        assert!(output.contains("mem-2"));
     }
 }

@@ -161,10 +161,10 @@ let complete = parser.is_complete(agent_output, "LOOP_COMPLETE");
 
 ```bash
 # CLI command
-ralph emit "build.done" "tests: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # JSON
-{"event": "build.done", "payload": "tests: pass"}
+{"event": "build.done", "payload": "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"}
 ```
 
 ### Instructions

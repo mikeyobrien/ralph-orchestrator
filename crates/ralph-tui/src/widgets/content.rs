@@ -11,6 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Widget,
 };
+use unicode_width::UnicodeWidthChar;
 
 /// Widget that renders the content of an iteration buffer.
 ///
@@ -65,11 +66,24 @@ impl Widget for ContentPane<'_> {
 
             // Render the line into the buffer with soft wrapping
             let mut x = area.x;
+            let right_edge = area.x + area.width;
             for span in &rendered_line.spans {
                 let content = span.content.as_ref();
                 for ch in content.chars() {
-                    // Soft wrap: when we reach the edge, move to next row
-                    if x >= area.x + area.width {
+                    let char_width = ch.width().unwrap_or(0) as u16;
+
+                    // Skip zero-width characters (combining marks, etc.)
+                    if char_width == 0 {
+                        continue;
+                    }
+
+                    // Soft wrap: if the character won't fit on this row, move to next row
+                    if x + char_width > right_edge {
+                        // Clear any remaining cells on this row
+                        while x < right_edge {
+                            buf[(x, y)].set_char(' ').set_style(Style::default());
+                            x += 1;
+                        }
                         y += 1;
                         x = area.x;
                         // Stop if we've filled the viewport
@@ -77,8 +91,15 @@ impl Widget for ContentPane<'_> {
                             return;
                         }
                     }
+
                     buf[(x, y)].set_char(ch).set_style(span.style);
+                    // Reset trailing cells for wide characters
+                    let next_x = x + char_width;
                     x += 1;
+                    while x < next_x {
+                        buf[(x, y)].reset();
+                        x += 1;
+                    }
                 }
             }
 
@@ -500,6 +521,71 @@ mod tests {
             lines[2].starts_with("e width"),
             "third row should have remaining text, got: {:?}",
             lines[2]
+        );
+    }
+
+    // =========================================================================
+    // Acceptance Criteria 5b: Wide Character Handling
+    // =========================================================================
+
+    #[test]
+    fn wide_chars_do_not_shift_subsequent_text() {
+        // Given a line with emoji (2-column wide) followed by ASCII text
+        let mut buffer = IterationBuffer::new(1);
+        buffer.append_line(Line::from("🔨 Builder"));
+
+        // When ContentPane renders
+        let lines = render_content_pane(&buffer, None, 40, 1);
+
+        // Then "Builder" should appear at the correct position (after emoji + space)
+        // 🔨 takes 2 columns, space takes 1, so "Builder" starts at column 3
+        assert!(
+            lines[0].contains("Builder"),
+            "text after emoji should be intact, got: {:?}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn wide_char_at_edge_wraps_to_next_line() {
+        // Given a line where a wide character would straddle the right edge
+        // With width 5: "abcd🔨" - 'abcd' fills 4 cols, emoji needs 2 but only 1 left
+        let mut buffer = IterationBuffer::new(1);
+        buffer.append_line(Line::from("abcd🔨x"));
+
+        // When rendered at width 5, emoji should wrap to next line
+        let lines = render_content_pane(&buffer, None, 5, 3);
+
+        // First row: "abcd " (4 chars + 1 cleared cell since emoji doesn't fit)
+        assert_eq!(
+            lines[0].trim_end(),
+            "abcd",
+            "first row should have 'abcd', got: {:?}",
+            lines[0]
+        );
+        // Second row: "🔨x" (emoji + 'x')
+        assert!(
+            lines[1].contains('x'),
+            "second row should have the emoji and 'x', got: {:?}",
+            lines[1]
+        );
+    }
+
+    #[test]
+    fn multiple_wide_chars_render_correctly() {
+        // Given a line with multiple emoji
+        let mut buffer = IterationBuffer::new(1);
+        buffer.append_line(Line::from("★ Insight ─────"));
+
+        // When rendered wide enough
+        let lines = render_content_pane(&buffer, None, 40, 1);
+
+        // Then all characters should be present without garbling
+        let rendered = lines[0].trim_end();
+        assert!(
+            rendered.contains("Insight"),
+            "content should be intact, got: {:?}",
+            rendered
         );
     }
 

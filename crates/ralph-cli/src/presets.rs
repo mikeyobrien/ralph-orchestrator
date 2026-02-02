@@ -11,7 +11,7 @@
 /// An embedded preset with its name, description, and full content.
 #[derive(Debug, Clone)]
 pub struct EmbeddedPreset {
-    /// The preset name (e.g., "tdd-red-green")
+    /// The preset name (e.g., "feature")
     pub name: &'static str,
     /// Short description extracted from the preset's header comment
     pub description: &'static str,
@@ -22,24 +22,14 @@ pub struct EmbeddedPreset {
 /// All embedded presets, compiled into the binary.
 const PRESETS: &[EmbeddedPreset] = &[
     EmbeddedPreset {
-        name: "adversarial-review",
-        description: "Red Team / Blue Team Security Review",
-        content: include_str!("../presets/adversarial-review.yml"),
+        name: "bugfix",
+        description: "Systematic bug reproduction, fix, and verification",
+        content: include_str!("../presets/bugfix.yml"),
     },
     EmbeddedPreset {
-        name: "api-design",
-        description: "API-First Design Workflow",
-        content: include_str!("../presets/api-design.yml"),
-    },
-    EmbeddedPreset {
-        name: "code-archaeology",
-        description: "Legacy Code Understanding and Modernization",
-        content: include_str!("../presets/code-archaeology.yml"),
-    },
-    EmbeddedPreset {
-        name: "confession-loop",
-        description: "Confidence-aware completion via structured self-assessment",
-        content: include_str!("../presets/confession-loop.yml"),
+        name: "code-assist",
+        description: "TDD implementation from specs, tasks, or descriptions",
+        content: include_str!("../presets/code-assist.yml"),
     },
     EmbeddedPreset {
         name: "debug",
@@ -57,19 +47,9 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/docs.yml"),
     },
     EmbeddedPreset {
-        name: "documentation-first",
-        description: "Documentation-Driven Development",
-        content: include_str!("../presets/documentation-first.yml"),
-    },
-    EmbeddedPreset {
         name: "feature",
         description: "Feature Development with integrated code review",
         content: include_str!("../presets/feature.yml"),
-    },
-    EmbeddedPreset {
-        name: "feature-minimal",
-        description: "Minimal feature development with auto-derived instructions",
-        content: include_str!("../presets/feature-minimal.yml"),
     },
     EmbeddedPreset {
         name: "gap-analysis",
@@ -82,29 +62,14 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/hatless-baseline.yml"),
     },
     EmbeddedPreset {
-        name: "incident-response",
-        description: "Production Incident Response Workflow",
-        content: include_str!("../presets/incident-response.yml"),
-    },
-    EmbeddedPreset {
         name: "merge-loop",
         description: "Merges completed parallel loop from worktree back to main branch",
         content: include_str!("../presets/merge-loop.yml"),
     },
     EmbeddedPreset {
-        name: "migration-safety",
-        description: "Safe Database/API Migration Workflow",
-        content: include_str!("../presets/migration-safety.yml"),
-    },
-    EmbeddedPreset {
-        name: "mob-programming",
-        description: "Mob Programming with rotating roles",
-        content: include_str!("../presets/mob-programming.yml"),
-    },
-    EmbeddedPreset {
-        name: "performance-optimization",
-        description: "Performance Analysis and Optimization",
-        content: include_str!("../presets/performance-optimization.yml"),
+        name: "pdd-to-code-assist",
+        description: "Full autonomous idea-to-code pipeline",
+        content: include_str!("../presets/pdd-to-code-assist.yml"),
     },
     EmbeddedPreset {
         name: "pr-review",
@@ -127,24 +92,9 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/review.yml"),
     },
     EmbeddedPreset {
-        name: "scientific-method",
-        description: "Hypothesis-driven experimentation",
-        content: include_str!("../presets/scientific-method.yml"),
-    },
-    EmbeddedPreset {
-        name: "socratic-learning",
-        description: "Learning through guided questioning",
-        content: include_str!("../presets/socratic-learning.yml"),
-    },
-    EmbeddedPreset {
         name: "spec-driven",
         description: "Specification-Driven Development",
         content: include_str!("../presets/spec-driven.yml"),
-    },
-    EmbeddedPreset {
-        name: "tdd-red-green",
-        description: "Test-Driven Development with red-green-refactor cycle",
-        content: include_str!("../presets/tdd-red-green.yml"),
     },
 ];
 
@@ -172,42 +122,17 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 25, "Expected 25 presets");
+        assert_eq!(presets.len(), 15, "Expected 15 presets");
     }
 
     #[test]
     fn test_get_preset_by_name() {
-        let preset = get_preset("tdd-red-green");
-        assert!(preset.is_some(), "tdd-red-green preset should exist");
+        let preset = get_preset("feature");
+        assert!(preset.is_some(), "feature preset should exist");
         let preset = preset.unwrap();
-        assert_eq!(preset.name, "tdd-red-green");
+        assert_eq!(preset.name, "feature");
         assert!(!preset.description.is_empty());
         assert!(!preset.content.is_empty());
-    }
-
-    #[test]
-    fn test_confession_loop_preset_is_embedded() {
-        let preset =
-            get_preset("confession-loop").expect("confession-loop preset should exist (issue #74)");
-        assert!(!preset.description.is_empty());
-        assert!(preset.content.contains("confession.issues_found"));
-        assert!(preset.content.contains("confession.clean"));
-        assert!(preset.content.contains("Confidence (0-100)"));
-        assert!(
-            preset
-                .content
-                .contains("If you were triggered by `confession.issues_found`:")
-        );
-        assert!(
-            preset
-                .content
-                .contains("Do not output the completion promise on this path.")
-        );
-        assert!(
-            preset
-                .content
-                .contains("If you were triggered by `confession.clean`:")
-        );
     }
 
     #[test]
@@ -271,10 +196,10 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 25);
-        assert!(names.contains(&"confession-loop"));
-        assert!(names.contains(&"tdd-red-green"));
+        assert_eq!(names.len(), 15);
+        assert!(names.contains(&"feature"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"merge-loop"));
+        assert!(names.contains(&"code-assist"));
     }
 }

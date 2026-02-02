@@ -1,0 +1,91 @@
+name: "Bug report"
+description: "Report a bug in the Ralph CLI or orchestration workflows"
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you can provide, the faster we can help.
+  - type: input
+    id: os
+    attributes:
+      label: "Operating system"
+      description: "Example: macOS 14.3, Ubuntu 22.04, Windows 11"
+      placeholder: "macOS 14.3"
+    validations:
+      required: true
+  - type: input
+    id: ralph_version
+    attributes:
+      label: "Ralph version"
+      description: "Run `ralph --version`"
+      placeholder: "ralph 0.9.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: "AI backend"
+      description: "Which backend were you using when this happened?"
+      options:
+        - "Claude Code"
+        - "Gemini CLI"
+        - "Copilot CLI"
+        - "OpenCode"
+        - "Kiro"
+        - "Amp"
+        - "Codex"
+        - "Other / Not sure"
+    validations:
+      required: true
+  - type: input
+    id: hat_preset
+    attributes:
+      label: "Hat preset / workflow"
+      description: "Which preset or hat collection was active (if any)?"
+      placeholder: "e.g. tdd, debug, spec-driven"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce"
+      description: "List the exact commands or actions needed to reproduce the bug."
+      placeholder: |
+        1. ralph run ...
+        2. choose backend ...
+        3. see error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior"
+      placeholder: "What did you expect to happen?"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual behavior"
+      placeholder: "What actually happened?"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs or error output"
+      description: "Paste any relevant console output or log lines."
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: config
+    attributes:
+      label: "Config / preset file"
+      description: "If relevant, link to or paste the config/preset you used."
+      placeholder: "ralph.yml or preset name"
+    validations:
+      required: false

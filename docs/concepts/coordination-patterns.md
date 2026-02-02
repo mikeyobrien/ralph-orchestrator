@@ -364,7 +364,7 @@ Hats emit events to signal completion or hand off work:
 
 ```bash
 # Simple event with payload
-ralph emit "build.done" "tests: pass, lint: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # Event with JSON payload
 ralph emit "review.done" --json '{"status": "approved", "issues": 0}'

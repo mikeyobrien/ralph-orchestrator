@@ -49,7 +49,7 @@ instructions: |
 # Do use backpressure
 instructions: |
   Implement the feature.
-  Evidence required: tests: pass, lint: pass, typecheck: pass
+  Evidence required: tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass
 ```
 
 ## 3. The Plan Is Disposable

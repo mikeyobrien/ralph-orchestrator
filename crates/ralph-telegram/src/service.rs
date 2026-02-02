@@ -398,7 +398,7 @@ impl TelegramService {
 
     /// Send a question to the human via Telegram and store it as a pending question.
     ///
-    /// The question payload is extracted from the `interact.human` event. A pending
+    /// The question payload is extracted from the `human.interact` event. A pending
     /// question is stored in the state manager so that incoming replies can be
     /// routed back to the correct loop.
     ///
@@ -413,7 +413,7 @@ impl TelegramService {
         } else {
             warn!(
                 loop_id = %self.loop_id,
-                "No chat ID configured — interact.human question logged but not sent: {}",
+                "No chat ID configured — human.interact question logged but not sent: {}",
                 payload
             );
             0
@@ -741,6 +741,49 @@ impl TelegramService {
     }
 }
 
+impl ralph_proto::RobotService for TelegramService {
+    fn send_question(&self, payload: &str) -> anyhow::Result<i32> {
+        Ok(TelegramService::send_question(self, payload)?)
+    }
+
+    fn wait_for_response(&self, events_path: &Path) -> anyhow::Result<Option<String>> {
+        Ok(TelegramService::wait_for_response(self, events_path)?)
+    }
+
+    fn send_checkin(
+        &self,
+        iteration: u32,
+        elapsed: Duration,
+        context: Option<&ralph_proto::CheckinContext>,
+    ) -> anyhow::Result<i32> {
+        // Convert ralph_proto::CheckinContext to the local CheckinContext
+        let local_context = context.map(|ctx| CheckinContext {
+            current_hat: ctx.current_hat.clone(),
+            open_tasks: ctx.open_tasks,
+            closed_tasks: ctx.closed_tasks,
+            cumulative_cost: ctx.cumulative_cost,
+        });
+        Ok(TelegramService::send_checkin(
+            self,
+            iteration,
+            elapsed,
+            local_context.as_ref(),
+        )?)
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        self.timeout_secs
+    }
+
+    fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        self.shutdown.clone()
+    }
+
+    fn stop(self: Box<Self>) {
+        TelegramService::stop(*self);
+    }
+}
+
 impl fmt::Debug for TelegramService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TelegramService")
@@ -857,7 +900,7 @@ mod tests {
         let mut file = std::fs::File::create(&events_path).unwrap();
         writeln!(
             file,
-            r#"{{"topic":"build.done","payload":"tests: pass","ts":"2026-01-30T00:00:00Z"}}"#
+            r#"{{"topic":"build.done","payload":"tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass","ts":"2026-01-30T00:00:00Z"}}"#
         )
         .unwrap();
         // Write a human.response event

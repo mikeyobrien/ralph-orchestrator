@@ -1,12 +1,12 @@
 # Telegram Human-in-the-Loop Test Preset
 #
-# Tests the full interact.human / human.response / human.guidance flow.
+# Tests the full human.interact / human.response / human.guidance flow.
 #
 # Usage:
 #   ralph run -c ralph.bot.yml -p "test human in the loop"
 #
 # Test flow:
-#   1. Planner asks the human a question via Telegram (interact.human)
+#   1. Planner asks the human a question via Telegram (human.interact)
 #   2. Human replies in Telegram -> human.response event
 #   3. Executor acts on the response
 #   4. Human can also send proactive guidance at any time -> human.guidance
@@ -49,8 +49,8 @@ hats:
     name: "Planner"
     description: "Asks the human what to do via Telegram."
     triggers: ["plan.start", "human.response"]
-    publishes: ["interact.human", "work.start"]
-    default_publishes: "interact.human"
+    publishes: ["human.interact", "work.start"]
+    default_publishes: "human.interact"
     instructions: |
       ## PLANNER PHASE
 
@@ -66,7 +66,7 @@ hats:
       After sending the status update, ask the human a clear, specific question about what to do next.
       Include concrete options based on what you found in Step 1.
       ```bash
-      ralph emit "interact.human" "Summary: <1-2 sentences>. What next? (A) ... (B) ... (C) Something else. Default: ..."
+      ralph emit "human.interact" "Summary: <1-2 sentences>. What next? (A) ... (B) ... (C) Something else. Default: ..."
       ```
 
       The loop will block until the human responds via Telegram.
@@ -79,7 +79,7 @@ hats:
     name: "Executor"
     description: "Executes the task based on human direction."
     triggers: ["work.start"]
-    publishes: ["work.done", "interact.human"]
+    publishes: ["work.done", "human.interact"]
     default_publishes: "work.done"
     backend:
       type: "codex"
@@ -89,7 +89,7 @@ hats:
       
       1. Read the human response from the triggering event.
       2. Do what they asked (or a reasonable interpretation of it).
-      3. If you need more clarification, emit another interact.human.
+      3. If you need more clarification, emit another human.interact.
       4. When done, emit work.done.
       
       ```bash
@@ -98,14 +98,14 @@ hats:
       
       If you need clarification:
       ```bash
-      ralph emit "interact.human" "I need clarification: your question"
+      ralph emit "human.interact" "I need clarification: your question"
       ```
 
   reviewer:
     name: "Reviewer"
     description: "Reviews completed work and decides if the loop is done."
     triggers: ["work.done"]
-    publishes: ["plan.start", "interact.human"]
+    publishes: ["plan.start", "human.interact"]
     backend:
       type: "codex"
     instructions: |
@@ -116,7 +116,7 @@ hats:
       
       If something needs fixing or you want human confirmation:
       ```bash
-      ralph emit "interact.human" "I finished the work. Does this look correct?"
+      ralph emit "human.interact" "I finished the work. Does this look correct?"
       ```
       
       If you need to restart:
@@ -130,5 +130,5 @@ skills:
   dirs:
     - ".claude/skills"
   overrides:
-    ralph-diagnostics:
+    ralph-operations:
       auto_inject: true

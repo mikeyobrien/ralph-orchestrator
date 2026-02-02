@@ -19,7 +19,8 @@ core:
   guardrails:
     - "Fresh context each iteration - save learnings to memories for next time"
     - "Don't assume 'not implemented' - search first"
-    - "Verification is mandatory - tests/typecheck/lint must pass"
+    - "Verification is mandatory - tests/typecheck/lint/audit must pass"
+    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
 
 # Default hats: planner and builder
 # These are registered automatically if no custom hats are defined.

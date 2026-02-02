@@ -68,9 +68,9 @@ RObot:
 
 ## How It Works
 
-### Agent Asks a Question (`interact.human`)
+### Agent Asks a Question (`human.interact`)
 
-When an agent emits an `interact.human` event during orchestration:
+When an agent emits a `human.interact` event during orchestration:
 
 1. The bot formats the question with context (hat name, iteration, loop ID) and sends it to Telegram
 2. The event loop **blocks**, waiting for a reply
@@ -94,8 +94,8 @@ This lets you steer the agent without waiting for it to ask.
 
 | Event | Direction | Behavior |
 |-------|-----------|----------|
-| `interact.human` | Agent to Human | Agent asks a question; loop blocks until reply or timeout |
-| `human.response` | Human to Agent | Your reply to an `interact.human` question |
+| `human.interact` | Agent to Human | Agent asks a question; loop blocks until reply or timeout |
+| `human.response` | Human to Agent | Your reply to a `human.interact` question |
 | `human.guidance` | Human to Agent | Proactive message injected into agent's next prompt |
 
 ## Parallel Loop Routing

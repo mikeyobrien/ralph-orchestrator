@@ -35,9 +35,13 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
 
     // Priority 1: Iteration counter - ALWAYS shown
     // Uses TUI pagination state (current_view/total_iterations) not Ralph loop iteration
-    let current = state.current_view + 1; // 0-indexed to 1-indexed
-    let total = state.total_iterations();
-    let iter_display = format!("[iter {}/{}]", current, total);
+    let current = state
+        .current_iteration()
+        .map(|buffer| buffer.number)
+        .unwrap_or_else(|| (state.current_view + 1) as u32);
+    let total_iterations = state.total_iterations() as u32;
+    let total_display = state.max_iterations.unwrap_or(total_iterations);
+    let iter_display = format!("[iter {}/{}]", current, total_display);
     spans.push(Span::raw(iter_display));
 
     // Priority 4: Elapsed time (iteration) - hidden at WIDTH_COMPRESS and below
@@ -52,12 +56,22 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
 
     // Priority 3: Hat display - compressed at WIDTH_COMPRESS and below
     spans.push(Span::raw(" | "));
+    let hat_display = state
+        .current_iteration_hat_display()
+        .map(|display| display.to_string())
+        .unwrap_or_else(|| state.get_pending_hat_display());
+    let hat_with_backend = if let Some(backend) = state.current_iteration_backend()
+        && width > WIDTH_COMPRESS
+    {
+        format!("{hat_display} @{backend}")
+    } else {
+        hat_display.clone()
+    };
     if width > WIDTH_COMPRESS {
         // Full hat display: "🔨 Builder"
-        spans.push(Span::raw(state.get_pending_hat_display()));
+        spans.push(Span::raw(hat_with_backend));
     } else {
         // Compressed: emoji only (first character cluster)
-        let hat_display = state.get_pending_hat_display();
         let emoji = hat_display.chars().next().unwrap_or('?');
         spans.push(Span::raw(emoji.to_string()));
     }
@@ -113,7 +127,7 @@ mod tests {
     use ralph_proto::{Event, HatId};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn render_to_string(state: &TuiState) -> String {
         render_to_string_with_width(state, 80)
@@ -174,6 +188,20 @@ mod tests {
     }
 
     #[test]
+    fn header_uses_max_iterations_when_available() {
+        let mut state = TuiState::new();
+        state.max_iterations = Some(50);
+        state.start_new_iteration();
+
+        let text = render_to_string(&state);
+        assert!(
+            text.contains("[iter 1/50]"),
+            "should show [iter 1/50], got: {}",
+            text
+        );
+    }
+
+    #[test]
     fn header_shows_elapsed_time() {
         let mut state = TuiState::new();
         let event = Event::new("task.start", "");
@@ -197,6 +225,134 @@ mod tests {
 
         let text = render_to_string(&state);
         assert!(text.contains("Builder"), "should show hat, got: {}", text);
+    }
+
+    #[test]
+    fn header_uses_iteration_metadata_for_review() {
+        let mut state = TuiState::new();
+        state.start_new_iteration_with_metadata(
+            Some("🔨 Builder".to_string()),
+            Some("claude".to_string()),
+        );
+        if let Some(iteration) = state.iterations.get_mut(0) {
+            iteration.elapsed = Some(Duration::from_secs(125));
+        }
+        state.start_new_iteration_with_metadata(
+            Some("🧪 Reviewer".to_string()),
+            Some("kiro".to_string()),
+        );
+        state.current_view = 0; // Review first iteration
+
+        let text = render_to_string(&state);
+        assert!(text.contains("Builder"), "should show hat, got: {}", text);
+        assert!(
+            text.contains("@claude"),
+            "should show backend, got: {}",
+            text
+        );
+        assert!(text.contains("02:05"), "should show 02:05, got: {}", text);
+    }
+
+    #[test]
+    fn header_uses_per_iteration_hat_from_events_when_reviewing() {
+        use std::collections::HashMap;
+
+        let mut hat_map = HashMap::new();
+        hat_map.insert(
+            "review.security".to_string(),
+            (HatId::new("security_reviewer"), "🛡Security".to_string()),
+        );
+        hat_map.insert(
+            "review.correctness".to_string(),
+            (
+                HatId::new("correctness_reviewer"),
+                "🧪Correctness".to_string(),
+            ),
+        );
+
+        let mut state = TuiState::with_hat_map(hat_map);
+
+        state.update(&Event::new("review.security", "Check auth"));
+        state.start_new_iteration();
+
+        state.update(&Event::new("review.correctness", "Check logic"));
+        state.start_new_iteration();
+
+        state.current_view = 0;
+        state.following_latest = false;
+
+        let text = render_to_string(&state);
+        assert!(
+            text.contains("Security"),
+            "should show iteration 1 hat, got: {}",
+            text
+        );
+        assert!(
+            !text.contains("Correctness"),
+            "should not show current hat while reviewing, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn header_review_uses_frozen_elapsed_and_backend_from_events() {
+        use std::collections::HashMap;
+
+        let mut hat_map = HashMap::new();
+        hat_map.insert(
+            "build.done".to_string(),
+            (HatId::new("planner"), "📋Planner".to_string()),
+        );
+
+        let mut state = TuiState::with_hat_map(hat_map);
+
+        state.start_new_iteration_with_metadata(
+            Some("🔨 Builder".to_string()),
+            Some("claude".to_string()),
+        );
+        if let Some(iteration) = state.iterations.first_mut() {
+            iteration.started_at = Some(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(125))
+                    .expect("instant should support backdating"),
+            );
+        }
+
+        state.update(&Event::new("build.done", "Done"));
+        let elapsed = state
+            .iterations
+            .first()
+            .and_then(|iteration| iteration.elapsed)
+            .expect("iteration elapsed should be frozen on build.done");
+
+        state.start_new_iteration_with_metadata(
+            Some("🧪 Reviewer".to_string()),
+            Some("kiro".to_string()),
+        );
+        state.current_view = 0;
+        state.following_latest = false;
+
+        let total_secs = elapsed.as_secs();
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        let expected_time = format!("{mins:02}:{secs:02}");
+
+        let text = render_to_string(&state);
+        assert!(
+            text.contains("@claude"),
+            "should show iteration backend, got: {}",
+            text
+        );
+        assert!(
+            text.contains(&expected_time),
+            "should show frozen elapsed time, got: {}",
+            text
+        );
+        assert!(
+            !text.contains("@kiro"),
+            "should not show current backend while reviewing, got: {}",
+            text
+        );
     }
 
     #[test]
@@ -251,11 +407,10 @@ mod tests {
         state.current_view = 2; // Viewing iteration 3 of 10
         state.following_latest = true;
 
-        state.iteration_started = Some(
-            std::time::Instant::now()
-                .checked_sub(Duration::from_secs(272))
-                .unwrap(),
-        );
+        if let Some(iteration) = state.iterations.get_mut(2) {
+            iteration.elapsed = Some(Duration::from_secs(272));
+            iteration.hat_display = Some("🔨Builder".to_string());
+        }
         state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
         state.idle_timeout_remaining = Some(Duration::from_secs(25));
         state.in_scroll_mode = true;
@@ -308,11 +463,10 @@ mod tests {
         state.current_view = 2; // Viewing iteration 3 of 10
         state.following_latest = true; // In LIVE mode
 
-        state.iteration_started = Some(
-            std::time::Instant::now()
-                .checked_sub(Duration::from_secs(272))
-                .unwrap(),
-        );
+        if let Some(iteration) = state.iterations.get_mut(2) {
+            iteration.elapsed = Some(Duration::from_secs(272));
+            iteration.hat_display = Some("🔨Builder".to_string());
+        }
         state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
         state.idle_timeout_remaining = Some(Duration::from_secs(25));
         state.in_scroll_mode = true;
@@ -544,11 +698,9 @@ mod tests {
         state.start_new_iteration();
         let event = Event::new("task.start", "");
         state.update(&event);
-        state.iteration_started = Some(
-            std::time::Instant::now()
-                .checked_sub(Duration::from_secs(300))
-                .unwrap(),
-        );
+        if let Some(iteration) = state.iterations.get_mut(0) {
+            iteration.elapsed = Some(Duration::from_secs(300));
+        }
 
         let text = render_to_string(&state);
         assert!(

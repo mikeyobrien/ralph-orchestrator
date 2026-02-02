@@ -43,7 +43,7 @@ regex.workspace = true
 async-trait.workspace = true
 
 # Ralph core for cassette replay
-ralph-core = { path = "../ralph-core" }
+ralph-core = { path = "../ralph-core", features = ["recording"] }
 
 [dev-dependencies]
 tempfile.workspace = true

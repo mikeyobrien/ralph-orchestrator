@@ -45,7 +45,7 @@ flowchart LR
 Hats publish events using `ralph emit`:
 
 ```bash
-ralph emit "build.done" "tests: pass, lint: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ```
 
 Or with JSON payloads:
@@ -209,7 +209,7 @@ Events are routing signals, not data transport:
 
 ```bash
 # Good: Small payload
-ralph emit "build.done" "tests: pass, lint: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # Bad: Large payload
 ralph emit "build.done" "full output of all test results..."
@@ -219,7 +219,7 @@ Use memories for detailed output:
 
 ```bash
 ralph tools memory add "Build details: ..." -t context
-ralph emit "build.done" "tests: pass"
+ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ```
 
 ### 2. Clear Triggers

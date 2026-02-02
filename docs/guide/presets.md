@@ -9,7 +9,7 @@ Presets are pre-configured workflows for common development patterns. They save 
 ralph init --list-presets
 
 # Initialize with a preset
-ralph init --preset tdd-red-green
+ralph init --preset feature
 
 # Combine with backend
 ralph init --preset spec-driven --backend kiro
@@ -30,258 +30,148 @@ Standard feature development with planning and building.
 ralph init --preset feature
 ```
 
-**Hats:** Planner → Builder
+**Hats:** Builder → Reviewer
 **Best for:** General feature implementation
 
-#### feature-minimal
+#### code-assist
 
-Single-hat minimal implementation.
-
-```bash
-ralph init --preset feature-minimal
-```
-
-**Hats:** Single Builder
-**Best for:** Simple tasks, quick prototyping
-
-#### tdd-red-green
-
-Test-Driven Development with red-green-refactor cycle.
+TDD implementation from specs, tasks, or rough descriptions.
 
 ```bash
-ralph init --preset tdd-red-green
+ralph init --preset code-assist
 ```
 
-**Hats:** Tester → Implementer → Refactorer
-**Best for:** Quality-focused development, well-tested code
+**Hats:** Planner → Builder → Validator → Committer
+**Best for:** Structured TDD development, working from specs or task definitions
 
 #### spec-driven
 
-Specification-first development.
+Specification-first development with contract-based implementation.
 
 ```bash
 ralph init --preset spec-driven
 ```
 
-**Hats:** Spec Writer → Builder → Verifier
-**Best for:** Complex features with clear requirements
+**Hats:** Spec Writer → Spec Critic → Implementer → Verifier
+**Best for:** Complex features with clear requirements, given-when-then acceptance criteria
 
 #### refactor
 
-Code refactoring workflow.
+Code refactoring workflow with atomic steps.
 
 ```bash
 ralph init --preset refactor
 ```
 
-**Hats:** Analyzer → Planner → Executor
+**Hats:** Refactorer → Verifier
 **Best for:** Large refactors, technical debt cleanup
-
-### Debugging & Investigation
-
-#### debug
-
-Bug investigation and fixing.
-
-```bash
-ralph init --preset debug
-```
-
-**Hats:** Investigator → Fixer → Verifier
-**Best for:** Bug hunting, issue resolution
-
-#### incident-response
-
-Production incident handling.
-
-```bash
-ralph init --preset incident-response
-```
-
-**Hats:** Triage → Fixer → Postmortem
-**Best for:** Production issues, urgent fixes
-
-#### code-archaeology
-
-Legacy code understanding.
-
-```bash
-ralph init --preset code-archaeology
-```
-
-**Hats:** Explorer → Documenter → Presenter
-**Best for:** Understanding unfamiliar code
-
-### Review & Quality
-
-#### review
-
-Code review workflow.
-
-```bash
-ralph init --preset review
-```
-
-**Hats:** Analyzer → Critic → Suggester
-**Best for:** PR reviews, code quality checks
-
-#### pr-review
-
-Multi-perspective PR review.
-
-```bash
-ralph init --preset pr-review
-```
-
-**Hats:** Security Reviewer → Performance Reviewer → Style Reviewer
-**Best for:** Comprehensive PR reviews
-
-#### adversarial-review
-
-Devil's advocate review style.
-
-```bash
-ralph init --preset adversarial-review
-```
-
-**Hats:** Critic → Defender → Judge
-**Best for:** Security reviews, critical code
-
-### Documentation
-
-#### docs
-
-Documentation writing workflow.
-
-```bash
-ralph init --preset docs
-```
-
-**Hats:** Writer → Reviewer → Publisher
-**Best for:** Creating documentation
-
-#### documentation-first
-
-Doc-first development.
-
-```bash
-ralph init --preset documentation-first
-```
-
-**Hats:** Doc Writer → Implementer → Syncer
-**Best for:** API design, contract-first development
-
-### Specialized
-
-#### api-design
-
-API-first development.
-
-```bash
-ralph init --preset api-design
-```
-
-**Hats:** Designer → Implementer → Documenter
-**Best for:** REST APIs, GraphQL schemas
-
-#### migration-safety
-
-Safe code migrations.
-
-```bash
-ralph init --preset migration-safety
-```
-
-**Hats:** Analyzer → Migrator → Verifier
-**Best for:** Framework upgrades, dependency updates
-
-#### performance-optimization
-
-Performance tuning workflow.
-
-```bash
-ralph init --preset performance-optimization
-```
-
-**Hats:** Profiler → Optimizer → Benchmarker
-**Best for:** Performance improvements
-
-#### scientific-method
-
-Experimental approach to problem-solving.
-
-```bash
-ralph init --preset scientific-method
-```
-
-**Hats:** Hypothesizer → Experimenter → Concluder
-**Best for:** Unknown problems, exploration
-
-#### mob-programming
-
-Simulated mob programming.
-
-```bash
-ralph init --preset mob-programming
-```
-
-**Hats:** Driver → Navigator → Observer (rotating)
-**Best for:** Complex problems, learning
-
-#### socratic-learning
-
-Learning through dialogue.
-
-```bash
-ralph init --preset socratic-learning
-```
-
-**Hats:** Questioner → Answerer → Synthesizer
-**Best for:** Understanding complex topics
-
-#### research
-
-Research and analysis workflow.
-
-```bash
-ralph init --preset research
-```
-
-**Hats:** Gatherer → Analyzer → Synthesizer
-**Best for:** Market research, technical investigation
-
-#### gap-analysis
-
-Compare current state vs target.
-
-```bash
-ralph init --preset gap-analysis
-```
-
-**Hats:** Current Analyzer → Target Definer → Gap Identifier
-**Best for:** Audit, compliance, planning
-
-#### confession-loop
-
-Introspective Builder-Confessor-Handler cycle.
-
-```bash
-ralph init --preset confession-loop
-```
-
-**Hats:** Builder → Confessor → Handler
-**Best for:** High-quality code with self-review
 
 #### pdd-to-code-assist
 
-Prompt-Driven Development flow.
+Full autonomous idea-to-code pipeline (9-hat orchestration).
 
 ```bash
 ralph init --preset pdd-to-code-assist
 ```
 
-**Hats:** Spec Writer → Code Assist
-**Best for:** Structured development workflow
+**Hats:** Inquisitor → Architect → Design Critic → Explorer → Planner → Task Writer → Builder → Validator → Committer
+**Best for:** End-to-end autonomous development from a rough idea
+
+### Bug Fixing & Debugging
+
+#### bugfix
+
+Systematic bug reproduction, fix, and verification.
+
+```bash
+ralph init --preset bugfix
+```
+
+**Hats:** Reproducer → Fixer → Verifier → Committer
+**Best for:** Bug fixes with reproducible test cases
+
+#### debug
+
+Bug investigation and root cause analysis using hypothesis-driven approach.
+
+```bash
+ralph init --preset debug
+```
+
+**Hats:** Investigator → Tester → Fixer → Verifier
+**Best for:** Bug hunting, issue resolution, unknown root causes
+
+### Review & Quality
+
+#### review
+
+Code review workflow producing structured feedback.
+
+```bash
+ralph init --preset review
+```
+
+**Hats:** Reviewer → Analyzer
+**Best for:** Code quality checks, structured feedback
+
+#### pr-review
+
+Multi-perspective PR review with specialized reviewers.
+
+```bash
+ralph init --preset pr-review
+```
+
+**Hats:** Correctness Reviewer → Security Reviewer → Architecture Reviewer → Synthesizer
+**Best for:** Comprehensive PR reviews from multiple angles
+
+#### gap-analysis
+
+Compare specifications against implementation to find discrepancies.
+
+```bash
+ralph init --preset gap-analysis
+```
+
+**Hats:** Analyzer → Verifier → Reporter
+**Best for:** Audit, compliance, spec-vs-implementation comparison
+
+### Documentation & Research
+
+#### docs
+
+Documentation writing with writer/editor review cycle.
+
+```bash
+ralph init --preset docs
+```
+
+**Hats:** Writer → Reviewer
+**Best for:** Creating and updating documentation
+
+#### research
+
+Deep exploration and analysis (no code changes).
+
+```bash
+ralph init --preset research
+```
+
+**Hats:** Researcher → Synthesizer
+**Best for:** Codebase exploration, technical investigation, market research
+
+### Operations
+
+#### deploy
+
+Deployment and release workflow with validation and monitoring.
+
+```bash
+ralph init --preset deploy
+```
+
+**Hats:** Builder → Deployer → Verifier
+**Best for:** Deployment pipelines, release management
 
 ## Preset Patterns
 
@@ -295,7 +185,7 @@ flowchart LR
     B --> C[Hat C]
 ```
 
-**Examples:** feature, tdd-red-green, docs
+**Examples:** feature, bugfix, docs
 
 ### Supervisor-Worker
 
@@ -309,7 +199,7 @@ flowchart TB
     B --> S
 ```
 
-**Examples:** mob-programming, pr-review
+**Examples:** pr-review, pdd-to-code-assist
 
 ### Critic-Actor
 
@@ -322,7 +212,7 @@ flowchart LR
     C -->|rejected| A
 ```
 
-**Examples:** adversarial-review, confession-loop
+**Examples:** spec-driven, review
 
 ## Customizing Presets
 
@@ -330,11 +220,11 @@ After initializing with a preset, modify `ralph.yml`:
 
 ```yaml
 # Start with preset
-ralph init --preset tdd-red-green
+ralph init --preset feature
 
 # Edit ralph.yml to customize
 hats:
-  tester:
+  builder:
     instructions: |
       Custom instructions for your project...
 ```

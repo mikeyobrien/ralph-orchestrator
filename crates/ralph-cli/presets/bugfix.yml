@@ -102,6 +102,31 @@ hats:
       - Don't skip the explore step - understand before changing
       - Don't add features - this is a bugfix, not an enhancement
 
+      ### Confidence-Based Decision Protocol
+
+      When you encounter ambiguity or must choose between approaches:
+
+      1. **Score your confidence** on the decision (0-100):
+         - **>80**: Proceed autonomously.
+         - **50-80**: Proceed, but document the decision in `.ralph/agent/decisions.md`.
+         - **<50**: Choose the safest default and document the decision in `.ralph/agent/decisions.md`.
+
+      2. **Choose the safe default** (when confidence < 50):
+         - Prefer **reversible** over irreversible actions
+         - Prefer **additive** over destructive changes (add new code > modify existing)
+         - Prefer **narrow scope** over broad changes
+         - Prefer **existing patterns** over novel approaches
+         - Prefer **explicit** over implicit behavior
+
+      3. **Document the decision:**
+         - Append a structured entry to `.ralph/agent/decisions.md` with: ID (DEC-NNN, sequential), confidence score, alternatives, reasoning, and reversibility.
+         - Briefly note the decision in your scratchpad for iteration context.
+         - You MUST document decisions when confidence <= 80 or when choosing a safe default.
+
+      4. **Never block on human input** for implementation decisions.
+         - `human.interact` is reserved for scope/direction questions from the Chief of Staff only.
+         - This hat MUST NOT use `human.interact`.
+
   verifier:
     name: "✅ Verifier"
     description: "Verifies fixes through tests and manual QA."

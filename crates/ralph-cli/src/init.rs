@@ -10,14 +10,18 @@ use std::path::Path;
 /// Errors that can occur during initialization.
 #[derive(Debug, thiserror::Error)]
 pub enum InitError {
-    #[error("ralph.yml already exists. Use --force to overwrite.")]
+    #[error(
+        "ralph.yml already exists. Use --force to overwrite.\nSee: docs/reference/troubleshooting.md#config-file-exists"
+    )]
     FileExists,
 
-    #[error("Unknown preset '{0}'. Available presets: {1}")]
+    #[error(
+        "Unknown preset '{0}'. Available presets: {1}\nSee: docs/reference/troubleshooting.md#unknown-preset"
+    )]
     UnknownPreset(String, String),
 
     #[error(
-        "Unknown backend '{0}'. Valid backends: claude, kiro, gemini, codex, amp, copilot, opencode, custom"
+        "Unknown backend '{0}'. Valid backends: claude, kiro, gemini, codex, amp, copilot, opencode, custom.\nSee: docs/reference/troubleshooting.md#unknown-backend"
     )]
     UnknownBackend(String),
 
@@ -202,10 +206,8 @@ pub fn format_preset_list() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use crate::test_support::CwdGuard;
     use tempfile::TempDir;
-
-    static CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn test_generate_template_claude() {
@@ -239,38 +241,23 @@ mod tests {
     fn test_format_preset_list() {
         let output = format_preset_list();
         assert!(output.contains("Available presets:"));
-        assert!(output.contains("confession-loop"));
-        assert!(output.contains("tdd-red-green"));
+        assert!(output.contains("feature"));
+        assert!(output.contains("code-assist"));
         assert!(output.contains("debug"));
         assert!(output.contains("Usage:"));
     }
 
     #[test]
-    fn test_init_from_preset_confession_loop_writes_config() {
-        struct RestoreDir(std::path::PathBuf);
-        impl Drop for RestoreDir {
-            fn drop(&mut self) {
-                let _ = std::env::set_current_dir(&self.0);
-            }
-        }
-
-        let _guard = CWD_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("cwd lock poisoned");
-
-        let original_dir = std::env::current_dir().expect("get current dir");
-        let _restore = RestoreDir(original_dir);
-
+    fn test_init_from_preset_code_assist_writes_config() {
         let temp_dir = TempDir::new().expect("create temp dir");
-        std::env::set_current_dir(temp_dir.path()).expect("set current dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
 
-        init_from_preset("confession-loop", None, false).expect("init_from_preset succeeds");
+        init_from_preset("code-assist", None, false).expect("init_from_preset succeeds");
 
         let content = fs::read_to_string("ralph.yml").expect("read ralph.yml");
         assert!(
-            content.contains("confession.issues_found") && content.contains("confession.clean"),
-            "expected confession events in generated config"
+            content.contains("build.start") && content.contains("LOOP_COMPLETE"),
+            "expected event loop configuration in generated config"
         );
     }
 
@@ -280,6 +267,22 @@ mod tests {
         // but we can test the validation logic
         let result = init_from_backend("invalid-backend", false);
         assert!(matches!(result, Err(InitError::UnknownBackend(_))));
+    }
+
+    #[test]
+    fn test_unknown_backend_message_actionable() {
+        let err = InitError::UnknownBackend("invalid".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Valid backends"));
+        assert!(msg.contains("docs/reference/troubleshooting.md#unknown-backend"));
+    }
+
+    #[test]
+    fn test_file_exists_message_actionable() {
+        let err = InitError::FileExists;
+        let msg = err.to_string();
+        assert!(msg.contains("--force"));
+        assert!(msg.contains("docs/reference/troubleshooting.md#config-file-exists"));
     }
 
     #[test]

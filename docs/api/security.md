@@ -1,177 +1,72 @@
 # Security API Reference
 
-This page documents the security utilities available in `ralph_orchestrator.security`.
+## Overview
 
-## SecurityValidator
+Ralph's security-related utilities are distributed across crates. Common safeguards:
 
-The `SecurityValidator` class provides static methods for input validation, path sanitization, and sensitive data protection.
+- **Safe CLI execution** via `ralph_adapters::CliExecutor` (no shell invocation)
+- **Secret masking** via `ralph_telegram::TelegramService::bot_token_masked`
+- **Output escaping** via `ralph_telegram::escape_html`
 
-### Methods
+## Safe CLI Execution
 
-#### `sanitize_path`
+`CliExecutor` uses `tokio::process::Command` with explicit argument vectors, which
+avoids shell interpolation and reduces injection risk for prompt content.
 
-Sanitizes a file path to prevent directory traversal attacks.
+```rust
+use ralph_adapters::{CliBackend, CliExecutor};
+use ralph_core::CliConfig;
 
-```python
-@classmethod
-def sanitize_path(cls, path: str, base_dir: Optional[Path] = None) -> Path
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configure a backend explicitly (no shell commands involved).
+    let config = CliConfig {
+        backend: "codex".to_string(),
+        ..Default::default()
+    };
+
+    let backend = CliBackend::from_config(&config)?;
+    let executor = CliExecutor::new(backend);
+
+    let result = executor.execute_capture("Summarize this task.").await?;
+    println!("success={} exit_code={:?}", result.success, result.exit_code);
+
+    Ok(())
+}
 ```
 
-**Arguments:**
+## Mask Secrets in Logs
 
-- `path` (str): Input path to sanitize.
-- `base_dir` (Optional[Path]): Base directory to resolve relative paths against. Defaults to current working directory.
+When integrating Telegram, `TelegramService::bot_token_masked` keeps logs safe
+by exposing only the prefix/suffix of the token.
 
-**Returns:**
+```rust
+use ralph_telegram::TelegramService;
+use std::path::PathBuf;
 
-- `Path`: Sanitized absolute Path.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = TelegramService::new(
+        PathBuf::from("."),
+        Some("1234567890:abcdefg_hijklmnop".to_string()),
+        300,
+        "loop-1".to_string(),
+    )?;
 
-**Raises:**
-
-- `ValueError`: If the path contains dangerous patterns (e.g., `../`, null bytes) or resolves to a location outside the base directory/allowed system paths.
-
-**Example:**
-
-```python
-from ralph_orchestrator.security import SecurityValidator
-
-# Safe usage
-path = SecurityValidator.sanitize_path("data/output.json")
-
-# Dangerous usage (will raise ValueError)
-# path = SecurityValidator.sanitize_path("../../etc/passwd")
+    println!("token={}", service.bot_token_masked());
+    Ok(())
+}
 ```
 
-#### `mask_sensitive_data`
+## Escape HTML for Telegram Output
 
-Masks sensitive data in text for logging purposes. Supports detection of API keys, bearer tokens, passwords, and other secrets.
+Telegram's HTML parse mode requires escaping special characters.
 
-```python
-@classmethod
-def mask_sensitive_data(cls, text: str) -> str
-```
+```rust
+use ralph_telegram::escape_html;
 
-**Arguments:**
-
-- `text` (str): Text to mask sensitive data in.
-
-**Returns:**
-
-- `str`: Text with sensitive data replaced by masked values (e.g., `sk-***********`).
-
-**Example:**
-
-```python
-log_message = "Using API key sk-1234567890abcdef"
-safe_log = SecurityValidator.mask_sensitive_data(log_message)
-print(safe_log)
-# Output: Using API key sk-***********
-```
-
-#### `validate_filename`
-
-Validates a filename for security, checking for forbidden characters, reserved names, and length limits.
-
-```python
-@classmethod
-def validate_filename(cls, filename: str) -> str
-```
-
-**Arguments:**
-
-- `filename` (str): Filename to validate.
-
-**Returns:**
-
-- `str`: Sanitized filename.
-
-**Raises:**
-
-- `ValueError`: If filename is empty, contains path separators, invalid characters, or is a reserved name (e.g., `CON` on Windows).
-
-#### `validate_config_value`
-
-Validates and sanitizes configuration values based on their key.
-
-```python
-@classmethod
-def validate_config_value(cls, key: str, value: Any) -> Any
-```
-
-**Arguments:**
-
-- `key` (str): Configuration key (e.g., "max_iterations", "log_file").
-- `value` (Any): Configuration value.
-
-**Returns:**
-
-- `Any`: Sanitized value.
-
-#### `create_secure_logger`
-
-Creates a logger instance that automatically masks sensitive data in log records.
-
-```python
-@classmethod
-def create_secure_logger(cls, name: str, log_file: Optional[str] = None) -> logging.Logger
-```
-
-**Arguments:**
-
-- `name` (str): Logger name.
-- `log_file` (Optional[str]): Path to log file. If None, logs to console.
-
-**Returns:**
-
-- `logging.Logger`: Configured logger instance.
-
-## PathTraversalProtection
-
-Utilities specifically for preventing path traversal in file operations.
-
-### Methods
-
-#### `safe_file_read`
-
-Safely reads a file with path traversal protection.
-
-```python
-@staticmethod
-def safe_file_read(file_path: str, base_dir: Optional[Path] = None) -> str
-```
-
-**Arguments:**
-
-- `file_path` (str): Path to file.
-- `base_dir` (Optional[Path]): Base directory.
-
-**Returns:**
-
-- `str`: File content (utf-8).
-
-#### `safe_file_write`
-
-Safely writes to a file with path traversal protection. Creates parent directories if needed.
-
-```python
-@staticmethod
-def safe_file_write(file_path: str, content: str, base_dir: Optional[Path] = None) -> None
-```
-
-**Arguments:**
-
-- `file_path` (str): Path to file.
-- `content` (str): Content to write.
-- `base_dir` (Optional[Path]): Base directory.
-
-## Decorators
-
-### `secure_file_operation`
-
-Decorator to secure functions that handle file paths as arguments. Automatically sanitizes any string argument containing path separators.
-
-```python
-@secure_file_operation(base_dir=None)
-def my_file_func(path, content):
-    ...
+fn main() {
+    let raw = "<task> & details";
+    let safe = escape_html(raw);
+    assert_eq!(safe, "&lt;task&gt; &amp; details");
+}
 ```

@@ -39,6 +39,12 @@ impl std::fmt::Display for NoBackendError {
         writeln!(f)?;
         writeln!(f, "Checked backends: {}", self.checked.join(", "))?;
         writeln!(f)?;
+        writeln!(
+            f,
+            "Fix: install a backend CLI or run `ralph doctor` to validate your setup."
+        )?;
+        writeln!(f, "See: docs/reference/troubleshooting.md#agent-not-found")?;
+        writeln!(f)?;
         writeln!(f, "Install one of the following:")?;
         writeln!(
             f,
@@ -181,6 +187,8 @@ mod tests {
         let msg = format!("{}", err);
         assert!(msg.contains("No supported AI backend found"));
         assert!(msg.contains("claude, gemini"));
+        assert!(msg.contains("ralph doctor"));
+        assert!(msg.contains("docs/reference/troubleshooting.md#agent-not-found"));
     }
 
     #[test]

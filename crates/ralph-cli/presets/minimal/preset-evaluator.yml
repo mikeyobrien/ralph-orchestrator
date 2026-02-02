@@ -27,6 +27,7 @@ core:
     - "Be specific about error messages and stack traces"
     - "Note timing and performance observations"
     - "Capture UX friction points as you experience them"
+    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
 
 # Single-hat mode for the meta-evaluator
 # Ralph handles task.start for coordination, then delegates via evaluation.start

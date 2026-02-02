@@ -14,16 +14,20 @@
 
 mod bot;
 mod display;
+mod doctor;
 mod hats;
 mod init;
 mod interact;
 mod loop_runner;
 mod loops;
 mod memory;
+mod preflight;
 mod presets;
 mod skill_cli;
 mod sop_runner;
 mod task_cli;
+#[cfg(test)]
+mod test_support;
 mod tools;
 mod web;
 
@@ -31,9 +35,9 @@ use anyhow::{Context, Result};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use ralph_adapters::detect_backend;
 use ralph_core::{
-    EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry, RalphConfig,
-    TerminationReason,
-    worktree::{WorktreeConfig, create_worktree, ensure_gitignore},
+    CheckStatus, EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry,
+    PreflightReport, PreflightRunner, RalphConfig, TerminationReason,
+    worktree::{WorktreeConfig, create_worktree, ensure_gitignore, remove_worktree},
 };
 use std::fs;
 use std::io::{IsTerminal, Write, stdout};
@@ -175,6 +179,18 @@ impl Verbosity {
     /// 3. Config file: (if supported in future)
     /// 4. Default: Normal
     fn resolve(cli_verbose: bool, cli_quiet: bool) -> Self {
+        let env_quiet = std::env::var("RALPH_QUIET").is_ok();
+        let env_verbose = std::env::var("RALPH_VERBOSE").is_ok();
+        Self::resolve_with_env(cli_verbose, cli_quiet, env_quiet, env_verbose)
+    }
+
+    #[allow(clippy::fn_params_excessive_bools)]
+    fn resolve_with_env(
+        cli_verbose: bool,
+        cli_quiet: bool,
+        env_quiet: bool,
+        env_verbose: bool,
+    ) -> Self {
         // CLI flags take precedence
         if cli_quiet {
             return Verbosity::Quiet;
@@ -184,10 +200,10 @@ impl Verbosity {
         }
 
         // Environment variables
-        if std::env::var("RALPH_QUIET").is_ok() {
+        if env_quiet {
             return Verbosity::Quiet;
         }
-        if std::env::var("RALPH_VERBOSE").is_ok() {
+        if env_verbose {
             return Verbosity::Verbose;
         }
 
@@ -213,7 +229,7 @@ use display::colors;
 pub enum ConfigSource {
     /// Local file path (default behavior)
     File(PathBuf),
-    /// Builtin preset name (e.g., "builtin:tdd-red-green")
+    /// Builtin preset name (e.g., "builtin:feature")
     Builtin(String),
     /// Remote URL (e.g., "http://example.com/preset.yml")
     Remote(String),
@@ -258,7 +274,7 @@ const KNOWN_CORE_FIELDS: &[&str] = &["scratchpad", "specs_dir"];
 ///
 /// Overrides are in the format `core.field=value` and take precedence
 /// over values from the config file.
-fn apply_config_overrides(
+pub(crate) fn apply_config_overrides(
     config: &mut RalphConfig,
     sources: &[ConfigSource],
 ) -> anyhow::Result<()> {
@@ -374,6 +390,15 @@ struct Cli {
 enum Commands {
     /// Run the orchestration loop (default if no subcommand given)
     Run(RunArgs),
+
+    /// Run preflight checks to validate configuration and environment
+    Preflight(preflight::PreflightArgs),
+
+    /// Run first-run diagnostics and environment checks
+    Doctor(doctor::DoctorArgs),
+
+    /// Interactive walkthrough of hats, presets, and workflow
+    Tutorial(TutorialArgs),
 
     /// DEPRECATED: Use `ralph run --continue` instead.
     /// Resume a previously interrupted loop from existing scratchpad.
@@ -504,17 +529,12 @@ struct RunArgs {
     no_auto_merge: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Chaos Mode Options
+    // Preflight Options
     // ─────────────────────────────────────────────────────────────────────────
-    /// Enable chaos mode: after LOOP_COMPLETE, explore related improvements.
-    /// Activates ONLY after successful completion, not on other termination.
+    /// Skip preflight checks before loop start.
+    /// Overrides features.preflight.enabled from config.
     #[arg(long)]
-    chaos: bool,
-
-    /// Maximum chaos mode iterations (default: 5).
-    /// Only relevant when --chaos is enabled.
-    #[arg(long, requires = "chaos")]
-    chaos_max_iterations: Option<u32>,
+    skip_preflight: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Verbosity Options
@@ -632,6 +652,14 @@ struct EmitArgs {
     /// Path to events file (defaults to .ralph/events.jsonl)
     #[arg(long, default_value = ".ralph/events.jsonl")]
     pub file: PathBuf,
+}
+
+/// Arguments for the tutorial subcommand.
+#[derive(Parser, Debug)]
+struct TutorialArgs {
+    /// Skip prompts and print the tutorial in one pass
+    #[arg(long)]
+    no_input: bool,
 }
 
 /// Arguments for the plan subcommand.
@@ -777,6 +805,13 @@ async fn main() -> Result<()> {
         Some(Commands::Run(args)) => {
             run_command(&config_sources, cli.verbose, cli.color, args).await
         }
+        Some(Commands::Preflight(args)) => {
+            preflight::execute(&config_sources, args, cli.color.should_use_colors()).await
+        }
+        Some(Commands::Doctor(args)) => {
+            doctor::execute(&config_sources, args, cli.color.should_use_colors()).await
+        }
+        Some(Commands::Tutorial(args)) => tutorial_command(cli.color, args),
         Some(Commands::Resume(args)) => {
             resume_command(&config_sources, cli.verbose, cli.color, args).await
         }
@@ -811,14 +846,168 @@ async fn main() -> Result<()> {
                 idle_timeout: None,
                 exclusive: false,
                 no_auto_merge: false,
-                chaos: false,
-                chaos_max_iterations: None,
+                skip_preflight: false,
                 verbose: false,
                 quiet: false,
                 record_session: None,
                 custom_args: Vec::new(),
             };
             run_command(&config_sources, cli.verbose, cli.color, args).await
+        }
+    }
+}
+
+fn format_preflight_summary(report: &PreflightReport) -> String {
+    let icons: Vec<String> = report
+        .checks
+        .iter()
+        .map(|check| {
+            let icon = match check.status {
+                CheckStatus::Pass => "✓",
+                CheckStatus::Warn => "⚠",
+                CheckStatus::Fail => "✗",
+            };
+            format!("{icon} {}", check.name)
+        })
+        .collect();
+
+    let summary = if icons.is_empty() {
+        "no checks".to_string()
+    } else {
+        icons.join(" ")
+    };
+
+    let suffix = if report.failures > 0 {
+        format!(
+            " ({} failure{})",
+            report.failures,
+            if report.failures == 1 { "" } else { "s" }
+        )
+    } else if report.warnings > 0 {
+        format!(
+            " ({} warning{})",
+            report.warnings,
+            if report.warnings == 1 { "" } else { "s" }
+        )
+    } else {
+        String::new()
+    };
+
+    format!("{summary}{suffix}")
+}
+
+enum AutoPreflightMode {
+    DryRun,
+    Run,
+}
+
+fn preflight_failure_detail(report: &PreflightReport, strict: bool) -> String {
+    if strict && report.warnings > 0 {
+        format!(
+            "{} failure{}, {} warning{}",
+            report.failures,
+            if report.failures == 1 { "" } else { "s" },
+            report.warnings,
+            if report.warnings == 1 { "" } else { "s" }
+        )
+    } else {
+        format!(
+            "{} failure{}",
+            report.failures,
+            if report.failures == 1 { "" } else { "s" }
+        )
+    }
+}
+
+async fn run_auto_preflight(
+    config: &RalphConfig,
+    skip_preflight: bool,
+    verbose: bool,
+    mode: AutoPreflightMode,
+) -> Result<Option<PreflightReport>> {
+    if skip_preflight || !config.features.preflight.enabled {
+        return Ok(None);
+    }
+
+    let runner = PreflightRunner::default_checks();
+    let mut report = if config.features.preflight.skip.is_empty() {
+        runner.run_all(config).await
+    } else {
+        let skip_lower: std::collections::HashSet<String> = config
+            .features
+            .preflight
+            .skip
+            .iter()
+            .map(|name| name.to_lowercase())
+            .collect();
+        let selected: Vec<String> = runner
+            .check_names()
+            .into_iter()
+            .filter(|name| !skip_lower.contains(&name.to_lowercase()))
+            .map(|name| name.to_string())
+            .collect();
+        runner.run_selected(config, &selected).await
+    };
+
+    let effective_passed = if config.features.preflight.strict {
+        report.failures == 0 && report.warnings == 0
+    } else {
+        report.failures == 0
+    };
+    report.passed = effective_passed;
+
+    match mode {
+        AutoPreflightMode::DryRun => Ok(Some(report)),
+        AutoPreflightMode::Run => {
+            print_preflight_summary(&report, verbose, "Preflight: ", false);
+            if !effective_passed {
+                let detail = preflight_failure_detail(&report, config.features.preflight.strict);
+                anyhow::bail!(
+                    "Preflight checks failed ({}). Fix the issues above or use --skip-preflight to bypass.",
+                    detail
+                );
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn print_preflight_summary(
+    report: &PreflightReport,
+    verbose: bool,
+    prefix: &str,
+    use_stdout: bool,
+) {
+    let summary = format_preflight_summary(report);
+    if use_stdout {
+        println!("{prefix}{summary}");
+    } else {
+        eprintln!("{prefix}{summary}");
+    }
+
+    let emit = |line: String| {
+        if use_stdout {
+            println!("{line}");
+        } else {
+            eprintln!("{line}");
+        }
+    };
+
+    for check in &report.checks {
+        if check.status == CheckStatus::Fail
+            && let Some(message) = &check.message
+        {
+            emit(format!("  ✗ {}: {}", check.name, message));
+        }
+    }
+
+    if verbose {
+        for check in &report.checks {
+            if check.status == CheckStatus::Warn
+                && let Some(message) = &check.message
+            {
+                emit(format!("  ⚠ {}: {}", check.name, message));
+            }
         }
     }
 }
@@ -993,7 +1182,16 @@ async fn run_command(
         }
     }
 
+    let preflight_verbose = verbose || args.verbose;
+
     if args.dry_run {
+        let preflight_report = run_auto_preflight(
+            &config,
+            args.skip_preflight,
+            preflight_verbose,
+            AutoPreflightMode::DryRun,
+        )
+        .await?;
         println!("Dry run mode - configuration:");
         println!(
             "  Hats: {}",
@@ -1034,6 +1232,9 @@ async fn run_command(
         if !warnings.is_empty() {
             println!("  Warnings: {}", warnings.len());
         }
+        if let Some(report) = preflight_report.as_ref() {
+            print_preflight_summary(report, preflight_verbose, "  Preflight: ", true);
+        }
         return Ok(());
     }
 
@@ -1068,6 +1269,8 @@ async fn run_command(
             }
         })
         .unwrap_or_else(|| "[no prompt]".to_string());
+
+    let mut pending_worktree_registration: Option<LoopEntry> = None;
 
     // Try to acquire the loop lock for multi-loop concurrency support
     // This implements the lock detection flow from the multi-loop spec
@@ -1150,18 +1353,15 @@ async fn run_command(
                     .generate_context_file(&worktree.branch, &prompt_summary)
                     .context("Failed to generate context file in worktree")?;
 
-                // Register this loop in the registry with the SAME loop_id
-                // This ensures registry ID matches worktree path and branch name
-                let registry = LoopRegistry::new(workspace_root);
+                // Register this loop after preflight succeeds so failed runs
+                // don't leave stale registry entries behind.
                 let entry = LoopEntry::with_id(
                     &loop_id,
                     &prompt_summary,
                     Some(worktree.path.to_string_lossy().to_string()),
                     worktree.path.to_string_lossy().to_string(),
                 );
-                registry
-                    .register(entry)
-                    .context("Failed to register loop in registry")?;
+                pending_worktree_registration = Some(entry);
 
                 // Update config to use worktree paths
                 // The scratchpad and other paths should resolve to the worktree
@@ -1197,6 +1397,34 @@ async fn run_command(
     loop_context
         .ensure_directories()
         .context("Failed to create loop directories")?;
+
+    if let Err(err) = run_auto_preflight(
+        &config,
+        args.skip_preflight,
+        preflight_verbose,
+        AutoPreflightMode::Run,
+    )
+    .await
+    {
+        if !loop_context.is_primary()
+            && let Err(clean_err) =
+                remove_worktree(loop_context.repo_root(), loop_context.workspace())
+        {
+            warn!(
+                "Preflight failed; unable to remove worktree {}: {}",
+                loop_context.workspace().display(),
+                clean_err
+            );
+        }
+        return Err(err);
+    }
+
+    if let Some(entry) = pending_worktree_registration {
+        let registry = LoopRegistry::new(loop_context.repo_root());
+        registry
+            .register(entry)
+            .context("Failed to register loop in registry")?;
+    }
 
     // Run the orchestration loop and exit with proper exit code
     // TUI is enabled by default (unless --no-tui or --autonomous is specified)
@@ -1696,6 +1924,141 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TutorialStep {
+    title: &'static str,
+    body: &'static [&'static str],
+}
+
+const TUTORIAL_STEPS: &[TutorialStep] = &[
+    TutorialStep {
+        title: "Hats: Event-driven personas",
+        body: &[
+            "Hats are named personas that subscribe to events and publish new events.",
+            "Each hat lists triggers (ex: task.start) and outputs (ex: build.task).",
+            "Inspect hats with: ralph hats list",
+            "Visualize the flow with: ralph hats graph --format ascii",
+        ],
+    },
+    TutorialStep {
+        title: "Presets: Packaged workflows",
+        body: &[
+            "Presets bundle hats, backend, and defaults into a single config.",
+            "List built-ins with: ralph init --list-presets",
+            "Create a config: ralph init --preset <name>",
+            "Run directly: ralph run -c builtin:<name>",
+        ],
+    },
+    TutorialStep {
+        title: "Workflow: The loop lifecycle",
+        body: &[
+            "Write a prompt file (ex: PROMPT.md) or pass --prompt/--prompt-file.",
+            "Run: ralph run -P PROMPT.md or ralph run -p \"...\"",
+            "Ralph emits task.start, hats process events, and the loop ends on done events.",
+            "Artifacts live in .ralph/agent (scratchpad, tasks, memories).",
+            "Check open tasks with: ralph tools task ready",
+        ],
+    },
+];
+
+fn tutorial_steps() -> &'static [TutorialStep] {
+    TUTORIAL_STEPS
+}
+
+/// Runs the interactive tutorial walkthrough.
+fn tutorial_command(color_mode: ColorMode, args: TutorialArgs) -> Result<()> {
+    let use_colors = color_mode.should_use_colors();
+    let interactive = !args.no_input && std::io::stdin().is_terminal();
+    let steps = tutorial_steps();
+
+    print_tutorial_intro(use_colors, interactive);
+
+    for (index, step) in steps.iter().enumerate() {
+        print_tutorial_step(index + 1, steps.len(), step, use_colors);
+        if interactive && index + 1 < steps.len() {
+            prompt_to_continue(use_colors)?;
+        } else {
+            println!();
+        }
+    }
+
+    print_tutorial_outro(use_colors);
+    Ok(())
+}
+
+fn print_tutorial_intro(use_colors: bool, interactive: bool) {
+    if use_colors {
+        println!(
+            "{}{}Ralph Tutorial{}",
+            colors::BOLD,
+            colors::CYAN,
+            colors::RESET
+        );
+        println!(
+            "{}Interactive walkthrough of hats, presets, and workflow.{}",
+            colors::DIM,
+            colors::RESET
+        );
+    } else {
+        println!("Ralph Tutorial");
+        println!("Interactive walkthrough of hats, presets, and workflow.");
+    }
+
+    if !interactive {
+        println!("Non-interactive mode: printing all steps.");
+    }
+
+    println!();
+}
+
+fn print_tutorial_step(index: usize, total: usize, step: &TutorialStep, use_colors: bool) {
+    if use_colors {
+        println!(
+            "{}{}Step {}/{}: {}{}",
+            colors::BOLD,
+            colors::CYAN,
+            index,
+            total,
+            step.title,
+            colors::RESET
+        );
+    } else {
+        println!("Step {}/{}: {}", index, total, step.title);
+    }
+
+    for line in step.body {
+        println!("  - {}", line);
+    }
+}
+
+fn prompt_to_continue(use_colors: bool) -> Result<()> {
+    if use_colors {
+        print!("{}Press Enter to continue...{}", colors::DIM, colors::RESET);
+    } else {
+        print!("Press Enter to continue...");
+    }
+
+    stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .context("Failed to read input")?;
+    println!();
+    Ok(())
+}
+
+fn print_tutorial_outro(use_colors: bool) {
+    if use_colors {
+        println!(
+            "{}Tutorial complete. Next: ralph init --list-presets, then ralph run.{}",
+            colors::GREEN,
+            colors::RESET
+        );
+    } else {
+        println!("Tutorial complete. Next: ralph init --list-presets, then ralph run.");
+    }
+}
+
 /// Starts a Prompt-Driven Development planning session.
 ///
 /// This is a thin wrapper that bypasses Ralph's event loop entirely.
@@ -1844,6 +2207,8 @@ fn list_directory_contents(path: &Path, use_colors: bool, indent: usize) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
+    use std::path::PathBuf;
 
     #[test]
     fn test_verbosity_cli_quiet() {
@@ -1861,10 +2226,32 @@ mod tests {
     }
 
     #[test]
+    fn test_verbosity_env_quiet() {
+        assert_eq!(
+            Verbosity::resolve_with_env(false, false, true, false),
+            Verbosity::Quiet
+        );
+    }
+
+    #[test]
+    fn test_verbosity_env_verbose() {
+        assert_eq!(
+            Verbosity::resolve_with_env(false, false, false, true),
+            Verbosity::Verbose
+        );
+    }
+
+    #[test]
+    fn test_color_mode_should_use_colors() {
+        assert!(ColorMode::Always.should_use_colors());
+        assert!(!ColorMode::Never.should_use_colors());
+    }
+
+    #[test]
     fn test_config_source_parse_builtin() {
-        let source = ConfigSource::parse("builtin:tdd-red-green");
+        let source = ConfigSource::parse("builtin:feature");
         match source {
-            ConfigSource::Builtin(name) => assert_eq!(name, "tdd-red-green"),
+            ConfigSource::Builtin(name) => assert_eq!(name, "feature"),
             _ => panic!("Expected Builtin variant"),
         }
     }
@@ -1932,6 +2319,29 @@ mod tests {
                 command: crate::bot::BotCommands::Daemon(_),
             }))
         ));
+    }
+
+    #[test]
+    fn test_doctor_parses_command() {
+        let cli = Cli::try_parse_from(["ralph", "doctor"]).expect("CLI parse failed");
+
+        assert!(matches!(cli.command, Some(Commands::Doctor(_))));
+    }
+
+    #[test]
+    fn test_tutorial_parses_command() {
+        let cli = Cli::try_parse_from(["ralph", "tutorial"]).expect("CLI parse failed");
+
+        assert!(matches!(cli.command, Some(Commands::Tutorial(_))));
+    }
+
+    #[test]
+    fn test_tutorial_steps_cover_core_topics() {
+        let steps = tutorial_steps();
+        assert_eq!(steps.len(), 3);
+        assert!(steps.iter().any(|step| step.title.contains("Hats")));
+        assert!(steps.iter().any(|step| step.title.contains("Presets")));
+        assert!(steps.iter().any(|step| step.title.contains("Workflow")));
     }
 
     #[test]
@@ -2056,6 +2466,42 @@ mod tests {
         // Should succeed without error (no-op)
         let result = ensure_scratchpad_directory(&config);
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auto_preflight_dry_run_returns_report() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        config.features.preflight.enabled = true;
+        config.features.preflight.skip = vec!["git".to_string(), "tools".to_string()];
+        config.cli.backend = "custom".to_string();
+        config.cli.command = Some("definitely-missing-12345".to_string());
+
+        let report = run_auto_preflight(&config, false, false, AutoPreflightMode::DryRun)
+            .await
+            .unwrap();
+
+        let report = report.expect("expected preflight report in dry-run mode");
+        assert!(!report.passed);
+        assert!(report.failures >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_auto_preflight_run_fails_on_check_failure() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        config.features.preflight.enabled = true;
+        config.features.preflight.skip = vec!["git".to_string(), "tools".to_string()];
+        config.cli.backend = "custom".to_string();
+        config.cli.command = Some("definitely-missing-12345".to_string());
+
+        let err = run_auto_preflight(&config, false, false, AutoPreflightMode::Run)
+            .await
+            .expect_err("expected preflight failure in run mode");
+
+        assert!(err.to_string().contains("Preflight checks failed"));
     }
 
     #[test]
@@ -2262,5 +2708,205 @@ core:
 
         // Assert: returns "[no prompt]" for missing file
         assert_eq!(prompt_summary, "[no prompt]");
+    }
+
+    #[test]
+    fn test_format_preflight_summary_with_failures() {
+        let report = PreflightReport {
+            passed: false,
+            warnings: 1,
+            failures: 1,
+            checks: vec![
+                ralph_core::CheckResult::pass("config", "Config"),
+                ralph_core::CheckResult::warn("backend", "Backend", "Missing"),
+                ralph_core::CheckResult::fail("paths", "Paths", "Missing path"),
+            ],
+        };
+
+        let summary = format_preflight_summary(&report);
+
+        assert!(summary.contains("✓"));
+        assert!(summary.contains("⚠"));
+        assert!(summary.contains("✗"));
+        assert!(summary.contains("(1 failure)"));
+    }
+
+    #[test]
+    fn test_format_preflight_summary_no_checks() {
+        let report = PreflightReport {
+            passed: true,
+            warnings: 0,
+            failures: 0,
+            checks: Vec::new(),
+        };
+
+        let summary = format_preflight_summary(&report);
+
+        assert_eq!(summary, "no checks");
+    }
+
+    #[test]
+    fn test_preflight_failure_detail_strict_includes_warnings() {
+        let report = PreflightReport {
+            passed: false,
+            warnings: 2,
+            failures: 1,
+            checks: Vec::new(),
+        };
+
+        assert_eq!(preflight_failure_detail(&report, false), "1 failure");
+        assert_eq!(
+            preflight_failure_detail(&report, true),
+            "1 failure, 2 warnings"
+        );
+    }
+
+    #[test]
+    fn test_load_config_with_overrides_applies_override_sources() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+        let config_path = temp_dir.path().join("ralph.yml");
+        std::fs::write(&config_path, "core:\n  scratchpad: .agent/scratchpad.md\n").unwrap();
+
+        let sources = vec![
+            ConfigSource::File(config_path),
+            ConfigSource::Override {
+                key: "core.scratchpad".to_string(),
+                value: ".custom/scratch.md".to_string(),
+            },
+        ];
+
+        let config = load_config_with_overrides(&sources).unwrap();
+
+        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        let expected_root = std::fs::canonicalize(temp_dir.path())
+            .unwrap_or_else(|_| temp_dir.path().to_path_buf());
+        let actual_root = std::fs::canonicalize(&config.core.workspace_root)
+            .unwrap_or_else(|_| config.core.workspace_root.clone());
+        assert_eq!(actual_root, expected_root);
+    }
+
+    #[test]
+    fn test_load_config_with_overrides_only_overrides_uses_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let sources = vec![ConfigSource::Override {
+            key: "core.specs_dir".to_string(),
+            value: "custom-specs".to_string(),
+        }];
+
+        let config = load_config_with_overrides(&sources).unwrap();
+
+        assert_eq!(config.core.specs_dir, "custom-specs");
+        let expected_root = std::fs::canonicalize(temp_dir.path())
+            .unwrap_or_else(|_| temp_dir.path().to_path_buf());
+        let actual_root = std::fs::canonicalize(&config.core.workspace_root)
+            .unwrap_or_else(|_| config.core.workspace_root.clone());
+        assert_eq!(actual_root, expected_root);
+    }
+
+    #[test]
+    fn test_load_config_with_overrides_missing_file_falls_back_to_defaults() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];
+
+        let config = load_config_with_overrides(&sources).unwrap();
+
+        let default = RalphConfig::default();
+        assert_eq!(config.core.scratchpad, default.core.scratchpad);
+        let expected_root = std::fs::canonicalize(temp_dir.path())
+            .unwrap_or_else(|_| temp_dir.path().to_path_buf());
+        let actual_root = std::fs::canonicalize(&config.core.workspace_root)
+            .unwrap_or_else(|_| config.core.workspace_root.clone());
+        assert_eq!(actual_root, expected_root);
+    }
+
+    #[test]
+    fn test_list_directory_contents_handles_nested_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nested_dir = temp_dir.path().join("one/two");
+        std::fs::create_dir_all(&nested_dir).unwrap();
+        std::fs::write(temp_dir.path().join("one/file.txt"), "hello").unwrap();
+
+        assert!(list_directory_contents(temp_dir.path(), false, 0).is_ok());
+        assert!(list_directory_contents(temp_dir.path(), true, 0).is_ok());
+    }
+
+    #[test]
+    fn test_list_directory_contents_missing_path_returns_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let missing = temp_dir.path().join("missing");
+
+        assert!(list_directory_contents(&missing, false, 0).is_err());
+    }
+
+    #[test]
+    fn test_print_preflight_summary_handles_failures_and_warnings() {
+        let report = PreflightReport {
+            passed: false,
+            warnings: 1,
+            failures: 1,
+            checks: vec![
+                ralph_core::CheckResult::pass("config", "Config"),
+                ralph_core::CheckResult::warn("backend", "Backend", "Missing"),
+                ralph_core::CheckResult::fail("paths", "Paths", "Missing path"),
+            ],
+        };
+
+        print_preflight_summary(&report, true, "Preflight: ", true);
+        print_preflight_summary(&report, false, "Preflight: ", false);
+    }
+
+    fn default_run_args() -> RunArgs {
+        RunArgs {
+            prompt_text: None,
+            backend: Some("claude".to_string()),
+            prompt_file: None,
+            max_iterations: None,
+            completion_promise: None,
+            dry_run: false,
+            continue_mode: false,
+            no_tui: true,
+            autonomous: false,
+            idle_timeout: None,
+            exclusive: false,
+            no_auto_merge: false,
+            skip_preflight: true,
+            verbose: false,
+            quiet: false,
+            record_session: None,
+            custom_args: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_command_continue_missing_scratchpad_returns_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let mut args = default_run_args();
+        args.continue_mode = true;
+
+        let err = run_command(&[], false, ColorMode::Never, args)
+            .await
+            .expect_err("expected missing scratchpad error");
+        assert!(err.to_string().contains("scratchpad not found"));
+    }
+
+    #[tokio::test]
+    async fn test_run_command_dry_run_inline_prompt_skips_execution() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let mut args = default_run_args();
+        args.dry_run = true;
+        args.prompt_text = Some("Test inline prompt".to_string());
+
+        run_command(&[], false, ColorMode::Never, args)
+            .await
+            .expect("dry run should succeed");
     }
 }

@@ -1010,7 +1010,7 @@ impl PtyExecutor {
                 let exit_code = status.exit_code() as i32;
                 debug!(exit_status = ?status, exit_code, "Child process exited");
 
-                // Drain remaining output from channel
+                // Drain remaining output already buffered.
                 while let Ok(event) = output_rx.try_recv() {
                     if let OutputEvent::Data(data) = event {
                         if !tui_connected {
@@ -1018,6 +1018,31 @@ impl PtyExecutor {
                             io::stdout().flush()?;
                         }
                         output.extend_from_slice(&data);
+                    }
+                }
+
+                // Give the reader thread a brief window to flush any final bytes/EOF.
+                // This avoids races where fast-exiting commands drop output before we return.
+                let drain_deadline = Instant::now() + Duration::from_millis(200);
+                loop {
+                    let remaining = drain_deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    match tokio::time::timeout(remaining, output_rx.recv()).await {
+                        Ok(Some(OutputEvent::Data(data))) => {
+                            if !tui_connected {
+                                io::stdout().write_all(&data)?;
+                                io::stdout().flush()?;
+                            }
+                            output.extend_from_slice(&data);
+                        }
+                        Ok(Some(OutputEvent::Eof) | None) => break,
+                        Ok(Some(OutputEvent::Error(e))) => {
+                            debug!(error = %e, "PTY read error after exit");
+                            break;
+                        }
+                        Err(_) => break, // timeout
                     }
                 }
 
@@ -1495,6 +1520,12 @@ fn build_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claude_stream::{AssistantMessage, UserMessage};
+    #[cfg(unix)]
+    use crate::cli_backend::PromptMode;
+    use crate::stream_handler::{SessionResult, StreamHandler};
+    #[cfg(unix)]
+    use tempfile::TempDir;
 
     #[test]
     fn test_double_ctrl_c_within_window() {
@@ -1509,6 +1540,27 @@ mod tests {
         let later = now + Duration::from_millis(500);
         let action = state.handle_ctrl_c(later);
         assert_eq!(action, CtrlCAction::Terminate);
+    }
+
+    #[test]
+    fn test_input_event_from_bytes_ctrl_c() {
+        let event = InputEvent::from_bytes(vec![3]);
+        assert!(matches!(event, InputEvent::CtrlC));
+    }
+
+    #[test]
+    fn test_input_event_from_bytes_ctrl_backslash() {
+        let event = InputEvent::from_bytes(vec![28]);
+        assert!(matches!(event, InputEvent::CtrlBackslash));
+    }
+
+    #[test]
+    fn test_input_event_from_bytes_data() {
+        let event = InputEvent::from_bytes(vec![b'a']);
+        assert!(matches!(event, InputEvent::Data(_)));
+
+        let event = InputEvent::from_bytes(vec![1, 2, 3]);
+        assert!(matches!(event, InputEvent::Data(_)));
     }
 
     #[test]
@@ -1595,6 +1647,22 @@ mod tests {
         assert_eq!(config.rows, 24);
     }
 
+    #[test]
+    fn test_pty_config_from_env_matches_env_or_defaults() {
+        let cols = std::env::var("COLUMNS")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(80);
+        let rows = std::env::var("LINES")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(24);
+
+        let config = PtyConfig::from_env();
+        assert_eq!(config.cols, cols);
+        assert_eq!(config.rows, rows);
+    }
+
     /// Verifies that the idle timeout logic in run_interactive correctly handles
     /// activity resets. Per spec (interactive-mode.spec.md lines 155-159):
     /// - Timeout resets on agent output (any bytes from PTY)
@@ -1661,6 +1729,129 @@ mod tests {
 
         assert_eq!(result.extracted_text, extracted);
         assert!(result.stripped_output.contains("raw output"));
+    }
+
+    #[test]
+    fn test_resolve_termination_type_handles_sigint_exit_code() {
+        let termination = resolve_termination_type(130, TerminationType::Natural);
+        assert_eq!(termination, TerminationType::UserInterrupt);
+
+        let termination = resolve_termination_type(0, TerminationType::ForceKill);
+        assert_eq!(termination, TerminationType::ForceKill);
+    }
+
+    #[derive(Default)]
+    struct CapturingHandler {
+        texts: Vec<String>,
+        tool_calls: Vec<(String, String, serde_json::Value)>,
+        tool_results: Vec<(String, String)>,
+        errors: Vec<String>,
+        completions: Vec<SessionResult>,
+    }
+
+    impl StreamHandler for CapturingHandler {
+        fn on_text(&mut self, text: &str) {
+            self.texts.push(text.to_string());
+        }
+
+        fn on_tool_call(&mut self, name: &str, id: &str, input: &serde_json::Value) {
+            self.tool_calls
+                .push((name.to_string(), id.to_string(), input.clone()));
+        }
+
+        fn on_tool_result(&mut self, id: &str, output: &str) {
+            self.tool_results.push((id.to_string(), output.to_string()));
+        }
+
+        fn on_error(&mut self, error: &str) {
+            self.errors.push(error.to_string());
+        }
+
+        fn on_complete(&mut self, result: &SessionResult) {
+            self.completions.push(result.clone());
+        }
+    }
+
+    #[test]
+    fn test_dispatch_stream_event_routes_text_and_tool_calls() {
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+
+        let event = ClaudeStreamEvent::Assistant {
+            message: AssistantMessage {
+                content: vec![
+                    ContentBlock::Text {
+                        text: "Hello".to_string(),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "Read".to_string(),
+                        input: serde_json::json!({"path": "README.md"}),
+                    },
+                ],
+            },
+            usage: None,
+        };
+
+        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+
+        assert_eq!(handler.texts, vec!["Hello".to_string()]);
+        assert_eq!(handler.tool_calls.len(), 1);
+        assert!(extracted_text.contains("Hello"));
+        assert!(extracted_text.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_dispatch_stream_event_routes_tool_results_and_completion() {
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+
+        let event = ClaudeStreamEvent::User {
+            message: UserMessage {
+                content: vec![UserContentBlock::ToolResult {
+                    tool_use_id: "tool-1".to_string(),
+                    content: "done".to_string(),
+                }],
+            },
+        };
+
+        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+        assert_eq!(handler.tool_results.len(), 1);
+        assert_eq!(handler.tool_results[0].0, "tool-1");
+        assert_eq!(handler.tool_results[0].1, "done");
+
+        let event = ClaudeStreamEvent::Result {
+            duration_ms: 12,
+            total_cost_usd: 0.01,
+            num_turns: 2,
+            is_error: true,
+        };
+
+        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+        assert_eq!(handler.errors.len(), 1);
+        assert_eq!(handler.completions.len(), 1);
+        assert!(handler.completions[0].is_error);
+    }
+
+    #[test]
+    fn test_dispatch_stream_event_system_noop() {
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+
+        let event = ClaudeStreamEvent::System {
+            session_id: "session-1".to_string(),
+            model: "claude-test".to_string(),
+            tools: Vec::new(),
+        };
+
+        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+
+        assert!(handler.texts.is_empty());
+        assert!(handler.tool_calls.is_empty());
+        assert!(handler.tool_results.is_empty());
+        assert!(handler.errors.is_empty());
+        assert!(handler.completions.is_empty());
+        assert!(extracted_text.is_empty());
     }
 
     /// Regression test: TUI mode should not spawn stdin reader thread
@@ -1737,5 +1928,201 @@ mod tests {
             !executor.tui_mode,
             "tui_mode should be false after set_tui_mode(false)"
         );
+    }
+
+    #[test]
+    fn test_build_result_populates_fields() {
+        let output = b"\x1b[31mHello\x1b[0m\n";
+        let extracted = "extracted text".to_string();
+
+        let result = build_result(
+            output,
+            true,
+            Some(0),
+            TerminationType::Natural,
+            extracted.clone(),
+        );
+
+        assert_eq!(result.output, String::from_utf8_lossy(output));
+        assert!(result.stripped_output.contains("Hello"));
+        assert!(!result.stripped_output.contains("\x1b["));
+        assert_eq!(result.extracted_text, extracted);
+        assert!(result.success);
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.termination, TerminationType::Natural);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_run_observe_executes_arg_prompt() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+
+        let result = executor
+            .run_observe("echo hello-pty", rx)
+            .await
+            .expect("run_observe");
+
+        assert!(result.success);
+        assert!(result.output.contains("hello-pty"));
+        assert!(result.stripped_output.contains("hello-pty"));
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.termination, TerminationType::Natural);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_run_observe_writes_stdin_prompt() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "read line; echo \"$line\"".to_string()],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+
+        let result = executor
+            .run_observe("stdin-line", rx)
+            .await
+            .expect("run_observe");
+
+        assert!(result.success);
+        assert!(result.output.contains("stdin-line"));
+        assert!(result.stripped_output.contains("stdin-line"));
+        assert_eq!(result.termination, TerminationType::Natural);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_run_observe_streaming_text_routes_output() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        let result = executor
+            .run_observe_streaming("printf 'alpha\\nbeta\\n'", rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(result.success);
+        let captured = handler.texts.join("");
+        assert!(captured.contains("alpha"), "captured: {captured}");
+        assert!(captured.contains("beta"), "captured: {captured}");
+        assert!(handler.completions.is_empty());
+        assert!(result.extracted_text.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_run_observe_streaming_parses_stream_json() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::StreamJson,
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        let script = r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Hello stream"}]}}' '{"type":"result","duration_ms":1,"total_cost_usd":0.0,"num_turns":1,"is_error":false}'"#;
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(result.success);
+        assert!(
+            handler
+                .texts
+                .iter()
+                .any(|text| text.contains("Hello stream"))
+        );
+        assert_eq!(handler.completions.len(), 1);
+        assert!(result.extracted_text.contains("Hello stream"));
+        assert_eq!(result.termination, TerminationType::Natural);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_run_interactive_in_tui_mode() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+        };
+        let config = PtyConfig {
+            interactive: true,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let mut executor = PtyExecutor::new(backend, config);
+        executor.set_tui_mode(true);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+
+        let result = executor
+            .run_interactive("echo hello-tui", rx)
+            .await
+            .expect("run_interactive");
+
+        assert!(result.success);
+        assert!(result.output.contains("hello-tui"));
+        assert!(result.stripped_output.contains("hello-tui"));
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.termination, TerminationType::Natural);
     }
 }

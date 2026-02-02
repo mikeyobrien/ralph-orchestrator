@@ -394,7 +394,8 @@ mod tests {
             scratchpad: None,
             events: vec![EventRecord {
                 topic: "build.done".to_string(),
-                payload: "tests: pass".to_string(),
+                payload: "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+                    .to_string(),
             }],
             iterations: 1,
             termination_reason: Some("LOOP_COMPLETE".to_string()),
