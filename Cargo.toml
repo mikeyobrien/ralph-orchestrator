@@ -143,7 +143,7 @@ ralph-e2e = { version = "2.4.4", path = "crates/ralph-e2e" }
 ralph-telegram = { version = "2.4.4", path = "crates/ralph-telegram" }
 
 # Telegram bot framework
-teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
+teloxide = { version = "0.17", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
 
 # Config for 'dist'
 [workspace.metadata.dist]
