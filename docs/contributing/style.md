@@ -5,7 +5,7 @@
 
 ## Overview
 
-Ralph Orchestrator follows Rust community conventions with project-specific additions.
+Hats follows Rust community conventions with project-specific additions.
 
 ## Rust Style
 

@@ -1,6 +1,6 @@
-# Rough Idea: Add Comprehensive Pi Agent Support to Ralph Orchestrator
+# Rough Idea: Add Comprehensive Pi Agent Support to Hats
 
-Add pi-coding-agent (pi) as a first-class backend in ralph-orchestrator, on par with Claude, Kiro, Gemini, Codex, Amp, Copilot, and OpenCode.
+Add pi-coding-agent (pi) as a first-class backend in hats, on par with Claude, Kiro, Gemini, Codex, Amp, Copilot, and OpenCode.
 
 Pi is a TypeScript-based coding agent CLI (`@mariozechner/pi-coding-agent`) that supports:
 - **Print mode** (`pi -p "prompt"`) — headless execution, outputs text or JSON
@@ -15,7 +15,7 @@ Pi's NDJSON schema differs from Claude's `stream-json`: events are wrapped in pi
 
 1. **CliBackend**: New `pi()` and `pi_interactive()` constructors
 2. **Auto-detection**: Add `pi` to the detection priority list
-3. **Stream parsing**: Handle pi's NDJSON format for real-time output in Ralph's TUI/console
+3. **Stream parsing**: Handle pi's NDJSON format for real-time output in Hats's TUI/console
 4. **RPC mode**: Potentially leverage pi's RPC for richer features (steering, follow-ups, compaction)
 5. **Configuration**: Support pi-specific config options (provider, model, thinking level, extensions, skills)
 6. **Cost tracking**: Parse pi's usage/cost data from NDJSON events

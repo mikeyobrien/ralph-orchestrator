@@ -1,6 +1,6 @@
-# Building a CLI Tool with Ralph
+# Building a CLI Tool with Hats
 
-This example shows how to use Ralph Orchestrator to create a command-line tool with argparse, subcommands, and proper packaging.
+This example shows how to use Hats to create a command-line tool with argparse, subcommands, and proper packaging.
 
 ## Task Description
 
@@ -78,13 +78,13 @@ file-manager-cli/
 <!-- The orchestrator will continue iterations until all requirements are met -->
 ```
 
-## Running Ralph
+## Running Hats
 
 ```bash
 # Initialize and run
-ralph init
+hats init
 cp cli-tool-prompt.md PROMPT.md
-ralph run --agent claude --max-iterations 40
+hats run --agent claude --max-iterations 40
 ```
 
 ## Expected Output

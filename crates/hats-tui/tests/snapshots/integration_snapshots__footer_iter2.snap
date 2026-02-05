@@ -1,0 +1,5 @@
+---
+source: crates/hats-tui/tests/integration_snapshots.rs
+expression: harness.render_footer()
+---
+──────────────────────────────────────────────────────────────────────────────── Total Time Elapsed: 00:00                                          ◉ ACTIVE

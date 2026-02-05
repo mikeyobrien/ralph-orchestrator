@@ -2,19 +2,19 @@
 
 ## Overview
 
-The CLI API provides the command-line interface for Ralph Orchestrator, including commands, arguments, and shell integration.
+The CLI API provides the command-line interface for Hats, including commands, arguments, and shell integration.
 
 ## Main CLI Interface
 
-### RalphCLI Class
+### HatsCLI Class
 
 ```python
-class RalphCLI:
+class HatsCLI:
     """
-    Main CLI interface for Ralph Orchestrator.
+    Main CLI interface for Hats.
     
     Example:
-        cli = RalphCLI()
+        cli = HatsCLI()
         cli.run(sys.argv[1:])
     """
     
@@ -42,18 +42,18 @@ class RalphCLI:
             ArgumentParser: Configured parser
         """
         parser = argparse.ArgumentParser(
-            prog='ralph',
-            description='Ralph Orchestrator - AI task automation',
+            prog='hats',
+            description='Hats - AI task automation',
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
-  ralph run                    # Run with auto-detected agent
-  ralph run -a claude          # Run with Claude
-  ralph run -a acp             # Run with ACP agent
-  ralph run -a acp --acp-agent gemini --acp-permission-mode auto_approve
-  ralph status                 # Check current status
-  ralph clean                  # Clean workspace
-  ralph init                   # Initialize new project
+  hats run                    # Run with auto-detected agent
+  hats run -a claude          # Run with Claude
+  hats run -a acp             # Run with ACP agent
+  hats run -a acp --acp-agent gemini --acp-permission-mode auto_approve
+  hats status                 # Check current status
+  hats clean                  # Clean workspace
+  hats init                   # Initialize new project
             """
         )
         
@@ -211,7 +211,7 @@ Examples:
             int: Exit code
             
         Example:
-            cli = RalphCLI()
+            cli = HatsCLI()
             exit_code = cli.run(['run', '--agent', 'claude'])
         """
         args = self.parser.parse_args(args)
@@ -271,7 +271,7 @@ def cmd_run(self, args, config):
         config['dry_run'] = True
     
     # Create and run orchestrator
-    orchestrator = RalphOrchestrator(config)
+    orchestrator = HatsOrchestrator(config)
     
     try:
         result = orchestrator.run()
@@ -296,7 +296,7 @@ def cmd_run(self, args, config):
 ```python
 def cmd_init(self, args, config):
     """
-    Initialize new Ralph project.
+    Initialize new Hats project.
     
     Args:
         args: Parsed arguments
@@ -308,7 +308,7 @@ def cmd_init(self, args, config):
     Example:
         cli.cmd_init(args, config)
     """
-    print("Initializing Ralph Orchestrator project...")
+    print("Initializing Hats project...")
     
     # Create directories
     directories = ['.agent', '.agent/metrics', '.agent/prompts', 
@@ -331,19 +331,19 @@ Describe your task here...
 ## Success Criteria
 - The task is complete when...
 
-<!-- Ralph will continue iterating until limits are reached -->
+<!-- Hats will continue iterating until limits are reached -->
 """)
         print("  ✓ Created PROMPT.md template")
     
     # Create default config
-    if not os.path.exists('ralph.json'):
-        with open('ralph.json', 'w') as f:
+    if not os.path.exists('hats.json'):
+        with open('hats.json', 'w') as f:
             json.dump({
                 'agent': 'auto',
                 'max_iterations': 100,
                 'checkpoint_interval': 5
             }, f, indent=2)
-        print("  ✓ Created ralph.json config")
+        print("  ✓ Created hats.json config")
     
     # Initialize Git if not present
     if not os.path.exists('.git'):
@@ -353,7 +353,7 @@ Describe your task here...
     print("\n✓ Project initialized successfully!")
     print("\nNext steps:")
     print("  1. Edit PROMPT.md with your task")
-    print("  2. Run: ralph run")
+    print("  2. Run: hats run")
     
     return 0
 ```
@@ -363,7 +363,7 @@ Describe your task here...
 ```python
 def cmd_status(self, args, config):
     """
-    Show current Ralph status.
+    Show current Hats status.
     
     Args:
         args: Parsed arguments
@@ -375,7 +375,7 @@ def cmd_status(self, args, config):
     Example:
         cli.cmd_status(args, config)
     """
-    print("Ralph Orchestrator Status")
+    print("Hats Status")
     print("=" * 40)
     
     # Check prompt file
@@ -429,7 +429,7 @@ def cmd_status(self, args, config):
 ```python
 def cmd_clean(self, args, config):
     """
-    Clean Ralph workspace.
+    Clean Hats workspace.
     
     Args:
         args: Parsed arguments
@@ -441,10 +441,10 @@ def cmd_clean(self, args, config):
     Example:
         cli.cmd_clean(args, config)
     """
-    print("Cleaning Ralph workspace...")
+    print("Cleaning Hats workspace...")
     
     # Confirm before cleaning
-    response = input("This will remove all Ralph data. Continue? [y/N]: ")
+    response = input("This will remove all Hats data. Continue? [y/N]: ")
     if response.lower() != 'y':
         print("Cancelled")
         return 0
@@ -478,8 +478,8 @@ def cmd_clean(self, args, config):
 ### Bash Completion
 
 ```bash
-# ralph-completion.bash
-_ralph_completion() {
+# hats-completion.bash
+_hats_completion() {
     local cur prev opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -489,7 +489,7 @@ _ralph_completion() {
     opts="run init status clean config agents metrics checkpoint rollback help"
     
     case "${prev}" in
-        ralph)
+        hats)
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
             ;;
@@ -524,16 +524,16 @@ _ralph_completion() {
     COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
 }
 
-complete -F _ralph_completion ralph
+complete -F _hats_completion hats
 ```
 
 ### ZSH Completion
 
 ```zsh
-# ralph-completion.zsh
-#compdef ralph
+# hats-completion.zsh
+#compdef hats
 
-_ralph() {
+_hats() {
     local -a commands
     commands=(
         'run:Run orchestrator'
@@ -587,7 +587,7 @@ _ralph() {
 ```python
 class InteractiveCLI:
     """
-    Interactive CLI mode for Ralph.
+    Interactive CLI mode for Hats.
     
     Example:
         interactive = InteractiveCLI()
@@ -601,13 +601,13 @@ class InteractiveCLI:
     
     def run(self):
         """Run interactive mode."""
-        print("Ralph Orchestrator Interactive Mode")
+        print("Hats Interactive Mode")
         print("Type 'help' for commands, 'exit' to quit")
         print()
         
         while self.running:
             try:
-                command = input("ralph> ").strip()
+                command = input("hats> ").strip()
                 if command:
                     self.execute_command(command)
             except KeyboardInterrupt:
@@ -675,7 +675,7 @@ class CLIPlugin:
     def __init__(self, name: str):
         self.name = name
     
-    def register_commands(self, cli: RalphCLI):
+    def register_commands(self, cli: HatsCLI):
         """Register plugin commands with CLI."""
         raise NotImplementedError
     
@@ -693,7 +693,7 @@ class PluginManager:
         """Load a plugin."""
         self.plugins.append(plugin)
     
-    def register_all(self, cli: RalphCLI):
+    def register_all(self, cli: HatsCLI):
         """Register all plugins with CLI."""
         for plugin in self.plugins:
             plugin.register_commands(cli)

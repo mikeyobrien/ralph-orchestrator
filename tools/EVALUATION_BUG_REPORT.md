@@ -15,7 +15,7 @@ All preset evaluations produce **invalid results** due to shared workspace state
 
 ## Root Cause
 
-The `evaluate-preset.sh` script creates a `SANDBOX_DIR` but doesn't use it for workspace isolation. Ralph runs in the main project directory, sharing:
+The `evaluate-preset.sh` script creates a `SANDBOX_DIR` but doesn't use it for workspace isolation. Hats runs in the main project directory, sharing:
 
 - `.agent/scratchpad.md` - Contains "awaiting new work" from real development
 - `.agent/events.jsonl` - Accumulates events from all evaluations
@@ -26,7 +26,7 @@ The `evaluate-preset.sh` script creates a `SANDBOX_DIR` but doesn't use it for w
 From `tdd-red-green` evaluation log:
 ```
 Claude: `★ Insight ─────────────────────────────────────`
-**Ralph Orchestrator State Management**: [...]
+**Hats State Management**: [...]
 `─────────────────────────────────────────────────`
 
 **LOOP_COMPLETE** - All tasks complete. Awaiting new work.
@@ -44,7 +44,7 @@ The agent output "LOOP_COMPLETE" without ever:
 Before each evaluation, reset the agent state:
 
 ```bash
-# In evaluate-preset.sh, before running ralph
+# In evaluate-preset.sh, before running hats
 rm -rf .agent/
 mkdir -p .agent
 echo '# Fresh evaluation context' > .agent/scratchpad.md
@@ -66,7 +66,7 @@ rm -rf .agent/
 mkdir -p .agent
 
 # Run evaluation
-cargo run --release --bin ralph -- run -c "$TEMP_CONFIG" -p "$TEST_TASK"
+cargo run --release --bin hats -- run -c "$TEMP_CONFIG" -p "$TEST_TASK"
 
 # Cleanup
 cd -

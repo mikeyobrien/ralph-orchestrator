@@ -1,4 +1,4 @@
-"""E2E tests for Ralph idle timeout functionality.
+"""E2E tests for Hats idle timeout functionality.
 
 These tests validate that:
 1. Idle timeout triggers correctly after inactivity
@@ -27,14 +27,14 @@ async def test_idle_timeout_triggers_after_inactivity(
     tmux_session: TmuxSession,
     freeze_capture: FreezeCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
-    ralph_config_path: Path,
+    hats_binary: Path,
+    hats_config_path: Path,
     evidence_dir: Path,
 ):
     """Test that idle timeout triggers correctly and TUI captures properly.
 
     This test:
-    1. Starts Ralph in interactive mode with a 5-second idle timeout
+    1. Starts Hats in interactive mode with a 5-second idle timeout
     2. Sends a simple prompt
     3. Waits for the idle timeout to trigger
     4. Captures the final TUI state
@@ -43,13 +43,13 @@ async def test_idle_timeout_triggers_after_inactivity(
     """
     # Build the command
     cmd = (
-        f"{ralph_binary} run -i "
+        f"{hats_binary} run -i "
         f"--idle-timeout 5 "
-        f"-c {ralph_config_path} "
+        f"-c {hats_config_path} "
         f'-p "Say hello and nothing else"'
     )
 
-    # Start Ralph in the tmux session
+    # Start Hats in the tmux session
     await tmux_session.send_keys(cmd)
 
     # Wait for Claude to respond and idle timeout to trigger
@@ -143,8 +143,8 @@ async def test_llm_judge_validates_content(llm_judge: LLMJudge):
     """Test that LLM judge can validate terminal content."""
     # Sample terminal output that should pass validation
     valid_content = """
-user@machine:~/project$ ralph run --tui --idle-timeout 5 -p "Say hello"
-[Starting Ralph orchestrator...]
+user@machine:~/project$ hats run --tui --idle-timeout 5 -p "Say hello"
+[Starting Hats orchestrator...]
 
 Hello! I'm here to help.
 

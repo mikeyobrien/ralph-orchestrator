@@ -24,24 +24,24 @@ The `mock-cli` subcommand replays pre-recorded JSONL cassettes instead of invoki
 - **Deterministic output**: Same cassette = same output every time
 - **Full integration**: Tests the complete orchestration loop via PTY
 
-The mock CLI acts as a drop-in replacement for real backends by implementing the same command-line interface that Ralph expects.
+The mock CLI acts as a drop-in replacement for real backends by implementing the same command-line interface that Hats expects.
 
 ## How It Works
 
 ### Architecture
 
 ```
-ralph-e2e --mock
+hats-e2e --mock
     │
-    ├─ Writes ralph.yml with custom backend
+    ├─ Writes hats.yml with custom backend
     │  cli:
     │    backend: custom
-    │    command: ralph-e2e
+    │    command: hats-e2e
     │    args: ["mock-cli", "--cassette", "path/to/cassette.jsonl"]
     │
-    └─ ralph run (orchestrator)
+    └─ hats run (orchestrator)
         │
-        └─ Spawns: ralph-e2e mock-cli --cassette cassettes/e2e/connect.jsonl
+        └─ Spawns: hats-e2e mock-cli --cassette cassettes/e2e/connect.jsonl
             │
             ├─ SessionPlayer: Reads JSONL cassette
             │   └─ Extracts ux.terminal.write events
@@ -49,7 +49,7 @@ ralph-e2e --mock
             ├─ Replays output to stdout (via PTY)
             │
             └─ WhitelistExecutor: Runs approved local commands
-                └─ ralph task add, ralph tools memory add, etc.
+                └─ hats task add, hats tools memory add, etc.
 ```
 
 ### Cassette Format
@@ -58,7 +58,7 @@ Cassettes are JSONL files containing timestamped events from the SessionRecorder
 
 ```jsonl
 {"ts":1000,"event":"ux.terminal.write","data":{"bytes":"UE9ORw==","stdout":true,"offset_ms":0}}
-{"ts":1100,"event":"bus.publish","data":{"command":"ralph task add 'test'"}}
+{"ts":1100,"event":"bus.publish","data":{"command":"hats task add 'test'"}}
 {"ts":1200,"event":"ux.terminal.write","data":{"bytes":"RG9uZQ==","stdout":true,"offset_ms":200}}
 ```
 
@@ -91,45 +91,45 @@ If neither exists, the test fails fast with a clear error.
 
 ```bash
 # Run all E2E tests with mock backends (zero cost)
-ralph-e2e --mock
+hats-e2e --mock
 
 # Run with accelerated replay (10x speed)
-ralph-e2e --mock --mock-speed 10.0
+hats-e2e --mock --mock-speed 10.0
 
 # Run with instant replay (no delays)
-ralph-e2e --mock --mock-speed 0.0
+hats-e2e --mock --mock-speed 0.0
 
 # Run specific scenarios
-ralph-e2e --mock --filter connect
+hats-e2e --mock --filter connect
 
 # Custom cassette directory (default: cassettes/e2e)
-ralph-e2e --mock --cassette-dir /path/to/cassettes
+hats-e2e --mock --cassette-dir /path/to/cassettes
 ```
 
 ### Direct Mock CLI Invocation
 
-The mock CLI is typically invoked by Ralph as a custom backend, but you can run it directly for testing:
+The mock CLI is typically invoked by Hats as a custom backend, but you can run it directly for testing:
 
 ```bash
 # Basic replay
-ralph-e2e mock-cli --cassette cassettes/e2e/connect.jsonl
+hats-e2e mock-cli --cassette cassettes/e2e/connect.jsonl
 
 # With speed adjustment (10x faster)
-ralph-e2e mock-cli --cassette cassettes/e2e/connect.jsonl --speed 10.0
+hats-e2e mock-cli --cassette cassettes/e2e/connect.jsonl --speed 10.0
 
 # With command execution whitelist
-ralph-e2e mock-cli \
+hats-e2e mock-cli \
   --cassette cassettes/e2e/task-add.jsonl \
-  --allow "ralph task add,ralph tools memory add"
+  --allow "hats task add,hats tools memory add"
 
 # Check version (for backend availability checks)
-ralph-e2e mock-cli --version
+hats-e2e mock-cli --version
 ```
 
 ### Prerequisites
 
 1. **Cassette files**: Must exist in `cassettes/e2e/` directory
-2. **Ralph installed**: Required for whitelisted command execution
+2. **Hats installed**: Required for whitelisted command execution
 3. **Workspace setup**: Mock CLI runs in the scenario workspace directory
 
 ### Recording New Cassettes
@@ -138,7 +138,7 @@ To create cassettes for new scenarios:
 
 ```bash
 # Run E2E test with real backend and session recording
-ralph run --record-session cassettes/e2e/my-scenario-claude.jsonl
+hats run --record-session cassettes/e2e/my-scenario-claude.jsonl
 
 # Or use the E2E harness with recording enabled
 # (Implementation detail: E2E harness should support --record flag)
@@ -149,14 +149,14 @@ ralph run --record-session cassettes/e2e/my-scenario-claude.jsonl
 ### Command-Line Interface
 
 ```
-ralph-e2e mock-cli [OPTIONS]
+hats-e2e mock-cli [OPTIONS]
 
 OPTIONS:
     --cassette <PATH>       Path to JSONL cassette file (required)
     --speed <FLOAT>         Replay speed multiplier (default: 0.0 = instant)
                            1.0 = real-time, 10.0 = 10x faster
     --allow <CSV>           Comma-separated command prefixes to whitelist
-                           Example: "ralph task add,ralph tools memory add"
+                           Example: "hats task add,hats tools memory add"
     --version              Print version and exit (for availability checks)
     -h, --help             Print help information
 ```
@@ -175,15 +175,15 @@ OPTIONS:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `RALPH_MOCK_ALLOW` | Command whitelist (overrides `--allow`) | None |
+| `HATS_MOCK_ALLOW` | Command whitelist (overrides `--allow`) | None |
 
 ### Cassette Resolution API
 
 The `CassetteResolver` provides programmatic access to cassette resolution:
 
 ```rust
-use ralph_e2e::mock::{CassetteResolver, MockConfig};
-use ralph_e2e::Backend;
+use hats_e2e::mock::{CassetteResolver, MockConfig};
+use hats_e2e::Backend;
 
 // Create resolver
 let resolver = CassetteResolver::new("cassettes/e2e");
@@ -200,7 +200,7 @@ let candidates = resolver.candidates("connect", Backend::Claude);
 ### Mock Configuration API
 
 ```rust
-use ralph_e2e::mock::MockConfig;
+use hats_e2e::mock::MockConfig;
 
 // Default config (instant replay, standard whitelist)
 let config = MockConfig::default();
@@ -208,7 +208,7 @@ let config = MockConfig::default();
 // Custom config
 let config = MockConfig::new("/custom/cassettes")
     .with_speed(10.0)
-    .with_allow_commands("ralph task add,ralph task close");
+    .with_allow_commands("hats task add,hats task close");
 
 // Disable command execution
 let config = MockConfig::default().without_commands();
@@ -257,7 +257,7 @@ Line 5: expected value at line 1 column 1
 **Behavior**: Warning logged, replay continues (non-fatal)
 
 ```
-[mock-cli] Warning: command 'ralph task close invalid-id' exited with status 1
+[mock-cli] Warning: command 'hats task close invalid-id' exited with status 1
 ```
 
 **Rationale**: Command failures during replay shouldn't break the test unless the scenario explicitly checks for them
@@ -286,8 +286,8 @@ assert_eq!(config.speed, 0.0);
 ### Limitations
 
 1. **No shell features**: Command whitelist does NOT support pipes, redirects, or variable expansion
-   - ✅ Allowed: `ralph task add 'test'`
-   - ❌ Not allowed: `ralph task add 'test' | grep foo`
+   - ✅ Allowed: `hats task add 'test'`
+   - ❌ Not allowed: `hats task add 'test' | grep foo`
 
 2. **No network access**: Mock CLI cannot make real API calls or network requests
    - Use real backend mode for integration tests requiring network
@@ -305,7 +305,7 @@ assert_eq!(config.speed, 0.0);
 
 ### Example 1: Basic Connectivity Test
 
-**Scenario**: Verify Ralph can connect to backend and receive output
+**Scenario**: Verify Hats can connect to backend and receive output
 
 **Cassette** (`cassettes/e2e/connect.jsonl`):
 ```jsonl
@@ -314,27 +314,27 @@ assert_eq!(config.speed, 0.0);
 
 **Usage**:
 ```bash
-ralph-e2e --mock --filter connect
+hats-e2e --mock --filter connect
 ```
 
 **Expected**: Test passes, output contains "PONG"
 
 ### Example 2: Task Creation with Side Effects
 
-**Scenario**: Verify Ralph can create tasks via `ralph task add`
+**Scenario**: Verify Hats can create tasks via `hats task add`
 
 **Cassette** (`cassettes/e2e/task-add.jsonl`):
 ```jsonl
 {"ts":1000,"event":"ux.terminal.write","data":{"bytes":"Q3JlYXRpbmcgdGFzaw==","stdout":true,"offset_ms":0}}
-{"ts":1100,"event":"bus.publish","data":{"command":"ralph task add 'test task' -p 1"}}
+{"ts":1100,"event":"bus.publish","data":{"command":"hats task add 'test task' -p 1"}}
 {"ts":1200,"event":"ux.terminal.write","data":{"bytes":"VGFzayBjcmVhdGVk","stdout":true,"offset_ms":100}}
 ```
 
 **Usage**:
 ```bash
-ralph-e2e mock-cli \
+hats-e2e mock-cli \
   --cassette cassettes/e2e/task-add.jsonl \
-  --allow "ralph task add"
+  --allow "hats task add"
 ```
 
 **Expected**: 
@@ -348,7 +348,7 @@ ralph-e2e mock-cli \
 **Usage**:
 ```bash
 # Run all tests with 10x speed (no delays)
-ralph-e2e --mock --mock-speed 0.0
+hats-e2e --mock --mock-speed 0.0
 ```
 
 **Expected**: All tests complete in seconds instead of minutes
@@ -365,14 +365,14 @@ ralph-e2e --mock --mock-speed 0.0
 **Usage**:
 ```bash
 # Runs with backend-specific cassettes
-ralph-e2e --mock --filter format
+hats-e2e --mock --filter format
 ```
 
 **Expected**: Each backend uses its specific cassette, falls back to generic if missing
 
 ### Example 5: Error Scenario Testing
 
-**Scenario**: Verify Ralph handles backend timeout gracefully
+**Scenario**: Verify Hats handles backend timeout gracefully
 
 **Cassette** (`cassettes/e2e/timeout-handling.jsonl`):
 ```jsonl
@@ -382,7 +382,7 @@ ralph-e2e --mock --filter format
 
 **Usage**:
 ```bash
-ralph-e2e --mock --filter timeout-handling --mock-speed 10.0
+hats-e2e --mock --filter timeout-handling --mock-speed 10.0
 ```
 
 **Expected**: Test validates timeout handling (3 seconds at 10x speed)
@@ -419,7 +419,7 @@ Error: cassette parse error in cassettes/e2e/test.jsonl
 **Symptoms**: Expected side effects (tasks, memories) not present
 
 **Solutions**:
-1. Verify whitelist includes command: `--allow "ralph task add"`
+1. Verify whitelist includes command: `--allow "hats task add"`
 2. Check cassette contains `bus.publish` events with commands
 3. Ensure commands are in correct format (no shell features)
 4. Run with verbose logging to see skipped commands
@@ -472,7 +472,7 @@ Error: cassette parse error in cassettes/e2e/test.jsonl
 
 1. **Principle of least privilege**: Only whitelist necessary commands
 2. **No destructive commands**: Never whitelist `rm`, `mv`, etc.
-3. **Prefix matching**: Use specific prefixes (`ralph task add`, not `ralph`)
+3. **Prefix matching**: Use specific prefixes (`hats task add`, not `hats`)
 4. **Review regularly**: Audit whitelist for unnecessary entries
 
 ### Testing Strategy

@@ -1,16 +1,16 @@
 # Overview
 
-## What is Ralph Orchestrator?
+## What is Hats?
 
-Ralph Orchestrator is a functional, early-stage (alpha) implementation of the Ralph Wiggum orchestration technique for AI agents. It provides a robust framework for running AI agents in a continuous loop until a task is completed, with practical safety, monitoring, and cost controls. It works today, but expect occasional rough edges and breaking API/config changes between releases.
+Hats is a functional, early-stage (alpha) implementation of the Hats Wiggum orchestration technique for AI agents. It provides a robust framework for running AI agents in a continuous loop until a task is completed, with practical safety, monitoring, and cost controls. It works today, but expect occasional rough edges and breaking API/config changes between releases.
 
-The system is named after Ralph Wiggum from The Simpsons, embodying the philosophy of persistent iteration: "Me fail English? That's unpossible!" - just keep trying until you succeed.
+The system is named after Hats Wiggum from The Simpsons, embodying the philosophy of persistent iteration: "Me fail English? That's unpossible!" - just keep trying until you succeed.
 
 ## Key Concepts
 
-### The Ralph Wiggum Technique
+### The Hats Wiggum Technique
 
-At its core, as [Geoffrey Huntley](https://ghuntley.com/ralph/) originally defined it: **"Ralph is a Bash loop."**
+At its core, as [Geoffrey Huntley](https://ghuntley.com/hats/) originally defined it: **"Hats is a Bash loop."**
 
 ```bash
 while :; do cat PROMPT.md | claude ; done
@@ -29,7 +29,7 @@ This approach leverages the AI's ability to self-correct and improve through mul
 
 ### Enhanced Implementation: Claude Code Plugin
 
-The official [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for Claude Code extends the basic technique with:
+The official [hats-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/hats-wiggum) for Claude Code extends the basic technique with:
 
 - **Stop Hook Mechanism**: Intercepts exit code 2 to re-inject prompts and continue iteration
 - **Iteration Limits**: Primary safety mechanism to prevent runaway loops
@@ -40,17 +40,17 @@ The official [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tre
 
 | Command                  | Description                                               |
 | ------------------------ | --------------------------------------------------------- |
-| `/ralph-loop "<prompt>"` | Start an autonomous loop with optional `--max-iterations` |
-| `/cancel-ralph`          | Stop an active Ralph loop                                 |
+| `/hats-loop "<prompt>"` | Start an autonomous loop with optional `--max-iterations` |
+| `/cancel-hats`          | Stop an active Hats loop                                 |
 | `/help`                  | Display plugin help and documentation                     |
 
-For detailed Claude Code integration, see [paddo.dev/blog/ralph-wiggum-autonomous-loops](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/).
+For detailed Claude Code integration, see [paddo.dev/blog/hats-wiggum-autonomous-loops](https://paddo.dev/blog/hats-wiggum-autonomous-loops/).
 
 ### Core Components
 
 ```mermaid
 graph TB
-    A[Prompt File] --> B[Ralph Orchestrator]
+    A[Prompt File] --> B[Hats]
     B --> C{AI Agent}
     C --> D[Claude]
     C --> E[Q Chat]
@@ -73,7 +73,7 @@ Autonomous loops consume significant tokens. **A 50-iteration cycle on large cod
 
 ### 1. Initialization Phase
 
-When you start Ralph Orchestrator, it:
+When you start Hats, it:
 
 - Validates the prompt file for security
 - Detects available AI agents
@@ -158,7 +158,7 @@ When the task completes or limits are reached:
 
 ## Use Cases
 
-Ralph Orchestrator excels at:
+Hats excels at:
 
 ### Optimal Use Cases
 
@@ -177,11 +177,11 @@ Ralph Orchestrator excels at:
 !!! info "Real-World Results (2024-2025)"
 The technique has proven effective at scale:
 
-    - **Y Combinator Hackathon**: Team shipped 6 repositories overnight using Ralph loops
+    - **Y Combinator Hackathon**: Team shipped 6 repositories overnight using Hats loops
     - **Contract MVP**: One engineer completed a $50,000 contract for just **$297** in API costs
     - **Language Development**: Geoffrey Huntley's 3-month loop created a complete esoteric programming language (CURSED) - the AI successfully programs in a language it invented that doesn't exist in any training data
 
-    These results demonstrate that with clear prompts and patience, Ralph can replace substantial outsourcing work for new projects.
+    These results demonstrate that with clear prompts and patience, Hats can replace substantial outsourcing work for new projects.
 
 ### Software Development
 
@@ -259,7 +259,7 @@ graph LR
     end
 
     subgraph "Orchestration Core"
-        D[Ralph Orchestrator]
+        D[Hats]
         E[Agent Manager]
         F[Context Manager]
         G[Metrics Collector]
@@ -293,7 +293,7 @@ graph LR
 
 ## Getting Started
 
-To start using Ralph Orchestrator:
+To start using Hats:
 
 1. **Install the tool** and at least one AI agent
 2. **Create a prompt file** with your task

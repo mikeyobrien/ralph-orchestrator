@@ -1,6 +1,6 @@
 # Advanced Topics
 
-Deep dives into Ralph's internals and advanced usage patterns.
+Deep dives into Hats's internals and advanced usage patterns.
 
 ## In This Section
 
@@ -20,33 +20,33 @@ Deep dives into Ralph's internals and advanced usage patterns.
 These guides are for you if:
 
 - You're building complex multi-hat workflows
-- You want to understand how Ralph works internally
-- You're contributing to Ralph development
+- You want to understand how Hats works internally
+- You're contributing to Hats development
 - You need to debug tricky issues
-- You're extending Ralph with custom backends
+- You're extending Hats with custom backends
 
 ## Key Concepts
 
 ### Crate Architecture
 
-Ralph is organized as a Cargo workspace:
+Hats is organized as a Cargo workspace:
 
 ```
-ralph-orchestrator/
+hats/
 ├── crates/
-│   ├── ralph-proto/     # Protocol types
-│   ├── ralph-core/      # Orchestration engine
-│   ├── ralph-adapters/  # CLI backends
-│   ├── ralph-telegram/  # Telegram bot for human-in-the-loop
-│   ├── ralph-tui/       # Terminal UI
-│   ├── ralph-cli/       # Binary entry point
-│   ├── ralph-e2e/       # End-to-end testing
-│   └── ralph-bench/     # Benchmarking
+│   ├── hats-proto/     # Protocol types
+│   ├── hats-core/      # Orchestration engine
+│   ├── hats-adapters/  # CLI backends
+│   ├── hats-telegram/  # Telegram bot for human-in-the-loop
+│   ├── hats-tui/       # Terminal UI
+│   ├── hats-cli/       # Binary entry point
+│   ├── hats-e2e/       # End-to-end testing
+│   └── hats-bench/     # Benchmarking
 ```
 
 ### Event Flow
 
-Events are the nervous system of hat-based Ralph:
+Events are the nervous system of hat-based Hats:
 
 ```mermaid
 flowchart LR
@@ -59,7 +59,7 @@ flowchart LR
 
 ### State Management
 
-Ralph uses files for all persistent state:
+Hats uses files for all persistent state:
 
 | File | Purpose |
 |------|---------|
@@ -73,26 +73,26 @@ Ralph uses files for all persistent state:
 ### Enable Diagnostics
 
 ```bash
-RALPH_DIAGNOSTICS=1 ralph run
+HATS_DIAGNOSTICS=1 hats run
 ```
 
 ### Run E2E Tests
 
 ```bash
-cargo run -p ralph-e2e -- claude
+cargo run -p hats-e2e -- claude
 ```
 
 ### Record a Session
 
 ```bash
-ralph run --record-session debug.jsonl -p "your prompt"
+hats run --record-session debug.jsonl -p "your prompt"
 ```
 
 ### Validate TUI
 
 ```bash
 # See TUI Validation in Testing guide
-/tui-validate file:output.txt criteria:ralph-header
+/tui-validate file:output.txt criteria:hats-header
 ```
 
 ## Next Steps

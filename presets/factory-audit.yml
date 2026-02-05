@@ -1,0 +1,85 @@
+# Factory Audit Preset
+#
+# For reviewing pipeline health, verifying proofs, checking quality.
+# Hats: auditor -> verifier -> reporter
+# Output: factory dashboard / status report.
+#
+# Usage:
+#   hats run -c presets/factory-audit.yml -b pi -p "Audit the spec pipeline"
+
+event_loop:
+  completion_promise: "AUDIT_COMPLETE"
+  max_iterations: 8
+  max_runtime_seconds: 1200
+  starting_event: "audit.start"
+
+hats:
+  auditor:
+    name: "Auditor"
+    description: "Inventories specs, implementations, and proofs."
+    triggers: ["audit.start"]
+    publishes: ["inventory.done"]
+    instructions: |
+      ## AUDITOR MODE
+
+      Take inventory of the dark factory pipeline.
+
+      1. List all .feature files in features/ directories
+      2. For each spec: check if corresponding tests exist
+      3. For each spec: check if implementation is done
+      4. For each spec: check if a proof artifact exists in proofs/
+      5. Check BACKLOGs -- every P0/P1 should have a spec
+      6. Check git log for recent commits -- match to backlog items
+
+      Record inventory in scratchpad:
+      - Specs: total, with-tests, with-implementation, with-proof
+      - Orphans: implementations without specs, specs without tests
+      - Backlog gaps: P0/P1 items without specs
+
+      Publish inventory.done.
+
+  verifier:
+    name: "Verifier"
+    description: "Spot-checks proofs and test results."
+    triggers: ["inventory.done"]
+    publishes: ["verification.done"]
+    instructions: |
+      ## VERIFIER MODE
+
+      Verify that proofs are real.
+
+      1. For each proof artifact: check that referenced tests exist
+      2. If possible, re-run tests to confirm they still pass
+      3. Check that coverage numbers are plausible
+      4. Flag any proof that looks stale (older than its implementation)
+      5. Check infrastructure: curl site health endpoints
+
+      Record findings in scratchpad. Publish verification.done.
+
+  reporter:
+    name: "Reporter"
+    description: "Writes the factory dashboard from audit findings."
+    triggers: ["verification.done"]
+    publishes: ["report.done"]
+    default_publishes: "report.done"
+    instructions: |
+      ## REPORTER MODE
+
+      Write the factory dashboard from audit and verification findings.
+
+      Write to ~/notes/metrics/factory-dashboard.md (overwrite):
+      ```
+      FACTORY STATUS -- <date>
+      ========================
+      hats: X specs | Y in-progress | Z proven | stars: N
+      rho:  X specs | Y in-progress | Z proven | stars: N
+      sites: runrho.dev <status> | hats.sh <status>
+      pipeline: <healthy|degraded|blocked>
+      blockers: <list or 'none'>
+      next: <highest priority unstarted spec>
+      pending-approval: <list of queued external actions>
+      ```
+
+      Also append a dated entry to ~/notes/metrics/engineering-log.md.
+
+      Output AUDIT_COMPLETE.

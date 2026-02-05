@@ -5,14 +5,14 @@
 
 ## Overview
 
-This example demonstrates using Ralph with specification-first development, where requirements are formalized before implementation begins.
+This example demonstrates using Hats with specification-first development, where requirements are formalized before implementation begins.
 
 ## Workflow
 
 1. Create specification in `specs/` directory
 2. Review and approve spec
 3. Generate implementation tasks
-4. Execute with Ralph orchestration
+4. Execute with Hats orchestration
 
 ## Example Spec
 

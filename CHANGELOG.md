@@ -1,18 +1,18 @@
 # Changelog
 
-All notable changes to ralph-orchestrator are documented here.
+All notable changes to hats are documented here.
 
 ## [2.3.0] - 2025-01-28
 
 ### Added
 
-- **Web Dashboard (Alpha)**: Full-featured web UI for monitoring and managing Ralph orchestration loops
+- **Web Dashboard (Alpha)**: Full-featured web UI for monitoring and managing Hats orchestration loops
   - React + Vite + TailwindCSS frontend with Fastify + tRPC + SQLite backend
-  - `ralph web` command to launch both servers (backend:3000, frontend:5173)
+  - `hats web` command to launch both servers (backend:3000, frontend:5173)
   - Preflight checks and auto-install for fresh installs
   - Port conflict detection, labeled output, and automatic browser open
   - Node 22 pinned for backend dev with tsc+node compilation
-- **Hats CLI**: Topology visualization and AI-powered diagrams (`ralph hats`)
+- **Hats CLI**: Topology visualization and AI-powered diagrams (`hats hats`)
 - **Event Publishing Guide**: Skip topology display when a hat is already active
 - **Parallel config gate**: `features.parallel` config option to control worktree spawning
 - **Per-hat backend args**: `args` support in hat-level backend configurations
@@ -28,7 +28,7 @@ All notable changes to ralph-orchestrator are documented here.
 
 ### Added
 
-- Loop merge command (`ralph loop merge`) and custom backend args
+- Loop merge command (`hats loop merge`) and custom backend args
 - Config override support for core fields via CLI
 - Mock adapter for cost-free E2E testing
 - CI: Run mock E2E tests on every PR/push
@@ -79,15 +79,15 @@ All notable changes to ralph-orchestrator are documented here.
 
 - TUI: require stdin to be terminal for TUI enablement
 - MkDocs strict build failures
-- Confession-loop preset updated to use `ralph emit` command
+- Confession-loop preset updated to use `hats emit` command
 
 ### Changed
 
 - Modularized codebase and fixed TUI mode
 
-[2.3.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.5...v2.3.0
-[2.2.5]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.4...v2.2.5
-[2.2.4]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.3...v2.2.4
-[2.2.3]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.2...v2.2.3
-[2.2.2]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.1...v2.2.2
-[2.2.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.0...v2.2.1
+[2.3.0]: https://github.com/mikeyobrien/hats/compare/v2.2.5...v2.3.0
+[2.2.5]: https://github.com/mikeyobrien/hats/compare/v2.2.4...v2.2.5
+[2.2.4]: https://github.com/mikeyobrien/hats/compare/v2.2.3...v2.2.4
+[2.2.3]: https://github.com/mikeyobrien/hats/compare/v2.2.2...v2.2.3
+[2.2.2]: https://github.com/mikeyobrien/hats/compare/v2.2.1...v2.2.2
+[2.2.1]: https://github.com/mikeyobrien/hats/compare/v2.2.0...v2.2.1

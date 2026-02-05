@@ -1,11 +1,11 @@
 # Getting Started
 
-Welcome to Ralph Orchestrator! This section will help you get up and running quickly.
+Welcome to Hats! This section will help you get up and running quickly.
 
 ## What You'll Learn
 
-1. **[Installation](installation.md)** — Install Ralph and its prerequisites
-2. **[Quick Start](quick-start.md)** — Run your first Ralph orchestration
+1. **[Installation](installation.md)** — Install Hats and its prerequisites
+2. **[Quick Start](quick-start.md)** — Run your first Hats orchestration
 3. **[Your First Task](first-task.md)** — Create and configure a real task
 
 ## Prerequisites
@@ -27,26 +27,26 @@ Before you begin, ensure you have:
 === "npm (Recommended)"
 
     ```bash
-    npm install -g @ralph-orchestrator/ralph-cli
+    npm install -g @hats/hats-cli
     ```
 
 === "Homebrew (macOS)"
 
     ```bash
-    brew install ralph-orchestrator
+    brew install hats
     ```
 
 === "Cargo"
 
     ```bash
-    cargo install ralph-cli
+    cargo install hats-cli
     ```
 
 ## Verify Installation
 
 ```bash
-ralph --version
-ralph --help
+hats --version
+hats --help
 ```
 
 ## Next Steps

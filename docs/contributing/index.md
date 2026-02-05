@@ -1,6 +1,6 @@
-# Contributing to Ralph
+# Contributing to Hats
 
-We welcome contributions to Ralph Orchestrator!
+We welcome contributions to Hats!
 
 ## In This Section
 
@@ -15,8 +15,8 @@ We welcome contributions to Ralph Orchestrator!
 
 ```bash
 # Clone the repo
-git clone https://github.com/mikeyobrien/ralph-orchestrator.git
-cd ralph-orchestrator
+git clone https://github.com/mikeyobrien/hats.git
+cd hats
 
 # Build
 cargo build
@@ -32,16 +32,16 @@ cargo test
 
 ### Report Bugs
 
-Found a bug? [Open an issue](https://github.com/mikeyobrien/ralph-orchestrator/issues/new) with:
+Found a bug? [Open an issue](https://github.com/mikeyobrien/hats/issues/new) with:
 
 - Description of the problem
 - Steps to reproduce
 - Expected vs actual behavior
-- Ralph version and backend used
+- Hats version and backend used
 
 ### Suggest Features
 
-Have an idea? [Start a discussion](https://github.com/mikeyobrien/ralph-orchestrator/discussions/new) first to:
+Have an idea? [Start a discussion](https://github.com/mikeyobrien/hats/discussions/new) first to:
 
 - Explain the use case
 - Discuss potential approaches
@@ -66,20 +66,20 @@ Documentation improvements are always welcome:
 
 ## Development Philosophy
 
-Ralph follows the [Six Tenets](../concepts/tenets.md):
+Hats follows the [Six Tenets](../concepts/tenets.md):
 
 1. **Fresh Context Is Reliability**
 2. **Backpressure Over Prescription**
 3. **The Plan Is Disposable**
 4. **Disk Is State, Git Is Memory**
 5. **Steer With Signals, Not Scripts**
-6. **Let Ralph Ralph**
+6. **Let Hats Hats**
 
 Contributions should align with these principles.
 
 ## Anti-Patterns to Avoid
 
-From the Ralph philosophy:
+From the Hats philosophy:
 
 - Building features into orchestrator that agents can handle
 - Complex retry logic (fresh context handles recovery)
@@ -89,9 +89,9 @@ From the Ralph philosophy:
 
 ## Code of Conduct
 
-Be respectful and constructive. We're all here to make Ralph better.
+Be respectful and constructive. We're all here to make Hats better.
 
 ## Getting Help
 
-- [GitHub Discussions](https://github.com/mikeyobrien/ralph-orchestrator/discussions)
-- [Issue Tracker](https://github.com/mikeyobrien/ralph-orchestrator/issues)
+- [GitHub Discussions](https://github.com/mikeyobrien/hats/discussions)
+- [Issue Tracker](https://github.com/mikeyobrien/hats/issues)

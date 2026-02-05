@@ -58,7 +58,7 @@ test_tasks:
     Document your investigation in `.eval-sandbox/debug/counter.md`.
 
   code-archaeology: |
-    Investigate the history and evolution of `crates/ralph-core/src/config.rs`.
+    Investigate the history and evolution of `crates/hats-core/src/config.rs`.
     Document: Why is it so large? What were the major changes? What gotchas exist?
     Save findings to `.eval-sandbox/archaeology/config-history.md`.
 
@@ -83,7 +83,7 @@ test_tasks:
     Document in `.eval-sandbox/incident/response.md`.
 
   migration-safety: |
-    Plan a migration from Ralph v1 flat config format to v2 nested format.
+    Plan a migration from Hats v1 flat config format to v2 nested format.
     Use the expand-contract pattern. Document the plan in `.eval-sandbox/migration/plan.md`.
 
 # Complexity ratings for time budgeting

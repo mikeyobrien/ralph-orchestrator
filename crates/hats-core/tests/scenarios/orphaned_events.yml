@@ -1,0 +1,33 @@
+# Orphaned Events: Event with no subscriber → Hats handles it
+# Hats is the fallback for unrouted events
+
+name: orphaned_events
+description: Hats handles events with no hat subscriber
+
+config:
+  prompt_file: PROMPT.md
+  max_iterations: 3
+  hats:
+    builder:
+      subscribes_to:
+        - build.task
+
+mock_responses:
+  - |
+    <event topic="unknown.event">
+    This event has no subscriber.
+    </event>
+  - |
+    Hats handled orphaned event.
+    <event topic="LOOP_COMPLETE">
+    Done.
+    </event>
+
+expected:
+  iterations: 2
+  events:
+    - topic: unknown.event
+    - topic: LOOP_COMPLETE
+  hats_handled:
+    - unknown.event
+  completion: true

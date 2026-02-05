@@ -1,5 +1,5 @@
 name: "Bug report"
-description: "Report a bug in the Ralph CLI or orchestration workflows"
+description: "Report a bug in the Hats CLI or orchestration workflows"
 title: "[Bug]: "
 labels:
   - bug
@@ -19,9 +19,9 @@ body:
   - type: input
     id: ralph_version
     attributes:
-      label: "Ralph version"
-      description: "Run `ralph --version`"
-      placeholder: "ralph 0.9.1"
+      label: "Hats version"
+      description: "Run `hats --version`"
+      placeholder: "hats 0.9.1"
     validations:
       required: true
   - type: dropdown
@@ -54,7 +54,7 @@ body:
       label: "Steps to reproduce"
       description: "List the exact commands or actions needed to reproduce the bug."
       placeholder: |
-        1. ralph run ...
+        1. hats run ...
         2. choose backend ...
         3. see error
     validations:
@@ -86,6 +86,6 @@ body:
     attributes:
       label: "Config / preset file"
       description: "If relevant, link to or paste the config/preset you used."
-      placeholder: "ralph.yml or preset name"
+      placeholder: "hats.yml or preset name"
     validations:
       required: false

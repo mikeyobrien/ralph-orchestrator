@@ -2,11 +2,11 @@
 
 ## Overview
 
-Ralph Orchestrator provides comprehensive monitoring capabilities to track execution, performance, and system health. This guide covers monitoring tools, metrics, and best practices.
+Hats provides comprehensive monitoring capabilities to track execution, performance, and system health. This guide covers monitoring tools, metrics, and best practices.
 
 ## Built-in Monitoring
 
-Ralph's monitoring system collects and routes execution data through multiple channels:
+Hats's monitoring system collects and routes execution data through multiple channels:
 
 ```
                            📊 Metrics Collection Flow
@@ -37,7 +37,7 @@ graph { label: "📊 Metrics Collection Flow"; flow: east; }
 
 ### State Files
 
-Ralph automatically generates state files in `.agent/metrics/`:
+Hats automatically generates state files in `.agent/metrics/`:
 
 ```json
 {
@@ -57,10 +57,10 @@ Ralph automatically generates state files in `.agent/metrics/`:
 
 ```bash
 # Check current status
-./ralph status
+./hats status
 
 # Output:
-Ralph Orchestrator Status
+Hats Status
 =========================
 Status: RUNNING
 Current Iteration: 15
@@ -76,7 +76,7 @@ Errors: 0
 
 ```bash
 # Enable detailed logging
-./ralph run --verbose
+./hats run --verbose
 
 # Output includes:
 # - Agent commands
@@ -95,7 +95,7 @@ logging.basicConfig(
     level=logging.DEBUG,  # DEBUG, INFO, WARNING, ERROR
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('.agent/logs/ralph.log'),
+        logging.FileHandler('.agent/logs/hats.log'),
         logging.StreamHandler()
     ]
 )
@@ -139,14 +139,14 @@ class MetricsCollector:
 
 ## Monitoring Tools
 
-### 1. Ralph Monitor (Built-in)
+### 1. Hats Monitor (Built-in)
 
 ```bash
 # Continuous monitoring
-watch -n 5 './ralph status'
+watch -n 5 './hats status'
 
 # Tail logs
-tail -f .agent/logs/ralph.log
+tail -f .agent/logs/hats.log
 
 # Monitor metrics
 watch -n 10 'cat .agent/metrics/state_*.json | jq .'
@@ -156,7 +156,7 @@ watch -n 10 'cat .agent/metrics/state_*.json | jq .'
 
 ```bash
 # View checkpoint history
-git log --oneline | grep "Ralph checkpoint"
+git log --oneline | grep "Hats checkpoint"
 
 # Analyze code changes over time
 git diff --stat HEAD~10..HEAD
@@ -168,11 +168,11 @@ git log --follow -p PROMPT.md
 ### 3. System Resource Monitoring
 
 ```bash
-# Monitor Ralph process
-htop -p $(pgrep -f ralph_orchestrator)
+# Monitor Hats process
+htop -p $(pgrep -f hats_orchestrator)
 
 # Track resource usage
-pidstat -p $(pgrep -f ralph_orchestrator) 1
+pidstat -p $(pgrep -f hats_orchestrator) 1
 
 # Monitor file system changes
 inotifywait -m -r . -e modify,create,delete
@@ -186,7 +186,7 @@ Create `monitor.sh`:
 
 ```bash
 #!/bin/bash
-# Ralph Monitoring Dashboard
+# Hats Monitoring Dashboard
 
 while true; do
     clear
@@ -194,17 +194,17 @@ while true; do
     echo ""
 
     # Status
-    ./ralph status
+    ./hats status
     echo ""
 
     # Recent errors
     echo "Recent Errors:"
-    tail -n 5 .agent/logs/ralph.log | grep ERROR || echo "No errors"
+    tail -n 5 .agent/logs/hats.log | grep ERROR || echo "No errors"
     echo ""
 
     # Resource usage
     echo "Resource Usage:"
-    ps aux | grep ralph_orchestrator | grep -v grep
+    ps aux | grep hats_orchestrator | grep -v grep
     echo ""
 
     # Latest checkpoint
@@ -240,7 +240,7 @@ def dashboard():
     return render_template_string('''
     <html>
         <head>
-            <title>Ralph Dashboard</title>
+            <title>Hats Dashboard</title>
             <script>
                 function updateMetrics() {
                     fetch('/metrics')
@@ -254,7 +254,7 @@ def dashboard():
             </script>
         </head>
         <body onload="updateMetrics()">
-            <h1>Ralph Orchestrator Dashboard</h1>
+            <h1>Hats Dashboard</h1>
             <pre id="metrics"></pre>
         </body>
     </html>
@@ -275,27 +275,27 @@ def check_errors():
         state = json.load(f)
 
     if state.get('errors'):
-        send_alert(f"Ralph encountered errors: {state['errors']}")
+        send_alert(f"Hats encountered errors: {state['errors']}")
 
     if state.get('iteration_count', 0) > 100:
-        send_alert("Ralph exceeded 100 iterations")
+        send_alert("Hats exceeded 100 iterations")
 
     if state.get('runtime', 0) > 14400:  # 4 hours
-        send_alert("Ralph runtime exceeded 4 hours")
+        send_alert("Hats runtime exceeded 4 hours")
 ```
 
 ### Notification Methods
 
 ```bash
 # Desktop notification
-notify-send "Ralph Alert" "Task completed successfully"
+notify-send "Hats Alert" "Task completed successfully"
 
 # Email alert
-echo "Ralph task failed" | mail -s "Ralph Alert" admin@example.com
+echo "Hats task failed" | mail -s "Hats Alert" admin@example.com
 
 # Slack webhook
 curl -X POST -H 'Content-type: application/json' \
-    --data '{"text":"Ralph task completed"}' \
+    --data '{"text":"Hats task completed"}' \
     YOUR_SLACK_WEBHOOK_URL
 ```
 
@@ -323,7 +323,7 @@ def analyze_iterations():
     plt.plot(df['iteration_count'], df['runtime'])
     plt.xlabel('Iteration')
     plt.ylabel('Cumulative Runtime (seconds)')
-    plt.title('Ralph Execution Performance')
+    plt.title('Hats Execution Performance')
     plt.savefig('.agent/performance.png')
 
     # Statistics
@@ -363,7 +363,7 @@ def calculate_costs():
 import logging.handlers
 
 handler = logging.handlers.RotatingFileHandler(
-    '.agent/logs/ralph.log',
+    '.agent/logs/hats.log',
     maxBytes=10*1024*1024,  # 10MB
     backupCount=5
 )
@@ -453,13 +453,13 @@ def health_check():
 
 ```bash
 # Maximum verbosity
-RALPH_DEBUG=1 ./ralph run --verbose
+HATS_DEBUG=1 ./hats run --verbose
 
 # Trace execution
-python -m trace -t ralph_orchestrator.py
+python -m trace -t hats_orchestrator.py
 
 # Profile performance
-python -m cProfile -o profile.stats ralph_orchestrator.py
+python -m cProfile -o profile.stats hats_orchestrator.py
 ```
 
 ## Best Practices

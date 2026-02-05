@@ -1,12 +1,12 @@
 # Installation
 
-This guide covers all installation methods for Ralph Orchestrator.
+This guide covers all installation methods for Hats.
 
 ## Prerequisites
 
 ### AI CLI Tools
 
-Ralph needs at least one AI CLI tool to function. Install one of the following:
+Hats needs at least one AI CLI tool to function. Install one of the following:
 
 === "Claude Code (Recommended)"
 
@@ -53,24 +53,24 @@ Ralph needs at least one AI CLI tool to function. Install one of the following:
     curl -fsSL https://opencode.ai/install | bash
     ```
 
-## Installing Ralph
+## Installing Hats
 
 ### Via npm (Recommended)
 
-The easiest way to install Ralph:
+The easiest way to install Hats:
 
 ```bash
 # Install globally
-npm install -g @ralph-orchestrator/ralph-cli
+npm install -g @hats/hats-cli
 
 # Or run directly with npx
-npx @ralph-orchestrator/ralph-cli --version
+npx @hats/hats-cli --version
 ```
 
 ### Via Homebrew (macOS)
 
 ```bash
-brew install ralph-orchestrator
+brew install hats
 ```
 
 ### Via Cargo
@@ -78,7 +78,7 @@ brew install ralph-orchestrator
 If you have Rust installed:
 
 ```bash
-cargo install ralph-cli
+cargo install hats-cli
 ```
 
 ### From Source
@@ -87,8 +87,8 @@ For the latest development version:
 
 ```bash
 # Clone the repository
-git clone https://github.com/mikeyobrien/ralph-orchestrator.git
-cd ralph-orchestrator
+git clone https://github.com/mikeyobrien/hats.git
+cd hats
 
 # Build release binary
 cargo build --release
@@ -97,38 +97,38 @@ cargo build --release
 export PATH="$PATH:$(pwd)/target/release"
 
 # Or create symlink
-sudo ln -s $(pwd)/target/release/ralph /usr/local/bin/ralph
+sudo ln -s $(pwd)/target/release/hats /usr/local/bin/hats
 ```
 
 ## Verify Installation
 
 ```bash
 # Check version
-ralph --version
+hats --version
 
 # Show help
-ralph --help
+hats --help
 
 # List available presets
-ralph init --list-presets
+hats init --list-presets
 ```
 
 ## Migrating from v1 (Legacy)
 
-If you have the legacy Ralph v1 installed, uninstall it first:
+If you have the legacy Hats v1 installed, uninstall it first:
 
 ```bash
 # If installed via pip
-pip uninstall ralph-orchestrator
+pip uninstall hats
 
 # If installed via pipx
-pipx uninstall ralph-orchestrator
+pipx uninstall hats
 
 # If installed via uv
-uv tool uninstall ralph-orchestrator
+uv tool uninstall hats
 
 # Verify removal
-which ralph  # Should return nothing or point to new Rust version
+which hats  # Should return nothing or point to new Rust version
 ```
 
 The v1 release is no longer maintained. See [Migration from v1](../reference/migration-v1.md) for details.
@@ -137,7 +137,7 @@ The v1 release is no longer maintained. See [Migration from v1](../reference/mig
 
 ### Command Not Found
 
-If `ralph` is not found after installation:
+If `hats` is not found after installation:
 
 ```bash
 # For npm global installs, ensure npm bin is in PATH
@@ -149,7 +149,7 @@ export PATH="$PATH:$HOME/.cargo/bin"
 
 ### No AI Agents Detected
 
-Ralph auto-detects available AI CLI tools. If none are found:
+Hats auto-detects available AI CLI tools. If none are found:
 
 1. Install one of the supported AI CLI tools (see Prerequisites)
 2. Ensure the tool is in your PATH
@@ -161,12 +161,12 @@ If you get permission errors:
 
 ```bash
 # For npm
-sudo npm install -g @ralph-orchestrator/ralph-cli
+sudo npm install -g @hats/hats-cli
 
 # For symlinks
-sudo ln -s $(pwd)/target/release/ralph /usr/local/bin/ralph
+sudo ln -s $(pwd)/target/release/hats /usr/local/bin/hats
 ```
 
 ## Next Steps
 
-Now that Ralph is installed, proceed to the [Quick Start](quick-start.md) guide.
+Now that Hats is installed, proceed to the [Quick Start](quick-start.md) guide.

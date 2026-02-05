@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide outlines best practices for implementing and using Ralph Orchestrator in production environments.
+This guide outlines best practices for implementing and using Hats in production environments.
 
 ## Architecture Best Practices
 
@@ -153,7 +153,7 @@ RUN pip install --user -r requirements.txt
 FROM python:3.11-slim
 COPY --from=builder /root/.local /root/.local
 COPY . .
-CMD ["python", "-m", "ralph_orchestrator"]
+CMD ["python", "-m", "hats_orchestrator"]
 ```
 
 ### 2. Scaling Considerations
@@ -208,7 +208,7 @@ except ValueError as e:
 
 ## Conclusion
 
-Following these best practices will help ensure your Ralph Orchestrator implementation is:
+Following these best practices will help ensure your Hats implementation is:
 - Reliable and performant
 - Secure and maintainable
 - Scalable and observable

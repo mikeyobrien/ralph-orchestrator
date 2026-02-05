@@ -1,27 +1,27 @@
-# Design: Pi Agent Support for Ralph Orchestrator
+# Design: Pi Agent Support for Hats
 
 ## Overview
 
-Add pi-coding-agent (`pi`) as a first-class backend in ralph-orchestrator with NDJSON stream parsing, structured tool call display, cost tracking, and per-hat configuration. Pi becomes the second backend (after Claude) with structured streaming output, giving it rich TUI/console display.
+Add pi-coding-agent (`pi`) as a first-class backend in hats with NDJSON stream parsing, structured tool call display, cost tracking, and per-hat configuration. Pi becomes the second backend (after Claude) with structured streaming output, giving it rich TUI/console display.
 
 ## Detailed Requirements
 
 1. **CLI Backend**: `pi` as a named backend with headless (`pi()`) and interactive (`pi_interactive()`) constructors, registered in all backend resolution paths (`from_name`, `from_config`, `for_interactive_prompt`).
 2. **Auto-Detection**: `pi` added last in `DEFAULT_PRIORITY`. Detection via `pi --version`.
-3. **NDJSON Stream Parser**: New `PiStreamParser` and `PiStreamEvent` types in `ralph-adapters` that parse pi's `--mode json` output and dispatch to `StreamHandler`.
+3. **NDJSON Stream Parser**: New `PiStreamParser` and `PiStreamEvent` types in `hats-adapters` that parse pi's `--mode json` output and dispatch to `StreamHandler`.
 4. **Output Format**: New `OutputFormat::PiStreamJson` variant, branched in `PtyExecutor::run_observe_streaming()`.
 5. **Cost Tracking**: Accumulate `turn_end.message.usage.cost.total` across turns. Synthesize `SessionResult` for `on_complete()`.
 6. **Tool Call Display**: Use `tool_execution_start` for `on_tool_call()`, `tool_execution_end` for `on_tool_result()`.
 7. **Thinking Output**: Stream `thinking_delta` events to handler only in verbose mode.
-8. **Text Extraction**: Accumulate `text_delta` content into `extracted_text` for Ralph's `EventParser` (LOOP_COMPLETE detection).
+8. **Text Extraction**: Accumulate `text_delta` content into `extracted_text` for Hats's `EventParser` (LOOP_COMPLETE detection).
 9. **Configuration**: Pi-specific options (provider, model, thinking, extensions, skills) via pass-through args using existing `NamedWithArgs` hat backend type.
-10. **Interactive Mode**: `pi_interactive()` constructor for `ralph plan` — runs pi TUI with initial prompt.
+10. **Interactive Mode**: `pi_interactive()` constructor for `hats plan` — runs pi TUI with initial prompt.
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    ralph-cli                              │
+│                    hats-cli                              │
 │  loop_runner.rs                                          │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │ run_observe_streaming()                          │    │
@@ -35,7 +35,7 @@ Add pi-coding-agent (`pi`) as a first-class backend in ralph-orchestrator with N
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
-│                  ralph-adapters                           │
+│                  hats-adapters                           │
 │                                                           │
 │  cli_backend.rs                                          │
 │  ┌───────────────────────────────────────────────┐      │
@@ -105,7 +105,7 @@ Registration points:
 ```rust
 /// Events from pi's `--mode json` NDJSON output.
 ///
-/// Only the events Ralph needs are modeled. All other event types
+/// Only the events Hats needs are modeled. All other event types
 /// (session, agent_start, turn_start, message_start, message_end,
 /// message_update sub-types for toolcall_*, text_start, text_end, done)
 /// are captured by the `Other` variant and ignored.
@@ -398,7 +398,7 @@ No changes to the `StreamHandler` trait or `SessionResult` struct.
 No changes to `RalphConfig`, `CliConfig`, or `HatBackend`. Pi-specific options use existing `NamedWithArgs`:
 
 ```yaml
-# ralph.yml
+# hats.yml
 cli:
   backend: pi
 
@@ -424,12 +424,12 @@ hats:
 ## Acceptance Criteria
 
 ### Backend Registration
-- **Given** a ralph.yml with `cli.backend: pi`, **when** Ralph resolves the backend, **then** it creates a `CliBackend` with command `pi`, args `["-p", "--mode", "json", "--no-session"]`, and `OutputFormat::PiStreamJson`.
-- **Given** `backend: pi` with extra args `["--provider", "anthropic"]`, **when** Ralph resolves the backend, **then** the extra args are appended to the default args.
+- **Given** a hats.yml with `cli.backend: pi`, **when** Hats resolves the backend, **then** it creates a `CliBackend` with command `pi`, args `["-p", "--mode", "json", "--no-session"]`, and `OutputFormat::PiStreamJson`.
+- **Given** `backend: pi` with extra args `["--provider", "anthropic"]`, **when** Hats resolves the backend, **then** the extra args are appended to the default args.
 
 ### Auto-Detection
-- **Given** `agent: auto` and only `pi` is installed, **when** Ralph detects backends, **then** `pi` is selected.
-- **Given** `agent: auto` and both `claude` and `pi` are installed, **when** Ralph detects backends, **then** `claude` is selected (higher priority).
+- **Given** `agent: auto` and only `pi` is installed, **when** Hats detects backends, **then** `pi` is selected.
+- **Given** `agent: auto` and both `claude` and `pi` are installed, **when** Hats detects backends, **then** `claude` is selected (higher priority).
 
 ### NDJSON Parsing
 - **Given** pi emits a `message_update` with `text_delta`, **when** the parser processes it, **then** `handler.on_text(delta)` is called and `extracted_text` is updated.
@@ -449,10 +449,10 @@ hats:
 - **Given** pi runs for 5 seconds, **when** the session ends, **then** `on_complete()` receives `duration_ms` approximately 5000 (wall-clock).
 
 ### Interactive Mode
-- **Given** `ralph plan` with `backend: pi`, **when** launching interactive mode, **then** pi is invoked as `pi --no-session "prompt"` (no `-p`, no `--mode json`).
+- **Given** `hats plan` with `backend: pi`, **when** launching interactive mode, **then** pi is invoked as `pi --no-session "prompt"` (no `-p`, no `--mode json`).
 
 ### LOOP_COMPLETE Detection
-- **Given** pi's text output contains `LOOP_COMPLETE`, **when** Ralph's `EventParser` processes `extracted_text`, **then** the completion is detected.
+- **Given** pi's text output contains `LOOP_COMPLETE`, **when** Hats's `EventParser` processes `extracted_text`, **then** the completion is detected.
 
 ### Unknown Events
 - **Given** pi emits a JSON line with an unknown `type`, **when** the parser processes it, **then** it is silently ignored (deserialized as `PiStreamEvent::Other`).
@@ -494,21 +494,21 @@ hats:
 ### Technology Choices
 
 - **Serde for parsing**: Pi's NDJSON maps cleanly to Rust enums with `#[serde(tag = "type")]`. The `#[serde(other)]` variant handles forward compatibility with new event types.
-- **No new dependencies**: Uses existing `serde`, `serde_json`, `tracing` from `ralph-adapters`.
+- **No new dependencies**: Uses existing `serde`, `serde_json`, `tracing` from `hats-adapters`.
 
 ### Research Findings
 
 See `research/` directory:
 1. [Stream format comparison](research/01-stream-format-comparison.md) — Pi vs Claude NDJSON schemas
-2. [Stream handler architecture](research/02-stream-handler-architecture.md) — Ralph's trait-based streaming
+2. [Stream handler architecture](research/02-stream-handler-architecture.md) — Hats's trait-based streaming
 3. [RPC mode analysis](research/03-rpc-mode-analysis.md) — Deferred to v2
 4. [Backend patterns](research/04-backend-patterns.md) — How other backends are implemented
-5. [CLI flags](research/05-pi-cli-flags.md) — Pi's flag reference for Ralph
+5. [CLI flags](research/05-pi-cli-flags.md) — Pi's flag reference for Hats
 6. [NDJSON schema](research/06-pi-ndjson-schema.md) — Definitive pi event schema from real output
 
 ### Alternative Approaches
 
 1. **Text-only backend (rejected)**: Could treat pi like Kiro/Gemini with raw text output. Rejected because pi's NDJSON gives structured tool calls, cost tracking, and rich TUI display for free.
-2. **RPC mode (deferred)**: Could use pi's bidirectional RPC for persistent sessions and steering. Deferred — requires new executor type and architectural changes to Ralph's core loop.
+2. **RPC mode (deferred)**: Could use pi's bidirectional RPC for persistent sessions and steering. Deferred — requires new executor type and architectural changes to Hats's core loop.
 3. **Unified StreamJson parser (rejected)**: Could auto-detect pi vs Claude from first JSON line. Rejected — fragile detection, cleaner to have explicit `PiStreamJson` variant.
 4. **Structured config fields (deferred)**: Could add pi-specific fields to `HatBackend` enum (like `KiroAgent`). Deferred — `NamedWithArgs` works now, structured fields can be added later as sugar.

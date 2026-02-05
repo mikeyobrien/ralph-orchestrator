@@ -1,4 +1,4 @@
-"""E2E tests for Ralph iteration lifecycle validation.
+"""E2E tests for Hats iteration lifecycle validation.
 
 These tests validate that:
 1. Iteration counter increments correctly in TUI
@@ -51,13 +51,13 @@ async def test_iteration_counter_increments(
     iteration_capture: IterationCapture,
     iteration_freeze_capture: FreezeCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory: Callable,
     iteration_evidence_dir: Path,
 ):
     """Validate TUI shows [iter 1/N], [iter 2/N], [iter 3/N] in sequence.
 
-    Given Ralph running a multi-iteration task
+    Given Hats running a multi-iteration task
     When TUI is captured at iterations 1, 2, 3
     Then each capture shows correct [iter N/M] in header
     And LLM-judge validates counter increments by exactly 1
@@ -73,13 +73,13 @@ async def test_iteration_counter_increments(
     # Use a prompt that won't complete immediately
     # Note: --tui is required for TUI output format [iter N/M]
     cmd = (
-        f"{ralph_binary} run --tui "
+        f"{hats_binary} run --tui "
         f"-c {config_path} "
         f'-p "Create a file called test.txt, write hello to it, then read it back. '
         f'Do this in separate steps to demonstrate iteration."'
     )
 
-    # Start Ralph in tmux session
+    # Start Hats in tmux session
     await tmux_session.send_keys(cmd)
 
     # Wait for TUI to enter alternate screen mode (ratatui uses this)
@@ -170,13 +170,13 @@ async def test_max_iterations_exit_code(
     iteration_capture: IterationCapture,
     iteration_freeze_capture: FreezeCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory: Callable,
     iteration_evidence_dir: Path,
 ):
     """Validate loop terminates at max_iterations with exit code 2.
 
-    Given Ralph config with max_iterations: 3
+    Given Hats config with max_iterations: 3
     When running a task that would require >3 iterations
     Then loop terminates after iteration 3
     And exit code is 2 (per spec)
@@ -192,13 +192,13 @@ async def test_max_iterations_exit_code(
     # Use a task that will never complete quickly
     # Note: --tui is required for TUI output format [iter N/M]
     cmd = (
-        f"{ralph_binary} run --tui "
+        f"{hats_binary} run --tui "
         f"-c {config_path} "
         f'-p "Implement a full REST API with CRUD operations for users, posts, '
         f'and comments. Include authentication, validation, and error handling."'
     )
 
-    # Start Ralph
+    # Start Hats
     await tmux_session.send_keys(cmd)
 
     # Wait for TUI to enter alternate screen mode
@@ -268,13 +268,13 @@ async def test_completion_dual_confirmation(
     iteration_capture: IterationCapture,
     iteration_freeze_capture: FreezeCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory: Callable,
     iteration_evidence_dir: Path,
 ):
     """Validate completion requires 2 consecutive LOOP_COMPLETE.
 
-    Given Ralph running a simple completable task
+    Given Hats running a simple completable task
     When task completes with LOOP_COMPLETE
     Then loop requires 2 consecutive confirmations (per spec)
     And exit code is 0
@@ -290,12 +290,12 @@ async def test_completion_dual_confirmation(
     # Simple task that should complete quickly
     # Note: --tui is required for TUI output format [iter N/M]
     cmd = (
-        f"{ralph_binary} run --tui "
+        f"{hats_binary} run --tui "
         f"-c {config_path} "
         f'-p "Echo hello world. This is a simple test."'
     )
 
-    # Start Ralph
+    # Start Hats
     await tmux_session.send_keys(cmd)
 
     # Wait for TUI to enter alternate screen mode
@@ -350,14 +350,14 @@ async def test_fresh_context_scratchpad_reread(
     iteration_capture: IterationCapture,
     iteration_freeze_capture: FreezeCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory: Callable,
     iteration_evidence_dir: Path,
     project_root: Path,
 ):
     """Validate scratchpad is re-read each iteration (not cached).
 
-    Given Ralph in iteration N
+    Given Hats in iteration N
     When scratchpad is modified externally before iteration N+1
     Then iteration N+1 prompt includes updated scratchpad content
     And LLM-judge can detect the change in TUI output
@@ -380,10 +380,10 @@ async def test_fresh_context_scratchpad_reread(
     initial_marker = "MARKER_ALPHA_INITIAL"
     scratchpad_path.write_text(f"# Scratchpad\n\nMarker: {initial_marker}\n")
 
-    # Start Ralph with a task that reads the scratchpad
+    # Start Hats with a task that reads the scratchpad
     # Note: --tui is required for TUI output format [iter N/M]
     cmd = (
-        f"{ralph_binary} run --tui "
+        f"{hats_binary} run --tui "
         f"-c {config_path} "
         f'-p "Read the scratchpad and report the marker value. '
         f'Then create a simple test file."'

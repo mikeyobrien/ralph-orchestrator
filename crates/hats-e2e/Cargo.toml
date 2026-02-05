@@ -1,0 +1,49 @@
+[package]
+name = "hats-e2e"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "E2E test harness for Hats - validates real backend behavior"
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hats-e2e"
+path = "src/main.rs"
+
+[dependencies]
+# CLI parsing
+clap.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+# Time/date
+chrono.workspace = true
+
+# Terminal colors
+colored.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Regex for parsing
+regex.workspace = true
+
+# Async trait support
+async-trait.workspace = true
+
+# Hats core for cassette replay
+hats-core = { path = "../hats-core", features = ["recording"] }
+
+[dev-dependencies]
+tempfile.workspace = true

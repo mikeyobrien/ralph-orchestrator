@@ -110,7 +110,7 @@ Respond with ONLY valid JSON (no markdown, no extra text):
 
 # Validation criteria for max iterations termination
 MAX_ITERATIONS_CRITERIA = """
-Analyze this TUI capture from a terminated Ralph session:
+Analyze this TUI capture from a terminated Hats session:
 
 1. **Final Iteration**: Shows the maximum iteration reached
    - Look for [iter N] where N is the expected max
@@ -143,7 +143,7 @@ Respond with ONLY valid JSON (no markdown, no extra text):
 
 # Validation criteria for successful completion
 COMPLETION_CRITERIA = """
-Analyze this TUI capture from a completed Ralph session:
+Analyze this TUI capture from a completed Hats session:
 
 1. **Completion State**: Session completed successfully
    - Look for: "completed", "done", "finished", "success", shell prompt return

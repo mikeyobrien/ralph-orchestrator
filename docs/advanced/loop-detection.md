@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ralph Orchestrator includes automatic loop detection to prevent agents from getting stuck in repetitive cycles. This feature uses fuzzy string matching to compare recent agent outputs and detect when an agent is producing similar responses repeatedly.
+Hats includes automatic loop detection to prevent agents from getting stuck in repetitive cycles. This feature uses fuzzy string matching to compare recent agent outputs and detect when an agent is producing similar responses repeatedly.
 
 ## How It Works
 

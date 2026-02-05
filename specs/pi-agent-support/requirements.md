@@ -8,7 +8,7 @@ Based on research, there are 3 tiers of integration depth:
 
 **Tier 1 (CLI Backend):** Add `pi` as a named backend with headless/interactive constructors, auto-detection, NDJSON stream parsing (`PiStreamParser`), cost tracking, and tool call display. Pi becomes a first-class backend on par with Claude for structured output.
 
-**Tier 2 (Configuration):** Support pi-specific config options in `ralph.yml` — provider, model, thinking level, extensions, skills. Enable per-hat pi configuration.
+**Tier 2 (Configuration):** Support pi-specific config options in `hats.yml` — provider, model, thinking level, extensions, skills. Enable per-hat pi configuration.
 
 **Tier 3 (RPC Integration):** Use pi's RPC mode for persistent sessions across iterations, real-time steering from RObot, and mid-run abort.
 
@@ -27,7 +27,7 @@ Options:
 
 **A2:** Last in the priority list. Conservative — existing users unaffected, but `agent: auto` will find pi if nothing else is available.
 
-### Q3: How should pi's multi-provider capability be exposed in ralph.yml?
+### Q3: How should pi's multi-provider capability be exposed in hats.yml?
 
 Pi uniquely supports multiple LLM providers (Anthropic, OpenAI, Google, etc.) via `--provider` and `--model` flags. This means a single `pi` backend can use different models depending on the hat.
 
@@ -88,7 +88,7 @@ The binary name `pi` could conflict with other tools (e.g., Raspberry Pi utiliti
 
 **A6:** `pi --version` only. Accept the collision risk — pi is last in priority anyway, so it only triggers if nothing else is found.
 
-### Q7: Should pi's thinking output (thinking_start/delta/end) be surfaced in Ralph's TUI/console, or silently ignored?
+### Q7: Should pi's thinking output (thinking_start/delta/end) be surfaced in Hats's TUI/console, or silently ignored?
 
 Claude's stream-json doesn't expose thinking. Pi does. Options:
 - **Ignore**: Don't show thinking output. Simplest, matches Claude behavior.
@@ -96,7 +96,7 @@ Claude's stream-json doesn't expose thinking. Pi does. Options:
 
 **A7:** Verbose only. Show thinking deltas in verbose mode, ignore otherwise.
 
-### Q8: For cost tracking, should Ralph sum per-turn costs from `turn_end` events, or use the final `message_end` usage?
+### Q8: For cost tracking, should Hats sum per-turn costs from `turn_end` events, or use the final `message_end` usage?
 
 Both contain cost data. `turn_end` is more reliable since it's always the last event. The final `message_end` only covers the last assistant response, not tool result messages.
 

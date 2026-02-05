@@ -1,13 +1,13 @@
 ---
 name: create-hat-collection
-description: Generates new Ralph hat collection presets through guided conversation. Asks clarifying questions, validates against schema constraints, and outputs production-ready YAML files.
+description: Generates new Hats hat collection presets through guided conversation. Asks clarifying questions, validates against schema constraints, and outputs production-ready YAML files.
 ---
 
 # Create Hat Collection
 
 ## Overview
 
-This skill generates Ralph hat collection presets through a guided, conversational workflow. It asks clarifying questions about your workflow, validates the configuration against schema constraints, and produces a production-ready YAML preset file.
+This skill generates Hats hat collection presets through a guided, conversational workflow. It asks clarifying questions about your workflow, validates the configuration against schema constraints, and produces a production-ready YAML preset file.
 
 **Output:** A complete `.yml` preset file in the `presets/` directory.
 
@@ -61,10 +61,10 @@ Create the YAML file with these sections:
 # <One-line description>
 #
 # Usage:
-#   ralph run --config presets/<name>.yml --prompt "<example prompt>"
+#   hats run --config presets/<name>.yml --prompt "<example prompt>"
 
 event_loop:
-  starting_event: "<first.event>"  # Ralph publishes this
+  starting_event: "<first.event>"  # Hats publishes this
 
 hats:
   hat_key:
@@ -101,7 +101,7 @@ hats:
 
 | Field | Description |
 |-------|-------------|
-| `event_loop.starting_event` | First event Ralph publishes |
+| `event_loop.starting_event` | First event Hats publishes |
 
 ### Hat Definition Fields
 
@@ -156,10 +156,10 @@ After generation, test with:
 
 ```bash
 # Dry run to validate config parsing
-cargo run --bin ralph -- run -c presets/<name>.yml -p "test prompt" --dry-run
+cargo run --bin hats -- run -c presets/<name>.yml -p "test prompt" --dry-run
 
 # Run smoke tests
-cargo test -p ralph-core smoke_runner
+cargo test -p hats-core smoke_runner
 ```
 
 Use `/evaluate-presets` for comprehensive validation.

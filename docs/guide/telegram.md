@@ -1,6 +1,6 @@
 # Telegram Integration
 
-Ralph supports human-in-the-loop communication via Telegram. Agents can ask questions during orchestration, and humans can send proactive guidance at any time — all through a Telegram bot.
+Hats supports human-in-the-loop communication via Telegram. Agents can ask questions during orchestration, and humans can send proactive guidance at any time — all through a Telegram bot.
 
 ## Setup
 
@@ -10,18 +10,18 @@ Ralph supports human-in-the-loop communication via Telegram. Agents can ask ques
 2. Send `/newbot` and follow the prompts
 3. Copy the bot token (format: `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
 
-### 2. Configure Ralph
+### 2. Configure Hats
 
 **Option A: Environment variable (recommended)**
 
 ```bash
-export RALPH_TELEGRAM_BOT_TOKEN="your-bot-token"
+export HATS_TELEGRAM_BOT_TOKEN="your-bot-token"
 ```
 
 **Option B: Config file**
 
 ```yaml
-# ralph.yml
+# hats.yml
 RObot:
   enabled: true
   timeout_seconds: 300
@@ -34,7 +34,7 @@ The environment variable takes precedence over the config file.
 ### 3. Start a Loop
 
 ```bash
-ralph run -p "your prompt"
+hats run -p "your prompt"
 ```
 
 The bot sends a greeting message on startup. The chat ID is auto-detected from the first message you send to the bot — just send any message to get started.
@@ -47,7 +47,7 @@ RObot:
   timeout_seconds: 300             # How long to block waiting for a response
   checkin_interval_seconds: 120    # Periodic status updates (optional)
   telegram:
-    bot_token: "your-bot-token"    # Or use RALPH_TELEGRAM_BOT_TOKEN env var
+    bot_token: "your-bot-token"    # Or use HATS_TELEGRAM_BOT_TOKEN env var
 ```
 
 | Field | Required | Description |
@@ -113,8 +113,8 @@ Examples:
 - Send `focus on tests` → routed to the primary (main) loop
 
 Each loop has its own `events.jsonl`:
-- Primary loop: `.ralph/events.jsonl`
-- Worktree loops: `.worktrees/<loop-id>/.ralph/events.jsonl`
+- Primary loop: `.hats/events.jsonl`
+- Worktree loops: `.worktrees/<loop-id>/.hats/events.jsonl`
 
 ## Multimedia Support
 
@@ -141,7 +141,7 @@ The bot reacts to your messages with emoji:
 
 ### Primary Loop Only
 
-The Telegram bot only starts on the **primary loop** (the one holding `.ralph/loop.lock`). Worktree loops route messages through the primary loop's bot.
+The Telegram bot only starts on the **primary loop** (the one holding `.hats/loop.lock`). Worktree loops route messages through the primary loop's bot.
 
 ## Error Handling
 
@@ -155,7 +155,7 @@ The Telegram bot only starts on the **primary loop** (the one holding `.ralph/lo
 
 ## State File
 
-The bot persists its state to `.ralph/telegram-state.json`:
+The bot persists its state to `.hats/telegram-state.json`:
 
 ```json
 {
@@ -183,7 +183,7 @@ TelegramService (lifecycle management)
 └── retry_with_backoff (exponential retry for all sends)
 ```
 
-The crate lives at `crates/ralph-telegram/` with these modules:
+The crate lives at `crates/hats-telegram/` with these modules:
 
 | Module | Purpose |
 |--------|---------|
@@ -197,8 +197,8 @@ The crate lives at `crates/ralph-telegram/` with these modules:
 ## Testing
 
 ```bash
-cargo test -p ralph-telegram          # 33 unit tests (mocked, no network)
-cargo test -p ralph-core human        # 11 integration tests in ralph-core
+cargo test -p hats-telegram          # 33 unit tests (mocked, no network)
+cargo test -p hats-core human        # 11 integration tests in hats-core
 ```
 
 All tests use a `MockBot` implementation of `BotApi` — no Telegram API calls are made during testing.
@@ -226,4 +226,4 @@ All tests use a `MockBot` implementation of `BotApi` — no Telegram API calls a
 
 - The bot auto-detects your chat ID from the first message you send
 - Send any message to the bot to establish the connection
-- The chat ID is persisted in `.ralph/telegram-state.json`
+- The chat ID is persisted in `.hats/telegram-state.json`

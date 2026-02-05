@@ -1,0 +1,96 @@
+# BDD Spec Writing Preset
+#
+# For writing behavior-driven specs from backlog items.
+# Hats: analyst -> spec-writer -> spec-reviewer
+# Output: .feature files ready for implementation.
+#
+# Usage:
+#   hats run -c presets/spec-writing.yml -b pi -p "Write BDD spec for user auth"
+
+event_loop:
+  completion_promise: "SPEC_COMPLETE"
+  max_iterations: 10
+  max_runtime_seconds: 1800
+  starting_event: "analysis.start"
+
+hats:
+  analyst:
+    name: "Analyst"
+    description: "Researches the codebase and gathers requirements before writing specs."
+    triggers: ["analysis.start"]
+    publishes: ["analysis.done"]
+    instructions: |
+      ## ANALYST MODE
+
+      Gather context needed to write a precise BDD spec.
+
+      1. Read the backlog item / prompt carefully
+      2. Search the codebase for existing related code, tests, patterns
+      3. Identify dependencies, integration points, edge cases
+      4. Document your findings in the scratchpad:
+         - What exists today
+         - What needs to change
+         - Key constraints and edge cases
+         - Similar patterns to follow
+
+      DO NOT write the spec yet. Gather facts.
+      Publish analysis.done when you have enough context.
+
+  spec_writer:
+    name: "Spec Writer"
+    description: "Writes Gherkin .feature files from analysis."
+    triggers: ["analysis.done", "spec.revision_needed"]
+    publishes: ["spec.draft_ready"]
+    instructions: |
+      ## SPEC WRITER MODE
+
+      Write a BDD spec in Gherkin format using the analyst's findings.
+
+      ### Format
+      ```gherkin
+      Feature: <name>
+        As a <role>
+        I want <capability>
+        So that <benefit>
+
+        Scenario: <happy path>
+          Given <precondition>
+          When <action>
+          Then <expected result>
+
+        Scenario: <edge case>
+          ...
+      ```
+
+      ### Rules
+      - Every scenario must be independently testable
+      - Cover happy path, error cases, edge cases
+      - Use concrete values in examples, not vague descriptions
+      - Each Given/When/Then should map to one assertion
+      - Write the spec to the file path specified in the prompt
+
+      Publish spec.draft_ready when written to disk.
+
+  spec_reviewer:
+    name: "Spec Reviewer"
+    description: "Reviews spec for completeness and testability."
+    triggers: ["spec.draft_ready"]
+    publishes: ["spec.revision_needed", "spec.approved"]
+    default_publishes: "spec.approved"
+    instructions: |
+      ## SPEC REVIEWER MODE
+
+      Review the .feature file for quality.
+
+      ### Checklist
+      - [ ] Could an engineer implement this from the spec alone?
+      - [ ] Are ALL acceptance criteria testable?
+      - [ ] Are edge cases covered (nulls, empties, boundaries)?
+      - [ ] Are error conditions specified?
+      - [ ] Is every scenario independent (no hidden ordering)?
+      - [ ] Do examples use concrete values?
+
+      If issues found: publish spec.revision_needed with feedback.
+      If solid: output SPEC_COMPLETE.
+
+      Be pragmatic. One revision max, then approve with notes.

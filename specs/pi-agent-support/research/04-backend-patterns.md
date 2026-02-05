@@ -1,4 +1,4 @@
-# Research: Existing Backend Patterns in Ralph
+# Research: Existing Backend Patterns in Hats
 
 ## Summary
 
@@ -40,21 +40,21 @@ Pi supports 3 output modes:
 - `--mode json`: NDJSON event stream (every delta, tool call, etc.)
 - `--mode rpc`: Bidirectional JSON protocol
 
-For Ralph integration: `--mode json` is the right choice for NDJSON streaming.
+For Hats integration: `--mode json` is the right choice for NDJSON streaming.
 
 ### Session Management
 
-Pi manages sessions by default. For Ralph (where each iteration is independent):
+Pi manages sessions by default. For Hats (where each iteration is independent):
 - Use `--no-session` to disable session persistence
 - Pi handles its own context/compaction within a single invocation
 
 ### Tool Restrictions
 
-Pi supports `--tools <list>` to restrict available tools. Ralph could use this to disable tools when running pi under specific hats, but the default toolset (read, bash, edit, write) matches what Ralph expects.
+Pi supports `--tools <list>` to restrict available tools. Hats could use this to disable tools when running pi under specific hats, but the default toolset (read, bash, edit, write) matches what Hats expects.
 
 ### Model/Provider Selection
 
-Pi supports `--provider <name>` and `--model <id>` flags. Ralph's hat system could use these to run different pi configurations per hat:
+Pi supports `--provider <name>` and `--model <id>` flags. Hats's hat system could use these to run different pi configurations per hat:
 
 ```yaml
 hats:
@@ -79,4 +79,4 @@ Pi supports `--thinking <level>` (off, minimal, low, medium, high, xhigh). Could
 3. **Skills**: Pi's skill system provides domain-specific instructions
 4. **Custom tools**: Pi supports user-defined tools beyond the built-in set
 
-These could be relevant for advanced Ralph configurations where different hats use different providers or capabilities.
+These could be relevant for advanced Hats configurations where different hats use different providers or capabilities.

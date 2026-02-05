@@ -1,14 +1,14 @@
-# The Ralph Wiggum Technique
+# The Hats Wiggum Technique
 
-The Ralph Wiggum technique is a simple but powerful approach to autonomous AI task completion through continuous iteration.
+The Hats Wiggum technique is a simple but powerful approach to autonomous AI task completion through continuous iteration.
 
 ## Origin
 
-The technique was created by [Geoffrey Huntley](https://ghuntley.com/ralph/) and named after Ralph Wiggum from The Simpsons, embodying the philosophy of persistent iteration: "Me fail English? That's unpossible!" — just keep trying until you succeed.
+The technique was created by [Geoffrey Huntley](https://ghuntley.com/hats/) and named after Hats Wiggum from The Simpsons, embodying the philosophy of persistent iteration: "Me fail English? That's unpossible!" — just keep trying until you succeed.
 
 ## The Basic Idea
 
-At its core, as Huntley originally defined it: **"Ralph is a Bash loop."**
+At its core, as Huntley originally defined it: **"Hats is a Bash loop."**
 
 ```bash
 while :; do cat PROMPT.md | claude ; done
@@ -28,7 +28,7 @@ AI: Done
 Human: Now do step 3...
 ```
 
-The Ralph Wiggum technique inverts this by defining **success criteria upfront**:
+The Hats Wiggum technique inverts this by defining **success criteria upfront**:
 
 ```
 Human: Here's what success looks like. Keep going until you get there.
@@ -55,7 +55,7 @@ Files on disk are the only persistent state:
 - The prompt file (`PROMPT.md`)
 - The codebase itself
 - Git history
-- Memory files (`.ralph/agent/memories.md`)
+- Memory files (`.hats/agent/memories.md`)
 
 ### 3. Eventual Consistency
 
@@ -63,7 +63,7 @@ The technique doesn't guarantee immediate success. It guarantees that given enou
 
 ### 4. Predictable Failure Modes
 
-When Ralph fails, it fails predictably:
+When Hats fails, it fails predictably:
 
 - Iteration limit reached
 - Cost limit exceeded
@@ -76,20 +76,20 @@ These are all observable and addressable.
 
 The technique has proven effective at scale:
 
-- **Y Combinator Hackathon**: Team shipped 6 repositories overnight using Ralph loops
+- **Y Combinator Hackathon**: Team shipped 6 repositories overnight using Hats loops
 - **Contract MVP**: One engineer completed a $50,000 contract for just $297 in API costs
 - **Language Development**: Geoffrey Huntley's 3-month loop created a complete esoteric programming language (CURSED)
 
 ## When to Use
 
-Ralph excels at:
+Hats excels at:
 
 - Large refactors and migrations
 - Batch operations (docs, tests)
 - Greenfield project scaffolding
 - Well-defined tasks with clear completion criteria
 
-Ralph struggles with:
+Hats struggles with:
 
 - Ambiguous requirements
 - Tasks requiring human judgment
@@ -98,7 +98,7 @@ Ralph struggles with:
 
 ## Enhanced Implementation
 
-Ralph Orchestrator extends the basic technique with:
+Hats extends the basic technique with:
 
 | Feature | Purpose |
 |---------|---------|
@@ -111,12 +111,12 @@ Ralph Orchestrator extends the basic technique with:
 
 ## The Philosophy
 
-> "Let Ralph Ralph" — Sit *on* the loop, not *in* it.
+> "Let Hats Hats" — Sit *on* the loop, not *in* it.
 
-The goal is to tune like a guitar, not conduct like an orchestra. Set up the constraints and signals, then let Ralph do its thing.
+The goal is to tune like a guitar, not conduct like an orchestra. Set up the constraints and signals, then let Hats do its thing.
 
 ## Next Steps
 
-- Understand the [Six Tenets](tenets.md) that guide Ralph's design
+- Understand the [Six Tenets](tenets.md) that guide Hats's design
 - Learn how [Hats & Events](hats-and-events.md) add structure
 - Master [Backpressure](backpressure.md) for quality control

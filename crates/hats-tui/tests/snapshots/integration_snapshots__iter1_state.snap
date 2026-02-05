@@ -1,0 +1,15 @@
+---
+source: crates/hats-tui/tests/integration_snapshots.rs
+expression: harness.capture_state()
+---
+iteration: 1
+current_view: 0
+total_iterations: 0
+following_latest: true
+has_alert: false
+alert_iteration: ~
+search_query: ~
+search_matches: 0
+search_current_match: 0
+pending_hat: 📋Planner
+show_help: false

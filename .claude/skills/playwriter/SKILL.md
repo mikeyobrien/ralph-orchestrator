@@ -12,7 +12,7 @@ Use Playwriter to run Playwright Page scripts against your local Chrome session.
 
 ## When to Use
 
-- Validating the Ralph web dashboard UI
+- Validating the Hats web dashboard UI
 - Navigating authenticated pages without re-logging in
 - Testing flows that require browser extensions or saved state
 - Capturing accessibility snapshots for element discovery

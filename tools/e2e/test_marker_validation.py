@@ -1,4 +1,4 @@
-"""Simple test file created by Ralph iteration.
+"""Simple test file created by Hats iteration.
 
 This test validates the marker value from the scratchpad.
 """

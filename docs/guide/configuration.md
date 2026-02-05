@@ -1,20 +1,20 @@
 # Configuration
 
-Complete reference for Ralph's YAML configuration.
+Complete reference for Hats's YAML configuration.
 
 ## Configuration File
 
-Ralph uses `ralph.yml` by default. Override with:
+Hats uses `hats.yml` by default. Override with:
 
 ```bash
-ralph run -c custom-config.yml
+hats run -c custom-config.yml
 ```
 
 ## CLI Config Overrides
 
 You can override specific core fields from the command line without creating a separate config file. This is useful for:
 
-- Running parallel Ralph instances with isolated scratchpads
+- Running parallel Hats instances with isolated scratchpads
 - Testing with different specs directories
 - CI/CD pipelines with dynamic paths
 
@@ -30,17 +30,17 @@ You can override specific core fields from the command line without creating a s
 **Examples:**
 
 ```bash
-# Override scratchpad (loads ralph.yml + applies override)
-ralph run -c core.scratchpad=.agent/feature-auth/scratchpad.md
+# Override scratchpad (loads hats.yml + applies override)
+hats run -c core.scratchpad=.agent/feature-auth/scratchpad.md
 
 # Explicit config + override
-ralph run -c ralph.yml -c core.scratchpad=.agent/feature-auth/scratchpad.md
+hats run -c hats.yml -c core.scratchpad=.agent/feature-auth/scratchpad.md
 
 # Multiple overrides
-ralph run -c core.scratchpad=.runs/task-1/scratchpad.md -c core.specs_dir=./custom-specs/
+hats run -c core.scratchpad=.runs/task-1/scratchpad.md -c core.specs_dir=./custom-specs/
 ```
 
-Overrides are applied after `ralph.yml` is loaded, so they take precedence. The scratchpad directory is auto-created if it doesn't exist.
+Overrides are applied after `hats.yml` is loaded, so they take precedence. The scratchpad directory is auto-created if it doesn't exist.
 
 ## Full Configuration Reference
 
@@ -157,7 +157,7 @@ Persistent learning across sessions.
 
 **Injection modes:**
 - `auto` — Automatically inject at iteration start
-- `manual` — Agent must call `ralph tools memory prime`
+- `manual` — Agent must call `hats tools memory prime`
 - `none` — No injection
 
 ### tasks
@@ -260,8 +260,8 @@ core:
 
 | Variable | Description |
 |----------|-------------|
-| `RALPH_CONFIG` | Default config file path |
-| `RALPH_DIAGNOSTICS` | Enable diagnostics (`1`) |
+| `HATS_CONFIG` | Default config file path |
+| `HATS_DIAGNOSTICS` | Enable diagnostics (`1`) |
 | `NO_COLOR` | Disable color output |
 
 ## Next Steps

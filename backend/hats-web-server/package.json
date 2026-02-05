@@ -1,0 +1,40 @@
+{
+  "name": "@hats-web/server",
+  "version": "0.1.0",
+  "description": "Hats web server with tRPC API and task dispatcher",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/serve.js",
+    "dev": "tsc && node --watch dist/serve.js",
+    "test": "tsx --test $(find src -name '*.test.ts')",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/websocket": "^11.2.0",
+    "@trpc/server": "^11.8.1",
+    "better-sqlite3": "^12.6.2",
+    "drizzle-orm": "^0.45.1",
+    "fastify": "^5.7.1",
+    "strip-ansi": "^6.0.1",
+    "uuid": "^13.0.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "keywords": [
+    "hats",
+    "server",
+    "orchestrator"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.8",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}

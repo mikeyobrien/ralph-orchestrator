@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-Deploy Ralph Orchestrator using Docker for consistent, reproducible environments.
+Deploy Hats using Docker for consistent, reproducible environments.
 
 ## Prerequisites
 
@@ -16,13 +16,13 @@ Deploy Ralph Orchestrator using Docker for consistent, reproducible environments
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/mikeyobrien/ralph-orchestrator:latest
+docker pull ghcr.io/mikeyobrien/hats:latest
 
 # Run with default settings
 docker run -it \
   -v $(pwd):/workspace \
   -e CLAUDE_API_KEY=$CLAUDE_API_KEY \
-  ghcr.io/mikeyobrien/ralph-orchestrator:latest
+  ghcr.io/mikeyobrien/hats:latest
 ```
 
 ### Building from Source
@@ -72,7 +72,7 @@ RUN mkdir -p /workspace
 WORKDIR /workspace
 
 # Entry point
-ENTRYPOINT ["python", "/app/ralph_orchestrator.py"]
+ENTRYPOINT ["python", "/app/hats_orchestrator.py"]
 CMD ["--help"]
 ```
 
@@ -80,13 +80,13 @@ Build and run:
 
 ```bash
 # Build the image
-docker build -t ralph-orchestrator:local .
+docker build -t hats:local .
 
 # Run with your prompt
 docker run -it \
   -v $(pwd):/workspace \
   -e CLAUDE_API_KEY=$CLAUDE_API_KEY \
-  ralph-orchestrator:local \
+  hats:local \
   --agent claude \
   --prompt PROMPT.md
 ```
@@ -100,21 +100,21 @@ For complex deployments with multiple services:
 version: '3.8'
 
 services:
-  ralph:
-    image: ghcr.io/mikeyobrien/ralph-orchestrator:latest
-    container_name: ralph-orchestrator
+  hats:
+    image: ghcr.io/mikeyobrien/hats:latest
+    container_name: hats
     environment:
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - Q_API_KEY=${Q_API_KEY}
-      - RALPH_MAX_ITERATIONS=100
-      - RALPH_MAX_RUNTIME=14400
+      - HATS_MAX_ITERATIONS=100
+      - HATS_MAX_RUNTIME=14400
     volumes:
       - ./workspace:/workspace
       - ./prompts:/prompts:ro
-      - ralph-cache:/app/.cache
+      - hats-cache:/app/.cache
     networks:
-      - ralph-network
+      - hats-network
     restart: unless-stopped
     command: 
       - --agent=auto
@@ -124,36 +124,36 @@ services:
   # Optional: Monitoring with Prometheus
   prometheus:
     image: prom/prometheus:latest
-    container_name: ralph-prometheus
+    container_name: hats-prometheus
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
     networks:
-      - ralph-network
+      - hats-network
     ports:
       - "9090:9090"
 
   # Optional: Grafana for visualization
   grafana:
     image: grafana/grafana:latest
-    container_name: ralph-grafana
+    container_name: hats-grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
     networks:
-      - ralph-network
+      - hats-network
     ports:
       - "3000:3000"
 
 volumes:
-  ralph-cache:
+  hats-cache:
   prometheus-data:
   grafana-data:
 
 networks:
-  ralph-network:
+  hats-network:
     driver: bridge
 ```
 
@@ -164,7 +164,7 @@ Start the stack:
 docker-compose up -d
 
 # View logs
-docker-compose logs -f ralph
+docker-compose logs -f hats
 
 # Stop all services
 docker-compose down
@@ -172,21 +172,21 @@ docker-compose down
 
 ## Environment Variables
 
-Configure Ralph through environment variables:
+Configure Hats through environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CLAUDE_API_KEY` | Anthropic Claude API key | Required for Claude |
 | `GEMINI_API_KEY` | Google Gemini API key | Required for Gemini |
 | `Q_API_KEY` | Q Chat API key | Required for Q |
-| `RALPH_AGENT` | Default agent (claude/gemini/q/auto) | auto |
-| `RALPH_MAX_ITERATIONS` | Maximum loop iterations | 100 |
-| `RALPH_MAX_RUNTIME` | Maximum runtime in seconds | 14400 |
-| `RALPH_MAX_TOKENS` | Maximum total tokens | 1000000 |
-| `RALPH_MAX_COST` | Maximum cost in USD | 50.0 |
-| `RALPH_CHECKPOINT_INTERVAL` | Git checkpoint frequency | 5 |
-| `RALPH_VERBOSE` | Enable verbose logging | false |
-| `RALPH_DRY_RUN` | Test mode without execution | false |
+| `HATS_AGENT` | Default agent (claude/gemini/q/auto) | auto |
+| `HATS_MAX_ITERATIONS` | Maximum loop iterations | 100 |
+| `HATS_MAX_RUNTIME` | Maximum runtime in seconds | 14400 |
+| `HATS_MAX_TOKENS` | Maximum total tokens | 1000000 |
+| `HATS_MAX_COST` | Maximum cost in USD | 50.0 |
+| `HATS_CHECKPOINT_INTERVAL` | Git checkpoint frequency | 5 |
+| `HATS_VERBOSE` | Enable verbose logging | false |
+| `HATS_DRY_RUN` | Test mode without execution | false |
 
 ## Volume Mounts
 
@@ -199,7 +199,7 @@ docker run -it \
   -v $(pwd)/.agent:/app/.agent \            # Agent state
   -v $(pwd)/.git:/workspace/.git \          # Git repository
   -v ~/.ssh:/root/.ssh:ro \                 # SSH keys (if needed)
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 ## Security Considerations
@@ -208,8 +208,8 @@ docker run -it \
 
 ```dockerfile
 # Add to Dockerfile
-RUN useradd -m -u 1000 ralph
-USER ralph
+RUN useradd -m -u 1000 hats
+USER hats
 ```
 
 ```bash
@@ -217,7 +217,7 @@ USER ralph
 docker run -it \
   --user $(id -u):$(id -g) \
   -v $(pwd):/workspace \
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 ### Secrets Management
@@ -234,21 +234,21 @@ Q_API_KEY=...
 docker run -it \
   --env-file .env \
   -v $(pwd):/workspace \
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 ### Network Isolation
 
 ```bash
 # Create isolated network
-docker network create ralph-isolated
+docker network create hats-isolated
 
 # Run with network isolation
 docker run -it \
-  --network ralph-isolated \
-  --network-alias ralph \
+  --network hats-isolated \
+  --network-alias hats \
   -v $(pwd):/workspace \
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 ## Resource Limits
@@ -262,7 +262,7 @@ docker run -it \
   --cpu-shares=512 \
   --pids-limit=100 \
   -v $(pwd):/workspace \
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 ## Health Checks
@@ -280,14 +280,14 @@ HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
 ### Interactive Shell
 
 ```bash
-# Start with shell instead of ralph
+# Start with shell instead of hats
 docker run -it \
   -v $(pwd):/workspace \
   --entrypoint /bin/bash \
-  ralph-orchestrator:latest
+  hats:latest
 
 # Inside container
-python /app/ralph_orchestrator.py --dry-run
+python /app/hats_orchestrator.py --dry-run
 ```
 
 ### View Logs
@@ -297,7 +297,7 @@ python /app/ralph_orchestrator.py --dry-run
 docker logs -f <container-id>
 
 # Save logs to file
-docker logs <container-id> > ralph.log 2>&1
+docker logs <container-id> > hats.log 2>&1
 ```
 
 ### Inspect Running Container
@@ -326,10 +326,10 @@ echo $CLAUDE_API_KEY | docker secret create claude_key -
 echo $GEMINI_API_KEY | docker secret create gemini_key -
 
 # Deploy stack
-docker stack deploy -c docker-compose.yml ralph-stack
+docker stack deploy -c docker-compose.yml hats-stack
 
 # Scale service
-docker service scale ralph-stack_ralph=3
+docker service scale hats-stack_hats=3
 ```
 
 ### Using Kubernetes
@@ -343,10 +343,10 @@ See [Kubernetes Deployment Guide](kubernetes.md) for container orchestration at 
 ```python
 # Enable metrics in config
 docker run -it \
-  -e RALPH_ENABLE_METRICS=true \
-  -e RALPH_METRICS_PORT=8080 \
+  -e HATS_ENABLE_METRICS=true \
+  -e HATS_METRICS_PORT=8080 \
   -p 8080:8080 \
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 ### Prometheus Configuration
@@ -354,9 +354,9 @@ docker run -it \
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: 'ralph'
+  - job_name: 'hats'
     static_configs:
-      - targets: ['ralph:8080']
+      - targets: ['hats:8080']
     metrics_path: '/metrics'
 ```
 
@@ -371,7 +371,7 @@ scrape_configs:
 docker run -it \
   --user $(id -u):$(id -g) \
   -v $(pwd):/workspace:Z \  # SELinux context
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 #### Out of Memory
@@ -381,7 +381,7 @@ docker run -it \
 docker run -it \
   --memory="8g" \
   --memory-swap="8g" \
-  ralph-orchestrator:latest
+  hats:latest
 ```
 
 #### Network Timeouts
@@ -389,9 +389,9 @@ docker run -it \
 ```bash
 # Increase timeout values
 docker run -it \
-  -e RALPH_RETRY_DELAY=5 \
-  -e RALPH_MAX_RETRIES=10 \
-  ralph-orchestrator:latest
+  -e HATS_RETRY_DELAY=5 \
+  -e HATS_MAX_RETRIES=10 \
+  hats:latest
 ```
 
 ### Debug Mode
@@ -400,8 +400,8 @@ docker run -it \
 # Enable debug logging
 docker run -it \
   -e LOG_LEVEL=DEBUG \
-  -e RALPH_VERBOSE=true \
-  ralph-orchestrator:latest \
+  -e HATS_VERBOSE=true \
+  hats:latest \
   --verbose --dry-run
 ```
 

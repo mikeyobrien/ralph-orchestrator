@@ -78,7 +78,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ralph-orchestrator"
+name = "hats"
 version = "1.4.0"
 source = { editable = "." }
 

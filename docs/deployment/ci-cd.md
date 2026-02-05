@@ -1,6 +1,6 @@
 # CI/CD Pipeline Guide
 
-Automate Ralph Orchestrator deployment with continuous integration and delivery pipelines.
+Automate Hats deployment with continuous integration and delivery pipelines.
 
 ## Overview
 
@@ -62,7 +62,7 @@ jobs:
     - name: Run tests
       run: |
         source .venv/bin/activate
-        pytest tests/ -v --cov=ralph_orchestrator --cov-report=xml
+        pytest tests/ -v --cov=hats_orchestrator --cov-report=xml
     
     - name: Upload coverage
       uses: codecov/codecov-action@v3
@@ -93,7 +93,7 @@ jobs:
       run: black --check .
     
     - name: Type checking
-      run: mypy ralph_orchestrator.py
+      run: mypy hats_orchestrator.py
     
     - name: Security scan
       run: |
@@ -187,10 +187,10 @@ jobs:
       run: |
         echo "$KUBE_CONFIG" | base64 -d > kubeconfig
         export KUBECONFIG=kubeconfig
-        kubectl set image deployment/ralph-orchestrator \
-          ralph=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop \
-          -n ralph-staging
-        kubectl rollout status deployment/ralph-orchestrator -n ralph-staging
+        kubectl set image deployment/hats \
+          hats=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop \
+          -n hats-staging
+        kubectl rollout status deployment/hats -n hats-staging
 
   # Deploy to Production
   deploy-production:
@@ -209,10 +209,10 @@ jobs:
         echo "$KUBE_CONFIG" | base64 -d > kubeconfig
         export KUBECONFIG=kubeconfig
         VERSION=${GITHUB_REF#refs/tags/}
-        kubectl set image deployment/ralph-orchestrator \
-          ralph=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION \
-          -n ralph-production
-        kubectl rollout status deployment/ralph-orchestrator -n ralph-production
+        kubectl set image deployment/hats \
+          hats=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION \
+          -n hats-production
+        kubectl rollout status deployment/hats -n hats-production
     
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -338,7 +338,7 @@ test:unit:
     - pip install uv
     - uv venv && source .venv/bin/activate
     - uv pip install -e . pytest pytest-cov
-    - pytest tests/ --cov=ralph_orchestrator
+    - pytest tests/ --cov=hats_orchestrator
   coverage: '/TOTAL.*\s+(\d+%)$/'
   artifacts:
     reports:
@@ -377,25 +377,25 @@ deploy:staging:
   image: bitnami/kubectl:latest
   environment:
     name: staging
-    url: https://staging.ralph.example.com
+    url: https://staging.hats.example.com
   only:
     - develop
   script:
-    - kubectl set image deployment/ralph ralph=$IMAGE_TAG -n staging
-    - kubectl rollout status deployment/ralph -n staging
+    - kubectl set image deployment/hats hats=$IMAGE_TAG -n staging
+    - kubectl rollout status deployment/hats -n staging
 
 deploy:production:
   stage: deploy
   image: bitnami/kubectl:latest
   environment:
     name: production
-    url: https://ralph.example.com
+    url: https://hats.example.com
   only:
     - tags
   when: manual
   script:
-    - kubectl set image deployment/ralph ralph=$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG -n production
-    - kubectl rollout status deployment/ralph -n production
+    - kubectl set image deployment/hats hats=$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG -n production
+    - kubectl rollout status deployment/hats -n production
 ```
 
 ## Jenkins Pipeline
@@ -408,7 +408,7 @@ pipeline {
     
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        DOCKER_IMAGE = 'mikeyobrien/ralph-orchestrator'
+        DOCKER_IMAGE = 'mikeyobrien/hats'
         DOCKER_CREDENTIALS = 'docker-hub-credentials'
         KUBECONFIG_STAGING = credentials('kubeconfig-staging')
         KUBECONFIG_PROD = credentials('kubeconfig-production')
@@ -477,8 +477,8 @@ pipeline {
             steps {
                 sh '''
                     export KUBECONFIG=${KUBECONFIG_STAGING}
-                    kubectl set image deployment/ralph ralph=${DOCKER_IMAGE}:${BUILD_NUMBER} -n staging
-                    kubectl rollout status deployment/ralph -n staging
+                    kubectl set image deployment/hats hats=${DOCKER_IMAGE}:${BUILD_NUMBER} -n staging
+                    kubectl rollout status deployment/hats -n staging
                 '''
             }
         }
@@ -494,8 +494,8 @@ pipeline {
             steps {
                 sh '''
                     export KUBECONFIG=${KUBECONFIG_PROD}
-                    kubectl set image deployment/ralph ralph=${DOCKER_IMAGE}:${TAG_NAME} -n production
-                    kubectl rollout status deployment/ralph -n production
+                    kubectl set image deployment/hats hats=${DOCKER_IMAGE}:${TAG_NAME} -n production
+                    kubectl rollout status deployment/hats -n production
                 '''
             }
         }
@@ -545,7 +545,7 @@ jobs:
           name: Run tests
           command: |
             pip install pytest pytest-cov
-            pytest tests/ --cov=ralph_orchestrator
+            pytest tests/ --cov=hats_orchestrator
       - store_test_results:
           path: test-results
       - store_artifacts:
@@ -558,10 +558,10 @@ jobs:
       - checkout
       - docker/check
       - docker/build:
-          image: mikeyobrien/ralph-orchestrator
+          image: mikeyobrien/hats
           tag: ${CIRCLE_SHA1}
       - docker/push:
-          image: mikeyobrien/ralph-orchestrator
+          image: mikeyobrien/hats
           tag: ${CIRCLE_SHA1}
 
   deploy:
@@ -574,8 +574,8 @@ jobs:
           command: |
             echo $KUBE_CONFIG | base64 -d > kubeconfig
             export KUBECONFIG=kubeconfig
-            kubectl set image deployment/ralph ralph=mikeyobrien/ralph-orchestrator:${CIRCLE_SHA1}
-            kubectl rollout status deployment/ralph
+            kubectl set image deployment/hats hats=mikeyobrien/hats:${CIRCLE_SHA1}
+            kubectl rollout status deployment/hats
 
 workflows:
   main:
@@ -614,7 +614,7 @@ pool:
 
 variables:
   dockerRegistry: 'your-registry.azurecr.io'
-  dockerImageName: 'ralph-orchestrator'
+  dockerImageName: 'hats'
   kubernetesServiceConnection: 'k8s-connection'
 
 stages:
@@ -668,7 +668,7 @@ stages:
               connectionType: 'Kubernetes Service Connection'
               kubernetesServiceEndpoint: $(kubernetesServiceConnection)
               command: 'set'
-              arguments: 'image deployment/ralph ralph=$(dockerRegistry)/$(dockerImageName):$(Build.BuildId)'
+              arguments: 'image deployment/hats hats=$(dockerRegistry)/$(dockerImageName):$(Build.BuildId)'
               namespace: 'production'
 ```
 
@@ -680,14 +680,14 @@ Create `argocd/application.yaml`:
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ralph-orchestrator
+  name: hats
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    repoURL: https://github.com/mikeyobrien/ralph-orchestrator
+    repoURL: https://github.com/mikeyobrien/hats
     targetRevision: HEAD
     path: k8s
     helm:
@@ -698,7 +698,7 @@ spec:
           value: latest
   destination:
     server: https://kubernetes.default.svc
-    namespace: ralph-production
+    namespace: hats-production
   syncPolicy:
     automated:
       prune: true
@@ -723,7 +723,7 @@ Create `tekton/pipeline.yaml`:
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
-  name: ralph-ci-pipeline
+  name: hats-ci-pipeline
 spec:
   params:
     - name: repo-url
@@ -765,7 +765,7 @@ spec:
           workspace: shared-workspace
       params:
         - name: IMAGE
-          value: ghcr.io/mikeyobrien/ralph-orchestrator
+          value: ghcr.io/mikeyobrien/hats
     
     - name: deploy
       runAfter:
@@ -775,8 +775,8 @@ spec:
       params:
         - name: script
           value: |
-            kubectl set image deployment/ralph ralph=ghcr.io/mikeyobrien/ralph-orchestrator:$(params.revision)
-            kubectl rollout status deployment/ralph
+            kubectl set image deployment/hats hats=ghcr.io/mikeyobrien/hats:$(params.revision)
+            kubectl rollout status deployment/hats
 ```
 
 ## Monitoring and Notifications
@@ -803,7 +803,7 @@ Add to any CI/CD platform:
 - name: Health Check
   run: |
     for i in {1..30}; do
-      if curl -f http://ralph.example.com/health; then
+      if curl -f http://hats.example.com/health; then
         echo "Service is healthy"
         exit 0
       fi

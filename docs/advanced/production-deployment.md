@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers deploying Ralph Orchestrator in production environments, including server setup, automation, monitoring, and scaling considerations.
+This guide covers deploying Hats in production environments, including server setup, automation, monitoring, and scaling considerations.
 
 ## Deployment Options
 
@@ -19,7 +19,7 @@ This guide covers deploying Ralph Orchestrator in production environments, inclu
 #### Installation Script
 ```bash
 #!/bin/bash
-# ralph-install.sh
+# hats-install.sh
 
 # Update system
 sudo apt-get update && sudo apt-get upgrade -y
@@ -32,17 +32,17 @@ npm install -g @anthropic-ai/claude-code
 npm install -g @google/gemini-cli
 # Install Q following its documentation
 
-# Clone Ralph
-git clone https://github.com/yourusername/ralph-orchestrator.git
-cd ralph-orchestrator
+# Clone Hats
+git clone https://github.com/yourusername/hats.git
+cd hats
 
 # Set permissions
-chmod +x ralph_orchestrator.py ralph
+chmod +x hats_orchestrator.py hats
 
 # Create systemd service
-sudo cp ralph.service /etc/systemd/system/
+sudo cp hats.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable ralph
+sudo systemctl enable hats
 ```
 
 ### 2. Docker Deployment
@@ -61,22 +61,22 @@ RUN apt-get update && apt-get install -y \
 # Install AI CLI tools
 RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
 
-# Create ralph user
-RUN useradd -m -s /bin/bash ralph
-WORKDIR /home/ralph
+# Create hats user
+RUN useradd -m -s /bin/bash hats
+WORKDIR /home/hats
 
 # Copy application
-COPY --chown=ralph:ralph . /home/ralph/ralph-orchestrator/
-WORKDIR /home/ralph/ralph-orchestrator
+COPY --chown=hats:hats . /home/hats/hats/
+WORKDIR /home/hats/hats
 
 # Set permissions
-RUN chmod +x ralph_orchestrator.py ralph
+RUN chmod +x hats_orchestrator.py hats
 
-# Switch to ralph user
-USER ralph
+# Switch to hats user
+USER hats
 
 # Default command
-CMD ["./ralph", "run"]
+CMD ["./hats", "run"]
 ```
 
 #### Docker Compose
@@ -85,18 +85,18 @@ CMD ["./ralph", "run"]
 version: '3.8'
 
 services:
-  ralph:
+  hats:
     build: .
-    container_name: ralph-orchestrator
+    container_name: hats
     restart: unless-stopped
     volumes:
-      - ./workspace:/home/ralph/workspace
-      - ./prompts:/home/ralph/prompts
-      - ralph-agent:/home/ralph/ralph-orchestrator/.agent
+      - ./workspace:/home/hats/workspace
+      - ./prompts:/home/hats/prompts
+      - hats-agent:/home/hats/hats/.agent
     environment:
-      - RALPH_MAX_ITERATIONS=100
-      - RALPH_AGENT=auto
-      - RALPH_CHECKPOINT_INTERVAL=5
+      - HATS_MAX_ITERATIONS=100
+      - HATS_AGENT=auto
+      - HATS_CHECKPOINT_INTERVAL=5
     logging:
       driver: "json-file"
       options:
@@ -104,7 +104,7 @@ services:
         max-file: "3"
 
 volumes:
-  ralph-agent:
+  hats-agent:
 ```
 
 ### 3. Cloud Deployment
@@ -116,23 +116,23 @@ volumes:
 yum update -y
 yum install -y python3 git nodejs
 
-# Install Ralph
+# Install Hats
 cd /opt
-git clone https://github.com/yourusername/ralph-orchestrator.git
-cd ralph-orchestrator
-chmod +x ralph_orchestrator.py ralph
+git clone https://github.com/yourusername/hats.git
+cd hats
+chmod +x hats_orchestrator.py hats
 
 # Configure as service
-cat > /etc/systemd/system/ralph.service << EOF
+cat > /etc/systemd/system/hats.service << EOF
 [Unit]
-Description=Ralph Orchestrator
+Description=Hats
 After=network.target
 
 [Service]
 Type=simple
 User=ec2-user
-WorkingDirectory=/opt/ralph-orchestrator
-ExecStart=/opt/ralph-orchestrator/ralph run
+WorkingDirectory=/opt/hats
+ExecStart=/opt/hats/hats run
 Restart=on-failure
 RestartSec=10
 
@@ -140,30 +140,30 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-systemctl enable ralph
-systemctl start ralph
+systemctl enable hats
+systemctl start hats
 ```
 
 #### Kubernetes Deployment
 ```yaml
-# ralph-deployment.yaml
+# hats-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ralph-orchestrator
+  name: hats
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ralph
+      app: hats
   template:
     metadata:
       labels:
-        app: ralph
+        app: hats
     spec:
       containers:
-      - name: ralph
-        image: ralph-orchestrator:latest
+      - name: hats
+        image: hats:latest
         resources:
           requests:
             memory: "2Gi"
@@ -179,10 +179,10 @@ spec:
       volumes:
       - name: workspace
         persistentVolumeClaim:
-          claimName: ralph-workspace
+          claimName: hats-workspace
       - name: config
         configMap:
-          name: ralph-config
+          name: hats-config
 ```
 
 ## Configuration Management
@@ -190,16 +190,16 @@ spec:
 ### Environment Variables
 ```bash
 # /etc/environment or .env file
-RALPH_HOME=/opt/ralph-orchestrator
-RALPH_WORKSPACE=/var/ralph/workspace
-RALPH_LOG_LEVEL=INFO
-RALPH_MAX_ITERATIONS=100
-RALPH_MAX_RUNTIME=14400
-RALPH_AGENT=claude
-RALPH_CHECKPOINT_INTERVAL=5
-RALPH_RETRY_DELAY=2
-RALPH_GIT_ENABLED=true
-RALPH_ARCHIVE_ENABLED=true
+HATS_HOME=/opt/hats
+HATS_WORKSPACE=/var/hats/workspace
+HATS_LOG_LEVEL=INFO
+HATS_MAX_ITERATIONS=100
+HATS_MAX_RUNTIME=14400
+HATS_AGENT=claude
+HATS_CHECKPOINT_INTERVAL=5
+HATS_RETRY_DELAY=2
+HATS_GIT_ENABLED=true
+HATS_ARCHIVE_ENABLED=true
 ```
 
 ### Configuration File
@@ -234,24 +234,24 @@ RALPH_ARCHIVE_ENABLED=true
 
 ### Systemd Service
 ```ini
-# /etc/systemd/system/ralph.service
+# /etc/systemd/system/hats.service
 [Unit]
-Description=Ralph Orchestrator Service
-Documentation=https://github.com/yourusername/ralph-orchestrator
+Description=Hats Service
+Documentation=https://github.com/yourusername/hats
 After=network.target
 
 [Service]
 Type=simple
-User=ralph
-Group=ralph
-WorkingDirectory=/opt/ralph-orchestrator
-ExecStart=/opt/ralph-orchestrator/ralph run --config production.json
+User=hats
+Group=hats
+WorkingDirectory=/opt/hats
+ExecStart=/opt/hats/hats run --config production.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=ralph
+SyslogIdentifier=hats
 Environment="PYTHONUNBUFFERED=1"
 
 # Security
@@ -259,7 +259,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/ralph-orchestrator /var/ralph
+ReadWritePaths=/opt/hats /var/hats
 
 [Install]
 WantedBy=multi-user.target
@@ -267,28 +267,28 @@ WantedBy=multi-user.target
 
 ### Cron Jobs
 ```bash
-# /etc/cron.d/ralph
+# /etc/cron.d/hats
 # Clean old logs weekly
-0 2 * * 0 ralph /opt/ralph-orchestrator/scripts/cleanup.sh
+0 2 * * 0 hats /opt/hats/scripts/cleanup.sh
 
 # Backup state daily
-0 3 * * * ralph tar -czf /backup/ralph-$(date +\%Y\%m\%d).tar.gz /opt/ralph-orchestrator/.agent
+0 3 * * * hats tar -czf /backup/hats-$(date +\%Y\%m\%d).tar.gz /opt/hats/.agent
 
 # Health check every 5 minutes
-*/5 * * * * ralph /opt/ralph-orchestrator/scripts/health-check.sh || systemctl restart ralph
+*/5 * * * * hats /opt/hats/scripts/health-check.sh || systemctl restart hats
 ```
 
 ### CI/CD Pipeline
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy Ralph
+name: Deploy Hats
 
 on:
   push:
     branches: [main]
     paths:
-      - 'ralph_orchestrator.py'
-      - 'ralph'
+      - 'hats_orchestrator.py'
+      - 'hats'
       - 'requirements.txt'
 
 jobs:
@@ -301,12 +301,12 @@ jobs:
         run: python test_comprehensive.py
       
       - name: Build Docker image
-        run: docker build -t ralph-orchestrator:${{ github.sha }} .
+        run: docker build -t hats:${{ github.sha }} .
       
       - name: Push to registry
         run: |
-          docker tag ralph-orchestrator:${{ github.sha }} ${{ secrets.REGISTRY }}/ralph:latest
-          docker push ${{ secrets.REGISTRY }}/ralph:latest
+          docker tag hats:${{ github.sha }} ${{ secrets.REGISTRY }}/hats:latest
+          docker push ${{ secrets.REGISTRY }}/hats:latest
       
       - name: Deploy to server
         uses: appleboy/ssh-action@v0.1.5
@@ -315,9 +315,9 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd /opt/ralph-orchestrator
+            cd /opt/hats
             git pull
-            systemctl restart ralph
+            systemctl restart hats
 ```
 
 ## Monitoring in Production
@@ -330,13 +330,13 @@ import json
 import glob
 
 # Define metrics
-iteration_counter = Counter('ralph_iterations_total', 'Total iterations')
-error_counter = Counter('ralph_errors_total', 'Total errors')
-runtime_gauge = Gauge('ralph_runtime_seconds', 'Current runtime')
-iteration_duration = Histogram('ralph_iteration_duration_seconds', 'Iteration duration')
+iteration_counter = Counter('hats_iterations_total', 'Total iterations')
+error_counter = Counter('hats_errors_total', 'Total errors')
+runtime_gauge = Gauge('hats_runtime_seconds', 'Current runtime')
+iteration_duration = Histogram('hats_iteration_duration_seconds', 'Iteration duration')
 
 def collect_metrics():
-    """Collect metrics from Ralph state files"""
+    """Collect metrics from Hats state files"""
     state_files = glob.glob('.agent/metrics/state_*.json')
     if state_files:
         latest = max(state_files)
@@ -391,7 +391,7 @@ def setup_production_logging():
     
     # File handler with rotation
     file_handler = logging.handlers.RotatingFileHandler(
-        '/var/log/ralph/ralph.log',
+        '/var/log/hats/hats.log',
         maxBytes=100*1024*1024,  # 100MB
         backupCount=10
     )
@@ -410,13 +410,13 @@ def setup_production_logging():
 ### User Isolation
 ```bash
 # Create dedicated user
-sudo useradd -r -s /bin/bash -m -d /opt/ralph ralph
-sudo chown -R ralph:ralph /opt/ralph-orchestrator
+sudo useradd -r -s /bin/bash -m -d /opt/hats hats
+sudo chown -R hats:hats /opt/hats
 
 # Set restrictive permissions
-chmod 750 /opt/ralph-orchestrator
-chmod 640 /opt/ralph-orchestrator/*.py
-chmod 750 /opt/ralph-orchestrator/ralph
+chmod 750 /opt/hats
+chmod 640 /opt/hats/*.py
+chmod 750 /opt/hats/hats
 ```
 
 ### Network Security
@@ -438,10 +438,10 @@ ufw default deny outgoing
 pip install keyring
 
 # Store API keys securely
-python -c "import keyring; keyring.set_password('ralph', 'claude_api_key', 'your-key')"
+python -c "import keyring; keyring.set_password('hats', 'claude_api_key', 'your-key')"
 
 # Or use environment variables from secure store
-source /etc/ralph/secrets.env
+source /etc/hats/secrets.env
 ```
 
 ## Scaling Considerations
@@ -452,7 +452,7 @@ source /etc/ralph/secrets.env
 import redis
 import json
 
-class RalphJobQueue:
+class HatsJobQueue:
     def __init__(self):
         self.redis = redis.Redis(host='localhost', port=6379)
     
@@ -465,12 +465,12 @@ class RalphJobQueue:
             'status': 'pending',
             'created': time.time()
         }
-        self.redis.lpush('ralph:jobs', json.dumps(job))
+        self.redis.lpush('hats:jobs', json.dumps(job))
         return job['id']
     
     def get_job(self):
         """Get next job from queue"""
-        job_data = self.redis.rpop('ralph:jobs')
+        job_data = self.redis.rpop('hats:jobs')
         if job_data:
             return json.loads(job_data)
         return None
@@ -516,20 +516,20 @@ def set_production_limits():
 #!/bin/bash
 # backup.sh
 
-BACKUP_DIR="/backup/ralph"
+BACKUP_DIR="/backup/hats"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Create backup
-tar -czf $BACKUP_DIR/ralph_$TIMESTAMP.tar.gz \
-    /opt/ralph-orchestrator/.agent \
-    /opt/ralph-orchestrator/*.json \
-    /opt/ralph-orchestrator/PROMPT.md
+tar -czf $BACKUP_DIR/hats_$TIMESTAMP.tar.gz \
+    /opt/hats/.agent \
+    /opt/hats/*.json \
+    /opt/hats/PROMPT.md
 
 # Keep only last 30 days
-find $BACKUP_DIR -name "ralph_*.tar.gz" -mtime +30 -delete
+find $BACKUP_DIR -name "hats_*.tar.gz" -mtime +30 -delete
 
 # Sync to S3 (optional)
-aws s3 sync $BACKUP_DIR s3://my-bucket/ralph-backups/
+aws s3 sync $BACKUP_DIR s3://my-bucket/hats-backups/
 ```
 
 ### Disaster Recovery
@@ -538,10 +538,10 @@ aws s3 sync $BACKUP_DIR s3://my-bucket/ralph-backups/
 # restore.sh
 
 BACKUP_FILE=$1
-RESTORE_DIR="/opt/ralph-orchestrator"
+RESTORE_DIR="/opt/hats"
 
 # Stop service
-systemctl stop ralph
+systemctl stop hats
 
 # Restore backup
 tar -xzf $BACKUP_FILE -C /
@@ -551,7 +551,7 @@ cd $RESTORE_DIR
 git reset --hard HEAD
 
 # Restart service
-systemctl start ralph
+systemctl start hats
 ```
 
 ## Health Checks
@@ -569,8 +569,8 @@ app = Flask(__name__)
 def health():
     """Health check endpoint"""
     try:
-        # Check Ralph process
-        pid_file = '/var/run/ralph.pid'
+        # Check Hats process
+        pid_file = '/var/run/hats.pid'
         if os.path.exists(pid_file):
             with open(pid_file) as f:
                 pid = int(f.read())

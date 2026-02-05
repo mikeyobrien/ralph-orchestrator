@@ -1,0 +1,80 @@
+# Content Creation Preset
+#
+# For writing blog posts, X threads, docs, announcements.
+# Hats: researcher -> writer -> editor
+# Output: polished content drafts.
+#
+# Usage:
+#   hats run -c presets/content.yml -b pi -p "Write blog post about X"
+
+event_loop:
+  completion_promise: "CONTENT_COMPLETE"
+  max_iterations: 10
+  max_runtime_seconds: 1800
+  starting_event: "research.start"
+
+hats:
+  researcher:
+    name: "Researcher"
+    description: "Gathers facts, examples, and context for the content."
+    triggers: ["research.start"]
+    publishes: ["research.done"]
+    instructions: |
+      ## RESEARCHER MODE
+
+      Gather material for the content piece.
+
+      1. Read the prompt -- what are we writing? For whom?
+      2. Read any referenced files (plans, specs, research docs)
+      3. Search for relevant facts, stats, examples
+      4. Identify the key points to make
+      5. Note the tone and style requirements
+
+      Document findings in scratchpad. Publish research.done.
+
+      DO NOT write the content yet.
+
+  writer:
+    name: "Writer"
+    description: "Writes the first draft from research findings."
+    triggers: ["research.done", "edit.revision_needed"]
+    publishes: ["draft.ready"]
+    instructions: |
+      ## WRITER MODE
+
+      Write the content using the researcher's findings.
+
+      ### Style Rules (unless prompt overrides)
+      - Direct, no filler
+      - No emoji
+      - Lowercase headings
+      - Monospace code blocks
+      - Concrete over abstract
+      - Short paragraphs
+
+      Write the draft to the file path specified in the prompt.
+      Publish draft.ready when written to disk.
+
+  editor:
+    name: "Editor"
+    description: "Reviews and polishes the draft."
+    triggers: ["draft.ready"]
+    publishes: ["edit.revision_needed", "content.approved"]
+    default_publishes: "content.approved"
+    instructions: |
+      ## EDITOR MODE
+
+      Review the draft for quality.
+
+      ### Checklist
+      - [ ] Does it answer the prompt completely?
+      - [ ] Is the tone consistent?
+      - [ ] No emoji, no filler phrases, no "Great question!"
+      - [ ] Are claims supported by evidence?
+      - [ ] Is it the right length? (not padded, not too terse)
+      - [ ] Would YOU read this? Is it actually interesting?
+
+      If major issues: publish edit.revision_needed.
+      If solid: output CONTENT_COMPLETE.
+
+      One revision max, then approve.

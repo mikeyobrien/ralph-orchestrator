@@ -5,7 +5,7 @@
 
 ## Overview
 
-This example demonstrates using Ralph for Test-Driven Development workflows, where tests are written before implementation.
+This example demonstrates using Hats for Test-Driven Development workflows, where tests are written before implementation.
 
 ## Workflow
 

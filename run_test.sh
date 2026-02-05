@@ -1,3 +1,3 @@
 #!/bin/bash
 export PYTHONPATH=$(pwd)/src
-python3 -m ralph_orchestrator -c test_ralph.yml -i 50 --dry-run
+python3 -m hats_orchestrator -c test_hats.yml -i 50 --dry-run

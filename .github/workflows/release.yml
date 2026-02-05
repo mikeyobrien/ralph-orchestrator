@@ -298,7 +298,7 @@ jobs:
       - name: Publish crates to crates.io
         run: |
           # Publish crates in dependency order with delays for registry indexing
-          # Order: ralph-proto -> ralph-telegram -> ralph-core -> ralph-adapters, ralph-tui -> ralph-cli
+          # Order: hats-proto -> hats-telegram -> hats-core -> hats-adapters, hats-tui -> hats-cli
 
           publish_crate() {
             local crate=$1
@@ -312,12 +312,12 @@ jobs:
             sleep 30
           }
 
-          publish_crate ralph-proto
-          publish_crate ralph-telegram
-          publish_crate ralph-core
-          publish_crate ralph-adapters
-          publish_crate ralph-tui
-          publish_crate ralph-cli
+          publish_crate hats-proto
+          publish_crate hats-telegram
+          publish_crate hats-core
+          publish_crate hats-adapters
+          publish_crate hats-tui
+          publish_crate hats-cli
 
           echo "All crates published!"
 
@@ -354,16 +354,16 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Publish npm packages
         run: |
-          # Publish ralph-cli only (ralph-bench is internal tooling)
+          # Publish hats-cli only (hats-bench is internal tooling)
           # Uses OIDC trusted publishing (no NPM_TOKEN needed)
-          pkg="target/distrib/ralph-cli-npm-package.tar.gz"
+          pkg="target/distrib/hats-cli-npm-package.tar.gz"
 
           if [ -f "$pkg" ]; then
             echo "Publishing $pkg with provenance..."
             npm publish "$pkg" --access public --provenance
             echo "npm package published successfully!"
           else
-            echo "Warning: ralph-cli npm package not found"
+            echo "Warning: hats-cli npm package not found"
             exit 1
           fi
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides examples of using Ralph Orchestrator for documentation tasks.
+This guide provides examples of using Hats for documentation tasks.
 
 ## Example 1: API Documentation Generation
 

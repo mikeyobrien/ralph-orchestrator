@@ -1,13 +1,13 @@
 # Diagnostics
 
-The diagnostics system captures complete visibility into Ralph's operation for debugging and analysis.
+The diagnostics system captures complete visibility into Hats's operation for debugging and analysis.
 
 ## Enabling Diagnostics
 
 Opt-in via environment variable:
 
 ```bash
-RALPH_DIAGNOSTICS=1 ralph run -p "your prompt"
+HATS_DIAGNOSTICS=1 hats run -p "your prompt"
 ```
 
 **Zero overhead when disabled** — diagnostics code is bypassed entirely.
@@ -17,7 +17,7 @@ RALPH_DIAGNOSTICS=1 ralph run -p "your prompt"
 Diagnostics are written to timestamped session directories:
 
 ```
-.ralph/diagnostics/
+.hats/diagnostics/
 └── 2024-01-21T08-45-30/           # ISO 8601 timestamp
     ├── agent-output.jsonl          # Agent text, tool calls, results
     ├── orchestration.jsonl         # Hat selection, events, backpressure
@@ -53,9 +53,9 @@ Hat selection and event flow:
 All tracing logs with metadata:
 
 ```json
-{"timestamp":"2024-01-21T08:45:30Z","level":"INFO","target":"ralph_core","message":"Starting iteration 1"}
-{"timestamp":"2024-01-21T08:45:31Z","level":"DEBUG","target":"ralph_adapters","message":"Spawning claude process"}
-{"timestamp":"2024-01-21T08:46:00Z","level":"WARN","target":"ralph_core","message":"Approaching context limit"}
+{"timestamp":"2024-01-21T08:45:30Z","level":"INFO","target":"hats_core","message":"Starting iteration 1"}
+{"timestamp":"2024-01-21T08:45:31Z","level":"DEBUG","target":"hats_adapters","message":"Spawning claude process"}
+{"timestamp":"2024-01-21T08:46:00Z","level":"WARN","target":"hats_core","message":"Approaching context limit"}
 ```
 
 ### performance.jsonl
@@ -82,25 +82,25 @@ Errors and failures:
 
 ```bash
 # All agent text output
-jq 'select(.type == "text")' .ralph/diagnostics/*/agent-output.jsonl
+jq 'select(.type == "text")' .hats/diagnostics/*/agent-output.jsonl
 
 # All tool calls
-jq 'select(.type == "tool_call")' .ralph/diagnostics/*/agent-output.jsonl
+jq 'select(.type == "tool_call")' .hats/diagnostics/*/agent-output.jsonl
 
 # Hat selection decisions
-jq 'select(.event.type == "hat_selected")' .ralph/diagnostics/*/orchestration.jsonl
+jq 'select(.event.type == "hat_selected")' .hats/diagnostics/*/orchestration.jsonl
 
 # All events
-jq '.event' .ralph/diagnostics/*/orchestration.jsonl
+jq '.event' .hats/diagnostics/*/orchestration.jsonl
 
 # All errors
-jq '.' .ralph/diagnostics/*/errors.jsonl
+jq '.' .hats/diagnostics/*/errors.jsonl
 
 # ERROR level traces
-jq 'select(.level == "ERROR")' .ralph/diagnostics/*/trace.jsonl
+jq 'select(.level == "ERROR")' .hats/diagnostics/*/trace.jsonl
 
 # Performance by iteration
-jq '{iteration, duration_ms, tokens_in, tokens_out}' .ralph/diagnostics/*/performance.jsonl
+jq '{iteration, duration_ms, tokens_in, tokens_out}' .hats/diagnostics/*/performance.jsonl
 ```
 
 ### Common Queries
@@ -109,26 +109,26 @@ jq '{iteration, duration_ms, tokens_in, tokens_out}' .ralph/diagnostics/*/perfor
 
 ```bash
 jq 'select(.event.type == "hat_selected" and .event.hat == "builder")' \
-  .ralph/diagnostics/*/orchestration.jsonl
+  .hats/diagnostics/*/orchestration.jsonl
 ```
 
 **What events were published?**
 
 ```bash
 jq 'select(.event.type == "event_published") | .event.topic' \
-  .ralph/diagnostics/*/orchestration.jsonl
+  .hats/diagnostics/*/orchestration.jsonl
 ```
 
 **How long did each iteration take?**
 
 ```bash
-jq '{iteration, duration_ms}' .ralph/diagnostics/*/performance.jsonl
+jq '{iteration, duration_ms}' .hats/diagnostics/*/performance.jsonl
 ```
 
 **Were there parse errors?**
 
 ```bash
-jq 'select(.type == "parse_error")' .ralph/diagnostics/*/errors.jsonl
+jq 'select(.type == "parse_error")' .hats/diagnostics/*/errors.jsonl
 ```
 
 ## Cleanup
@@ -136,13 +136,13 @@ jq 'select(.type == "parse_error")' .ralph/diagnostics/*/errors.jsonl
 Remove diagnostics files:
 
 ```bash
-ralph clean --diagnostics
+hats clean --diagnostics
 ```
 
 Or manually:
 
 ```bash
-rm -rf .ralph/diagnostics/
+rm -rf .hats/diagnostics/
 ```
 
 ## When to Use
@@ -178,23 +178,23 @@ The TUI shows summary information. For details, check diagnostics:
 
 ```bash
 # 1. Run with diagnostics
-RALPH_DIAGNOSTICS=1 ralph run -p "implement feature X"
+HATS_DIAGNOSTICS=1 hats run -p "implement feature X"
 
 # 2. Find the session
-ls -la .ralph/diagnostics/
+ls -la .hats/diagnostics/
 # 2024-01-21T08-45-30/
 
 # 3. Check for errors first
-jq '.' .ralph/diagnostics/2024-01-21T08-45-30/errors.jsonl
+jq '.' .hats/diagnostics/2024-01-21T08-45-30/errors.jsonl
 
 # 4. Review hat selections
-jq '.event' .ralph/diagnostics/2024-01-21T08-45-30/orchestration.jsonl
+jq '.event' .hats/diagnostics/2024-01-21T08-45-30/orchestration.jsonl
 
 # 5. Check what the agent did
-jq 'select(.type == "tool_call")' .ralph/diagnostics/2024-01-21T08-45-30/agent-output.jsonl
+jq 'select(.type == "tool_call")' .hats/diagnostics/2024-01-21T08-45-30/agent-output.jsonl
 
 # 6. Review performance
-jq '{iteration, duration_ms}' .ralph/diagnostics/2024-01-21T08-45-30/performance.jsonl
+jq '{iteration, duration_ms}' .hats/diagnostics/2024-01-21T08-45-30/performance.jsonl
 ```
 
 ## Next Steps

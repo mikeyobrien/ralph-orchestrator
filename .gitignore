@@ -2,7 +2,7 @@
 /target/
 
 # Test configs with secrets
-ralph.test.yml
+hats.test.yml
 
 # Python
 __pycache__/
@@ -47,10 +47,10 @@ node_modules/
 *.tsbuildinfo
 test-results/
 
-# Web dashboard ephemeral (nested .ralph/.agent in subprojects)
-backend/**/.ralph/
+# Web dashboard ephemeral (nested .hats/.agent in subprojects)
+backend/**/.hats/
 backend/**/.agent/
-frontend/**/.ralph/
+frontend/**/.hats/
 frontend/**/.agent/
 frontend/**/dist/
 backend/**/dist/
@@ -60,7 +60,7 @@ backend/**/target/
 .agent/
 IMPLEMENTATION_PLAN.md
 
-# Ralph specific
+# Hats specific
 .sop/
 .logs/
 prompts/
@@ -100,20 +100,20 @@ site/
 PROMPT.md
 # But allow benchmark task prompts
 !bench/tasks/**/PROMPT.md
-.tmp-ralph-claude-code
+.tmp-hats-claude-code
 
-# Ralph orchestrator state
-# All state now consolidated under .ralph/
-.ralph/
+# Hats orchestrator state
+# All state now consolidated under .hats/
+.hats/
 
 # Track git-friendly content (negations must follow the ignore)
-!.ralph/specs/
-!.ralph/specs/**
-!.ralph/tasks/
-!.ralph/tasks/**
-!.ralph/agent/
-!.ralph/agent/memories.md
-!.ralph/agent/tasks.jsonl
+!.hats/specs/
+!.hats/specs/**
+!.hats/tasks/
+!.hats/tasks/**
+!.hats/agent/
+!.hats/agent/memories.md
+!.hats/agent/tasks.jsonl
 
 # Codex local state
 .codex/

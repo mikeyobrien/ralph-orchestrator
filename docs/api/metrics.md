@@ -2,11 +2,11 @@
 
 ## Overview
 
-Metrics are collected through the diagnostics system in `ralph_core::diagnostics`.
-When diagnostics are enabled, Ralph writes structured JSONL files under:
+Metrics are collected through the diagnostics system in `hats_core::diagnostics`.
+When diagnostics are enabled, Hats writes structured JSONL files under:
 
 ```
-.ralph/diagnostics/<timestamp>/
+.hats/diagnostics/<timestamp>/
 ```
 
 Files include:
@@ -14,15 +14,15 @@ Files include:
 - `orchestration.jsonl` — orchestration events
 - `errors.jsonl` — error reports
 
-Diagnostics are enabled by setting `RALPH_DIAGNOSTICS=1`.
+Diagnostics are enabled by setting `HATS_DIAGNOSTICS=1`.
 
 ## Log Performance Metrics
 
 Use `DiagnosticsCollector` to log metrics without worrying about file management:
 
 ```rust
-use ralph_core::DiagnosticsCollector;
-use ralph_core::diagnostics::PerformanceMetric;
+use hats_core::DiagnosticsCollector;
+use hats_core::diagnostics::PerformanceMetric;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,11 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 If you already have a diagnostics session directory, use `PerformanceLogger`:
 
 ```rust
-use ralph_core::diagnostics::{PerformanceLogger, PerformanceMetric};
+use hats_core::diagnostics::{PerformanceLogger, PerformanceMetric};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let session_dir = Path::new(".ralph/diagnostics/2026-01-31T12-00-00");
+    let session_dir = Path::new(".hats/diagnostics/2026-01-31T12-00-00");
     let mut logger = PerformanceLogger::new(session_dir)?;
 
     logger.log(
@@ -78,7 +78,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file = File::open(".ralph/diagnostics/2026-01-31T12-00-00/performance.jsonl")?;
+    let file = File::open(".hats/diagnostics/2026-01-31T12-00-00/performance.jsonl")?;
     let reader = BufReader::new(file);
 
     for line in reader.lines() {

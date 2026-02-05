@@ -1,6 +1,6 @@
 # REST API Reference
 
-Ralph Web Server exposes a REST API at `/api/v1/*` for external consumers that cannot use the tRPC client. The server runs on port 3000 by default.
+Hats Web Server exposes a REST API at `/api/v1/*` for external consumers that cannot use the tRPC client. The server runs on port 3000 by default.
 
 ## Base URL
 
@@ -181,8 +181,8 @@ Get a specific hat by its key.
 List all available presets from all sources.
 
 Presets are returned in priority order:
-1. **builtin** — Shipped with Ralph (from `presets/` directory)
-2. **directory** — User-created (from `.ralph/hats/`)
+1. **builtin** — Shipped with Hats (from `presets/` directory)
+2. **directory** — User-created (from `.hats/hats/`)
 3. **collection** — Database collections (created via Builder)
 
 **Response** `200 OK`
@@ -198,7 +198,7 @@ Presets are returned in priority order:
     "id": "my-custom",
     "name": "my-custom",
     "source": "directory",
-    "path": ".ralph/hats/my-custom.yml"
+    "path": ".hats/hats/my-custom.yml"
   },
   {
     "id": "uuid-abc-123",
@@ -225,7 +225,7 @@ All error responses follow this structure:
 ## Running the Server
 
 ```bash
-ralph web                    # Launch backend (port 3000) and frontend (port 5173)
+hats web                    # Launch backend (port 3000) and frontend (port 5173)
 npm run dev:server           # Backend only in dev mode
 ```
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide demonstrates how to use Ralph Orchestrator for debugging and fixing code issues.
+This guide demonstrates how to use Hats for debugging and fixing code issues.
 
 ## Example 1: Null Pointer Exception
 

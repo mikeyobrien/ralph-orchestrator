@@ -1,6 +1,6 @@
 # User Guide
 
-Practical guides for using Ralph Orchestrator effectively.
+Practical guides for using Hats effectively.
 
 ## In This Section
 
@@ -18,22 +18,22 @@ Practical guides for using Ralph Orchestrator effectively.
 
 ### Getting Started
 
-- Initialize a project: `ralph init --backend claude`
-- Run with a preset: `ralph init --preset tdd-red-green`
-- List presets: `ralph init --list-presets`
+- Initialize a project: `hats init --backend claude`
+- Run with a preset: `hats init --preset tdd-red-green`
+- List presets: `hats init --list-presets`
 
-### Running Ralph
+### Running Hats
 
-- Basic run: `ralph run`
-- With inline prompt: `ralph run -p "Implement feature X"`
-- Headless mode: `ralph run --no-tui`
-- Resume session: `ralph run --continue`
+- Basic run: `hats run`
+- With inline prompt: `hats run -p "Implement feature X"`
+- Headless mode: `hats run --no-tui`
+- Resume session: `hats run --continue`
 
 ### Monitoring
 
-- View event history: `ralph events`
-- Check memories: `ralph tools memory list`
-- Check tasks: `ralph tools task list`
+- View event history: `hats events`
+- Check memories: `hats tools memory list`
+- Check tasks: `hats tools task list`
 
 ## Choosing a Workflow
 
@@ -51,30 +51,30 @@ Practical guides for using Ralph Orchestrator effectively.
 ### Start a New Feature
 
 ```bash
-ralph init --preset feature
+hats init --preset feature
 # Edit PROMPT.md with your feature spec
-ralph run
+hats run
 ```
 
 ### Debug an Issue
 
 ```bash
-ralph init --preset debug
-ralph run -p "Investigate why user authentication fails on mobile"
+hats init --preset debug
+hats run -p "Investigate why user authentication fails on mobile"
 ```
 
 ### Run TDD Workflow
 
 ```bash
-ralph init --preset tdd-red-green
-ralph run -p "Add email validation to user registration"
+hats init --preset tdd-red-green
+hats run -p "Add email validation to user registration"
 ```
 
 ### Review Code
 
 ```bash
-ralph init --preset review
-ralph run -p "Review the changes in src/api/"
+hats init --preset review
+hats run -p "Review the changes in src/api/"
 ```
 
 ## Next Steps

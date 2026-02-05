@@ -1,6 +1,6 @@
 ---
 name: evaluate-presets
-description: Use when testing Ralph's hat collection presets, validating preset configurations, or auditing the preset library for bugs and UX issues.
+description: Use when testing Hats's hat collection presets, validating preset configurations, or auditing the preset library for bugs and UX issues.
 ---
 
 # Evaluate Presets
@@ -57,7 +57,7 @@ After launching, use `TaskOutput` with `block: false` to check status without wa
 
 1. Loads test task from `tools/preset-test-tasks.yml` (if `yq` available)
 2. Creates merged config with evaluation settings
-3. Runs Ralph with `--record-session` for metrics capture
+3. Runs Hats with `--record-session` for metrics capture
 4. Captures output logs, exit codes, and timing
 5. Extracts metrics: iterations, hats activated, events published
 
@@ -122,7 +122,7 @@ Runs all 12 presets sequentially and generates a summary:
 
 Each hat should execute in its **own iteration**:
 ```
-Iter 1: Ralph → publishes starting event → STOPS
+Iter 1: Hats → publishes starting event → STOPS
 Iter 2: Hat A → does work → publishes next event → STOPS
 Iter 3: Hat B → does work → publishes next event → STOPS
 Iter 4: Hat C → does work → LOOP_COMPLETE
@@ -132,7 +132,7 @@ Iter 4: Hat C → does work → LOOP_COMPLETE
 
 **BAD:** Multiple hat personas in one iteration:
 ```
-Iter 2: Ralph does Blue Team + Red Team + Fixer work
+Iter 2: Hats does Blue Team + Red Team + Fixer work
         ^^^ All in one bloated context!
 ```
 
@@ -178,7 +178,7 @@ cat .eval/logs/<preset>/latest/session.jsonl | jq -r '.ts'
 
 If hat routing is broken:
 
-1. **Check workflow prompt** in `hatless_ralph.rs`:
+1. **Check workflow prompt** in `hatless.rs`:
    - Does it say "CRITICAL: STOP after publishing"?
    - Is the DELEGATE section clear about yielding control?
 
@@ -228,7 +228,7 @@ Mode: auto"
 ## Prerequisites
 
 - **yq** (optional): For loading test tasks from YAML. Install: `brew install yq`
-- **Cargo**: Must be able to build Ralph
+- **Cargo**: Must be able to build Hats
 
 ## Related Files
 

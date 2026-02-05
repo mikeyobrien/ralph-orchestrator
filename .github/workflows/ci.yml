@@ -80,10 +80,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: Build ralph and ralph-e2e
-        run: cargo build --release -p ralph-cli -p ralph-e2e
+      - name: Build hats and hats-e2e
+        run: cargo build --release -p hats-cli -p hats-e2e
       - name: Run mock E2E tests
-        run: ./target/release/ralph-e2e --mock --skip-analysis || true
+        run: ./target/release/hats-e2e --mock --skip-analysis || true
       - name: Upload E2E report
         if: always()
         uses: actions/upload-artifact@v4
@@ -104,7 +104,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:server
-      - run: npm run test -w @ralph-web/dashboard
+      - run: npm run test -w @hats-web/dashboard
 
   # Verify the crate can be packaged (catches include_str! issues)
   # Only runs on PRs - main pushes are either merges (already verified) or
@@ -120,9 +120,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: Check ralph-cli packages correctly
+      - name: Check hats-cli packages correctly
         run: |
           # This will fail if include_str! references files outside the crate
           # Use --list to validate without resolving crates.io dependencies
-          cargo package -p ralph-cli --allow-dirty --list > /dev/null
+          cargo package -p hats-cli --allow-dirty --list > /dev/null
           echo "Package check passed - all embedded files are included"

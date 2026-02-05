@@ -1,10 +1,10 @@
 # Hats & Events
 
-Hats are specialized Ralph personas that coordinate through typed events. This enables complex workflows with role separation.
+Hats are specialized Hats personas that coordinate through typed events. This enables complex workflows with role separation.
 
 ## What Are Hats?
 
-A hat is a persona that Ralph can "wear" — each with:
+A hat is a persona that Hats can "wear" — each with:
 
 - **Triggers** — Events that activate this hat
 - **Publishes** — Events this hat can emit
@@ -42,16 +42,16 @@ flowchart LR
 
 ### Publishing Events
 
-Hats publish events using `ralph emit`:
+Hats publish events using `hats emit`:
 
 ```bash
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ```
 
 Or with JSON payloads:
 
 ```bash
-ralph emit "review.done" --json '{"status": "approved", "issues": 0}'
+hats emit "review.done" --json '{"status": "approved", "issues": 0}'
 ```
 
 ## Event Routing
@@ -127,7 +127,7 @@ hats:
 
 ### Starting Event
 
-The first event published when Ralph starts:
+The first event published when Hats starts:
 
 ```yaml
 event_loop:
@@ -193,7 +193,7 @@ flowchart LR
 
 ```bash
 # View event history
-ralph events
+hats events
 
 # Output:
 # 2024-01-21 10:30:00 task.start → planner
@@ -209,17 +209,17 @@ Events are routing signals, not data transport:
 
 ```bash
 # Good: Small payload
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # Bad: Large payload
-ralph emit "build.done" "full output of all test results..."
+hats emit "build.done" "full output of all test results..."
 ```
 
 Use memories for detailed output:
 
 ```bash
-ralph tools memory add "Build details: ..." -t context
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats tools memory add "Build details: ..." -t context
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ```
 
 ### 2. Clear Triggers

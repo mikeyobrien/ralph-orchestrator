@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ralph Orchestrator executes AI agents with significant system access. This document outlines security considerations and best practices for safe operation.
+Hats executes AI agents with significant system access. This document outlines security considerations and best practices for safe operation.
 
 ## Threat Model
 
@@ -30,7 +30,7 @@ Ralph Orchestrator executes AI agents with significant system access. This docum
 
 ## Security Controls
 
-Ralph implements multiple security layers to protect against threats:
+Hats implements multiple security layers to protect against threats:
 
 ```
  🔒 Security Defense Layers
@@ -93,7 +93,7 @@ graph { label: "🔒 Security Defense Layers"; flow: south; }
 
 ### Process Isolation
 
-Ralph runs AI agents in subprocesses with:
+Hats runs AI agents in subprocesses with:
 
 - Timeout protection (5 minutes default)
 - Output size limits
@@ -138,9 +138,9 @@ def validate_path(path):
 #### Checkpoint-Only Commits
 
 ```bash
-# Ralph only creates checkpoint commits
+# Hats only creates checkpoint commits
 git add .
-git commit -m "Ralph checkpoint: iteration N"
+git commit -m "Hats checkpoint: iteration N"
 ```
 
 ### Environment Sanitization
@@ -209,7 +209,7 @@ gemini --no-web --no-exec PROMPT.md
 secrets/
 credentials/
 
-# Ralph workspace
+# Hats workspace
 .agent/metrics/
 .agent/logs/
 ```
@@ -264,7 +264,7 @@ logging.info(json.dumps({
 
 ## Security Checklist
 
-### Before Running Ralph
+### Before Running Hats
 
 - [ ] Review PROMPT.md for unsafe instructions
 - [ ] Check no credentials in prompt
@@ -295,11 +295,11 @@ logging.info(json.dumps({
 1. **Immediate Actions**
 
    ```bash
-   # Stop Ralph
-   pkill -f ralph_orchestrator
+   # Stop Hats
+   pkill -f hats_orchestrator
 
    # Preserve evidence
-   cp -r .agent /tmp/ralph-incident-$(date +%s)
+   cp -r .agent /tmp/hats-incident-$(date +%s)
 
    # Check for modifications
    git status
@@ -331,11 +331,11 @@ logging.info(json.dumps({
 
 ```dockerfile
 FROM python:3.11-slim
-RUN useradd -m -s /bin/bash ralph
-USER ralph
-WORKDIR /home/ralph/project
-COPY --chown=ralph:ralph . .
-CMD ["./ralph", "run"]
+RUN useradd -m -s /bin/bash hats
+USER hats
+WORKDIR /home/hats/project
+COPY --chown=hats:hats . .
+CMD ["./hats", "run"]
 ```
 
 ### Virtual Machine
@@ -343,7 +343,7 @@ CMD ["./ralph", "run"]
 ```bash
 # Run in VM with snapshot
 vagrant up
-vagrant ssh -c "cd /project && ./ralph run"
+vagrant ssh -c "cd /project && ./hats run"
 vagrant snapshot restore clean
 ```
 
@@ -351,11 +351,11 @@ vagrant snapshot restore clean
 
 ```bash
 # Create restricted user
-sudo useradd -m -s /bin/bash ralph-runner
-sudo usermod -L ralph-runner  # No password login
+sudo useradd -m -s /bin/bash hats-runner
+sudo usermod -L hats-runner  # No password login
 
 # Run as restricted user
-sudo -u ralph-runner ./ralph run
+sudo -u hats-runner ./hats run
 ```
 
 ## API Key Management
@@ -402,7 +402,7 @@ sudo -u ralph-runner ./ralph run
 
 ### Access Control
 
-- Limit who can run Ralph
+- Limit who can run Hats
 - Restrict agent permissions
 - Control repository access
 
@@ -427,7 +427,7 @@ git --version
 If you discover a security vulnerability:
 
 1. **Do NOT** open a public issue
-2. Email security report to: <security@ralph-orchestrator.org>
+2. Email security report to: <security@hats.org>
 3. Include:
    - Description of vulnerability
    - Steps to reproduce

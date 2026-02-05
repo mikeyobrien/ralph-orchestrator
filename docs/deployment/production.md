@@ -1,6 +1,6 @@
 # Production Deployment Guide
 
-This guide covers deployment patterns and operational checklists for running Ralph Orchestrator in production environments. Ralph is alpha-quality and evolving, so treat this as a solid starting point and validate/tune it for your infrastructure, risk profile, and compliance needs.
+This guide covers deployment patterns and operational checklists for running Hats in production environments. Hats is alpha-quality and evolving, so treat this as a solid starting point and validate/tune it for your infrastructure, risk profile, and compliance needs.
 
 ## Pre-Production Checklist
 
@@ -67,9 +67,9 @@ graph TB
     end
     
     subgraph "Application Layer"
-        R1[Ralph Instance 1]
-        R2[Ralph Instance 2]
-        R3[Ralph Instance N]
+        R1[Hats Instance 1]
+        R2[Hats Instance 2]
+        R3[Hats Instance N]
     end
     
     subgraph "Data Layer"
@@ -114,7 +114,7 @@ aws ec2 create-vpc --cidr-block 10.0.0.0/16
 
 # Create EKS cluster
 eksctl create cluster \
-  --name ralph-production \
+  --name hats-production \
   --version 1.28 \
   --region us-west-2 \
   --nodegroup-name workers \
@@ -126,11 +126,11 @@ eksctl create cluster \
 
 # Create RDS instance
 aws rds create-db-instance \
-  --db-instance-identifier ralph-prod-db \
+  --db-instance-identifier hats-prod-db \
   --db-instance-class db.t3.large \
   --engine postgres \
   --engine-version 15.4 \
-  --master-username ralph \
+  --master-username hats \
   --master-user-password $DB_PASSWORD \
   --allocated-storage 100 \
   --backup-retention-period 30 \
@@ -138,18 +138,18 @@ aws rds create-db-instance \
 
 # Create ElastiCache Redis cluster
 aws elasticache create-cache-cluster \
-  --cache-cluster-id ralph-prod-cache \
+  --cache-cluster-id hats-prod-cache \
   --engine redis \
   --cache-node-type cache.r6g.large \
   --num-cache-nodes 3 \
-  --cache-subnet-group-name ralph-cache-subnet
+  --cache-subnet-group-name hats-cache-subnet
 ```
 
 #### GCP Production Setup
 
 ```bash
 # Create GKE cluster
-gcloud container clusters create ralph-production \
+gcloud container clusters create hats-production \
   --zone us-central1-a \
   --machine-type n2-standard-4 \
   --num-nodes 3 \
@@ -160,7 +160,7 @@ gcloud container clusters create ralph-production \
   --enable-autoupgrade
 
 # Create Cloud SQL instance
-gcloud sql instances create ralph-prod-db \
+gcloud sql instances create hats-prod-db \
   --database-version=POSTGRES_15 \
   --cpu=4 \
   --memory=16GB \
@@ -170,7 +170,7 @@ gcloud sql instances create ralph-prod-db \
   --backup-start-time=03:00
 
 # Create Memorystore Redis
-gcloud redis instances create ralph-prod-cache \
+gcloud redis instances create hats-prod-cache \
   --size=5 \
   --region=us-central1 \
   --redis-version=redis_6_x \
@@ -184,14 +184,14 @@ gcloud redis instances create ralph-prod-cache \
 ```bash
 # .env.production
 # API Configuration
-RALPH_AGENT=auto
-RALPH_MAX_ITERATIONS=1000
-RALPH_MAX_RUNTIME=28800  # 8 hours
-RALPH_MAX_TOKENS=5000000
-RALPH_MAX_COST=500.0
+HATS_AGENT=auto
+HATS_MAX_ITERATIONS=1000
+HATS_MAX_RUNTIME=28800  # 8 hours
+HATS_MAX_TOKENS=5000000
+HATS_MAX_COST=500.0
 
 # Database
-DATABASE_URL=postgresql://user:pass@db.example.com:5432/ralph_prod
+DATABASE_URL=postgresql://user:pass@db.example.com:5432/hats_prod
 DATABASE_POOL_SIZE=20
 DATABASE_MAX_OVERFLOW=40
 
@@ -210,7 +210,7 @@ SENTRY_DSN=https://xxx@sentry.io/xxx
 SECRET_KEY=$(openssl rand -hex 32)
 ENCRYPTION_KEY=$(openssl rand -base64 32)
 API_RATE_LIMIT=100/minute
-ALLOWED_HOSTS=ralph.example.com
+ALLOWED_HOSTS=hats.example.com
 CORS_ORIGINS=https://app.example.com
 
 # AI Service Keys (from secrets manager)
@@ -249,7 +249,7 @@ class ProductionConfig:
         'max_overflow': 40,
         'connect_args': {
             'connect_timeout': 10,
-            'application_name': 'ralph-orchestrator'
+            'application_name': 'hats'
         }
     }
     
@@ -282,7 +282,7 @@ class ProductionConfig:
             },
             'file': {
                 'class': 'logging.handlers.RotatingFileHandler',
-                'filename': '/var/log/ralph/app.log',
+                'filename': '/var/log/hats/app.log',
                 'maxBytes': 104857600,  # 100MB
                 'backupCount': 10,
                 'formatter': 'json'
@@ -304,7 +304,7 @@ class ProductionConfig:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ralph-orchestrator
+  name: hats
   namespace: production
 spec:
   replicas: 3
@@ -315,11 +315,11 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: ralph-orchestrator
+      app: hats
   template:
     metadata:
       labels:
-        app: ralph-orchestrator
+        app: hats
         version: v1.0.0
     spec:
       affinity:
@@ -330,19 +330,19 @@ spec:
               - key: app
                 operator: In
                 values:
-                - ralph-orchestrator
+                - hats
             topologyKey: kubernetes.io/hostname
       containers:
-      - name: ralph
-        image: ghcr.io/mikeyobrien/ralph-orchestrator:v1.0.0
+      - name: hats
+        image: ghcr.io/mikeyobrien/hats:v1.0.0
         ports:
         - containerPort: 8080
           name: metrics
         envFrom:
         - secretRef:
-            name: ralph-secrets
+            name: hats-secrets
         - configMapRef:
-            name: ralph-config
+            name: hats-config
         resources:
           requests:
             memory: "4Gi"
@@ -376,10 +376,10 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: ralph-config
+          name: hats-config
       - name: secrets
         secret:
-          secretName: ralph-secrets
+          secretName: hats-secrets
           defaultMode: 0400
 ```
 
@@ -392,7 +392,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ralph-ingress
+  name: hats-ingress
   namespace: production
   annotations:
     kubernetes.io/ingress.class: nginx
@@ -403,17 +403,17 @@ metadata:
 spec:
   tls:
   - hosts:
-    - ralph.example.com
-    secretName: ralph-tls
+    - hats.example.com
+    secretName: hats-tls
   rules:
-  - host: ralph.example.com
+  - host: hats.example.com
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: ralph-service
+            name: hats-service
             port:
               number: 80
 ```
@@ -424,24 +424,24 @@ spec:
 
 ```sql
 -- Create production database
-CREATE DATABASE ralph_production;
-CREATE USER ralph_app WITH ENCRYPTED PASSWORD 'secure_password';
-GRANT ALL PRIVILEGES ON DATABASE ralph_production TO ralph_app;
+CREATE DATABASE hats_production;
+CREATE USER hats_app WITH ENCRYPTED PASSWORD 'secure_password';
+GRANT ALL PRIVILEGES ON DATABASE hats_production TO hats_app;
 
 -- Enable extensions
-\c ralph_production
+\c hats_production
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
 
 -- Create schemas
-CREATE SCHEMA IF NOT EXISTS ralph;
+CREATE SCHEMA IF NOT EXISTS hats;
 CREATE SCHEMA IF NOT EXISTS audit;
 
 -- Set search path
-ALTER USER ralph_app SET search_path TO ralph, public;
+ALTER USER hats_app SET search_path TO hats, public;
 
 -- Create tables
-CREATE TABLE ralph.orchestrations (
+CREATE TABLE hats.orchestrations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     task_id VARCHAR(255) UNIQUE NOT NULL,
     agent_type VARCHAR(50) NOT NULL,
@@ -454,9 +454,9 @@ CREATE TABLE ralph.orchestrations (
 );
 
 -- Create indexes
-CREATE INDEX idx_orchestrations_status ON ralph.orchestrations(status);
-CREATE INDEX idx_orchestrations_created ON ralph.orchestrations(created_at);
-CREATE INDEX idx_orchestrations_agent ON ralph.orchestrations(agent_type);
+CREATE INDEX idx_orchestrations_status ON hats.orchestrations(status);
+CREATE INDEX idx_orchestrations_created ON hats.orchestrations(created_at);
+CREATE INDEX idx_orchestrations_agent ON hats.orchestrations(agent_type);
 
 -- Audit table
 CREATE TABLE audit.activity_log (
@@ -490,7 +490,7 @@ rule_files:
   - "alerts.yml"
 
 scrape_configs:
-  - job_name: 'ralph-orchestrator'
+  - job_name: 'hats'
     kubernetes_sd_configs:
     - role: pod
       namespaces:
@@ -499,7 +499,7 @@ scrape_configs:
     relabel_configs:
     - source_labels: [__meta_kubernetes_pod_label_app]
       action: keep
-      regex: ralph-orchestrator
+      regex: hats
     - source_labels: [__meta_kubernetes_pod_name]
       target_label: instance
 ```
@@ -509,11 +509,11 @@ scrape_configs:
 ```yaml
 # monitoring/alerts.yml
 groups:
-- name: ralph_alerts
+- name: hats_alerts
   interval: 30s
   rules:
   - alert: HighErrorRate
-    expr: rate(ralph_errors_total[5m]) > 0.1
+    expr: rate(hats_errors_total[5m]) > 0.1
     for: 5m
     labels:
       severity: critical
@@ -522,7 +522,7 @@ groups:
       description: "Error rate is {{ $value }} errors/sec"
   
   - alert: HighMemoryUsage
-    expr: container_memory_usage_bytes{pod=~"ralph-.*"} / container_spec_memory_limit_bytes > 0.9
+    expr: container_memory_usage_bytes{pod=~"hats-.*"} / container_spec_memory_limit_bytes > 0.9
     for: 5m
     labels:
       severity: warning
@@ -531,7 +531,7 @@ groups:
       description: "Memory usage is above 90%"
   
   - alert: LongRunningTask
-    expr: ralph_task_duration_seconds > 14400
+    expr: hats_task_duration_seconds > 14400
     for: 1m
     labels:
       severity: warning
@@ -550,7 +550,7 @@ groups:
 
 # Configuration
 BACKUP_DIR="/backups"
-S3_BUCKET="s3://ralph-backups"
+S3_BUCKET="s3://hats-backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 RETENTION_DAYS=30
 
@@ -586,7 +586,7 @@ done
 apiVersion: policy/v1beta1
 kind: PodSecurityPolicy
 metadata:
-  name: ralph-psp
+  name: hats-psp
 spec:
   privileged: false
   allowPrivilegeEscalation: false
@@ -614,12 +614,12 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ralph-network-policy
+  name: hats-network-policy
   namespace: production
 spec:
   podSelector:
     matchLabels:
-      app: ralph-orchestrator
+      app: hats
   policyTypes:
   - Ingress
   - Egress
@@ -677,14 +677,14 @@ class CacheManager:
 ```sql
 -- Optimize queries
 CREATE INDEX CONCURRENTLY idx_orchestrations_composite 
-ON ralph.orchestrations(agent_type, status, created_at);
+ON hats.orchestrations(agent_type, status, created_at);
 
 -- Partition large tables
-CREATE TABLE ralph.orchestrations_2024 PARTITION OF ralph.orchestrations
+CREATE TABLE hats.orchestrations_2024 PARTITION OF hats.orchestrations
 FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 
 -- Vacuum and analyze
-VACUUM ANALYZE ralph.orchestrations;
+VACUUM ANALYZE hats.orchestrations;
 ```
 
 ## Disaster Recovery
@@ -701,7 +701,7 @@ VACUUM ANALYZE ralph.orchestrations;
 # failover.sh
 
 # Check primary health
-if ! curl -f https://ralph.example.com/health; then
+if ! curl -f https://hats.example.com/health; then
   echo "Primary unhealthy, initiating failover"
   
   # Update DNS to point to standby
@@ -711,10 +711,10 @@ if ! curl -f https://ralph.example.com/health; then
   
   # Promote standby database
   aws rds promote-read-replica \
-    --db-instance-identifier ralph-standby-db
+    --db-instance-identifier hats-standby-db
   
   # Scale up standby region
-  kubectl scale deployment ralph-orchestrator \
+  kubectl scale deployment hats \
     --replicas=5 \
     --context=standby-cluster
   
@@ -731,15 +731,15 @@ fi
 
 ```bash
 # Zero-downtime deployment
-kubectl set image deployment/ralph-orchestrator \
-  ralph=ghcr.io/mikeyobrien/ralph-orchestrator:v1.0.1 \
+kubectl set image deployment/hats \
+  hats=ghcr.io/mikeyobrien/hats:v1.0.1 \
   --record
 
 # Monitor rollout
-kubectl rollout status deployment/ralph-orchestrator
+kubectl rollout status deployment/hats
 
 # Rollback if needed
-kubectl rollout undo deployment/ralph-orchestrator
+kubectl rollout undo deployment/hats
 ```
 
 ### Health Checks

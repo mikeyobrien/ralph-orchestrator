@@ -34,7 +34,7 @@ Use when the input references a `.spec.md` file with Given/When/Then acceptance 
 3. **Verify stubs compile** but fail: `cargo test --no-run -p <crate>`
 4. Proceed to the [TDD Cycle](#tdd-cycle) to make stubs pass
 
-**Programmatic support:** `ralph_core::preflight::{extract_acceptance_criteria, extract_criteria_from_file, extract_all_criteria}` can parse criteria from spec files.
+**Programmatic support:** `hats_core::preflight::{extract_acceptance_criteria, extract_criteria_from_file, extract_all_criteria}` can parse criteria from spec files.
 
 ### Mode B: From Task (`.code-task.md`)
 
@@ -113,7 +113,7 @@ Don't introduce proptest as a new dependency without strong justification.
 Include coverage evidence in completion events:
 
 ```bash
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass (82%)"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass (82%)"
 ```
 
 Run `cargo tarpaulin --out Html --output-dir coverage --skip-clean` when feasible. If coverage cannot be run, state why and include targeted test evidence instead.
@@ -122,7 +122,7 @@ Run `cargo tarpaulin --out Html --output-dir coverage --skip-clean` when feasibl
 
 - Spec maps to a single module → inline `#[cfg(test)]` tests
 - Spec spans multiple modules → integration test in `crates/<crate>/tests/`
-- CLI behavior → `crates/ralph-cli/tests/`
+- CLI behavior → `crates/hats-cli/tests/`
 - Follow existing patterns in the target crate
 
 ## Anti-Patterns

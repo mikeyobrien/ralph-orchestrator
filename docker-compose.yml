@@ -1,28 +1,28 @@
 version: '3.8'
 
 services:
-  # Main Ralph Orchestrator service
-  ralph:
+  # Main Hats service
+  hats:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ralph-orchestrator:local
-    container_name: ralph-orchestrator
+    image: hats:local
+    container_name: hats
     environment:
       # AI Agent API Keys (set in .env file)
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - Q_API_KEY=${Q_API_KEY}
       
-      # Ralph Configuration
-      - RALPH_AGENT=${RALPH_AGENT:-auto}
-      - RALPH_MAX_ITERATIONS=${RALPH_MAX_ITERATIONS:-100}
-      - RALPH_MAX_RUNTIME=${RALPH_MAX_RUNTIME:-14400}
-      - RALPH_MAX_TOKENS=${RALPH_MAX_TOKENS:-1000000}
-      - RALPH_MAX_COST=${RALPH_MAX_COST:-50.0}
-      - RALPH_CHECKPOINT_INTERVAL=${RALPH_CHECKPOINT_INTERVAL:-5}
-      - RALPH_VERBOSE=${RALPH_VERBOSE:-false}
-      - RALPH_ENABLE_METRICS=${RALPH_ENABLE_METRICS:-true}
+      # Hats Configuration
+      - HATS_AGENT=${HATS_AGENT:-auto}
+      - HATS_MAX_ITERATIONS=${HATS_MAX_ITERATIONS:-100}
+      - HATS_MAX_RUNTIME=${HATS_MAX_RUNTIME:-14400}
+      - HATS_MAX_TOKENS=${HATS_MAX_TOKENS:-1000000}
+      - HATS_MAX_COST=${HATS_MAX_COST:-50.0}
+      - HATS_CHECKPOINT_INTERVAL=${HATS_CHECKPOINT_INTERVAL:-5}
+      - HATS_VERBOSE=${HATS_VERBOSE:-false}
+      - HATS_ENABLE_METRICS=${HATS_ENABLE_METRICS:-true}
       
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -32,16 +32,16 @@ services:
       # Mount prompts directory (read-only)
       - ./prompts:/prompts:ro
       # Mount agent state directory
-      - ralph-agent:/app/.agent
+      - hats-agent:/app/.agent
       # Mount cache directory
-      - ralph-cache:/app/.cache
+      - hats-cache:/app/.cache
       # Mount git directory if needed
       - ./.git:/workspace/.git
     networks:
-      - ralph-network
+      - hats-network
     restart: unless-stopped
     command: 
-      - "--agent=${RALPH_AGENT:-auto}"
+      - "--agent=${HATS_AGENT:-auto}"
       - "--prompt=/workspace/PROMPT.md"
       - "--verbose"
     depends_on:
@@ -56,12 +56,12 @@ services:
   # Redis for caching and state management
   redis:
     image: redis:7-alpine
-    container_name: ralph-redis
+    container_name: hats-redis
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
     networks:
-      - ralph-network
+      - hats-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -72,19 +72,19 @@ services:
   # PostgreSQL for persistent storage (optional)
   postgres:
     image: postgres:15-alpine
-    container_name: ralph-postgres
+    container_name: hats-postgres
     environment:
-      - POSTGRES_DB=ralph_orchestrator
-      - POSTGRES_USER=ralph
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-ralph_secret}
+      - POSTGRES_DB=hats
+      - POSTGRES_USER=hats
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-hats_secret}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
-      - ralph-network
+      - hats-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ralph"]
+      test: ["CMD-SHELL", "pg_isready -U hats"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -94,7 +94,7 @@ services:
   # Prometheus for metrics collection
   prometheus:
     image: prom/prometheus:latest
-    container_name: ralph-prometheus
+    container_name: hats-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -104,7 +104,7 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     networks:
-      - ralph-network
+      - hats-network
     ports:
       - "9090:9090"
     restart: unless-stopped
@@ -114,7 +114,7 @@ services:
   # Grafana for visualization
   grafana:
     image: grafana/grafana:latest
-    container_name: ralph-grafana
+    container_name: hats-grafana
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
@@ -124,7 +124,7 @@ services:
       - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     networks:
-      - ralph-network
+      - hats-network
     ports:
       - "3000:3000"
     restart: unless-stopped
@@ -136,11 +136,11 @@ services:
   # Documentation server (development)
   docs:
     image: squidfunk/mkdocs-material:latest
-    container_name: ralph-docs
+    container_name: hats-docs
     volumes:
       - .:/docs
     networks:
-      - ralph-network
+      - hats-network
     ports:
       - "8000:8000"
     command: serve --dev-addr=0.0.0.0:8000
@@ -149,9 +149,9 @@ services:
 
 # Volumes for persistent data
 volumes:
-  ralph-agent:
+  hats-agent:
     driver: local
-  ralph-cache:
+  hats-cache:
     driver: local
   redis-data:
     driver: local
@@ -164,7 +164,7 @@ volumes:
 
 # Networks
 networks:
-  ralph-network:
+  hats-network:
     driver: bridge
     ipam:
       config:

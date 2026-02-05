@@ -1,0 +1,14 @@
+---
+source: crates/hats-tui/tests/integration_snapshots.rs
+expression: harness.render_full()
+---
+[iter 1/1] | 📋  | ▶
+────────────────────────────────────────
+Content line 1
+Content line 2
+Content line 3
+Content line 4
+Content line 5
+
+────────────────────────────────────────
+ Total Time Elapsed: [TIME]  ◉ ACTIVE

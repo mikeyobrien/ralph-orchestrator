@@ -1,8 +1,8 @@
-# Research: Pi's RPC Mode for Ralph Integration
+# Research: Pi's RPC Mode for Hats Integration
 
 ## Summary
 
-Pi's RPC mode offers rich bidirectional control (steering, follow-ups, abort, model switching, compaction) that could enhance Ralph's orchestration. However, it's significantly more complex than the CLI execution model and likely overkill for v1.
+Pi's RPC mode offers rich bidirectional control (steering, follow-ups, abort, model switching, compaction) that could enhance Hats's orchestration. However, it's significantly more complex than the CLI execution model and likely overkill for v1.
 
 ## RPC Capabilities
 
@@ -32,11 +32,11 @@ pi --mode rpc --no-session
 # Process stays alive, accepts multiple prompts
 ```
 
-## How Ralph Could Use RPC
+## How Hats Could Use RPC
 
 ### Scenario: Multi-iteration without process restart
 
-Currently Ralph spawns a new CLI process per iteration. With RPC:
+Currently Hats spawns a new CLI process per iteration. With RPC:
 1. Spawn `pi --mode rpc` once
 2. Send prompts via stdin between iterations
 3. Keep session context across iterations (pi handles compaction)
@@ -44,8 +44,8 @@ Currently Ralph spawns a new CLI process per iteration. With RPC:
 
 ### Scenario: Human-in-the-loop via RPC
 
-Ralph's RObot system could use `steer` instead of injecting guidance into the next prompt:
-- Human sends message → Ralph sends `{"type": "steer", "message": "..."}` to pi
+Hats's RObot system could use `steer` instead of injecting guidance into the next prompt:
+- Human sends message → Hats sends `{"type": "steer", "message": "..."}` to pi
 - Pi interrupts current work and processes the steering message
 
 ## Complexity Analysis
@@ -58,7 +58,7 @@ RPC integration would require:
 5. **Error recovery**: Handle process crashes, restart logic
 6. **Extension UI handling**: Respond to extension_ui_request events or ignore them
 
-This is a fundamentally different execution model from Ralph's current "spawn process, read output, kill process" approach.
+This is a fundamentally different execution model from Hats's current "spawn process, read output, kill process" approach.
 
 ## Recommendation
 
@@ -66,15 +66,15 @@ This is a fundamentally different execution model from Ralph's current "spawn pr
 - Use `pi -p --mode json --no-session` for headless execution
 - Parse NDJSON with `PiStreamParser`
 - Fits cleanly into existing `PtyExecutor` / `CliExecutor` model
-- No architectural changes to Ralph's core loop
+- No architectural changes to Hats's core loop
 
 ### v2 (future): RPC mode
 - Worth exploring for long-running orchestration
 - Could enable session persistence across iterations (token savings)
 - Could enable real-time steering from RObot
 - Requires new executor type (`RpcExecutor`) alongside `PtyExecutor` / `CliExecutor`
-- Consider when Ralph adds persistent agent sessions
+- Consider when Hats adds persistent agent sessions
 
 ## Conclusion
 
-RPC is powerful but premature for initial pi support. The CLI mode gives Ralph everything it needs for orchestration loops. RPC should be a follow-up feature when there's a concrete use case (e.g., persistent sessions across iterations, real-time steering).
+RPC is powerful but premature for initial pi support. The CLI mode gives Hats everything it needs for orchestration loops. RPC should be a follow-up feature when there's a concrete use case (e.g., persistent sessions across iterations, real-time steering).

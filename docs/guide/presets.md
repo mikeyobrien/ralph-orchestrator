@@ -6,16 +6,16 @@ Presets are pre-configured workflows for common development patterns. They save 
 
 ```bash
 # List all presets
-ralph init --list-presets
+hats init --list-presets
 
 # Initialize with a preset
-ralph init --preset feature
+hats init --preset feature
 
 # Combine with backend
-ralph init --preset spec-driven --backend kiro
+hats init --preset spec-driven --backend kiro
 
 # Overwrite existing config
-ralph init --preset debug --force
+hats init --preset debug --force
 ```
 
 ## Available Presets
@@ -27,7 +27,7 @@ ralph init --preset debug --force
 Standard feature development with planning and building.
 
 ```bash
-ralph init --preset feature
+hats init --preset feature
 ```
 
 **Hats:** Builder → Reviewer
@@ -38,7 +38,7 @@ ralph init --preset feature
 TDD implementation from specs, tasks, or rough descriptions.
 
 ```bash
-ralph init --preset code-assist
+hats init --preset code-assist
 ```
 
 **Hats:** Planner → Builder → Validator → Committer
@@ -49,7 +49,7 @@ ralph init --preset code-assist
 Specification-first development with contract-based implementation.
 
 ```bash
-ralph init --preset spec-driven
+hats init --preset spec-driven
 ```
 
 **Hats:** Spec Writer → Spec Critic → Implementer → Verifier
@@ -60,7 +60,7 @@ ralph init --preset spec-driven
 Code refactoring workflow with atomic steps.
 
 ```bash
-ralph init --preset refactor
+hats init --preset refactor
 ```
 
 **Hats:** Refactorer → Verifier
@@ -71,7 +71,7 @@ ralph init --preset refactor
 Full autonomous idea-to-code pipeline (9-hat orchestration).
 
 ```bash
-ralph init --preset pdd-to-code-assist
+hats init --preset pdd-to-code-assist
 ```
 
 **Hats:** Inquisitor → Architect → Design Critic → Explorer → Planner → Task Writer → Builder → Validator → Committer
@@ -84,7 +84,7 @@ ralph init --preset pdd-to-code-assist
 Systematic bug reproduction, fix, and verification.
 
 ```bash
-ralph init --preset bugfix
+hats init --preset bugfix
 ```
 
 **Hats:** Reproducer → Fixer → Verifier → Committer
@@ -95,7 +95,7 @@ ralph init --preset bugfix
 Bug investigation and root cause analysis using hypothesis-driven approach.
 
 ```bash
-ralph init --preset debug
+hats init --preset debug
 ```
 
 **Hats:** Investigator → Tester → Fixer → Verifier
@@ -108,7 +108,7 @@ ralph init --preset debug
 Code review workflow producing structured feedback.
 
 ```bash
-ralph init --preset review
+hats init --preset review
 ```
 
 **Hats:** Reviewer → Analyzer
@@ -119,7 +119,7 @@ ralph init --preset review
 Multi-perspective PR review with specialized reviewers.
 
 ```bash
-ralph init --preset pr-review
+hats init --preset pr-review
 ```
 
 **Hats:** Correctness Reviewer → Security Reviewer → Architecture Reviewer → Synthesizer
@@ -130,7 +130,7 @@ ralph init --preset pr-review
 Compare specifications against implementation to find discrepancies.
 
 ```bash
-ralph init --preset gap-analysis
+hats init --preset gap-analysis
 ```
 
 **Hats:** Analyzer → Verifier → Reporter
@@ -143,7 +143,7 @@ ralph init --preset gap-analysis
 Documentation writing with writer/editor review cycle.
 
 ```bash
-ralph init --preset docs
+hats init --preset docs
 ```
 
 **Hats:** Writer → Reviewer
@@ -154,7 +154,7 @@ ralph init --preset docs
 Deep exploration and analysis (no code changes).
 
 ```bash
-ralph init --preset research
+hats init --preset research
 ```
 
 **Hats:** Researcher → Synthesizer
@@ -167,7 +167,7 @@ ralph init --preset research
 Deployment and release workflow with validation and monitoring.
 
 ```bash
-ralph init --preset deploy
+hats init --preset deploy
 ```
 
 **Hats:** Builder → Deployer → Verifier
@@ -216,13 +216,13 @@ flowchart LR
 
 ## Customizing Presets
 
-After initializing with a preset, modify `ralph.yml`:
+After initializing with a preset, modify `hats.yml`:
 
 ```yaml
 # Start with preset
-ralph init --preset feature
+hats init --preset feature
 
-# Edit ralph.yml to customize
+# Edit hats.yml to customize
 hats:
   builder:
     instructions: |
@@ -257,7 +257,7 @@ hats:
 Then use it:
 
 ```bash
-ralph init --preset my-workflow
+hats init --preset my-workflow
 ```
 
 ## Next Steps

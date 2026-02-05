@@ -1,6 +1,6 @@
 # E2E Test Cassettes
 
-This directory contains recorded cassettes for mock-mode E2E testing. Cassettes are JSONL files that record the output from real Ralph sessions, enabling deterministic, cost-free test execution.
+This directory contains recorded cassettes for mock-mode E2E testing. Cassettes are JSONL files that record the output from real Hats sessions, enabling deterministic, cost-free test execution.
 
 ## Directory Structure
 
@@ -27,7 +27,7 @@ cassettes/e2e/
 
 ## Known Limitations
 
-1. **Multi-iteration scenarios**: Mock-cli replays entire cassette in one invocation, so Ralph sees only one iteration
+1. **Multi-iteration scenarios**: Mock-cli replays entire cassette in one invocation, so Hats sees only one iteration
 2. **File write assertions**: Scenarios checking scratchpad/artifact content fail unless whitelisted commands execute
 3. **Task/Memory scenarios**: Require cassettes with `bus.publish` events containing whitelisted commands
 
@@ -46,9 +46,9 @@ When running in mock mode, the cassette resolver checks for:
 To record a new cassette from a live session:
 
 ```bash
-# Record with ralph's built-in recording
-cargo run --bin ralph -- run \
-  -c ralph.yml \
+# Record with hats's built-in recording
+cargo run --bin hats -- run \
+  -c hats.yml \
   --record-session cassettes/e2e/my-scenario.jsonl \
   -p "Your prompt here"
 ```
@@ -87,16 +87,16 @@ Run E2E tests in mock mode:
 
 ```bash
 # Run all tests with cassettes
-cargo run -p ralph-e2e -- --mock
+cargo run -p hats-e2e -- --mock
 
 # Run with specific cassette directory
-cargo run -p ralph-e2e -- --mock --cassette-dir ./my-cassettes
+cargo run -p hats-e2e -- --mock --cassette-dir ./my-cassettes
 
 # Run with real-time playback (1x speed)
-cargo run -p ralph-e2e -- --mock --mock-speed 1.0
+cargo run -p hats-e2e -- --mock --mock-speed 1.0
 
 # Check cassette availability
-cargo run -p ralph-e2e -- --mock --list
+cargo run -p hats-e2e -- --mock --list
 ```
 
 ## Creating Cassettes for New Scenarios
@@ -104,4 +104,4 @@ cargo run -p ralph-e2e -- --mock --list
 1. Run the scenario against a live backend with recording enabled
 2. Copy the recorded JSONL to the appropriate location
 3. Name it according to the convention above
-4. Run `ralph-e2e --mock --filter <scenario-id>` to verify
+4. Run `hats-e2e --mock --filter <scenario-id>` to verify

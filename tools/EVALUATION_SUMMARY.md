@@ -9,7 +9,7 @@
 ### ✅ Blockers Resolved
 
 1. **BUG-001: CLI Argument Mismatch** - FIXED
-   - Evaluation script was passing unsupported `-a` flag to Ralph
+   - Evaluation script was passing unsupported `-a` flag to Hats
    - Fixed by creating merged config with backend settings
    - All evaluations can now start successfully
 
@@ -91,23 +91,23 @@
 The 21 presets are organized into two categories:
 
 ### Standalone Presets (16 presets)
-Have `starting_event` in `event_loop` config - Ralph auto-publishes this event to start the workflow:
+Have `starting_event` in `event_loop` config - Hats auto-publishes this event to start the workflow:
 - `tdd-red-green`, `adversarial-review`, `socratic-learning`, `spec-driven`
 - `mob-programming`, `scientific-method`, `code-archaeology`, `performance-optimization`
 - `api-design`, `documentation-first`, `incident-response`, `migration-safety`
 - `research`, `review`, `debug`, `gap-analysis`
 
 ### Planner-Dependent Presets (5 presets)
-Require Ralph's internal Planner component to inject events:
+Require Hats's internal Planner component to inject events:
 - `feature`, `feature-minimal`, `deploy`, `docs`, `refactor`
 
-This is BY DESIGN - these presets work with Ralph's planning system which creates tasks and injects `build.task` or similar events.
+This is BY DESIGN - these presets work with Hats's planning system which creates tasks and injects `build.task` or similar events.
 
 ## Next Steps
 
 1. ~~Apply BUG-003 fix~~ DONE
 2. ~~Complete validation of all presets~~ DONE (all 21 parse correctly)
-3. Consider creating a `ralph validate-preset` subcommand
+3. Consider creating a `hats validate-preset` subcommand
 4. Update preset documentation to clarify standalone vs Planner-dependent
 
 ## Evidence
@@ -126,7 +126,7 @@ All identified bugs have been fixed. All 21 presets parse correctly. All 72 carg
 
 ## 🎯 EVALUATION COMPLETE
 
-**Summary**: Successfully evaluated and fixed Ralph's preset infrastructure across multiple sessions.
+**Summary**: Successfully evaluated and fixed Hats's preset infrastructure across multiple sessions.
 
 **Key Achievements**:
 - ✅ Fixed 9 bugs total (BUG-001 through BUG-009)

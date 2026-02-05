@@ -1,5 +1,5 @@
 name: "Question"
-description: "Ask a question about using Ralph"
+description: "Ask a question about using Hats"
 title: "[Question]: "
 labels:
   - question
@@ -12,7 +12,7 @@ body:
     id: area
     attributes:
       label: "Area"
-      description: "What part of Ralph is your question about?"
+      description: "What part of Hats is your question about?"
       options:
         - "Getting started"
         - "Installation"
@@ -37,14 +37,14 @@ body:
     attributes:
       label: "What have you tried?"
       description: "Links to docs, commands run, or configuration you attempted."
-      placeholder: "I tried `ralph run ...` and read ..."
+      placeholder: "I tried `hats run ...` and read ..."
     validations:
       required: false
   - type: input
     id: ralph_version
     attributes:
-      label: "Ralph version"
-      description: "Run `ralph --version` if relevant."
-      placeholder: "ralph 0.9.1"
+      label: "Hats version"
+      description: "Run `hats --version` if relevant."
+      placeholder: "hats 0.9.1"
     validations:
       required: false

@@ -995,6 +995,168 @@ dependencies = [
 ]
 
 [[package]]
+name = "hats-adapters"
+version = "2.4.4"
+dependencies = [
+ "ansi-to-tui",
+ "anyhow",
+ "async-trait",
+ "crossterm 0.28.1",
+ "hats-core",
+ "hats-proto",
+ "nix 0.29.0",
+ "portable-pty",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "strip-ansi-escapes",
+ "tempfile",
+ "termimad",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "vt100",
+]
+
+[[package]]
+name = "hats-bench"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hats-adapters",
+ "hats-core",
+ "hats-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hats-cli"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "crossterm 0.28.1",
+ "hats-adapters",
+ "hats-core",
+ "hats-proto",
+ "hats-telegram",
+ "hats-tui",
+ "indicatif",
+ "keyring",
+ "nix 0.29.0",
+ "open",
+ "ratatui",
+ "regex",
+ "reqwest 0.12.28",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hats-core"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "crossterm 0.28.1",
+ "hats-proto",
+ "keyring",
+ "nix 0.29.0",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "hats-e2e"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "colored",
+ "hats-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
+name = "hats-proto"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "hats-telegram"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "hats-proto",
+ "nix 0.29.0",
+ "serde",
+ "serde_json",
+ "teloxide",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "hats-tui"
+version = "2.4.4"
+dependencies = [
+ "anyhow",
+ "crossterm 0.28.1",
+ "futures",
+ "hats-core",
+ "hats-proto",
+ "insta",
+ "ratatui",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2135,168 +2297,6 @@ name = "r-efi"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
-
-[[package]]
-name = "ralph-adapters"
-version = "2.4.4"
-dependencies = [
- "ansi-to-tui",
- "anyhow",
- "async-trait",
- "crossterm 0.28.1",
- "nix 0.29.0",
- "portable-pty",
- "ralph-core",
- "ralph-proto",
- "ratatui",
- "serde",
- "serde_json",
- "strip-ansi-escapes",
- "tempfile",
- "termimad",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "vt100",
-]
-
-[[package]]
-name = "ralph-bench"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "clap",
- "ralph-adapters",
- "ralph-core",
- "ralph-proto",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ralph-cli"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "crossterm 0.28.1",
- "indicatif",
- "keyring",
- "nix 0.29.0",
- "open",
- "ralph-adapters",
- "ralph-core",
- "ralph-proto",
- "ralph-telegram",
- "ralph-tui",
- "ratatui",
- "regex",
- "reqwest 0.12.28",
- "scopeguard",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ralph-core"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "crossterm 0.28.1",
- "keyring",
- "nix 0.29.0",
- "ralph-proto",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ralph-e2e"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "colored",
- "ralph-core",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
-]
-
-[[package]]
-name = "ralph-proto"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "ralph-telegram"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "nix 0.29.0",
- "ralph-proto",
- "serde",
- "serde_json",
- "teloxide",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ralph-tui"
-version = "2.4.4"
-dependencies = [
- "anyhow",
- "crossterm 0.28.1",
- "futures",
- "insta",
- "ralph-core",
- "ralph-proto",
- "ratatui",
- "scopeguard",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "unicode-width 0.2.0",
-]
 
 [[package]]
 name = "rand"

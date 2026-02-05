@@ -1,5 +1,5 @@
 {
-  "name": "ralph-orchestrator",
+  "name": "hats",
   "version": "2.3.0",
   "private": true,
   "description": "AI agent orchestrator with web dashboard",
@@ -9,14 +9,14 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "build:server": "npm run build -w @ralph-web/server",
-    "build:web": "npm run build -w @ralph-web/dashboard",
+    "build:server": "npm run build -w @hats-web/server",
+    "build:web": "npm run build -w @hats-web/dashboard",
     "dev": "npm run dev --workspaces --if-present",
-    "dev:server": "npm run dev -w @ralph-web/server",
-    "dev:web": "npm run dev -w @ralph-web/dashboard",
-    "start": "npm run start -w @ralph-web/server",
+    "dev:server": "npm run dev -w @hats-web/server",
+    "dev:web": "npm run dev -w @hats-web/dashboard",
+    "start": "npm run start -w @hats-web/server",
     "test": "npm run test --workspaces --if-present",
-    "test:server": "npm run test -w @ralph-web/server",
+    "test:server": "npm run test -w @hats-web/server",
     "clean": "npm run clean --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present"
   },
@@ -27,7 +27,7 @@
     "ai",
     "agent",
     "orchestrator",
-    "ralph"
+    "hats"
   ],
   "author": "",
   "license": "MIT"

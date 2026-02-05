@@ -1,6 +1,6 @@
 # CLI Reference
 
-Complete reference for Ralph's command-line interface.
+Complete reference for Hats's command-line interface.
 
 ## Global Options
 
@@ -16,13 +16,13 @@ These options work with all commands:
 
 ### Config Sources (`-c`)
 
-The `-c` flag specifies where to load configuration from. If not provided, `ralph.yml` is loaded by default.
+The `-c` flag specifies where to load configuration from. If not provided, `hats.yml` is loaded by default.
 
 **Config source types:**
 
 | Format | Description |
 |--------|-------------|
-| `ralph.yml` | Local file path |
+| `hats.yml` | Local file path |
 | `builtin:preset-name` | Embedded preset |
 | `https://example.com/config.yml` | Remote URL |
 | `core.field=value` | Override a core config field |
@@ -40,31 +40,31 @@ Only one config file/preset/URL is used (the first one specified). Overrides can
 
 ```bash
 # Use custom config file
-ralph run -c production.yml
+hats run -c production.yml
 
 # Use embedded preset
-ralph run -c builtin:tdd-red-green
+hats run -c builtin:tdd-red-green
 
-# Override scratchpad (loads ralph.yml + applies override)
-ralph run -c core.scratchpad=.agent/feature-x/scratchpad.md
+# Override scratchpad (loads hats.yml + applies override)
+hats run -c core.scratchpad=.agent/feature-x/scratchpad.md
 
 # Explicit config + override
-ralph run -c ralph.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
+hats run -c hats.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
 
 # Multiple overrides
-ralph run -c core.scratchpad=.runs/task-123/scratchpad.md -c core.specs_dir=./my-specs/
+hats run -c core.scratchpad=.runs/task-123/scratchpad.md -c core.specs_dir=./my-specs/
 ```
 
 Overrides are applied after config file loading, so they take precedence.
 
 ## Commands
 
-### ralph run
+### hats run
 
 Run the orchestration loop.
 
 ```bash
-ralph run [OPTIONS]
+hats run [OPTIONS]
 ```
 
 **Options:**
@@ -87,39 +87,39 @@ ralph run [OPTIONS]
 
 ```bash
 # Basic run with TUI
-ralph run
+hats run
 
 # With inline prompt
-ralph run -p "Implement user authentication"
+hats run -p "Implement user authentication"
 
 # Use custom config
-ralph run -c production.yml
+hats run -c production.yml
 
 # Use builtin preset
-ralph run -c builtin:tdd-red-green
+hats run -c builtin:tdd-red-green
 
 # Override scratchpad for parallel runs
-ralph run -c ralph.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
+hats run -c hats.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
 
 # Dry run
-ralph run --dry-run
+hats run --dry-run
 
 # CI mode (quiet, no TUI)
-ralph run -q --no-tui
+hats run -q --no-tui
 
 # Limit iterations
-ralph run --max-iterations 50
+hats run --max-iterations 50
 
 # Record session for debugging
-ralph run --record-session debug.jsonl
+hats run --record-session debug.jsonl
 ```
 
-### ralph init
+### hats init
 
 Initialize configuration file.
 
 ```bash
-ralph init [OPTIONS]
+hats init [OPTIONS]
 ```
 
 **Options:**
@@ -135,24 +135,24 @@ ralph init [OPTIONS]
 
 ```bash
 # Traditional mode with Claude
-ralph init --backend claude
+hats init --backend claude
 
 # Use TDD preset
-ralph init --preset tdd-red-green
+hats init --preset tdd-red-green
 
 # List all presets
-ralph init --list-presets
+hats init --list-presets
 
 # Force overwrite
-ralph init --preset debug --force
+hats init --preset debug --force
 ```
 
-### ralph plan
+### hats plan
 
 Start an interactive PDD planning session.
 
 ```bash
-ralph plan [OPTIONS] [IDEA]
+hats plan [OPTIONS] [IDEA]
 ```
 
 **Options:**
@@ -166,21 +166,21 @@ ralph plan [OPTIONS] [IDEA]
 
 ```bash
 # Interactive planning
-ralph plan
+hats plan
 
 # Plan with idea
-ralph plan "build a REST API"
+hats plan "build a REST API"
 
 # Use specific backend
-ralph plan --backend kiro "my idea"
+hats plan --backend kiro "my idea"
 ```
 
-### ralph task
+### hats task
 
 Generate code task files.
 
 ```bash
-ralph task [OPTIONS] [INPUT]
+hats task [OPTIONS] [INPUT]
 ```
 
 **Options:**
@@ -194,28 +194,28 @@ ralph task [OPTIONS] [INPUT]
 
 ```bash
 # Interactive task creation
-ralph task
+hats task
 
 # From description
-ralph task "add authentication"
+hats task "add authentication"
 
 # From PDD plan
-ralph task specs/feature/plan.md
+hats task specs/feature/plan.md
 ```
 
-### ralph events
+### hats events
 
 View event history.
 
 ```bash
-ralph events [OPTIONS]
+hats events [OPTIONS]
 ```
 
 **Examples:**
 
 ```bash
 # View all events
-ralph events
+hats events
 
 # Output:
 # 2024-01-21 10:30:00 task.start → planner
@@ -223,12 +223,12 @@ ralph events
 # 2024-01-21 10:35:42 build.done → reviewer
 ```
 
-### ralph emit
+### hats emit
 
 Emit an event to the event log.
 
 ```bash
-ralph emit <TOPIC> [PAYLOAD] [OPTIONS]
+hats emit <TOPIC> [PAYLOAD] [OPTIONS]
 ```
 
 **Options:**
@@ -243,18 +243,18 @@ ralph emit <TOPIC> [PAYLOAD] [OPTIONS]
 
 ```bash
 # Simple event
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # JSON payload
-ralph emit "review.done" --json '{"status": "approved", "issues": 0}'
+hats emit "review.done" --json '{"status": "approved", "issues": 0}'
 ```
 
-### ralph clean
+### hats clean
 
 Clean up `.agent/` directory.
 
 ```bash
-ralph clean [OPTIONS]
+hats clean [OPTIONS]
 ```
 
 **Options:**
@@ -268,22 +268,22 @@ ralph clean [OPTIONS]
 
 ```bash
 # Clean agent state
-ralph clean
+hats clean
 
 # Clean diagnostics
-ralph clean --diagnostics
+hats clean --diagnostics
 ```
 
-### ralph tools
+### hats tools
 
 Runtime tools for memories and tasks.
 
-#### ralph tools memory
+#### hats tools memory
 
 Manage persistent memories.
 
 ```bash
-ralph tools memory <SUBCOMMAND>
+hats tools memory <SUBCOMMAND>
 ```
 
 **Subcommands:**
@@ -330,27 +330,27 @@ ralph tools memory <SUBCOMMAND>
 
 ```bash
 # Add a pattern memory
-ralph tools memory add "Uses barrel exports" -t pattern --tags structure
+hats tools memory add "Uses barrel exports" -t pattern --tags structure
 
 # Search for fixes
-ralph tools memory search -t fix "database"
+hats tools memory search -t fix "database"
 
 # List recent memories
-ralph tools memory list --last 10
+hats tools memory list --last 10
 
 # Show memory details
-ralph tools memory show mem-1737372000-a1b2
+hats tools memory show mem-1737372000-a1b2
 
 # Delete a memory
-ralph tools memory delete mem-1737372000-a1b2
+hats tools memory delete mem-1737372000-a1b2
 ```
 
-#### ralph tools task
+#### hats tools task
 
 Manage runtime tasks.
 
 ```bash
-ralph tools task <SUBCOMMAND>
+hats tools task <SUBCOMMAND>
 ```
 
 **Subcommands:**
@@ -373,22 +373,22 @@ ralph tools task <SUBCOMMAND>
 
 ```bash
 # Add a task
-ralph tools task add "Implement authentication"
+hats tools task add "Implement authentication"
 
 # Add with priority
-ralph tools task add "Fix critical bug" -p 1
+hats tools task add "Fix critical bug" -p 1
 
 # Add with dependency
-ralph tools task add "Deploy" --blocked-by setup-infra
+hats tools task add "Deploy" --blocked-by setup-infra
 
 # List all tasks
-ralph tools task list
+hats tools task list
 
 # List ready tasks
-ralph tools task ready
+hats tools task ready
 
 # Close a task
-ralph tools task close task-123
+hats tools task close task-123
 ```
 
 ## Exit Codes
@@ -405,8 +405,8 @@ ralph tools task close task-123
 
 | Variable | Description |
 |----------|-------------|
-| `RALPH_DIAGNOSTICS` | Set to `1` to enable diagnostics |
-| `RALPH_CONFIG` | Default config file path |
+| `HATS_DIAGNOSTICS` | Set to `1` to enable diagnostics |
+| `HATS_CONFIG` | Default config file path |
 | `NO_COLOR` | Disable color output |
 
 ## Shell Completion
@@ -415,11 +415,11 @@ Generate shell completions:
 
 ```bash
 # Bash
-ralph completions bash > ~/.local/share/bash-completion/completions/ralph
+hats completions bash > ~/.local/share/bash-completion/completions/hats
 
 # Zsh
-ralph completions zsh > ~/.zfunc/_ralph
+hats completions zsh > ~/.zfunc/_hats
 
 # Fish
-ralph completions fish > ~/.config/fish/completions/ralph.fish
+hats completions fish > ~/.config/fish/completions/hats.fish
 ```

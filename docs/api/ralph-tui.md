@@ -1,10 +1,10 @@
-# ralph-tui
+# hats-tui
 
-Terminal UI for real-time Ralph monitoring.
+Terminal UI for real-time Hats monitoring.
 
 ## Overview
 
-`ralph-tui` provides:
+`hats-tui` provides:
 
 - Real-time iteration display
 - Hat and event status
@@ -42,14 +42,14 @@ Shows activity status:
 
 ## Usage
 
-The TUI is enabled by default with `ralph run`:
+The TUI is enabled by default with `hats run`:
 
 ```bash
 # TUI mode (default)
-ralph run
+hats run
 
 # Disable TUI
-ralph run --no-tui
+hats run --no-tui
 ```
 
 ## Key Bindings
@@ -69,7 +69,7 @@ ralph run --no-tui
 ### TUI Application
 
 ```rust
-use ralph_tui::TuiApp;
+use hats_tui::TuiApp;
 
 let app = TuiApp::new();
 app.run().await?;
@@ -80,7 +80,7 @@ app.run().await?;
 For integration with adapters:
 
 ```rust
-use ralph_tui::TuiStreamHandler;
+use hats_tui::TuiStreamHandler;
 use tokio::sync::mpsc;
 
 let (tx, rx) = mpsc::channel(100);
@@ -94,7 +94,7 @@ let handler = TuiStreamHandler::new(tx);
 Events from the orchestrator to TUI:
 
 ```rust
-use ralph_proto::UxEvent;
+use hats_proto::UxEvent;
 
 enum UxEvent {
     TerminalWrite(String),
@@ -111,7 +111,7 @@ enum UxEvent {
 ### Header Widget
 
 ```rust
-use ralph_tui::widgets::Header;
+use hats_tui::widgets::Header;
 
 let header = Header::new()
     .iteration(3)
@@ -123,7 +123,7 @@ let header = Header::new()
 ### Footer Widget
 
 ```rust
-use ralph_tui::widgets::Footer;
+use hats_tui::widgets::Footer;
 
 let footer = Footer::new()
     .activity(Activity::Active)
@@ -134,7 +134,7 @@ let footer = Footer::new()
 ### Content Widget
 
 ```rust
-use ralph_tui::widgets::Content;
+use hats_tui::widgets::Content;
 
 let content = Content::new()
     .text(&output)
@@ -146,7 +146,7 @@ let content = Content::new()
 ### Colors
 
 ```rust
-use ralph_tui::theme::Theme;
+use hats_tui::theme::Theme;
 
 let theme = Theme {
     header_bg: Color::Rgb(30, 30, 46),
@@ -159,7 +159,7 @@ let theme = Theme {
 ### Layout
 
 ```rust
-use ralph_tui::Layout;
+use hats_tui::Layout;
 
 let layout = Layout {
     header_height: 3,
@@ -181,8 +181,8 @@ pub enum TuiError {
 ## Example: Custom TUI Integration
 
 ```rust
-use ralph_tui::{TuiApp, TuiStreamHandler};
-use ralph_adapters::PtyExecutor;
+use hats_tui::{TuiApp, TuiStreamHandler};
+use hats_adapters::PtyExecutor;
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -215,7 +215,7 @@ async fn main() -> Result<()> {
 For testing TUI rendering, use the `/tui-validate` skill:
 
 ```bash
-/tui-validate file:output.txt criteria:ralph-header
+/tui-validate file:output.txt criteria:hats-header
 ```
 
 See [Testing & Validation](../advanced/testing.md) for details.

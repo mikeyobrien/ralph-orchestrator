@@ -131,12 +131,12 @@ async def test_tui_shows_output_in_real_time(
     tmux_session: TmuxSession,
     iteration_capture: IterationCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory,
 ):
     """Verify TUI displays Claude output as it streams.
 
-    Given Ralph running with TUI enabled
+    Given Hats running with TUI enabled
     When Claude generates multi-line output
     Then TUI content pane shows output incrementally
     And output is formatted with markdown rendering
@@ -147,7 +147,7 @@ async def test_tui_shows_output_in_real_time(
     )
 
     cmd = (
-        f"{ralph_binary} run "
+        f"{hats_binary} run "
         f"-c {config_path} "
         f"--tui "
         f'-p "Explain the SOLID principles in software design briefly"'
@@ -201,12 +201,12 @@ async def test_tui_shows_output_in_real_time(
 async def test_tui_navigation_during_output(
     tmux_session: TmuxSession,
     iteration_capture: IterationCapture,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory,
 ):
     """Verify TUI displays iteration info and responds to navigation.
 
-    Given Ralph running with TUI enabled
+    Given Hats running with TUI enabled
     When Claude generates output
     Then TUI shows iteration counter [iter N]
     And navigation keys are functional (don't crash)
@@ -218,7 +218,7 @@ async def test_tui_navigation_during_output(
 
     # Use a prompt that requires multiple steps to encourage multiple iterations
     cmd = (
-        f"{ralph_binary} run "
+        f"{hats_binary} run "
         f"-c {config_path} "
         f"--tui "
         f'-p "Step 1: Write a Python function that adds two numbers. '
@@ -301,12 +301,12 @@ async def test_tui_search_functionality(
     tmux_session: TmuxSession,
     iteration_capture: IterationCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory,
 ):
     """Verify search works in TUI.
 
-    Given Ralph with TUI showing output
+    Given Hats with TUI showing output
     When user searches for a term (press '/' then type)
     Then search mode is activated
     And TUI remains functional during search
@@ -317,7 +317,7 @@ async def test_tui_search_functionality(
     )
 
     cmd = (
-        f"{ralph_binary} run "
+        f"{hats_binary} run "
         f"-c {config_path} "
         f"--tui "
         f'-p "Explain error handling best practices in Python with examples"'
@@ -396,12 +396,12 @@ async def test_tui_search_functionality(
 async def test_tui_ctrl_c_termination(
     tmux_session: TmuxSession,
     iteration_capture: IterationCapture,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory,
 ):
     """Verify Ctrl+C cleanly terminates TUI.
 
-    Given Ralph running with TUI
+    Given Hats running with TUI
     When user presses Ctrl+C
     Then process terminates cleanly
     And terminal is restored (not in raw mode)
@@ -412,7 +412,7 @@ async def test_tui_ctrl_c_termination(
     )
 
     cmd = (
-        f"{ralph_binary} run "
+        f"{hats_binary} run "
         f"-c {config_path} "
         f"--tui "
         f'-p "Implement a full REST API with authentication"'
@@ -461,7 +461,7 @@ async def test_tui_new_iteration_alert(
     tmux_session: TmuxSession,
     iteration_capture: IterationCapture,
     llm_judge: LLMJudge,
-    ralph_binary: Path,
+    hats_binary: Path,
     iteration_config_factory,
 ):
     """Verify new iteration alert appears when viewing history.
@@ -477,7 +477,7 @@ async def test_tui_new_iteration_alert(
     )
 
     cmd = (
-        f"{ralph_binary} run "
+        f"{hats_binary} run "
         f"-c {config_path} "
         f"--tui "
         f'-p "Step 1: Create file. Step 2: Edit file. Step 3: Delete file. Do each in order."'

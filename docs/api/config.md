@@ -2,20 +2,20 @@
 
 ## Overview
 
-Configuration is defined by `ralph_core::RalphConfig`. The YAML file supports both:
+Configuration is defined by `hats_core::HatsConfig`. The YAML file supports both:
 - **v2 nested format** (preferred): `cli`, `event_loop`, `core`, `hats`, `events`
 - **v1 flat format** (legacy): `agent`, `max_iterations`, `prompt_file`, etc.
 
-Use `RalphConfig::parse_yaml` / `RalphConfig::from_file` and call `normalize()` to map
+Use `HatsConfig::parse_yaml` / `HatsConfig::from_file` and call `normalize()` to map
 legacy fields into the v2 nested structure.
 
 ## Load Configuration From YAML
 
 ```rust
-use ralph_core::RalphConfig;
+use hats_core::HatsConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut config = RalphConfig::from_file("ralph.yml")?;
+    let mut config = HatsConfig::from_file("hats.yml")?;
     config.normalize();
 
     println!("Backend: {}", config.cli.backend);
@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Parse YAML In Memory
 
 ```rust
-use ralph_core::RalphConfig;
+use hats_core::HatsConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let yaml = r#"
@@ -44,7 +44,7 @@ hats:
     publishes: ["plan.done"]
 "#;
 
-    let mut config = RalphConfig::parse_yaml(yaml)?;
+    let mut config = HatsConfig::parse_yaml(yaml)?;
     config.normalize();
 
     assert_eq!(config.cli.backend, "claude");
@@ -59,17 +59,17 @@ hats:
 You can override specific fields after loading:
 
 ```rust
-use ralph_core::RalphConfig;
+use hats_core::HatsConfig;
 
 fn main() {
-    let mut config = RalphConfig::default();
+    let mut config = HatsConfig::default();
 
     config.cli.backend = "gemini".to_string();
     config.event_loop.max_iterations = 25;
     config.event_loop.max_runtime_seconds = 900;
 
     // Optional: update workspace root for path resolution
-    config.core = config.core.with_workspace_root("/tmp/ralph-run");
+    config.core = config.core.with_workspace_root("/tmp/hats-run");
 }
 ```
 

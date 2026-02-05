@@ -1,20 +1,20 @@
-# Migration Guide: v2.0 Hatless Ralph
+# Migration Guide: v2.0 Hatless Hats
 
-This guide helps you migrate from v1.x to v2.0, which introduces the "Hatless Ralph" architecture.
+This guide helps you migrate from v1.x to v2.0, which introduces the "Hatless Hats" architecture.
 
 ## What Changed
 
-**v1.x**: Ralph wore hats (planner, builder) that were hardcoded into the orchestrator.
+**v1.x**: Hats wore hats (planner, builder) that were hardcoded into the orchestrator.
 
-**v2.0**: Ralph is a constant coordinator. Hats are optional and configurable. Ralph handles all events by default.
+**v2.0**: Hats is a constant coordinator. Hats are optional and configurable. Hats handles all events by default.
 
 ## Breaking Changes
 
-1. **No default hats**: Empty config = solo Ralph mode (no hats)
-2. **JSONL events**: Events written to `.ralph/events-YYYYMMDD-HHMMSS.jsonl` instead of XML in output
+1. **No default hats**: Empty config = solo Hats mode (no hats)
+2. **JSONL events**: Events written to `.hats/events-YYYYMMDD-HHMMSS.jsonl` instead of XML in output
 3. **Per-hat backends**: Each hat can specify its own backend
 4. **Planner removed**: No automatic planner hat
-5. **Events directory moved**: Events now live in `.ralph/` (orchestrator metadata), not `.agent/` (agent state)
+5. **Events directory moved**: Events now live in `.hats/` (orchestrator metadata), not `.agent/` (agent state)
 
 ## Migration Steps
 
@@ -30,10 +30,10 @@ cli:
 ```yaml
 cli:
   backend: claude
-# No hats section = Ralph handles everything
+# No hats section = Hats handles everything
 ```
 
-Ralph receives all prompts directly and writes events to `.ralph/events-YYYYMMDD-HHMMSS.jsonl`.
+Hats receives all prompts directly and writes events to `.hats/events-YYYYMMDD-HHMMSS.jsonl`.
 
 ### Multi-Hat Mode
 
@@ -65,7 +65,7 @@ hats:
 
 ```yaml
 cli:
-  backend: claude  # Default for Ralph
+  backend: claude  # Default for Hats
 
 hats:
   - name: builder
@@ -90,7 +90,7 @@ hats:
     default_publishes: "build.done"
 ```
 
-If the builder completes without writing any events, Ralph automatically injects `build.done`.
+If the builder completes without writing any events, Hats automatically injects `build.done`.
 
 ## Event Format
 
@@ -105,13 +105,13 @@ coverage: pass
 </event>
 ```
 
-**After (v2.0)**: JSONL in `.ralph/events-YYYYMMDD-HHMMSS.jsonl`
+**After (v2.0)**: JSONL in `.hats/events-YYYYMMDD-HHMMSS.jsonl`
 ```bash
-# Preferred: Use ralph emit for safe JSON formatting
-ralph emit build.done "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+# Preferred: Use hats emit for safe JSON formatting
+hats emit build.done "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ```
 
-Each run creates a unique timestamped events file. Use `ralph emit` to write events safely.
+Each run creates a unique timestamped events file. Use `hats emit` to write events safely.
 
 ## Common Configurations
 
@@ -139,7 +139,7 @@ hats:
 ```yaml
 cli:
   backend: claude
-# No hats - Ralph does everything
+# No hats - Hats does everything
 ```
 
 ### Mixed Backends
@@ -162,14 +162,14 @@ hats:
 
 Test your config:
 ```bash
-ralph validate ralph.yml
+hats validate hats.yml
 ```
 
 ## Rollback
 
 If you need to rollback to v1.x behavior, use a preset:
 ```bash
-ralph run --preset feature
+hats run --preset feature
 ```
 
 Presets provide curated multi-hat configurations.

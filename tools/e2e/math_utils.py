@@ -1,6 +1,6 @@
 """Math utility functions.
 
-This module provides basic mathematical operations for use in the Ralph
+This module provides basic mathematical operations for use in the Hats
 orchestrator test suite and demonstration purposes.
 """
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide demonstrates how to use Ralph Orchestrator for generating comprehensive test suites.
+This guide demonstrates how to use Hats for generating comprehensive test suites.
 
 ## Example 1: Unit Test Generation
 

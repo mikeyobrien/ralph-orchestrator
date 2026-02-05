@@ -1,6 +1,6 @@
 # Coordination Patterns
 
-Ralph's hat system enables sophisticated multi-agent workflows through event-driven coordination. This section covers the architectural patterns, event routing mechanics, and built-in workflow templates.
+Hats's hat system enables sophisticated multi-agent workflows through event-driven coordination. This section covers the architectural patterns, event routing mechanics, and built-in workflow templates.
 
 ## How Hat-Based Orchestration Works
 
@@ -8,7 +8,7 @@ Ralph's hat system enables sophisticated multi-agent workflows through event-dri
 
 Hats communicate through a **pub/sub event system**:
 
-1. **Ralph publishes a starting event** (e.g., `task.start`)
+1. **Hats publishes a starting event** (e.g., `task.start`)
 2. **The matching hat activates** — the hat subscribed to that event takes over
 3. **The hat does its work** and publishes an event when done
 4. **The next hat activates** — triggered by the new event
@@ -24,16 +24,16 @@ Hats communicate through a **pub/sub event system**:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Ralph as the Constant Coordinator
+### Hats as the Constant Coordinator
 
-In hat-based mode, **Ralph is always present**:
+In hat-based mode, **Hats is always present**:
 
-- Ralph cannot be removed or replaced
+- Hats cannot be removed or replaced
 - Custom hats define the **topology** (who triggers whom)
-- Ralph executes with **topology awareness** — knowing which hats exist and their relationships
-- Ralph serves as the **universal fallback** — orphaned events automatically route to Ralph
+- Hats executes with **topology awareness** — knowing which hats exist and their relationships
+- Hats serves as the **universal fallback** — orphaned events automatically route to Hats
 
-This means custom hats don't execute directly. Instead, Ralph reads all pending events across all hats and decides what to do based on the defined topology. Ralph then either:
+This means custom hats don't execute directly. Instead, Hats reads all pending events across all hats and decides what to do based on the defined topology. Hats then either:
 
 - Delegates to the appropriate hat by publishing an event
 - Handles the work directly if no hat is suited
@@ -47,7 +47,7 @@ Events route to hats using **glob-style pattern matching**:
 | `task.start` | Exactly `task.start` |
 | `build.*` | `build.done`, `build.blocked`, `build.task`, etc. |
 | `*.done` | `build.done`, `review.done`, `test.done`, etc. |
-| `*` | Everything (global wildcard — used by Ralph as fallback) |
+| `*` | Everything (global wildcard — used by Hats as fallback) |
 
 **Priority Rules:**
 
@@ -57,7 +57,7 @@ Events route to hats using **glob-style pattern matching**:
 
 ## Coordination Patterns
 
-Ralph presets implement several proven coordination patterns:
+Hats presets implement several proven coordination patterns:
 
 ### 1. Linear Pipeline
 
@@ -322,7 +322,7 @@ build.start → 📋 Planner ─── (detects input type) ───→ tasks.r
 hats:
   my_hat:
     name: "🎯 Display Name"      # Shown in TUI and logs
-    description: "What this hat does"  # REQUIRED — Ralph uses this for delegation
+    description: "What this hat does"  # REQUIRED — Hats uses this for delegation
     triggers: ["event.a", "event.b"]   # Events that activate this hat
     publishes: ["event.c", "event.d"]  # Events this hat can emit
     default_publishes: "event.c"       # Fallback if hat forgets to emit
@@ -335,22 +335,22 @@ hats:
 
 ### Design Principles
 
-1. **Description is critical** — Ralph uses hat descriptions to decide when to delegate. Make them clear and specific.
+1. **Description is critical** — Hats uses hat descriptions to decide when to delegate. Make them clear and specific.
 
 2. **One hat, one responsibility** — Each hat should have a clear, focused purpose. If you're writing "and" in the description, consider splitting.
 
 3. **Events are routing signals, not data** — Keep payloads brief. Store detailed output in files and reference them in events.
 
-4. **Design for recovery** — If a hat fails or forgets to publish, Ralph catches the orphaned event. Your topology should handle unexpected states gracefully.
+4. **Design for recovery** — If a hat fails or forgets to publish, Hats catches the orphaned event. Your topology should handle unexpected states gracefully.
 
 5. **Test with simple prompts first** — Complex topologies can have emergent behavior. Start simple, validate the flow, then add complexity.
 
 ### Validation Rules
 
-Ralph validates hat configurations:
+Hats validates hat configurations:
 
-- **Required description**: Every hat must have a description (Ralph needs it for delegation context)
-- **Reserved triggers**: `task.start` and `task.resume` are reserved for Ralph
+- **Required description**: Every hat must have a description (Hats needs it for delegation context)
+- **Reserved triggers**: `task.start` and `task.resume` are reserved for Hats
 - **No ambiguous routing**: Each trigger pattern must map to exactly one hat
 
 ```
@@ -364,13 +364,13 @@ Hats emit events to signal completion or hand off work:
 
 ```bash
 # Simple event with payload
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # Event with JSON payload
-ralph emit "review.done" --json '{"status": "approved", "issues": 0}'
+hats emit "review.done" --json '{"status": "approved", "issues": 0}'
 
 # Direct handoff to specific hat (bypasses routing)
-ralph emit "handoff" --target reviewer "Please review the changes"
+hats emit "handoff" --target reviewer "Please review the changes"
 ```
 
 **In agent output**, events are embedded as XML tags:
@@ -402,7 +402,7 @@ Hat-based orchestration adds complexity. Use **traditional mode** (no hats) when
 - You're prototyping and want minimal configuration
 - The work doesn't naturally decompose into distinct phases
 
-Traditional mode is just Ralph in a loop until completion — simpler, faster to set up, and often sufficient.
+Traditional mode is just Hats in a loop until completion — simpler, faster to set up, and often sufficient.
 
 ## Next Steps
 

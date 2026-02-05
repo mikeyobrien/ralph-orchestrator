@@ -1,19 +1,19 @@
 # Memories & Tasks
 
-Ralph uses two complementary systems for persistent state: memories for cross-session learning, and tasks for runtime work tracking.
+Hats uses two complementary systems for persistent state: memories for cross-session learning, and tasks for runtime work tracking.
 
 ## Overview
 
 | System | Storage | Purpose |
 |--------|---------|---------|
-| **Memories** | `.ralph/agent/memories.md` | Accumulated wisdom across sessions |
-| **Tasks** | `.ralph/agent/tasks.jsonl` | Runtime work items |
+| **Memories** | `.hats/agent/memories.md` | Accumulated wisdom across sessions |
+| **Tasks** | `.hats/agent/tasks.jsonl` | Runtime work items |
 
 Both are enabled by default and work together to replace the legacy scratchpad.
 
 ## Memories
 
-Memories persist learning across sessions. They capture patterns, decisions, fixes, and context that Ralph should remember.
+Memories persist learning across sessions. They capture patterns, decisions, fixes, and context that Hats should remember.
 
 ### Memory Types
 
@@ -28,19 +28,19 @@ Memories persist learning across sessions. They capture patterns, decisions, fix
 
 ```bash
 # Pattern: discovered convention
-ralph tools memory add "All API handlers return Result<Json<T>, AppError>" \
+hats tools memory add "All API handlers return Result<Json<T>, AppError>" \
   -t pattern --tags api,error-handling
 
 # Decision: architectural choice
-ralph tools memory add "Chose JSONL over SQLite: simpler, git-friendly" \
+hats tools memory add "Chose JSONL over SQLite: simpler, git-friendly" \
   -t decision --tags storage,architecture
 
 # Fix: recurring problem solution
-ralph tools memory add "cargo test hangs: kill orphan postgres" \
+hats tools memory add "cargo test hangs: kill orphan postgres" \
   -t fix --tags testing,postgres
 
 # Context: project knowledge
-ralph tools memory add "The /legacy folder is deprecated, use /v2" \
+hats tools memory add "The /legacy folder is deprecated, use /v2" \
   -t context --tags api,migration
 ```
 
@@ -48,19 +48,19 @@ ralph tools memory add "The /legacy folder is deprecated, use /v2" \
 
 ```bash
 # Broad search
-ralph tools memory search "api"
+hats tools memory search "api"
 
 # Filter by type
-ralph tools memory search -t fix "error"
+hats tools memory search -t fix "error"
 
 # Filter by tags
-ralph tools memory search --tags api,auth
+hats tools memory search --tags api,auth
 
 # List all memories
-ralph tools memory list
+hats tools memory list
 
 # List recent fixes
-ralph tools memory list -t fix --last 10
+hats tools memory list -t fix --last 10
 ```
 
 ### Memory Injection
@@ -93,31 +93,31 @@ Tasks track runtime work items during orchestration.
 
 ```bash
 # Basic task
-ralph tools task add "Implement user authentication"
+hats tools task add "Implement user authentication"
 
 # With priority (1-5, 1 = highest)
-ralph tools task add "Fix critical bug" -p 1
+hats tools task add "Fix critical bug" -p 1
 
 # With dependency
-ralph tools task add "Deploy to production" --blocked-by setup-infra
+hats tools task add "Deploy to production" --blocked-by setup-infra
 ```
 
 ### Managing Tasks
 
 ```bash
 # List all tasks
-ralph tools task list
+hats tools task list
 
 # List unblocked tasks only
-ralph tools task ready
+hats tools task ready
 
 # Close a completed task
-ralph tools task close task-123
+hats tools task close task-123
 ```
 
 ### Task Workflow
 
-1. Ralph creates tasks from the prompt/plan
+1. Hats creates tasks from the prompt/plan
 2. Tasks are worked in priority order
 3. Dependencies are respected (blocked tasks wait)
 4. Completed tasks are closed
@@ -135,10 +135,10 @@ Tasks must only be closed when:
 ```bash
 # Good: Close with evidence
 cargo test  # passes
-ralph tools task close task-123
+hats tools task close task-123
 
 # Bad: Close without verification
-ralph tools task close task-123  # No tests run!
+hats tools task close task-123  # No tests run!
 ```
 
 ## Memories vs Tasks
@@ -200,10 +200,10 @@ hats:
     triggers: ["task.start"]
     instructions: |
       1. Check memories for relevant patterns
-      2. Pick a task from `ralph tools task ready`
+      2. Pick a task from `hats tools task ready`
       3. Implement the task
       4. Record learnings as memories
-      5. Close the task with `ralph tools task close <id>`
+      5. Close the task with `hats tools task close <id>`
 ```
 
 ## Next Steps

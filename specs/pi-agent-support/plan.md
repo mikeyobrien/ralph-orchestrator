@@ -8,16 +8,16 @@
 - [ ] Step 4: OutputFormat extension and PtyExecutor integration
 - [ ] Step 5: Auto-detection
 - [ ] Step 6: Smoke test fixture and replay test
-- [ ] Step 7: Documentation and ralph.yml examples
+- [ ] Step 7: Documentation and hats.yml examples
 
 ---
 
 ## Step 1: Pi stream parser types and parsing
 
-**Objective:** Create `pi_stream.rs` in `ralph-adapters` with the `PiStreamEvent` enum, sub-types, and `PiStreamParser::parse_line()`.
+**Objective:** Create `pi_stream.rs` in `hats-adapters` with the `PiStreamEvent` enum, sub-types, and `PiStreamParser::parse_line()`.
 
 **Implementation guidance:**
-- Create `crates/ralph-adapters/src/pi_stream.rs`
+- Create `crates/hats-adapters/src/pi_stream.rs`
 - Define `PiStreamEvent` enum with `#[serde(tag = "type", rename_all = "snake_case")]` and variants: `MessageUpdate`, `ToolExecutionStart`, `ToolExecutionEnd`, `TurnEnd`, `Other`
 - Define sub-types: `PiAssistantEvent`, `PiToolResult`, `PiContentBlock`, `PiTurnMessage`, `PiUsage`, `PiCost`
 - Implement `PiStreamParser::parse_line()` matching `ClaudeStreamParser::parse_line()` pattern
@@ -65,7 +65,7 @@
 - Verify `turn_end` increments turn count
 - Verify `Other` variant does nothing
 
-**Integration notes:** Still self-contained in `ralph-adapters`. No changes to other crates.
+**Integration notes:** Still self-contained in `hats-adapters`. No changes to other crates.
 
 **Demo:** Feed a sequence of `PiStreamEvent` values through dispatch, verify handler received correct calls and state has correct totals.
 
@@ -118,7 +118,7 @@
 
 **Integration notes:** This is the main integration point. Changes `pty_executor.rs` which is a critical path. Careful to only add a new branch, not modify existing Claude/Text paths.
 
-**Demo:** Run Ralph with a mock pi binary that outputs NDJSON fixtures. TUI shows tool calls with ⚙️ icons and text output streams in real-time.
+**Demo:** Run Hats with a mock pi binary that outputs NDJSON fixtures. TUI shows tool calls with ⚙️ icons and text output streams in real-time.
 
 ---
 
@@ -137,7 +137,7 @@
 
 **Integration notes:** Minimal change. One line added to the constant.
 
-**Demo:** `ralph doctor` (or equivalent) shows pi as a detected backend when installed.
+**Demo:** `hats doctor` (or equivalent) shows pi as a detected backend when installed.
 
 ---
 
@@ -147,7 +147,7 @@
 
 **Implementation guidance:**
 - Capture a pi session: `pi -p --mode json --no-session --thinking off "create a file called test.txt with 'hello world', then read it back" > fixture.jsonl`
-- Place fixture in `crates/ralph-adapters/tests/fixtures/pi-basic-session.jsonl` (or `crates/ralph-core/tests/fixtures/`)
+- Place fixture in `crates/hats-adapters/tests/fixtures/pi-basic-session.jsonl` (or `crates/hats-core/tests/fixtures/`)
 - Write a test that reads the fixture line by line, parses with `PiStreamParser`, dispatches through `dispatch_pi_stream_event()` with a recording handler
 - Verify: text output extracted, tool calls captured, cost accumulated, turn count correct
 
@@ -160,18 +160,18 @@
 
 **Integration notes:** Tests the full parse+dispatch pipeline against real data.
 
-**Demo:** `cargo test -p ralph-adapters pi_smoke` passes.
+**Demo:** `cargo test -p hats-adapters pi_smoke` passes.
 
 ---
 
-## Step 7: Documentation and ralph.yml examples
+## Step 7: Documentation and hats.yml examples
 
 **Objective:** Document pi backend in user-facing docs and provide example configurations.
 
 **Implementation guidance:**
 - Update `docs/installation.md` or equivalent to mention pi as a supported backend
 - Add pi to the backend comparison table in docs
-- Add example `ralph.pi.yml` config file in project root or `examples/`
+- Add example `hats.pi.yml` config file in project root or `examples/`
 - Update `AGENTS.md` / `CLAUDE.md` architecture section to mention pi in the backend list
 - Update the `NoBackendError` display to include pi install instructions
 
@@ -181,4 +181,4 @@
 
 **Integration notes:** Documentation only, no code behavior changes beyond `NoBackendError` message.
 
-**Demo:** User can copy `ralph.pi.yml`, set `backend: pi`, and run `ralph run -c ralph.pi.yml -p "prompt"`.
+**Demo:** User can copy `hats.pi.yml`, set `backend: pi`, and run `hats run -c hats.pi.yml -p "prompt"`.

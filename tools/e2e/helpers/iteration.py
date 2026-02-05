@@ -114,7 +114,7 @@ class IterationCapture:
         timeout: float = 60.0,
         check_interval: float = 1.0,
     ) -> tuple[bool, str]:
-        """Wait for the Ralph process to exit.
+        """Wait for the Hats process to exit.
 
         Detects exit by looking for shell prompt return or
         process termination indicators.
@@ -176,7 +176,7 @@ class IterationCapture:
         return None
 
     def _detect_exit(self, content: str) -> bool:
-        """Detect if the Ralph process has exited.
+        """Detect if the Hats process has exited.
 
         Args:
             content: TUI content to check

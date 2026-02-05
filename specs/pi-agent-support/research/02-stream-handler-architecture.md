@@ -1,8 +1,8 @@
-# Research: Ralph's Stream Handler Architecture
+# Research: Hats's Stream Handler Architecture
 
 ## Summary
 
-Ralph has a clean trait-based streaming architecture that pi can plug into. The critical integration point is in `PtyExecutor::run_observe_streaming()` which branches on `OutputFormat` to choose between NDJSON parsing and raw text passthrough.
+Hats has a clean trait-based streaming architecture that pi can plug into. The critical integration point is in `PtyExecutor::run_observe_streaming()` which branches on `OutputFormat` to choose between NDJSON parsing and raw text passthrough.
 
 ## Architecture Overview
 
@@ -96,7 +96,7 @@ fn dispatch_stream_event<H: StreamHandler>(event: ClaudeStreamEvent, handler: &m
 
 ## extracted_text
 
-Critical for Ralph's core loop: the accumulated text output is used by `EventParser` to find `LOOP_COMPLETE` and event tags. For NDJSON backends, `extracted_text` collects only the text content (not JSON). For Text backends, `stripped_output` (ANSI-stripped raw output) is used instead.
+Critical for Hats's core loop: the accumulated text output is used by `EventParser` to find `LOOP_COMPLETE` and event tags. For NDJSON backends, `extracted_text` collects only the text content (not JSON). For Text backends, `stripped_output` (ANSI-stripped raw output) is used instead.
 
 ## Integration Options for Pi
 

@@ -4,7 +4,7 @@
     The Q Chat CLI has been rebranded to **Kiro CLI**. This guide references the legacy Q Chat adapter.
     Please refer to the [Kiro Migration Guide](../guide/kiro-migration.md) for information on migrating to the new `kiro` adapter.
 
-This guide provides comprehensive instructions for deploying the Q Chat adapter in production environments with Ralph Orchestrator.
+This guide provides comprehensive instructions for deploying the Q Chat adapter in production environments with Hats.
 
 ## Overview
 
@@ -32,8 +32,8 @@ pip install q-cli
 # Verify installation
 qchat --version
 
-# Install Ralph Orchestrator with Q adapter support
-pip install ralph-orchestrator
+# Install Hats with Q adapter support
+pip install hats
 ```
 
 ## Configuration
@@ -79,7 +79,7 @@ performance:
 logging:
   level: INFO
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: /var/log/ralph/qchat.log
+  file: /var/log/hats/qchat.log
   
 monitoring:
   metrics_enabled: true
@@ -102,14 +102,14 @@ export ENVIRONMENT=production
 export QCHAT_TIMEOUT=300
 export QCHAT_VERBOSE=1
 
-# Start Ralph Orchestrator with Q Chat
-python -m ralph_orchestrator \
+# Start Hats with Q Chat
+python -m hats_orchestrator \
   --agent q \
   --config config/qchat.yaml \
   --checkpoint-interval 10 \
   --max-iterations 1000 \
   --metrics-interval 60 \
-  --log-file /var/log/ralph/orchestrator.log
+  --log-file /var/log/hats/orchestrator.log
 ```
 
 ### 2. High-Availability Deployment
@@ -130,10 +130,10 @@ export HEALTH_CHECK_ENABLED=true
 export HEALTH_CHECK_INTERVAL=30
 
 # Start with supervisor for automatic restart
-supervisorctl start ralph-qchat
+supervisorctl start hats-qchat
 
 # Or use systemd
-systemctl start ralph-qchat.service
+systemctl start hats-qchat.service
 ```
 
 ### 3. Containerized Deployment
@@ -147,7 +147,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-RUN pip install ralph-orchestrator q-cli
+RUN pip install hats q-cli
 
 # Copy configuration
 COPY config/qchat.yaml /app/config/
@@ -162,7 +162,7 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD python -c "import requests; requests.get('http://localhost:8080/health')"
 
 # Run the orchestrator
-CMD ["python", "-m", "ralph_orchestrator", "--agent", "q", "--config", "config/qchat.yaml"]
+CMD ["python", "-m", "hats_orchestrator", "--agent", "q", "--config", "config/qchat.yaml"]
 ```
 
 Docker Compose configuration:
@@ -172,9 +172,9 @@ Docker Compose configuration:
 version: '3.8'
 
 services:
-  ralph-qchat:
+  hats-qchat:
     build: .
-    container_name: ralph-qchat
+    container_name: hats-qchat
     restart: unless-stopped
     environment:
       - QCHAT_TIMEOUT=300
@@ -205,12 +205,12 @@ import logging
 import logging.handlers
 
 def setup_logging():
-    logger = logging.getLogger('ralph.qchat')
+    logger = logging.getLogger('hats.qchat')
     logger.setLevel(logging.INFO)
     
     # File handler with rotation
     file_handler = logging.handlers.RotatingFileHandler(
-        '/var/log/ralph/qchat.log',
+        '/var/log/hats/qchat.log',
         maxBytes=10485760,  # 10MB
         backupCount=5
     )
@@ -341,8 +341,8 @@ ulimit -u 2048          # Increase process limit
 ulimit -m 4194304       # Set memory limit (4GB)
 
 # Configure cgroups for container environments
-echo "4G" > /sys/fs/cgroup/memory/ralph-qchat/memory.limit_in_bytes
-echo "80" > /sys/fs/cgroup/cpu/ralph-qchat/cpu.shares
+echo "4G" > /sys/fs/cgroup/memory/hats-qchat/memory.limit_in_bytes
+echo "80" > /sys/fs/cgroup/cpu/hats-qchat/cpu.shares
 ```
 
 ## Troubleshooting
@@ -397,7 +397,7 @@ export PYTHONVERBOSE=1
 export RUST_LOG=debug  # If using Rust-based components
 
 # Run with debug logging
-python -m ralph_orchestrator \
+python -m hats_orchestrator \
   --agent q \
   --verbose \
   --debug \
@@ -435,7 +435,7 @@ Run Q Chat processes with limited privileges:
 useradd -r -s /bin/false qchat-user
 
 # Run with limited privileges
-sudo -u qchat-user python -m ralph_orchestrator --agent q
+sudo -u qchat-user python -m hats_orchestrator --agent q
 ```
 
 ### 3. Network Security
@@ -459,7 +459,7 @@ Perform zero-downtime updates:
 # rolling-update.sh
 
 # Start new version
-docker-compose up -d ralph-qchat-new
+docker-compose up -d hats-qchat-new
 
 # Wait for health check
 while ! curl -f http://localhost:8081/health; do
@@ -470,7 +470,7 @@ done
 nginx -s reload
 
 # Stop old version
-docker-compose stop ralph-qchat-old
+docker-compose stop hats-qchat-old
 ```
 
 ### Backup and Recovery
@@ -519,31 +519,31 @@ Expected performance metrics in production:
 
 ## Support and Resources
 
-- **Documentation**: [Ralph Orchestrator Docs](https://ralph-orchestrator.readthedocs.io)
-- **Issues**: [GitHub Issues](https://github.com/your-org/ralph-orchestrator/issues)
-- **Community**: [Discord Server](https://discord.gg/ralph-orchestrator)
-- **Emergency Support**: support@ralph-orchestrator.com
+- **Documentation**: [Hats Docs](https://hats.readthedocs.io)
+- **Issues**: [GitHub Issues](https://github.com/your-org/hats/issues)
+- **Community**: [Discord Server](https://discord.gg/hats)
+- **Emergency Support**: support@hats.com
 
 ## Appendix: Systemd Service
 
 ```ini
-# /etc/systemd/system/ralph-qchat.service
+# /etc/systemd/system/hats-qchat.service
 [Unit]
-Description=Ralph Orchestrator with Q Chat Adapter
+Description=Hats with Q Chat Adapter
 After=network.target
 
 [Service]
 Type=simple
 User=qchat-user
 Group=qchat-group
-WorkingDirectory=/opt/ralph-orchestrator
+WorkingDirectory=/opt/hats
 Environment="QCHAT_TIMEOUT=300"
 Environment="QCHAT_VERBOSE=1"
-ExecStart=/usr/bin/python3 -m ralph_orchestrator --agent q --config /etc/ralph/qchat.yaml
+ExecStart=/usr/bin/python3 -m hats_orchestrator --agent q --config /etc/hats/qchat.yaml
 Restart=always
 RestartSec=10
-StandardOutput=append:/var/log/ralph/qchat.log
-StandardError=append:/var/log/ralph/qchat-error.log
+StandardOutput=append:/var/log/hats/qchat.log
+StandardError=append:/var/log/hats/qchat-error.log
 
 [Install]
 WantedBy=multi-user.target
@@ -553,7 +553,7 @@ Enable and start the service:
 
 ```bash
 systemctl daemon-reload
-systemctl enable ralph-qchat.service
-systemctl start ralph-qchat.service
-systemctl status ralph-qchat.service
+systemctl enable hats-qchat.service
+systemctl start hats-qchat.service
+systemctl status hats-qchat.service
 ```

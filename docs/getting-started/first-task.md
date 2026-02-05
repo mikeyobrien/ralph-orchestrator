@@ -1,10 +1,10 @@
 # Your First Task
 
-Let's walk through creating and running a complete task with Ralph.
+Let's walk through creating and running a complete task with Hats.
 
 ## Choose Your Mode
 
-Ralph offers two modes. Choose based on your task complexity:
+Hats offers two modes. Choose based on your task complexity:
 
 | Mode | When to Use |
 |------|-------------|
@@ -18,11 +18,11 @@ For this guide, we'll use traditional mode first, then show hat-based mode.
 ### 1. Initialize
 
 ```bash
-mkdir my-first-ralph-task
-cd my-first-ralph-task
-git init  # Ralph works best with git
+mkdir my-first-hats-task
+cd my-first-hats-task
+git init  # Hats works best with git
 
-ralph init --backend claude
+hats init --backend claude
 ```
 
 ### 2. Create Your Prompt
@@ -45,13 +45,13 @@ Create a Rust calculator module with:
 - Code is formatted with `cargo fmt`
 ```
 
-### 3. Run Ralph
+### 3. Run Hats
 
 ```bash
-ralph run
+hats run
 ```
 
-Ralph will:
+Hats will:
 
 1. Read your prompt
 2. Start the AI agent
@@ -60,7 +60,7 @@ Ralph will:
 
 ### 4. Review Results
 
-When Ralph completes, check your directory:
+When Hats completes, check your directory:
 
 ```bash
 ls -la
@@ -79,7 +79,7 @@ For more complex tasks, use hats to separate concerns.
 ### 1. Initialize with a Preset
 
 ```bash
-ralph init --preset tdd-red-green
+hats init --preset tdd-red-green
 ```
 
 This creates a configuration with specialized hats:
@@ -109,7 +109,7 @@ Create a URL shortening service with:
 ### 3. Run with Hat Coordination
 
 ```bash
-ralph run
+hats run
 ```
 
 The TUI shows which hat is active:
@@ -121,7 +121,7 @@ The TUI shows which hat is active:
 ### 4. View Event History
 
 ```bash
-ralph events
+hats events
 ```
 
 Shows the event flow between hats:
@@ -173,7 +173,7 @@ Create an Axum web app with:
 
 The TUI shows real-time progress. Key information:
 
-- **Iteration count** - How many cycles Ralph has run
+- **Iteration count** - How many cycles Hats has run
 - **Elapsed time** - Total runtime
 - **Active hat** - Which persona is working (hat-based mode)
 - **Agent output** - What the AI is doing
@@ -185,7 +185,7 @@ Press `q` in the TUI to quit gracefully.
 ### Resume Interrupted Sessions
 
 ```bash
-ralph run --continue
+hats run --continue
 ```
 
 ### Check Metrics
@@ -200,7 +200,7 @@ After completion, check `.agent/` for:
 
 ### Task Not Completing
 
-If Ralph runs forever:
+If Hats runs forever:
 
 1. Check your prompt has clear completion criteria
 2. Ensure `LOOP_COMPLETE` can be reasonably output
@@ -210,7 +210,7 @@ If Ralph runs forever:
 
 ```bash
 # Explicitly specify backend
-ralph run --backend kiro
+hats run --backend kiro
 ```
 
 ### Agent Errors

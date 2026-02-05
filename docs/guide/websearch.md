@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ralph Orchestrator now includes full WebSearch support for the Claude adapter, enabling Claude to search the web for current information, research topics, and access data beyond its knowledge cutoff.
+Hats now includes full WebSearch support for the Claude adapter, enabling Claude to search the web for current information, research topics, and access data beyond its knowledge cutoff.
 
 ## Features
 
@@ -25,16 +25,16 @@ You can explicitly control WebSearch in several ways:
 
 #### 1. Via CLI (Automatic)
 
-When using Ralph with Claude, WebSearch is automatically enabled:
+When using Hats with Claude, WebSearch is automatically enabled:
 
 ```bash
-ralph -a claude  # WebSearch is enabled by default
+hats -a claude  # WebSearch is enabled by default
 ```
 
 #### 2. Via Adapter Configuration
 
 ```python
-from src.ralph_orchestrator.adapters.claude import ClaudeAdapter
+from src.hats_orchestrator.adapters.claude import ClaudeAdapter
 
 # Create adapter with WebSearch enabled (default)
 adapter = ClaudeAdapter()
@@ -47,9 +47,9 @@ adapter.configure(enable_web_search=False)
 #### 3. Via Orchestrator
 
 ```python
-from src.ralph_orchestrator.orchestrator import RalphOrchestrator
+from src.hats_orchestrator.orchestrator import HatsOrchestrator
 
-orchestrator = RalphOrchestrator(
+orchestrator = HatsOrchestrator(
     prompt_file="TASK.md",
     primary_tool="claude"
 )
@@ -197,9 +197,9 @@ else:
     adapter.configure(enable_web_search=False)
 ```
 
-## Integration with Ralph Workflows
+## Integration with Hats Workflows
 
-WebSearch enhances Ralph's capabilities in various workflows:
+WebSearch enhances Hats's capabilities in various workflows:
 
 1. **Documentation Generation**: Research and create up-to-date documentation
 2. **Dependency Updates**: Find latest versions and migration guides

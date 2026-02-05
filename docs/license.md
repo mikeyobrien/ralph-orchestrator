@@ -2,7 +2,7 @@
 
 ## MIT License
 
-Copyright (c) 2025 Ralph Orchestrator Contributors
+Copyright (c) 2025 Hats Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,11 +26,11 @@ SOFTWARE.
 
 ## Attribution
 
-Ralph Orchestrator is based on the Ralph Wiggum technique created by [Geoffrey Huntley](https://ghuntley.com/ralph/). The original concept and technique are used with permission and gratitude.
+Hats is based on the Hats Wiggum technique created by [Geoffrey Huntley](https://ghuntley.com/hats/). The original concept and technique are used with permission and gratitude.
 
 ## Third-Party Licenses
 
-Ralph Orchestrator uses the following open-source libraries:
+Hats uses the following open-source libraries:
 
 ### Python Standard Library
 - **License**: Python Software Foundation License
@@ -82,7 +82,7 @@ Ralph Orchestrator uses the following open-source libraries:
 
 ## AI Agent CLIs
 
-Ralph Orchestrator integrates with the following AI agent CLI tools, which have their own licenses:
+Hats integrates with the following AI agent CLI tools, which have their own licenses:
 
 ### Claude CLI
 - **Provider**: Anthropic
@@ -101,7 +101,7 @@ Ralph Orchestrator integrates with the following AI agent CLI tools, which have 
 
 ## Documentation License
 
-The Ralph Orchestrator documentation is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+The Hats documentation is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
 
 You are free to:
 - **Share** — copy and redistribute the material in any medium or format
@@ -112,15 +112,15 @@ Under the following terms:
 
 ## Contributing
 
-By contributing to Ralph Orchestrator, you agree that your contributions will be licensed under the MIT License.
+By contributing to Hats, you agree that your contributions will be licensed under the MIT License.
 
 ## Patent Notice
 
-This software is provided "as is" without any patent licenses or grants. Users are responsible for ensuring their use of Ralph Orchestrator does not infringe on any patents.
+This software is provided "as is" without any patent licenses or grants. Users are responsible for ensuring their use of Hats does not infringe on any patents.
 
 ## Trademark Notice
 
-The name "Ralph Orchestrator" and the Ralph Wiggum technique are not registered trademarks. The Simpsons and Ralph Wiggum are trademarks of their respective owners and are referenced here for descriptive purposes only.
+The name "Hats" and the Hats Wiggum technique are not registered trademarks. The Simpsons and Hats Wiggum are trademarks of their respective owners and are referenced here for descriptive purposes only.
 
 ## Export Compliance
 
@@ -128,7 +128,7 @@ This software may be subject to export control laws and regulations. Users are r
 
 ## Disclaimer
 
-The authors and contributors of Ralph Orchestrator:
+The authors and contributors of Hats:
 - Make no warranties about the suitability of this software for any purpose
 - Are not responsible for any damages or losses arising from the use of this software
 - Do not provide any guarantee of support or maintenance
@@ -136,7 +136,7 @@ The authors and contributors of Ralph Orchestrator:
 ## Questions
 
 For licensing questions, please:
-- Open an issue on [GitHub](https://github.com/mikeyobrien/ralph-orchestrator/issues)
+- Open an issue on [GitHub](https://github.com/mikeyobrien/hats/issues)
 - Contact the maintainers through GitHub discussions
 
 ## Summary

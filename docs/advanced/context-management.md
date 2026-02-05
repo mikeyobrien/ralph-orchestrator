@@ -2,7 +2,7 @@
 
 ## Overview
 
-Managing context windows effectively is crucial for Ralph Orchestrator's success. AI agents have limited context windows, and exceeding them can cause failures or degraded performance.
+Managing context windows effectively is crucial for Hats's success. AI agents have limited context windows, and exceeding them can cause failures or degraded performance.
 
 ## Context Window Limits
 

@@ -1,6 +1,6 @@
 # Development Setup
 
-Set up your environment for Ralph development.
+Set up your environment for Hats development.
 
 ## Prerequisites
 
@@ -19,8 +19,8 @@ Set up your environment for Ralph development.
 
 ```bash
 # Clone
-git clone https://github.com/mikeyobrien/ralph-orchestrator.git
-cd ralph-orchestrator
+git clone https://github.com/mikeyobrien/hats.git
+cd hats
 
 # Build
 cargo build
@@ -47,7 +47,7 @@ This installs pre-commit hooks that run:
 cargo test
 
 # Run smoke tests
-cargo test -p ralph-core smoke_runner
+cargo test -p hats-core smoke_runner
 
 # Check formatting
 cargo fmt --check
@@ -59,15 +59,15 @@ cargo clippy --all-targets --all-features
 ## Project Structure
 
 ```
-ralph-orchestrator/
+hats/
 ├── crates/                    # Cargo workspace crates
-│   ├── ralph-proto/           # Protocol types
-│   ├── ralph-core/            # Orchestration engine
-│   ├── ralph-adapters/        # CLI backends
-│   ├── ralph-tui/             # Terminal UI
-│   ├── ralph-cli/             # Binary entry point
-│   ├── ralph-e2e/             # E2E testing
-│   └── ralph-bench/           # Benchmarking
+│   ├── hats-proto/           # Protocol types
+│   ├── hats-core/            # Orchestration engine
+│   ├── hats-adapters/        # CLI backends
+│   ├── hats-tui/             # Terminal UI
+│   ├── hats-cli/             # Binary entry point
+│   ├── hats-e2e/             # E2E testing
+│   └── hats-bench/           # Benchmarking
 ├── presets/                   # Hat collection presets
 ├── specs/                     # Development specs
 ├── tasks/                     # Code tasks
@@ -117,17 +117,17 @@ git push origin feature/my-feature
 # Open PR on GitHub
 ```
 
-## Running Ralph Locally
+## Running Hats Locally
 
 ```bash
 # From source
-cargo run --bin ralph -- run -p "test prompt"
+cargo run --bin hats -- run -p "test prompt"
 
 # With release build
-cargo run --release --bin ralph -- run -p "test prompt"
+cargo run --release --bin hats -- run -p "test prompt"
 
 # Direct binary
-./target/release/ralph run -p "test prompt"
+./target/release/hats run -p "test prompt"
 ```
 
 ## Testing with Fixtures
@@ -136,10 +136,10 @@ Smoke tests use JSONL fixtures:
 
 ```bash
 # Run smoke tests
-cargo test -p ralph-core smoke_runner
+cargo test -p hats-core smoke_runner
 
 # Record a new fixture
-cargo run --bin ralph -- run --record-session fixture.jsonl -p "your prompt"
+cargo run --bin hats -- run --record-session fixture.jsonl -p "your prompt"
 ```
 
 ## E2E Testing
@@ -148,10 +148,10 @@ Requires a live AI backend:
 
 ```bash
 # Run E2E tests
-cargo run -p ralph-e2e -- claude
+cargo run -p hats-e2e -- claude
 
 # Debug mode
-cargo run -p ralph-e2e -- claude --keep-workspace --verbose
+cargo run -p hats-e2e -- claude --keep-workspace --verbose
 ```
 
 ## Debugging
@@ -159,13 +159,13 @@ cargo run -p ralph-e2e -- claude --keep-workspace --verbose
 ### Enable Diagnostics
 
 ```bash
-RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- run -p "test"
+HATS_DIAGNOSTICS=1 cargo run --bin hats -- run -p "test"
 ```
 
 ### Debug Logging
 
 ```bash
-RUST_LOG=debug cargo run --bin ralph -- run -p "test"
+RUST_LOG=debug cargo run --bin hats -- run -p "test"
 ```
 
 ### GDB/LLDB
@@ -175,7 +175,7 @@ RUST_LOG=debug cargo run --bin ralph -- run -p "test"
 cargo build
 
 # Debug
-lldb ./target/debug/ralph -- run -p "test"
+lldb ./target/debug/hats -- run -p "test"
 ```
 
 ## IDE Setup

@@ -2,33 +2,33 @@
 
 ## Summary
 
-Pi has a simpler permission model than Claude CLI. In print mode (`-p`), all tools are auto-approved. The key flags for Ralph integration are `-p`, `--mode json`, `--no-session`, and the optional `--provider`/`--model`/`--thinking` flags.
+Pi has a simpler permission model than Claude CLI. In print mode (`-p`), all tools are auto-approved. The key flags for Hats integration are `-p`, `--mode json`, `--no-session`, and the optional `--provider`/`--model`/`--thinking` flags.
 
-## Pi CLI Flags (Ralph-relevant)
+## Pi CLI Flags (Hats-relevant)
 
 ### Execution Mode
-| Flag | Purpose | Ralph usage |
+| Flag | Purpose | Hats usage |
 |------|---------|-------------|
 | `-p, --print` | Non-interactive headless mode | **Required** for `pi()` headless backend |
 | `--mode json` | NDJSON event stream output | **Required** for structured streaming |
 | `--mode text` | Plain text output (default) | Fallback if JSON parsing fails |
-| `--no-session` | Disable session persistence | **Required** — Ralph manages its own state |
+| `--no-session` | Disable session persistence | **Required** — Hats manages its own state |
 
 ### Model Configuration
-| Flag | Purpose | Ralph usage |
+| Flag | Purpose | Hats usage |
 |------|---------|-------------|
 | `--provider <name>` | LLM provider | Optional, configurable per hat |
 | `--model <id>` | Model ID | Optional, configurable per hat |
 | `--thinking <level>` | Reasoning level (off/minimal/low/medium/high/xhigh) | Optional, configurable per hat |
 
 ### Tool Control
-| Flag | Purpose | Ralph usage |
+| Flag | Purpose | Hats usage |
 |------|---------|-------------|
 | `--tools <list>` | Restrict available tools (read,bash,edit,write,grep,find,ls) | Optional, for restricted hats |
 | `--no-tools` | Disable all tools | Unlikely to use |
 
 ### Extension/Skill Control
-| Flag | Purpose | Ralph usage |
+| Flag | Purpose | Hats usage |
 |------|---------|-------------|
 | `-e, --extension <path>` | Load specific extension | Optional, advanced config |
 | `--no-extensions` | Disable extension discovery | Optional, for clean runs |
@@ -37,11 +37,11 @@ Pi has a simpler permission model than Claude CLI. In print mode (`-p`), all too
 | `--no-prompt-templates` | Disable prompt template discovery | Optional |
 
 ### Context
-| Flag | Purpose | Ralph usage |
+| Flag | Purpose | Hats usage |
 |------|---------|-------------|
 | `--system-prompt <text>` | Override system prompt | Could be used by hat system |
 | `--append-system-prompt <text>` | Append to system prompt | Better for hat-specific additions |
-| `-c, --continue` | Continue previous session | Not for Ralph (uses --no-session) |
+| `-c, --continue` | Continue previous session | Not for Hats (uses --no-session) |
 
 ## Permission Model
 
@@ -50,7 +50,7 @@ Pi does NOT have a `--dangerously-skip-permissions` flag because:
 - There's no interactive approval flow in headless mode
 - Extensions can add approval gates, but these are opt-in
 
-This means Ralph's pi backend needs fewer flags than the Claude backend.
+This means Hats's pi backend needs fewer flags than the Claude backend.
 
 ## Headless Pi Backend Command
 
@@ -70,7 +70,7 @@ pi -p --mode json --no-session \
 
 ## Interactive Pi Backend Command
 
-For `ralph plan` (interactive mode):
+For `hats plan` (interactive mode):
 ```bash
 pi --no-session "initial prompt text"
 ```
@@ -79,10 +79,10 @@ No `-p` flag, no `--mode json` — runs pi's TUI with the initial prompt.
 
 ## Large Prompt Handling
 
-Claude CLI has a 7000-char prompt limit that Ralph works around with temp files. Pi doesn't appear to have this limitation (prompts are passed via args or stdin). However, the OS `ARG_MAX` limit still applies. For very large prompts, Ralph should use the same temp file strategy:
+Claude CLI has a 7000-char prompt limit that Hats works around with temp files. Pi doesn't appear to have this limitation (prompts are passed via args or stdin). However, the OS `ARG_MAX` limit still applies. For very large prompts, Hats should use the same temp file strategy:
 
 ```bash
-pi -p --mode json --no-session "Please read and execute the task in /tmp/ralph-prompt-xxx"
+pi -p --mode json --no-session "Please read and execute the task in /tmp/hats-prompt-xxx"
 ```
 
 ## Pi Detection
@@ -95,7 +95,7 @@ Detection command: `pi --version` — outputs version string and exits 0.
 
 ## DisallowedTools Equivalent
 
-Claude backend uses `--disallowedTools=TodoWrite,TaskCreate,...` to prevent the agent from using Claude's built-in task management (which conflicts with Ralph's task system). 
+Claude backend uses `--disallowedTools=TodoWrite,TaskCreate,...` to prevent the agent from using Claude's built-in task management (which conflicts with Hats's task system). 
 
 Pi doesn't have TodoWrite/TaskCreate tools. Its built-in tools are: read, bash, edit, write, grep, find, ls. No equivalent restriction is needed.
 

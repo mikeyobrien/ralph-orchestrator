@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Ralph Orchestrator will be documented in this file.
+All notable changes to Hats will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -23,22 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI Autoscroll**: Content now autoscrolls to keep latest output visible
 - **TUI Artifacts**: Fixed viewport buffer clearing to prevent visual artifacts when switching iterations
 - **Markdown Boundaries**: Preserved line boundaries when rendering markdown content
-- **Backend Support**: Added `opencode` and `copilot` to valid backends for `ralph init` (#75, #77)
+- **Backend Support**: Added `opencode` and `copilot` to valid backends for `hats init` (#75, #77)
 - **Interrupt Handling**: Fixed Ctrl+C race condition where process continued executing after interrupt (#76)
 
 ## [2.0.0] - 2026-01-14
 
 ### Added
 
-- **Hatless Ralph Architecture**: Ralph is now a constant coordinator with optional hats
-  - Solo mode: Ralph handles all events (no hats configured)
-  - Multi-hat mode: Ralph orchestrates multiple specialized hats
+- **Hatless Hats Architecture**: Hats is now a constant coordinator with optional hats
+  - Solo mode: Hats handles all events (no hats configured)
+  - Multi-hat mode: Hats orchestrates multiple specialized hats
   - Per-hat backend configuration (each hat can use different AI agent)
   - Default publishes: Hats can specify fallback events
-- **JSONL Event Format**: Events written to `.ralph/events-YYYYMMDD-HHMMSS.jsonl` instead of XML in output
+- **JSONL Event Format**: Events written to `.hats/events-YYYYMMDD-HHMMSS.jsonl` instead of XML in output
   - Each run creates unique timestamped events file for isolation
   - Structured event format: `{"topic":"...", "payload":"...", "ts":"..."}`
-  - `ralph emit` command for safe event emission
+  - `hats emit` command for safe event emission
   - EventReader for reading new events since last read
   - Backward compatible with existing event topics
 - **Interactive TUI Mode**: Full-screen terminal UI for agent interaction
@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Scroll mode with navigation (j/k/arrows/Page Up/Down/g/G)
   - Search in scroll mode (/ and ? for forward/backward, n/N for next/prev)
   - Iteration boundary handling (screen clears between iterations)
-  - Configurable prefix key in ralph.yml
+  - Configurable prefix key in hats.yml
 - **Mock Backend Testing**: Deterministic E2E testing with scripted responses
   - MockBackend for testing without real AI agents
   - Scenario YAML format for test cases
@@ -55,14 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING**: No default hats - empty config = solo Ralph mode
+- **BREAKING**: No default hats - empty config = solo Hats mode
 - **BREAKING**: Planner hat removed from all presets
-- **BREAKING**: Events must be written to `.ralph/` directory (XML format deprecated)
+- **BREAKING**: Events must be written to `.hats/` directory (XML format deprecated)
 - **BREAKING**: HatRegistry no longer creates default planner/builder hats
 - CLI flag `--tui` launches TUI mode for visual observation
 - TUI mode provides scroll and search navigation while removing execution controls (pause, skip, abort)
 - HatConfig now includes `backend` and `default_publishes` fields
-- InstructionBuilder adds `build_hatless_ralph()` for new prompt format
+- InstructionBuilder adds `build_hatless()` for new prompt format
 - EventLoop uses EventReader instead of EventParser
 
 ### Removed
@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 
-See [Migration Guide](../migration/v2-hatless-ralph.md) for upgrading from v1.x.
+See [Migration Guide](../migration/v2-hatless-hats.md) for upgrading from v1.x.
 
 ## [1.2.3] - 2026-01-12
 
@@ -126,8 +126,8 @@ See [Migration Guide](../migration/v2-hatless-ralph.md) for upgrading from v1.x.
   - Session management and streaming updates
   - Agent scratchpad mechanism for context persistence across iterations
 - New CLI options: `--acp-agent`, `--acp-permission-mode`
-- ACP configuration support in `ralph.yml` under `adapters.acp`
-- Environment variable overrides: `RALPH_ACP_AGENT`, `RALPH_ACP_PERMISSION_MODE`, `RALPH_ACP_TIMEOUT`
+- ACP configuration support in `hats.yml` under `adapters.acp`
+- Environment variable overrides: `HATS_ACP_AGENT`, `HATS_ACP_PERMISSION_MODE`, `HATS_ACP_TIMEOUT`
 - 305+ new ACP-specific tests
 
 ### Changed
@@ -278,7 +278,7 @@ See [Migration Guide](../migration/v2-hatless-ralph.md) for upgrading from v1.x.
 
 - Initial alpha release
 - Proof of concept implementation
-- Basic Ralph loop
+- Basic Hats loop
 - Manual testing only
 
 ---
@@ -322,11 +322,11 @@ Features marked for deprecation will:
    - Old: `agent_name` → New: `agent`
 
 2. **API Changes**
-   - `RalphOrchestrator.execute()` → `RalphOrchestrator.run()`
+   - `HatsOrchestrator.execute()` → `HatsOrchestrator.run()`
    - Return format changed from tuple to dictionary
 
 3. **File Structure**
-   - State files moved from `.ralph/` to `.agent/metrics/`
+   - State files moved from `.hats/` to `.agent/metrics/`
    - Checkpoint format updated
 
 ### Migration Script
@@ -336,25 +336,25 @@ Features marked for deprecation will:
 # Migrate from 0.x to 1.0
 
 # Backup old data
-cp -r .ralph .ralph.backup
+cp -r .hats .hats.backup
 
 # Create new structure
 mkdir -p .agent/metrics .agent/prompts .agent/checkpoints
 
 # Migrate state files
-mv .ralph/*.json .agent/metrics/ 2>/dev/null
+mv .hats/*.json .agent/metrics/ 2>/dev/null
 
 # Update configuration
-if [ -f "ralph.conf" ]; then
+if [ -f "hats.conf" ]; then
     python -c "
 import json
-with open('ralph.conf') as f:
+with open('hats.conf') as f:
     old_config = json.load(f)
 # Update keys
 old_config['max_iterations'] = old_config.pop('max_iter', 100)
 old_config['agent'] = old_config.pop('agent_name', 'auto')
 # Save new config
-with open('ralph.json', 'w') as f:
+with open('hats.json', 'w') as f:
     json.dump(old_config, f, indent=2)
 "
 fi
@@ -405,9 +405,9 @@ twine upload dist/*
 
 ## Contributors
 
-Thanks to all contributors who have helped improve Ralph Orchestrator:
+Thanks to all contributors who have helped improve Hats:
 
-- Geoffrey Huntley (@ghuntley) - Original Ralph Wiggum technique
+- Geoffrey Huntley (@ghuntley) - Original Hats Wiggum technique
 - Community contributors via GitHub
 
 ## How to Contribute
@@ -421,7 +421,7 @@ See [CONTRIBUTING.md](../contributing.md) for details on:
 
 ## Links
 
-- [GitHub Repository](https://github.com/mikeyobrien/ralph-orchestrator)
-- [Issue Tracker](https://github.com/mikeyobrien/ralph-orchestrator/issues)
-- [Discussions](https://github.com/mikeyobrien/ralph-orchestrator/discussions)
-- [Documentation](https://mikeyobrien.github.io/ralph-orchestrator/)
+- [GitHub Repository](https://github.com/mikeyobrien/hats)
+- [Issue Tracker](https://github.com/mikeyobrien/hats/issues)
+- [Discussions](https://github.com/mikeyobrien/hats/discussions)
+- [Documentation](https://mikeyobrien.github.io/hats/)

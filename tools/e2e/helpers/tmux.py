@@ -115,7 +115,7 @@ class TmuxSession:
         start = time.time()
         while (time.time() - start) < timeout:
             content = await self.capture_pane(preserve_ansi=False)
-            # Look for TUI patterns that indicate Ralph TUI is running
+            # Look for TUI patterns that indicate Hats TUI is running
             # - [iter N/M] - iteration counter in header
             # - [LIVE] or [REVIEW] - mode indicator
             # - Content that's clearly TUI output (not shell prompt)

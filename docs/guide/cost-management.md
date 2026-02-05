@@ -34,10 +34,10 @@ Set maximum spending caps:
 
 ```bash
 # Strict $10 limit
-python ralph_orchestrator.py --max-cost 10.0
+python hats_orchestrator.py --max-cost 10.0
 
 # Conservative token limit
-python ralph_orchestrator.py --max-tokens 100000
+python hats_orchestrator.py --max-tokens 100000
 ```
 
 ### 2. Context Management
@@ -46,7 +46,7 @@ Reduce token usage through smart context handling:
 
 ```bash
 # Aggressive context management
-python ralph_orchestrator.py \
+python hats_orchestrator.py \
   --context-window 50000 \
   --context-threshold 0.6  # Summarize at 60% full
 ```
@@ -57,10 +57,10 @@ Choose cost-effective agents:
 
 ```bash
 # Development: Use cheaper agents
-python ralph_orchestrator.py --agent q --max-cost 5.0
+python hats_orchestrator.py --agent q --max-cost 5.0
 
 # Production: Use quality agents with limits
-python ralph_orchestrator.py --agent claude --max-cost 50.0
+python hats_orchestrator.py --agent claude --max-cost 50.0
 ```
 
 ## Optimization Strategies
@@ -72,15 +72,15 @@ Use different agents for different task phases:
 ```bash
 # Phase 1: Research with Q (cheap)
 echo "Research the problem" > research.md
-python ralph_orchestrator.py --agent q --prompt research.md --max-cost 2.0
+python hats_orchestrator.py --agent q --prompt research.md --max-cost 2.0
 
 # Phase 2: Implementation with Claude (quality)
 echo "Implement the solution" > implement.md
-python ralph_orchestrator.py --agent claude --prompt implement.md --max-cost 20.0
+python hats_orchestrator.py --agent claude --prompt implement.md --max-cost 20.0
 
 # Phase 3: Testing with Q (cheap)
 echo "Test the solution" > test.md
-python ralph_orchestrator.py --agent q --prompt test.md --max-cost 2.0
+python hats_orchestrator.py --agent q --prompt test.md --max-cost 2.0
 ```
 
 ### 2. Prompt Optimization
@@ -114,7 +114,7 @@ See spec.md for details.
 
 ```bash
 # Trigger summarization early to save tokens
-python ralph_orchestrator.py \
+python hats_orchestrator.py \
   --context-window 100000 \
   --context-threshold 0.5  # Summarize at 50%
 ```
@@ -135,10 +135,10 @@ Fewer, smarter iterations save money:
 
 ```bash
 # Many quick iterations (expensive)
-python ralph_orchestrator.py --max-iterations 100  # ❌
+python hats_orchestrator.py --max-iterations 100  # ❌
 
 # Fewer, focused iterations (economical)
-python ralph_orchestrator.py --max-iterations 20   # ✅
+python hats_orchestrator.py --max-iterations 20   # ✅
 ```
 
 ## Cost Monitoring
@@ -149,7 +149,7 @@ Monitor costs during execution:
 
 ```bash
 # Verbose cost reporting
-python ralph_orchestrator.py \
+python hats_orchestrator.py \
   --verbose \
   --metrics-interval 1
 ```
@@ -201,7 +201,7 @@ for metric_file in sorted(Path('.agent/metrics').glob('*.json')):
 plt.plot(iterations, costs)
 plt.xlabel('Iteration')
 plt.ylabel('Cumulative Cost ($)')
-plt.title('Ralph Orchestrator Cost Progression')
+plt.title('Hats Cost Progression')
 plt.savefig('cost_report.png')
 ```
 
@@ -237,7 +237,7 @@ print(f"Recommended monthly budget: ${monthly_budget}")
 Maximum savings, acceptable quality:
 
 ```bash
-python ralph_orchestrator.py \
+python hats_orchestrator.py \
   --agent q \
   --max-tokens 50000 \
   --max-cost 2.0 \
@@ -251,7 +251,7 @@ python ralph_orchestrator.py \
 Good quality, reasonable cost:
 
 ```bash
-python ralph_orchestrator.py \
+python hats_orchestrator.py \
   --agent gemini \
   --max-tokens 200000 \
   --max-cost 10.0 \
@@ -265,7 +265,7 @@ python ralph_orchestrator.py \
 Best results, controlled spending:
 
 ```bash
-python ralph_orchestrator.py \
+python hats_orchestrator.py \
   --agent claude \
   --max-tokens 500000 \
   --max-cost 50.0 \
@@ -308,14 +308,14 @@ Combine multiple small tasks:
 
 ```bash
 # Inefficient: Multiple orchestrations
-python ralph_orchestrator.py --prompt task1.md  # $5
-python ralph_orchestrator.py --prompt task2.md  # $5
-python ralph_orchestrator.py --prompt task3.md  # $5
+python hats_orchestrator.py --prompt task1.md  # $5
+python hats_orchestrator.py --prompt task2.md  # $5
+python hats_orchestrator.py --prompt task3.md  # $5
 # Total: $15
 
 # Efficient: Batched orchestration
 cat task1.md task2.md task3.md > batch.md
-python ralph_orchestrator.py --prompt batch.md  # $10
+python hats_orchestrator.py --prompt batch.md  # $10
 # Total: $10 (33% savings)
 ```
 
@@ -335,7 +335,7 @@ with open('.agent/metrics/state_latest.json') as f:
 ")
 
 if (( $(echo "$CURRENT_COST > $COST_LIMIT" | bc -l) )); then
-    echo "ALERT: Cost exceeded $COST_LIMIT" | mail -s "Ralph Cost Alert" admin@example.com
+    echo "ALERT: Cost exceeded $COST_LIMIT" | mail -s "Hats Cost Alert" admin@example.com
 fi
 ```
 
@@ -391,10 +391,10 @@ Test with minimal budgets first:
 
 ```bash
 # Test run
-python ralph_orchestrator.py --max-cost 1.0 --max-iterations 5
+python hats_orchestrator.py --max-cost 1.0 --max-iterations 5
 
 # Scale up if successful
-python ralph_orchestrator.py --max-cost 10.0 --max-iterations 50
+python hats_orchestrator.py --max-cost 10.0 --max-iterations 50
 ```
 
 ### 2. Monitor Continuously
@@ -403,7 +403,7 @@ Track costs in real-time:
 
 ```bash
 # Terminal 1: Run orchestration
-python ralph_orchestrator.py --verbose
+python hats_orchestrator.py --verbose
 
 # Terminal 2: Monitor costs
 watch -n 5 'tail -n 20 .agent/metrics/state_latest.json'
@@ -428,7 +428,7 @@ Keep records for analysis:
 
 ```bash
 # Save cost report after each run
-python ralph_orchestrator.py && \
+python hats_orchestrator.py && \
   cp .agent/metrics/state_latest.json "reports/run_$(date +%Y%m%d_%H%M%S).json"
 ```
 

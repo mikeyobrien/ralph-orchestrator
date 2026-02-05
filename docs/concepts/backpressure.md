@@ -1,6 +1,6 @@
 # Backpressure
 
-Backpressure is Ralph's mechanism for enforcing quality gates. Instead of prescribing how to do something, you define gates that reject incomplete work.
+Backpressure is Hats's mechanism for enforcing quality gates. Instead of prescribing how to do something, you define gates that reject incomplete work.
 
 ## The Concept
 
@@ -49,7 +49,7 @@ hats:
 
       Include evidence in your event:
       ```
-      ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: pass (82%)"
+      hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: pass (82%)"
       ```
 ```
 
@@ -59,10 +59,10 @@ Events carry evidence of backpressure satisfaction:
 
 ```bash
 # Good: Evidence included
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: pass (82%)"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass, mutants: pass (82%)"
 
 # Bad: No evidence
-ralph emit "build.done" "I think it works"
+hats emit "build.done" "I think it works"
 ```
 
 ### Verification by Other Hats
@@ -80,9 +80,9 @@ hats:
       3. Reject if backpressure not satisfied
 
       If verified:
-        ralph emit "review.approved" "evidence verified"
+        hats emit "review.approved" "evidence verified"
       If not:
-        ralph emit "review.rejected" "tests actually failing"
+        hats emit "review.rejected" "tests actually failing"
 ```
 
 ## Types of Backpressure
@@ -194,7 +194,7 @@ Everything must pass:
 
 ```bash
 cargo test && cargo clippy && cargo fmt --check && \
-  ralph emit "build.done" "all checks pass"
+  hats emit "build.done" "all checks pass"
 ```
 
 ### Gradual Gates
@@ -219,7 +219,7 @@ instructions: |
 
   Exception: If a test is flaky (fails intermittently),
   document it and proceed. Add a memory:
-  ralph tools memory add "Flaky test: test_network_timeout" -t fix
+  hats tools memory add "Flaky test: test_network_timeout" -t fix
 ```
 
 ## Anti-Patterns
@@ -236,7 +236,7 @@ instructions: |
 
 ```yaml
 # Bad: Evidence not verified
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"  # Didn't actually run tests
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"  # Didn't actually run tests
 ```
 
 ### Too Many Gates

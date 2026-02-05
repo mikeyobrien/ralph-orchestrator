@@ -5,7 +5,7 @@
 
 ## Overview
 
-Custom hats allow you to extend Ralph's orchestration capabilities by defining specialized behavioral modes for AI agents.
+Custom hats allow you to extend Hats's orchestration capabilities by defining specialized behavioral modes for AI agents.
 
 ## Quick Start
 

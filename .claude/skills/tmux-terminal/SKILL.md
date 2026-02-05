@@ -8,11 +8,11 @@ hats: [developer, qa_tester]
 
 ## Overview
 
-Use tmux to drive interactive terminal sessions, including TUI workflows like `ralph-tui`. tmux lets you send keystrokes, capture screen output, and keep processes running between steps.
+Use tmux to drive interactive terminal sessions, including TUI workflows like `hats-tui`. tmux lets you send keystrokes, capture screen output, and keep processes running between steps.
 
 ## When to Use
 
-- Testing `ralph-tui` or any interactive CLI prompts
+- Testing `hats-tui` or any interactive CLI prompts
 - Managing long-running processes (web server, loops, watch mode)
 - Capturing live terminal output for QA reports
 - Interacting with applications that redraw the screen
@@ -66,21 +66,21 @@ tmux send-keys -t <name> C-c
 
 ## TUI Interaction Patterns
 
-### Start ralph-tui
+### Start hats-tui
 ```bash
-tmux new-session -d -s ralph-tui
-tmux send-keys -t ralph-tui "cargo run -p ralph-tui" Enter
+tmux new-session -d -s hats-tui
+tmux send-keys -t hats-tui "cargo run -p hats-tui" Enter
 ```
 
 ### Navigate in TUI
 ```bash
-tmux send-keys -t ralph-tui Down
-tmux send-keys -t ralph-tui Enter
+tmux send-keys -t hats-tui Down
+tmux send-keys -t hats-tui Enter
 ```
 
 ### Capture and parse the screen
 ```bash
-tmux capture-pane -t ralph-tui -p -S -200
+tmux capture-pane -t hats-tui -p -S -200
 ```
 
 Use `-S -200` to capture the last 200 lines when the screen is noisy.
@@ -93,11 +93,11 @@ Use `-S -200` to capture the last 200 lines when the screen is noisy.
 
 Example:
 ```bash
-tmux new-session -d -s ralph-web
-tmux send-keys -t ralph-web "cargo run -p ralph-cli -- web" Enter
-tmux capture-pane -t ralph-web -p | rg -n "listening|ready"
-tmux send-keys -t ralph-web C-c
-tmux kill-session -t ralph-web
+tmux new-session -d -s hats-web
+tmux send-keys -t hats-web "cargo run -p hats-cli -- web" Enter
+tmux capture-pane -t hats-web -p | rg -n "listening|ready"
+tmux send-keys -t hats-web C-c
+tmux kill-session -t hats-web
 ```
 
 ## Notes

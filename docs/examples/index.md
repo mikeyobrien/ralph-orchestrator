@@ -1,6 +1,6 @@
 # Examples
 
-Practical examples showing Ralph in action.
+Practical examples showing Hats in action.
 
 ## In This Section
 
@@ -10,7 +10,7 @@ Practical examples showing Ralph in action.
 | [TDD Workflow](tdd-workflow.md) | Test-driven development with hats |
 | [Spec-Driven Development](spec-driven.md) | Specification-first approach |
 | [Multi-Hat Workflow](multi-hat.md) | Complex coordination between hats |
-| [Debugging](debugging.md) | Using Ralph to investigate bugs |
+| [Debugging](debugging.md) | Using Hats to investigate bugs |
 
 ## Quick Examples
 
@@ -19,14 +19,14 @@ Practical examples showing Ralph in action.
 Simple loop until completion:
 
 ```bash
-ralph init --backend claude
+hats init --backend claude
 
 cat > PROMPT.md << 'EOF'
 Write a function that calculates factorial.
 Include tests.
 EOF
 
-ralph run
+hats run
 ```
 
 ### Hat-Based Mode
@@ -34,7 +34,7 @@ ralph run
 Using the TDD preset:
 
 ```bash
-ralph init --preset tdd-red-green
+hats init --preset tdd-red-green
 
 cat > PROMPT.md << 'EOF'
 Implement a URL validator function.
@@ -45,7 +45,7 @@ Must handle:
 - Port numbers
 EOF
 
-ralph run
+hats run
 ```
 
 ### Inline Prompts
@@ -53,7 +53,7 @@ ralph run
 Skip the prompt file:
 
 ```bash
-ralph run -p "Add input validation to the signup form"
+hats run -p "Add input validation to the signup form"
 ```
 
 ### Custom Configuration
@@ -61,7 +61,7 @@ ralph run -p "Add input validation to the signup form"
 Override defaults:
 
 ```bash
-ralph run --max-iterations 50 -p "Refactor the authentication module"
+hats run --max-iterations 50 -p "Refactor the authentication module"
 ```
 
 ## Example Workflows
@@ -70,7 +70,7 @@ ralph run --max-iterations 50 -p "Refactor the authentication module"
 
 ```bash
 # Initialize with feature preset
-ralph init --preset feature
+hats init --preset feature
 
 # Create detailed prompt
 cat > PROMPT.md << 'EOF'
@@ -85,28 +85,28 @@ Use React components.
 Follow existing UI patterns.
 EOF
 
-# Run Ralph
-ralph run
+# Run Hats
+hats run
 ```
 
 ### Bug Investigation
 
 ```bash
 # Initialize with debug preset
-ralph init --preset debug
+hats init --preset debug
 
 # Describe the bug
-ralph run -p "Users report login fails on Safari. Error: 'Invalid token'. Investigate and fix."
+hats run -p "Users report login fails on Safari. Error: 'Invalid token'. Investigate and fix."
 ```
 
 ### Code Review
 
 ```bash
 # Initialize with review preset
-ralph init --preset review
+hats init --preset review
 
 # Review specific files
-ralph run -p "Review the changes in src/api/auth.rs for security issues"
+hats run -p "Review the changes in src/api/auth.rs for security issues"
 ```
 
 ## Full Examples

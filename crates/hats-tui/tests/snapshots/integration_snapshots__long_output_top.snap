@@ -1,0 +1,14 @@
+---
+source: crates/hats-tui/tests/integration_snapshots.rs
+expression: harness.render_full()
+---
+[iter 1/1] [TIME] | — | [LIVE] | ? help
+────────────────────────────────────────────────────────────────────────────────
+HTTP Status line 1
+HTTP Status line 2
+HTTP Status line 3
+HTTP Status line 4
+HTTP Status line 5
+HTTP Status line 6
+────────────────────────────────────────────────────────────────────────────────
+ Total Time Elapsed: [TIME]                                            ■ DONE

@@ -1,12 +1,12 @@
 # Prompt Engineering Guide
 
-Effective prompt engineering is crucial for successful Ralph Orchestrator tasks. This guide covers best practices, patterns, and techniques for writing prompts that get results.
+Effective prompt engineering is crucial for successful Hats tasks. This guide covers best practices, patterns, and techniques for writing prompts that get results.
 
 ## Prompt File Basics
 
 ### File Format
 
-Ralph Orchestrator uses Markdown files for prompts:
+Hats uses Markdown files for prompts:
 
 ```markdown
 # Task Title
@@ -32,7 +32,7 @@ Default prompt file: `PROMPT.md`
 
 Custom location:
 ```bash
-python ralph_orchestrator.py --prompt path/to/task.md
+python hats_orchestrator.py --prompt path/to/task.md
 ```
 
 ## Prompt Structure
@@ -323,7 +323,7 @@ Expected Output:
 
 ## Iterative Prompts
 
-Ralph Orchestrator modifies the prompt file during execution. Design prompts that support iteration:
+Hats modifies the prompt file during execution. Design prompts that support iteration:
 
 ### Self-Documenting Progress
 
@@ -420,7 +420,7 @@ If you encounter errors:
 
 ### Sanitization
 
-Ralph Orchestrator automatically sanitizes prompts for:
+Hats automatically sanitizes prompts for:
 - Command injection attempts
 - Path traversal attacks
 - Malicious patterns
@@ -440,7 +440,7 @@ Default maximum prompt size: 10MB
 
 Adjust if needed:
 ```bash
-python ralph_orchestrator.py --max-prompt-size 20971520  # 20MB
+python hats_orchestrator.py --max-prompt-size 20971520  # 20MB
 ```
 
 ## Testing Prompts
@@ -450,7 +450,7 @@ python ralph_orchestrator.py --max-prompt-size 20971520  # 20MB
 Test prompts without execution:
 
 ```bash
-python ralph_orchestrator.py --dry-run --prompt test.md
+python hats_orchestrator.py --dry-run --prompt test.md
 ```
 
 ### Limited Iterations
@@ -458,7 +458,7 @@ python ralph_orchestrator.py --dry-run --prompt test.md
 Test with few iterations:
 
 ```bash
-python ralph_orchestrator.py --max-iterations 3 --prompt test.md
+python hats_orchestrator.py --max-iterations 3 --prompt test.md
 ```
 
 ### Verbose Mode
@@ -466,7 +466,7 @@ python ralph_orchestrator.py --max-iterations 3 --prompt test.md
 Debug prompt processing:
 
 ```bash
-python ralph_orchestrator.py --verbose --prompt test.md
+python hats_orchestrator.py --verbose --prompt test.md
 ```
 
 ## Common Pitfalls

@@ -1,6 +1,6 @@
 # Kubernetes Deployment Guide
 
-Deploy Ralph Orchestrator on Kubernetes for scalable, resilient AI orchestration.
+Deploy Hats on Kubernetes for scalable, resilient AI orchestration.
 
 ## Prerequisites
 
@@ -18,13 +18,13 @@ Create namespace and deploy:
 
 ```bash
 # Create namespace
-kubectl create namespace ralph-orchestrator
+kubectl create namespace hats
 
 # Apply manifests
-kubectl apply -f k8s/ -n ralph-orchestrator
+kubectl apply -f k8s/ -n hats
 
 # Check deployment
-kubectl get pods -n ralph-orchestrator
+kubectl get pods -n hats
 ```
 
 ## Kubernetes Manifests
@@ -36,21 +36,21 @@ kubectl get pods -n ralph-orchestrator
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ralph-orchestrator
+  name: hats
 ---
 # k8s/01-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ralph-config
-  namespace: ralph-orchestrator
+  name: hats-config
+  namespace: hats
 data:
-  RALPH_AGENT: "auto"
-  RALPH_MAX_ITERATIONS: "100"
-  RALPH_MAX_RUNTIME: "14400"
-  RALPH_CHECKPOINT_INTERVAL: "5"
-  RALPH_VERBOSE: "true"
-  RALPH_ENABLE_METRICS: "true"
+  HATS_AGENT: "auto"
+  HATS_MAX_ITERATIONS: "100"
+  HATS_MAX_RUNTIME: "14400"
+  HATS_CHECKPOINT_INTERVAL: "5"
+  HATS_VERBOSE: "true"
+  HATS_ENABLE_METRICS: "true"
 ```
 
 ### 2. Secrets Management
@@ -60,8 +60,8 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: ralph-secrets
-  namespace: ralph-orchestrator
+  name: hats-secrets
+  namespace: hats
 type: Opaque
 stringData:
   CLAUDE_API_KEY: "sk-ant-..."
@@ -73,11 +73,11 @@ Apply secrets from command line:
 
 ```bash
 # Create secret from literals
-kubectl create secret generic ralph-secrets \
+kubectl create secret generic hats-secrets \
   --from-literal=CLAUDE_API_KEY=$CLAUDE_API_KEY \
   --from-literal=GEMINI_API_KEY=$GEMINI_API_KEY \
   --from-literal=Q_API_KEY=$Q_API_KEY \
-  -n ralph-orchestrator
+  -n hats
 ```
 
 ### 3. Persistent Storage
@@ -87,8 +87,8 @@ kubectl create secret generic ralph-secrets \
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: ralph-workspace
-  namespace: ralph-orchestrator
+  name: hats-workspace
+  namespace: hats
 spec:
   accessModes:
     - ReadWriteOnce
@@ -100,8 +100,8 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: ralph-cache
-  namespace: ralph-orchestrator
+  name: hats-cache
+  namespace: hats
 spec:
   accessModes:
     - ReadWriteMany
@@ -118,30 +118,30 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ralph-orchestrator
-  namespace: ralph-orchestrator
+  name: hats
+  namespace: hats
   labels:
-    app: ralph-orchestrator
+    app: hats
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ralph-orchestrator
+      app: hats
   template:
     metadata:
       labels:
-        app: ralph-orchestrator
+        app: hats
     spec:
-      serviceAccountName: ralph-sa
+      serviceAccountName: hats-sa
       containers:
-      - name: ralph
-        image: ghcr.io/mikeyobrien/ralph-orchestrator:v1.0.0
+      - name: hats
+        image: ghcr.io/mikeyobrien/hats:v1.0.0
         imagePullPolicy: Always
         envFrom:
         - configMapRef:
-            name: ralph-config
+            name: hats-config
         - secretRef:
-            name: ralph-secrets
+            name: hats-secrets
         resources:
           requests:
             memory: "2Gi"
@@ -169,19 +169,19 @@ spec:
             command:
             - python
             - -c
-            - "import os; sys.exit(0 if os.path.exists('/app/ralph_orchestrator.py') else 1)"
+            - "import os; sys.exit(0 if os.path.exists('/app/hats_orchestrator.py') else 1)"
           initialDelaySeconds: 10
           periodSeconds: 10
       volumes:
       - name: workspace
         persistentVolumeClaim:
-          claimName: ralph-workspace
+          claimName: hats-workspace
       - name: cache
         persistentVolumeClaim:
-          claimName: ralph-cache
+          claimName: hats-cache
       - name: prompts
         configMap:
-          name: ralph-prompts
+          name: hats-prompts
 ```
 
 ### 5. Service and Monitoring
@@ -191,10 +191,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ralph-metrics
-  namespace: ralph-orchestrator
+  name: hats-metrics
+  namespace: hats
   labels:
-    app: ralph-orchestrator
+    app: hats
 spec:
   type: ClusterIP
   ports:
@@ -202,18 +202,18 @@ spec:
     targetPort: 8080
     name: metrics
   selector:
-    app: ralph-orchestrator
+    app: hats
 ---
 # k8s/06-servicemonitor.yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: ralph-orchestrator
-  namespace: ralph-orchestrator
+  name: hats
+  namespace: hats
 spec:
   selector:
     matchLabels:
-      app: ralph-orchestrator
+      app: hats
   endpoints:
   - port: metrics
     interval: 30s
@@ -227,8 +227,8 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ralph-task
-  namespace: ralph-orchestrator
+  name: hats-task
+  namespace: hats
 spec:
   backoffLimit: 3
   activeDeadlineSeconds: 14400
@@ -236,13 +236,13 @@ spec:
     spec:
       restartPolicy: Never
       containers:
-      - name: ralph
-        image: ghcr.io/mikeyobrien/ralph-orchestrator:v1.0.0
+      - name: hats
+        image: ghcr.io/mikeyobrien/hats:v1.0.0
         envFrom:
         - configMapRef:
-            name: ralph-config
+            name: hats-config
         - secretRef:
-            name: ralph-secrets
+            name: hats-secrets
         args:
         - "--agent=claude"
         - "--prompt=/prompts/task.md"
@@ -255,7 +255,7 @@ spec:
       volumes:
       - name: prompts
         configMap:
-          name: ralph-prompts
+          name: hats-prompts
       - name: output
         emptyDir: {}
 ```
@@ -266,12 +266,12 @@ spec:
 
 ```bash
 # Add repository
-helm repo add ralph https://mikeyobrien.github.io/ralph-orchestrator/charts
+helm repo add hats https://mikeyobrien.github.io/hats/charts
 helm repo update
 
 # Install with custom values
-helm install ralph ralph/ralph-orchestrator \
-  --namespace ralph-orchestrator \
+helm install hats hats/hats \
+  --namespace hats \
   --create-namespace \
   --set apiKeys.claude=$CLAUDE_API_KEY \
   --set apiKeys.gemini=$GEMINI_API_KEY \
@@ -285,7 +285,7 @@ helm install ralph ralph/ralph-orchestrator \
 replicaCount: 1
 
 image:
-  repository: ghcr.io/mikeyobrien/ralph-orchestrator
+  repository: ghcr.io/mikeyobrien/hats
   tag: v1.0.0
   pullPolicy: IfNotPresent
 
@@ -335,7 +335,7 @@ ingress:
   className: "nginx"
   annotations: {}
   hosts:
-    - host: ralph.example.com
+    - host: hats.example.com
       paths:
         - path: /
           pathType: Prefix
@@ -348,13 +348,13 @@ ingress:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: ralph-hpa
-  namespace: ralph-orchestrator
+  name: hats-hpa
+  namespace: hats
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: ralph-orchestrator
+    name: hats
   minReplicas: 1
   maxReplicas: 10
   metrics:
@@ -379,8 +379,8 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: ralph-daily
-  namespace: ralph-orchestrator
+  name: hats-daily
+  namespace: hats
 spec:
   schedule: "0 2 * * *"  # Daily at 2 AM
   jobTemplate:
@@ -389,13 +389,13 @@ spec:
         spec:
           restartPolicy: OnFailure
           containers:
-          - name: ralph
-            image: ghcr.io/mikeyobrien/ralph-orchestrator:v1.0.0
+          - name: hats
+            image: ghcr.io/mikeyobrien/hats:v1.0.0
             envFrom:
             - configMapRef:
-                name: ralph-config
+                name: hats-config
             - secretRef:
-                name: ralph-secrets
+                name: hats-secrets
             args:
             - "--agent=auto"
             - "--prompt=/prompts/daily-task.md"
@@ -408,14 +408,14 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: ralph-sa
-  namespace: ralph-orchestrator
+  name: hats-sa
+  namespace: hats
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: ralph-role
-  namespace: ralph-orchestrator
+  name: hats-role
+  namespace: hats
 rules:
 - apiGroups: [""]
   resources: ["configmaps", "secrets"]
@@ -427,16 +427,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: ralph-rolebinding
-  namespace: ralph-orchestrator
+  name: hats-rolebinding
+  namespace: hats
 roleRef:
   apiVersion: rbac.authorization.k8s.io/v1
   kind: Role
-  name: ralph-role
+  name: hats-role
 subjects:
 - kind: ServiceAccount
-  name: ralph-sa
-  namespace: ralph-orchestrator
+  name: hats-sa
+  namespace: hats
 ```
 
 ## Network Policies
@@ -446,12 +446,12 @@ subjects:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: ralph-network-policy
-  namespace: ralph-orchestrator
+  name: hats-network-policy
+  namespace: hats
 spec:
   podSelector:
     matchLabels:
-      app: ralph-orchestrator
+      app: hats
   policyTypes:
   - Ingress
   - Egress
@@ -489,16 +489,16 @@ data:
     global:
       scrape_interval: 15s
     scrape_configs:
-    - job_name: 'ralph-orchestrator'
+    - job_name: 'hats'
       kubernetes_sd_configs:
       - role: pod
         namespaces:
           names:
-          - ralph-orchestrator
+          - hats
       relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app]
         action: keep
-        regex: ralph-orchestrator
+        regex: hats
 ```
 
 ## Cloud Provider Specific
@@ -507,13 +507,13 @@ data:
 
 ```bash
 # Create cluster
-gcloud container clusters create ralph-cluster \
+gcloud container clusters create hats-cluster \
   --zone us-central1-a \
   --num-nodes 3 \
   --machine-type n1-standard-2
 
 # Get credentials
-gcloud container clusters get-credentials ralph-cluster \
+gcloud container clusters get-credentials hats-cluster \
   --zone us-central1-a
 
 # Create secret for GCR
@@ -521,7 +521,7 @@ kubectl create secret docker-registry gcr-json-key \
   --docker-server=gcr.io \
   --docker-username=_json_key \
   --docker-password="$(cat ~/key.json)" \
-  -n ralph-orchestrator
+  -n hats
 ```
 
 ### Amazon EKS
@@ -529,7 +529,7 @@ kubectl create secret docker-registry gcr-json-key \
 ```bash
 # Create cluster
 eksctl create cluster \
-  --name ralph-cluster \
+  --name hats-cluster \
   --region us-west-2 \
   --nodegroup-name workers \
   --node-type t3.medium \
@@ -537,7 +537,7 @@ eksctl create cluster \
 
 # Update kubeconfig
 aws eks update-kubeconfig \
-  --name ralph-cluster \
+  --name hats-cluster \
   --region us-west-2
 ```
 
@@ -546,15 +546,15 @@ aws eks update-kubeconfig \
 ```bash
 # Create cluster
 az aks create \
-  --resource-group ralph-rg \
-  --name ralph-cluster \
+  --resource-group hats-rg \
+  --name hats-cluster \
   --node-count 3 \
   --node-vm-size Standard_DS2_v2
 
 # Get credentials
 az aks get-credentials \
-  --resource-group ralph-rg \
-  --name ralph-cluster
+  --resource-group hats-rg \
+  --name hats-cluster
 ```
 
 ## GitOps with ArgoCD
@@ -564,17 +564,17 @@ az aks get-credentials \
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ralph-orchestrator
+  name: hats
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/mikeyobrien/ralph-orchestrator
+    repoURL: https://github.com/mikeyobrien/hats
     targetRevision: HEAD
     path: k8s
   destination:
     server: https://kubernetes.default.svc
-    namespace: ralph-orchestrator
+    namespace: hats
   syncPolicy:
     automated:
       prune: true
@@ -587,16 +587,16 @@ spec:
 
 ```bash
 # Get pods
-kubectl get pods -n ralph-orchestrator
+kubectl get pods -n hats
 
 # Describe pod
-kubectl describe pod <pod-name> -n ralph-orchestrator
+kubectl describe pod <pod-name> -n hats
 
 # View logs
-kubectl logs -f <pod-name> -n ralph-orchestrator
+kubectl logs -f <pod-name> -n hats
 
 # Execute into pod
-kubectl exec -it <pod-name> -n ralph-orchestrator -- /bin/bash
+kubectl exec -it <pod-name> -n hats -- /bin/bash
 ```
 
 ### Common Issues
@@ -605,21 +605,21 @@ kubectl exec -it <pod-name> -n ralph-orchestrator -- /bin/bash
 
 ```bash
 # Check image pull secrets
-kubectl get secrets -n ralph-orchestrator
+kubectl get secrets -n hats
 
 # Create pull secret
 kubectl create secret docker-registry regcred \
   --docker-server=ghcr.io \
   --docker-username=USERNAME \
   --docker-password=TOKEN \
-  -n ralph-orchestrator
+  -n hats
 ```
 
 #### PVC Not Bound
 
 ```bash
 # Check PVC status
-kubectl get pvc -n ralph-orchestrator
+kubectl get pvc -n hats
 
 # Check available storage classes
 kubectl get storageclass
@@ -632,14 +632,14 @@ kubectl apply -f persistent-volume.yaml
 
 ```bash
 # Increase memory limits
-kubectl set resources deployment ralph-orchestrator \
+kubectl set resources deployment hats \
   --limits=memory=8Gi \
-  -n ralph-orchestrator
+  -n hats
 ```
 
 ## Best Practices
 
-1. **Use namespaces** to isolate Ralph deployments
+1. **Use namespaces** to isolate Hats deployments
 2. **Implement RBAC** for least privilege access
 3. **Use secrets management** (Sealed Secrets, External Secrets)
 4. **Set resource limits** to prevent resource starvation

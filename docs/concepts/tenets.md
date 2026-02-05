@@ -1,6 +1,6 @@
 # The Six Tenets
 
-Ralph's design is guided by six core tenets. Understanding these helps you work with Ralph effectively.
+Hats's design is guided by six core tenets. Understanding these helps you work with Hats effectively.
 
 ## 1. Fresh Context Is Reliability
 
@@ -29,7 +29,7 @@ Each iteration starts fresh. The AI doesn't carry over state from previous itera
 
 **What it means:**
 
-Instead of telling Ralph exactly how to do something, define quality gates that block incomplete work.
+Instead of telling Hats exactly how to do something, define quality gates that block incomplete work.
 
 **Why it matters:**
 
@@ -68,7 +68,7 @@ Plans are cheap to regenerate. Don't fight to save a failing plan — just make 
 
 **How to apply:**
 
-- Let Ralph regenerate plans freely
+- Let Hats regenerate plans freely
 - Don't add complex "plan repair" logic
 - If something isn't working, a new plan is one iteration away
 
@@ -80,8 +80,8 @@ Plans are cheap to regenerate. Don't fight to save a failing plan — just make 
 
 All persistent state lives on disk:
 
-- `.ralph/agent/memories.md` — Accumulated wisdom
-- `.ralph/agent/tasks.jsonl` — Runtime work tracking
+- `.hats/agent/memories.md` — Accumulated wisdom
+- `.hats/agent/tasks.jsonl` — Runtime work tracking
 - The codebase itself
 - Git history
 
@@ -103,13 +103,13 @@ All persistent state lives on disk:
 
 **What it means:**
 
-When Ralph fails in a specific way, add a signal (test, lint rule, guardrail) to prevent it next time. Don't try to script exact behavior.
+When Hats fails in a specific way, add a signal (test, lint rule, guardrail) to prevent it next time. Don't try to script exact behavior.
 
 **Why it matters:**
 
 - Scripts are rigid; signals are adaptive
 - The codebase becomes the instruction manual
-- Ralph learns from its environment
+- Hats learns from its environment
 
 **How to apply:**
 
@@ -123,17 +123,17 @@ guardrails:
 # (Don't do this)
 ```
 
-## 6. Let Ralph Ralph
+## 6. Let Hats Hats
 
 > Sit *on* the loop, not *in* it. Tune like a guitar, don't conduct like an orchestra.
 
 **What it means:**
 
-Your job is to set up the environment and constraints, then let Ralph work. Don't micromanage each iteration.
+Your job is to set up the environment and constraints, then let Hats work. Don't micromanage each iteration.
 
 **Why it matters:**
 
-- Ralph is autonomous by design
+- Hats is autonomous by design
 - Intervention disrupts the iteration cycle
 - The whole point is hands-off operation
 
@@ -150,7 +150,7 @@ These patterns violate the tenets:
 
 | Anti-Pattern | Why It's Bad | Tenet Violated |
 |--------------|--------------|----------------|
-| Building features into orchestrator | Agents can handle it | #6 Let Ralph Ralph |
+| Building features into orchestrator | Agents can handle it | #6 Let Hats Hats |
 | Complex retry logic | Fresh context handles recovery | #1 Fresh Context |
 | Detailed step-by-step instructions | Use backpressure instead | #2 Backpressure |
 | Scoping work at task selection | Scope at plan creation | #3 Plan Is Disposable |
@@ -165,7 +165,7 @@ These patterns violate the tenets:
 | 3. Disposable Plans | Regenerate freely |
 | 4. Disk Is State | Files are truth |
 | 5. Signals Not Scripts | Add signs, not steps |
-| 6. Let Ralph Ralph | Hands off |
+| 6. Let Hats Hats | Hands off |
 
 ## Next Steps
 

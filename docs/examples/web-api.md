@@ -1,6 +1,6 @@
-# Building a Web API with Ralph
+# Building a Web API with Hats
 
-This example demonstrates how to use Ralph Orchestrator to build a complete REST API with database integration.
+This example demonstrates how to use Hats to build a complete REST API with database integration.
 
 ## Task Description
 
@@ -61,22 +61,22 @@ todo-api/
 <!-- The orchestrator will continue iterations until all requirements are met -->
 ```
 
-## Running Ralph
+## Running Hats
 
 ```bash
 # Initialize project
-ralph init
+hats init
 
 # Copy prompt to PROMPT.md
 cp web-api-prompt.md PROMPT.md
 
 # Run with Claude (recommended for complex tasks)
-ralph run --agent claude --max-iterations 50
+hats run --agent claude --max-iterations 50
 ```
 
 ## Expected Output
 
-Ralph will create the following files:
+Hats will create the following files:
 
 ### app.py
 
@@ -252,14 +252,14 @@ def test_delete_todo(client):
 ## Monitoring Progress
 
 ```bash
-# Watch Ralph's progress
-ralph status
+# Watch Hats's progress
+hats status
 
 # Monitor in real-time
-watch -n 5 'ralph status'
+watch -n 5 'hats status'
 
 # Check logs
-tail -f .agent/logs/ralph.log
+tail -f .agent/logs/hats.log
 ```
 
 ## Iteration Examples
@@ -361,7 +361,7 @@ Ensure proper test isolation with fixtures.
 
 ## Verification
 
-After Ralph completes:
+After Hats completes:
 
 ```bash
 # Install dependencies

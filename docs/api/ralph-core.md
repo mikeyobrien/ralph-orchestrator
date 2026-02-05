@@ -1,10 +1,10 @@
-# ralph-core
+# hats-core
 
-The orchestration engine — the heart of Ralph.
+The orchestration engine — the heart of Hats.
 
 ## Overview
 
-`ralph-core` provides:
+`hats-core` provides:
 
 - Configuration loading and validation
 - The main event loop
@@ -19,10 +19,10 @@ The orchestration engine — the heart of Ralph.
 Configuration loading from YAML.
 
 ```rust
-use ralph_core::config::Config;
+use hats_core::config::Config;
 
 // Load from file
-let config = Config::load("ralph.yml")?;
+let config = Config::load("hats.yml")?;
 
 // Load with defaults
 let config = Config::default();
@@ -72,7 +72,7 @@ pub struct TaskConfig {
 The main orchestration loop.
 
 ```rust
-use ralph_core::EventLoop;
+use hats_core::EventLoop;
 
 // Create with config
 let event_loop = EventLoop::new(config);
@@ -100,7 +100,7 @@ let result = event_loop.run().await?;
 Persistent memory management.
 
 ```rust
-use ralph_core::memory_store::MemoryStore;
+use hats_core::memory_store::MemoryStore;
 
 let store = MemoryStore::new(".agent/memories.md");
 
@@ -123,7 +123,7 @@ let patterns = store.list_by_type(MemoryType::Pattern)?;
 Runtime task tracking.
 
 ```rust
-use ralph_core::task_store::TaskStore;
+use hats_core::task_store::TaskStore;
 
 let store = TaskStore::new(".agent/tasks.jsonl");
 
@@ -146,7 +146,7 @@ store.close(&id)?;
 Parse agent output for events.
 
 ```rust
-use ralph_core::event_parser::EventParser;
+use hats_core::event_parser::EventParser;
 
 let parser = EventParser::new();
 
@@ -161,7 +161,7 @@ let complete = parser.is_complete(agent_output, "LOOP_COMPLETE");
 
 ```bash
 # CLI command
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 
 # JSON
 {"event": "build.done", "payload": "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"}
@@ -172,7 +172,7 @@ ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, 
 Hat instruction assembly.
 
 ```rust
-use ralph_core::instructions::InstructionBuilder;
+use hats_core::instructions::InstructionBuilder;
 
 let builder = InstructionBuilder::new();
 
@@ -192,7 +192,7 @@ let instructions = builder
 Replay-based testing with JSONL fixtures.
 
 ```rust
-use ralph_core::testing::smoke_runner::SmokeRunner;
+use hats_core::testing::smoke_runner::SmokeRunner;
 
 let runner = SmokeRunner::new("tests/fixtures/basic.jsonl");
 let result = runner.run().await?;
@@ -204,7 +204,7 @@ assert!(result.completed);
 Record sessions for replay.
 
 ```rust
-use ralph_core::session_recorder::SessionRecorder;
+use hats_core::session_recorder::SessionRecorder;
 
 let recorder = SessionRecorder::new("session.jsonl");
 recorder.record_output("Hello")?;
@@ -234,13 +234,13 @@ pub enum CoreError {
 ## Example: Custom Event Loop
 
 ```rust
-use ralph_core::{Config, EventLoop};
-use ralph_proto::{EventBus, Event};
+use hats_core::{Config, EventLoop};
+use hats_proto::{EventBus, Event};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load config
-    let config = Config::load("ralph.yml")?;
+    let config = Config::load("hats.yml")?;
 
     // Create event loop
     let mut event_loop = EventLoop::new(config);

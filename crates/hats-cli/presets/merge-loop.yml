@@ -1,0 +1,337 @@
+# Merge Loop Preset
+#
+# Merges completed parallel loop from worktree back to main branch.
+# Designed to run automatically after worktree loops complete, resolving
+# conflicts via AI and verifying with tests.
+#
+# This preset reads the HATS_MERGE_LOOP_ID environment variable to
+# identify which loop to merge. If not set, reads from the prompt.
+#
+# Usage (automatic, via auto-merge):
+#   After a worktree loop completes, Hats spawns:
+#   HATS_MERGE_LOOP_ID=a3f2 hats run --preset builtin:merge-loop
+#
+# Usage (manual):
+#   hats run --preset builtin:merge-loop -p "Merge loop hats-20250124-a3f2"
+
+event_loop:
+  prompt: |
+    Merge the completed Hats loop back to the main branch.
+
+    ## Context
+    - Check HATS_MERGE_LOOP_ID environment variable for loop ID
+    - Or extract loop ID from this prompt if provided
+    - Loop branch format: hats/{loop_id}
+    - Worktree location: .worktrees/{loop_id}
+
+    ## Your Task
+    Safely merge the loop's changes into the main branch, ensuring all tests pass.
+  completion_promise: "MERGE_COMPLETE"
+  max_iterations: 15
+  max_runtime_seconds: 1800
+  starting_event: "merge.start"
+
+cli:
+  backend: "auto"
+
+core:
+  specs_dir: "./specs/"
+
+hats:
+  merger:
+    name: "Branch Merger"
+    description: "Performs git merge with conflict resolution and test verification."
+    triggers: ["merge.start", "tests.passed"]
+    publishes: ["merge.done", "conflict.detected", "merge.failed"]
+    default_publishes: "merge.done"
+    instructions: |
+      ## BRANCH MERGER MODE
+
+      Merge the completed Hats loop branch into main.
+
+      ### Step 1: Identify the Loop
+
+      Check the HATS_MERGE_LOOP_ID environment variable:
+      ```bash
+      echo $HATS_MERGE_LOOP_ID
+      ```
+
+      If not set, extract the loop ID from the prompt (format: hats-YYYYMMDD-HHMMSS-XXXX).
+
+      The branch to merge is: `hats/{loop_id}`
+
+      ### Step 2: Review Changes
+
+      Before merging, understand what the loop accomplished:
+      ```bash
+      git diff main...hats/{loop_id} --stat
+      git log main..hats/{loop_id} --oneline
+      ```
+
+      ### Step 3: Generate Commit Message
+
+      Create a conventional commit message using this format:
+      ```
+      merge(hats): <summary> (loop <id>)
+      ```
+
+      Steps to generate the summary:
+      1. Review the changes: `git diff --stat main...hats/{loop_id}`
+      2. Review the commits: `git log main..hats/{loop_id} --oneline`
+      3. Write a single-line summary of what the loop accomplished
+      4. Truncate to keep total subject line ≤ 72 characters
+
+      Example messages:
+      - `merge(hats): add user auth module (loop hats-20250124-a3f2)`
+      - `merge(hats): fix memory leak in worker (loop hats-20250124-b5c9)`
+
+      ### Step 4: Attempt Merge
+
+      ```bash
+      git checkout main
+      git merge hats/{loop_id} --no-ff -m "merge(hats): <summary> (loop {loop_id})"
+      ```
+
+      Use `--no-ff` to create an explicit merge commit with your message.
+
+      ### If Merge Succeeds (No Conflicts)
+
+      1. Run the test suite:
+         ```bash
+         cargo test
+         ```
+
+      2. If tests pass, publish `merge.done` with the merge commit SHA
+
+      3. If tests fail, investigate and fix:
+         - The issue may be a subtle incompatibility
+         - Make minimal changes to fix
+         - Re-run tests until passing
+         - Commit the fix
+         - Then publish `merge.done`
+
+      ### If Conflicts Detected
+
+      Publish `conflict.detected` with:
+      - List of conflicted files
+      - Brief description of the conflict type (e.g., "both modified same function")
+
+      ### DON'T
+      - Don't merge if you can't identify the loop branch
+      - Don't skip running tests after merge
+      - Don't make unrelated changes
+      - Don't force push or rewrite history
+
+      ### DONE
+      When merge is complete and tests pass, output: MERGE_COMPLETE
+
+  resolver:
+    name: "Conflict Resolver"
+    description: "Resolves merge conflicts by understanding intent of both sides."
+    triggers: ["conflict.detected"]
+    publishes: ["conflict.resolved", "conflict.unresolvable"]
+    instructions: |
+      ## CONFLICT RESOLVER MODE
+
+      Resolve merge conflicts by understanding the intent of both sides.
+
+      ### Process
+
+      1. **List conflicted files:**
+         ```bash
+         git status --short | grep "^UU"
+         ```
+
+      2. **For each conflict:**
+
+         a. Read the file to understand the conflict markers:
+            - `<<<<<<< HEAD` — Main branch version
+            - `=======` — Separator
+            - `>>>>>>> hats/{id}` — Loop branch version
+
+         b. Understand what each side intended:
+            - Main: What was the goal of these changes?
+            - Loop: What was the goal of these changes?
+
+         c. Resolve by preserving intent from BOTH sides:
+            - If features are independent, include both
+            - If features overlap, merge logic carefully
+            - If directly contradictory, prefer the loop's intent (it's newer)
+
+      3. **Mark resolved:**
+         ```bash
+         git add <file>
+         ```
+
+      4. **After all conflicts resolved:**
+         Create a conventional commit message (same format as merge):
+         ```bash
+         git commit -m "merge(hats): <summary> (loop {loop_id})"
+         ```
+
+         Use the same summary you would have used for the merge.
+
+      5. **Publish `conflict.resolved`** to trigger test verification
+
+      ### If Unresolvable
+
+      Some conflicts can't be auto-resolved:
+      - Major architectural changes on both sides
+      - Complex refactoring conflicts
+      - Business logic contradictions requiring human decision
+
+      In these cases, publish `conflict.unresolvable` with:
+      - Detailed explanation of why
+      - What decision needs to be made
+      - Which files are affected
+
+      ### DON'T
+      - Don't delete code without understanding its purpose
+      - Don't resolve conflicts by just picking one side blindly
+      - Don't leave conflict markers in the code
+
+  tester:
+    name: "Test Verifier"
+    description: "Runs test suite to verify merge didn't break anything."
+    triggers: ["conflict.resolved"]
+    publishes: ["tests.passed", "tests.failed"]
+    instructions: |
+      ## TEST VERIFIER MODE
+
+      Verify the merge by running the complete test suite.
+
+      ### Process
+
+      1. **Run the test suite:**
+         ```bash
+         cargo test
+         ```
+
+      2. **If all tests pass:**
+         Publish `tests.passed`
+
+      3. **If tests fail:**
+         Publish `tests.failed` with:
+         - Which tests failed
+         - Brief analysis of why
+         - Suggested fix approach
+
+      ### Build Verification
+
+      Also verify the build is clean:
+      ```bash
+      cargo build
+      cargo clippy -- -D warnings
+      ```
+
+      ### DON'T
+      - Don't skip any test suites
+      - Don't ignore warnings if clippy fails
+      - Don't publish tests.passed if anything fails
+
+  cleaner:
+    name: "Worktree Cleaner"
+    description: "Cleans up worktree and branch after successful merge."
+    triggers: ["merge.done"]
+    publishes: ["cleanup.done", "cleanup.failed"]
+    instructions: |
+      ## WORKTREE CLEANER MODE
+
+      Clean up the worktree and branch after successful merge.
+
+      ### Step 1: Get Loop ID
+
+      Read from HATS_MERGE_LOOP_ID or extract from context.
+
+      ### Step 2: Remove Worktree
+
+      ```bash
+      git worktree remove .worktrees/{loop_id} --force
+      ```
+
+      ### Step 3: Delete Branch
+
+      ```bash
+      git branch -D hats/{loop_id}
+      ```
+
+      ### Step 4: Prune Refs
+
+      ```bash
+      git worktree prune
+      ```
+
+      ### Step 5: Update Merge Queue
+
+      Use hats tools to mark the loop as merged:
+      ```bash
+      hats emit "merge.complete" --json '{"loop_id": "{loop_id}", "status": "merged"}'
+      ```
+
+      ### Step 6: Publish Result
+
+      Publish `cleanup.done` to signal completion.
+
+      If any step fails, publish `cleanup.failed` with the error details.
+
+      ### DON'T
+      - Don't force-remove if there are uncommitted changes (investigate first)
+      - Don't delete wrong branches (always verify the hats/ prefix)
+
+  failure_handler:
+    name: "Failure Handler"
+    description: "Handles unresolvable conflicts and marks loop for review."
+    triggers: ["conflict.unresolvable", "tests.failed", "merge.failed", "cleanup.failed"]
+    publishes: []
+    instructions: |
+      ## FAILURE HANDLER MODE
+
+      Handle merge failures by marking the loop for manual review.
+
+      ### Step 1: Assess the Failure
+
+      Understand what failed:
+      - `conflict.unresolvable` — Conflicts need human decision
+      - `tests.failed` — Merge broke something
+      - `merge.failed` — Merge operation itself failed
+      - `cleanup.failed` — Cleanup failed (merge may have succeeded)
+
+      ### Step 2: Abort Merge (if in progress)
+
+      If there's a merge in progress:
+      ```bash
+      git merge --abort
+      ```
+
+      ### Step 3: Update Merge Queue
+
+      Mark the loop as needing review:
+      ```bash
+      hats emit "merge.needs_review" --json '{"loop_id": "{loop_id}", "reason": "{failure_reason}"}'
+      ```
+
+      ### Step 4: Provide Instructions
+
+      Output clear instructions for manual resolution:
+
+      ```
+      ## Manual Resolution Required
+
+      Loop {loop_id} could not be automatically merged.
+
+      **Reason:** {detailed explanation}
+
+      **To resolve:**
+      1. cd .worktrees/{loop_id}
+      2. Investigate the issue
+      3. Make necessary changes
+      4. Run: hats loops retry {loop_id}
+
+      **To discard:**
+      Run: hats loops discard {loop_id}
+      ```
+
+      ### DON'T
+      - Don't keep retrying indefinitely
+      - Don't leave merge in conflicted state
+      - Don't delete the worktree (user may need it)

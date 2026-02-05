@@ -101,7 +101,7 @@ cat > "$LOG_DIR/environment.json" << EOF
   "preset": "$PRESET",
   "backend": "$BACKEND",
   "timestamp": "$TIMESTAMP",
-  "ralph_version": "$(cargo run --bin ralph -- --version 2>/dev/null || echo 'unknown')",
+  "hats_version": "$(cargo run --bin hats -- --version 2>/dev/null || echo 'unknown')",
   "backend_version": "$(${BACKEND}-cli --version 2>/dev/null || ${BACKEND} --version 2>/dev/null || echo 'unknown')",
   "os": "$(uname -s)",
   "hostname": "$(hostname)"
@@ -129,9 +129,9 @@ cat > .agent/scratchpad.md << 'SCRATCHPAD_EOF'
 Follow the instructions in the prompt. This is a fresh evaluation context.
 SCRATCHPAD_EOF
 
-# Create .ralph directory for events isolation
-mkdir -p .ralph
-echo -e "${GREEN}Created fresh .agent/ and .ralph/ state for evaluation${NC}"
+# Create .hats directory for events isolation
+mkdir -p .hats
+echo -e "${GREEN}Created fresh .agent/ and .hats/ state for evaluation${NC}"
 echo ""
 
 # Run evaluation
@@ -185,11 +185,11 @@ verbose: false
 YAML_EOF
 fi
 
-# Run ralph with the merged config
+# Run hats with the merged config
 set +e  # Don't exit on error - we want to capture failures
 # Use --foreground to allow Ctrl+C to propagate to child processes
 timeout --foreground "$TIMEOUT" \
-    cargo run --release --bin ralph -- run \
+    cargo run --release --bin hats -- run \
         -c "$TEMP_CONFIG" \
         -p "$TEST_TASK" \
         --record-session "$LOG_DIR/session.jsonl" \

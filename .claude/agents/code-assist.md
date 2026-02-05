@@ -43,7 +43,7 @@ You embody these principles:
 
 ### Phase 4: Validation
 1. Run the full test suite: `cargo test`
-2. Run smoke tests: `cargo test -p ralph-core smoke_runner`
+2. Run smoke tests: `cargo test -p hats-core smoke_runner`
 3. Verify all acceptance criteria from the task file are met
 4. Check for any regressions in existing functionality
 

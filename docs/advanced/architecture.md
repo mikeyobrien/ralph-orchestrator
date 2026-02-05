@@ -1,27 +1,27 @@
 # Architecture
 
-Ralph's system architecture and how the pieces fit together.
+Hats's system architecture and how the pieces fit together.
 
 ## Overview
 
-Ralph is a Cargo workspace with seven crates, each with a specific responsibility:
+Hats is a Cargo workspace with seven crates, each with a specific responsibility:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      ralph-cli                          │
+│                      hats-cli                          │
 │                  (Binary Entry Point)                   │
 ├─────────────┬─────────────┬─────────────┬──────────────┤
-│ ralph-core  │ralph-adapters│  ralph-tui  │ ralph-e2e   │
+│ hats-core  │hats-adapters│  hats-tui  │ hats-e2e   │
 │  (Engine)   │ (Backends)   │    (UI)     │  (Testing)  │
 ├─────────────┴─────────────┴─────────────┴──────────────┤
-│                     ralph-proto                         │
+│                     hats-proto                         │
 │                  (Protocol Types)                       │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## Crate Responsibilities
 
-### ralph-proto
+### hats-proto
 
 Protocol types shared across all crates.
 
@@ -35,9 +35,9 @@ Protocol types shared across all crates.
 | `Topic` | Event routing with glob patterns |
 | `EventBus` | Hat registry and event routing |
 
-**Location:** `crates/ralph-proto/src/`
+**Location:** `crates/hats-proto/src/`
 
-### ralph-core
+### hats-core
 
 The orchestration engine.
 
@@ -52,9 +52,9 @@ The orchestration engine.
 | `task_store` | Task storage and querying |
 | `instructions` | Hat instruction assembly |
 
-**Location:** `crates/ralph-core/src/`
+**Location:** `crates/hats-core/src/`
 
-### ralph-adapters
+### hats-adapters
 
 CLI backend integrations.
 
@@ -76,9 +76,9 @@ CLI backend integrations.
 - Copilot CLI
 - OpenCode
 
-**Location:** `crates/ralph-adapters/src/`
+**Location:** `crates/hats-adapters/src/`
 
-### ralph-tui
+### hats-tui
 
 Terminal UI using ratatui.
 
@@ -89,23 +89,23 @@ Terminal UI using ratatui.
 - Activity indicator
 - Event topic display
 
-**Location:** `crates/ralph-tui/src/`
+**Location:** `crates/hats-tui/src/`
 
-### ralph-cli
+### hats-cli
 
 Binary entry point and CLI parsing.
 
 **Commands:**
-- `ralph run` — Execute orchestration
-- `ralph init` — Initialize config
-- `ralph plan` — PDD planning
-- `ralph task` — Task generation
-- `ralph events` — View history
-- `ralph tools` — Memory/task management
+- `hats run` — Execute orchestration
+- `hats init` — Initialize config
+- `hats plan` — PDD planning
+- `hats task` — Task generation
+- `hats events` — View history
+- `hats tools` — Memory/task management
 
-**Location:** `crates/ralph-cli/src/`
+**Location:** `crates/hats-cli/src/`
 
-### ralph-e2e
+### hats-e2e
 
 End-to-end testing framework.
 
@@ -121,13 +121,13 @@ End-to-end testing framework.
 | 6 | Memory System |
 | 7 | Error Handling |
 
-**Location:** `crates/ralph-e2e/src/`
+**Location:** `crates/hats-e2e/src/`
 
-### ralph-bench
+### hats-bench
 
 Benchmarking harness (development only).
 
-**Location:** `crates/ralph-bench/src/`
+**Location:** `crates/hats-bench/src/`
 
 ## Data Flow
 
@@ -135,9 +135,9 @@ Benchmarking harness (development only).
 
 ```mermaid
 flowchart TD
-    A[PROMPT.md] --> B[ralph-cli]
-    B --> C[ralph-core EventLoop]
-    C --> D[ralph-adapters Backend]
+    A[PROMPT.md] --> B[hats-cli]
+    B --> C[hats-core EventLoop]
+    C --> D[hats-adapters Backend]
     D --> E[AI CLI]
     E --> F[Output]
     F --> G{LOOP_COMPLETE?}
@@ -190,7 +190,7 @@ struct EventBus {
 
 ### Configuration
 
-Loaded from `ralph.yml`:
+Loaded from `hats.yml`:
 
 ```rust
 struct Config {
@@ -207,7 +207,7 @@ struct Config {
 
 ### Unix Process Groups
 
-Ralph manages processes carefully:
+Hats manages processes carefully:
 
 - Creates process group leadership
 - Handles SIGINT, SIGTERM gracefully
@@ -225,7 +225,7 @@ pty_executor.execute(command, stream_handler).await
 
 ## Async Architecture
 
-Ralph uses Tokio throughout:
+Hats uses Tokio throughout:
 
 - Async trait support
 - Stream-based output capture
@@ -239,7 +239,7 @@ Custom error types with context:
 ```rust
 // thiserror for type definitions
 #[derive(Error, Debug)]
-enum RalphError {
+enum HatsError {
     #[error("Configuration error: {0}")]
     Config(String),
     // ...

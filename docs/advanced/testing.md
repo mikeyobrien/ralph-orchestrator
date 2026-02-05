@@ -1,6 +1,6 @@
 # Testing & Validation
 
-Comprehensive testing approaches for Ralph development and validation.
+Comprehensive testing approaches for Hats development and validation.
 
 ## Test Types
 
@@ -24,26 +24,26 @@ This includes unit tests and smoke tests (344+ tests total).
 ### Smoke Tests Only
 
 ```bash
-cargo test -p ralph-core smoke_runner
+cargo test -p hats-core smoke_runner
 ```
 
 ### Kiro-Specific Tests
 
 ```bash
-cargo test -p ralph-core kiro
+cargo test -p hats-core kiro
 ```
 
 ### E2E Tests
 
 ```bash
 # All backends
-cargo run -p ralph-e2e -- all
+cargo run -p hats-e2e -- all
 
 # Specific backend
-cargo run -p ralph-e2e -- claude
+cargo run -p hats-e2e -- claude
 
 # List scenarios
-cargo run -p ralph-e2e -- --list
+cargo run -p hats-e2e -- --list
 ```
 
 ## Smoke Tests
@@ -59,7 +59,7 @@ Smoke tests use recorded JSONL fixtures instead of live API calls — fast, free
 ### Fixture Locations
 
 ```
-crates/ralph-core/tests/fixtures/
+crates/hats-core/tests/fixtures/
 ├── basic_session.jsonl          # Claude CLI session
 └── kiro/                         # Kiro sessions
     ├── basic.jsonl
@@ -71,7 +71,7 @@ crates/ralph-core/tests/fixtures/
 
 ```bash
 # Record a session
-ralph run -c ralph.yml --record-session session.jsonl -p "your prompt"
+hats run -c hats.yml --record-session session.jsonl -p "your prompt"
 
 # Or capture raw CLI output
 claude -p "your prompt" 2>&1 | tee output.txt
@@ -108,16 +108,16 @@ End-to-end tests validate against real AI backends.
 
 ```bash
 # All tests for Claude
-cargo run -p ralph-e2e -- claude
+cargo run -p hats-e2e -- claude
 
 # All available backends
-cargo run -p ralph-e2e -- all
+cargo run -p hats-e2e -- all
 
 # Fast mode (skip analysis)
-cargo run -p ralph-e2e -- claude --skip-analysis
+cargo run -p hats-e2e -- claude --skip-analysis
 
 # Debug mode (keep workspaces)
-cargo run -p ralph-e2e -- claude --keep-workspace --verbose
+cargo run -p hats-e2e -- claude --keep-workspace --verbose
 ```
 
 ### E2E Reports
@@ -137,7 +137,7 @@ For E2E test development, use isolated config:
 
 ```bash
 # E2E test development
-ralph run -c ralph.e2e.yml -p "fix e2e tests"
+hats run -c hats.e2e.yml -p "fix e2e tests"
 ```
 
 This uses separate scratchpad to avoid pollution.
@@ -150,10 +150,10 @@ Validate Terminal UI rendering using LLM-as-judge.
 
 ```bash
 # Validate from captured output
-/tui-validate file:output.txt criteria:ralph-header
+/tui-validate file:output.txt criteria:hats-header
 
 # Validate live TUI via tmux
-/tui-validate tmux:ralph-session criteria:ralph-full
+/tui-validate tmux:hats-session criteria:hats-full
 
 # Custom criteria
 /tui-validate command:"cargo run --example tui" criteria:"Shows header"
@@ -163,26 +163,26 @@ Validate Terminal UI rendering using LLM-as-judge.
 
 | Criteria | Validates |
 |----------|-----------|
-| `ralph-header` | Iteration count, elapsed time, hat display |
-| `ralph-footer` | Activity indicator, event topic |
-| `ralph-full` | Complete layout and hierarchy |
+| `hats-header` | Iteration count, elapsed time, hat display |
+| `hats-footer` | Activity indicator, event topic |
+| `hats-full` | Complete layout and hierarchy |
 | `tui-basic` | Has content, no artifacts |
 
 ### Live TUI Capture
 
 ```bash
 # 1. Start TUI in tmux
-tmux new-session -d -s ralph-test -x 100 -y 30
-tmux send-keys -t ralph-test "ralph run -p 'test'" Enter
+tmux new-session -d -s hats-test -x 100 -y 30
+tmux send-keys -t hats-test "hats run -p 'test'" Enter
 
 # 2. Wait for render
 sleep 3
 
 # 3. Capture
-tmux capture-pane -t ralph-test -p -e > tui-capture.txt
+tmux capture-pane -t hats-test -p -e > tui-capture.txt
 
 # 4. Validate
-/tui-validate file:tui-capture.txt criteria:ralph-header
+/tui-validate file:tui-capture.txt criteria:hats-header
 ```
 
 ### Prerequisites
@@ -230,7 +230,7 @@ E2E tests are expensive but catch integration issues.
 
 ### 4. Validate TUI Changes
 
-After modifying `ralph-tui`, use TUI validation.
+After modifying `hats-tui`, use TUI validation.
 
 ### 5. Keep Fixtures Updated
 
@@ -243,7 +243,7 @@ When behavior changes, update corresponding fixtures.
 ```rust
 #[test]
 fn test_event_parsing() {
-    let input = r#"ralph emit "build.done" "tests pass""#;
+    let input = r#"hats emit "build.done" "tests pass""#;
     let event = parse_event(input).unwrap();
     assert_eq!(event.topic, "build.done");
 }

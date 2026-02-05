@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers testing strategies, tools, and best practices for Ralph Orchestrator development and deployment.
+This guide covers testing strategies, tools, and best practices for Hats development and deployment.
 
 ## Test Suite Structure
 
@@ -34,7 +34,7 @@ tests/
 pytest
 
 # With coverage
-pytest --cov=ralph_orchestrator --cov-report=html
+pytest --cov=hats_orchestrator --cov-report=html
 
 # Verbose output
 pytest -v
@@ -65,10 +65,10 @@ pytest -m "not slow"
 ```python
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from ralph_orchestrator import RalphOrchestrator
+from hats_orchestrator import HatsOrchestrator
 
-class TestRalphOrchestrator:
-    """Unit tests for RalphOrchestrator"""
+class TestHatsOrchestrator:
+    """Unit tests for HatsOrchestrator"""
     
     @pytest.fixture
     def orchestrator(self):
@@ -79,7 +79,7 @@ class TestRalphOrchestrator:
             'max_iterations': 10,
             'dry_run': True
         }
-        return RalphOrchestrator(config)
+        return HatsOrchestrator(config)
     
     def test_initialization(self, orchestrator):
         """Test orchestrator initialization"""
@@ -113,7 +113,7 @@ class TestRalphOrchestrator:
         prompt_file.write_text("Do something\n<!-- Legacy marker removed -->")
         assert orchestrator.check_task_complete(str(prompt_file)) is True
     
-    @patch('ralph_orchestrator.RalphOrchestrator.execute_agent')
+    @patch('hats_orchestrator.HatsOrchestrator.execute_agent')
     def test_iteration_limit(self, mock_execute, orchestrator):
         """Test max iterations limit"""
         mock_execute.return_value = (True, "Output")
@@ -177,10 +177,10 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from ralph_orchestrator import RalphOrchestrator
+from hats_orchestrator import HatsOrchestrator
 
 class TestIntegration:
-    """Integration tests for full Ralph cycle"""
+    """Integration tests for full Hats cycle"""
     
     @pytest.fixture
     def test_dir(self):
@@ -207,7 +207,7 @@ class TestIntegration:
         }
         
         # Execute
-        orchestrator = RalphOrchestrator(config)
+        orchestrator = HatsOrchestrator(config)
         result = orchestrator.run()
         
         # Verify
@@ -230,7 +230,7 @@ class TestIntegration:
             'working_directory': str(test_dir)
         }
         
-        orchestrator = RalphOrchestrator(config)
+        orchestrator = HatsOrchestrator(config)
         orchestrator.create_checkpoint(1)
         
         # Check Git log
@@ -241,7 +241,7 @@ class TestIntegration:
             text=True
         )
         
-        assert 'Ralph checkpoint' in result.stdout
+        assert 'Hats checkpoint' in result.stdout
 ```
 
 ## End-to-End Tests
@@ -251,7 +251,7 @@ class TestIntegration:
 ```python
 import pytest
 from click.testing import CliRunner
-from ralph_cli import cli
+from hats_cli import cli
 
 class TestCLI:
     """End-to-end CLI tests"""
@@ -265,7 +265,7 @@ class TestCLI:
         """Test help command"""
         result = runner.invoke(cli, ['--help'])
         assert result.exit_code == 0
-        assert 'Ralph Orchestrator' in result.output
+        assert 'Hats' in result.output
     
     def test_cli_init(self, runner):
         """Test init command"""
@@ -347,7 +347,7 @@ class MockAgent:
 ```python
 import pytest
 import time
-from ralph_orchestrator import RalphOrchestrator
+from hats_orchestrator import HatsOrchestrator
 
 @pytest.mark.performance
 class TestPerformance:
@@ -361,7 +361,7 @@ class TestPerformance:
             'dry_run': True
         }
         
-        orchestrator = RalphOrchestrator(config)
+        orchestrator = HatsOrchestrator(config)
         
         start_time = time.time()
         orchestrator.run()
@@ -380,7 +380,7 @@ class TestPerformance:
         
         # Run multiple iterations
         config = {'max_iterations': 100, 'dry_run': True}
-        orchestrator = RalphOrchestrator(config)
+        orchestrator = HatsOrchestrator(config)
         orchestrator.run()
         
         final_memory = process.memory_info().rss / 1024 / 1024  # MB
@@ -397,7 +397,7 @@ class TestPerformance:
 ```ini
 # .coveragerc
 [run]
-source = ralph_orchestrator
+source = hats_orchestrator
 omit = 
     */tests/*
     */test_*.py
@@ -417,13 +417,13 @@ exclude_lines =
 
 ```bash
 # Generate HTML coverage report
-pytest --cov=ralph_orchestrator --cov-report=html
+pytest --cov=hats_orchestrator --cov-report=html
 
 # View report
 open htmlcov/index.html
 
 # Terminal report with missing lines
-pytest --cov=ralph_orchestrator --cov-report=term-missing
+pytest --cov=hats_orchestrator --cov-report=term-missing
 ```
 
 ## Continuous Integration
@@ -458,7 +458,7 @@ jobs:
     
     - name: Run tests
       run: |
-        pytest --cov=ralph_orchestrator --cov-report=xml
+        pytest --cov=hats_orchestrator --cov-report=xml
     
     - name: Upload coverage
       uses: codecov/codecov-action@v3
@@ -499,7 +499,7 @@ def test_1():
 ```python
 def test_example():
     # Arrange
-    orchestrator = RalphOrchestrator(config)
+    orchestrator = HatsOrchestrator(config)
     
     # Act
     result = orchestrator.run()

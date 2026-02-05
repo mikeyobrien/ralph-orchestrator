@@ -1,6 +1,6 @@
-# Contributing to Ralph Orchestrator
+# Contributing to Hats
 
-Thank you for considering contributing to Ralph Orchestrator! This document provides guidelines and information to help you contribute effectively.
+Thank you for considering contributing to Hats! This document provides guidelines and information to help you contribute effectively.
 
 ## Code of Conduct
 
@@ -17,8 +17,8 @@ This project and everyone participating in it is governed by the [Code of Conduc
 
 ```bash
 # Clone the repository
-git clone https://github.com/mikeyobrien/ralph-orchestrator.git
-cd ralph-orchestrator
+git clone https://github.com/mikeyobrien/hats.git
+cd hats
 
 # Install git hooks for pre-commit checks
 ./scripts/setup-hooks.sh
@@ -101,7 +101,7 @@ Read [AGENTS.md](AGENTS.md) for the full development philosophy. Key tenets:
 cargo test
 
 # Run smoke tests (replay-based, no API calls)
-cargo test -p ralph-core smoke_runner
+cargo test -p hats-core smoke_runner
 
 # Run with coverage
 cargo tarpaulin --out Html --output-dir coverage --skip-clean
@@ -112,13 +112,13 @@ cargo tarpaulin --out Html --output-dir coverage --skip-clean
 ### Project Structure
 
 ```
-ralph-orchestrator/
+hats/
 ├── crates/
-│   ├── ralph-cli/      # CLI application
-│   ├── ralph-core/     # Core library
-│   ├── ralph-tui/      # Terminal UI
-│   ├── ralph-adapters/ # Backend adapters
-│   └── ralph-e2e/      # End-to-end tests
+│   ├── hats-cli/      # CLI application
+│   ├── hats-core/     # Core library
+│   ├── hats-tui/      # Terminal UI
+│   ├── hats-adapters/ # Backend adapters
+│   └── hats-e2e/      # End-to-end tests
 ├── presets/            # Pre-configured hat collections
 ├── specs/              # Design specifications
 └── tasks/              # Code task files
@@ -140,10 +140,10 @@ To create new test fixtures from live sessions:
 
 ```bash
 # Record a session
-cargo run --bin ralph -- run -c ralph.claude.yml --record-session session.jsonl -p "your prompt"
+cargo run --bin hats -- run -c hats.claude.yml --record-session session.jsonl -p "your prompt"
 ```
 
-See `crates/ralph-core/tests/fixtures/` for fixture format details.
+See `crates/hats-core/tests/fixtures/` for fixture format details.
 
 ## Anti-Patterns to Avoid
 
@@ -157,7 +157,7 @@ See `crates/ralph-core/tests/fixtures/` for fixture format details.
 
 - **Issues**: Open an issue for bugs or feature requests
 - **Discussions**: Use GitHub Discussions for questions
-- **Documentation**: Check the [docs](https://mikeyobrien.github.io/ralph-orchestrator/)
+- **Documentation**: Check the [docs](https://mikeyobrien.github.io/hats/)
 
 ## License
 

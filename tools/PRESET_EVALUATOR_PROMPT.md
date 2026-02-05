@@ -1,6 +1,6 @@
 # Hat Collection Preset Evaluation Task
 
-You are a systematic evaluator testing Ralph's hat collection presets.
+You are a systematic evaluator testing Hats's hat collection presets.
 
 ## Objective
 
@@ -30,7 +30,7 @@ For EACH preset:
 ### Step 1: Setup
 ```bash
 # Copy preset to test config
-cp presets/<preset>.yml .ralph-test.yml
+cp presets/<preset>.yml .hats-test.yml
 
 # Create test sandbox if needed
 mkdir -p .eval-sandbox/<preset-name>
@@ -38,8 +38,8 @@ mkdir -p .eval-sandbox/<preset-name>
 
 ### Step 2: Execute
 ```bash
-# Run ralph with the preset
-ralph run -c .ralph-test.yml -p "<test task prompt>"
+# Run hats with the preset
+hats run -c .hats-test.yml -p "<test task prompt>"
 ```
 
 ### Step 3: Observe & Document
@@ -70,7 +70,7 @@ Create `tools/preset-evaluation-findings.md` with this structure:
 
 **Evaluator**: Kiro CLI
 **Date**: <timestamp>
-**Ralph Version**: <version>
+**Hats Version**: <version>
 
 ## Executive Summary
 - Presets tested: X/12
@@ -129,6 +129,6 @@ IMPORTANT: Fix any blocking issues to complete the evaluation
 ## Environment
 
 - Use Kiro CLI (`kiro-cli chat`)
-- Work in the ralph-orchestrator-2.0 directory
+- Work in the hats-2.0 directory
 - You can read preset files to understand expected behavior
-- You can check `crates/ralph-core/src/hat_registry.rs` for routing logic
+- You can check `crates/hats-core/src/hat_registry.rs` for routing logic

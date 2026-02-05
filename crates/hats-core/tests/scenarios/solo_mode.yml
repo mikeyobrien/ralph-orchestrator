@@ -1,0 +1,23 @@
+# Solo Mode: Hats with no hats
+# Hats handles all events and outputs LOOP_COMPLETE
+
+name: solo_mode
+description: Hats operates alone, handles all events, completes loop
+
+config:
+  prompt_file: PROMPT.md
+  max_iterations: 3
+  hats: {}
+
+mock_responses:
+  - |
+    Task complete.
+    <event topic="LOOP_COMPLETE">
+    All work done.
+    </event>
+
+expected:
+  iterations: 1
+  events:
+    - topic: LOOP_COMPLETE
+  completion: true

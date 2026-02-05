@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides a comprehensive comparison of different AI agents and their capabilities when integrated with Ralph Orchestrator.
+This document provides a comprehensive comparison of different AI agents and their capabilities when integrated with Hats.
 
 ## Agent Comparison Table
 
@@ -88,6 +88,6 @@ The choice of AI agent depends on your specific requirements:
 
 ## See Also
 
-- [Ralph Orchestrator Configuration](../guide/configuration.md)
+- [Hats Configuration](../guide/configuration.md)
 - [Agent Integration Guide](../guide/agents.md)
 - [Monitoring](../advanced/monitoring.md)

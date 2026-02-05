@@ -1,10 +1,10 @@
-# ralph-proto
+# hats-proto
 
-Protocol types shared across all Ralph crates.
+Protocol types shared across all Hats crates.
 
 ## Overview
 
-`ralph-proto` defines the core data structures used throughout Ralph:
+`hats-proto` defines the core data structures used throughout Hats:
 
 - Events and Topics for communication
 - Hats for persona definitions
@@ -29,7 +29,7 @@ pub struct Event {
 **Creating events:**
 
 ```rust
-use ralph_proto::Event;
+use hats_proto::Event;
 
 // Simple event
 let event = Event::new("build.done");
@@ -68,7 +68,7 @@ topic.matches("test.*");      // false
 
 ### Hat
 
-A specialized Ralph persona.
+A specialized Hats persona.
 
 ```rust
 pub struct Hat {
@@ -87,7 +87,7 @@ pub struct Hat {
 **Creating hats:**
 
 ```rust
-use ralph_proto::Hat;
+use hats_proto::Hat;
 
 let hat = Hat::builder("builder")
     .name("Builder")
@@ -131,7 +131,7 @@ impl EventBus {
 **Using EventBus:**
 
 ```rust
-use ralph_proto::{EventBus, Event, Hat};
+use hats_proto::{EventBus, Event, Hat};
 
 let mut bus = EventBus::new();
 
@@ -182,7 +182,7 @@ pub enum ProtoError {
 ## Example: Event Flow
 
 ```rust
-use ralph_proto::{EventBus, Event, Hat};
+use hats_proto::{EventBus, Event, Hat};
 
 // Setup
 let mut bus = EventBus::new();

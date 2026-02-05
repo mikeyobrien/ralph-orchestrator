@@ -5,7 +5,7 @@
 
 ## Overview
 
-Ralph's task system provides runtime work tracking through `.agent/tasks.jsonl`, replacing the legacy scratchpad mechanism.
+Hats's task system provides runtime work tracking through `.agent/tasks.jsonl`, replacing the legacy scratchpad mechanism.
 
 ## Task Lifecycle
 
@@ -25,9 +25,9 @@ tasks:
 ## CLI Commands
 
 ```bash
-ralph task list              # Show current tasks
-ralph task add "description" # Add new task
-ralph task complete <id>     # Mark task complete
+hats task list              # Show current tasks
+hats task add "description" # Add new task
+hats task complete <id>     # Mark task complete
 ```
 
 ## See Also

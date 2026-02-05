@@ -1,19 +1,19 @@
 # Orchestrator API Reference
 
-Complete API documentation for the Ralph Orchestrator core module.
+Complete API documentation for the Hats core module.
 
-## Module: `ralph_orchestrator`
+## Module: `hats_orchestrator`
 
 The main orchestration module that coordinates AI agent execution.
 
 ## Classes
 
-### `RalphOrchestrator`
+### `HatsOrchestrator`
 
 Main orchestrator class managing the execution loop.
 
 ```python
-class RalphOrchestrator:
+class HatsOrchestrator:
     def __init__(
         self,
         prompt_file_or_config = None,
@@ -45,13 +45,13 @@ async def arun(self) -> None:
     """Run the orchestration loop asynchronously."""
 ```
 
-### `RalphConfig`
+### `HatsConfig`
 
 Configuration dataclass for the orchestrator.
 
 ```python
 @dataclass
-class RalphConfig:
+class HatsConfig:
     agent: AgentType = AgentType.AUTO
     prompt_file: str = "PROMPT.md"
     max_iterations: int = 100
@@ -98,15 +98,15 @@ def main() -> int:
 ## Usage Examples
 
 ```python
-from ralph_orchestrator import RalphOrchestrator, RalphConfig
+from hats_orchestrator import HatsOrchestrator, HatsConfig
 
 # Using config object
-config = RalphConfig(agent=AgentType.CLAUDE)
-orchestrator = RalphOrchestrator(config)
+config = HatsConfig(agent=AgentType.CLAUDE)
+orchestrator = HatsOrchestrator(config)
 orchestrator.run()
 
 # Using individual parameters
-orchestrator = RalphOrchestrator(
+orchestrator = HatsOrchestrator(
     prompt_file_or_config="PROMPT.md",
     primary_tool="claude",
     max_iterations=50
@@ -114,21 +114,21 @@ orchestrator = RalphOrchestrator(
 orchestrator.run()
 ```
 
-The main orchestration module that implements the Ralph Wiggum technique.
+The main orchestration module that implements the Hats Wiggum technique.
 
 ### Classes
 
-#### `RalphOrchestrator`
+#### `HatsOrchestrator`
 
 The main orchestrator class that manages the iteration loop.
 
 ```python
-class RalphOrchestrator:
+class HatsOrchestrator:
     """
     Orchestrates AI agent iterations for autonomous task completion.
     
     Attributes:
-        config (RalphConfig): Configuration object
+        config (HatsConfig): Configuration object
         agent (Agent): Active AI agent instance
         metrics (MetricsCollector): Metrics tracking
         state (OrchestratorState): Current state
@@ -138,12 +138,12 @@ class RalphOrchestrator:
 ##### Constructor
 
 ```python
-def __init__(self, config: RalphConfig) -> None:
+def __init__(self, config: HatsConfig) -> None:
     """
     Initialize the orchestrator with configuration.
     
     Args:
-        config: RalphConfig object with settings
+        config: HatsConfig object with settings
         
     Raises:
         ValueError: If configuration is invalid
@@ -226,20 +226,20 @@ def load_state(self) -> Optional[OrchestratorState]:
     """
 ```
 
-#### `RalphConfig`
+#### `HatsConfig`
 
 Configuration dataclass for the orchestrator.
 
 ```python
 @dataclass
-class RalphConfig:
+class HatsConfig:
     """
-    Configuration for Ralph orchestrator.
+    Configuration for Hats orchestrator.
     
     All parameters can be set via:
     - Command-line arguments
-    - Environment variables (RALPH_*)
-    - Configuration file (.ralph.conf)
+    - Environment variables (HATS_*)
+    - Configuration file (.hats.conf)
     - Default values
     """
     
@@ -491,10 +491,10 @@ DANGEROUS_PATTERNS = [
 ### Basic Usage
 
 ```python
-from ralph_orchestrator import RalphOrchestrator, RalphConfig
+from hats_orchestrator import HatsOrchestrator, HatsConfig
 
 # Create configuration
-config = RalphConfig(
+config = HatsConfig(
     agent=AgentType.CLAUDE,
     prompt_file="task.md",
     max_iterations=50,
@@ -502,7 +502,7 @@ config = RalphConfig(
 )
 
 # Initialize orchestrator
-orchestrator = RalphOrchestrator(config)
+orchestrator = HatsOrchestrator(config)
 
 # Run orchestration
 exit_code = orchestrator.run()
@@ -512,13 +512,13 @@ exit_code = orchestrator.run()
 
 ```python
 # Load from environment and add overrides
-config = RalphConfig()
+config = HatsConfig()
 config.max_iterations = 100
 config.checkpoint_interval = 10
 config.verbose = True
 
 # Initialize with custom config
-orchestrator = RalphOrchestrator(config)
+orchestrator = HatsOrchestrator(config)
 ```
 
 ### State Management
@@ -537,7 +537,7 @@ if state:
 
 ```python
 try:
-    orchestrator = RalphOrchestrator(config)
+    orchestrator = HatsOrchestrator(config)
     exit_code = orchestrator.run()
 except SecurityError as e:
     print(f"Security violation: {e}")

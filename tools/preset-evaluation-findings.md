@@ -1,10 +1,10 @@
 # Hat Collection Preset Evaluation Findings
 
-> **Purpose**: Comprehensive evaluation of Ralph's hat collection presets, documenting structure, event routing, issues, and recommendations.
+> **Purpose**: Comprehensive evaluation of Hats's hat collection presets, documenting structure, event routing, issues, and recommendations.
 
 **Evaluator**: Claude Agent
 **Date**: 2026-01-15
-**Ralph Version**: 2.0.0
+**Hats Version**: 2.0.0
 **Presets Evaluated**: 21
 
 ---
@@ -71,7 +71,7 @@ These are the 12 new multi-agent workflow presets from COLLECTION.md:
 
 ### Category 2: Standard Workflow Presets
 
-These are the traditional Ralph presets:
+These are the traditional Hats presets:
 
 | Preset | Purpose | Entry | Hats | Status |
 |--------|---------|-------|------|--------|
@@ -403,9 +403,9 @@ review.request → reviewer → review.approved → ? (no handler)
 |------|-------------|----------|
 | No Entry | No hat triggers on `task.start` | HIGH |
 | Orphaned Events | `build.done`, `build.blocked`, `review.*` have no handlers | HIGH |
-| External Dependency | Requires Ralph Planner to inject `build.task` events | MEDIUM |
+| External Dependency | Requires Hats Planner to inject `build.task` events | MEDIUM |
 
-**Analysis**: This preset is designed to work with Ralph's internal Planner component, which creates a scratchpad and injects `build.task` events. It's not a standalone preset—it requires external orchestration.
+**Analysis**: This preset is designed to work with Hats's internal Planner component, which creates a scratchpad and injects `build.task` events. It's not a standalone preset—it requires external orchestration.
 
 **Recommendations**:
 - Document that this preset requires Planner mode
@@ -569,7 +569,7 @@ Clean preset with proper `task.start` entry point.
 |----|-------------|--------|--------|
 | UX-001 | Add progress indicators during evaluation | HIGH | LOW |
 | UX-002 | Show event publication status in real-time | MEDIUM | MEDIUM |
-| UX-003 | Create preset validation command (`ralph validate-preset`) | HIGH | MEDIUM |
+| UX-003 | Create preset validation command (`hats validate-preset`) | HIGH | MEDIUM |
 | UX-004 | Add visual event flow diagrams to COLLECTION.md | HIGH | LOW |
 | UX-005 | Standardize completion signals across presets | MEDIUM | LOW |
 
@@ -595,7 +595,7 @@ Clean preset with proper `task.start` entry point.
 
 2. **Add entry points to orphaned presets** (feature, feature-minimal, deploy, refactor, docs)
    - Either add planner hats that trigger on `task.start`
-   - Or clearly document they require Ralph Planner mode
+   - Or clearly document they require Hats Planner mode
 
 3. **Handle orphaned events**
    - spec-driven.yml: Add `spec.violated` → spec_writer trigger
@@ -613,7 +613,7 @@ Clean preset with proper `task.start` entry point.
 
 3. **Create preset validation tool**
    ```bash
-   ralph validate-preset presets/tdd-red-green.yml
+   hats validate-preset presets/tdd-red-green.yml
    # Output:
    # ✓ Valid YAML syntax
    # ✓ All hats have triggers
@@ -639,12 +639,12 @@ Clean preset with proper `task.start` entry point.
 ### A. Test Environment
 ```
 OS: macOS (Darwin 24.6.0)
-Ralph Version: 2.0.0
+Hats Version: 2.0.0
 Rust Version: 1.85+ (stable)
 Date: 2026-01-15
 Evaluator: Claude Agent
 Build: cargo build --release ✓
-Smoke Tests: cargo test -p ralph-core smoke_runner ✓ (12 tests passed)
+Smoke Tests: cargo test -p hats-core smoke_runner ✓ (12 tests passed)
 ```
 
 ### B. Preset File Locations
@@ -688,7 +688,7 @@ presets/
 The `HatRegistry::get_for_topic()` function finds hats by matching published events to hat triggers:
 
 ```rust
-// crates/ralph-core/src/hat_registry.rs:110-113
+// crates/hats-core/src/hat_registry.rs:110-113
 pub fn get_for_topic(&self, topic: &str) -> Option<&Hat> {
     let topic = Topic::new(topic);
     self.hats.values().find(|hat| hat.is_subscribed(&topic))

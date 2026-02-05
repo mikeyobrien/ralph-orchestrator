@@ -1,0 +1,51 @@
+# Multi-Hat: Hats + builder + reviewer
+# Events route between hats, Hats coordinates
+
+name: multi_hat
+description: Hats coordinates multiple hats with event routing
+
+config:
+  prompt_file: PROMPT.md
+  max_iterations: 5
+  hats:
+    builder:
+      subscribes_to:
+        - build.task
+      default_publishes: build.done
+    reviewer:
+      subscribes_to:
+        - build.done
+      default_publishes: review.complete
+
+mock_responses:
+  - |
+    <event topic="build.task">
+    Task: Implement feature X
+    </event>
+  - |
+    Feature implemented.
+    <event topic="build.done">
+    tests: pass
+    lint: pass
+    typecheck: pass
+    audit: pass
+    coverage: pass
+    </event>
+  - |
+    Code reviewed.
+    <event topic="review.complete">
+    approved: true
+    </event>
+  - |
+    <event topic="LOOP_COMPLETE">
+    All done.
+    </event>
+
+expected:
+  iterations: 4
+  events:
+    - topic: build.task
+    - topic: build.done
+    - topic: review.complete
+    - topic: LOOP_COMPLETE
+  completion: true

@@ -36,7 +36,7 @@
   },
   {
     "name": "hatless-baseline",
-    "description": "A control preset with NO hats - tests core Ralph loop without hat delegation.",
+    "description": "A control preset with NO hats - tests core Hats loop without hat delegation.",
     "category": "testing"
   },
   {
@@ -46,7 +46,7 @@
   },
   {
     "name": "pdd-to-code-assist",
-    "description": "Ralph debates with himself from rough idea to committed, tested code",
+    "description": "Hats debates with himself from rough idea to committed, tested code",
     "category": "development"
   },
   {

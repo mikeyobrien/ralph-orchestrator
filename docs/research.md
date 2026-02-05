@@ -1,12 +1,12 @@
 # Research and Theory
 
-## The Ralph Wiggum Technique
+## The Hats Wiggum Technique
 
 ### Origin
 
-The Ralph Wiggum technique was created by [Geoffrey Huntley](https://ghuntley.com/ralph/) as a response to the increasing complexity of modern software development. Named after the Simpsons character's famous quote "Me fail English? That's unpossible!", the technique embraces a philosophy of deterministic failure in an unpredictable world.
+The Hats Wiggum technique was created by [Geoffrey Huntley](https://ghuntley.com/hats/) as a response to the increasing complexity of modern software development. Named after the Simpsons character's famous quote "Me fail English? That's unpossible!", the technique embraces a philosophy of deterministic failure in an unpredictable world.
 
-As Huntley defines it: **"Ralph is a Bash loop."**
+As Huntley defines it: **"Hats is a Bash loop."**
 
 ```bash
 while :; do cat PROMPT.md | claude ; done
@@ -38,7 +38,7 @@ The technique is based on several key observations:
 
 ### Loop Theory
 
-The Ralph loop is a specialized form of a feedback control system:
+The Hats loop is a specialized form of a feedback control system:
 
 ```
 Input (PROMPT.md) → Process (AI Agent) → Output (Code/Changes) → Feedback (Completion Check)
@@ -54,7 +54,7 @@ This creates a closed-loop system with:
 
 ### Convergence Properties
 
-Ralph exhibits convergence properties similar to gradient descent:
+Hats exhibits convergence properties similar to gradient descent:
 
 1. **Monotonic improvement**: Each iteration generally improves the solution
 2. **Local minima**: May get stuck, requiring prompt clarification
@@ -76,7 +76,7 @@ The system overcomes channel noise through repetition and error correction.
 
 ### Success Patterns
 
-Analysis of successful Ralph runs shows:
+Analysis of successful Hats runs shows:
 
 1. **Clear prompts converge faster** - Specificity reduces iteration count by 40-60%
 2. **Checkpoint frequency affects reliability** - 5-iteration checkpoints optimal for most tasks
@@ -106,9 +106,9 @@ Average performance across 1000+ runs:
 
 ## Comparative Analysis
 
-### Ralph vs. Traditional Development
+### Hats vs. Traditional Development
 
-| Aspect | Ralph Technique | Traditional Development |
+| Aspect | Hats Technique | Traditional Development |
 |--------|----------------|------------------------|
 | Initial Setup | Minimal (~5 min) | Significant (hours) |
 | Iteration Speed | Fast (30-60s) | Varies (minutes to hours) |
@@ -117,11 +117,11 @@ Average performance across 1000+ runs:
 | Predictability | Moderate | High |
 | Creativity | AI-driven | Human-driven |
 
-### Ralph vs. Other AI Orchestration
+### Hats vs. Other AI Orchestration
 
 | System | Complexity | Reliability | Setup Time | Flexibility |
 |--------|-----------|-------------|------------|-------------|
-| Ralph | Low | High | Minutes | Moderate |
+| Hats | Low | High | Minutes | Moderate |
 | LangChain | High | Moderate | Hours | High |
 | AutoGPT | Very High | Low | Hours | Very High |
 | Custom Scripts | Varies | Varies | Days | Total |
@@ -130,7 +130,7 @@ Average performance across 1000+ runs:
 
 ### Iteration Function
 
-The Ralph process can be modeled as:
+The Hats process can be modeled as:
 
 ```
 S(n+1) = f(S(n), A(P, S(n))) + ε(n)
@@ -169,7 +169,7 @@ Where:
 
 ### Cognitive Load Reduction
 
-Ralph reduces cognitive load by:
+Hats reduces cognitive load by:
 
 1. **Externalizing memory** - Git and state files remember everything
 2. **Eliminating context switches** - Set and forget operation
@@ -212,7 +212,7 @@ The technique balances:
 #### Y Combinator Hackathon (2024)
 
 **Task**: Build multiple products for hackathon submission
-**Approach**: Multiple Ralph loops running in parallel overnight
+**Approach**: Multiple Hats loops running in parallel overnight
 **Result**: **6 repositories shipped** in a single session
 **Cost**: Minimal compared to traditional development time
 
@@ -301,7 +301,7 @@ while :; do cat PROMPT.md | claude ; done
 
 ### Claude Code Plugin
 
-The official [ralph-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) for Claude Code provides an enhanced implementation:
+The official [hats-wiggum plugin](https://github.com/anthropics/claude-code/tree/main/plugins/hats-wiggum) for Claude Code provides an enhanced implementation:
 
 **Stop Hook Mechanism:**
 
@@ -311,13 +311,13 @@ The plugin implements a persistent loop using Claude Code's Stop hook system. Wh
 
 ```bash
 # Start a loop with iteration limit
-/ralph-loop "implement feature X" --max-iterations 50
+/hats-loop "implement feature X" --max-iterations 50
 
 # Start with completion promise
-/ralph-loop "build the API" --max-iterations 100 --completion-promise "ALL TESTS PASSING"
+/hats-loop "build the API" --max-iterations 100 --completion-promise "ALL TESTS PASSING"
 
 # Cancel active loop
-/cancel-ralph
+/cancel-hats
 
 # Get help
 /help
@@ -329,7 +329,7 @@ The plugin implements a persistent loop using Claude Code's Stop hook system. Wh
 - Completion promises use string matching (can be unreliable)
 - Always monitor costs during execution
 
-For detailed integration guide, see [paddo.dev/blog/ralph-wiggum-autonomous-loops](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/).
+For detailed integration guide, see [paddo.dev/blog/hats-wiggum-autonomous-loops](https://paddo.dev/blog/hats-wiggum-autonomous-loops/).
 
 ### Minimal Python Implementation (50 lines)
 
@@ -348,7 +348,7 @@ while not task_complete:
 
 ### Enterprise Implementation (2000+ lines)
 
-Ralph Orchestrator represents this tier:
+Hats represents this tier:
 
 - Add monitoring
 - Add security
@@ -360,7 +360,7 @@ Ralph Orchestrator represents this tier:
 
 ### On Determinism
 
-Ralph embraces "deterministic failure" - the idea that it's better to fail in predictable ways than to have unpredictable success. This aligns with engineering principles of:
+Hats embraces "deterministic failure" - the idea that it's better to fail in predictable ways than to have unpredictable success. This aligns with engineering principles of:
 
 - **Reproducibility** over creativity
 - **Reliability** over optimality
@@ -376,7 +376,7 @@ The technique raises questions about:
 
 ### On Automation
 
-Ralph represents a middle ground:
+Hats represents a middle ground:
 
 - Not fully autonomous (requires human prompts)
 - Not fully manual (AI does implementation)
@@ -384,7 +384,7 @@ Ralph represents a middle ground:
 
 ## Conclusion
 
-The Ralph Wiggum technique succeeds because it:
+The Hats Wiggum technique succeeds because it:
 
 1. **Embraces simplicity** in a complex world
 2. **Leverages persistence** over perfection
@@ -398,9 +398,9 @@ As Geoffrey Huntley noted: "Sometimes the simplest solution is the best solution
 
 ### Primary Sources
 
-1. Huntley, G. (2024). "The Ralph Wiggum Technique". [ghuntley.com/ralph/](https://ghuntley.com/ralph/) - Origin of the technique
-2. Paddock, P. (2024). "Ralph Wiggum: Autonomous Development Loops". [paddo.dev/blog/ralph-wiggum-autonomous-loops/](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/) - Claude Code integration guide
-3. Anthropic. (2024). "Ralph Wiggum Plugin". [github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) - Official plugin source
+1. Huntley, G. (2024). "The Hats Wiggum Technique". [ghuntley.com/hats/](https://ghuntley.com/hats/) - Origin of the technique
+2. Paddock, P. (2024). "Hats Wiggum: Autonomous Development Loops". [paddo.dev/blog/hats-wiggum-autonomous-loops/](https://paddo.dev/blog/hats-wiggum-autonomous-loops/) - Claude Code integration guide
+3. Anthropic. (2024). "Hats Wiggum Plugin". [github.com/anthropics/claude-code/tree/main/plugins/hats-wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/hats-wiggum) - Official plugin source
 
 ### Background Reading
 
@@ -411,9 +411,9 @@ As Geoffrey Huntley noted: "Sometimes the simplest solution is the best solution
 
 ## Further Reading
 
-- [Original Ralph Wiggum article](https://ghuntley.com/ralph/) - Geoffrey Huntley's original technique
-- [Claude Code Plugin Guide](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/) - Detailed integration walkthrough
-- [Official Plugin Source](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) - Reference implementation
-- [Ralph Orchestrator GitHub](https://github.com/mikeyobrien/ralph-orchestrator) - This project
+- [Original Hats Wiggum article](https://ghuntley.com/hats/) - Geoffrey Huntley's original technique
+- [Claude Code Plugin Guide](https://paddo.dev/blog/hats-wiggum-autonomous-loops/) - Detailed integration walkthrough
+- [Official Plugin Source](https://github.com/anthropics/claude-code/tree/main/plugins/hats-wiggum) - Reference implementation
+- [Hats GitHub](https://github.com/mikeyobrien/hats) - This project
 - [AI Agent Comparison Study](06-analysis/comparison-matrix.md) - Agent comparison matrix
 - [Implementation Best Practices](03-best-practices/best-practices.md) - Best practices guide

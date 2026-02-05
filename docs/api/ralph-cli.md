@@ -1,10 +1,10 @@
-# ralph-cli
+# hats-cli
 
 Binary entry point and CLI parsing.
 
 ## Overview
 
-`ralph-cli` is the main binary that:
+`hats-cli` is the main binary that:
 
 - Parses command-line arguments
 - Routes to appropriate commands
@@ -12,7 +12,7 @@ Binary entry point and CLI parsing.
 
 ## Commands
 
-### ralph run
+### hats run
 
 Execute the orchestration loop.
 
@@ -32,7 +32,7 @@ pub struct RunCommand {
 }
 ```
 
-### ralph init
+### hats init
 
 Initialize configuration file.
 
@@ -45,7 +45,7 @@ pub struct InitCommand {
 }
 ```
 
-### ralph plan
+### hats plan
 
 Start PDD planning session.
 
@@ -56,7 +56,7 @@ pub struct PlanCommand {
 }
 ```
 
-### ralph task
+### hats task
 
 Generate code task files.
 
@@ -67,7 +67,7 @@ pub struct TaskCommand {
 }
 ```
 
-### ralph events
+### hats events
 
 View event history.
 
@@ -78,7 +78,7 @@ pub struct EventsCommand {
 }
 ```
 
-### ralph emit
+### hats emit
 
 Emit an event.
 
@@ -90,7 +90,7 @@ pub struct EmitCommand {
 }
 ```
 
-### ralph clean
+### hats clean
 
 Clean up `.agent/` directory.
 
@@ -101,7 +101,7 @@ pub struct CleanCommand {
 }
 ```
 
-### ralph tools
+### hats tools
 
 Runtime tools subcommands.
 
@@ -147,7 +147,7 @@ pub async fn run() -> Result<()> {
 
 ```rust
 fn main() {
-    if let Err(e) = ralph_cli::run() {
+    if let Err(e) = hats_cli::run() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
@@ -162,7 +162,7 @@ Generate shell completions:
 pub fn generate_completions(shell: Shell) -> String {
     let mut cmd = Cli::command();
     let mut buf = Vec::new();
-    generate(shell, &mut cmd, "ralph", &mut buf);
+    generate(shell, &mut cmd, "hats", &mut buf);
     String::from_utf8(buf).unwrap()
 }
 ```
@@ -170,9 +170,9 @@ pub fn generate_completions(shell: Shell) -> String {
 **Usage:**
 
 ```bash
-ralph completions bash > ~/.local/share/bash-completion/completions/ralph
-ralph completions zsh > ~/.zfunc/_ralph
-ralph completions fish > ~/.config/fish/completions/ralph.fish
+hats completions bash > ~/.local/share/bash-completion/completions/hats
+hats completions zsh > ~/.zfunc/_hats
+hats completions fish > ~/.config/fish/completions/hats.fish
 ```
 
 ## Exit Codes

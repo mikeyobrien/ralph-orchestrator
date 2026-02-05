@@ -1,6 +1,6 @@
 # Installation Guide
 
-Comprehensive installation instructions for Ralph Orchestrator.
+Comprehensive installation instructions for Hats.
 
 ## Prerequisites
 
@@ -14,19 +14,19 @@ Comprehensive installation instructions for Ralph Orchestrator.
 ### Method 1: npm (Recommended)
 
 ```bash
-npm install -g @ralph-orchestrator/ralph-cli
+npm install -g @hats/hats-cli
 ```
 
 ### Method 2: Homebrew (macOS/Linux)
 
 ```bash
-brew install ralph-orchestrator
+brew install hats
 ```
 
 ### Method 3: Cargo
 
 ```bash
-cargo install ralph-cli
+cargo install hats-cli
 ```
 
 ### Method 4: Prebuilt Binary (cargo-dist)
@@ -36,16 +36,16 @@ Download the latest release artifact for your OS/arch from GitHub Releases (buil
 ```bash
 # Example (replace with the correct archive for your platform)
 mkdir -p ~/bin
-curl -L -o ralph.tar.gz "<release-archive-url>"
-tar -xzf ralph.tar.gz
-mv ralph ~/bin/
+curl -L -o hats.tar.gz "<release-archive-url>"
+tar -xzf hats.tar.gz
+mv hats ~/bin/
 export PATH="$HOME/bin:$PATH"
 ```
 
 ## Verify Installation
 
 ```bash
-ralph --version
+hats --version
 ```
 
 ## Next Steps

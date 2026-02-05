@@ -1,6 +1,6 @@
-# Task: Build Web UI for Ralph Orchestrator Monitoring ✅ COMPLETE
+# Task: Build Web UI for Hats Monitoring ✅ COMPLETE
 
-Create a web-based monitoring interface for the Ralph Orchestrator system that provides real-time visibility into agent execution, task progress, and system health metrics.
+Create a web-based monitoring interface for the Hats system that provides real-time visibility into agent execution, task progress, and system health metrics.
 
 **COMPLETION DATE**: September 8, 2024  
 **FINAL STATUS**: ✅ All requirements successfully implemented and tested  
@@ -39,7 +39,7 @@ Create a web-based monitoring interface for the Ralph Orchestrator system that p
 **FINAL VERIFICATION**: The authentication fix has been tested and confirmed working. Users can now:
 1. Visit the dashboard at http://localhost:8080
 2. Be properly redirected to login page if not authenticated  
-3. Login with credentials (admin / ralph-admin-2024)
+3. Login with credentials (admin / hats-admin-2024)
 4. Access all dashboard features without 403 errors
 5. All API calls work correctly with proper authentication
 
@@ -68,13 +68,13 @@ uv run python -m ralph_orchestrator.web --port 8000
 
 # With authentication enabled (default)
 # Username: admin
-# Password: ralph-admin-2024
+# Password: hats-admin-2024
 ```
 
 Then open your browser to: http://localhost:8080
 
 ## Final Summary
-The Ralph Orchestrator Web Monitoring Dashboard has been successfully completed through 11 iterations of development. The system provides a comprehensive, secure, and performant web interface for monitoring and controlling Ralph Orchestrator instances.
+The Hats Web Monitoring Dashboard has been successfully completed through 11 iterations of development. The system provides a comprehensive, secure, and performant web interface for monitoring and controlling Hats instances.
 
 ### Key Achievements:
 - **Full-stack implementation**: FastAPI backend with WebSocket support + responsive HTML/JS frontend
@@ -147,8 +147,8 @@ The Ralph Orchestrator Web Monitoring Dashboard has been successfully completed 
 - Created authentication module at `src/ralph_orchestrator/web/auth.py`
   - Implemented JWT-based authentication with bcrypt password hashing
   - Added AuthManager class for user management
-  - Support for environment variable configuration (RALPH_WEB_SECRET_KEY, RALPH_WEB_USERNAME, RALPH_WEB_PASSWORD)
-  - Default credentials: admin / ralph-admin-2024 (configurable)
+  - Support for environment variable configuration (HATS_WEB_SECRET_KEY, HATS_WEB_USERNAME, HATS_WEB_PASSWORD)
+  - Default credentials: admin / hats-admin-2024 (configurable)
 - Added authentication endpoints to the web server:
   - `/api/auth/login` - Login with username/password, returns JWT token
   - `/api/auth/verify` - Verify current token validity
@@ -287,7 +287,7 @@ The Ralph Orchestrator Web Monitoring Dashboard has been successfully completed 
   - Proper foreign key relationships and indices for performance
   - Methods for creating, updating, and querying runs, iterations, and tasks
 - Database features:
-  - Automatic database initialization in ~/.ralph/history.db
+  - Automatic database initialization in ~/.hats/history.db
   - Thread-safe connection management with context managers
   - JSON storage for metadata and metrics
   - Statistics generation (success rate, average iterations, etc.)
@@ -416,10 +416,10 @@ Fix this issues
 
 ✦ ❯ uv run python -m ralph_orchestrator.web
 
-2025-09-08 17:14:57,646 - ralph.orchestrator - INFO - Logging initialized - Level: INFO, Console: True, File: None, Dir: .logs
-2025-09-08 17:14:57,863 - ralph_orchestrator.web.database - INFO - Database initialized at /home/mobrienv/.ralph/history.db
-2025-09-08 17:14:57,868 - __main__ - INFO - Starting Ralph Orchestrator Web Monitor on 0.0.0.0:8080
-2025-09-08 17:14:57,868 - __main__ - INFO - Authentication enabled - default credentials: admin / ralph-admin-2024
+2025-09-08 17:14:57,646 - hats.orchestrator - INFO - Logging initialized - Level: INFO, Console: True, File: None, Dir: .logs
+2025-09-08 17:14:57,863 - ralph_orchestrator.web.database - INFO - Database initialized at /home/mobrienv/.hats/history.db
+2025-09-08 17:14:57,868 - __main__ - INFO - Starting Hats Web Monitor on 0.0.0.0:8080
+2025-09-08 17:14:57,868 - __main__ - INFO - Authentication enabled - default credentials: admin / hats-admin-2024
 2025-09-08 17:14:57,868 - ralph_orchestrator.web.server - INFO - Starting web monitor on 0.0.0.0:8080
 INFO:     Started server process [331156]
 INFO:     Waiting for application startup.

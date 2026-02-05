@@ -3,7 +3,7 @@
 #
 # Files referenced via include_str!() must be inside the crate directory to be
 # included when publishing. Additionally, presets are mirrored from /presets/
-# to /crates/ralph-cli/presets/ so cargo install users get the same presets.
+# to /crates/hats-cli/presets/ so cargo install users get the same presets.
 # This script syncs source files to their crate-local copies.
 #
 # Usage:
@@ -17,36 +17,36 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Define source -> destination mappings
 # Format: "source_path:dest_path"
 EMBEDDED_FILES=(
-    # SOPs for ralph plan/task commands
-    ".claude/skills/pdd/SKILL.md:crates/ralph-cli/sops/pdd.md"
-    ".claude/skills/code-task-generator/SKILL.md:crates/ralph-cli/sops/code-task-generator.md"
+    # SOPs for hats plan/task commands
+    ".claude/skills/pdd/SKILL.md:crates/hats-cli/sops/pdd.md"
+    ".claude/skills/code-task-generator/SKILL.md:crates/hats-cli/sops/code-task-generator.md"
 
     # Presets (canonical -> mirror for cargo install)
-    "presets/bugfix.yml:crates/ralph-cli/presets/bugfix.yml"
-    "presets/code-assist.yml:crates/ralph-cli/presets/code-assist.yml"
-    "presets/debug.yml:crates/ralph-cli/presets/debug.yml"
-    "presets/deploy.yml:crates/ralph-cli/presets/deploy.yml"
-    "presets/docs.yml:crates/ralph-cli/presets/docs.yml"
-    "presets/feature.yml:crates/ralph-cli/presets/feature.yml"
-    "presets/gap-analysis.yml:crates/ralph-cli/presets/gap-analysis.yml"
-    "presets/hatless-baseline.yml:crates/ralph-cli/presets/hatless-baseline.yml"
-    "presets/minimal/amp.yml:crates/ralph-cli/presets/minimal/amp.yml"
-    "presets/minimal/builder.yml:crates/ralph-cli/presets/minimal/builder.yml"
-    "presets/minimal/claude.yml:crates/ralph-cli/presets/minimal/claude.yml"
-    "presets/minimal/code-assist.yml:crates/ralph-cli/presets/minimal/code-assist.yml"
-    "presets/minimal/codex.yml:crates/ralph-cli/presets/minimal/codex.yml"
-    "presets/minimal/gemini.yml:crates/ralph-cli/presets/minimal/gemini.yml"
-    "presets/minimal/kiro.yml:crates/ralph-cli/presets/minimal/kiro.yml"
-    "presets/minimal/opencode.yml:crates/ralph-cli/presets/minimal/opencode.yml"
-    "presets/minimal/preset-evaluator.yml:crates/ralph-cli/presets/minimal/preset-evaluator.yml"
-    "presets/minimal/smoke.yml:crates/ralph-cli/presets/minimal/smoke.yml"
-    "presets/minimal/test.yml:crates/ralph-cli/presets/minimal/test.yml"
-    "presets/pdd-to-code-assist.yml:crates/ralph-cli/presets/pdd-to-code-assist.yml"
-    "presets/pr-review.yml:crates/ralph-cli/presets/pr-review.yml"
-    "presets/refactor.yml:crates/ralph-cli/presets/refactor.yml"
-    "presets/research.yml:crates/ralph-cli/presets/research.yml"
-    "presets/review.yml:crates/ralph-cli/presets/review.yml"
-    "presets/spec-driven.yml:crates/ralph-cli/presets/spec-driven.yml"
+    "presets/bugfix.yml:crates/hats-cli/presets/bugfix.yml"
+    "presets/code-assist.yml:crates/hats-cli/presets/code-assist.yml"
+    "presets/debug.yml:crates/hats-cli/presets/debug.yml"
+    "presets/deploy.yml:crates/hats-cli/presets/deploy.yml"
+    "presets/docs.yml:crates/hats-cli/presets/docs.yml"
+    "presets/feature.yml:crates/hats-cli/presets/feature.yml"
+    "presets/gap-analysis.yml:crates/hats-cli/presets/gap-analysis.yml"
+    "presets/hatless-baseline.yml:crates/hats-cli/presets/hatless-baseline.yml"
+    "presets/minimal/amp.yml:crates/hats-cli/presets/minimal/amp.yml"
+    "presets/minimal/builder.yml:crates/hats-cli/presets/minimal/builder.yml"
+    "presets/minimal/claude.yml:crates/hats-cli/presets/minimal/claude.yml"
+    "presets/minimal/code-assist.yml:crates/hats-cli/presets/minimal/code-assist.yml"
+    "presets/minimal/codex.yml:crates/hats-cli/presets/minimal/codex.yml"
+    "presets/minimal/gemini.yml:crates/hats-cli/presets/minimal/gemini.yml"
+    "presets/minimal/kiro.yml:crates/hats-cli/presets/minimal/kiro.yml"
+    "presets/minimal/opencode.yml:crates/hats-cli/presets/minimal/opencode.yml"
+    "presets/minimal/preset-evaluator.yml:crates/hats-cli/presets/minimal/preset-evaluator.yml"
+    "presets/minimal/smoke.yml:crates/hats-cli/presets/minimal/smoke.yml"
+    "presets/minimal/test.yml:crates/hats-cli/presets/minimal/test.yml"
+    "presets/pdd-to-code-assist.yml:crates/hats-cli/presets/pdd-to-code-assist.yml"
+    "presets/pr-review.yml:crates/hats-cli/presets/pr-review.yml"
+    "presets/refactor.yml:crates/hats-cli/presets/refactor.yml"
+    "presets/research.yml:crates/hats-cli/presets/research.yml"
+    "presets/review.yml:crates/hats-cli/presets/review.yml"
+    "presets/spec-driven.yml:crates/hats-cli/presets/spec-driven.yml"
 )
 
 # Colors for output

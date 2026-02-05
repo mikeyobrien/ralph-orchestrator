@@ -49,16 +49,16 @@ if [ "$LOCAL_MODE" = true ]; then
 
     info "Removing node_modules..."
     rm -rf "$WORK_DIR/node_modules"
-    rm -rf "$WORK_DIR/backend/ralph-web-server/node_modules"
-    rm -rf "$WORK_DIR/frontend/ralph-web/node_modules"
+    rm -rf "$WORK_DIR/backend/hats-web-server/node_modules"
+    rm -rf "$WORK_DIR/frontend/hats-web/node_modules"
     pass "node_modules removed"
 else
     TMPDIR=$(mktemp -d)
     trap 'rm -rf "$TMPDIR"' EXIT
     info "Clone mode: cloning into $TMPDIR"
 
-    git clone --depth 1 "$REPO_ROOT" "$TMPDIR/ralph-orchestrator"
-    WORK_DIR="$TMPDIR/ralph-orchestrator"
+    git clone --depth 1 "$REPO_ROOT" "$TMPDIR/hats"
+    WORK_DIR="$TMPDIR/hats"
     pass "Cloned repository"
 fi
 
@@ -87,7 +87,7 @@ pass "Backend tests passed"
 
 # --- Frontend tests ---
 info "Running frontend tests..."
-npm run test -w @ralph-web/dashboard
+npm run test -w @hats-web/dashboard
 pass "Frontend tests passed"
 
 echo ""

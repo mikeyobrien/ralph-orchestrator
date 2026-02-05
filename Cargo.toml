@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ralph-proto",
-    "crates/ralph-core",
-    "crates/ralph-adapters",
-    "crates/ralph-tui",
-    "crates/ralph-cli",
-    "crates/ralph-bench",
-    "crates/ralph-e2e",
-    "crates/ralph-telegram",
+    "crates/hats-proto",
+    "crates/hats-core",
+    "crates/hats-adapters",
+    "crates/hats-tui",
+    "crates/hats-cli",
+    "crates/hats-bench",
+    "crates/hats-e2e",
+    "crates/hats-telegram",
 ]
 exclude = [
     ".eval-sandbox",  # Evaluation sandbox - should never be in workspace
@@ -19,9 +19,9 @@ exclude = [
 edition = "2024"
 version = "2.4.4"
 license = "MIT"
-repository = "https://github.com/mikeyobrien/ralph-orchestrator"
-homepage = "https://github.com/mikeyobrien/ralph-orchestrator"
-description = "Ralph Orchestrator - Multi-agent orchestration framework"
+repository = "https://github.com/mikeyobrien/hats"
+homepage = "https://github.com/mikeyobrien/hats"
+description = "Hats - Multi-agent orchestration framework"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -133,14 +133,14 @@ scopeguard = "1"
 strip-ansi-escapes = "0.2"
 
 # Internal crates (version required for crates.io publishing)
-ralph-proto = { version = "2.4.4", path = "crates/ralph-proto" }
-ralph-core = { version = "2.4.4", path = "crates/ralph-core", features = ["recording"] }
-ralph-adapters = { version = "2.4.4", path = "crates/ralph-adapters" }
-ralph-tui = { version = "2.4.4", path = "crates/ralph-tui" }
-ralph-cli = { version = "2.4.4", path = "crates/ralph-cli" }
-ralph-bench = { version = "2.4.4", path = "crates/ralph-bench" }
-ralph-e2e = { version = "2.4.4", path = "crates/ralph-e2e" }
-ralph-telegram = { version = "2.4.4", path = "crates/ralph-telegram" }
+hats-proto = { version = "2.4.4", path = "crates/hats-proto" }
+hats-core = { version = "2.4.4", path = "crates/hats-core", features = ["recording"] }
+hats-adapters = { version = "2.4.4", path = "crates/hats-adapters" }
+hats-tui = { version = "2.4.4", path = "crates/hats-tui" }
+hats-cli = { version = "2.4.4", path = "crates/hats-cli" }
+hats-bench = { version = "2.4.4", path = "crates/hats-bench" }
+hats-e2e = { version = "2.4.4", path = "crates/hats-e2e" }
+hats-telegram = { version = "2.4.4", path = "crates/hats-telegram" }
 
 # Telegram bot framework
 teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
@@ -150,12 +150,12 @@ teloxide = { version = "0.13", default-features = false, features = ["macros", "
 # CI backends to support
 ci = "github"
 # Target platforms to build apps for (Rust target-triple syntax)
-# Windows excluded: Ralph requires Unix PTY and signal handling
+# Windows excluded: Hats requires Unix PTY and signal handling
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
 # The installers to generate for each app
 installers = ["shell", "npm"]
-# npm package scope (creates @ralph-orchestrator/ralph)
-npm-scope = "@ralph-orchestrator"
+# npm package scope (creates @hats/hats)
+npm-scope = "@hats"
 # Publish jobs to run in CI
 publish-jobs = ["npm"]
 # Extra static files to include in each App (path relative to this Cargo.toml's dir)

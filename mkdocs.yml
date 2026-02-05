@@ -1,12 +1,12 @@
-# Ralph Orchestrator Documentation
+# Hats Documentation
 # MkDocs configuration for GitHub Pages hosting
 
-site_name: Ralph Orchestrator
+site_name: Hats
 site_description: Hat-based orchestration framework that keeps AI agents in a loop until the task is done
-site_author: Ralph Orchestrator Contributors
-site_url: https://mikeyobrien.github.io/ralph-orchestrator/
-repo_url: https://github.com/mikeyobrien/ralph-orchestrator
-repo_name: mikeyobrien/ralph-orchestrator
+site_author: Hats Contributors
+site_url: https://mikeyobrien.github.io/hats/
+repo_url: https://github.com/mikeyobrien/hats
+repo_name: mikeyobrien/hats
 edit_uri: edit/main/docs/
 
 # Theme Configuration
@@ -67,7 +67,7 @@ nav:
     - Your First Task: getting-started/first-task.md
   - Concepts:
     - concepts/index.md
-    - The Ralph Wiggum Technique: concepts/ralph-wiggum-technique.md
+    - The Hats Wiggum Technique: concepts/hats-wiggum-technique.md
     - The Six Tenets: concepts/tenets.md
     - Hats & Events: concepts/hats-and-events.md
     - Coordination Patterns: concepts/coordination-patterns.md
@@ -93,11 +93,11 @@ nav:
     - Parallel Loops: advanced/parallel-loops.md
   - API Reference:
     - api/index.md
-    - ralph-proto: api/ralph-proto.md
-    - ralph-core: api/ralph-core.md
-    - ralph-adapters: api/ralph-adapters.md
-    - ralph-tui: api/ralph-tui.md
-    - ralph-cli: api/ralph-cli.md
+    - hats-proto: api/hats-proto.md
+    - hats-core: api/hats-core.md
+    - hats-adapters: api/hats-adapters.md
+    - hats-tui: api/hats-tui.md
+    - hats-cli: api/hats-cli.md
   - Examples:
     - examples/index.md
     - Simple Task: examples/simple-task.md
@@ -156,7 +156,7 @@ markdown_extensions:
   - pymdownx.magiclink:
       repo_url_shorthand: true
       user: mikeyobrien
-      repo: ralph-orchestrator
+      repo: hats
   - pymdownx.mark
   - pymdownx.smartsymbols
   - pymdownx.superfences:
@@ -175,10 +175,10 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mikeyobrien/ralph-orchestrator
+      link: https://github.com/mikeyobrien/hats
   version:
     provider: mike
   generator: false
 
 # Copyright
-copyright: Copyright &copy; 2024-2026 Ralph Orchestrator Contributors
+copyright: Copyright &copy; 2024-2026 Hats Contributors

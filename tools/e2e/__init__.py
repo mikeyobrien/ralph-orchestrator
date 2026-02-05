@@ -1,1 +1,1 @@
-# E2E tests for Ralph orchestrator
+# E2E tests for Hats orchestrator

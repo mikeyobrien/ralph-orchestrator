@@ -1,0 +1,84 @@
+# Market Intelligence Preset
+#
+# For competitive analysis and signal gathering.
+# Hats: scanner -> analyst -> synthesizer
+# Output: market signals report.
+#
+# Usage:
+#   hats run -c presets/market-intel.yml -b pi -p "Scan for agent security signals"
+
+event_loop:
+  completion_promise: "INTEL_COMPLETE"
+  max_iterations: 8
+  max_runtime_seconds: 1200
+  starting_event: "scan.start"
+
+hats:
+  scanner:
+    name: "Scanner"
+    description: "Casts a wide net for signals across sources."
+    triggers: ["scan.start"]
+    publishes: ["scan.done"]
+    instructions: |
+      ## SCANNER MODE
+
+      Gather raw signals from multiple sources. STEALTH MODE: observe only.
+
+      1. Search X (via web_search with site:x.com) for key accounts and topics
+      2. Check GitHub repos for new issues, releases, discussions
+      3. Search for news articles, blog posts, announcements
+      4. Note exact URLs and dates for everything found
+
+      Record raw signals in scratchpad. Do NOT filter yet.
+      Do NOT post, comment, or engage anywhere.
+      Publish scan.done.
+
+  analyst:
+    name: "Analyst"
+    description: "Filters signals for relevance and impact."
+    triggers: ["scan.done"]
+    publishes: ["analysis.done"]
+    instructions: |
+      ## ANALYST MODE
+
+      Filter and prioritize the raw signals.
+
+      For each signal, assess:
+      - Relevance: does this affect our products (hats/rho/pi)?
+      - Urgency: does this need action this week?
+      - Opportunity: can we capitalize on this?
+      - Threat: does this undermine our position?
+
+      Discard noise. Keep only signals that matter.
+      Publish analysis.done.
+
+  synthesizer:
+    name: "Synthesizer"
+    description: "Creates actionable intelligence brief."
+    triggers: ["analysis.done"]
+    publishes: ["intel.done"]
+    default_publishes: "intel.done"
+    instructions: |
+      ## SYNTHESIZER MODE
+
+      Write the intel brief.
+
+      Append to ~/notes/research/market-signals.md:
+      ```
+      ## <date>
+
+      ### Signals
+      - [source](url) -- <one-line summary>. <why it matters>.
+
+      ### Opportunities
+      - <actionable opportunity>
+
+      ### Threats
+      - <thing to watch>
+
+      ### No Action Needed
+      - <notable but not urgent>
+      ```
+
+      If nothing notable: just add "No new signals" with date.
+      Output INTEL_COMPLETE.

@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "name": "Ralph Benchmark Suite",
-    "description": "Starter benchmark tasks for evaluating Ralph loop effectiveness",
+    "name": "Hats Benchmark Suite",
+    "description": "Starter benchmark tasks for evaluating Hats loop effectiveness",
     "version": "1.0.0"
   },
   "tasks": [

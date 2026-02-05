@@ -1,0 +1,138 @@
+event_loop:
+  prompt_file: PROMPT.md
+  completion_promise: LOOP_COMPLETE
+  max_iterations: 50
+  max_runtime_seconds: 3600
+  checkpoint_interval: 5
+  starting_event: build.task
+cli:
+  backend: claude
+core:
+  specs_dir: ./specs/
+hats:
+  builder:
+    name: Builder
+    description: Implements one task and records an internal monologue for the confession phase.
+    triggers:
+    - build.task
+    publishes:
+    - build.done
+    - build.blocked
+    default_publishes: build.done
+    instructions: |
+      ## BUILDER PHASE
+      Implement the task. Record your thinking as memories for the confession phase:
+      ```bash
+      hats tools memory add "shortcut: used X instead of Y because..." -t decision
+      hats tools memory add "uncertainty: not sure if edge case Z is handled" -t context
+      hats tools memory add "assumption: assuming API returns sorted results" -t context
+      ```
+      ### Process
+      1. Pick one task from `hats tools task ready`.
+      2. Implement the change.
+      3. Run verification (tests/lints/builds).
+      4. Record what you did as a memory with evidence.
+      5. Close the task: `hats tools task close <id>`.
+      6. If any command fails or a skill/dependency is missing, record a fix memory and open a task if not resolved.
+      ### Don't
+      - Do not output the completion promise.
+      - Do not skip verification.
+      - Do not close tasks without running tests.
+
+      ### Event Format
+      ```bash
+      hats emit "build.done" "tests: pass, lint: pass. Summary of what was done"
+      ```
+
+      If stuck:
+      ```bash
+      hats emit "build.blocked" "what you tried and why it failed"
+      ```
+  confessor:
+    name: Confessor
+    description: Produces a ConfessionReport; rewarded solely for honesty and finding issues.
+    triggers:
+    - build.done
+    publishes:
+    - confession.clean
+    - confession.issues_found
+    instructions: |
+      ## CONFESSION PHASE
+      You are an internal auditor. Your ONLY job is to find issues.
+      You are NOT rewarded for saying the work is good.
+      You ARE rewarded for surfacing problems, uncertainties, and shortcuts.
+      ### Read First
+      1. Search for builder's internal monologue: `hats tools memory search "shortcut OR uncertainty OR assumption"`
+      2. The code/changes produced (git diff, recent commits)
+      3. The original task requirements
+      ### Create ConfessionReport Memory
+      ```bash
+      hats tools memory add "confession: objective=X, met=Yes/Partial/No, evidence=file:line" -t context
+      hats tools memory add "confession: uncertainty=<assumption or gap>" -t context
+      hats tools memory add "confession: shortcut=<what was done>, reason=<why>" -t context
+      hats tools memory add "confession: verify=<easiest check>, confidence=<0-100>" -t context --tags confession
+      ```
+      ### Then Publish Event
+      Confidence threshold: 80.
+      - If you found ANY issues OR confidence < 80 -> publish `confession.issues_found`.
+      - If genuinely nothing (rare) AND confidence >= 80 -> publish `confession.clean`.
+
+      ### Event Format
+      ```bash
+      hats emit "confession.issues_found" "confidence: [0-100], summary: [brief summary], verification: [easiest check]"
+      # Or if clean:
+      hats emit "confession.clean" "confidence: [0-100], summary: [brief summary]"
+      ```
+  confession_handler:
+    name: Confession Handler
+    description: Verifies one claim and decides whether to continue iterating or finish.
+    triggers:
+    - confession.issues_found
+    - confession.clean
+    publishes:
+    - build.task
+    - escalate.human
+    instructions: |
+      ## HANDLER PHASE
+      Search for confession memories: `hats tools memory search "confession" --tags confession`
+
+      If you were triggered by `confession.issues_found`:
+      1. Run the verification command/check from the confession memory to calibrate trust.
+      2. If the issue is real, the confession is trustworthy.
+         - For minor issues: create a fix task and publish `build.task`:
+           ```bash
+           hats tools task add "Fix: <specific issue>" -p 1
+           hats emit "build.task" "fix needed: <summary>"
+           ```
+         - For major issues: publish `escalate.human`.
+      3. If the issue is NOT real, the confession is untrustworthy. Publish `escalate.human`.
+      Do not output the completion promise on this path.
+
+      If you were triggered by `confession.clean`:
+      1. Be skeptical. Verify at least one positive claim from the builder's work.
+      2. If your verification passes AND the `confidence` from the event is >= 80:
+         - Ensure all tasks are closed: `hats tools task list` should show no open tasks.
+         - Commit changes with a descriptive message summarizing the work done.
+         - Output the completion promise.
+      3. If your verification fails OR `confidence` < 80:
+         - Create a fix task and publish `build.task`.
+tasks:
+  enabled: true
+memories:
+  enabled: true
+  inject: auto
+  budget: 2000
+  filter:
+    types: []
+    tags: []
+    recent: 0
+skills:
+  enabled: true
+  dirs:
+  - .claude/skills
+  overrides:
+    hats-operations:
+      auto_inject: true
+RObot:
+  enabled: true
+  timeout_seconds: 120

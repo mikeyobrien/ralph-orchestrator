@@ -136,7 +136,7 @@ Streaming deltas during assistant response. Always has `assistantMessageEvent` s
 | `done` | `reason` | Message complete ("stop", "length", "toolUse") |
 | `error` | `reason` | Error ("aborted", "error") |
 
-**text_delta (the event Ralph cares about most):**
+**text_delta (the event Hats cares about most):**
 ```json
 {
   "type": "message_update",
@@ -266,7 +266,7 @@ Turn complete. **This is where per-turn usage/cost lives.** Also the last event 
 - `"error"` — error occurred
 - `"aborted"` — aborted
 
-## Mapping to Ralph's StreamHandler
+## Mapping to Hats's StreamHandler
 
 For the `PiStreamParser`, only a subset of events need handling:
 
@@ -280,7 +280,7 @@ For the `PiStreamParser`, only a subset of events need handling:
 
 **Events to ignore:** `session`, `agent_start`, `turn_start`, `message_start`, `message_end`, `message_update` (text_start, text_end, thinking_*, toolcall_start, toolcall_delta, toolcall_end, done), `tool_execution_update`.
 
-**`extracted_text` accumulation:** Collect from `text_delta` events (same as `on_text` calls). This feeds Ralph's event parser for LOOP_COMPLETE detection.
+**`extracted_text` accumulation:** Collect from `text_delta` events (same as `on_text` calls). This feeds Hats's event parser for LOOP_COMPLETE detection.
 
 ## Cost Tracking
 
@@ -291,7 +291,7 @@ No single summary event like Claude's `result`. Instead:
 
 **Turn count:** Count `turn_end` events.
 
-**Duration:** Not provided by pi. Ralph must calculate from wall-clock time (already does this for non-Claude backends).
+**Duration:** Not provided by pi. Hats must calculate from wall-clock time (already does this for non-Claude backends).
 
 ## Key Differences from Claude stream-json
 

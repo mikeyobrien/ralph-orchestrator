@@ -1,11 +1,11 @@
 # E2E Test Orchestration Config
 #
-# This config is used when Ralph orchestrates E2E test development.
+# This config is used when Hats orchestrates E2E test development.
 # It uses a separate scratchpad to avoid polluting the main scratchpad
 # or interfering with E2E test workspaces.
 #
 # Usage:
-#   ralph run -c ralph.e2e.yml -p ".ralph/specs/e2e-test-fixes.spec.md"
+#   hats run -c hats.e2e.yml -p ".hats/specs/e2e-test-fixes.spec.md"
 
 event_loop:
   prompt_file: "PROMPT.md"
@@ -20,8 +20,8 @@ cli:
   prompt_mode: "arg"
 
 core:
-  scratchpad: ".ralph/agent/e2e-scratchpad.md"  # Isolated from main scratchpad
-  specs_dir: ".ralph/specs/"
+  scratchpad: ".hats/agent/e2e-scratchpad.md"  # Isolated from main scratchpad
+  specs_dir: ".hats/specs/"
   guardrails:
     - "Fresh context each iteration — scratchpad is memory"
     - "Verification is mandatory — tests/typecheck/lint must pass"
@@ -45,13 +45,13 @@ hats:
       Analyze the prompt to determine input type:
 
       **Type 1: PDD Output Directory**
-      - Prompt looks like a path: `.ralph/specs/my-feature` or `.ralph/specs/my-feature/`
-      - Directory contains `.ralph/tasks/` subdirectory with `.code-task.md` files
+      - Prompt looks like a path: `.hats/specs/my-feature` or `.hats/specs/my-feature/`
+      - Directory contains `.hats/tasks/` subdirectory with `.code-task.md` files
       - May also have `design.md`, `plan.md`, `context.md`
 
       **Type 2: Single Code Task File**
       - Prompt is a path ending in `.code-task.md`
-      - Example: `.ralph/tasks/add-verbose-flag.code-task.md`
+      - Example: `.hats/tasks/add-verbose-flag.code-task.md`
 
       **Type 3: Rough Description**
       - Prompt is plain text describing what to implement
@@ -60,9 +60,9 @@ hats:
       ### Process by Input Type
 
       **For PDD Directory:**
-      1. Verify directory exists and has `.ralph/tasks/` subdirectory
-      2. List all `.code-task.md` files in `.ralph/tasks/`
-      3. Derive `task_name` from directory name (e.g., `.ralph/specs/my-feature` → `my-feature`)
+      1. Verify directory exists and has `.hats/tasks/` subdirectory
+      2. List all `.code-task.md` files in `.hats/tasks/`
+      3. Derive `task_name` from directory name (e.g., `.hats/specs/my-feature` → `my-feature`)
       4. Write scratchpad with frontmatter:
          ```markdown
          ---
@@ -131,7 +131,7 @@ hats:
 
       ### Event Format
       ```bash
-      ralph emit "tasks.ready" "input_type: {pdd|single_task|description}, task_name: {task_name}, tasks: {count or 1}"
+      hats emit "tasks.ready" "input_type: {pdd|single_task|description}, task_name: {task_name}, tasks: {count or 1}"
       ```
 
       ### Constraints
@@ -182,17 +182,17 @@ hats:
 
       **After completing a task:**
       ```bash
-      ralph emit "task.complete" "task: {task_name}, tests: {pass/fail}"
+      hats emit "task.complete" "task: {task_name}, tests: {pass/fail}"
       ```
 
       **After all tasks complete:**
       ```bash
-      ralph emit "implementation.ready" "tests: pass, lint: pass, typecheck: pass"
+      hats emit "implementation.ready" "tests: pass, lint: pass, typecheck: pass"
       ```
 
       **If blocked:**
       ```bash
-      ralph emit "build.blocked" "reason: {why blocked}"
+      hats emit "build.blocked" "reason: {why blocked}"
       ```
 
       ### Constraints
@@ -238,12 +238,12 @@ hats:
 
       **If validation passes:**
       ```bash
-      ralph emit "validation.passed" "automated: pass, yagni: pass, kiss: pass, e2e: pass"
+      hats emit "validation.passed" "automated: pass, yagni: pass, kiss: pass, e2e: pass"
       ```
 
       **If validation fails:**
       ```bash
-      ralph emit "validation.failed" "issues: [{issue 1}, {issue 2}]"
+      hats emit "validation.failed" "issues: [{issue 1}, {issue 2}]"
       ```
 
       ### Constraints
@@ -289,7 +289,7 @@ hats:
 
       ### Event Format
       ```bash
-      ralph emit "commit.complete" "commit: {short hash}, message: {commit subject}"
+      hats emit "commit.complete" "commit: {short hash}, message: {commit subject}"
       ```
 
       ### Constraints

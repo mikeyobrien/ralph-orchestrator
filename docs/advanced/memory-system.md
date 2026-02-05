@@ -5,7 +5,7 @@
 
 ## Overview
 
-Ralph's memory system provides persistent learning across orchestration sessions, stored in `.agent/memories.md`.
+Hats's memory system provides persistent learning across orchestration sessions, stored in `.agent/memories.md`.
 
 ## Memory Types
 

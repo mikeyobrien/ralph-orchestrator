@@ -1,10 +1,10 @@
-# ralph-adapters
+# hats-adapters
 
 CLI backend integrations for various AI tools.
 
 ## Overview
 
-`ralph-adapters` provides:
+`hats-adapters` provides:
 
 - Backend definitions for Claude, Kiro, Gemini, and more
 - PTY-based execution for real-time output
@@ -52,7 +52,7 @@ pub enum OutputFormat {
 **Built-in backends:**
 
 ```rust
-use ralph_adapters::backends;
+use hats_adapters::backends;
 
 let claude = backends::claude();
 let kiro = backends::kiro();
@@ -64,7 +64,7 @@ let gemini = backends::gemini();
 Detect available backends.
 
 ```rust
-use ralph_adapters::auto_detect;
+use hats_adapters::auto_detect;
 
 // Get first available backend
 let backend = auto_detect::detect()?;
@@ -91,7 +91,7 @@ let available = auto_detect::is_available("claude");
 PTY-based execution for real-time output.
 
 ```rust
-use ralph_adapters::pty_executor::PtyExecutor;
+use hats_adapters::pty_executor::PtyExecutor;
 
 let executor = PtyExecutor::new();
 
@@ -118,7 +118,7 @@ pub trait StreamHandler: Send {
 **Built-in handlers:**
 
 ```rust
-use ralph_adapters::stream_handler::*;
+use hats_adapters::stream_handler::*;
 
 // Console output (plain)
 let handler = ConsoleStreamHandler::new();
@@ -138,7 +138,7 @@ let handler = QuietStreamHandler::new();
 Parse Claude's NDJSON streaming output.
 
 ```rust
-use ralph_adapters::claude_stream::ClaudeStreamParser;
+use hats_adapters::claude_stream::ClaudeStreamParser;
 
 let parser = ClaudeStreamParser::new();
 
@@ -160,7 +160,7 @@ for event in events {
 Create custom backend definitions.
 
 ```rust
-use ralph_adapters::{CliBackend, PromptMode, OutputFormat};
+use hats_adapters::{CliBackend, PromptMode, OutputFormat};
 
 let my_backend = CliBackend {
     name: "my-ai".to_string(),
@@ -175,7 +175,7 @@ let my_backend = CliBackend {
 Implement the `StreamHandler` trait.
 
 ```rust
-use ralph_adapters::StreamHandler;
+use hats_adapters::StreamHandler;
 
 struct MyHandler {
     buffer: String,
@@ -219,7 +219,7 @@ pub enum AdapterError {
 ## Example: Execute Backend
 
 ```rust
-use ralph_adapters::{backends, PtyExecutor, ConsoleStreamHandler};
+use hats_adapters::{backends, PtyExecutor, ConsoleStreamHandler};
 
 #[tokio::main]
 async fn main() -> Result<()> {

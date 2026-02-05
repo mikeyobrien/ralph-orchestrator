@@ -2,7 +2,7 @@
 """Tier 3: Visual regression testing using TUI-Validate skill.
 
 This script demonstrates how to use the /tui-validate skill for visual
-regression testing of the Ralph TUI. It's designed to be run manually
+regression testing of the Hats TUI. It's designed to be run manually
 or integrated into CI pipelines.
 
 Usage:
@@ -10,7 +10,7 @@ Usage:
     python tools/e2e/tui_visual_regression.py validate-header output.txt
 
     # Validate full TUI from tmux session
-    python tools/e2e/tui_visual_regression.py validate-full ralph-session
+    python tools/e2e/tui_visual_regression.py validate-full hats-session
 
     # Run all validations from fixtures
     python tools/e2e/tui_visual_regression.py validate-fixtures
@@ -123,7 +123,7 @@ def capture_tmux_session(session_name: str, output_path: Path) -> bool:
 
 
 def validate_header(content: str) -> dict:
-    """Validate Ralph header content against criteria.
+    """Validate Hats header content against criteria.
 
     Args:
         content: Terminal content to validate
@@ -172,7 +172,7 @@ def validate_header(content: str) -> dict:
 
 
 def validate_footer(content: str) -> dict:
-    """Validate Ralph footer content against criteria.
+    """Validate Hats footer content against criteria.
 
     Args:
         content: Terminal content to validate
@@ -207,7 +207,7 @@ def validate_footer(content: str) -> dict:
 
 
 def validate_full_tui(content: str) -> dict:
-    """Validate complete Ralph TUI layout.
+    """Validate complete Hats TUI layout.
 
     Args:
         content: Full terminal content
@@ -300,7 +300,7 @@ def cmd_validate_full(args):
 
 def cmd_validate_fixtures(args):
     """Command: validate all test fixtures."""
-    fixtures_dir = Path(__file__).parent.parent.parent / "crates" / "ralph-tui" / "tests" / "fixtures"
+    fixtures_dir = Path(__file__).parent.parent.parent / "crates" / "hats-tui" / "tests" / "fixtures"
 
     if not fixtures_dir.exists():
         print(f"Fixtures directory not found: {fixtures_dir}")
@@ -348,13 +348,13 @@ def main():
         epilog="""
 Examples:
   %(prog)s validate-header output.txt --screenshot
-  %(prog)s validate-full ralph-session --screenshot
+  %(prog)s validate-full hats-session --screenshot
   %(prog)s validate-fixtures
 
 Integration with /tui-validate skill:
   # In Claude Code, use the skill directly:
-  /tui-validate file:output.txt criteria:ralph-header
-  /tui-validate tmux:ralph-session criteria:ralph-full save_screenshot:true
+  /tui-validate file:output.txt criteria:hats-header
+  /tui-validate tmux:hats-session criteria:hats-full save_screenshot:true
 """,
     )
 
@@ -363,7 +363,7 @@ Integration with /tui-validate skill:
     # validate-header command
     header_parser = subparsers.add_parser(
         "validate-header",
-        help="Validate Ralph TUI header from file",
+        help="Validate Hats TUI header from file",
     )
     header_parser.add_argument("file", help="File containing ANSI output")
     header_parser.add_argument("--screenshot", action="store_true", help="Save screenshot")
@@ -372,7 +372,7 @@ Integration with /tui-validate skill:
     # validate-full command
     full_parser = subparsers.add_parser(
         "validate-full",
-        help="Validate full Ralph TUI from tmux session",
+        help="Validate full Hats TUI from tmux session",
     )
     full_parser.add_argument("session", help="tmux session name")
     full_parser.add_argument("--screenshot", action="store_true", help="Save screenshot")

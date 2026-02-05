@@ -42,12 +42,12 @@ RUN npm install -g @anthropic-ai/claude-code@latest || true
 RUN npm install -g @google/gemini-cli@latest || true
 
 # Create non-root user
-RUN useradd -m -u 1000 -s /bin/bash ralph && \
+RUN useradd -m -u 1000 -s /bin/bash hats && \
     mkdir -p /app /workspace /app/.agent /app/.cache && \
-    chown -R ralph:ralph /app /workspace
+    chown -R hats:hats /app /workspace
 
 # Copy Python environment from builder
-COPY --from=builder --chown=ralph:ralph /build/.venv /app/.venv
+COPY --from=builder --chown=hats:hats /build/.venv /app/.venv
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -58,26 +58,26 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 # Copy application code
 WORKDIR /app
-COPY --chown=ralph:ralph . /app/
+COPY --chown=hats:hats . /app/
 
 # Make scripts executable
-RUN chmod +x /app/ralph_orchestrator.py /app/ralph
+RUN chmod +x /app/hats_orchestrator.py /app/hats
 
 # Create volume mount points
 VOLUME ["/workspace", "/app/.agent", "/app/.cache"]
 
 # Switch to non-root user
-USER ralph
+USER hats
 
 # Set working directory for execution
 WORKDIR /workspace
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import sys; import os; sys.exit(0 if os.path.exists('/app/ralph_orchestrator.py') else 1)"
+    CMD python -c "import sys; import os; sys.exit(0 if os.path.exists('/app/hats_orchestrator.py') else 1)"
 
 # Default entrypoint
-ENTRYPOINT ["python", "/app/ralph_orchestrator.py"]
+ENTRYPOINT ["python", "/app/hats_orchestrator.py"]
 
 # Default command (show help)
 CMD ["--help"]

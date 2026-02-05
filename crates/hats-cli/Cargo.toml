@@ -1,0 +1,68 @@
+[package]
+name = "hats-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Command-line interface for Hats"
+repository.workspace = true
+homepage.workspace = true
+
+# Mark this crate for distribution by cargo-dist
+[package.metadata.dist]
+dist = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hats"
+path = "src/main.rs"
+
+[dependencies]
+hats-proto.workspace = true
+hats-core.workspace = true
+hats-adapters.workspace = true
+hats-telegram.workspace = true
+hats-tui.workspace = true
+
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+regex.workspace = true
+keyring.workspace = true
+
+# For raw mode handling in PTY mode
+crossterm.workspace = true
+scopeguard.workspace = true
+
+# For TUI stream handler line types
+ratatui.workspace = true
+
+# For progress spinners
+indicatif.workspace = true
+
+# For opening URLs in the default browser
+open.workspace = true
+
+# For Unix process group and signal handling
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[example]]
+name = "calculator"
+path = "examples/calculator.rs"
+
+[[example]]
+name = "greeter"
+path = "examples/greeter.rs"

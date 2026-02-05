@@ -1,30 +1,30 @@
-# Ralph Orchestrator
+# Hats
 
 <div align="center" markdown>
 
 **Hat-based orchestration framework that keeps AI agents in a loop until the task is done.**
 
-[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/mikeyobrien/hats/blob/main/LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange)](https://www.rust-lang.org/)
-[![Build](https://img.shields.io/github/actions/workflow/status/mikeyobrien/ralph-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/mikeyobrien/ralph-orchestrator/actions)
+[![Build](https://img.shields.io/github/actions/workflow/status/mikeyobrien/hats/ci.yml?branch=main&label=CI)](https://github.com/mikeyobrien/hats/actions)
 
-> "Me fail English? That's unpossible!" - Ralph Wiggum
+> "Me fail English? That's unpossible!" - Hats Wiggum
 
 </div>
 
 ---
 
-## What is Ralph?
+## What is Hats?
 
-Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — autonomous task completion through continuous iteration. Give Ralph a task, and it will keep working until it's done.
+Hats implements the [Hats Wiggum technique](https://ghuntley.com/hats/) — autonomous task completion through continuous iteration. Give Hats a task, and it will keep working until it's done.
 
-> "The orchestrator is a thin coordination layer, not a platform. Ralph is smart; let Ralph do the work."
+> "The orchestrator is a thin coordination layer, not a platform. Hats is smart; let Hats do the work."
 
 ### Two Modes of Operation
 
 | Mode | Description | Best For |
 |------|-------------|----------|
-| **Traditional** | Simple loop — Ralph iterates until done | Quick tasks, simple automation |
+| **Traditional** | Simple loop — Hats iterates until done | Quick tasks, simple automation |
 | **Hat-Based** | Specialized personas coordinate through events | Complex workflows, multi-step processes |
 
 ## Key Features
@@ -37,7 +37,7 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 
 -   :material-hat-fedora: **Hat System**
 
-    Specialized Ralph personas with distinct behaviors coordinating through typed events
+    Specialized Hats personas with distinct behaviors coordinating through typed events
 
 -   :material-shield-check: **Backpressure Enforcement**
 
@@ -49,7 +49,7 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 
 -   :material-monitor: **Interactive TUI**
 
-    Real-time terminal UI for monitoring Ralph's activity
+    Real-time terminal UI for monitoring Hats's activity
 
 -   :material-cog: **31 Presets**
 
@@ -61,7 +61,7 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 
 ```bash
 # Initialize with traditional mode
-ralph init --backend claude
+hats init --backend claude
 
 # Create a task
 cat > PROMPT.md << 'EOF'
@@ -73,20 +73,20 @@ Build a REST API with these endpoints:
 Use Express.js with TypeScript.
 EOF
 
-# Run Ralph
-ralph run
+# Run Hats
+hats run
 ```
 
-Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
+Hats iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
 
-## The Ralph Tenets
+## The Hats Tenets
 
 1. **Fresh Context Is Reliability** — Each iteration clears context. Re-read specs, plan, code every cycle.
 2. **Backpressure Over Prescription** — Don't prescribe how; create gates that reject bad work.
 3. **The Plan Is Disposable** — Regeneration costs one planning loop. Cheap.
 4. **Disk Is State, Git Is Memory** — Files are the handoff mechanism.
 5. **Steer With Signals, Not Scripts** — Add signs, not scripts.
-6. **Let Ralph Ralph** — Sit *on* the loop, not *in* it.
+6. **Let Hats Hats** — Sit *on* the loop, not *in* it.
 
 ## Getting Started
 
@@ -94,7 +94,7 @@ Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
 
 -   :material-download: **[Installation](getting-started/installation.md)**
 
-    Install Ralph via npm, Homebrew, or Cargo
+    Install Hats via npm, Homebrew, or Cargo
 
 -   :material-rocket-launch: **[Quick Start](getting-started/quick-start.md)**
 
@@ -106,38 +106,38 @@ Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
 
 -   :material-cog: **[Configuration](guide/configuration.md)**
 
-    Configure Ralph for your workflow
+    Configure Hats for your workflow
 
 </div>
 
 ## Architecture
 
-Ralph is organized as a Cargo workspace with seven crates:
+Hats is organized as a Cargo workspace with seven crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `ralph-proto` | Protocol types: Event, Hat, Topic |
-| `ralph-core` | Business logic: EventLoop, Config |
-| `ralph-adapters` | CLI backend integrations |
-| `ralph-tui` | Terminal UI with ratatui |
-| `ralph-cli` | Binary entry point |
-| `ralph-e2e` | End-to-end testing |
-| `ralph-bench` | Benchmarking |
+| `hats-proto` | Protocol types: Event, Hat, Topic |
+| `hats-core` | Business logic: EventLoop, Config |
+| `hats-adapters` | CLI backend integrations |
+| `hats-tui` | Terminal UI with ratatui |
+| `hats-cli` | Binary entry point |
+| `hats-e2e` | End-to-end testing |
+| `hats-bench` | Benchmarking |
 
 ## Community
 
-- [GitHub Issues](https://github.com/mikeyobrien/ralph-orchestrator/issues) — Report bugs and request features
-- [GitHub Discussions](https://github.com/mikeyobrien/ralph-orchestrator/discussions) — Ask questions and share ideas
-- [Contributing Guide](contributing/index.md) — Help improve Ralph
+- [GitHub Issues](https://github.com/mikeyobrien/hats/issues) — Report bugs and request features
+- [GitHub Discussions](https://github.com/mikeyobrien/hats/discussions) — Ask questions and share ideas
+- [Contributing Guide](contributing/index.md) — Help improve Hats
 
 ## License
 
-Ralph Orchestrator is open source software licensed under the [MIT License](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/LICENSE).
+Hats is open source software licensed under the [MIT License](https://github.com/mikeyobrien/hats/blob/main/LICENSE).
 
 ---
 
 <div align="center" markdown>
 
-*"I'm learnding!" - Ralph Wiggum*
+*"I'm learnding!" - Hats Wiggum*
 
 </div>

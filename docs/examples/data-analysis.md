@@ -1,6 +1,6 @@
-# Data Analysis Script with Ralph
+# Data Analysis Script with Hats
 
-This example demonstrates using Ralph Orchestrator to create a data analysis script with pandas, visualization, and reporting.
+This example demonstrates using Hats to create a data analysis script with pandas, visualization, and reporting.
 
 ## Task Description
 
@@ -93,12 +93,12 @@ CSV columns:
 <!-- The orchestrator will continue iterations until limits are reached -->
 ```
 
-## Running Ralph
+## Running Hats
 
 ```bash
-ralph init
+hats init
 cp data-analysis-prompt.md PROMPT.md
-ralph run --agent claude --max-iterations 35
+hats run --agent claude --max-iterations 35
 ```
 
 ## Expected Output

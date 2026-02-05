@@ -1,10 +1,10 @@
 # Migration from v1
 
-Guide for migrating from the Python-based Ralph v1 to the Rust-based v2.
+Guide for migrating from the Python-based Hats v1 to the Rust-based v2.
 
 ## Overview
 
-Ralph v2 is a complete rewrite in Rust with significant changes:
+Hats v2 is a complete rewrite in Rust with significant changes:
 
 | Aspect | v1 (Python) | v2 (Rust) |
 |--------|-------------|-----------|
@@ -23,29 +23,29 @@ Remove the old Python version first:
 
 ```bash
 # If installed via pip
-pip uninstall ralph-orchestrator
+pip uninstall hats
 
 # If installed via pipx
-pipx uninstall ralph-orchestrator
+pipx uninstall hats
 
 # If installed via uv
-uv tool uninstall ralph-orchestrator
+uv tool uninstall hats
 
 # Verify removal
-which ralph  # Should return nothing
+which hats  # Should return nothing
 ```
 
 ## Installing v2
 
 ```bash
 # Via npm (recommended)
-npm install -g @ralph-orchestrator/ralph-cli
+npm install -g @hats/hats-cli
 
 # Via Homebrew
-brew install ralph-orchestrator
+brew install hats
 
 # Via Cargo
-cargo install ralph-cli
+cargo install hats-cli
 ```
 
 ## Configuration Changes
@@ -53,7 +53,7 @@ cargo install ralph-cli
 ### v1 Configuration (Python)
 
 ```python
-# ralph_config.py
+# hats_config.py
 config = {
     "max_iterations": 100,
     "agent": "claude",
@@ -65,7 +65,7 @@ config = {
 ### v2 Configuration (YAML)
 
 ```yaml
-# ralph.yml
+# hats.yml
 cli:
   backend: "claude"
 
@@ -79,10 +79,10 @@ event_loop:
 
 | v1 Command | v2 Command |
 |------------|------------|
-| `python ralph_orchestrator.py --prompt PROMPT.md` | `ralph run` |
-| `python ralph_orchestrator.py --agent claude` | `ralph run --backend claude` |
-| `python ralph_orchestrator.py --max-iterations 50` | `ralph run --max-iterations 50` |
-| `python ralph_orchestrator.py --dry-run` | `ralph run --dry-run` |
+| `python hats_orchestrator.py --prompt PROMPT.md` | `hats run` |
+| `python hats_orchestrator.py --agent claude` | `hats run --backend claude` |
+| `python hats_orchestrator.py --max-iterations 50` | `hats run --max-iterations 50` |
+| `python hats_orchestrator.py --dry-run` | `hats run --dry-run` |
 
 ## New Features in v2
 
@@ -103,8 +103,8 @@ hats:
 Typed communication between hats:
 
 ```bash
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
-ralph events  # View history
+hats emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
+hats events  # View history
 ```
 
 ### Memories
@@ -112,8 +112,8 @@ ralph events  # View history
 Persistent learning:
 
 ```bash
-ralph tools memory add "Pattern discovered" -t pattern
-ralph tools memory search "pattern"
+hats tools memory add "Pattern discovered" -t pattern
+hats tools memory search "pattern"
 ```
 
 ### Tasks
@@ -121,9 +121,9 @@ ralph tools memory search "pattern"
 Runtime tracking:
 
 ```bash
-ralph tools task add "Implement feature"
-ralph tools task list
-ralph tools task close task-123
+hats tools task add "Implement feature"
+hats tools task list
+hats tools task close task-123
 ```
 
 ### Presets
@@ -131,7 +131,7 @@ ralph tools task close task-123
 Pre-configured workflows:
 
 ```bash
-ralph init --preset tdd-red-green
+hats init --preset tdd-red-green
 ```
 
 ### TUI
@@ -139,8 +139,8 @@ ralph init --preset tdd-red-green
 Rich terminal interface (enabled by default):
 
 ```bash
-ralph run  # TUI mode
-ralph run --no-tui  # Headless mode
+hats run  # TUI mode
+hats run --no-tui  # Headless mode
 ```
 
 ## Removed Features
@@ -191,18 +191,18 @@ Description here.
 ### 1. Uninstall v1
 
 ```bash
-pip uninstall ralph-orchestrator
+pip uninstall hats
 ```
 
 ### 2. Install v2
 
 ```bash
-npm install -g @ralph-orchestrator/ralph-cli
+npm install -g @hats/hats-cli
 ```
 
 ### 3. Convert Configuration
 
-Create `ralph.yml` from your old config:
+Create `hats.yml` from your old config:
 
 ```yaml
 cli:
@@ -234,8 +234,8 @@ rm -rf .agent/metrics .agent/checkpoints .agent/prompts .agent/plans
 ### 6. Test
 
 ```bash
-ralph run --dry-run
-ralph run
+hats run --dry-run
+hats run
 ```
 
 ## Getting Help
@@ -243,5 +243,5 @@ ralph run
 If you encounter migration issues:
 
 - Check [Troubleshooting](troubleshooting.md)
-- [Open an issue](https://github.com/mikeyobrien/ralph-orchestrator/issues)
-- Reference v1 code at [v1.2.3](https://github.com/mikeyobrien/ralph-orchestrator/tree/v1.2.3)
+- [Open an issue](https://github.com/mikeyobrien/hats/issues)
+- Reference v1 code at [v1.2.3](https://github.com/mikeyobrien/hats/tree/v1.2.3)

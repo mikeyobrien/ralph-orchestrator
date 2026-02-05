@@ -197,7 +197,7 @@ class IterationCapture:
         timeout: float = 120.0,
         poll_interval: float = 1.0,
     ) -> tuple[Optional[str], bool]:
-        """Wait for Ralph process to terminate.
+        """Wait for Hats process to terminate.
 
         Captures the last TUI content (from alternate screen) before exit,
         rather than returning the shell prompt after exit.
@@ -258,7 +258,7 @@ class IterationCapture:
         timeout: float = 120.0,
         check_interval: float = 1.0,
     ) -> tuple[bool, str]:
-        """Wait for Ralph process to exit.
+        """Wait for Hats process to exit.
 
         Alias for wait_for_termination with swapped return order for compatibility.
 
