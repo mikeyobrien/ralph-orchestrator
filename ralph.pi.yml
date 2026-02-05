@@ -1,0 +1,25 @@
+# Ralph configuration for pi-coding-agent backend.
+#
+# Simple form: just set cli.backend to "pi"
+# Pi-specific options (provider, model, thinking) are passed as extra args
+# via the hat backend configuration.
+#
+# For a minimal setup with defaults:
+#   cli:
+#     backend: pi
+
+hats:
+  default:
+    backend:
+      type: pi
+      args:
+        - "--provider"
+        - "openai-codex"
+        - "--model"
+        - "gpt-5.2-codex"
+        - "--thinking"
+        - "high"
+
+event_loop:
+  max_iterations: 15
+  completion_promise: LOOP_COMPLETE

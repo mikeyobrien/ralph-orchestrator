@@ -40,12 +40,12 @@ pub use claude_stream::{
     AssistantMessage, ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, Usage, UserContentBlock,
     UserMessage,
 };
+pub use cli_backend::{CliBackend, CustomBackendError, OutputFormat, PromptMode};
+pub use cli_executor::{CliExecutor, ExecutionResult};
 pub use pi_stream::{
     PiAssistantEvent, PiContentBlock, PiCost, PiSessionState, PiStreamEvent, PiStreamParser,
     PiToolResult, PiTurnMessage, PiUsage, dispatch_pi_stream_event,
 };
-pub use cli_backend::{CliBackend, CustomBackendError, OutputFormat, PromptMode};
-pub use cli_executor::{CliExecutor, ExecutionResult};
 pub use pty_executor::{
     CtrlCAction, CtrlCState, PtyConfig, PtyExecutionResult, PtyExecutor, TerminationType,
 };

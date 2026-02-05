@@ -796,7 +796,13 @@ impl PtyExecutor {
                                     let line = line_buffer[..newline_pos].to_string();
                                     line_buffer = line_buffer[newline_pos + 1..].to_string();
                                     if let Some(event) = PiStreamParser::parse_line(&line) {
-                                        dispatch_pi_stream_event(event, handler, &mut extracted_text, &mut pi_state, false);
+                                        dispatch_pi_stream_event(
+                                            event,
+                                            handler,
+                                            &mut extracted_text,
+                                            &mut pi_state,
+                                            false,
+                                        );
                                     }
                                 }
                             } else {
@@ -817,7 +823,13 @@ impl PtyExecutor {
                     && !line_buffer.is_empty()
                     && let Some(event) = PiStreamParser::parse_line(&line_buffer)
                 {
-                    dispatch_pi_stream_event(event, handler, &mut extracted_text, &mut pi_state, false);
+                    dispatch_pi_stream_event(
+                        event,
+                        handler,
+                        &mut extracted_text,
+                        &mut pi_state,
+                        false,
+                    );
                 }
 
                 let final_termination = resolve_termination_type(exit_code, termination);

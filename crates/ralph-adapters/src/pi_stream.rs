@@ -46,9 +46,7 @@ pub enum PiStreamEvent {
     },
 
     /// Turn completes — contains per-turn usage/cost.
-    TurnEnd {
-        message: Option<PiTurnMessage>,
-    },
+    TurnEnd { message: Option<PiTurnMessage> },
 
     /// All other events (session, agent_start, turn_start, message_start,
     /// message_end, tool_execution_update, etc.)
@@ -64,17 +62,11 @@ pub enum PiStreamEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiAssistantEvent {
     /// Text content delta.
-    TextDelta {
-        delta: String,
-    },
+    TextDelta { delta: String },
     /// Extended thinking delta.
-    ThinkingDelta {
-        delta: String,
-    },
+    ThinkingDelta { delta: String },
     /// Error during message generation.
-    Error {
-        reason: String,
-    },
+    Error { reason: String },
     /// All other sub-types (text_start, text_end, thinking_start, thinking_end,
     /// toolcall_start, toolcall_delta, toolcall_end, done)
     #[serde(other)]
@@ -91,7 +83,9 @@ pub struct PiToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(other)]
     Other,
 }
@@ -217,7 +211,7 @@ pub fn dispatch_pi_stream_event<H: StreamHandler>(
                 .iter()
                 .filter_map(|b| match b {
                     PiContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
+                    PiContentBlock::Other => None,
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -229,12 +223,11 @@ pub fn dispatch_pi_stream_event<H: StreamHandler>(
         }
         PiStreamEvent::TurnEnd { message } => {
             state.num_turns += 1;
-            if let Some(msg) = &message {
-                if let Some(usage) = &msg.usage {
-                    if let Some(cost) = &usage.cost {
-                        state.total_cost_usd += cost.total;
-                    }
-                }
+            if let Some(msg) = &message
+                && let Some(usage) = &msg.usage
+                && let Some(cost) = &usage.cost
+            {
+                state.total_cost_usd += cost.total;
             }
         }
         PiStreamEvent::Other => {}
@@ -292,10 +285,7 @@ mod tests {
             } => {
                 assert_eq!(delta, "Let me think...");
             }
-            _ => panic!(
-                "Expected MessageUpdate with ThinkingDelta, got {:?}",
-                event
-            ),
+            _ => panic!("Expected MessageUpdate with ThinkingDelta, got {:?}", event),
         }
     }
 
@@ -441,7 +431,8 @@ mod tests {
             _ => panic!("Expected MessageUpdate with Other assistant event"),
         }
 
-        let json = r#"{"type":"message_update","assistantMessageEvent":{"type":"done","reason":"stop"}}"#;
+        let json =
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"done","reason":"stop"}}"#;
         let event = PiStreamParser::parse_line(json).unwrap();
         match event {
             PiStreamEvent::MessageUpdate {
