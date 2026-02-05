@@ -27,10 +27,10 @@ _(nothing currently running)_
 
 ### Communication (P1)
 
-- [ ] **Blog post: "Ralph is now Hats"** -- Draft at ~/notes/drafts/hats-rename-blog.md. **P1**
-- [ ] **X announcement thread** -- Draft at ~/notes/drafts/hats-rename-x-thread.md. **P1**
-- [ ] **Migration guide** -- Draft at ~/notes/drafts/hats-migration-guide.md. **P1**
-- [ ] **Geoffrey Huntley courtesy DM** -- Draft at ~/notes/drafts/huntley-dm.md. **P1**
+- [x] **Blog post: "Ralph is now Hats"** -- Draft at ~/notes/drafts/hats-rename-blog.md. **P1** _(2026-02-05)_
+- [x] **X announcement thread** -- Draft at ~/notes/drafts/hats-rename-x-thread.md. **P1** _(2026-02-05)_
+- [x] **Migration guide** -- In-repo at docs/migration/ralph-to-hats.md. **P1** _(2026-02-05)_
+- [x] **Geoffrey Huntley courtesy DM** -- Draft at ~/notes/drafts/huntley-dm.md. **P1** _(2026-02-05)_
 - [ ] **PR to awesome-claude-code** -- Update link to new repo. **P1** (GATED: external)
 
 ### Integration (P1)
@@ -54,6 +54,12 @@ _(nothing currently running)_
 
 ## Done
 
+- [x] **Migration guide** -- In-repo at docs/migration/ralph-to-hats.md. Covers CLI, config, env vars, state dir, CI/CD. _(2026-02-05)_
+- [x] **Blog post draft** -- ~/notes/drafts/hats-rename-blog.md. _(2026-02-05)_
+- [x] **X announcement thread** -- ~/notes/drafts/hats-rename-x-thread.md. 5-tweet thread. _(2026-02-05)_
+- [x] **Geoffrey Huntley courtesy DM** -- ~/notes/drafts/huntley-dm.md. _(2026-02-05)_
+- [x] **Fix flaky benchmark test** -- bench_get_for_topic_baseline threshold 10K->50K ns for ARM debug builds. _(2026-02-05)_
+- [x] **Clean .ralph/ from git** -- Added .ralph/ to .gitignore, removed tracked runtime artifacts. _(2026-02-05)_
 - [x] **Global codebase rename** -- ralph -> hats in all crate names, Cargo.toml, binary name, config files. 585 files changed. 725 tests pass. _(2026-02-05)_
 - [x] **Config fallback** -- hats reads ralph.yml if hats.yml not found. HATS_* env vars read RALPH_* as deprecated. hats_env_var() helper. _(2026-02-05)_
 - [x] **Update cargo-dist config** -- npm scope @hats, binary name hats. _(2026-02-05, done as part of global rename)_
