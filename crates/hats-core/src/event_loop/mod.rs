@@ -1344,46 +1344,6 @@ impl EventLoop {
         HatId::new("hats")
     }
 
-    /// Records the current event count before hat execution.
-    ///
-    /// Call this before executing a hat, then use `check_default_publishes`
-    /// after execution to inject a fallback event if needed.
-    pub fn record_event_count(&mut self) -> usize {
-        self.event_reader
-            .read_new_events()
-            .map(|r| r.events.len())
-            .unwrap_or(0)
-    }
-
-    /// Checks if hat wrote any events, and injects default if configured.
-    ///
-    /// Call this after hat execution with the count from `record_event_count`.
-    /// If no new events were written AND the hat has `default_publishes` configured,
-    /// this will inject the default event automatically.
-    pub fn check_default_publishes(&mut self, hat_id: &HatId, _events_before: usize) {
-        let events_after = self
-            .event_reader
-            .read_new_events()
-            .map(|r| r.events.len())
-            .unwrap_or(0);
-
-        if events_after == 0
-            && let Some(config) = self.registry.get_config(hat_id)
-            && let Some(default_topic) = &config.default_publishes
-        {
-            // No new events written - inject default event
-            let default_event = Event::new(default_topic.as_str(), "").with_source(hat_id.clone());
-
-            debug!(
-                hat = %hat_id.as_str(),
-                topic = %default_topic,
-                "No events written by hat, injecting default_publishes event"
-            );
-
-            self.bus.publish(default_event);
-        }
-    }
-
     /// Returns a mutable reference to the event bus for direct event publishing.
     ///
     /// This is primarily used for planning sessions to inject user responses

@@ -346,6 +346,10 @@ pub async fn run_loop_impl(
     let mut consecutive_fallbacks: u32 = 0;
     const MAX_FALLBACK_ATTEMPTS: u32 = 3;
 
+    // Track consecutive iterations with no JSONL events from the agent
+    let mut consecutive_no_progress: u32 = 0;
+    const NO_PROGRESS_WARN_THRESHOLD: u32 = 5;
+
     // Initialize loop history if we have a loop context
     let loop_history = loop_context
         .as_ref()
@@ -708,7 +712,9 @@ pub async fn run_loop_impl(
                 if consecutive_fallbacks > MAX_FALLBACK_ATTEMPTS {
                     warn!(
                         attempts = consecutive_fallbacks,
-                        "Fallback recovery exhausted after {} attempts, terminating",
+                        "Fallback recovery exhausted after {} attempts, terminating. \
+                         The agent did not emit any events via `hats emit`. \
+                         Ensure your backend model supports tool use.",
                         MAX_FALLBACK_ATTEMPTS
                     );
                     let reason = TerminationReason::Stopped;
@@ -1074,6 +1080,17 @@ pub async fn run_loop_impl(
         // when the agent never emits events. (Fixes #157)
         if event_loop.has_pending_events() {
             consecutive_fallbacks = 0;
+            consecutive_no_progress = 0;
+        } else {
+            consecutive_no_progress += 1;
+            if consecutive_no_progress == NO_PROGRESS_WARN_THRESHOLD {
+                warn!(
+                    iterations_without_events = consecutive_no_progress,
+                    "Agent has not emitted events for {} consecutive iterations. \
+                     The loop may not be making progress.",
+                    consecutive_no_progress
+                );
+            }
         }
 
         if let Some(reason) = event_loop.check_completion_event() {
