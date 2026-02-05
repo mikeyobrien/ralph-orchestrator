@@ -45,7 +45,7 @@ pub struct RalphConfig {
     // These map to nested v2 fields for backwards compatibility.
     // ─────────────────────────────────────────────────────────────────────────
     /// V1 field: Backend CLI (maps to cli.backend).
-    /// Values: "claude", "kiro", "gemini", "codex", "amp", "auto", or "custom".
+    /// Values: "claude", "kiro", "gemini", "codex", "amp", "pi", "auto", or "custom".
     #[serde(default)]
     pub agent: Option<String>,
 
@@ -731,7 +731,7 @@ impl CoreConfig {
 /// CLI backend configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliConfig {
-    /// Backend to use: "claude", "kiro", "gemini", "codex", "amp", or "custom".
+    /// Backend to use: "claude", "kiro", "gemini", "codex", "amp", "pi", or "custom".
     #[serde(default = "default_backend")]
     pub backend: String,
 

@@ -181,9 +181,8 @@ fn resolve_backend(
 /// Validates a backend name.
 fn validate_backend_name(name: &str) -> Result<(), SopRunError> {
     match name {
-        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "custom" => {
-            Ok(())
-        }
+        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "pi"
+        | "custom" => Ok(()),
         _ => Err(SopRunError::UnknownBackend(name.to_string())),
     }
 }

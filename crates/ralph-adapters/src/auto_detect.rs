@@ -9,7 +9,7 @@ use tracing::debug;
 
 /// Default priority order for backend detection.
 pub const DEFAULT_PRIORITY: &[&str] = &[
-    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode",
+    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "pi",
 ];
 
 /// Maps backend config names to their actual CLI command names.
@@ -56,6 +56,10 @@ impl std::fmt::Display for NoBackendError {
         writeln!(f, "  • Amp CLI:      https://amp.dev")?;
         writeln!(f, "  • Copilot CLI:  https://docs.github.com/copilot")?;
         writeln!(f, "  • OpenCode CLI: https://opencode.ai")?;
+        writeln!(
+            f,
+            "  • Pi CLI:       https://github.com/anthropics/pi-coding-agent"
+        )?;
         Ok(())
     }
 }
@@ -189,6 +193,7 @@ mod tests {
         assert!(msg.contains("claude, gemini"));
         assert!(msg.contains("ralph doctor"));
         assert!(msg.contains("docs/reference/troubleshooting.md#agent-not-found"));
+        assert!(msg.contains("Pi CLI"));
     }
 
     #[test]
@@ -204,6 +209,24 @@ mod tests {
         assert_eq!(detection_command("gemini"), "gemini");
         assert_eq!(detection_command("codex"), "codex");
         assert_eq!(detection_command("amp"), "amp");
+        assert_eq!(detection_command("pi"), "pi");
+    }
+
+    #[test]
+    fn test_default_priority_includes_pi() {
+        assert!(
+            DEFAULT_PRIORITY.contains(&"pi"),
+            "DEFAULT_PRIORITY should include 'pi'"
+        );
+    }
+
+    #[test]
+    fn test_default_priority_pi_is_last() {
+        assert_eq!(
+            DEFAULT_PRIORITY.last(),
+            Some(&"pi"),
+            "Pi should be the last entry in DEFAULT_PRIORITY"
+        );
     }
 
     #[test]
