@@ -6,7 +6,16 @@
 
 ## In Progress
 
-_(nothing currently running)_
+### Dark Factory / BDD (P0)
+
+- [x] **BDD preset** -- presets/bdd.yml with spec_writer, implementer, verifier hats. Embedded in binary. _(2026-02-05)_
+- [x] **Proof artifact module** -- hats-core/src/proof.rs: ProofArtifact struct, write/read/list. 10 tests. _(2026-02-05)_
+- [x] **Proof config** -- features.proof.enabled in HatsConfig. BDD preset enables by default. _(2026-02-05)_
+- [x] **Wire proof into completion** -- loop_completion.rs generates proofs on BDD loop finish. 13 integration tests. _(2026-02-05)_
+- [ ] **Gherkin parser** -- Parse .feature files natively (currently agent-driven via prompt). **P1**
+- [ ] **ProofData population** -- Wire test result counts from loop events into ProofData (currently None). **P1**
+- [ ] **Proof CLI command** -- `hats proofs list`, `hats proofs show <id>`. **P2**
+- [ ] **bdd-preset.feature acceptance tests** -- Map 14 Gherkin scenarios to runnable tests. **P2**
 
 ## Ready (Prioritized)
 
@@ -63,6 +72,7 @@ _(nothing currently running)_
 - [x] **Global codebase rename** -- ralph -> hats in all crate names, Cargo.toml, binary name, config files. 585 files changed. 725 tests pass. _(2026-02-05)_
 - [x] **Config fallback** -- hats reads ralph.yml if hats.yml not found. HATS_* env vars read RALPH_* as deprecated. hats_env_var() helper. _(2026-02-05)_
 - [x] **Update cargo-dist config** -- npm scope @hats, binary name hats. _(2026-02-05, done as part of global rename)_
+- [x] **BDD preset + proof infrastructure** -- presets/bdd.yml, proof.rs, ProofConfig, wired into loop completion. 23 new tests. _(2026-02-05)_
 - [x] **hats.sh landing page** -- Built and deployed on Cloudflare Pages. _(2026-02-04)_
 
 ---
