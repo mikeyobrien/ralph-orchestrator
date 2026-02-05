@@ -299,9 +299,11 @@ hats:
         println!("Time per operation: {} ns", ns_per_op);
         println!("================================\n");
 
-        // Assert reasonable performance (sanity check)
+        // Assert reasonable performance (sanity check).
+        // Threshold is generous to accommodate debug builds and constrained
+        // hardware (e.g., ARM mobile in Termux).  Release builds are ~10x faster.
         assert!(
-            ns_per_op < 10_000,
+            ns_per_op < 50_000,
             "Performance degraded: {} ns/op",
             ns_per_op
         );
