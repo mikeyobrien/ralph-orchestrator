@@ -21,7 +21,7 @@ pub enum InitError {
     UnknownPreset(String, String),
 
     #[error(
-        "Unknown backend '{0}'. Valid backends: claude, kiro, gemini, codex, amp, copilot, opencode, custom.\nSee: docs/reference/troubleshooting.md#unknown-backend"
+        "Unknown backend '{0}'. Valid backends: claude, kiro, gemini, codex, amp, copilot, opencode, pi, custom.\nSee: docs/reference/troubleshooting.md#unknown-backend"
     )]
     UnknownBackend(String),
 
@@ -34,7 +34,7 @@ pub enum InitError {
 
 /// Valid backend names.
 const VALID_BACKENDS: &[&str] = &[
-    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "custom",
+    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "pi", "custom",
 ];
 
 /// Generates the minimal config template for a given backend.

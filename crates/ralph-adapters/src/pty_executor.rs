@@ -20,6 +20,7 @@
 
 use crate::claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock};
 use crate::cli_backend::{CliBackend, OutputFormat};
+use crate::pi_stream::{PiSessionState, PiStreamParser, dispatch_pi_stream_event};
 use crate::stream_handler::{SessionResult, StreamHandler};
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
@@ -567,9 +568,11 @@ impl PtyExecutor {
         // Check output format to decide parsing strategy
         let output_format = self.backend.output_format;
 
-        // StreamJson format uses NDJSON line parsing
+        // StreamJson format uses NDJSON line parsing (Claude)
+        // PiStreamJson format uses NDJSON line parsing (Pi)
         // Text format streams raw output directly to handler
         let is_stream_json = output_format == OutputFormat::StreamJson;
+        let is_pi_stream = output_format == OutputFormat::PiStreamJson;
 
         // Keep temp_file alive for the duration of execution
         let (pair, mut child, stdin_input, _temp_file) = self.spawn_pty(prompt)?;
@@ -597,6 +600,9 @@ impl PtyExecutor {
         let mut line_buffer = String::new();
         // Accumulate extracted text from NDJSON for event parsing
         let mut extracted_text = String::new();
+        // Pi session state for accumulating cost/turns (wall-clock for duration)
+        let mut pi_state = PiSessionState::new();
+        let start_time = Instant::now();
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
             None
         } else {
@@ -701,6 +707,18 @@ impl PtyExecutor {
                                             dispatch_stream_event(event, handler, &mut extracted_text);
                                         }
                                     }
+                                } else if is_pi_stream {
+                                    // PiStreamJson format: Parse NDJSON lines from pi
+                                    line_buffer.push_str(text);
+
+                                    while let Some(newline_pos) = line_buffer.find('\n') {
+                                        let line = line_buffer[..newline_pos].to_string();
+                                        line_buffer = line_buffer[newline_pos + 1..].to_string();
+
+                                        if let Some(event) = PiStreamParser::parse_line(&line) {
+                                            dispatch_pi_stream_event(event, handler, &mut extracted_text, &mut pi_state, false);
+                                        }
+                                    }
                                 } else {
                                     // Text format: Stream raw output directly to handler
                                     // This preserves ANSI escape codes for TUI rendering
@@ -710,11 +728,15 @@ impl PtyExecutor {
                         }
                         Some(OutputEvent::Eof) | None => {
                             debug!("Output channel closed");
-                            // Process any remaining content in buffer (StreamJson only)
+                            // Process any remaining content in buffer
                             if is_stream_json && !line_buffer.is_empty()
                                 && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                             {
                                 dispatch_stream_event(event, handler, &mut extracted_text);
+                            } else if is_pi_stream && !line_buffer.is_empty()
+                                && let Some(event) = PiStreamParser::parse_line(&line_buffer)
+                            {
+                                dispatch_pi_stream_event(event, handler, &mut extracted_text, &mut pi_state, false);
                             }
                             break;
                         }
@@ -767,6 +789,16 @@ impl PtyExecutor {
                                         dispatch_stream_event(event, handler, &mut extracted_text);
                                     }
                                 }
+                            } else if is_pi_stream {
+                                // PiStreamJson: parse NDJSON lines
+                                line_buffer.push_str(text);
+                                while let Some(newline_pos) = line_buffer.find('\n') {
+                                    let line = line_buffer[..newline_pos].to_string();
+                                    line_buffer = line_buffer[newline_pos + 1..].to_string();
+                                    if let Some(event) = PiStreamParser::parse_line(&line) {
+                                        dispatch_pi_stream_event(event, handler, &mut extracted_text, &mut pi_state, false);
+                                    }
+                                }
                             } else {
                                 // Text: stream raw output to handler
                                 handler.on_text(text);
@@ -775,15 +807,31 @@ impl PtyExecutor {
                     }
                 }
 
-                // Process final buffer content (StreamJson only)
+                // Process final buffer content
                 if is_stream_json
                     && !line_buffer.is_empty()
                     && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                 {
                     dispatch_stream_event(event, handler, &mut extracted_text);
+                } else if is_pi_stream
+                    && !line_buffer.is_empty()
+                    && let Some(event) = PiStreamParser::parse_line(&line_buffer)
+                {
+                    dispatch_pi_stream_event(event, handler, &mut extracted_text, &mut pi_state, false);
                 }
 
                 let final_termination = resolve_termination_type(exit_code, termination);
+
+                // Synthesize on_complete for Pi sessions (pi has no dedicated result event)
+                if is_pi_stream {
+                    handler.on_complete(&SessionResult {
+                        duration_ms: start_time.elapsed().as_millis() as u64,
+                        total_cost_usd: pi_state.total_cost_usd,
+                        num_turns: pi_state.num_turns,
+                        is_error: !status.success(),
+                    });
+                }
+
                 // Pass extracted_text for event parsing from NDJSON
                 return Ok(build_result(
                     &output,
@@ -815,6 +863,16 @@ impl PtyExecutor {
                 (false, None, termination)
             }
         };
+
+        // Synthesize on_complete for Pi sessions (pi has no dedicated result event)
+        if is_pi_stream {
+            handler.on_complete(&SessionResult {
+                duration_ms: start_time.elapsed().as_millis() as u64,
+                total_cost_usd: pi_state.total_cost_usd,
+                num_turns: pi_state.num_turns,
+                is_error: !success,
+            });
+        }
 
         // Pass extracted_text for event parsing from NDJSON
         Ok(build_result(

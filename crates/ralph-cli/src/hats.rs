@@ -493,9 +493,9 @@ fn resolve_backend(flag_override: Option<&str>, config: &RalphConfig) -> Result<
 /// Validates a backend name.
 fn validate_backend_name(name: &str) -> Result<()> {
     match name {
-        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" => Ok(()),
+        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "pi" => Ok(()),
         _ => Err(anyhow::anyhow!(
-            "Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp, copilot, opencode",
+            "Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp, copilot, opencode, pi",
             name
         )),
     }

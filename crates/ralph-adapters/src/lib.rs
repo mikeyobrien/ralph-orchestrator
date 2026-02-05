@@ -6,6 +6,7 @@
 //! - Claude (Anthropic)
 //! - Gemini (Google)
 //! - Codex (OpenAI)
+//! - Pi (pi-coding-agent)
 //! - Amp
 //! - Custom commands
 //!
@@ -27,6 +28,7 @@ mod auto_detect;
 mod claude_stream;
 mod cli_backend;
 mod cli_executor;
+mod pi_stream;
 mod pty_executor;
 pub mod pty_handle;
 mod stream_handler;
@@ -37,6 +39,10 @@ pub use auto_detect::{
 pub use claude_stream::{
     AssistantMessage, ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, Usage, UserContentBlock,
     UserMessage,
+};
+pub use pi_stream::{
+    PiAssistantEvent, PiContentBlock, PiCost, PiSessionState, PiStreamEvent, PiStreamParser,
+    PiToolResult, PiTurnMessage, PiUsage, dispatch_pi_stream_event,
 };
 pub use cli_backend::{CliBackend, CustomBackendError, OutputFormat, PromptMode};
 pub use cli_executor::{CliExecutor, ExecutionResult};
