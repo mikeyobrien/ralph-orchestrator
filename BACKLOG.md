@@ -6,6 +6,11 @@
 
 ## In Progress
 
+### Bug Fixes (P0)
+
+- [x] **#157 Infinite loop when agent fails to emit events** -- consecutive_fallbacks counter oscillated between 0 and 1 instead of reaching MAX_FALLBACK_ATTEMPTS. Fixed by resetting only on real JSONL events. _(2026-02-05)_
+- [ ] **default_publishes dead code** -- `record_event_count()` and `check_default_publishes()` defined in EventLoop but never called by loop runner. The `default_publishes` config field has no effect. **P1**
+
 ### Dark Factory / BDD (P0)
 
 - [x] **BDD preset** -- presets/bdd.yml with spec_writer, implementer, verifier hats. Embedded in binary. _(2026-02-05)_
@@ -63,6 +68,7 @@
 
 ## Done
 
+- [x] **#157 Infinite loop fix** -- consecutive_fallbacks counter reset bug in loop_runner.rs. _(2026-02-05)_
 - [x] **Migration guide** -- In-repo at docs/migration/ralph-to-hats.md. Covers CLI, config, env vars, state dir, CI/CD. _(2026-02-05)_
 - [x] **Blog post draft** -- ~/notes/drafts/hats-rename-blog.md. _(2026-02-05)_
 - [x] **X announcement thread** -- ~/notes/drafts/hats-rename-x-thread.md. 5-tweet thread. _(2026-02-05)_
@@ -87,6 +93,7 @@
 
 | Issue | Status | Rename Impact |
 |-------|--------|--------------|
+| #157 Infinite loop with v2.4.4 | **Fixed** (local) | None -- loop_runner.rs fix |
 | #148 RFC: CLI/TUI guidance | Open | Examples reference `ralph` CLI -- fix in docs |
 | #135 docs site: llms.txt | Open | Docs move to hats.sh |
 | #128 broken ralph completions zsh | Open | Moot after rename -- binary is now `hats` |
