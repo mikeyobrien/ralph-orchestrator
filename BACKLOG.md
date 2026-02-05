@@ -1,28 +1,24 @@
 # Hats Product Backlog
 
-> Formerly hats. Managed by heartbeat PM/TPM cycles.
+> Formerly ralph-orchestrator. Managed by heartbeat PM/TPM cycles.
 > See ~/notes/requests/2026-02-04-hats-3mo-plan.md for full 3-month plan.
 > See ~/notes/research/hats-rename-plan.md for rename scope.
 
 ## In Progress
 
-_(nothing yet -- TPM will populate on first heartbeat)_
+_(nothing currently running)_
 
 ## Ready (Prioritized)
 
 ### Rename (P0 -- blocks everything)
 
-- [ ] **Reserve npm @hats/cli** -- Publish placeholder 0.0.1. Secures the name. **P0**
-- [ ] **Reserve crates.io hats-cli** -- Publish placeholder 0.0.1. **P0**
-- [ ] **Reserve crates.io hats-core, hats-proto, hats-adapters, hats-tui, hats-bench, hats-e2e, hats-telegram** -- All confirmed available. **P0**
-- [ ] **Rename GitHub repo** -- mikeyobrien/hats -> mikeyobrien/hats. Auto-redirects old URLs. **P0**
-- [ ] **Global codebase rename** -- hats -> hats in all crate names, Cargo.toml, binary name, config files. **P0**
-- [ ] **Config fallback** -- hats reads hats.yml if hats.yml not found. HATS_* env vars read HATS_* as deprecated. **P0**
-- [ ] **Publish new packages** -- npm @hats/cli, crates.io all crates, PyPI hats-cli. **P0**
-- [ ] **Deprecation notices** -- Publish final version of @hats/hats-cli that prints "hats is now hats". Same for crates.io and PyPI. **P0**
-- [ ] **Update homebrew formula** -- New tap or update existing. **P0**
-- [ ] **Update cargo-dist config** -- npm scope @hats, binary name hats. **P0**
-- [ ] **Deploy docs to hats.sh** -- mkdocs site, same content, new branding. **P1**
+- [ ] **Reserve npm @hats/cli** -- Publish placeholder 0.0.1. Secures the name. **P0** (GATED: publish)
+- [ ] **Reserve crates.io hats-cli** -- Publish placeholder 0.0.1. **P0** (GATED: publish)
+- [ ] **Reserve crates.io hats-core, hats-proto, hats-adapters, hats-tui, hats-bench, hats-e2e, hats-telegram** -- All confirmed available. **P0** (GATED: publish)
+- [ ] **Rename GitHub repo** -- mikeyobrien/ralph-orchestrator -> mikeyobrien/hats. Auto-redirects old URLs. **P0** (GATED: external)
+- [ ] **Publish new packages** -- npm @hats/cli, crates.io all crates, PyPI hats-cli. **P0** (GATED: publish)
+- [ ] **Deprecation notices** -- Publish final version of @ralph-orchestrator/ralph-cli that prints "ralph is now hats". Same for crates.io and PyPI. **P0** (GATED: publish)
+- [ ] **Update homebrew formula** -- New tap or update existing. **P0** (GATED: external)
 
 ### Landing Page (P1)
 
@@ -31,11 +27,11 @@ _(nothing yet -- TPM will populate on first heartbeat)_
 
 ### Communication (P1)
 
-- [ ] **Blog post: "Hats is now Hats"** -- Draft at ~/notes/drafts/hats-rename-blog.md. **P1**
+- [ ] **Blog post: "Ralph is now Hats"** -- Draft at ~/notes/drafts/hats-rename-blog.md. **P1**
 - [ ] **X announcement thread** -- Draft at ~/notes/drafts/hats-rename-x-thread.md. **P1**
 - [ ] **Migration guide** -- Draft at ~/notes/drafts/hats-migration-guide.md. **P1**
 - [ ] **Geoffrey Huntley courtesy DM** -- Draft at ~/notes/drafts/huntley-dm.md. **P1**
-- [ ] **PR to awesome-claude-code** -- Update link to new repo. **P1**
+- [ ] **PR to awesome-claude-code** -- Update link to new repo. **P1** (GATED: external)
 
 ### Integration (P1)
 
@@ -58,7 +54,10 @@ _(nothing yet -- TPM will populate on first heartbeat)_
 
 ## Done
 
-_(TPM logs completed items here with dates)_
+- [x] **Global codebase rename** -- ralph -> hats in all crate names, Cargo.toml, binary name, config files. 585 files changed. 725 tests pass. _(2026-02-05)_
+- [x] **Config fallback** -- hats reads ralph.yml if hats.yml not found. HATS_* env vars read RALPH_* as deprecated. hats_env_var() helper. _(2026-02-05)_
+- [x] **Update cargo-dist config** -- npm scope @hats, binary name hats. _(2026-02-05, done as part of global rename)_
+- [x] **hats.sh landing page** -- Built and deployed on Cloudflare Pages. _(2026-02-04)_
 
 ---
 
@@ -67,3 +66,15 @@ _(TPM logs completed items here with dates)_
 - **P1**: Important, do this week
 - **P2**: Next up after P1s clear
 - **P3**: Future / needs validation
+
+## GitHub Issues Triage (2026-02-05)
+
+| Issue | Status | Rename Impact |
+|-------|--------|--------------|
+| #148 RFC: CLI/TUI guidance | Open | Examples reference `ralph` CLI -- fix in docs |
+| #135 docs site: llms.txt | Open | Docs move to hats.sh |
+| #128 broken ralph completions zsh | Open | Moot after rename -- binary is now `hats` |
+| #127 MCP tools auth | Open | No impact |
+| #120 Windows support | Open | No impact |
+| #106 grepai feature req | Open | No impact |
+| #27 MCP support | Open | No impact |
