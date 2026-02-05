@@ -37,6 +37,7 @@ mod memory_store;
 pub mod merge_queue;
 pub mod planning_session;
 pub mod preflight;
+pub mod proof;
 #[cfg(feature = "recording")]
 mod session_player;
 #[cfg(feature = "recording")]

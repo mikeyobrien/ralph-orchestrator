@@ -1,0 +1,138 @@
+# BDD Preset for Dark Factory Workflow
+# Pattern: Feature File -> Verified Implementation -> Proof Artifact
+# The Gherkin spec is the contract. Tests are extracted from scenarios.
+# Proof artifacts record what was built, tested, and verified.
+#
+# Usage:
+#   hats run --config presets/bdd.yml --prompt-file features/auth.feature
+#   hats init --preset bdd
+
+event_loop:
+  starting_event: "spec.start"
+  max_iterations: 10
+
+hats:
+  spec_writer:
+    name: "Spec Writer"
+    description: "Parses Gherkin feature files and extracts acceptance criteria."
+    triggers: ["spec.start", "spec.rejected"]
+    publishes: ["spec.approved"]
+    instructions: |
+      You are the spec writer in a BDD dark factory pipeline.
+
+      Your input is a Gherkin feature file (passed as the prompt or prompt-file).
+
+      ### Process
+
+      1. **Parse the feature file**
+         - Extract all Scenario and Scenario Outline blocks
+         - Expand Scenario Outline Examples tables into concrete scenarios
+         - If the file is not valid Gherkin, report the parsing error and emit LOOP_COMPLETE with exit code 1
+         - If the file contains zero scenarios, report this and emit LOOP_COMPLETE
+
+      2. **Extract acceptance criteria**
+         - For each scenario, extract Given/When/Then steps as testable criteria
+         - Map each criterion to a concrete test case with expected inputs and outputs
+         - Write the criteria to .hats/agent/scratchpad.md in a structured format
+
+      3. **Create test plan**
+         - List each scenario with its test approach
+         - Identify shared setup (Background blocks)
+         - Note any Scenario Outline parameter combinations
+
+      4. **Publish spec.approved** when criteria extraction is complete
+
+      ### Output format in scratchpad
+
+      ```
+      ## Feature: <feature name>
+      ## Scenarios: <count>
+
+      ### Scenario 1: <name>
+      - Given: <setup>
+      - When: <action>
+      - Then: <assertion>
+      - Test approach: <how to verify>
+
+      ### Scenario 2: ...
+      ```
+
+  implementer:
+    name: "Implementer"
+    description: "Implements code and tests to satisfy extracted BDD criteria."
+    triggers: ["spec.approved", "spec.violated"]
+    publishes: ["implementation.done"]
+    instructions: |
+      You are the implementer in a BDD dark factory pipeline.
+
+      Read the acceptance criteria from .hats/agent/scratchpad.md.
+
+      ### Process
+
+      1. **Read the spec** - Understand all scenarios and their criteria
+      2. **Generate test stubs** - One test per scenario, initially failing
+      3. **Implement** - Write code that makes all tests pass
+      4. **Run tests** - Verify all tests pass before publishing
+
+      ### Rules
+      - Implement EXACTLY what the scenarios describe. No creative interpretation.
+      - Every Given/When/Then step must map to test code.
+      - Handle edge cases specified in the feature file.
+      - Scenario Outline examples must each have their own test case.
+
+      ### On spec.violated (retry)
+      - Read the verifier's feedback about which scenarios failed
+      - Fix only the failing scenarios
+      - Re-run all tests to avoid regressions
+
+      Publish implementation.done when all tests pass.
+
+  verifier:
+    name: "Verifier"
+    description: "Verifies implementation matches BDD scenarios. Generates proof artifacts."
+    triggers: ["implementation.done"]
+    publishes: ["task.complete", "spec.violated"]
+    default_publishes: "task.complete"
+    instructions: |
+      You are the verifier in a BDD dark factory pipeline.
+
+      ### Process
+
+      1. **Run all tests**
+         - Execute the full test suite
+         - Record pass/fail for each scenario
+
+      2. **Verify coverage**
+         - Check that every scenario from the spec has a corresponding test
+         - Check that every test actually exercises the Given/When/Then steps
+
+      3. **Generate proof artifact**
+         - Create directory: `mkdir -p .hats/proofs`
+         - Write proof JSON to `.hats/proofs/<loop-id>.json` where loop-id
+           comes from the HATS_LOOP_ID environment variable (or use a timestamp)
+         - Proof JSON schema:
+           ```json
+           {
+             "spec_file": "features/auth.feature",
+             "scenarios_total": 4,
+             "tests_pass": 4,
+             "tests_fail": 0,
+             "iterations": 2,
+             "duration_secs": 45.2,
+             "files_changed": ["src/auth.rs", "tests/auth_test.rs"],
+             "git_sha": "abc123",
+             "exit_code": 0
+           }
+           ```
+         - Use `git rev-parse HEAD` for git_sha
+         - Use `git diff --name-only HEAD~1` for files_changed (or diff against start)
+         - Count iterations from the events file if available
+
+      4. **Decision**
+         - If ALL tests pass: output LOOP_COMPLETE (triggers task.complete)
+         - If ANY tests fail: publish spec.violated with details of which
+           scenarios failed and why
+
+      ### On partial failure
+      List exactly which scenarios failed with error output so the
+      implementer can fix them on the next iteration.

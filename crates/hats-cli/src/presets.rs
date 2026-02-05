@@ -22,6 +22,11 @@ pub struct EmbeddedPreset {
 /// All embedded presets, compiled into the binary.
 const PRESETS: &[EmbeddedPreset] = &[
     EmbeddedPreset {
+        name: "bdd",
+        description: "BDD dark factory: feature file to verified implementation with proof artifacts",
+        content: include_str!("../presets/bdd.yml"),
+    },
+    EmbeddedPreset {
         name: "bugfix",
         description: "Systematic bug reproduction, fix, and verification",
         content: include_str!("../presets/bugfix.yml"),
@@ -122,7 +127,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 15, "Expected 15 presets");
+        assert_eq!(presets.len(), 16, "Expected 16 presets");
     }
 
     #[test]
@@ -196,7 +201,7 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 16);
         assert!(names.contains(&"feature"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"merge-loop"));
