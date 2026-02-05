@@ -104,7 +104,17 @@ impl TelegramService {
         loop_id: String,
     ) -> TelegramResult<Self> {
         let resolved_token = bot_token
-            .or_else(|| std::env::var("HATS_TELEGRAM_BOT_TOKEN").ok())
+            .or_else(|| {
+                std::env::var("HATS_TELEGRAM_BOT_TOKEN")
+                    .or_else(|_| {
+                        let val = std::env::var("RALPH_TELEGRAM_BOT_TOKEN");
+                        if val.is_ok() {
+                            eprintln!("⚠ RALPH_TELEGRAM_BOT_TOKEN is deprecated. Use HATS_TELEGRAM_BOT_TOKEN.");
+                        }
+                        val
+                    })
+                    .ok()
+            })
             .ok_or(TelegramError::MissingBotToken)?;
 
         let state_path = workspace_root.join(".hats/telegram-state.json");

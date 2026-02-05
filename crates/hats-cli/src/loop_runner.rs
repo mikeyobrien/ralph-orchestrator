@@ -363,7 +363,7 @@ pub async fn run_loop_impl(
 
     // Detect merge loop on startup via HATS_MERGE_LOOP_ID env var
     // Per spec: If set, mark entry as "merging" with current PID
-    let merge_loop_id: Option<String> = std::env::var("HATS_MERGE_LOOP_ID").ok();
+    let merge_loop_id: Option<String> = hats_core::hats_env_var("MERGE_LOOP_ID").ok();
     if let Some(ref loop_id) = merge_loop_id {
         let repo_root = loop_context
             .as_ref()
@@ -1409,7 +1409,7 @@ fn resolve_prompt_content(event_loop_config: &hats_core::EventLoopConfig) -> Res
 /// publishes them as `user.response` events to the event loop.
 fn check_planning_session_responses(event_loop: &mut EventLoop) -> Result<()> {
     // Get the planning session ID from environment
-    let session_id = match std::env::var("HATS_PLANNING_SESSION_ID") {
+    let session_id = match hats_core::hats_env_var("PLANNING_SESSION_ID") {
         Ok(id) => id,
         Err(_) => return Ok(()), // Not in planning mode
     };

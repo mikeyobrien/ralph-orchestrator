@@ -179,8 +179,8 @@ impl Verbosity {
     /// 3. Config file: (if supported in future)
     /// 4. Default: Normal
     fn resolve(cli_verbose: bool, cli_quiet: bool) -> Self {
-        let env_quiet = std::env::var("HATS_QUIET").is_ok();
-        let env_verbose = std::env::var("HATS_VERBOSE").is_ok();
+        let env_quiet = hats_core::hats_env_var_is_set("QUIET");
+        let env_verbose = hats_core::hats_env_var_is_set("VERBOSE");
         Self::resolve_with_env(cli_verbose, cli_quiet, env_quiet, env_verbose)
     }
 
@@ -330,10 +330,22 @@ pub(crate) fn load_config_with_overrides(
         .partition(|s| !matches!(s, ConfigSource::Override { .. }));
 
     // Load configuration from first file source, or default hats.yml
+    // Fallback: if hats.yml not found, try ralph.yml (deprecated migration path)
     let mut config = if let Some(ConfigSource::File(path)) = primary_sources.first() {
         if path.exists() {
             HatsConfig::from_file(path)
                 .with_context(|| format!("Failed to load config from {:?}", path))?
+        } else if path.as_path() == std::path::Path::new("hats.yml") {
+            // Default config path not found -- try legacy ralph.yml
+            let legacy_path = PathBuf::from("ralph.yml");
+            if legacy_path.exists() {
+                eprintln!("⚠ Loading config from ralph.yml (deprecated). Rename to hats.yml.");
+                HatsConfig::from_file(&legacy_path)
+                    .with_context(|| "Failed to load config from ralph.yml")?
+            } else {
+                warn!("Config file {:?} not found, using defaults", path);
+                HatsConfig::default()
+            }
         } else {
             warn!("Config file {:?} not found, using defaults", path);
             HatsConfig::default()
@@ -345,7 +357,15 @@ pub(crate) fn load_config_with_overrides(
             HatsConfig::from_file(&default_path)
                 .with_context(|| "Failed to load config from hats.yml")?
         } else {
-            HatsConfig::default()
+            // Try legacy ralph.yml
+            let legacy_path = PathBuf::from("ralph.yml");
+            if legacy_path.exists() {
+                eprintln!("⚠ Loading config from ralph.yml (deprecated). Rename to hats.yml.");
+                HatsConfig::from_file(&legacy_path)
+                    .with_context(|| "Failed to load config from ralph.yml")?
+            } else {
+                HatsConfig::default()
+            }
         }
     };
 
@@ -722,7 +742,7 @@ async fn main() -> Result<()> {
     let filter = if cli.verbose { "debug" } else { "info" };
 
     // Check if diagnostics are enabled
-    let diagnostics_enabled = std::env::var("HATS_DIAGNOSTICS")
+    let diagnostics_enabled = hats_core::hats_env_var("DIAGNOSTICS")
         .map(|v| v == "1")
         .unwrap_or(false);
 

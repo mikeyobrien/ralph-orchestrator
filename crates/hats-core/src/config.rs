@@ -696,7 +696,7 @@ impl Default for CoreConfig {
             scratchpad: default_scratchpad(),
             specs_dir: default_specs_dir(),
             guardrails: default_guardrails(),
-            workspace_root: std::env::var("HATS_WORKSPACE_ROOT")
+            workspace_root: crate::utils::hats_env_var("WORKSPACE_ROOT")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| {
                     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -1335,8 +1335,8 @@ impl RobotConfig {
     /// 2. `RObot.telegram.bot_token` in config file (explicit project override)
     /// 3. OS keychain (service: "hats", user: "telegram-bot-token")
     pub fn resolve_bot_token(&self) -> Option<String> {
-        // 1. Env var (highest priority)
-        let env_token = std::env::var("HATS_TELEGRAM_BOT_TOKEN").ok();
+        // 1. Env var (highest priority), with RALPH_ fallback
+        let env_token = crate::utils::hats_env_var("TELEGRAM_BOT_TOKEN").ok();
         let config_token = self
             .telegram
             .as_ref()

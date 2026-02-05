@@ -44,7 +44,7 @@ impl DiagnosticsCollector {
     ///
     /// If `HATS_DIAGNOSTICS=1`, creates `.hats/diagnostics/<timestamp>/` directory.
     pub fn new(base_path: &Path) -> std::io::Result<Self> {
-        let enabled = std::env::var("HATS_DIAGNOSTICS")
+        let enabled = crate::utils::hats_env_var("DIAGNOSTICS")
             .map(|v| v == "1")
             .unwrap_or(false);
 

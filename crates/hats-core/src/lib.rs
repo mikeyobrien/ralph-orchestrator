@@ -113,6 +113,7 @@ pub use task_definition::{
 };
 pub use task_store::TaskStore;
 pub use text::{floor_char_boundary, truncate_with_ellipsis};
+pub use utils::{hats_env_var, hats_env_var_is_set};
 pub use workspace::{
     CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,
     WorkspaceManager,

@@ -4,6 +4,40 @@
 
 use std::time::Duration;
 
+/// Reads an environment variable with `HATS_` prefix, falling back to the
+/// deprecated `RALPH_` prefix. Emits a deprecation warning to stderr on first
+/// use of a `RALPH_` variant.
+///
+/// # Examples
+///
+/// ```
+/// use hats_core::utils::hats_env_var;
+///
+/// // Checks HATS_VERBOSE first, then RALPH_VERBOSE
+/// let val = hats_env_var("VERBOSE");
+/// ```
+pub fn hats_env_var(suffix: &str) -> Result<String, std::env::VarError> {
+    let hats_key = format!("HATS_{suffix}");
+    match std::env::var(&hats_key) {
+        Ok(val) => Ok(val),
+        Err(_) => {
+            let ralph_key = format!("RALPH_{suffix}");
+            match std::env::var(&ralph_key) {
+                Ok(val) => {
+                    eprintln!("⚠ {ralph_key} is deprecated. Use {hats_key} instead.");
+                    Ok(val)
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+}
+
+/// Returns true if the env var (HATS_ or RALPH_ prefixed) is set.
+pub fn hats_env_var_is_set(suffix: &str) -> bool {
+    hats_env_var(suffix).is_ok()
+}
+
 /// Formats a duration as MM:SS (minutes:seconds).
 ///
 /// Useful for displaying elapsed time in TUI headers, status bars, and logs.
