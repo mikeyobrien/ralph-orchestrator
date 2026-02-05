@@ -1015,6 +1015,18 @@ pub struct PreflightConfig {
     pub skip: Vec<String>,
 }
 
+/// Proof artifact generation configuration.
+///
+/// When enabled, a proof artifact (JSON) is automatically written to
+/// `.hats/proofs/<loop-id>.json` on successful loop completion.
+/// Used by the BDD dark factory workflow to record what was built and tested.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProofConfig {
+    /// Whether to generate proof artifacts on loop completion.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 /// Feature flags for optional Hats capabilities.
 ///
 /// Example configuration:
@@ -1058,6 +1070,13 @@ pub struct FeaturesConfig {
     /// Preflight check configuration.
     #[serde(default)]
     pub preflight: PreflightConfig,
+
+    /// Proof artifact generation configuration.
+    ///
+    /// When enabled, a proof artifact is written on successful loop completion.
+    /// The BDD preset enables this by default.
+    #[serde(default)]
+    pub proof: ProofConfig,
 }
 
 impl Default for FeaturesConfig {
@@ -1067,6 +1086,7 @@ impl Default for FeaturesConfig {
             auto_merge: false, // Auto-merge disabled by default for safety
             loop_naming: crate::loop_name::LoopNamingConfig::default(),
             preflight: PreflightConfig::default(),
+            proof: ProofConfig::default(),
         }
     }
 }

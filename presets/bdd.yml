@@ -11,6 +11,10 @@ event_loop:
   starting_event: "spec.start"
   max_iterations: 10
 
+features:
+  proof:
+    enabled: true
+
 hats:
   spec_writer:
     name: "Spec Writer"

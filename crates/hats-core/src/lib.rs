@@ -78,7 +78,9 @@ pub use hat_registry::HatRegistry;
 pub use hatless::{HatInfo, HatTopology, HatlessHats};
 pub use instructions::InstructionBuilder;
 pub use landing::{LandingConfig, LandingError, LandingHandler, LandingResult};
-pub use loop_completion::{CompletionAction, CompletionError, LoopCompletionHandler};
+pub use loop_completion::{
+    CompletionAction, CompletionError, LoopCompletionHandler, ProofData, ProofResult,
+};
 pub use loop_context::LoopContext;
 pub use loop_history::{HistoryError, HistoryEvent, HistoryEventType, HistorySummary, LoopHistory};
 pub use loop_lock::{LockError, LockGuard, LockMetadata, LoopLock};

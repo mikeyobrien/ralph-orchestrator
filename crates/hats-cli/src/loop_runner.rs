@@ -389,6 +389,24 @@ pub async fn run_loop_impl(
         }
     }
 
+    // Proof generation feature flag
+    let proof_enabled = config.features.proof.enabled;
+
+    // Resolve prompt_file path for proof artifacts (the file path, not contents)
+    let proof_prompt_file: Option<String> = {
+        let pf = &config.event_loop.prompt_file;
+        if pf.is_empty() || pf == "PROMPT.md" {
+            // Check if the default file exists; if not, this was an inline prompt
+            if std::path::Path::new(pf).exists() {
+                Some(pf.clone())
+            } else {
+                None
+            }
+        } else {
+            Some(pf.clone())
+        }
+    };
+
     // Helper closure to handle termination (writes summary, prints status, records history)
     let handle_termination = |reason: &TerminationReason,
                               state: &hats_core::LoopState,
@@ -508,20 +526,38 @@ pub async fn run_loop_impl(
         // Per spec: merge loops do NOT enqueue themselves, even if run in worktree context
         if let Some(ctx) = context {
             if merge_loop_id.is_none() && matches!(reason, TerminationReason::CompletionPromise) {
-                let handler = LoopCompletionHandler::new(auto_merge);
-                match handler.handle_completion(ctx, prompt) {
+                let handler = LoopCompletionHandler::new(auto_merge, proof_enabled);
+                match handler.handle_completion(
+                    ctx,
+                    prompt,
+                    state.iteration,
+                    state.elapsed().as_secs_f64(),
+                    proof_prompt_file.as_deref(),
+                    None, // ProofData not populated yet — future work
+                ) {
                     Ok(CompletionAction::None) => {
                         debug!("Loop completed, no action needed");
                     }
-                    Ok(CompletionAction::Landed { landing }) => {
+                    Ok(CompletionAction::Landed { landing, proof }) => {
                         info!(
                             committed = landing.committed,
                             handoff = %landing.handoff_path,
                             open_tasks = landing.open_task_count,
                             "Primary loop landed successfully"
                         );
+                        if let Some(ref p) = proof {
+                            if p.success {
+                                info!(proof = %p.path, "Proof artifact generated");
+                            } else {
+                                warn!("Proof artifact generation failed");
+                            }
+                        }
                     }
-                    Ok(CompletionAction::Enqueued { loop_id, landing }) => {
+                    Ok(CompletionAction::Enqueued {
+                        loop_id,
+                        landing,
+                        proof,
+                    }) => {
                         info!(loop_id = %loop_id, "Loop queued for auto-merge");
                         if let Some(ref l) = landing {
                             debug!(
@@ -529,6 +565,11 @@ pub async fn run_loop_impl(
                                 handoff = %l.handoff_path,
                                 "Landing completed before enqueue"
                             );
+                        }
+                        if let Some(ref p) = proof {
+                            if p.success {
+                                info!(proof = %p.path, "Proof artifact generated");
+                            }
                         }
                         if let Some(hist) = history {
                             let _ = hist.record_merge_queued();
@@ -540,6 +581,7 @@ pub async fn run_loop_impl(
                         loop_id,
                         worktree_path,
                         landing,
+                        proof,
                     }) => {
                         info!(
                             loop_id = %loop_id,
@@ -552,6 +594,11 @@ pub async fn run_loop_impl(
                                 handoff = %l.handoff_path,
                                 "Landing completed (manual merge mode)"
                             );
+                        }
+                        if let Some(ref p) = proof {
+                            if p.success {
+                                info!(proof = %p.path, "Proof artifact generated");
+                            }
                         }
                     }
                     Err(e) => {
