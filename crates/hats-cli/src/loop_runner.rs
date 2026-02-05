@@ -693,8 +693,11 @@ pub async fn run_loop_impl(
         // Get next hat to execute, with fallback recovery if no pending events
         let hat_id = match event_loop.next_hat() {
             Some(id) => {
-                // Reset fallback counter on successful event routing
-                consecutive_fallbacks = 0;
+                // Don't reset consecutive_fallbacks here — it would reset on our
+                // own fallback-injected events, causing the counter to oscillate
+                // between 0 and 1 forever. Instead, reset only when the agent
+                // produces real JSONL events (see process_events_from_jsonl below).
+                // Fixes: https://github.com/mikeyobrien/ralph-orchestrator/issues/157
                 id.clone()
             }
             None => {
@@ -1061,6 +1064,16 @@ pub async fn run_loop_impl(
         // Read events from JSONL that agent may have written
         if let Err(e) = event_loop.process_events_from_jsonl() {
             warn!(error = %e, "Failed to read events from JSONL");
+        }
+
+        // Reset fallback counter only when the agent produces real JSONL events.
+        // At this point in the loop, build_prompt() has already consumed any
+        // bus events (including our own fallback injections). So has_pending_events()
+        // returning true means process_events_from_jsonl() found real agent output.
+        // This prevents the fallback counter from oscillating between 0 and 1
+        // when the agent never emits events. (Fixes #157)
+        if event_loop.has_pending_events() {
+            consecutive_fallbacks = 0;
         }
 
         if let Some(reason) = event_loop.check_completion_event() {
