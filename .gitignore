@@ -117,3 +117,6 @@ PROMPT.md
 
 # Codex local state
 .codex/
+
+# Legacy ralph state (pre-rename runtime artifacts)
+.ralph/
