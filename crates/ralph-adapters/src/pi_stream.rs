@@ -341,7 +341,7 @@ mod tests {
                 assert_eq!(result.content.len(), 1);
                 match &result.content[0] {
                     PiContentBlock::Text { text } => assert_eq!(text, "hello\n"),
-                    _ => panic!("Expected Text content block"),
+                    PiContentBlock::Other => panic!("Expected Text content block"),
                 }
             }
             _ => panic!("Expected ToolExecutionEnd, got {:?}", event),
