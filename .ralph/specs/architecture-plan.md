@@ -410,8 +410,12 @@ pub enum Error {
 pub enum TelegramError {
     #[error("telegram bot token not found: set RALPH_TELEGRAM_BOT_TOKEN or configure human.telegram.bot_token")]
     MissingBotToken,
+    #[error("failed to start telegram bot: {0}")]
+    Startup(String),
     #[error("failed to send telegram message after {attempts} attempts: {reason}")]
     Send { attempts: u32, reason: String },
+    #[error("failed to receive telegram messages: {0}")]
+    Receive(String),
     #[error("timed out waiting for human response after {timeout_secs}s")]
     ResponseTimeout { timeout_secs: u64 },
     #[error("state persistence error: {0}")]
@@ -427,7 +431,7 @@ Across all crates, there are 25+ files defining `thiserror::Error` types. The pa
 
 ### Anyhow Usage
 
-`anyhow` is used sparingly and only at application boundaries (CLI commands, bot entry points, benchmarking tools). The core library crates (`ralph-core`, `ralph-proto`) use specific error types exclusively. This keeps library errors inspectable and matchable while allowing CLI code to use `anyhow::Result` for convenience.
+`anyhow` is used sparingly and only at application boundaries (CLI commands, bot entry points, benchmarking tools). The core library crates (`ralph-core`, `ralph-proto`) use specific error types almost exclusively, with two exceptions in `ralph-core`: `skill_registry.rs` (skill loading) and `preflight.rs` (Telegram API validation and directory setup) use `anyhow` for convenience where errors are terminal and not matched on. This keeps library errors inspectable and matchable while allowing CLI code to use `anyhow::Result` for convenience.
 
 ### Consecutive Failure Tracking
 
