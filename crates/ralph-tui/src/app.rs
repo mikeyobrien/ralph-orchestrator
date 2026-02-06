@@ -116,6 +116,7 @@ impl App {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
         // CRITICAL: Ensure terminal cleanup on ANY exit path (normal, abort, or panic).
         // When cleanup_tui() calls handle.abort(), the task is cancelled immediately

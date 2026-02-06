@@ -715,6 +715,7 @@ async fn main() -> Result<()> {
     let tui_enabled = match &cli.command {
         Some(Commands::Run(args)) => !args.no_tui && !args.autonomous,
         Some(Commands::Resume(args)) => !args.no_tui && !args.autonomous,
+        None => true,
         _ => false,
     };
 
