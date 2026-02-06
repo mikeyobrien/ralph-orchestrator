@@ -144,20 +144,27 @@ async fn run_npm_install_with(root: &Path, npm_cmd: &OsStr) -> Result<()> {
     Ok(())
 }
 
-/// Check that a TCP port is available for binding.
-fn check_port_available(port: u16) -> Result<()> {
-    match std::net::TcpListener::bind(("127.0.0.1", port)) {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            anyhow::bail!(
-                "Port {} is already in use.\n\
-                 Use --backend-port or --frontend-port to pick a different port.\n\
-                 To free the port: fuser -k {}/tcp",
-                port,
-                port
-            );
+/// Check if a TCP port is available for binding on all interfaces (0.0.0.0).
+fn is_port_available(port: u16) -> bool {
+    // Check 0.0.0.0 since that's what the servers actually bind to.
+    // This catches ports held by Docker, other services, etc.
+    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
+}
+
+/// Find an available port starting from `preferred`, incrementing up to `max_attempts` times.
+fn find_available_port(preferred: u16, max_attempts: u16) -> Result<u16> {
+    for offset in 0..max_attempts {
+        let port = preferred + offset;
+        if is_port_available(port) {
+            return Ok(port);
         }
     }
+    anyhow::bail!(
+        "No available port found in range {}–{}.\n\
+         Free a port or use --backend-port / --frontend-port.",
+        preferred,
+        preferred + max_attempts - 1
+    );
 }
 
 /// Check for tsx 4.20.0 which has known issues.
@@ -288,9 +295,22 @@ pub async fn execute(args: WebArgs) -> Result<()> {
     // Verify Node.js/npm, check tsx version, and auto-install dependencies if needed
     preflight(&orchestrator_root, &backend_dir).await?;
 
-    // Check ports before spawning anything
-    check_port_available(args.backend_port)?;
-    check_port_available(args.frontend_port)?;
+    // Find available ports (auto-increment if preferred port is taken)
+    let backend_port = find_available_port(args.backend_port, 10)?;
+    let frontend_port = find_available_port(args.frontend_port, 10)?;
+
+    if backend_port != args.backend_port {
+        println!(
+            "Port {} in use, using {} for backend",
+            args.backend_port, backend_port
+        );
+    }
+    if frontend_port != args.frontend_port {
+        println!(
+            "Port {} in use, using {} for frontend",
+            args.frontend_port, frontend_port
+        );
+    }
 
     println!("Using workspace: {}", workspace_root.display());
 
@@ -301,7 +321,7 @@ pub async fn execute(args: WebArgs) -> Result<()> {
         .args(["run", "dev"])
         .current_dir(&backend_dir)
         .env("RALPH_WORKSPACE_ROOT", &workspace_root)
-        .env("PORT", args.backend_port.to_string())
+        .env("PORT", backend_port.to_string())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -321,10 +341,10 @@ pub async fn execute(args: WebArgs) -> Result<()> {
             "dev",
             "--",
             "--port",
-            &args.frontend_port.to_string(),
+            &frontend_port.to_string(),
         ])
         .current_dir(&frontend_dir)
-        .env("RALPH_BACKEND_PORT", args.backend_port.to_string())
+        .env("RALPH_BACKEND_PORT", backend_port.to_string())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -372,8 +392,8 @@ pub async fn execute(args: WebArgs) -> Result<()> {
     });
 
     // Wait for both servers to become ready
-    let dashboard_url = format!("http://localhost:{}", args.frontend_port);
-    let api_url = format!("http://localhost:{}", args.backend_port);
+    let dashboard_url = format!("http://localhost:{}", frontend_port);
+    let api_url = format!("http://localhost:{}", backend_port);
 
     let ready_result = tokio::time::timeout(READY_TIMEOUT, async {
         tokio::join!(backend_ready.notified(), frontend_ready.notified());
@@ -541,20 +561,44 @@ mod tests {
     }
 
     #[test]
-    fn check_port_available_detects_in_use() {
-        match TcpListener::bind(("127.0.0.1", 0)) {
+    fn is_port_available_detects_in_use() {
+        match TcpListener::bind(("0.0.0.0", 0)) {
             Ok(listener) => {
                 let port = listener.local_addr().expect("addr").port();
-                assert!(check_port_available(port).is_err());
+                assert!(!is_port_available(port));
                 drop(listener);
-                assert!(check_port_available(port).is_ok());
+                assert!(is_port_available(port));
             }
             Err(err) => {
                 // Some sandboxes disallow binding; ensure we handle that path gracefully.
                 assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
-                assert!(check_port_available(0).is_err());
+                assert!(!is_port_available(0));
             }
         }
+    }
+
+    #[test]
+    fn find_available_port_skips_occupied() {
+        match TcpListener::bind(("0.0.0.0", 0)) {
+            Ok(listener) => {
+                let occupied = listener.local_addr().expect("addr").port();
+                // Should skip occupied and return occupied+1
+                let found = find_available_port(occupied, 5).expect("find port");
+                assert!(found > occupied);
+                assert!(found <= occupied + 4);
+            }
+            Err(_) => {
+                // Can't test port binding in this sandbox
+            }
+        }
+    }
+
+    #[test]
+    fn find_available_port_returns_preferred_when_free() {
+        // Port 0 is special, use a high ephemeral port that's likely free
+        // We just verify the function returns Ok when ports are available
+        let result = find_available_port(49152, 10);
+        assert!(result.is_ok());
     }
 
     #[cfg(unix)]
