@@ -551,6 +551,11 @@ struct RunArgs {
     #[arg(long, value_name = "FILE")]
     record_session: Option<PathBuf>,
 
+    /// Workspace directory for the orchestration loop (default: current directory).
+    /// Ralph will create .ralph/, acquire locks, and operate within this directory.
+    #[arg(short = 'w', long)]
+    workspace: Option<PathBuf>,
+
     /// Custom backend command and arguments (use after --)
     #[arg(last = true)]
     custom_args: Vec<String>,
@@ -850,6 +855,7 @@ async fn main() -> Result<()> {
                 verbose: false,
                 quiet: false,
                 record_session: None,
+                workspace: None,
                 custom_args: Vec::new(),
             };
             run_command(&config_sources, cli.verbose, cli.color, args).await
@@ -1091,11 +1097,15 @@ async fn run_command(
     // Normalize v1 flat fields into v2 nested structure
     config.normalize();
 
-    // Set workspace_root to current directory (critical for E2E tests in isolated workspaces).
+    // Set workspace_root: use --workspace flag if provided, otherwise current directory.
     // This must happen after config load because workspace_root has #[serde(skip)] and
-    // defaults to cwd at deserialize time - but we need it set to the actual runtime cwd.
-    config.core.workspace_root =
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    // defaults to cwd at deserialize time - but we need it set to the actual runtime workspace.
+    config.core.workspace_root = match &args.workspace {
+        Some(path) => path
+            .canonicalize()
+            .with_context(|| format!("Invalid workspace path: {}", path.display()))?,
+        None => std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    };
 
     // Apply CLI config overrides (takes precedence over config file values)
     let override_sources: Vec<_> = overrides.into_iter().cloned().collect();
@@ -2878,6 +2888,7 @@ core:
             verbose: false,
             quiet: false,
             record_session: None,
+            workspace: None,
             custom_args: Vec::new(),
         }
     }

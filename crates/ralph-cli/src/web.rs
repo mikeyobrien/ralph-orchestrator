@@ -269,22 +269,24 @@ async fn forward_output(
 pub async fn execute(args: WebArgs) -> Result<()> {
     println!("Starting Ralph web servers...");
 
-    // Determine workspace root: explicit flag or current directory
+    // Orchestrator source root: always cwd (where backend/frontend source lives)
+    let orchestrator_root = env::current_dir().context("Failed to get current directory")?;
+
+    // Target workspace: --workspace flag or cwd
     let workspace_root = match args.workspace {
         Some(path) => {
-            // Canonicalize to get absolute path
             path.canonicalize()
                 .with_context(|| format!("Invalid workspace path: {}", path.display()))?
         }
-        None => env::current_dir().context("Failed to get current directory")?,
+        None => orchestrator_root.clone(),
     };
 
-    // Compute absolute paths for backend and frontend directories
-    let backend_dir = workspace_root.join("backend/ralph-web-server");
-    let frontend_dir = workspace_root.join("frontend/ralph-web");
+    // Compute absolute paths for backend and frontend directories (always in orchestrator source)
+    let backend_dir = orchestrator_root.join("backend/ralph-web-server");
+    let frontend_dir = orchestrator_root.join("frontend/ralph-web");
 
     // Verify Node.js/npm, check tsx version, and auto-install dependencies if needed
-    preflight(&workspace_root, &backend_dir).await?;
+    preflight(&orchestrator_root, &backend_dir).await?;
 
     // Check ports before spawning anything
     check_port_available(args.backend_port)?;
