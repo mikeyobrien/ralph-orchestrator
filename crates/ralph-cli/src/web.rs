@@ -144,11 +144,14 @@ async fn run_npm_install_with(root: &Path, npm_cmd: &OsStr) -> Result<()> {
     Ok(())
 }
 
-/// Check if a TCP port is available for binding on all interfaces (0.0.0.0).
+/// Check if a TCP port is available for binding on all interfaces.
+/// Tests both IPv4 (0.0.0.0) and IPv6 (::) since either can block Node.js
+/// from binding — e.g. Docker Desktop on macOS often holds an IPv6 wildcard.
 fn is_port_available(port: u16) -> bool {
-    // Check 0.0.0.0 since that's what the servers actually bind to.
-    // This catches ports held by Docker, other services, etc.
-    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
+    let v4 = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+    let v6 = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
+    TcpListener::bind(v4).is_ok() && TcpListener::bind(v6).is_ok()
 }
 
 /// Find an available port starting from `preferred`, incrementing up to `max_attempts` times.
