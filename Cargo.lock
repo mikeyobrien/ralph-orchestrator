@@ -2284,6 +2284,7 @@ name = "ralph-tui"
 version = "2.4.4"
 dependencies = [
  "anyhow",
+ "chrono",
  "crossterm 0.28.1",
  "futures",
  "insta",
@@ -2293,6 +2294,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "unicode-width 0.2.0",

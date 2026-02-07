@@ -24,6 +24,46 @@ impl Widget for Footer<'_> {
         let inner_area = block.inner(area);
         block.render(area, buf);
 
+        // Guidance input mode takes priority
+        if let Some(mode) = self.state.guidance_mode {
+            let label = match mode {
+                crate::state::GuidanceMode::Next => "guidance (next)",
+                crate::state::GuidanceMode::Now => "guidance (now!)",
+            };
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(format!("{}: ", label), Style::default().fg(Color::Yellow)),
+                Span::raw(&self.state.guidance_input),
+                Span::styled("\u{2588}", Style::default().fg(Color::Yellow)), // block cursor
+            ]);
+            Paragraph::new(line).render(inner_area, buf);
+            return;
+        }
+
+        // Guidance flash (brief after attempting send)
+        if let Some((mode, result)) = self.state.active_guidance_flash() {
+            let (msg, color) = match (mode, result) {
+                (crate::state::GuidanceMode::Next, crate::state::GuidanceResult::Queued) => {
+                    ("\u{2713} guidance queued (next)", Color::Green)
+                }
+                (crate::state::GuidanceMode::Now, crate::state::GuidanceResult::Sent) => {
+                    ("\u{2713} guidance sent (now!)", Color::Green)
+                }
+                (_, crate::state::GuidanceResult::Failed) => {
+                    ("\u{2717} failed to send guidance", Color::Red)
+                }
+                // Shouldn't happen, but degrade gracefully
+                _ => ("\u{2717} failed to send guidance", Color::Red),
+            };
+
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(msg, Style::default().fg(color)),
+            ]);
+            Paragraph::new(line).render(inner_area, buf);
+            return;
+        }
+
         // If search state has an active query, render search display
         if let Some(query) = &self.state.search_state.query {
             let match_info = if self.state.search_state.matches.is_empty() {
