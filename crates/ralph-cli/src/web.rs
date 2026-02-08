@@ -510,6 +510,7 @@ mod tests {
     use std::ffi::OsStr;
     use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     #[cfg(unix)]
@@ -545,7 +546,21 @@ mod tests {
                 let port = listener.local_addr().expect("addr").port();
                 assert!(check_port_available(port).is_err());
                 drop(listener);
-                assert!(check_port_available(port).is_ok());
+
+                // Some environments (CI, heavily loaded systems) can take a moment to fully
+                // release the port after the listener is dropped. Retry briefly to avoid flakes.
+                let mut freed = false;
+                for _ in 0..25 {
+                    if check_port_available(port).is_ok() {
+                        freed = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                assert!(
+                    freed,
+                    "port {port} should become available after listener is dropped"
+                );
             }
             Err(err) => {
                 // Some sandboxes disallow binding; ensure we handle that path gracefully.
