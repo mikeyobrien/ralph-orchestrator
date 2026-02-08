@@ -54,6 +54,8 @@ pub struct CliBackend {
     pub prompt_flag: Option<String>,
     /// Output format emitted by this backend.
     pub output_format: OutputFormat,
+    /// Environment variables to set when spawning the process.
+    pub env_vars: Vec<(String, String)>,
 }
 
 impl CliBackend {
@@ -104,6 +106,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
         }
     }
 
@@ -126,6 +129,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -143,6 +147,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -162,6 +167,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         backend.args.extend(extra_args.iter().cloned());
         backend
@@ -220,6 +226,7 @@ impl CliBackend {
                 prompt_mode: PromptMode::Arg,
                 prompt_flag: None,
                 output_format: OutputFormat::Text,
+                env_vars: vec![],
             }),
         }
     }
@@ -232,6 +239,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -243,6 +251,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -254,6 +263,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -268,6 +278,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -283,6 +294,28 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
+        }
+    }
+
+    /// Creates the Claude interactive backend with Agent Teams support.
+    ///
+    /// Like `claude_interactive()` but with reduced `--disallowedTools` (only `TodoWrite`)
+    /// and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` env var.
+    pub fn claude_interactive_teams() -> Self {
+        Self {
+            command: "claude".to_string(),
+            args: vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--disallowedTools=TodoWrite".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![(
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+                "1".to_string(),
+            )],
         }
     }
 
@@ -329,6 +362,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -343,6 +377,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-i".to_string()), // NOT -p!
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -357,6 +392,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -371,6 +407,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -385,6 +422,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -404,6 +442,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -421,6 +460,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -440,6 +480,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("--prompt".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -459,6 +500,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
         }
     }
 
@@ -473,6 +515,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -494,6 +537,7 @@ impl CliBackend {
             prompt_mode,
             prompt_flag: config.prompt_flag.clone(),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         })
     }
 
@@ -1457,5 +1501,49 @@ mod tests {
             run_idx < model_idx,
             "Original args should come before custom args"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for Agent Teams backends
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_claude_interactive_teams_backend() {
+        let backend = CliBackend::claude_interactive_teams();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "claude");
+        assert_eq!(
+            args,
+            vec![
+                "--dangerously-skip-permissions",
+                "--disallowedTools=TodoWrite",
+                "test prompt"
+            ]
+        );
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+        assert_eq!(
+            backend.env_vars,
+            vec![(
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+                "1".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn test_env_vars_default_empty() {
+        // All non-teams constructors should have empty env_vars
+        assert!(CliBackend::claude().env_vars.is_empty());
+        assert!(CliBackend::claude_interactive().env_vars.is_empty());
+        assert!(CliBackend::kiro().env_vars.is_empty());
+        assert!(CliBackend::gemini().env_vars.is_empty());
+        assert!(CliBackend::codex().env_vars.is_empty());
+        assert!(CliBackend::amp().env_vars.is_empty());
+        assert!(CliBackend::copilot().env_vars.is_empty());
+        assert!(CliBackend::opencode().env_vars.is_empty());
+        assert!(CliBackend::pi().env_vars.is_empty());
     }
 }
