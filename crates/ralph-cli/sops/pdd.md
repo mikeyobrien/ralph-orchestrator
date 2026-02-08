@@ -28,6 +28,7 @@ These rules apply across ALL steps:
 - **project_dir** (optional, default: `specs/{task_name}/`): Base directory for all artifacts. `{task_name}` is derived as kebab-case from the idea (e.g., "build a rate limiter" → `rate-limiter`). Aligns with Ralph's spec-driven pipeline.
 
 **Constraints:**
+
 - You MUST ask for all required parameters upfront in a single prompt
 - You MUST support multiple input methods: direct text, file path, URL
 - You MUST derive `task_name` from the rough idea as kebab-case
@@ -38,6 +39,7 @@ These rules apply across ALL steps:
 ### 1. Create Project Structure
 
 Create the directory and initial files:
+
 - `{project_dir}/rough-idea.md` — the provided rough idea
 - `{project_dir}/requirements.md` — Q&A record (initially empty)
 - `{project_dir}/research/` — directory for research notes
@@ -49,6 +51,7 @@ Inform the user the structure feeds into Ralph's spec-driven presets.
 ### 2. Initial Process Planning
 
 Ask the user their preferred starting point:
+
 - Requirements clarification (default)
 - Preliminary research on specific topics
 - Provide additional context first
@@ -60,6 +63,7 @@ Ask the user their preferred starting point:
 Guide the user through questions to refine the idea into a thorough specification.
 
 **Constraints:**
+
 - You MUST ask ONE question at a time — do not list multiple questions
 - You MUST NOT pre-populate answers or batch-write Q&A to requirements.md
 - You MUST follow this cycle for each question:
@@ -78,7 +82,9 @@ Cover edge cases, user experience, technical constraints, and success criteria. 
 Conduct research on technologies, libraries, or existing code to inform the design.
 
 **Constraints:**
+
 - You MUST propose a research plan to the user and incorporate their suggestions
+- You SHOULD decompose research into independent sub-topics, each producing a separate file in `research/`. This enables focused investigation and prevents research from becoming a monolithic wall of text
 - You MUST document findings in `{project_dir}/research/` as separate topic files
 - You MUST periodically check in with the user to share findings and confirm direction
 - You MUST summarize key findings before moving on
@@ -88,6 +94,7 @@ Conduct research on technologies, libraries, or existing code to inform the desi
 ### 5. Iteration Checkpoint
 
 Summarize the current state of requirements and research, then ask the user:
+
 - Proceed to design?
 - Return to requirements clarification?
 - Conduct additional research?
@@ -97,6 +104,7 @@ Summarize the current state of requirements and research, then ask the user:
 ### 6. Create Detailed Design
 
 Create `{project_dir}/design.md` as a standalone document with these sections:
+
 - Overview
 - Detailed Requirements (consolidated from requirements.md)
 - Architecture Overview
@@ -108,10 +116,12 @@ Create `{project_dir}/design.md` as a standalone document with these sections:
 - Appendices (Technology Choices, Research Findings, Alternative Approaches)
 
 **Constraints:**
+
 - You MUST write the design as standalone — understandable without reading other files
 - You MUST consolidate all requirements from requirements.md
 - You MUST include an appendix summarizing research (technology choices, alternatives, limitations)
 - You MUST review the design with the user and iterate on feedback
+- You SHOULD critically review the design before presenting to the user — challenge assumptions, identify gaps in edge case handling, and consider whether alternative approaches were adequately evaluated
 
 **Gate:** You MUST NOT proceed to the implementation plan until the user explicitly approves the design. You MUST offer to return to requirements or research if gaps are identified during design review.
 
@@ -122,8 +132,10 @@ Create `{project_dir}/plan.md` — a numbered series of incremental implementati
 **Guiding principle:** Each step builds on previous steps, results in working demoable functionality, and follows TDD practices. No orphaned code — every step ends with integration. Core end-to-end functionality should be available as early as possible.
 
 **Constraints:**
+
 - You MUST include a checklist at the top of plan.md tracking each step
 - You MUST format as "Step N:" with: objective, implementation guidance, test requirements, integration notes, and demo description
+- You SHOULD consider at least one alternative step ordering or decomposition before finalizing the plan, noting the trade-offs of each approach
 - You MUST ensure the plan covers all aspects of the design without duplicating design details
 
 **Gate:** You MUST NOT proceed to the summary until the user reviews and approves the implementation plan.
@@ -137,12 +149,14 @@ Create `{project_dir}/summary.md` listing all artifacts, a brief overview, and s
 Ask: "Would you like me to create a PROMPT.md for Ralph to implement this autonomously?"
 
 If yes, create a concise PROMPT.md (under 100 lines) with:
+
 - Objective statement
 - Key requirements
 - Acceptance criteria (Given-When-Then)
 - Reference to `specs/{task_name}/`
 
 Suggest the appropriate command:
+
 - Full pipeline: `ralph run --config presets/pdd-to-code-assist.yml`
 - Simpler flow: `ralph run --config presets/spec-driven.yml`
 
