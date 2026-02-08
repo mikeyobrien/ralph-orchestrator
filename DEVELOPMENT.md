@@ -2,6 +2,66 @@
 
 This guide documents the spec-driven development workflow for Ralph Orchestrator. All changes flow through specs—they are the source of truth.
 
+## Quick Start
+
+### Prerequisites
+
+- [Nix](https://nixos.org/download.html) package manager
+- [devenv](https://devenv.sh/getting-started/) 
+- [direnv](https://direnv.net/docs/installation.html) (optional but recommended)
+
+### Setup
+
+**Option A: With direnv (Recommended)**
+
+```bash
+# Clone the repo
+cd ralph-orchestrator
+
+# Allow direnv to activate the dev environment
+direnv allow
+
+# You'll automatically have all tools (rustfmt, clippy, just, etc.)
+```
+
+**Option B: With nix develop**
+
+```bash
+cd ralph-orchestrator
+
+# Enter the development shell
+nix develop
+
+# All tools are available in this shell
+```
+
+**Option C: Without Nix (Not Recommended)**
+
+If you can't use Nix, you'll need to manually install:
+- Rust toolchain with `rustup component add rustfmt clippy`
+- [just](https://github.com/casey/just) command runner
+
+### Development Workflow
+
+```bash
+# Install git hooks (one-time setup)
+./scripts/setup-hooks.sh
+
+# Run all checks (fmt, lint, test)
+just check
+
+# Format code
+just fmt
+
+# Run lints
+just lint
+
+# Run tests
+just test
+```
+
+**Important:** Pre-commit hooks will block commits that fail formatting or linting. Run `just check` before committing.
+
 ## Core Principle
 
 > **Specs are contracts, not documentation.** Implementation follows specs; specs don't follow implementation.

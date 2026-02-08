@@ -1,27 +1,36 @@
-#!/bin/bash
-# Pre-commit hook: Enforce formatting and zero clippy warnings
-# Runs the same checks as CI to catch issues early
+#!/usr/bin/env bash
+# Pre-commit hook for Ralph Orchestrator
+# Runs formatting and linting checks before allowing commits
 
 set -e
 
-echo "🔍 Checking formatting..."
-if ! cargo fmt --check; then
-    echo ""
-    echo "❌ Formatting check failed!"
-    echo "   Run 'cargo fmt' to fix formatting issues."
+echo "🔍 Running pre-commit checks..."
+
+# Check if rustfmt is available
+if ! command -v rustfmt &> /dev/null; then
+    echo "❌ rustfmt not found. Run: rustup component add rustfmt"
     exit 1
 fi
-echo "✅ Formatting OK"
 
-echo ""
-echo "🔍 Running clippy (warnings = errors)..."
-if ! cargo clippy --all-targets --all-features -- -D warnings 2>&1; then
-    echo ""
-    echo "❌ Clippy check failed!"
-    echo "   Fix the warnings above before committing."
+# Check if clippy is available
+if ! command -v cargo-clippy &> /dev/null; then
+    echo "❌ clippy not found. Run: rustup component add clippy"
     exit 1
 fi
-echo "✅ Clippy passed with no warnings!"
 
-echo ""
-echo "🎉 All pre-commit checks passed!"
+# Check formatting
+echo "📐 Checking formatting..."
+if ! cargo fmt --all -- --check; then
+    echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
+    exit 1
+fi
+
+# Run clippy
+echo "🔧 Running clippy..."
+if ! cargo clippy --all-targets --all-features -- -D warnings; then
+    echo "❌ Clippy check failed. Fix warnings before committing."
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed!"
+exit 0

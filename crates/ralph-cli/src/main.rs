@@ -13,6 +13,7 @@
 //! - Work item tracking via `ralph task`
 
 mod bot;
+mod completions;
 mod display;
 mod doctor;
 mod hats;
@@ -440,6 +441,9 @@ enum Commands {
 
     /// Manage Telegram bot setup and testing
     Bot(bot::BotArgs),
+
+    /// Generate shell completion scripts
+    Completions(completions::CompletionsArgs),
 }
 
 /// Arguments for the init subcommand.
@@ -831,6 +835,10 @@ async fn main() -> Result<()> {
         Some(Commands::Web(args)) => web::execute(args).await,
         Some(Commands::Bot(args)) => {
             bot::execute(args, &config_sources, cli.color.should_use_colors()).await
+        }
+        Some(Commands::Completions(args)) => {
+            completions::generate_completions(&args);
+            Ok(())
         }
         None => {
             // Default to run with TUI enabled (new default behavior)

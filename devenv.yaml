@@ -1,0 +1,12 @@
+# devenv configuration
+# https://devenv.sh/reference/yaml-options/
+
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+  
+# Allow unfree packages (if needed)
+# allowUnfree: true
+
+# Impure packages (if needed)
+# allowBroken: false
