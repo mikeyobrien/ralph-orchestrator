@@ -1,0 +1,71 @@
+{
+  "name": "structured-headers",
+  "version": "0.4.1",
+  "description": "Implementation of RFC8941, structured headers for HTTP.",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "make test",
+    "prepare": "make build",
+    "build": "make build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/evert/structured-header.git"
+  },
+  "keywords": [
+    "http",
+    "structured-header",
+    "RFC8941",
+    "headers"
+  ],
+  "author": "Evert Pot <me@evertpot.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/evert/structured-header/issues"
+  },
+  "files": [
+    "src/",
+    "dist/",
+    "browser/structured-header.min.js",
+    "browser/structured-header.min.js.map",
+    "LICENSE"
+  ],
+  "homepage": "https://github.com/evert/structured-header#readme",
+  "devDependencies": {
+    "@types/node": "^12.20.13",
+    "@typescript-eslint/eslint-plugin": "^4.23.0",
+    "@typescript-eslint/parser": "^4.23.0",
+    "base32-decode": "^1.0.0",
+    "base32-encode": "^1.1.1",
+    "chai": "^4.2.0",
+    "eslint": "^7.26.0",
+    "mocha": "^9.0.0",
+    "nyc": "^15.1.0",
+    "ts-node": "^10.0.0",
+    "typescript": "^4.2.4",
+    "webpack": "^5.37.0",
+    "webpack-cli": "^4.7.0"
+  },
+  "nyc": {
+    "extension": [
+      ".ts"
+    ]
+  },
+  "mocha": {
+    "require": [
+      "ts-node/register"
+    ],
+    "recursive": true,
+    "extension": [
+      "ts",
+      "js",
+      "tsx"
+    ],
+    "exit": true
+  },
+  "browserslist": [
+    "last 2 versions",
+    "not ie 11",
+    "not op_mini all"
+  ]
+}

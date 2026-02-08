@@ -117,3 +117,19 @@ PROMPT.md
 
 # Codex local state
 .codex/
+
+# iOS / Xcode
+xcuserdata/
+*.xcuserstate
+ios/validation-screenshots/
+ios/screenshots/
+ios/stitch-designs/
+
+# Spec state and screenshots
+specs/.current-spec
+**/.progress.md
+specs/*/screenshots/
+specs/*/logs/
+
+# OMC ephemeral state
+.omc/

@@ -1,0 +1,55 @@
+{
+  "name": "expo-asset",
+  "version": "11.0.5",
+  "description": "An Expo universal module to download assets and pass them into other APIs",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "sideEffects": [
+    "*.fx.js",
+    "*.fx.web.js"
+  ],
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "asset"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expo/expo.git",
+    "directory": "packages/expo-asset"
+  },
+  "bugs": {
+    "url": "https://github.com/expo/expo/issues"
+  },
+  "author": "650 Industries, Inc.",
+  "license": "MIT",
+  "homepage": "https://docs.expo.dev/versions/latest/sdk/asset/",
+  "jest": {
+    "preset": "expo-module-scripts"
+  },
+  "dependencies": {
+    "@expo/image-utils": "^0.6.5",
+    "expo-constants": "~17.0.8",
+    "invariant": "^2.2.4",
+    "md5-file": "^3.2.3"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "^12.5.2",
+    "expo-module-scripts": "^4.0.4"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "gitHead": "0d83355bc0ec72f115de85eb418aaf9500c68528"
+}

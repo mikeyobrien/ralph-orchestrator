@@ -1,0 +1,70 @@
+[package]
+name = "ralph-mobile-server"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "REST API + SSE server for mobile monitoring of Ralph orchestrator sessions"
+
+[lints]
+workspace = true
+
+[lib]
+name = "ralph_mobile_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ralph-mobile-server"
+path = "src/main.rs"
+
+[dependencies]
+ralph-core.workspace = true
+
+# Web framework
+actix-web = "4"
+actix-rt = "2"
+
+# Async runtime
+tokio = { workspace = true, features = ["fs", "sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+bytes = "1"
+
+# File watching
+notify = "6"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+
+# Time/date
+chrono.workspace = true
+
+# Logging/tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Cryptographic key generation
+rand = "0.8"
+hex = "0.4"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Process signals (Unix)
+nix = { version = "0.27", features = ["signal", "process"] }
+
+# Directory operations
+dirs = "5"
+
+# System information
+sysinfo = "0.32"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+actix-web = { version = "4", features = ["macros"] }
+tempfile.workspace = true
+serial_test = "3"
+scopeguard = "1"

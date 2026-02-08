@@ -1,0 +1,58 @@
+{
+  "name": "@expo/config",
+  "version": "12.0.13",
+  "description": "A library for interacting with the app.json",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc --emitDeclarationOnly && babel src --out-dir build --extensions \".ts\" --source-maps --ignore \"src/**/__mocks__/*\",\"src/**/__tests__/*\"",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "prepare": "expo-module clean && yarn run build",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "test": "expo-module test",
+    "typecheck": "expo-module typecheck"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expo/expo.git",
+    "directory": "packages/@expo/config"
+  },
+  "keywords": [
+    "json",
+    "react-native",
+    "expo",
+    "react"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/expo/expo/issues"
+  },
+  "homepage": "https://github.com/expo/expo/tree/main/packages/@expo/config#readme",
+  "files": [
+    "build",
+    "paths"
+  ],
+  "dependencies": {
+    "@babel/code-frame": "~7.10.4",
+    "@expo/config-plugins": "~54.0.4",
+    "@expo/config-types": "^54.0.10",
+    "@expo/json-file": "^10.0.8",
+    "deepmerge": "^4.3.1",
+    "getenv": "^2.0.0",
+    "glob": "^13.0.0",
+    "require-from-string": "^2.0.2",
+    "resolve-from": "^5.0.0",
+    "resolve-workspace-root": "^2.0.0",
+    "semver": "^7.6.0",
+    "slugify": "^1.3.4",
+    "sucrase": "~3.35.1"
+  },
+  "devDependencies": {
+    "@types/require-from-string": "^1.2.1",
+    "expo-module-scripts": "^5.0.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "gitHead": "309f8dc09d24203fb80eca0ad534106c5f73c4b7"
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@expo/xcpretty",
+  "description": "Parse and format xcodebuild logs",
+  "version": "4.3.2",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "author": "Evan Bacon <bacon@expo.io> (https://github.com/evanbacon)",
+  "homepage": "https://github.com/expo/expo-cli",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expo/expo-cli.git"
+  },
+  "bin": {
+    "excpretty": "./build/cli.js"
+  },
+  "scripts": {
+    "watch": "tsc --watch",
+    "build": "tsc",
+    "prepare": "yarn run clean && yarn build",
+    "clean": "rimraf build ./tsconfig.tsbuildinfo",
+    "lint": "eslint . --ext .ts",
+    "test": "jest"
+  },
+  "keywords": [
+    "xcodebuild",
+    "formatter",
+    "logging"
+  ],
+  "files": [
+    "build"
+  ],
+  "dependencies": {
+    "@babel/code-frame": "7.10.4",
+    "chalk": "^4.1.0",
+    "find-up": "^5.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/babel__code-frame": "^7.0.2",
+    "@types/js-yaml": "^4.0.1"
+  }
+}

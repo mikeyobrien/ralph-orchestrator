@@ -1,0 +1,16 @@
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ *
+ * @flow strict-local
+ * @format
+ * @oncall react_native
+ */
+
+import minifier from './minifier';
+
+// CommonJS export for backwards compatibility
+// eslint-disable-next-line import/no-commonjs
+module.exports = minifier;

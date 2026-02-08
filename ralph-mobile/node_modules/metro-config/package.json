@@ -1,0 +1,42 @@
+{
+  "name": "metro-config",
+  "version": "0.81.5",
+  "description": "🚇 Config parser for Metro.",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./private/*": "./src/*.js",
+    "./src": "./src/index.js",
+    "./src/*.js": "./src/*.js",
+    "./src/*": "./src/*.js",
+    "./src/defaults": "./src/defaults/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:facebook/metro.git"
+  },
+  "scripts": {
+    "prepare-release": "test -d build && rm -rf src.real && mv src src.real && mv build src",
+    "cleanup-release": "test ! -e build && mv src build && mv src.real src"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "connect": "^3.6.5",
+    "cosmiconfig": "^5.0.5",
+    "flow-enums-runtime": "^0.0.6",
+    "jest-validate": "^29.7.0",
+    "metro": "0.81.5",
+    "metro-cache": "0.81.5",
+    "metro-core": "0.81.5",
+    "metro-runtime": "0.81.5"
+  },
+  "devDependencies": {
+    "@types/connect": "^3.4.35",
+    "metro-babel-register": "0.81.5",
+    "pretty-format": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}

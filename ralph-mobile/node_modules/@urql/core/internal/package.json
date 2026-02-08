@@ -1,0 +1,18 @@
+{
+  "name": "urql-core-internal",
+  "private": true,
+  "version": "0.0.0",
+  "main": "../dist/urql-core-internal",
+  "module": "../dist/urql-core-internal.mjs",
+  "types": "../dist/urql-core-internal.d.ts",
+  "source": "../src/internal/index.ts",
+  "exports": {
+    ".": {
+      "types": "../dist/urql-core-internal.d.ts",
+      "import": "../dist/urql-core-internal.mjs",
+      "require": "../dist/urql-core-internal.js",
+      "source": "../src/internal/index.ts"
+    },
+    "./package.json": "./package.json"
+  }
+}

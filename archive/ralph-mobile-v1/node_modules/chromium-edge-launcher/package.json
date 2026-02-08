@@ -1,0 +1,38 @@
+{
+  "name": "chromium-edge-launcher",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "test": "mocha --require ts-node/register --reporter=dot test/**/*-test.ts --timeout=10000",
+    "test-formatting": "test/check-formatting.sh",
+    "format": "scripts/format.sh",
+    "type-check": "tsc --allowJs --checkJs --noEmit --target es2016 *.js",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "devDependencies": {
+    "@types/mkdirp": "^1.0.1",
+    "@types/mocha": "^8.0.4",
+    "@types/rimraf": "^3.0.0",
+    "@types/sinon": "^9.0.1",
+    "clang-format": "^1.0.50",
+    "mocha": "^8.2.1",
+    "sinon": "^9.0.1",
+    "ts-node": "^9.1.0",
+    "typescript": "^4.1.2"
+  },
+  "dependencies": {
+    "@types/node": "*",
+    "escape-string-regexp": "^4.0.0",
+    "is-wsl": "^2.2.0",
+    "lighthouse-logger": "^1.0.0",
+    "mkdirp": "^1.0.4",
+    "rimraf": "^3.0.2"
+  },
+  "version": "0.2.0",
+  "types": "./dist/index.d.ts",
+  "description": "Launch latest Edge with the Devtools Protocol port open",
+  "repository": "https://github.com/cezaraugusto/chromium-edge-launcher/",
+  "author": "Cezar Augusto",
+  "license": "Apache-2.0"
+}

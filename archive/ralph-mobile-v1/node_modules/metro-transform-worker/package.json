@@ -1,0 +1,42 @@
+{
+  "name": "metro-transform-worker",
+  "version": "0.83.3",
+  "description": "🚇 Transform worker for Metro.",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./private/*": "./src/*.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:facebook/metro.git"
+  },
+  "scripts": {
+    "prepare-release": "test -d build && rm -rf src.real && mv src src.real && mv build src",
+    "cleanup-release": "test ! -e build && mv src build && mv src.real src"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/generator": "^7.25.0",
+    "@babel/parser": "^7.25.3",
+    "@babel/types": "^7.25.2",
+    "flow-enums-runtime": "^0.0.6",
+    "metro": "0.83.3",
+    "metro-babel-transformer": "0.83.3",
+    "metro-cache": "0.83.3",
+    "metro-cache-key": "0.83.3",
+    "metro-minify-terser": "0.83.3",
+    "metro-source-map": "0.83.3",
+    "metro-transform-plugins": "0.83.3",
+    "nullthrows": "^1.1.1"
+  },
+  "devDependencies": {
+    "@react-native/metro-babel-transformer": "0.78.0",
+    "metro-memory-fs": "*"
+  },
+  "engines": {
+    "node": ">=20.19.4"
+  }
+}

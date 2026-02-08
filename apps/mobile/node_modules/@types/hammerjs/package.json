@@ -1,0 +1,25 @@
+{
+    "name": "@types/hammerjs",
+    "version": "2.0.46",
+    "description": "TypeScript definitions for hammerjs",
+    "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/hammerjs",
+    "license": "MIT",
+    "contributors": [
+        {
+            "name": "Han Lin Yap",
+            "githubUsername": "codler",
+            "url": "https://github.com/codler"
+        }
+    ],
+    "main": "",
+    "types": "index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/hammerjs"
+    },
+    "scripts": {},
+    "dependencies": {},
+    "typesPublisherContentHash": "940610a83da8b99e3035028564e9536f6c44025e0387899fdaafa00474821be4",
+    "typeScriptVersion": "4.8"
+}

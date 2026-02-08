@@ -1,0 +1,44 @@
+{
+  "name": "react-native-is-edge-to-edge",
+  "version": "1.2.1",
+  "license": "MIT",
+  "description": "Detect react-native-edge-to-edge package install",
+  "author": "Mathieu Acthernoene <zoontek@gmail.com>",
+  "homepage": "https://github.com/zoontek/react-native-edge-to-edge",
+  "source": "src/index",
+  "main": "dist/index",
+  "module": "dist/index",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zoontek/react-native-edge-to-edge.git"
+  },
+  "keywords": [
+    "react",
+    "react-native",
+    "edge-to-edge",
+    "status-bar",
+    "navigation-bar",
+    "system-bar",
+    "system-bars"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "build": "yarn clean && yarn test && tsup && tsc -p tsconfig.build.json --emitDeclarationOnly"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "react": "19.1.0",
+    "react-native": "0.80.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

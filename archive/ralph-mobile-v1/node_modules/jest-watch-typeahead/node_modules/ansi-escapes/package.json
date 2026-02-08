@@ -1,0 +1,59 @@
+{
+	"name": "ansi-escapes",
+	"version": "6.2.1",
+	"description": "ANSI escape codes for manipulating the terminal",
+	"license": "MIT",
+	"repository": "sindresorhus/ansi-escapes",
+	"funding": "https://github.com/sponsors/sindresorhus",
+	"author": {
+		"name": "Sindre Sorhus",
+		"email": "sindresorhus@gmail.com",
+		"url": "https://sindresorhus.com"
+	},
+	"type": "module",
+	"exports": "./index.js",
+	"types": "./index.d.ts",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=14.16"
+	},
+	"scripts": {
+		"test": "ava && tsd",
+		"//test": "xo && ava && tsd"
+	},
+	"files": [
+		"index.js",
+		"index.d.ts"
+	],
+	"keywords": [
+		"ansi",
+		"terminal",
+		"console",
+		"cli",
+		"string",
+		"tty",
+		"escape",
+		"escapes",
+		"formatting",
+		"shell",
+		"xterm",
+		"log",
+		"logging",
+		"command-line",
+		"text",
+		"vt100",
+		"sequence",
+		"control",
+		"code",
+		"codes",
+		"cursor",
+		"iterm",
+		"iterm2"
+	],
+	"devDependencies": {
+		"@types/node": "^18.7.18",
+		"ava": "^4.3.3",
+		"tsd": "^0.24.1",
+		"xo": "^0.52.3"
+	}
+}

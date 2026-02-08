@@ -1,0 +1,1 @@
+module.exports = require("metro-config/private/defaults/createModuleIdFactory");

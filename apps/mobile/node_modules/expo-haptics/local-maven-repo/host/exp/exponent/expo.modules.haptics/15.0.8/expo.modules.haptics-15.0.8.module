@@ -1,0 +1,103 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "host.exp.exponent",
+    "module": "expo.modules.haptics",
+    "version": "15.0.8",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.14.3"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.annotation",
+          "module": "annotation",
+          "version": {
+            "requires": "1.0.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "expo.modules.haptics-15.0.8.aar",
+          "url": "expo.modules.haptics-15.0.8.aar",
+          "size": 28171,
+          "sha512": "be7a2d389b7a58f36ea761974ac30eeb3f153701402c3ae9880df7eed16110b13f6f1c339d2a607dd27ab164685b4bfc0b6ba84baf658d8863b6950b0f130b79",
+          "sha256": "95cda9e93b63e9735e0dea320267e74064a1e7f953af103b243cef9b7297c6cb",
+          "sha1": "89231a26536111351cd73ad42e144901975bae6c",
+          "md5": "cabe0bbeee6db9c42e09ad21e8af3383"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib-jdk7",
+          "version": {
+            "requires": "2.1.20"
+          }
+        },
+        {
+          "group": "androidx.annotation",
+          "module": "annotation",
+          "version": {
+            "requires": "1.0.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "expo.modules.haptics-15.0.8.aar",
+          "url": "expo.modules.haptics-15.0.8.aar",
+          "size": 28171,
+          "sha512": "be7a2d389b7a58f36ea761974ac30eeb3f153701402c3ae9880df7eed16110b13f6f1c339d2a607dd27ab164685b4bfc0b6ba84baf658d8863b6950b0f130b79",
+          "sha256": "95cda9e93b63e9735e0dea320267e74064a1e7f953af103b243cef9b7297c6cb",
+          "sha1": "89231a26536111351cd73ad42e144901975bae6c",
+          "md5": "cabe0bbeee6db9c42e09ad21e8af3383"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "expo.modules.haptics-15.0.8-sources.jar",
+          "url": "expo.modules.haptics-15.0.8-sources.jar",
+          "size": 5163,
+          "sha512": "f633d4531c9b82d15c63049e288aa9c626060387bd337d684eeeab8636cf9c66c821715ec4d52f8a25d054296b843e6947d7d644af223e2d1cc89737fc8fea61",
+          "sha256": "9722e38c417c5e51ed9a82b2e3f97aed7f554dd0531707ff0c008771b0637f04",
+          "sha1": "33aab2666ff455cc101de95494ce99e45fc33391",
+          "md5": "f67422521236b067bd723aa3f78be1e6"
+        }
+      ]
+    }
+  ]
+}

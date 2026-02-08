@@ -1,0 +1,27 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+apply from: "../scripts/get-app-config-android.gradle"
+
+group = 'host.exp.exponent'
+version = '18.0.12'
+
+expoModule {
+  // We can't prebuild the module because we need to apply `get-app-config-android.gradle` script.
+  canBePublished false
+}
+
+android {
+  namespace "expo.modules.constants"
+  defaultConfig {
+    versionCode 33
+    versionName "18.0.12"
+  }
+}
+
+dependencies {
+  api "androidx.annotation:annotation:1.0.0"
+  implementation "commons-io:commons-io:2.6"
+}

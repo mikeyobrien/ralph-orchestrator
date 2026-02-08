@@ -1,0 +1,19 @@
+{
+  "type": "module",
+  "name": "lighthouse-logger",
+  "version": "1.4.2",
+  "license": "Apache-2.0",
+  "main": "./dist/index.cjs",
+  "exports": {
+    "require": "./dist/index.cjs",
+    "import": "./index.js"
+  },
+  "scripts": {
+    "prepack": "yarn build-cjs",
+    "build-cjs": "npx rollup --format=cjs --file=dist/index.cjs -- index.js"
+  },
+  "dependencies": {
+    "debug": "^2.6.9",
+    "marky": "^1.2.2"
+  }
+}

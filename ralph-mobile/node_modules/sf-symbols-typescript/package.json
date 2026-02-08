@@ -1,0 +1,32 @@
+{
+  "version": "2.2.0",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=10"
+  },
+  "scripts": {
+    "build": "bun src/generate.ts"
+  },
+  "prettier": {
+    "printWidth": 80,
+    "trailingComma": "es5",
+    "semi": false,
+    "singleQuote": true,
+    "tabWidth": 2
+  },
+  "name": "sf-symbols-typescript",
+  "author": "Fernando Rojo",
+  "repository": {
+    "url": "https://github.com/nandorojo/typescript-sf-symbols"
+  },
+  "devDependencies": {
+    "@types/node": "^18.14.5",
+    "@types/plist": "^3.0.5",
+    "plist": "^3.1.0"
+  }
+}

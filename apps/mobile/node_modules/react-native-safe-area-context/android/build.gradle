@@ -1,0 +1,124 @@
+buildscript {
+    def kotlin_version = rootProject.ext.has('kotlinVersion') ? rootProject.ext.get('kotlinVersion') : project.properties['RNSAC_kotlinVersion']
+
+    repositories {
+        mavenCentral()
+        google()
+    }
+
+    dependencies {
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+        classpath("com.android.tools.build:gradle:7.3.1")
+        classpath("com.diffplug.spotless:spotless-plugin-gradle:6.11.0")
+    }
+}
+
+if (project == rootProject) {
+    apply from: "spotless.gradle"
+    return
+}
+
+
+def getExtOrDefault(name, defaultValue) {
+    return rootProject.ext.has(name) ? rootProject.ext.get(name) : defaultValue
+}
+
+def isNewArchitectureEnabled() {
+    // To opt-in for the New Architecture, you can either:
+    // - Set `newArchEnabled` to true inside the `gradle.properties` file
+    // - Invoke gradle with `-newArchEnabled=true`
+    // - Set an environment variable `ORG_GRADLE_PROJECT_newArchEnabled=true`
+    return project.hasProperty("newArchEnabled") && project.newArchEnabled == "true"
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+if (isNewArchitectureEnabled()) {
+    apply plugin: "com.facebook.react"
+}
+
+android {
+    def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
+    if (agpVersion.tokenize('.')[0].toInteger() >= 7) {
+        namespace "com.th3rdwave.safeareacontext"
+        buildFeatures {
+            buildConfig true
+        }
+    }
+
+    compileSdkVersion getExtOrDefault('compileSdkVersion', 30)
+
+    // Used to override the NDK path/version on internal CI or by allowing
+    // users to customize the NDK path/version from their root project (e.g. for M1 support)
+    if (rootProject.hasProperty("ndkPath")) {
+        ndkPath rootProject.ext.ndkPath
+    }
+    if (rootProject.hasProperty("ndkVersion")) {
+        ndkVersion rootProject.ext.ndkVersion
+    }
+
+    defaultConfig {
+        minSdkVersion getExtOrDefault('minSdkVersion', 16)
+        targetSdkVersion getExtOrDefault('targetSdkVersion', 28)
+        versionCode 1
+        versionName "1.0"
+        buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
+
+        ndk {
+            abiFilters (*reactNativeArchitectures())
+        }
+    }
+
+    lintOptions{
+        abortOnError false
+    }
+
+    packagingOptions {
+        // For some reason gradle only complains about the duplicated version of libreact_render libraries
+        // while there are more libraries copied in intermediates folder of the lib build directory, we exclude
+        // only the ones that make the build fail (ideally we should only include libsafeareacontext_modules but we
+        // are only allowed to specify exclude patterns)
+        exclude "**/libreact_render*.so"
+    }
+    sourceSets.main {
+        java {
+            if (isNewArchitectureEnabled()) {
+                srcDirs += [
+                    "src/fabric/java",
+                    "${project.buildDir}/generated/source/codegen/java"
+                ]
+            } else {
+                srcDirs += [
+                    "src/paper/java"
+                ]
+            }
+        }
+    }
+}
+
+def reactNativeArchitectures() {
+    def value = project.getProperties().get("reactNativeArchitectures")
+    return value ? value.split(",") : [
+        "armeabi-v7a",
+        "x86",
+        "x86_64",
+        "arm64-v8a"
+    ]
+}
+
+repositories {
+    google()
+    maven {
+        // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+        url "$rootDir/../node_modules/react-native/android"
+    }
+    mavenCentral()
+}
+
+def kotlin_version = getExtOrDefault('kotlinVersion', project.properties['RNSAC_kotlinVersion'])
+
+dependencies {
+    implementation 'com.facebook.react:react-native:+'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+}

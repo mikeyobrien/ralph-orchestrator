@@ -1,0 +1,75 @@
+{
+  "name": "@expo/metro",
+  "version": "54.2.0",
+  "description": "Generated and versioned meta-package wrapping Metro",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/expo/expo-metro.git"
+  },
+  "files": [
+    "metro",
+    "metro-babel-transformer",
+    "metro-cache",
+    "metro-cache-key",
+    "metro-config",
+    "metro-core",
+    "metro-file-map",
+    "metro-minify-terser",
+    "metro-resolver",
+    "metro-runtime",
+    "metro-source-map",
+    "metro-symbolicate",
+    "metro-transform-plugins",
+    "metro-transform-worker"
+  ],
+  "keywords": [
+    "expo",
+    "metro"
+  ],
+  "author": "Expo",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/expo/expo-metro/issues"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": "./*.js",
+    "./*.js": "./*.js",
+    "./metro": "./metro/index.js",
+    "./metro-babel-transformer": "./metro-babel-transformer/index.js",
+    "./metro-cache": "./metro-cache/index.js",
+    "./metro-cache-key": "./metro-cache-key/index.js",
+    "./metro-config": "./metro-config/index.js",
+    "./metro-config/defaults": "./metro-config/defaults/index.js",
+    "./metro-core": "./metro-core/index.js",
+    "./metro-file-map": "./metro-file-map/index.js",
+    "./metro-file-map/crawlers/node": "./metro-file-map/crawlers/node/index.js",
+    "./metro-file-map/crawlers/watchman": "./metro-file-map/crawlers/watchman/index.js",
+    "./metro-minify-terser": "./metro-minify-terser/index.js",
+    "./metro-resolver": "./metro-resolver/index.js",
+    "./metro-source-map": "./metro-source-map/source-map.js",
+    "./metro-source-map/Consumer": "./metro-source-map/Consumer/index.js",
+    "./metro-symbolicate": "./metro-symbolicate/index.js",
+    "./metro-transform-plugins": "./metro-transform-plugins/index.js",
+    "./metro-transform-worker": "./metro-transform-worker/index.js"
+  },
+  "dependencies": {
+    "metro": "0.83.3",
+    "metro-babel-transformer": "0.83.3",
+    "metro-cache": "0.83.3",
+    "metro-cache-key": "0.83.3",
+    "metro-config": "0.83.3",
+    "metro-core": "0.83.3",
+    "metro-file-map": "0.83.3",
+    "metro-minify-terser": "0.83.3",
+    "metro-resolver": "0.83.3",
+    "metro-runtime": "0.83.3",
+    "metro-source-map": "0.83.3",
+    "metro-symbolicate": "0.83.3",
+    "metro-transform-plugins": "0.83.3",
+    "metro-transform-worker": "0.83.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

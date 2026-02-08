@@ -1,0 +1,115 @@
+{
+  "name": "@0no-co/graphql.web",
+  "description": "A spec-compliant client-side GraphQL implementation",
+  "version": "1.2.0",
+  "author": "0no.co <hi@0no.co>",
+  "source": "./src/index.ts",
+  "main": "./dist/graphql.web",
+  "module": "./dist/graphql.web.mjs",
+  "types": "./dist/graphql.web.d.ts",
+  "sideEffects": false,
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist/"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/graphql.web.d.ts",
+      "import": "./dist/graphql.web.mjs",
+      "require": "./dist/graphql.web.js",
+      "source": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "graphql": "^14.0.0 || ^15.0.0 || ^16.0.0"
+  },
+  "peerDependenciesMeta": {
+    "graphql": {
+      "optional": true
+    }
+  },
+  "public": true,
+  "keywords": [
+    "graphql",
+    "graphql-js",
+    "client-side graphql"
+  ],
+  "repository": "https://github.com/0no-co/graphql.web",
+  "bugs": {
+    "url": "https://github.com/0no-co/graphql.web/issues"
+  },
+  "license": "MIT",
+  "prettier": {
+    "singleQuote": true,
+    "tabWidth": 2,
+    "printWidth": 100,
+    "trailingComma": "es5"
+  },
+  "lint-staged": {
+    "*.{ts,js}": "eslint -c scripts/eslint-preset.js --fix",
+    "*.json": "prettier --write",
+    "*.md": "prettier --write"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged --quiet --relative"
+    }
+  },
+  "eslintConfig": {
+    "root": true,
+    "extends": [
+      "./scripts/eslint-preset.js"
+    ]
+  },
+  "devDependencies": {
+    "@actions/core": "^1.10.0",
+    "@actions/github": "^5.1.1",
+    "@babel/plugin-transform-block-scoping": "^7.23.4",
+    "@babel/plugin-transform-typescript": "^7.23.6",
+    "@changesets/cli": "^2.27.1",
+    "@changesets/get-github-info": "^0.6.0",
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@typescript-eslint/eslint-plugin": "^6.20.0",
+    "@typescript-eslint/parser": "^6.20.0",
+    "@vitest/coverage-v8": "^1.2.2",
+    "dotenv": "^16.4.1",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.3",
+    "eslint-plugin-tsdoc": "^0.2.17",
+    "husky-v4": "^4.3.8",
+    "jsr": "^0.12.1",
+    "lint-staged": "^15.2.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.2.4",
+    "rimraf": "^5.0.5",
+    "rollup": "^4.9.6",
+    "rollup-plugin-cjs-check": "^1.0.3",
+    "rollup-plugin-dts": "^6.1.0",
+    "terser": "^5.27.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2",
+    "graphql15": "npm:graphql@^15.8.0",
+    "graphql16": "npm:graphql@^16.8.1",
+    "graphql17": "npm:graphql@^17.0.0-alpha.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "test": "vitest test",
+    "bench": "vitest bench --typecheck.enabled=false",
+    "check": "tsc",
+    "lint": "eslint --ext=js,ts .",
+    "build": "rollup -c scripts/rollup.config.mjs",
+    "clean": "rimraf dist node_modules/.cache",
+    "changeset:version": "changeset version && pnpm install --lockfile-only && node ./scripts/jsr.js",
+    "changeset:publish": "changeset publish && jsr publish"
+  }
+}

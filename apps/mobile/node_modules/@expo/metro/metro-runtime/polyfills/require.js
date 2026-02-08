@@ -1,0 +1,1 @@
+module.exports = require("metro-runtime/src/polyfills/require.js");

@@ -1,0 +1,131 @@
+#include "RNCSafeAreaViewShadowNode.h"
+
+#include <react/renderer/components/view/conversions.h>
+#include <react/renderer/core/LayoutContext.h>
+#include <yoga/Yoga.h>
+#include <algorithm>
+
+namespace facebook {
+namespace react {
+
+using namespace yoga;
+
+extern const char RNCSafeAreaViewComponentName[] = "RNCSafeAreaView";
+
+inline Style::Length valueFromEdges(
+    Style::Length edge,
+    Style::Length axis,
+    Style::Length defaultValue) {
+  if (edge.unit() != Unit::Undefined) {
+    return edge;
+  }
+  if (axis.unit() != Unit::Undefined) {
+    return axis;
+  }
+  return defaultValue;
+}
+
+inline float
+getEdgeValue(std::string edgeMode, float insetValue, float edgeValue) {
+  if (edgeMode == "off") {
+    return edgeValue;
+  } else if (edgeMode == "maximum") {
+    return fmax(insetValue, edgeValue);
+  } else {
+    return insetValue + edgeValue;
+  }
+}
+
+void RNCSafeAreaViewShadowNode::adjustLayoutWithState() {
+  ensureUnsealed();
+
+  auto &props = getConcreteProps();
+  auto state =
+      std::static_pointer_cast<const RNCSafeAreaViewShadowNode::ConcreteState>(
+          getState());
+  auto stateData = state->getData();
+  auto edges = props.edges;
+
+  // Get the current values for padding / margin. The only caveat here is that
+  // percent values are not supported. Also might need to add support for start
+  // / end.
+  Style::Length top, left, right, bottom;
+  if (props.mode == RNCSafeAreaViewMode::Padding) {
+    auto defaultPadding = props.yogaStyle.padding(Edge::All);
+    top = valueFromEdges(
+        props.yogaStyle.padding(Edge::Top),
+        props.yogaStyle.padding(Edge::Vertical),
+        defaultPadding);
+    left = valueFromEdges(
+        props.yogaStyle.padding(Edge::Left),
+        props.yogaStyle.padding(Edge::Horizontal),
+        defaultPadding);
+    bottom = valueFromEdges(
+        props.yogaStyle.padding(Edge::Bottom),
+        props.yogaStyle.padding(Edge::Vertical),
+        defaultPadding);
+    right = valueFromEdges(
+        props.yogaStyle.padding(Edge::Right),
+        props.yogaStyle.padding(Edge::Horizontal),
+        defaultPadding);
+  } else {
+    auto defaultMargin = props.yogaStyle.margin(Edge::All);
+    top = valueFromEdges(
+        props.yogaStyle.margin(Edge::Top),
+        props.yogaStyle.margin(Edge::Vertical),
+        defaultMargin);
+    left = valueFromEdges(
+        props.yogaStyle.margin(Edge::Left),
+        props.yogaStyle.margin(Edge::Horizontal),
+        defaultMargin);
+    bottom = valueFromEdges(
+        props.yogaStyle.margin(Edge::Bottom),
+        props.yogaStyle.margin(Edge::Vertical),
+        defaultMargin);
+    right = valueFromEdges(
+        props.yogaStyle.margin(Edge::Right),
+        props.yogaStyle.margin(Edge::Horizontal),
+        defaultMargin);
+  }
+
+  top = Style::Length::points(getEdgeValue(
+      edges.top, stateData.insets.top, top.value().unwrapOrDefault(0)));
+  left = Style::Length::points(getEdgeValue(
+      edges.left, stateData.insets.left, left.value().unwrapOrDefault(0)));
+  right = Style::Length::points(getEdgeValue(
+      edges.right, stateData.insets.right, right.value().unwrapOrDefault(0)));
+  bottom = Style::Length::points(getEdgeValue(
+      edges.bottom,
+      stateData.insets.bottom,
+      bottom.value().unwrapOrDefault(0)));
+
+  yoga::Style adjustedStyle = getConcreteProps().yogaStyle;
+  if (props.mode == RNCSafeAreaViewMode::Padding) {
+    adjustedStyle.setPadding(Edge::Top, top);
+    adjustedStyle.setPadding(Edge::Left, left);
+    adjustedStyle.setPadding(Edge::Right, right);
+    adjustedStyle.setPadding(Edge::Bottom, bottom);
+  } else {
+    adjustedStyle.setMargin(Edge::Top, top);
+    adjustedStyle.setMargin(Edge::Left, left);
+    adjustedStyle.setMargin(Edge::Right, right);
+    adjustedStyle.setMargin(Edge::Bottom, bottom);
+  }
+
+  auto currentStyle = yogaNode_.style();
+  if (adjustedStyle.padding(Edge::Top) != currentStyle.padding(Edge::Top) ||
+      adjustedStyle.padding(Edge::Left) != currentStyle.padding(Edge::Left) ||
+      adjustedStyle.padding(Edge::Right) != currentStyle.padding(Edge::Right) ||
+      adjustedStyle.padding(Edge::Bottom) !=
+          currentStyle.padding(Edge::Bottom) ||
+      adjustedStyle.margin(Edge::Top) != currentStyle.margin(Edge::Top) ||
+      adjustedStyle.margin(Edge::Left) != currentStyle.margin(Edge::Left) ||
+      adjustedStyle.margin(Edge::Right) != currentStyle.margin(Edge::Right) ||
+      adjustedStyle.margin(Edge::Bottom) != currentStyle.margin(Edge::Bottom)) {
+    yogaNode_.setStyle(adjustedStyle);
+    yogaNode_.setDirty(true);
+  }
+}
+
+} // namespace react
+} // namespace facebook

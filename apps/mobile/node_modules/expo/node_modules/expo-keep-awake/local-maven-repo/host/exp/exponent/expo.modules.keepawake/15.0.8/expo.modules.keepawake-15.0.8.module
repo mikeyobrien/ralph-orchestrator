@@ -1,0 +1,87 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "host.exp.exponent",
+    "module": "expo.modules.keepawake",
+    "version": "15.0.8",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.14.3"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "expo.modules.keepawake-15.0.8.aar",
+          "url": "expo.modules.keepawake-15.0.8.aar",
+          "size": 16547,
+          "sha512": "ba0c8eff21464b945a456be6df553ffd64871091f4d8f37d73aa7cdbb82128c2991c4b84e728feca8ddbd81acc415cbfacac422bdc062bda82b27a96f2933e3c",
+          "sha256": "a7ab8bd6b5b22f3fa47c0142ab21da4c0ab6dca57b164efbc12dad3e45380e0e",
+          "sha1": "cb7f343a04bb9fae9f4c7ea402323e10391193e6",
+          "md5": "ea0b42e28df9d404885baaf5ad1c657c"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib-jdk7",
+          "version": {
+            "requires": "2.1.20"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "expo.modules.keepawake-15.0.8.aar",
+          "url": "expo.modules.keepawake-15.0.8.aar",
+          "size": 16547,
+          "sha512": "ba0c8eff21464b945a456be6df553ffd64871091f4d8f37d73aa7cdbb82128c2991c4b84e728feca8ddbd81acc415cbfacac422bdc062bda82b27a96f2933e3c",
+          "sha256": "a7ab8bd6b5b22f3fa47c0142ab21da4c0ab6dca57b164efbc12dad3e45380e0e",
+          "sha1": "cb7f343a04bb9fae9f4c7ea402323e10391193e6",
+          "md5": "ea0b42e28df9d404885baaf5ad1c657c"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "expo.modules.keepawake-15.0.8-sources.jar",
+          "url": "expo.modules.keepawake-15.0.8-sources.jar",
+          "size": 3024,
+          "sha512": "e0ea55a83130a27438c54dc4cd8de78fd0f30b64564f7560be86098334ebbeef01cb20c06567639a1b543eaf6e8af1bebd0fc93024b8bd1bd2c387391dcca920",
+          "sha256": "bc16fc48d7b12e2ca536bf13912142062512ced914ce2ad880cb3271df51290d",
+          "sha1": "965ff36020697e6b8f024d0e36df1c65c884ae6e",
+          "md5": "b2834008c2a9e3edcb434ffa6b02db11"
+        }
+      ]
+    }
+  ]
+}

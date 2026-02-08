@@ -1,0 +1,41 @@
+{
+  "name": "chrome-launcher",
+  "main": "./dist/index.js",
+  "engines": {
+    "node": ">=12.13.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "test": "mocha --require ts-node/register --reporter=dot test/**/*-test.ts --timeout=10000",
+    "test-formatting": "test/check-formatting.sh",
+    "format": "scripts/format.sh",
+    "type-check": "tsc --allowJs --checkJs --noEmit --target es2019 *.js",
+    "prepublishOnly": "npm run build && npm run test",
+    "reset-link": "(yarn unlink || true) && yarn link && yarn --cwd node_modules/lighthouse/ link chrome-launcher"
+  },
+  "bin": {
+    "print-chrome-path": "bin/print-chrome-path.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^8.0.4",
+    "@types/sinon": "^9.0.1",
+    "clang-format": "^1.0.50",
+    "mocha": "^8.2.1",
+    "sinon": "^9.0.1",
+    "ts-node": "^9.1.0",
+    "typescript": "^4.1.2"
+  },
+  "dependencies": {
+    "@types/node": "*",
+    "escape-string-regexp": "^4.0.0",
+    "is-wsl": "^2.2.0",
+    "lighthouse-logger": "^1.0.0"
+  },
+  "version": "0.15.2",
+  "types": "./dist/index.d.ts",
+  "description": "Launch latest Chrome with the Devtools Protocol port open",
+  "repository": "https://github.com/GoogleChrome/chrome-launcher/",
+  "author": "The Chromium Authors",
+  "license": "Apache-2.0"
+}

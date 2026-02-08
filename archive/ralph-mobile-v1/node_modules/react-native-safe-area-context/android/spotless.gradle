@@ -1,0 +1,24 @@
+apply plugin: 'com.diffplug.spotless'
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+spotless {
+    java {
+        target 'src/**/*.java'
+        googleJavaFormat()
+    }
+    kotlin {
+        target 'src/**/*.kt'
+        ktfmt()
+    }
+    groovyGradle {
+        target '*.gradle'
+        greclipse()
+        indentWithSpaces(4)
+    }
+}

@@ -1,0 +1,35 @@
+name: 🛠
+
+on:
+  push:
+    branches: [master]
+  pull_request: # run on all PRs, not just PRs to a particular branch
+
+jobs:
+  basics:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # awaiting support for 'latest'/'lts'. https://github.com/actions/setup-node/issues/26
+        node: [ '10', '12', '14' ]
+    name: basics (node ${{ matrix.node }})
+
+    steps:
+    - name: git clone
+      uses: actions/checkout@v2
+
+    - name: Setup node
+      uses: actions/setup-node@v2
+      with:
+        node-version: ${{ matrix.node }}
+
+    - run: yarn --frozen-lockfile
+    - run: yarn build
+
+    - run: yarn test-formatting
+    - run: yarn type-check
+
+    # Run tests that require headful Edge.
+    - run: sudo apt-get install xvfb
+    - name: yarn test
+      run: xvfb-run --auto-servernum yarn test --reporter=spec

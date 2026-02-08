@@ -1,0 +1,16 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["ExpoLinkingModule"],
+    "appDelegateSubscribers": ["LinkingAppDelegateSubscriber"]
+  },
+  "android": {
+    "modules": ["expo.modules.linking.ExpoLinkingModule"],
+    "publication": {
+      "groupId": "host.exp.exponent",
+      "artifactId": "expo.modules.linking",
+      "version": "8.0.11",
+      "repository": "local-maven-repo"
+    }
+  }
+}

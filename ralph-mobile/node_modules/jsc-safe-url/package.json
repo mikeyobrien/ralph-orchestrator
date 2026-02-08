@@ -1,0 +1,32 @@
+{
+  "name": "jsc-safe-url",
+  "version": "0.2.4",
+  "description": "Utility functions for converting to and from URLs that encode query string data into URL paths",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robhogan/jsc-safe-url.git"
+  },
+  "keywords": [
+    "javascriptcore",
+    "metro",
+    "react-native"
+  ],
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "author": "Rob Hogan <npm@rhogan.net>",
+  "license": "0BSD",
+  "bugs": {
+    "url": "https://github.com/robhogan/jsc-safe-url/issues"
+  },
+  "homepage": "https://github.com/robhogan/jsc-safe-url#readme",
+  "devDependencies": {
+    "flow-bin": "^0.206.0",
+    "prettier": "^2.8.8"
+  }
+}

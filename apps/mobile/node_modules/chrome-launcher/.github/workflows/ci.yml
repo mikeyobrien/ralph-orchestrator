@@ -1,0 +1,56 @@
+name: 🛠
+
+on:
+  push:
+    branches: [main]
+  pull_request: # run on all PRs, not just PRs to a particular branch
+
+jobs:
+  basics:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [ 'latest', 'lts/*', 'lts/-1' ]
+    name: basics (node ${{ matrix.node }})
+
+    steps:
+    - name: git clone
+      uses: actions/checkout@v3
+
+    - name: Setup node
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node }}
+        cache: 'yarn'
+
+    - run: yarn --frozen-lockfile --network-timeout 1000000
+    - run: yarn build
+
+    - run: yarn test-formatting
+    - run: yarn type-check
+
+    # Run tests that require headful Chrome.
+    - run: sudo apt-get install xvfb
+    - name: yarn test
+      run: xvfb-run --auto-servernum yarn test --reporter=spec
+
+  unit:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: unit_${{ matrix.os }}
+
+    steps:
+    - name: git clone
+      uses: actions/checkout@v3
+
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: lts/*
+        cache: 'yarn'
+
+    - run: yarn --frozen-lockfile --network-timeout 1000000
+    - run: yarn build
+    - run: yarn test --reporter=spec

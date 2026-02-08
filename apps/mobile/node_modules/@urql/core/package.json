@@ -1,0 +1,63 @@
+{
+  "name": "@urql/core",
+  "version": "5.2.0",
+  "description": "The shared core for the highly customizable and versatile GraphQL client",
+  "sideEffects": false,
+  "homepage": "https://formidable.com/open-source/urql/docs/",
+  "bugs": "https://github.com/urql-graphql/urql/issues",
+  "license": "MIT",
+  "author": "urql GraphQL Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/urql-graphql/urql.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "graphql",
+    "graphql client",
+    "state management",
+    "cache",
+    "exchanges"
+  ],
+  "main": "dist/urql-core",
+  "module": "dist/urql-core.mjs",
+  "types": "dist/urql-core.d.ts",
+  "source": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/urql-core.d.ts",
+      "import": "./dist/urql-core.mjs",
+      "require": "./dist/urql-core.js",
+      "source": "./src/index.ts"
+    },
+    "./package.json": "./package.json",
+    "./internal": {
+      "types": "./dist/urql-core-internal.d.ts",
+      "import": "./dist/urql-core-internal.mjs",
+      "require": "./dist/urql-core-internal.js",
+      "source": "./src/internal/index.ts"
+    }
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist/",
+    "internal/"
+  ],
+  "dependencies": {
+    "@0no-co/graphql.web": "^1.0.13",
+    "wonka": "^6.3.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "test": "vitest",
+    "clean": "rimraf dist",
+    "check": "tsc --noEmit",
+    "lint": "eslint --ext=js,jsx,ts,tsx .",
+    "build": "rollup -c ../../scripts/rollup/config.mjs",
+    "jsr": "jsr publish"
+  }
+}

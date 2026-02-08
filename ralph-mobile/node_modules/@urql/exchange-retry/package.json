@@ -1,0 +1,63 @@
+{
+  "name": "@urql/exchange-retry",
+  "version": "1.3.2",
+  "description": "An exchange for operation retry support in urql",
+  "sideEffects": false,
+  "homepage": "https://formidable.com/open-source/urql/docs/",
+  "bugs": "https://github.com/urql-graphql/urql/issues",
+  "license": "MIT",
+  "author": "urql GraphQL Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/urql-graphql/urql.git",
+    "directory": "exchanges/retry"
+  },
+  "keywords": [
+    "urql",
+    "graphql client",
+    "graphql",
+    "exchanges",
+    "retry"
+  ],
+  "main": "dist/urql-exchange-retry",
+  "module": "dist/urql-exchange-retry.mjs",
+  "types": "dist/urql-exchange-retry.d.ts",
+  "source": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/urql-exchange-retry.d.ts",
+      "import": "./dist/urql-exchange-retry.mjs",
+      "require": "./dist/urql-exchange-retry.js",
+      "source": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "LICENSE",
+    "CHANGELOG.md",
+    "README.md",
+    "dist/"
+  ],
+  "devDependencies": {
+    "graphql": "^16.0.0",
+    "@urql/core": "5.1.2"
+  },
+  "peerDependencies": {
+    "@urql/core": "^5.0.0"
+  },
+  "dependencies": {
+    "@urql/core": "^5.1.2",
+    "wonka": "^6.3.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "test": "vitest",
+    "clean": "rimraf dist",
+    "check": "tsc --noEmit",
+    "lint": "eslint --ext=js,jsx,ts,tsx .",
+    "build": "rollup -c ../../scripts/rollup/config.mjs"
+  }
+}

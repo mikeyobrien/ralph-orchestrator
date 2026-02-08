@@ -1,0 +1,85 @@
+{
+  "name": "lan-network",
+  "version": "0.1.7",
+  "description": "Best-effort discovery of the machine's default gateway and local network IP exclusively with UDP sockets.",
+  "author": "Phil Pluckthun <phil@kitten.sh>",
+  "source": "./src/index.ts",
+  "main": "./dist/lan-network",
+  "types": "./dist/lan-network.d.ts",
+  "files": [
+    "LICENSE.md",
+    "README.md",
+    "CHANGELOG.md",
+    "dist/"
+  ],
+  "bin": {
+    "lan-network": "./dist/lan-network-cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/lan-network.d.ts",
+      "require": "./dist/lan-network.js",
+      "source": "./src/index.ts"
+    },
+    "./subprocess": {
+      "types": "./dist/lan-network-subprocess.d.ts",
+      "require": "./dist/lan-network-subprocess.js",
+      "source": "./src/subprocess.ts"
+    },
+    "./cli": {
+      "types": "./dist/lan-network-cli.d.ts",
+      "require": "./dist/lan-network-cli.js",
+      "source": "./src/cli.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "arrowParens": "avoid",
+    "trailingComma": "es5"
+  },
+  "lint-staged": {
+    "*.{js,ts,json,md}": "prettier --write"
+  },
+  "keywords": [],
+  "license": "MIT",
+  "repository": "https://github.com/kitten/lan-network",
+  "bugs": {
+    "url": "https://github.com/kitten/lan-network/issues"
+  },
+  "devDependencies": {
+    "@babel/plugin-transform-block-scoping": "^7.25.9",
+    "@babel/plugin-transform-typescript": "^7.26.7",
+    "@changesets/cli": "^2.27.1",
+    "@changesets/get-github-info": "^0.6.0",
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-commonjs": "^28.0.2",
+    "@rollup/plugin-node-resolve": "^16.0.0",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@types/node": "^22.12.0",
+    "dotenv": "^16.4.7",
+    "lint-staged": "^15.4.3",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "rollup": "^4.32.1",
+    "rollup-plugin-cjs-check": "^1.0.3",
+    "rollup-plugin-dts": "^6.1.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.6"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "test": "vitest test",
+    "test:run": "vitest test --run",
+    "build": "rollup -c ./scripts/rollup.config.mjs",
+    "postbuild": "tsc --noEmit ./dist/lan-network.d.ts",
+    "check": "tsc --noEmit",
+    "clean": "rimraf dist node_modules/.cache",
+    "changeset:version": "changeset version && pnpm install --lockfile-only",
+    "changeset:publish": "changeset publish"
+  }
+}

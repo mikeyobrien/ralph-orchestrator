@@ -1,0 +1,62 @@
+{
+  "name": "resolve-workspace-root",
+  "version": "2.0.0",
+  "description": "Resolve the workspace root using bun, npm, pnpm, or yarn",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "files": [
+    "build/index.js",
+    "build/index.d.ts"
+  ],
+  "scripts": {
+    "build": "ncc build src/index.ts --out build --minify --no-cache --no-source-map-register && tsc --declaration --emitDeclarationOnly",
+    "lint": "eslint . --ext ts",
+    "test": "bun test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/byCedric/resolve-workspace-root.git"
+  },
+  "keywords": [
+    "monorepo",
+    "workspace",
+    "bun",
+    "npm",
+    "pnpm",
+    "yarn"
+  ],
+  "author": "Cedric van Putten <me@cedric.dev>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/byCedric/resolve-workspace-root/issues"
+  },
+  "homepage": "https://github.com/byCedric/resolve-workspace-root#readme",
+  "devDependencies": {
+    "@tsconfig/node20": "^20.1.4",
+    "@types/bun": "^1.1.6",
+    "@types/js-yaml": "^4.0.9",
+    "@types/micromatch": "^4.0.9",
+    "@types/node": "^22.5.0",
+    "@vercel/ncc": "^0.38.1",
+    "eslint": "^8.57.0",
+    "eslint-config-universe": "^13.0.0",
+    "js-yaml": "^4.1.0",
+    "memfs": "^4.11.1",
+    "micromatch": "^4.0.7",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "eslintConfig": {
+    "extends": "universe/node",
+    "ignorePatterns": [
+      "build",
+      "node_modules"
+    ]
+  },
+  "prettier": {
+    "printWidth": 100,
+    "tabWidth": 2,
+    "singleQuote": true,
+    "trailingComma": "es5"
+  }
+}

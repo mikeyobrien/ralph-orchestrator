@@ -1,0 +1,1 @@
+module.exports = require("metro-file-map/private/crawlers/node/hasNativeFindSupport");

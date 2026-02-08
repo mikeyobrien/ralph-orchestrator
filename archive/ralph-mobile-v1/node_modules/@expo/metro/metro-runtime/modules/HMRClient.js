@@ -1,0 +1,1 @@
+module.exports = require("metro-runtime/src/modules/HMRClient.js");

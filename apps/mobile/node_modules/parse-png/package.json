@@ -1,0 +1,39 @@
+{
+	"name": "parse-png",
+	"version": "2.1.0",
+	"description": "Parse a PNG",
+	"license": "MIT",
+	"repository": "kevva/parse-png",
+	"author": {
+		"name": "Kevin Martensson",
+		"email": "kevinmartensson@gmail.com",
+		"url": "github.com/kevva"
+	},
+	"engines": {
+		"node": ">=10"
+	},
+	"scripts": {
+		"test": "xo && ava && tsd"
+	},
+	"files": [
+		"index.js",
+		"index.d.ts"
+	],
+	"keywords": [
+		"parse",
+		"png",
+		"promise"
+	],
+	"dependencies": {
+		"pngjs": "^3.3.0"
+	},
+	"devDependencies": {
+		"@types/node": "^12.7.5",
+		"@types/pngjs": "^3.3.2",
+		"ava": "^2.4.0",
+		"file-type": "^7.2.0",
+		"get-stream": "^3.0.0",
+		"tsd": "^0.7.4",
+		"xo": "^0.24.0"
+	}
+}

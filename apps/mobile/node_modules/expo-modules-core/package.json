@@ -1,0 +1,69 @@
+{
+  "name": "expo-modules-core",
+  "version": "3.0.29",
+  "description": "The core of Expo Modules architecture",
+  "main": "src/index.ts",
+  "types": "build/index.d.ts",
+  "sideEffects": [
+    "*.fx.ts",
+    "./src/polyfill/*.ts"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./build/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./types": "./types.d.ts",
+    "./src/polyfill/dangerous-internal": {
+      "types": "./build/polyfill/dangerous-internal.d.ts",
+      "default": "./src/polyfill/dangerous-internal.ts"
+    },
+    "./src/uuid": {
+      "types": "./build/uuid/index.d.ts",
+      "default": "./src/uuid/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "expo",
+    "modules",
+    "expo-modules",
+    "unimodules",
+    "react-native"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expo/expo.git",
+    "directory": "packages/expo-modules-core"
+  },
+  "bugs": {
+    "url": "https://github.com/expo/expo/issues"
+  },
+  "author": "650 Industries, Inc.",
+  "license": "MIT",
+  "homepage": "https://github.com/expo/expo/tree/main/packages/expo-modules-core",
+  "jest": {
+    "preset": "expo-module-scripts"
+  },
+  "dependencies": {
+    "invariant": "^2.2.4"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "^13.2.0",
+    "expo-module-scripts": "^5.0.8"
+  },
+  "gitHead": "599ebc94db5c972f961641db9aa33e2964498c42"
+}

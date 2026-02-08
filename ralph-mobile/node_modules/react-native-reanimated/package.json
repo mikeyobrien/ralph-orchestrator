@@ -1,0 +1,166 @@
+{
+  "name": "react-native-reanimated",
+  "version": "4.2.1",
+  "description": "More powerful alternative to Animated library for React Native.",
+  "keywords": [
+    "react-native",
+    "react",
+    "native",
+    "reanimated"
+  ],
+  "scripts": {
+    "test": "jest",
+    "lint": "yarn lint:js && yarn lint:common && yarn lint:android && yarn lint:apple",
+    "lint:js": "eslint src __tests__ __typetests__ && yarn prettier --check src __tests__ __typetests__",
+    "lint:android": "../../scripts/validate-android.sh && ./android/gradlew -p android spotlessCheck -q && ../../scripts/cpplint.sh android/src && yarn format:android:cpp --dry-run -Werror && yarn lint:cmake",
+    "lint:common": "../../scripts/validate-common.sh && ../../scripts/cpplint.sh Common && yarn format:common --dry-run -Werror",
+    "lint:clang-tidy": "find Common -iname \"*.h\" -o -iname \"*.cpp\" | xargs ../../scripts/clang-tidy-lint.sh",
+    "lint:apple": "../../scripts/validate-apple.sh && yarn format:apple --dry-run -Werror",
+    "lint:cmake": "find ./android -type d \\( -name build -o -name .cxx \\) -prune -o -type f -name 'CMakeLists.txt' -print | xargs ../../scripts/lint-cmake.sh",
+    "format": "yarn format:js && yarn format:apple && yarn format:android && yarn format:common",
+    "format:js": "prettier --write --list-different src __tests__ __typetests__",
+    "format:apple": "find apple -iname \"*.h\" -o -iname \"*.m\" -o -iname \"*.mm\" -o -iname \"*.cpp\" | xargs clang-format -i",
+    "format:android": "yarn format:android:java && yarn format:android:cpp && yarn format:android:cmake",
+    "format:android:java": "node ../../scripts/format-java.js",
+    "format:android:cpp": "find android/src -iname \"*.h\" -o -iname \"*.cpp\" | xargs clang-format -i",
+    "format:android:cmake": "find ./android -type d \\( -name build -o -name .cxx \\) -prune -o -type f -name 'CMakeLists.txt' -print | xargs ../../scripts/format-cmake.sh",
+    "format:common": "find Common -iname \"*.h\" -o -iname \"*.cpp\" | xargs clang-format -i",
+    "find-unused-code:js": "knip",
+    "type:check": "yarn type:check:src:native && yarn type:check:src:web && yarn type:check:app && yarn type:check:tests:common",
+    "type:check:src:native": "yarn tsc --noEmit",
+    "type:check:src:web": "yarn tsc --noEmit --project tsconfig.web.json",
+    "type:check:app": "yarn workspace common-app type:check",
+    "type:check:tests:common": "../../scripts/test-ts.sh __typetests__/common",
+    "type:check:strict": "yarn type:check:strict:src && yarn type:check:strict:app",
+    "type:check:strict:src": "yarn tsc --noEmit --customConditions react-native-strict-api",
+    "type:check:strict:app": "yarn workspace common-app type:check:strict",
+    "build": "yarn workspace react-native-worklets build && bob build",
+    "circular-dependency-check": "yarn madge --extensions js,jsx --circular lib",
+    "prepack": "cp ../../README.md ./README.md",
+    "postpack": "rm ./README.md"
+  },
+  "main": "lib/module/index",
+  "module": "lib/module/index",
+  "react-native": "src/index",
+  "source": "src/index",
+  "types": "lib/typescript/index.d.ts",
+  "files": [
+    "Common/",
+    "src/",
+    "lib/",
+    "android/src/main/AndroidManifest.xml",
+    "android/src/main/java/",
+    "android/build.gradle",
+    "android/",
+    "apple/",
+    "RNReanimated.podspec",
+    "scripts/reanimated_utils.rb",
+    "scripts/validate-worklets-build.js",
+    "scripts/validate-worklets-version.js",
+    "scripts/worklets-version.json",
+    "scripts/validate-react-native-version.js",
+    "compatibility.json",
+    "mock.js",
+    "plugin/index.js",
+    "plugin/index.d.ts",
+    "metro-config",
+    "!**/__tests__",
+    "!**/__fixtures__",
+    "!**/__mocks__",
+    "!apple/build/",
+    "!android/build/",
+    "!android/.cxx/",
+    "!android/.gradle/",
+    "!__snapshots__",
+    "!*.test.js",
+    "!*.test.js.map",
+    "!**/node_modules"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/software-mansion/react-native-reanimated.git",
+    "directory": "packages/react-native-reanimated"
+  },
+  "author": {
+    "email": "krzys.magiera@gmail.com",
+    "name": "Krzysztof Magiera"
+  },
+  "license": "MIT",
+  "readmeFilename": "README.md",
+  "bugs": {
+    "url": "https://github.com/software-mansion/react-native-reanimated/issues"
+  },
+  "homepage": "https://docs.swmansion.com/react-native-reanimated",
+  "dependencies": {
+    "react-native-is-edge-to-edge": "1.2.1",
+    "semver": "7.7.3"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*",
+    "react-native-worklets": ">=0.7.0"
+  },
+  "devDependencies": {
+    "@babel/core": "7.28.4",
+    "@babel/preset-env": "7.28.3",
+    "@react-native/babel-preset": "0.82.0",
+    "@react-native/eslint-config": "0.82.0",
+    "@react-native/metro-config": "0.82.0",
+    "@react-native/typescript-config": "0.82.0",
+    "@testing-library/jest-native": "5.4.3",
+    "@testing-library/react-hooks": "8.0.1",
+    "@testing-library/react-native": "13.3.3",
+    "@types/convert-source-map": "2.0.3",
+    "@types/jest": "30.0.0",
+    "@types/node": "24.0.14",
+    "@types/react": "19.2.2",
+    "@types/react-test-renderer": "19.1.0",
+    "@types/semver": "7.7.1",
+    "clang-format-node": "1.3.5",
+    "eslint": "9.37.0",
+    "jest": "30.2.0",
+    "knip": "5.61.3",
+    "madge": "8.0.0",
+    "prettier": "3.6.2",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-native": "0.82.0",
+    "react-native-builder-bob": "0.40.13",
+    "react-native-web": "0.21.1",
+    "react-native-worklets": "workspace:*",
+    "react-test-renderer": "19.1.1",
+    "typescript": "5.8.3"
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      [
+        "module",
+        {
+          "esm": false,
+          "jsxRuntime": "automatic"
+        }
+      ],
+      "typescript"
+    ]
+  },
+  "codegenConfig": {
+    "name": "rnreanimated",
+    "type": "modules",
+    "jsSrcsDir": "./src/specs",
+    "android": {
+      "javaPackageName": "com.swmansion.reanimated"
+    }
+  },
+  "sideEffects": [
+    "./src/layoutReanimation/animationsManager.ts",
+    "./lib/module/layoutReanimation/animationsManager.js",
+    "./src/core.ts",
+    "./lib/module/core.js",
+    "./src/initializers.ts",
+    "./lib/module/initializers.js",
+    "./src/index.ts",
+    "./lib/module/index.js"
+  ]
+}

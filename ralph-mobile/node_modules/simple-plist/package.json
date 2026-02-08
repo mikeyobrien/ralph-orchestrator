@@ -1,0 +1,53 @@
+{
+  "name": "simple-plist",
+  "author": "Joe Wollard",
+  "license": "MIT",
+  "homepage": "https://github.com/wollardj/simple-plist.git",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wollardj/simple-plist.git"
+  },
+  "version": "1.3.1",
+  "description": "A wrapper utility for interacting with plist data.",
+  "main": "dist/index",
+  "files": [
+    "./dist"
+  ],
+  "types": "./dist/index.d.ts",
+  "keywords": [
+    "plist",
+    "binary",
+    "bplist",
+    "xml"
+  ],
+  "scripts": {
+    "build:tsc": "tsc --project ./tsconfig-build.json",
+    "build": "run-s clean:build build:tsc",
+    "clean:build": "rimraf dist",
+    "clean": "rimraf __tests__/write-test* coverage",
+    "prepare": "husky install",
+    "pretest": "clean",
+    "test": "jest --coverage --verbose"
+  },
+  "dependencies": {
+    "bplist-creator": "0.1.0",
+    "bplist-parser": "0.3.1",
+    "plist": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^27.4.1",
+    "@types/node": "^16.11.26",
+    "@types/plist": "^3.0.2",
+    "husky": "^7.0.4",
+    "jest": "^27.5.1",
+    "lint-staged": "^11.2.6",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^2.6.1",
+    "rimraf": "^3.0.2",
+    "ts-jest": "^27.0.7",
+    "typescript": "^4.4.4"
+  },
+  "lint-staged": {
+    "*.{ts,js,json,md}": "yarn prettier --write"
+  }
+}

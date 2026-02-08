@@ -1,0 +1,48 @@
+{
+  "name": "expo-modules-autolinking",
+  "version": "3.0.23",
+  "description": "Scripts that autolink Expo modules.",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "bin": {
+    "expo-modules-autolinking": "bin/expo-modules-autolinking.js"
+  },
+  "keywords": [
+    "expo",
+    "expo-module",
+    "autolinking",
+    "unimodules"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expo/expo.git",
+    "directory": "packages/expo-modules-autolinking"
+  },
+  "bugs": {
+    "url": "https://github.com/expo/expo/issues"
+  },
+  "author": "650 Industries, Inc.",
+  "license": "MIT",
+  "homepage": "https://github.com/expo/expo/tree/main/packages/expo-modules-autolinking#readme",
+  "devDependencies": {
+    "expo-module-scripts": "~5.0.8",
+    "memfs": "^3.2.0"
+  },
+  "dependencies": {
+    "@expo/spawn-async": "^1.7.2",
+    "chalk": "^4.1.0",
+    "commander": "^7.2.0",
+    "require-from-string": "^2.0.2",
+    "resolve-from": "^5.0.0"
+  },
+  "gitHead": "e8b838828e5e985379c07294dc932dba66c89562"
+}

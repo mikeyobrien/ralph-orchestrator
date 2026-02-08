@@ -1,0 +1,26 @@
+{
+  "name": "jimp-compact",
+  "version": "0.16.1",
+  "description": "Compact version of Jimp",
+  "repository": "nuxt-community/jimp-compact",
+  "license": "MIT",
+  "contributors": [
+    {
+      "name": "Pooya Parsa",
+      "email": "pooya@pi0.ir"
+    }
+  ],
+  "files": [
+    "dist"
+  ],
+  "main": "dist/jimp.js",
+  "scripts": {
+    "build": "node ./build.js",
+    "test": "node ./test/index.js"
+  },
+  "devDependencies": {
+    "@zeit/ncc": "^0.22.3",
+    "fs-extra": "^9.0.1",
+    "jimp": "^0.16.1"
+  }
+}

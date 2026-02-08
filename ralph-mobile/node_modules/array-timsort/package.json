@@ -1,0 +1,55 @@
+{
+  "name": "array-timsort",
+  "version": "1.0.3",
+  "description": "Fast JavaScript array sorting by implementing Python's Timsort algorithm",
+  "homepage": "https://github.com/kaelzhang/node-array-timsort",
+  "main": "./src",
+  "files": [
+    "src"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@ostai/eslint-config": "^3.5.0",
+    "ava": "^3.13.0",
+    "codecov": "^3.7.2",
+    "eslint": "^7.10.0",
+    "eslint-plugin-import": "^2.22.1",
+    "eslint-plugin-mocha": "^8.0.0",
+    "nyc": "^15.1.0"
+  },
+  "scripts": {
+    "benchmark": "node benchmark/index.js",
+    "test": "npm run test:only",
+    "test:only": "NODE_DEBUG=array-timsort nyc ava --timeout=10s --verbose",
+    "test:dev": "npm run test:only && npm run report:dev",
+    "lint": "eslint .",
+    "fix": "eslint . --fix",
+    "posttest": "npm run report",
+    "report": "nyc report --reporter=text-lcov > coverage.lcov && codecov",
+    "report:dev": "nyc report --reporter=html && npm run report:open",
+    "report:open": "open coverage/index.html"
+  },
+  "ava": {
+    "files": [
+      "test/*.test.js"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaelzhang/node-array-timsort.git"
+  },
+  "keywords": [
+    "fast sort",
+    "array soft",
+    "sort",
+    "compare",
+    "TimSort",
+    "algorithm",
+    "python",
+    "performance"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/kaelzhang/node-array-timsort/issues"
+  }
+}

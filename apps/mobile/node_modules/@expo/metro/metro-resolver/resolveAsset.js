@@ -1,0 +1,1 @@
+module.exports = require("metro-resolver/private/resolveAsset");

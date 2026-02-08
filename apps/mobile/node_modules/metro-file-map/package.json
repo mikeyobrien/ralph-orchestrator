@@ -1,0 +1,37 @@
+{
+  "name": "metro-file-map",
+  "version": "0.83.3",
+  "description": "[Experimental] - 🚇 File crawling, watching and mapping for Metro",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json",
+    "./private/*": "./src/*.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:facebook/metro.git"
+  },
+  "scripts": {
+    "prepare-release": "test -d build && rm -rf src.real && mv src src.real && mv build src",
+    "cleanup-release": "test ! -e build && mv src build && mv src.real src"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "debug": "^4.4.0",
+    "fb-watchman": "^2.0.0",
+    "flow-enums-runtime": "^0.0.6",
+    "graceful-fs": "^4.2.4",
+    "invariant": "^2.2.4",
+    "jest-worker": "^29.7.0",
+    "micromatch": "^4.0.4",
+    "nullthrows": "^1.1.1",
+    "walker": "^1.0.7"
+  },
+  "devDependencies": {
+    "slash": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.19.4"
+  }
+}

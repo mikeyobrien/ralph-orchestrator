@@ -1,0 +1,35 @@
+{
+  "name": "bplist-parser",
+  "version": "0.3.1",
+  "description": "Binary plist parser.",
+  "main": "bplistParser.js",
+  "scripts": {
+    "test": "mocha test"
+  },
+  "keywords": [
+    "bplist",
+    "plist",
+    "parser"
+  ],
+  "author": "Joe Ferner <joe.ferner@nearinfinity.com>",
+  "contributors": [
+    "Brett Zamir"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "6.5.x",
+    "mocha": "6.2.x"
+  },
+  "homepage": "https://github.com/nearinfinity/node-bplist-parser",
+  "bugs": "https://github.com/nearinfinity/node-bplist-parser/issues",
+  "engines": {
+    "node": ">= 5.10.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nearinfinity/node-bplist-parser.git"
+  },
+  "dependencies": {
+    "big-integer": "1.6.x"
+  }
+}

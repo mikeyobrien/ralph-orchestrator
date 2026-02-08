@@ -1,0 +1,15 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["ClipboardModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.clipboard.ClipboardModule"],
+    "publication": {
+      "groupId": "host.exp.exponent",
+      "artifactId": "expo.modules.clipboard",
+      "version": "8.0.8",
+      "repository": "local-maven-repo"
+    }
+  }
+}

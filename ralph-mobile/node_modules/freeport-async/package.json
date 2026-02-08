@@ -1,0 +1,35 @@
+{
+  "name": "freeport-async",
+  "version": "2.0.0",
+  "description": "Finds an available port for your application to use.",
+  "license": "MIT",
+  "main": "index.js",
+  "engines": {
+    "node": ">=8"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expo/freeport-async.git"
+  },
+  "keywords": [
+    "port",
+    "free",
+    "open",
+    "new",
+    "fresh",
+    "clean",
+    "networking",
+    "mikeal"
+  ],
+  "author": "Expo",
+  "bugs": {
+    "url": "https://github.com/expo/freeport-async/issues"
+  },
+  "homepage": "https://github.com/expo/freeport-async/blob/master/README.md",
+  "devDependencies": {
+    "project-repl": "^1.5.0"
+  }
+}

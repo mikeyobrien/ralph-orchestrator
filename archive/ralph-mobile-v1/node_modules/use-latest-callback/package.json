@@ -1,0 +1,91 @@
+{
+  "name": "use-latest-callback",
+  "version": "0.2.6",
+  "description": "React hook which returns the latest callback without changing the reference",
+  "repository": "https://github.com/satya164/use-latest-callback",
+  "author": "Satyajit Sahoo <satyajit.happy@gmail.com>",
+  "license": "MIT",
+  "keywords": [
+    "react",
+    "use-event",
+    "use-callback"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
+  "type": "commonjs",
+  "source": "./src/index.ts",
+  "main": "./lib/src/index.js",
+  "types": "./lib/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/src/index.d.ts",
+      "import": "./esm.mjs",
+      "default": "./lib/src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "lib",
+    "esm.mjs"
+  ],
+  "scripts": {
+    "lint": "eslint \"**/*.{js,ts,tsx}\"",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "del lib",
+    "build": "tsc --declaration",
+    "prepare": "yarn build",
+    "release": "release-it"
+  },
+  "peerDependencies": {
+    "react": ">=16.8"
+  },
+  "devDependencies": {
+    "@commitlint/config-conventional": "^12.1.4",
+    "@release-it/conventional-changelog": "^7.0.2",
+    "@types/react": "^18.0.10",
+    "commitlint": "^12.1.4",
+    "del-cli": "^4.0.1",
+    "eslint": "^8.53.0",
+    "eslint-config-satya164": "^3.2.0",
+    "prettier": "^3.0.3",
+    "react": "^17.0.2",
+    "release-it": "^16.2.1",
+    "typescript": "^5.2.2"
+  },
+  "eslintConfig": {
+    "extends": "satya164",
+    "env": {
+      "node": true,
+      "browser": true
+    },
+    "rules": {
+      "import/no-commonjs": "off"
+    }
+  },
+  "eslintIgnore": [
+    "node_modules/",
+    "lib/"
+  ],
+  "release-it": {
+    "git": {
+      "commitMessage": "chore: release ${version}",
+      "tagName": "v${version}"
+    },
+    "npm": {
+      "publish": true
+    },
+    "github": {
+      "release": true
+    },
+    "plugins": {
+      "@release-it/conventional-changelog": {
+        "preset": {
+          "name": "conventionalcommits"
+        },
+        "infile": "CHANGELOG.md"
+      }
+    }
+  }
+}

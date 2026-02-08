@@ -1,0 +1,53 @@
+{
+	"name": "env-editor",
+	"version": "0.4.2",
+	"description": "Get metadata on the default editor or a specific editor",
+	"license": "MIT",
+	"repository": "sindresorhus/env-editor",
+	"author": {
+		"name": "Sindre Sorhus",
+		"email": "sindresorhus@gmail.com",
+		"url": "sindresorhus.com"
+	},
+	"engines": {
+		"node": ">=8"
+	},
+	"scripts": {
+		"test": "xo && ava && tsd"
+	},
+	"files": [
+		"index.js",
+		"index.d.ts"
+	],
+	"keywords": [
+		"env",
+		"editor",
+		"environment",
+		"variable",
+		"default",
+		"editors",
+		"main",
+		"user",
+		"meta",
+		"metadata",
+		"info",
+		"name",
+		"binary",
+		"path",
+		"sublime",
+		"atom",
+		"vscode",
+		"webstorm",
+		"textmate",
+		"vim",
+		"neovim",
+		"intellij",
+		"nano",
+		"emacs"
+	],
+	"devDependencies": {
+		"ava": "^2.4.0",
+		"tsd": "^0.7.2",
+		"xo": "^0.24.0"
+	}
+}

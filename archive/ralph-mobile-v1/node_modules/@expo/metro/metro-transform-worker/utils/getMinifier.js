@@ -1,0 +1,1 @@
+module.exports = require("metro-transform-worker/private/utils/getMinifier");

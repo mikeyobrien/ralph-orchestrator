@@ -1,0 +1,61 @@
+{
+  "author": "Apache Software Foundation",
+  "name": "xcode",
+  "description": "parser for xcodeproj/project.pbxproj files",
+  "version": "3.0.1",
+  "main": "index.js",
+  "repository": "github:apache/cordova-node-xcode",
+  "bugs": "https://github.com/apache/cordova-node-xcode/issues",
+  "engines": {
+    "node": ">=10.0.0"
+  },
+  "dependencies": {
+    "simple-plist": "^1.1.0",
+    "uuid": "^7.0.3"
+  },
+  "devDependencies": {
+    "nodeunit": "^0.11.3",
+    "nyc": "^15.0.0",
+    "pegjs": "^0.10.0"
+  },
+  "scripts": {
+    "pegjs": "node_modules/.bin/pegjs lib/parser/pbxproj.pegjs",
+    "test": "npm run cover",
+    "test:unit": "nodeunit test/parser test",
+    "cover": "nyc npm run test:unit"
+  },
+  "license": "Apache-2.0",
+  "contributors": [
+    {
+      "name": "Andrew Lunny",
+      "email": "alunny@gmail.com"
+    },
+    {
+      "name": "Anis Kadri"
+    },
+    {
+      "name": "Mike Reinstein"
+    },
+    {
+      "name": "Filip Maj"
+    },
+    {
+      "name": "Brett Rudd",
+      "email": "goya@apache.org"
+    },
+    {
+      "name": "Bob Easterday"
+    }
+  ],
+  "nyc": {
+    "all": true,
+    "exclude": [
+      "coverage/",
+      "test/"
+    ],
+    "reporter": [
+      "lcov",
+      "text"
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+module.exports = require("metro-transform-plugins/private/import-export-plugin");

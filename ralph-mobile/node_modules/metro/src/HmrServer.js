@@ -1,0 +1,286 @@
+"use strict";
+
+const hmrJSBundle = require("./DeltaBundler/Serializers/hmrJSBundle");
+const GraphNotFoundError = require("./IncrementalBundler/GraphNotFoundError");
+const RevisionNotFoundError = require("./IncrementalBundler/RevisionNotFoundError");
+const debounceAsyncQueue = require("./lib/debounceAsyncQueue");
+const formatBundlingError = require("./lib/formatBundlingError");
+const getGraphId = require("./lib/getGraphId");
+const parseOptionsFromUrl = require("./lib/parseOptionsFromUrl");
+const splitBundleOptions = require("./lib/splitBundleOptions");
+const transformHelpers = require("./lib/transformHelpers");
+const {
+  Logger: { createActionStartEntry, createActionEndEntry, log },
+} = require("metro-core");
+const nullthrows = require("nullthrows");
+const url = require("url");
+function send(sendFns, message) {
+  const strMessage = JSON.stringify(message);
+  sendFns.forEach((sendFn) => sendFn(strMessage));
+}
+class HmrServer {
+  constructor(bundler, createModuleId, config) {
+    this._config = config;
+    this._bundler = bundler;
+    this._createModuleId = createModuleId;
+    this._clientGroups = new Map();
+  }
+  onClientConnect = async (requestUrl, sendFn) => {
+    return {
+      sendFn,
+      revisionIds: [],
+      optedIntoHMR: false,
+    };
+  };
+  async _registerEntryPoint(client, requestUrl, sendFn) {
+    requestUrl = this._config.server.rewriteRequestUrl(requestUrl);
+    const clientUrl = nullthrows(url.parse(requestUrl, true));
+    const options = parseOptionsFromUrl(
+      requestUrl,
+      new Set(this._config.resolver.platforms)
+    );
+    const { entryFile, resolverOptions, transformOptions, graphOptions } =
+      splitBundleOptions(options);
+    const resolutionFn = await transformHelpers.getResolveDependencyFn(
+      this._bundler.getBundler(),
+      transformOptions.platform,
+      resolverOptions
+    );
+    const resolvedEntryFilePath = resolutionFn(
+      (this._config.server.unstable_serverRoot ?? this._config.projectRoot) +
+        "/.",
+      {
+        name: entryFile,
+        data: {
+          key: entryFile,
+          asyncType: null,
+          isESMImport: false,
+          locs: [],
+        },
+      }
+    ).filePath;
+    const graphId = getGraphId(resolvedEntryFilePath, transformOptions, {
+      resolverOptions,
+      shallow: graphOptions.shallow,
+      lazy: graphOptions.lazy,
+      unstable_allowRequireContext:
+        this._config.transformer.unstable_allowRequireContext,
+    });
+    const revPromise = this._bundler.getRevisionByGraphId(graphId);
+    if (!revPromise) {
+      send([sendFn], {
+        type: "error",
+        body: formatBundlingError(new GraphNotFoundError(graphId)),
+      });
+      return;
+    }
+    const { graph, id } = await revPromise;
+    client.revisionIds.push(id);
+    let clientGroup = this._clientGroups.get(id);
+    if (clientGroup != null) {
+      clientGroup.clients.add(client);
+    } else {
+      clientUrl.protocol = "http";
+      const {
+        dev,
+        minify,
+        runModule,
+        bundleEntry: _bundleEntry,
+        ...query
+      } = clientUrl.query || {};
+      clientUrl.query = {
+        ...query,
+        dev: dev || "true",
+        minify: minify || "false",
+        modulesOnly: "true",
+        runModule: runModule || "false",
+        shallow: "true",
+      };
+      clientUrl.search = "";
+      clientGroup = {
+        clients: new Set([client]),
+        clientUrl,
+        revisionId: id,
+        graphOptions,
+        unlisten: () => unlisten(),
+      };
+      this._clientGroups.set(id, clientGroup);
+      let latestEventArgs = [];
+      const debounceCallHandleFileChange = debounceAsyncQueue(async () => {
+        await this._handleFileChange(
+          nullthrows(clientGroup),
+          {
+            isInitialUpdate: false,
+          },
+          ...latestEventArgs
+        );
+      }, 50);
+      const unlisten = this._bundler
+        .getDeltaBundler()
+        .listen(graph, async (...args) => {
+          latestEventArgs = args;
+          await debounceCallHandleFileChange();
+        });
+    }
+    await this._handleFileChange(clientGroup, {
+      isInitialUpdate: true,
+    });
+    send([sendFn], {
+      type: "bundle-registered",
+    });
+  }
+  onClientMessage = async (client, message, sendFn) => {
+    let data;
+    try {
+      data = JSON.parse(String(message));
+    } catch (error) {
+      send([sendFn], {
+        type: "error",
+        body: formatBundlingError(error),
+      });
+      return Promise.resolve();
+    }
+    if (data && data.type) {
+      switch (data.type) {
+        case "register-entrypoints":
+          return Promise.all(
+            data.entryPoints.map((entryPoint) =>
+              this._registerEntryPoint(client, entryPoint, sendFn)
+            )
+          );
+        case "log":
+          if (this._config.server.forwardClientLogs) {
+            this._config.reporter.update({
+              type: "client_log",
+              level: data.level,
+              data: data.data,
+              mode: data.mode,
+            });
+          }
+          break;
+        case "log-opt-in":
+          client.optedIntoHMR = true;
+          break;
+        default:
+          break;
+      }
+    }
+    return Promise.resolve();
+  };
+  onClientError = (client, e) => {
+    this._config.reporter.update({
+      type: "hmr_client_error",
+      error: e.error,
+    });
+    this.onClientDisconnect(client);
+  };
+  onClientDisconnect = (client) => {
+    client.revisionIds.forEach((revisionId) => {
+      const group = this._clientGroups.get(revisionId);
+      if (group != null) {
+        if (group.clients.size === 1) {
+          this._clientGroups.delete(revisionId);
+          group.unlisten();
+        } else {
+          group.clients.delete(client);
+        }
+      }
+    });
+  };
+  async _handleFileChange(group, options, changeEvent) {
+    const logger = !options.isInitialUpdate ? changeEvent?.logger : null;
+    if (logger) {
+      logger.point("fileChange_end");
+      logger.point("hmrPrepareAndSendMessage_start");
+    }
+    const optedIntoHMR = [...group.clients].some(
+      (client) => client.optedIntoHMR
+    );
+    const processingHmrChange = log(
+      createActionStartEntry({
+        action_name: optedIntoHMR
+          ? "Processing HMR change"
+          : "Processing HMR change (no client opt-in)",
+      })
+    );
+    const sendFns = [...group.clients].map((client) => client.sendFn);
+    send(sendFns, {
+      type: "update-start",
+      body: options,
+    });
+    const message = await this._prepareMessage(group, options, changeEvent);
+    send(sendFns, message);
+    send(sendFns, {
+      type: "update-done",
+    });
+    log({
+      ...createActionEndEntry(processingHmrChange),
+      outdated_modules:
+        message.type === "update"
+          ? message.body.added.length + message.body.modified.length
+          : undefined,
+    });
+    if (logger) {
+      logger.point("hmrPrepareAndSendMessage_end");
+      logger.end("SUCCESS");
+    }
+  }
+  async _prepareMessage(group, options, changeEvent) {
+    const logger = !options.isInitialUpdate ? changeEvent?.logger : null;
+    try {
+      const revPromise = this._bundler.getRevision(group.revisionId);
+      if (!revPromise) {
+        return {
+          type: "error",
+          body: formatBundlingError(
+            new RevisionNotFoundError(group.revisionId)
+          ),
+        };
+      }
+      logger?.point("updateGraph_start");
+      const { revision, delta } = await this._bundler.updateGraph(
+        await revPromise,
+        false
+      );
+      logger?.point("updateGraph_end");
+      this._clientGroups.delete(group.revisionId);
+      group.revisionId = revision.id;
+      for (const client of group.clients) {
+        client.revisionIds = client.revisionIds.filter(
+          (revisionId) => revisionId !== group.revisionId
+        );
+        client.revisionIds.push(revision.id);
+      }
+      this._clientGroups.set(group.revisionId, group);
+      logger?.point("serialize_start");
+      const hmrUpdate = hmrJSBundle(delta, revision.graph, {
+        clientUrl: group.clientUrl,
+        createModuleId: this._createModuleId,
+        includeAsyncPaths: group.graphOptions.lazy,
+        projectRoot: this._config.projectRoot,
+        serverRoot:
+          this._config.server.unstable_serverRoot ?? this._config.projectRoot,
+      });
+      logger?.point("serialize_end");
+      return {
+        type: "update",
+        body: {
+          revisionId: revision.id,
+          isInitialUpdate: options.isInitialUpdate,
+          ...hmrUpdate,
+        },
+      };
+    } catch (error) {
+      const formattedError = formatBundlingError(error);
+      this._config.reporter.update({
+        type: "bundling_error",
+        error,
+      });
+      return {
+        type: "error",
+        body: formattedError,
+      };
+    }
+  }
+}
+module.exports = HmrServer;

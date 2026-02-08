@@ -1,0 +1,26 @@
+apply plugin: 'com.android.library'
+
+group = 'host.exp.exponent'
+version = '17.0.8'
+
+apply from: "../scripts/get-app-config-android.gradle"
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+useExpoPublishing()
+
+android {
+  namespace "expo.modules.constants"
+  defaultConfig {
+    versionCode 33
+    versionName "17.0.8"
+  }
+}
+
+dependencies {
+  api "androidx.annotation:annotation:1.0.0"
+  implementation "commons-io:commons-io:2.6"
+}

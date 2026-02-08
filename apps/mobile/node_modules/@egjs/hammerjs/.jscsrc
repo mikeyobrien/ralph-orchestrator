@@ -1,0 +1,10 @@
+{
+  "preset": "ember-suave",
+  "excludeFiles": [
+    "tests/**/assets",
+    "node_modules/**"
+  ],
+  "disallowConstOutsideModuleScope": false,
+  "requireArrowFunctions": true,
+  "disallowEmptyBlocks": false
+}

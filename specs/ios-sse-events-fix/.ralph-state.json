@@ -1,0 +1,13 @@
+{
+  "source": "spec",
+  "name": "ios-sse-events-fix",
+  "basePath": "specs/ios-sse-events-fix",
+  "phase": "execution",
+  "taskIndex": 4,
+  "totalTasks": 7,
+  "taskIteration": 1,
+  "maxTaskIterations": 5,
+  "globalIteration": 1,
+  "maxGlobalIterations": 100,
+  "awaitingApproval": false
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>host.exp.exponent</groupId>
+  <artifactId>expo.modules.keepawake</artifactId>
+  <versioning>
+    <latest>15.0.8</latest>
+    <release>15.0.8</release>
+    <versions>
+      <version>15.0.8</version>
+    </versions>
+    <lastUpdated>20251205064551</lastUpdated>
+  </versioning>
+</metadata>

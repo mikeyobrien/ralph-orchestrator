@@ -1,0 +1,82 @@
+{
+  "name": "marky",
+  "version": "1.3.0",
+  "description": "Performance timer based on performance.mark() and measure()",
+  "main": "lib/marky.cjs.js",
+  "jsnext:main": "lib/marky.es.js",
+  "module": "lib/marky.es.js",
+  "types": "marky.d.ts",
+  "scripts": {
+    "clean": "rimraf lib dist && mkdirp lib dist",
+    "rollup-cjs": "rollup -c config/rollup.config.cjs.js && rollup -c config/rollup.config.browser.cjs.js",
+    "rollup-es": "rollup -c config/rollup.config.es.js && rollup -c config/rollup.config.browser.es.js",
+    "rollup-iife": "rollup -c config/rollup.config.iife.js",
+    "rollup": "npm-run-all --parallel rollup-cjs rollup-es rollup-iife",
+    "minify": "terser -mc < dist/marky.js > dist/marky.min.js",
+    "prepare": "npm run build",
+    "build": "npm-run-all clean rollup minify",
+    "test": "npm run rollup-cjs && mocha test/test.js",
+    "test-browser": "karma start --single-run",
+    "test-browser-debug": "karma start --browsers=Chrome --single-run=false",
+    "lint": "standard"
+  },
+  "keywords": [
+    "mark",
+    "measure",
+    "performance",
+    "user timing",
+    "timing",
+    "polyfill",
+    "stopwatch",
+    "timer"
+  ],
+  "author": "Nolan Lawson <nolan@nolanlawson.com>",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@rollup/plugin-buble": "^0.21.3",
+    "@rollup/plugin-commonjs": "^21.0.1",
+    "@rollup/plugin-node-resolve": "^13.1.3",
+    "@rollup/plugin-replace": "^3.1.0",
+    "assert": "^2.0.0",
+    "karma": "^6.3.16",
+    "karma-chrome-launcher": "^3.1.0",
+    "karma-firefox-launcher": "^2.1.2",
+    "karma-mocha": "^2.0.1",
+    "karma-rollup-preprocessor": "^7.0.8",
+    "mkdirp": "^1.0.4",
+    "mocha": "^9.2.0",
+    "npm-run-all": "^4.1.5",
+    "rimraf": "^3.0.2",
+    "rollup": "^2.67.2",
+    "standard": "^16.0.4",
+    "terser": "^5.10.0"
+  },
+  "files": [
+    "lib",
+    "dist",
+    "marky.d.ts"
+  ],
+  "browser": {
+    "./lib/marky.cjs.js": "./lib/marky.browser.cjs.js",
+    "./lib/marky.es.js": "./lib/marky.browser.es.js"
+  },
+  "standard": {
+    "ignore": [
+      "lib",
+      "dist"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nolanlawson/marky.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nolanlawson/marky/issues"
+  },
+  "homepage": "https://github.com/nolanlawson/marky#readme",
+  "volta": {
+    "node": "16.15.1",
+    "yarn": "1.22.19"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}

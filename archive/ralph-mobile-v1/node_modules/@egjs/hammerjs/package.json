@@ -1,0 +1,75 @@
+{
+	"name": "@egjs/hammerjs",
+	"title": "Hammer.JS",
+	"description": "A javascript library for multi-touch gestures",
+	"version": "2.0.17",
+	"homepage": "http://naver.github.io/egjs",
+	"license": "MIT",
+	"keywords": [
+		"touch",
+		"gestures"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git://github.com/naver/hammer.js.git"
+	},
+	"bugs": {
+		"url": "https://github.com/naver/hammer.js/issues"
+	},
+	"devDependencies": {
+		"@babel/cli": "^7.0.0",
+		"@babel/core": "^7.0.1",
+		"@babel/plugin-proposal-class-properties": "^7.0.0",
+		"@babel/plugin-transform-object-assign": "^7.0.0",
+		"@babel/preset-env": "^7.0.0",
+		"babel-plugin-no-side-effect-class-properties": "0.0.4",
+		"bannerize": "^1.0.2",
+		"blanket": "^1.2.3",
+		"changelogplease": "^1.2.0",
+		"ember-suave": "^4.0.0",
+		"git-tags": "^0.2.4",
+		"hammer-simulator": "git://github.com/hammerjs/simulator#master",
+		"jquery": "^3.1.0",
+		"jquery-hammerjs": "2.0.x",
+		"jscs": "^3.0.7",
+		"jshint": "^2.9.2",
+		"jshint-stylish": "^2.2.0",
+		"lodash-compat": "^3.10.2",
+		"node-qunit-phantomjs": "^1.4.0",
+		"print-sizes": "^0.1.0",
+		"qunitjs": "^2.0.0",
+		"rollup": "^0.66.0",
+		"rollup-plugin-analyzer": "^2.1.0",
+		"rollup-plugin-babel": "^4.0.3",
+		"rollup-plugin-replace": "^2.1.0",
+		"rollup-plugin-uglify": "^6.0.0",
+		"run-when-changed": "^1.2.0",
+		"serve": "^1.4.0",
+		"uglify-js": "^2.7.0"
+	},
+	"engines": {
+		"node": ">=0.8.0"
+	},
+	"scripts": {
+		"build": "npm run rollup && npm run test:node && npm run printsizes",
+		"printsizes": "print-sizes ./dist --exclude=\\.map",
+		"testbuild": "rollup -c ./testrollup.config.js",
+		"bannerize": "bannerize hammer.js hammer.min.js",
+		"connect": "serve -p 8000 ./",
+		"rollup": "rollup -c",
+		"jshint": "jshint src/**/*.js tests/unit/*.js tests/unit/gestures/*.js --config .jshintrc --verbose --reporter=node_modules/jshint-stylish",
+		"jscs": " jscs src/**/*.js tests/unit/*.js tests/unit/gestures/*.js --config=./.jscsrc",
+		"qunit": "phantomjs node_modules/qunit-phantomjs-runner/runner-list.js tests/unit/index.html 15",
+		"watch": "run-when-changed --watch 'src/**/*.js' --watch 'tests/unit/*.js' --watch 'tests/unit/gestures/*.js' --exec 'npm run watch-tasks'",
+		"watch-tasks": "npm run rollup && npm run string-replace && npm run uglify && npm run jshint && npm run jscs",
+		"test": "npm run build && npm run qunit",
+		"test:node": "node ./dist/hammer.js"
+	},
+	"sideEffects": false,
+	"module": "dist/hammer.esm.js",
+	"main": "dist/hammer.js",
+	"types": "src/hammer.d.ts",
+	"dependencies": {
+		"@types/hammerjs": "^2.0.36"
+	}
+}

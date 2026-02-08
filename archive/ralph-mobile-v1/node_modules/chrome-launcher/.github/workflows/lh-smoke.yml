@@ -1,0 +1,48 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request: # run on all PRs, not just PRs to a particular branch
+
+jobs:
+  # Only run smoke tests for windows against stable chrome.
+  lh-smoke-windows:
+    strategy:
+      matrix:
+        smoke-test-shard: [1, 2]
+      # e.g. if set 1 fails, continue with set 2 anyway
+      fail-fast: false
+    runs-on: windows-latest
+    name: Windows smoke ${{ matrix.smoke-test-shard }}/2
+
+    steps:
+    - name: git clone
+      uses: actions/checkout@v3
+
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: lts/*
+        cache: 'yarn'
+    
+    # chrome-launcher
+    # This'll add lighthouse AND install chrome-launcher's deps
+    - run: yarn add --frozen-lockfile --network-timeout 1000000 -D https://github.com/GoogleChrome/lighthouse.git#main
+    - run: yarn build
+
+    # lighthouse 
+    - run: yarn --cwd node_modules/lighthouse/ install --frozen-lockfile --network-timeout 1000000
+    - run: yarn reset-link
+    - run: yarn --cwd node_modules/lighthouse/ build-report
+
+    - name: Run smoke tests
+      # Windows bots are slow, so only run enough tests to verify matching behavior.
+      run: yarn --cwd node_modules/lighthouse/ smoke --debug -j=2 --retries=0 --shard=${{ matrix.smoke-test-shard }}/2 dbw oopif offline lantern metrics
+
+    - name: Upload failures
+      if: failure()
+      uses: actions/upload-artifact@v1
+      with:
+        name: Smokehouse (windows)
+        path: node_modules/lighthouse/.tmp/smokehouse-ci-failures/
