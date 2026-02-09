@@ -60,6 +60,19 @@ pub fn render(f: &mut Frame, area: Rect) {
             Span::raw("    Next/prev match"),
         ]),
         Line::from(""),
+        Line::from(Span::styled(
+            "Guidance:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(vec![
+            Span::styled("  :", Style::default().fg(Color::Cyan)),
+            Span::raw("      Send guidance (next iteration)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  !", Style::default().fg(Color::Cyan)),
+            Span::raw("      Send guidance (now, current iteration)"),
+        ]),
+        Line::from(""),
         Line::from(Span::styled("Other:", Style::default().fg(Color::Yellow))),
         Line::from(vec![
             Span::styled("  q", Style::default().fg(Color::Cyan)),

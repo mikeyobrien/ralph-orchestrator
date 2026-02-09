@@ -36,6 +36,10 @@ pub enum Action {
     ShowHelp,
     /// Dismiss help overlay or cancel search
     DismissHelp,
+    /// Open guidance input for next iteration
+    GuidanceNext,
+    /// Open guidance input for current iteration (urgent)
+    GuidanceNow,
     /// Key not mapped to any action
     None,
 }
@@ -74,6 +78,10 @@ pub fn map_key(key: KeyEvent) -> Action {
         KeyCode::Char('/') => Action::StartSearch,
         KeyCode::Char('n') => Action::SearchNext,
         KeyCode::Char('N') => Action::SearchPrev,
+
+        // Guidance
+        KeyCode::Char(':') => Action::GuidanceNext,
+        KeyCode::Char('!') => Action::GuidanceNow,
 
         // Help
         KeyCode::Char('?') => Action::ShowHelp,
@@ -187,7 +195,21 @@ mod tests {
         assert_eq!(map_key(key), Action::PrevIteration);
     }
 
-    // AC15: Unknown Key Returns None
+    // AC15: : Opens Guidance Next
+    #[test]
+    fn colon_returns_guidance_next() {
+        let key = KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE);
+        assert_eq!(map_key(key), Action::GuidanceNext);
+    }
+
+    // AC16: ! Opens Guidance Now
+    #[test]
+    fn bang_returns_guidance_now() {
+        let key = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE);
+        assert_eq!(map_key(key), Action::GuidanceNow);
+    }
+
+    // AC17: Unknown Key Returns None
     #[test]
     fn unknown_key_returns_none() {
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);

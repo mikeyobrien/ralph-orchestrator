@@ -12,8 +12,11 @@ use ratatui::{
     style::{Color as RatatuiColor, Style},
     text::{Line, Span},
 };
-use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::{
+    borrow::Cow,
+    io::{self, Write},
+    sync::{Arc, Mutex},
+};
 use termimad::MadSkin;
 
 /// Detects if text contains ANSI escape sequences.
@@ -23,6 +26,51 @@ use termimad::MadSkin;
 #[inline]
 pub(crate) fn contains_ansi(text: &str) -> bool {
     text.contains("\x1b[")
+}
+
+/// Normalizes terminal control characters that commonly break ratatui rendering.
+///
+/// In particular:
+/// - `\r` (carriage return) is used by many CLIs (git, cargo, etc.) to render
+///   progress updates on a single line. When embedded in ratatui content it can
+///   move the cursor and corrupt layout.
+/// - Some other C0 controls (bell, backspace, vertical tab, form feed) can also
+///   cause display corruption or odd glyphs.
+///
+/// We keep `\n` and `\t` intact.
+fn sanitize_tui_block_text(text: &str) -> Cow<'_, str> {
+    let has_cr = text.contains('\r');
+    let has_other_ctrl = text
+        .chars()
+        .any(|c| matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
+
+    if !has_cr && !has_other_ctrl {
+        return Cow::Borrowed(text);
+    }
+
+    let mut s = if has_cr {
+        // Normalize CRLF and bare CR to LF.
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text.to_string()
+    };
+
+    if has_other_ctrl {
+        s.retain(|c| !matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
+    }
+
+    Cow::Owned(s)
+}
+
+/// Sanitizes text that must stay on a *single* TUI line (tool summaries, errors).
+/// Removes embedded newlines and carriage returns entirely.
+fn sanitize_tui_inline_text(text: &str) -> String {
+    let mut s = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+
+    // Drop other control characters that can corrupt the terminal.
+    s.retain(|c| !matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
+
+    s
 }
 
 /// Session completion result data.
@@ -271,6 +319,14 @@ fn text_to_lines(text: &str) -> Vec<Line<'static>> {
         return Vec::new();
     }
 
+    // Ratatui content must not contain control characters like carriage returns.
+    // See sanitize_tui_block_text() for rationale.
+    let text = sanitize_tui_block_text(text);
+    let text = text.as_ref();
+    if text.is_empty() {
+        return Vec::new();
+    }
+
     // Convert text to ANSI-styled string
     // - If already contains ANSI: use as-is
     // - If plain/markdown: process through termimad (matches non-TUI behavior)
@@ -450,6 +506,7 @@ impl StreamHandler for TuiStreamHandler {
         )];
 
         if let Some(summary) = format_tool_summary(name, input) {
+            let summary = sanitize_tui_inline_text(&summary);
             spans.push(Span::styled(
                 format!(" {}", summary),
                 Style::default().fg(RatatuiColor::DarkGray),
@@ -461,8 +518,9 @@ impl StreamHandler for TuiStreamHandler {
 
     fn on_tool_result(&mut self, _id: &str, output: &str) {
         if self.verbose {
+            let clean = sanitize_tui_inline_text(output);
             let line = Line::from(Span::styled(
-                format!(" \u{2713} {}", truncate(output, 200)),
+                format!(" \u{2713} {}", truncate(&clean, 200)),
                 Style::default().fg(RatatuiColor::DarkGray),
             ));
             self.add_non_text_line(line);
@@ -470,8 +528,9 @@ impl StreamHandler for TuiStreamHandler {
     }
 
     fn on_error(&mut self, error: &str) {
+        let clean = sanitize_tui_inline_text(error);
         let line = Line::from(Span::styled(
-            format!("\n\u{2717} Error: {}", error),
+            format!("\u{2717} Error: {}", clean),
             Style::default().fg(RatatuiColor::Red),
         ));
         self.add_non_text_line(line);
@@ -621,6 +680,28 @@ mod tests {
         // Emoji (4-byte characters)
         let emoji = "🎉🎊🎁🎈🎄";
         assert_eq!(truncate(emoji, 3), "🎉🎊🎁...");
+    }
+
+    #[test]
+    fn test_sanitize_tui_inline_text_removes_newlines_and_carriage_returns() {
+        let s = "hello\r\nworld\nbye\rok";
+        let clean = sanitize_tui_inline_text(s);
+        assert!(!clean.contains('\r'));
+        assert!(!clean.contains('\n'));
+    }
+
+    #[test]
+    fn test_text_to_lines_sanitizes_carriage_returns() {
+        let lines = text_to_lines("alpha\rbravo\ncharlie");
+        for line in lines {
+            for span in line.spans {
+                assert!(
+                    !span.content.contains('\r'),
+                    "Span content should not contain carriage returns: {:?}",
+                    span.content
+                );
+            }
+        }
     }
 
     #[test]
