@@ -292,6 +292,11 @@ impl PtyExecutor {
 
         // Set up environment for PTY
         cmd_builder.env("TERM", "xterm-256color");
+
+        // Apply backend-specific environment variables (e.g., Agent Teams env var)
+        for (key, value) in &self.backend.env_vars {
+            cmd_builder.env(key, value);
+        }
         let child = pair
             .slave
             .spawn_command(cmd_builder)
@@ -2032,6 +2037,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2065,6 +2071,7 @@ mod tests {
             prompt_mode: PromptMode::Stdin,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2097,6 +2104,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2132,6 +2140,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2172,6 +2181,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: true,

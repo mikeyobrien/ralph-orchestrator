@@ -47,6 +47,7 @@ mod pty_executor_integration {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -77,6 +78,7 @@ mod pty_executor_integration {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -110,6 +112,7 @@ mod pty_executor_integration {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -150,6 +153,7 @@ mod pty_executor_integration {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -211,6 +215,7 @@ mod pty_executor_integration {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,

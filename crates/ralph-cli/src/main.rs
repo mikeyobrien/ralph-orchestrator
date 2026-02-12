@@ -682,6 +682,10 @@ struct PlanArgs {
     #[arg(short, long, value_name = "BACKEND")]
     backend: Option<String>,
 
+    /// Enable Claude Code's experimental Agent Teams feature
+    #[arg(long)]
+    teams: bool,
+
     /// Custom backend command and arguments (use after --)
     #[arg(last = true)]
     custom_args: Vec<String>,
@@ -702,6 +706,10 @@ struct CodeTaskArgs {
     #[arg(short, long, value_name = "BACKEND")]
     backend: Option<String>,
 
+    /// Enable Claude Code's experimental Agent Teams feature
+    #[arg(long)]
+    teams: bool,
+
     /// Custom backend command and arguments (use after --)
     #[arg(last = true)]
     custom_args: Vec<String>,
@@ -720,6 +728,7 @@ async fn main() -> Result<()> {
     let tui_enabled = match &cli.command {
         Some(Commands::Run(args)) => !args.no_tui && !args.autonomous,
         Some(Commands::Resume(args)) => !args.no_tui && !args.autonomous,
+        None => true,
         _ => false,
     };
 
@@ -2110,6 +2119,7 @@ fn plan_command(
         } else {
             Some(args.custom_args)
         },
+        agent_teams: args.teams,
     };
 
     sop_runner::run_sop(config).map_err(|e| match e {
@@ -2163,6 +2173,7 @@ fn code_task_command(
         } else {
             Some(args.custom_args)
         },
+        agent_teams: args.teams,
     };
 
     sop_runner::run_sop(config).map_err(|e| match e {

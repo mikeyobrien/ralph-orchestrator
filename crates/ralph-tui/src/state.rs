@@ -93,6 +93,26 @@ impl SearchState {
     }
 }
 
+/// Whether guidance is being entered for the next or current iteration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuidanceMode {
+    /// Guidance for the next iteration (queued, written before build_prompt)
+    Next,
+    /// Guidance for the current iteration (written immediately to events.jsonl)
+    Now,
+}
+
+/// Result of attempting to send guidance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuidanceResult {
+    /// Next-iteration guidance was queued successfully.
+    Queued,
+    /// Current-iteration guidance was written to events successfully.
+    Sent,
+    /// Guidance could not be queued/written.
+    Failed,
+}
+
 /// Observable state derived from loop events.
 pub struct TuiState {
     /// Which hat will process next event (ID + display name).
@@ -164,6 +184,21 @@ pub struct TuiState {
     pub task_counts: TaskCounts,
     /// Currently active task (if any) for display in TUI widgets.
     pub active_task: Option<TaskSummary>,
+
+    // ========================================================================
+    // Guidance State
+    // ========================================================================
+    /// Active guidance input mode (None when not entering guidance).
+    pub guidance_mode: Option<GuidanceMode>,
+    /// Text being typed in guidance input.
+    pub guidance_input: String,
+    /// Queue of guidance messages for the next iteration (drained by loop_runner).
+    pub guidance_next_queue: Arc<Mutex<Vec<String>>>,
+    /// Path to events.jsonl for writing "now" guidance directly.
+    pub events_path: Option<std::path::PathBuf>,
+    /// Brief flash message after attempting to send guidance.
+    /// (mode, result, when)
+    pub guidance_flash: Option<(GuidanceMode, GuidanceResult, Instant)>,
 }
 
 impl TuiState {
@@ -199,6 +234,12 @@ impl TuiState {
             // Task tracking state
             task_counts: TaskCounts::default(),
             active_task: None,
+            // Guidance state
+            guidance_mode: None,
+            guidance_input: String::new(),
+            guidance_next_queue: Arc::new(Mutex::new(Vec::new())),
+            events_path: None,
+            guidance_flash: None,
         }
     }
 
@@ -235,6 +276,12 @@ impl TuiState {
             // Task tracking state
             task_counts: TaskCounts::default(),
             active_task: None,
+            // Guidance state
+            guidance_mode: None,
+            guidance_input: String::new(),
+            guidance_next_queue: Arc::new(Mutex::new(Vec::new())),
+            events_path: None,
+            guidance_flash: None,
         }
     }
 
@@ -268,6 +315,8 @@ impl TuiState {
                 let saved_following_latest = self.following_latest;
                 let saved_new_iteration_alert = self.new_iteration_alert.take();
                 let saved_pending_backend = self.pending_backend.clone();
+                let saved_guidance_next_queue = Arc::clone(&self.guidance_next_queue);
+                let saved_events_path = self.events_path.clone();
                 *self = Self::new();
                 self.hat_map = saved_hat_map;
                 self.loop_started = saved_loop_started; // Keep original timer
@@ -277,6 +326,8 @@ impl TuiState {
                 self.following_latest = saved_following_latest;
                 self.new_iteration_alert = saved_new_iteration_alert;
                 self.pending_backend = saved_pending_backend;
+                self.guidance_next_queue = saved_guidance_next_queue;
+                self.events_path = saved_events_path;
                 if let Some((hat_id, hat_display)) = custom_hat.clone() {
                     self.pending_hat = Some((hat_id, hat_display));
                 } else {
@@ -655,6 +706,122 @@ impl TuiState {
                 buffer.scroll_offset = line_idx.saturating_sub(viewport_height / 2);
             }
         }
+    }
+
+    // ========================================================================
+    // Guidance Methods
+    // ========================================================================
+
+    /// Enters guidance input mode.
+    pub fn start_guidance(&mut self, mode: GuidanceMode) {
+        self.guidance_mode = Some(mode);
+        self.guidance_input.clear();
+        self.guidance_flash = None;
+    }
+
+    /// Cancels guidance input without sending.
+    pub fn cancel_guidance(&mut self) {
+        self.guidance_mode = None;
+        self.guidance_input.clear();
+    }
+
+    /// Sends the current guidance input.
+    ///
+    /// For `GuidanceMode::Next`, pushes to the shared queue (drained by loop_runner).
+    /// For `GuidanceMode::Now`, writes directly to events.jsonl.
+    ///
+    /// Returns true if guidance was sent successfully.
+    pub fn send_guidance(&mut self) -> bool {
+        let input = self.guidance_input.trim().to_string();
+        if input.is_empty() {
+            self.cancel_guidance();
+            return false;
+        }
+
+        let mode = match self.guidance_mode {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let (ok, result) = match mode {
+            GuidanceMode::Next => {
+                if let Ok(mut queue) = self.guidance_next_queue.lock() {
+                    queue.push(input);
+                    (true, GuidanceResult::Queued)
+                } else {
+                    (false, GuidanceResult::Failed)
+                }
+            }
+            GuidanceMode::Now => {
+                let ok = self.write_guidance_event(&input);
+                if ok {
+                    (true, GuidanceResult::Sent)
+                } else {
+                    (false, GuidanceResult::Failed)
+                }
+            }
+        };
+
+        self.guidance_flash = Some((mode, result, Instant::now()));
+        self.guidance_mode = None;
+        self.guidance_input.clear();
+        ok
+    }
+
+    /// Writes a human.guidance event directly to events.jsonl.
+    fn write_guidance_event(&self, message: &str) -> bool {
+        let Some(ref path) = self.events_path else {
+            return false;
+        };
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let event = serde_json::json!({
+            "topic": "human.guidance",
+            "payload": message,
+            "ts": timestamp,
+        });
+
+        let line = match serde_json::to_string(&event) {
+            Ok(l) => l,
+            Err(_) => return false,
+        };
+
+        use std::io::Write;
+        let mut file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+
+        file.write_all(line.as_bytes()).is_ok() && file.write_all(b"\n").is_ok()
+    }
+
+    /// Returns true if guidance input is currently active.
+    pub fn is_guidance_active(&self) -> bool {
+        self.guidance_mode.is_some()
+    }
+
+    /// Clears flash message if it has expired.
+    pub fn clear_expired_guidance_flash(&mut self) {
+        if let Some((_, _, when)) = self.guidance_flash
+            && when.elapsed() >= Duration::from_secs(2)
+        {
+            self.guidance_flash = None;
+        }
+    }
+
+    /// Returns active guidance flash (mode + result) if still within display window (2 seconds).
+    pub fn active_guidance_flash(&self) -> Option<(GuidanceMode, GuidanceResult)> {
+        self.guidance_flash.and_then(|(mode, result, when)| {
+            if when.elapsed() < Duration::from_secs(2) {
+                Some((mode, result))
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -2057,6 +2224,152 @@ mod tests {
                 1,
                 "iteration 7 (latest) should have the output"
             );
+        }
+    }
+
+    // ========================================================================
+    // Guidance Tests
+    // ========================================================================
+
+    mod guidance {
+        use super::*;
+
+        #[test]
+        fn start_guidance_sets_mode_and_clears_input() {
+            let mut state = TuiState::new();
+            state.guidance_input = "leftover".to_string();
+            state.start_guidance(GuidanceMode::Next);
+            assert_eq!(state.guidance_mode, Some(GuidanceMode::Next));
+            assert!(state.guidance_input.is_empty());
+        }
+
+        #[test]
+        fn start_guidance_now_mode() {
+            let mut state = TuiState::new();
+            state.start_guidance(GuidanceMode::Now);
+            assert_eq!(state.guidance_mode, Some(GuidanceMode::Now));
+        }
+
+        #[test]
+        fn cancel_guidance_clears_state() {
+            let mut state = TuiState::new();
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "some text".to_string();
+            state.cancel_guidance();
+            assert!(state.guidance_mode.is_none());
+            assert!(state.guidance_input.is_empty());
+        }
+
+        #[test]
+        fn send_guidance_next_pushes_to_queue() {
+            let mut state = TuiState::new();
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "check auth.rs".to_string();
+            assert!(state.send_guidance());
+            assert!(state.guidance_mode.is_none());
+            assert!(state.guidance_input.is_empty());
+
+            let queue = state.guidance_next_queue.lock().unwrap();
+            assert_eq!(queue.len(), 1);
+            assert_eq!(queue[0], "check auth.rs");
+        }
+
+        #[test]
+        fn send_guidance_empty_input_cancels() {
+            let mut state = TuiState::new();
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "   ".to_string();
+            assert!(!state.send_guidance());
+            let queue = state.guidance_next_queue.lock().unwrap();
+            assert!(queue.is_empty());
+        }
+
+        #[test]
+        fn send_guidance_sets_flash() {
+            let mut state = TuiState::new();
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "test".to_string();
+            state.send_guidance();
+            assert!(state.guidance_flash.is_some());
+            assert_eq!(
+                state.active_guidance_flash(),
+                Some((GuidanceMode::Next, GuidanceResult::Queued))
+            );
+        }
+
+        #[test]
+        fn send_guidance_now_writes_to_events_file() {
+            let dir = tempfile::tempdir().unwrap();
+            let events_path = dir.path().join("events.jsonl");
+
+            let mut state = TuiState::new();
+            state.events_path = Some(events_path.clone());
+            state.start_guidance(GuidanceMode::Now);
+            state.guidance_input = "fix the bug now".to_string();
+            assert!(state.send_guidance());
+
+            let content = std::fs::read_to_string(&events_path).unwrap();
+            let event: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+            assert_eq!(event["topic"], "human.guidance");
+            assert_eq!(event["payload"], "fix the bug now");
+            assert!(event["ts"].is_string());
+        }
+
+        #[test]
+        fn send_guidance_now_without_events_path_fails() {
+            let mut state = TuiState::new();
+            state.events_path = None;
+            state.start_guidance(GuidanceMode::Now);
+            state.guidance_input = "test".to_string();
+            assert!(!state.send_guidance());
+        }
+
+        #[test]
+        fn is_guidance_active_reflects_mode() {
+            let mut state = TuiState::new();
+            assert!(!state.is_guidance_active());
+            state.start_guidance(GuidanceMode::Next);
+            assert!(state.is_guidance_active());
+            state.cancel_guidance();
+            assert!(!state.is_guidance_active());
+        }
+
+        #[test]
+        fn multiple_guidance_messages_queue_correctly() {
+            let mut state = TuiState::new();
+
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "first".to_string();
+            state.send_guidance();
+
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "second".to_string();
+            state.send_guidance();
+
+            let queue = state.guidance_next_queue.lock().unwrap();
+            assert_eq!(queue.len(), 2);
+            assert_eq!(queue[0], "first");
+            assert_eq!(queue[1], "second");
+        }
+
+        #[test]
+        fn task_start_preserves_guidance_queue() {
+            let mut state = TuiState::new();
+            state.start_new_iteration();
+
+            // Queue some guidance
+            state.start_guidance(GuidanceMode::Next);
+            state.guidance_input = "remember this".to_string();
+            state.send_guidance();
+
+            // Simulate task.start reset
+            let event = Event::new("task.start", "New task");
+            state.update(&event);
+
+            // Queue should be preserved (same Arc)
+            let queue = state.guidance_next_queue.lock().unwrap();
+            assert_eq!(queue.len(), 1);
+            assert_eq!(queue[0], "remember this");
         }
     }
 }

@@ -78,6 +78,12 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
         Action::SearchPrev => {
             state.prev_match();
         }
+        Action::GuidanceNext => {
+            state.start_guidance(crate::state::GuidanceMode::Next);
+        }
+        Action::GuidanceNow => {
+            state.start_guidance(crate::state::GuidanceMode::Now);
+        }
         Action::None => {}
     }
     false
@@ -116,6 +122,7 @@ impl App {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
 
         // CRITICAL: Ensure terminal cleanup on ANY exit path (normal, abort, or panic).
         // When cleanup_tui() calls handle.abort(), the task is cancelled immediately
@@ -178,7 +185,36 @@ impl App {
                                         _ => {}
                                     }
                                 }
+                                Event::Paste(text) => {
+                                    let mut state = self.state.lock().unwrap();
+                                    if state.is_guidance_active() {
+                                        state.guidance_input.push_str(&text);
+                                    }
+                                }
                                 Event::Key(key) if key.kind == KeyEventKind::Press => {
+                                    // Guidance input mode: intercept all keys
+                                    {
+                                        let mut state = self.state.lock().unwrap();
+                                        if state.is_guidance_active() {
+                                            match key.code {
+                                                KeyCode::Esc => {
+                                                    state.cancel_guidance();
+                                                }
+                                                KeyCode::Enter => {
+                                                    state.send_guidance();
+                                                }
+                                                KeyCode::Backspace => {
+                                                    state.guidance_input.pop();
+                                                }
+                                                KeyCode::Char(c) => {
+                                                    state.guidance_input.push(c);
+                                                }
+                                                _ => {}
+                                            }
+                                            continue;
+                                        }
+                                    }
+
                                     // Dismiss help on any key when help is showing
                                     {
                                         let mut state = self.state.lock().unwrap();
@@ -227,6 +263,9 @@ impl App {
                     viewport_height = content_area.height as usize;
 
                     let mut state = self.state.lock().unwrap();
+
+                    // Clear expired flash messages (e.g., guidance send confirmation)
+                    state.clear_expired_guidance_flash();
 
                     // Autoscroll: if user hasn't scrolled away, keep them at the bottom
                     // as new content arrives. This mimics standard terminal behavior.
