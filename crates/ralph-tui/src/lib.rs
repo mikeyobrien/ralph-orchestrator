@@ -75,9 +75,24 @@ impl Tui {
         self
     }
 
+    /// Sets the path to events.jsonl for direct guidance writes.
+    #[must_use]
+    pub fn with_events_path(self, path: std::path::PathBuf) -> Self {
+        if let Ok(mut state) = self.state.lock() {
+            state.events_path = Some(path);
+        }
+        self
+    }
+
     /// Returns the shared state for external updates.
     pub fn state(&self) -> Arc<Mutex<TuiState>> {
         Arc::clone(&self.state)
+    }
+
+    /// Returns a handle to the guidance next-queue for draining in the loop runner.
+    pub fn guidance_next_queue(&self) -> Arc<std::sync::Mutex<Vec<String>>> {
+        let state = self.state.lock().unwrap();
+        Arc::clone(&state.guidance_next_queue)
     }
 
     /// Returns an observer closure that updates TUI state from events.

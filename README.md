@@ -22,7 +22,7 @@ A hat-based orchestration framework that keeps AI agents in a loop until the tas
 npm install -g @ralph-orchestrator/ralph-cli
 ```
 
-### Via Homebrew (macOS)
+### Via Homebrew (macOS/Linux)
 
 ```bash
 brew install ralph-orchestrator

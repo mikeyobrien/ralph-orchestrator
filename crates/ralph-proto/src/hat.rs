@@ -6,7 +6,7 @@ use crate::Topic;
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a hat.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct HatId(String);
 
 impl HatId {

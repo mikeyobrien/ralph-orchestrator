@@ -23,6 +23,9 @@ pub mod sops {
 
     /// Code Task Generator SOP for creating code task files.
     pub const CODE_TASK_GENERATOR: &str = include_str!("../sops/code-task-generator.md");
+
+    /// Team instructions addendum for PDD planning sessions with Agent Teams.
+    pub const PDD_TEAM_ADDENDUM: &str = include_str!("../sops/pdd-team-addendum.md");
 }
 
 /// Which SOP to run.
@@ -64,6 +67,8 @@ pub struct SopRunConfig {
     pub config_path: Option<PathBuf>,
     /// Custom backend command and arguments (from CLI args).
     pub custom_args: Option<Vec<String>>,
+    /// Enable Claude Code's experimental Agent Teams feature.
+    pub agent_teams: bool,
 }
 
 /// Errors that can occur when running an SOP.
@@ -96,8 +101,19 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
         config.config_path.as_ref(),
     )?;
 
-    // 2. Build the prompt
-    let prompt = build_prompt(config.sop, config.user_input.as_deref());
+    // 2. Build addendums and prompt
+    let is_claude = backend_name == "claude";
+    let mut addendums: Vec<(&str, &str)> = Vec::new();
+
+    if config.agent_teams {
+        if is_claude {
+            addendums.push(("team-instructions", sops::PDD_TEAM_ADDENDUM));
+        } else {
+            tracing::warn!("--teams is only supported with the Claude backend, ignoring");
+        }
+    }
+
+    let prompt = build_prompt(config.sop, config.user_input.as_deref(), &addendums);
 
     // 3. Get interactive backend configuration
     let cli_backend = if backend_name == "custom" {
@@ -117,6 +133,7 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
                 prompt_mode: ralph_adapters::PromptMode::Arg,
                 prompt_flag: None, // Prompt appended as last arg by default
                 output_format: ralph_adapters::OutputFormat::Text,
+                env_vars: vec![],
             }
         } else {
             // For custom backend from config, we need to load the configuration to get the command/args
@@ -139,6 +156,8 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
                 ));
             }
         }
+    } else if config.agent_teams && is_claude {
+        CliBackend::claude_interactive_teams()
     } else {
         CliBackend::for_interactive_prompt(&backend_name)?
     };
@@ -181,34 +200,40 @@ fn resolve_backend(
 /// Validates a backend name.
 fn validate_backend_name(name: &str) -> Result<(), SopRunError> {
     match name {
-        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "custom" => {
-            Ok(())
-        }
+        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "pi"
+        | "custom" => Ok(()),
         _ => Err(SopRunError::UnknownBackend(name.to_string())),
     }
 }
 
-/// Builds the combined SOP + user input prompt.
+/// Builds the combined SOP + addendums + user input prompt.
 ///
 /// Format:
 /// ```text
 /// <sop>
 /// {SOP content}
 /// </sop>
+/// <tag1>
+/// {addendum1 content}
+/// </tag1>
 /// <user-content>
 /// {User's initial input if provided}
 /// </user-content>
 /// ```
-fn build_prompt(sop: Sop, user_input: Option<&str>) -> String {
-    let sop_content = sop.content();
-
-    match user_input {
-        Some(input) if !input.is_empty() => format!(
-            "<sop>\n{}\n</sop>\n<user-content>\n{}\n</user-content>",
-            sop_content, input
-        ),
-        _ => format!("<sop>\n{}\n</sop>", sop_content),
-    }
+fn build_prompt(sop: Sop, user_input: Option<&str>, addendums: &[(&str, &str)]) -> String {
+    std::iter::once(format!("<sop>\n{}\n</sop>", sop.content()))
+        .chain(
+            addendums
+                .iter()
+                .map(|(tag, content)| format!("<{}>\n{}\n</{}>", tag, content, tag)),
+        )
+        .chain(
+            user_input
+                .filter(|s| !s.is_empty())
+                .map(|input| format!("<user-content>\n{}\n</user-content>", input)),
+        )
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Spawns an interactive backend session.
@@ -217,12 +242,16 @@ fn build_prompt(sop: Sop, user_input: Option<&str>) -> String {
 fn spawn_interactive(backend: &CliBackend, prompt: &str) -> Result<(), SopRunError> {
     let (command, args, _stdin_input, _temp_file) = backend.build_command(prompt, true);
 
-    let mut child = Command::new(&command)
-        .args(&args)
+    let mut cmd = Command::new(&command);
+    cmd.args(&args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+        .stderr(Stdio::inherit());
+
+    // Apply backend-specific environment variables (e.g., Agent Teams env var)
+    cmd.envs(backend.env_vars.iter().map(|(k, v)| (k, v)));
+
+    let mut child = cmd.spawn()?;
 
     // Wait for the interactive session to complete
     child.wait()?;
@@ -259,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_build_prompt_with_user_input() {
-        let prompt = build_prompt(Sop::Pdd, Some("Build a REST API"));
+        let prompt = build_prompt(Sop::Pdd, Some("Build a REST API"), &[]);
 
         // Should have SOP wrapped in tags
         assert!(prompt.starts_with("<sop>\n"));
@@ -271,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_build_prompt_without_user_input() {
-        let prompt = build_prompt(Sop::CodeTaskGenerator, None);
+        let prompt = build_prompt(Sop::CodeTaskGenerator, None, &[]);
 
         // Should have SOP wrapped in tags
         assert!(prompt.starts_with("<sop>\n"));
@@ -283,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_build_prompt_with_empty_user_input() {
-        let prompt = build_prompt(Sop::Pdd, Some(""));
+        let prompt = build_prompt(Sop::Pdd, Some(""), &[]);
 
         // Empty input should be treated like None
         assert!(!prompt.contains("<user-content>"));
@@ -350,6 +379,7 @@ mod tests {
             backend_override: Some("custom".to_string()),
             config_path: None,
             custom_args: None,
+            agent_teams: false,
         };
 
         let err = run_sop(config).expect_err("expected error");
@@ -376,8 +406,93 @@ mod tests {
                 "-c".to_string(),
                 "exit 0".to_string(),
             ]),
+            agent_teams: false,
         };
 
         run_sop(config).expect("run sop");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for build_prompt addendums
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_build_prompt_with_addendums() {
+        let prompt = build_prompt(
+            Sop::Pdd,
+            Some("my idea"),
+            &[("team-instructions", "Use teams wisely")],
+        );
+
+        assert!(prompt.starts_with("<sop>\n"));
+        assert!(prompt.contains("</sop>"));
+        assert!(prompt.contains("<team-instructions>\nUse teams wisely\n</team-instructions>"));
+        assert!(prompt.contains("<user-content>\nmy idea\n</user-content>"));
+
+        // Verify ordering: sop before addendum before user-content
+        let sop_end = prompt.find("</sop>").unwrap();
+        let addendum_start = prompt.find("<team-instructions>").unwrap();
+        let user_start = prompt.find("<user-content>").unwrap();
+        assert!(sop_end < addendum_start);
+        assert!(addendum_start < user_start);
+    }
+
+    #[test]
+    fn test_build_prompt_with_multiple_addendums() {
+        let prompt = build_prompt(
+            Sop::Pdd,
+            Some("input"),
+            &[("a", "content-a"), ("b", "content-b")],
+        );
+
+        assert!(prompt.contains("<a>\ncontent-a\n</a>"));
+        assert!(prompt.contains("<b>\ncontent-b\n</b>"));
+
+        // Verify ordering
+        let a_pos = prompt.find("<a>").unwrap();
+        let b_pos = prompt.find("<b>").unwrap();
+        let user_pos = prompt.find("<user-content>").unwrap();
+        assert!(a_pos < b_pos);
+        assert!(b_pos < user_pos);
+    }
+
+    #[test]
+    fn test_build_prompt_with_addendums_and_user_input() {
+        let prompt = build_prompt(
+            Sop::Pdd,
+            Some("my input"),
+            &[("instructions", "do something")],
+        );
+
+        let expected_pattern = "</sop>\n<instructions>\ndo something\n</instructions>\n<user-content>\nmy input\n</user-content>";
+        assert!(
+            prompt.contains(expected_pattern),
+            "Expected pattern not found in prompt: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn test_build_prompt_no_addendums_unchanged() {
+        // Empty addendums should produce identical output to the old behavior
+        let prompt_with_input = build_prompt(Sop::Pdd, Some("test"), &[]);
+        assert!(prompt_with_input.contains("<sop>"));
+        assert!(prompt_with_input.contains("</sop>"));
+        assert!(prompt_with_input.contains("<user-content>\ntest\n</user-content>"));
+        // No extra tags between sop and user-content
+        let between = &prompt_with_input[prompt_with_input.find("</sop>").unwrap()
+            ..prompt_with_input.find("<user-content>").unwrap()];
+        assert_eq!(between, "</sop>\n");
+
+        let prompt_no_input = build_prompt(Sop::Pdd, None, &[]);
+        assert!(prompt_no_input.ends_with("</sop>"));
+        assert!(!prompt_no_input.contains("<user-content>"));
+    }
+
+    #[test]
+    fn test_sop_content_pdd_team_addendum() {
+        let content = sops::PDD_TEAM_ADDENDUM;
+        assert!(content.contains("Agent Teams"));
+        assert!(content.contains("teammate"));
     }
 }

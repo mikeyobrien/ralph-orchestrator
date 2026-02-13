@@ -5,7 +5,7 @@
 //! recording, TUI updates, and benchmarking purposes.
 
 use crate::{Event, Hat, HatId};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Type alias for the observer callback function.
 type Observer = Box<dyn Fn(&Event) + Send + 'static>;
@@ -14,10 +14,10 @@ type Observer = Box<dyn Fn(&Event) + Send + 'static>;
 #[derive(Default)]
 pub struct EventBus {
     /// Registered hats indexed by ID.
-    hats: HashMap<HatId, Hat>,
+    hats: BTreeMap<HatId, Hat>,
 
     /// Pending events for each hat.
-    pending: HashMap<HatId, Vec<Event>>,
+    pending: BTreeMap<HatId, Vec<Event>>,
 
     /// Pending human interaction events (human.*).
     human_pending: Vec<Event>,
@@ -168,6 +168,7 @@ impl EventBus {
     }
 
     /// Returns the next hat with pending events.
+    /// BTreeMap iteration is already sorted by key.
     pub fn next_hat_with_pending(&self) -> Option<&HatId> {
         self.pending
             .iter()

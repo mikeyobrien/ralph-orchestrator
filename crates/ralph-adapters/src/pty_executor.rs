@@ -20,6 +20,7 @@
 
 use crate::claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock};
 use crate::cli_backend::{CliBackend, OutputFormat};
+use crate::pi_stream::{PiSessionState, PiStreamParser, dispatch_pi_stream_event};
 use crate::stream_handler::{SessionResult, StreamHandler};
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
@@ -291,6 +292,11 @@ impl PtyExecutor {
 
         // Set up environment for PTY
         cmd_builder.env("TERM", "xterm-256color");
+
+        // Apply backend-specific environment variables (e.g., Agent Teams env var)
+        for (key, value) in &self.backend.env_vars {
+            cmd_builder.env(key, value);
+        }
         let child = pair
             .slave
             .spawn_command(cmd_builder)
@@ -567,9 +573,25 @@ impl PtyExecutor {
         // Check output format to decide parsing strategy
         let output_format = self.backend.output_format;
 
-        // StreamJson format uses NDJSON line parsing
+        // StreamJson format uses NDJSON line parsing (Claude)
+        // PiStreamJson format uses NDJSON line parsing (Pi)
         // Text format streams raw output directly to handler
         let is_stream_json = output_format == OutputFormat::StreamJson;
+        let is_pi_stream = output_format == OutputFormat::PiStreamJson;
+        // Pi thinking deltas are noisy for plain console output but useful in TUI.
+        let show_pi_thinking = is_pi_stream && self.tui_mode;
+        let is_real_pi_backend = self.backend.command == "pi";
+
+        if is_pi_stream && is_real_pi_backend {
+            let configured_provider =
+                extract_cli_flag_value(&self.backend.args, "--provider", "-p")
+                    .unwrap_or_else(|| "auto".to_string());
+            let configured_model = extract_cli_flag_value(&self.backend.args, "--model", "-m")
+                .unwrap_or_else(|| "default".to_string());
+            handler.on_text(&format!(
+                "Pi configured: provider={configured_provider}, model={configured_model}\n"
+            ));
+        }
 
         // Keep temp_file alive for the duration of execution
         let (pair, mut child, stdin_input, _temp_file) = self.spawn_pty(prompt)?;
@@ -597,6 +619,9 @@ impl PtyExecutor {
         let mut line_buffer = String::new();
         // Accumulate extracted text from NDJSON for event parsing
         let mut extracted_text = String::new();
+        // Pi session state for accumulating cost/turns (wall-clock for duration)
+        let mut pi_state = PiSessionState::new();
+        let start_time = Instant::now();
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
             None
         } else {
@@ -701,6 +726,24 @@ impl PtyExecutor {
                                             dispatch_stream_event(event, handler, &mut extracted_text);
                                         }
                                     }
+                                } else if is_pi_stream {
+                                    // PiStreamJson format: Parse NDJSON lines from pi
+                                    line_buffer.push_str(text);
+
+                                    while let Some(newline_pos) = line_buffer.find('\n') {
+                                        let line = line_buffer[..newline_pos].to_string();
+                                        line_buffer = line_buffer[newline_pos + 1..].to_string();
+
+                                        if let Some(event) = PiStreamParser::parse_line(&line) {
+                                            dispatch_pi_stream_event(
+                                                event,
+                                                handler,
+                                                &mut extracted_text,
+                                                &mut pi_state,
+                                                show_pi_thinking,
+                                            );
+                                        }
+                                    }
                                 } else {
                                     // Text format: Stream raw output directly to handler
                                     // This preserves ANSI escape codes for TUI rendering
@@ -710,11 +753,21 @@ impl PtyExecutor {
                         }
                         Some(OutputEvent::Eof) | None => {
                             debug!("Output channel closed");
-                            // Process any remaining content in buffer (StreamJson only)
+                            // Process any remaining content in buffer
                             if is_stream_json && !line_buffer.is_empty()
                                 && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                             {
                                 dispatch_stream_event(event, handler, &mut extracted_text);
+                            } else if is_pi_stream && !line_buffer.is_empty()
+                                && let Some(event) = PiStreamParser::parse_line(&line_buffer)
+                            {
+                                dispatch_pi_stream_event(
+                                    event,
+                                    handler,
+                                    &mut extracted_text,
+                                    &mut pi_state,
+                                    show_pi_thinking,
+                                );
                             }
                             break;
                         }
@@ -767,6 +820,22 @@ impl PtyExecutor {
                                         dispatch_stream_event(event, handler, &mut extracted_text);
                                     }
                                 }
+                            } else if is_pi_stream {
+                                // PiStreamJson: parse NDJSON lines
+                                line_buffer.push_str(text);
+                                while let Some(newline_pos) = line_buffer.find('\n') {
+                                    let line = line_buffer[..newline_pos].to_string();
+                                    line_buffer = line_buffer[newline_pos + 1..].to_string();
+                                    if let Some(event) = PiStreamParser::parse_line(&line) {
+                                        dispatch_pi_stream_event(
+                                            event,
+                                            handler,
+                                            &mut extracted_text,
+                                            &mut pi_state,
+                                            show_pi_thinking,
+                                        );
+                                    }
+                                }
                             } else {
                                 // Text: stream raw output to handler
                                 handler.on_text(text);
@@ -775,15 +844,45 @@ impl PtyExecutor {
                     }
                 }
 
-                // Process final buffer content (StreamJson only)
+                // Process final buffer content
                 if is_stream_json
                     && !line_buffer.is_empty()
                     && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                 {
                     dispatch_stream_event(event, handler, &mut extracted_text);
+                } else if is_pi_stream
+                    && !line_buffer.is_empty()
+                    && let Some(event) = PiStreamParser::parse_line(&line_buffer)
+                {
+                    dispatch_pi_stream_event(
+                        event,
+                        handler,
+                        &mut extracted_text,
+                        &mut pi_state,
+                        show_pi_thinking,
+                    );
                 }
 
                 let final_termination = resolve_termination_type(exit_code, termination);
+
+                // Synthesize on_complete for Pi sessions (pi has no dedicated result event)
+                if is_pi_stream {
+                    if is_real_pi_backend {
+                        let stream_provider =
+                            pi_state.stream_provider.as_deref().unwrap_or("unknown");
+                        let stream_model = pi_state.stream_model.as_deref().unwrap_or("unknown");
+                        handler.on_text(&format!(
+                            "Pi stream: provider={stream_provider}, model={stream_model}\n"
+                        ));
+                    }
+                    handler.on_complete(&SessionResult {
+                        duration_ms: start_time.elapsed().as_millis() as u64,
+                        total_cost_usd: pi_state.total_cost_usd,
+                        num_turns: pi_state.num_turns,
+                        is_error: !status.success(),
+                    });
+                }
+
                 // Pass extracted_text for event parsing from NDJSON
                 return Ok(build_result(
                     &output,
@@ -815,6 +914,23 @@ impl PtyExecutor {
                 (false, None, termination)
             }
         };
+
+        // Synthesize on_complete for Pi sessions (pi has no dedicated result event)
+        if is_pi_stream {
+            if is_real_pi_backend {
+                let stream_provider = pi_state.stream_provider.as_deref().unwrap_or("unknown");
+                let stream_model = pi_state.stream_model.as_deref().unwrap_or("unknown");
+                handler.on_text(&format!(
+                    "Pi stream: provider={stream_provider}, model={stream_model}\n"
+                ));
+            }
+            handler.on_complete(&SessionResult {
+                duration_ms: start_time.elapsed().as_millis() as u64,
+                total_cost_usd: pi_state.total_cost_usd,
+                num_turns: pi_state.num_turns,
+                is_error: !success,
+            });
+        }
 
         // Pass extracted_text for event parsing from NDJSON
         Ok(build_result(
@@ -1435,6 +1551,33 @@ fn resolve_termination_type(exit_code: i32, default: TerminationType) -> Termina
     }
 }
 
+fn extract_cli_flag_value(args: &[String], long_flag: &str, short_flag: &str) -> Option<String> {
+    for (i, arg) in args.iter().enumerate() {
+        if arg == long_flag || arg == short_flag {
+            if let Some(value) = args.get(i + 1)
+                && !value.starts_with('-')
+            {
+                return Some(value.clone());
+            }
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix(&format!("{long_flag}="))
+            && !value.is_empty()
+        {
+            return Some(value.to_string());
+        }
+
+        if let Some(value) = arg.strip_prefix(&format!("{short_flag}="))
+            && !value.is_empty()
+        {
+            return Some(value.to_string());
+        }
+    }
+
+    None
+}
+
 /// Dispatches a Claude stream event to the appropriate handler method.
 /// Also accumulates text content into `extracted_text` for event parsing.
 fn dispatch_stream_event<H: StreamHandler>(
@@ -1740,6 +1883,25 @@ mod tests {
         assert_eq!(termination, TerminationType::ForceKill);
     }
 
+    #[test]
+    fn test_extract_cli_flag_value_supports_split_and_equals_syntax() {
+        let args = vec![
+            "--provider".to_string(),
+            "anthropic".to_string(),
+            "--model=claude-sonnet-4".to_string(),
+        ];
+
+        assert_eq!(
+            extract_cli_flag_value(&args, "--provider", "-p"),
+            Some("anthropic".to_string())
+        );
+        assert_eq!(
+            extract_cli_flag_value(&args, "--model", "-m"),
+            Some("claude-sonnet-4".to_string())
+        );
+        assert_eq!(extract_cli_flag_value(&args, "--foo", "-f"), None);
+    }
+
     #[derive(Default)]
     struct CapturingHandler {
         texts: Vec<String>,
@@ -1962,6 +2124,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -1995,6 +2158,7 @@ mod tests {
             prompt_mode: PromptMode::Stdin,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2027,6 +2191,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2062,6 +2227,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: false,
@@ -2102,6 +2268,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         let config = PtyConfig {
             interactive: true,

@@ -2,13 +2,13 @@
 
 use crate::config::{HatConfig, RalphConfig};
 use ralph_proto::{Hat, HatId, Topic};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 /// Registry for managing and creating hats from configuration.
 #[derive(Debug, Default)]
 pub struct HatRegistry {
-    hats: HashMap<HatId, Hat>,
-    configs: HashMap<HatId, HatConfig>,
+    hats: BTreeMap<HatId, Hat>,
+    configs: BTreeMap<HatId, HatConfig>,
     /// Prefix index for O(1) early-exit on no-match lookups.
     /// Contains all first segments of subscription patterns (e.g., "task" from "task.*").
     /// Also contains "*" if any global wildcard exists.
@@ -106,6 +106,7 @@ impl HatRegistry {
     }
 
     /// Finds all hats subscribed to a topic.
+    /// BTreeMap iteration is already sorted by key.
     pub fn subscribers(&self, topic: &Topic) -> Vec<&Hat> {
         self.hats
             .values()
@@ -115,6 +116,7 @@ impl HatRegistry {
 
     /// Finds the first hat that would be triggered by a topic.
     /// Returns the hat ID if found, used for event logging.
+    /// BTreeMap iteration is already sorted by key.
     pub fn find_by_trigger(&self, topic: &str) -> Option<&HatId> {
         let topic = Topic::new(topic);
         self.hats
@@ -145,7 +147,7 @@ impl HatRegistry {
             }
         }
 
-        // Fall back to full linear scan
+        // Fall back to full linear scan (BTreeMap is already sorted by key)
         self.hats.values().find(|hat| hat.is_subscribed_str(topic))
     }
 }
@@ -305,5 +307,83 @@ hats:
             "Performance degraded: {} ns/op",
             ns_per_op
         );
+    }
+
+    #[test]
+    fn test_get_for_topic_returns_alphabetically_first_hat() {
+        // Two hats subscribing to same wildcard pattern → get_for_topic returns alphabetically first
+        let yaml = r#"
+hats:
+  zebra:
+    name: "Zebra"
+    triggers: ["task.*"]
+  alpha:
+    name: "Alpha"
+    triggers: ["task.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        // Should deterministically return "alpha" (alphabetically first)
+        let hat = registry.get_for_topic("task.start");
+        assert!(hat.is_some());
+        assert_eq!(
+            hat.unwrap().id.as_str(),
+            "alpha",
+            "get_for_topic should return alphabetically first matching hat"
+        );
+
+        // Run multiple times to confirm determinism
+        for _ in 0..100 {
+            let hat = registry.get_for_topic("task.start").unwrap();
+            assert_eq!(hat.id.as_str(), "alpha");
+        }
+    }
+
+    #[test]
+    fn test_find_by_trigger_returns_alphabetically_first_hat() {
+        let yaml = r#"
+hats:
+  zebra:
+    name: "Zebra"
+    triggers: ["task.*"]
+  alpha:
+    name: "Alpha"
+    triggers: ["task.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        let hat_id = registry.find_by_trigger("task.start");
+        assert!(hat_id.is_some());
+        assert_eq!(
+            hat_id.unwrap().as_str(),
+            "alpha",
+            "find_by_trigger should return alphabetically first matching hat"
+        );
+    }
+
+    #[test]
+    fn test_subscribers_returns_deterministic_order() {
+        let yaml = r#"
+hats:
+  zebra:
+    name: "Zebra"
+    triggers: ["task.*"]
+  middle:
+    name: "Middle"
+    triggers: ["task.*"]
+  alpha:
+    name: "Alpha"
+    triggers: ["task.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        let subs = registry.subscribers(&Topic::new("task.start"));
+        assert_eq!(subs.len(), 3);
+        assert_eq!(subs[0].id.as_str(), "alpha");
+        assert_eq!(subs[1].id.as_str(), "middle");
+        assert_eq!(subs[2].id.as_str(), "zebra");
     }
 }

@@ -1,36 +1,37 @@
-#!/usr/bin/env bash
-# Pre-commit hook for Ralph Orchestrator
-# Runs formatting and linting checks before allowing commits
+#!/bin/bash
+# Pre-commit hook: Enforce formatting and zero clippy warnings
+# Runs the same checks as CI to catch issues early
 
 set -e
 
-echo "🔍 Running pre-commit checks..."
-
-# Check if rustfmt is available
-if ! command -v rustfmt &> /dev/null; then
-    echo "❌ rustfmt not found. Run: rustup component add rustfmt"
+echo "🔍 Checking embedded files are in sync..."
+if ! ./scripts/sync-embedded-files.sh check; then
+    echo ""
+    echo "❌ Embedded files out of sync!"
+    echo "   Run './scripts/sync-embedded-files.sh' and commit the generated changes."
     exit 1
 fi
+echo "✅ Embedded files are in sync"
 
-# Check if clippy is available
-if ! command -v cargo-clippy &> /dev/null; then
-    echo "❌ clippy not found. Run: rustup component add clippy"
-    exit 1
-fi
-
-# Check formatting
-echo "📐 Checking formatting..."
+echo ""
+echo "🔍 Checking formatting..."
 if ! cargo fmt --all -- --check; then
-    echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
+    echo ""
+    echo "❌ Formatting check failed!"
+    echo "   Run 'cargo fmt --all' to fix formatting issues."
     exit 1
 fi
+echo "✅ Formatting OK"
 
-# Run clippy
-echo "🔧 Running clippy..."
-if ! cargo clippy --all-targets --all-features -- -D warnings; then
-    echo "❌ Clippy check failed. Fix warnings before committing."
+echo ""
+echo "🔍 Running clippy (warnings = errors)..."
+if ! cargo clippy --all-targets --all-features -- -D warnings 2>&1; then
+    echo ""
+    echo "❌ Clippy check failed!"
+    echo "   Fix the warnings above before committing."
     exit 1
 fi
+echo "✅ Clippy passed with no warnings!"
 
-echo "✅ Pre-commit checks passed!"
-exit 0
+echo ""
+echo "🎉 All pre-commit checks passed!"

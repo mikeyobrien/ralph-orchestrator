@@ -45,6 +45,10 @@ pub struct LoopState {
     /// When the last Telegram check-in message was sent.
     /// `None` means no check-in has been sent yet.
     pub last_checkin_at: Option<Instant>,
+
+    /// Hat IDs that were active in the last iteration.
+    /// Used to inject `default_publishes` when agent writes no events.
+    pub last_active_hat_ids: Vec<HatId>,
 }
 
 impl Default for LoopState {
@@ -65,6 +69,7 @@ impl Default for LoopState {
             hat_activation_counts: HashMap::new(),
             exhausted_hats: HashSet::new(),
             last_checkin_at: None,
+            last_active_hat_ids: Vec::new(),
         }
     }
 }

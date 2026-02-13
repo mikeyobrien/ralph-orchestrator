@@ -71,6 +71,9 @@ impl CliExecutor {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         command.current_dir(&cwd);
 
+        // Apply backend-specific environment variables (e.g., Agent Teams env var)
+        command.envs(self.backend.env_vars.iter().map(|(k, v)| (k, v)));
+
         debug!(
             command = %cmd,
             args = ?args,
@@ -243,6 +246,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
 
         let executor = CliExecutor::new(backend);
@@ -267,6 +271,7 @@ mod tests {
             prompt_mode: PromptMode::Stdin,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
 
         let executor = CliExecutor::new(backend);
@@ -284,6 +289,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
 
         let executor = CliExecutor::new(backend);
@@ -305,6 +311,7 @@ mod tests {
             prompt_mode: PromptMode::Stdin, // Use stdin mode so prompt doesn't interfere
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
 
         let executor = CliExecutor::new(backend);
@@ -332,6 +339,7 @@ mod tests {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
 
         let executor = CliExecutor::new(backend);

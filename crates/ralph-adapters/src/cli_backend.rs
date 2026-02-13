@@ -16,6 +16,8 @@ pub enum OutputFormat {
     Text,
     /// Newline-delimited JSON stream (Claude with --output-format stream-json)
     StreamJson,
+    /// Newline-delimited JSON stream (Pi with --mode json)
+    PiStreamJson,
 }
 
 /// Error when creating a custom backend without a command.
@@ -52,6 +54,8 @@ pub struct CliBackend {
     pub prompt_flag: Option<String>,
     /// Output format emitted by this backend.
     pub output_format: OutputFormat,
+    /// Environment variables to set when spawning the process.
+    pub env_vars: Vec<(String, String)>,
 }
 
 impl CliBackend {
@@ -68,9 +72,17 @@ impl CliBackend {
             "amp" => Self::amp(),
             "copilot" => Self::copilot(),
             "opencode" => Self::opencode(),
+            "pi" => Self::pi(),
             "custom" => return Self::custom(config),
             _ => Self::claude(), // Default to claude
         };
+
+        // Apply configured extra args for named backends too.
+        // This keeps ralph.yml `cli.args` consistent with CLI `-- ...` extra args behavior.
+        backend.args.extend(config.args.iter().cloned());
+        if backend.command == "codex" {
+            Self::reconcile_codex_args(&mut backend.args);
+        }
 
         // Honor command override for named backends (e.g., custom binary path)
         if let Some(ref cmd) = config.command {
@@ -101,6 +113,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
         }
     }
 
@@ -123,6 +136,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -140,6 +154,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -159,6 +174,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         };
         backend.args.extend(extra_args.iter().cloned());
         backend
@@ -193,6 +209,7 @@ impl CliBackend {
             "amp" => Ok(Self::amp()),
             "copilot" => Ok(Self::copilot()),
             "opencode" => Ok(Self::opencode()),
+            "pi" => Ok(Self::pi()),
             _ => Err(CustomBackendError),
         }
     }
@@ -216,6 +233,7 @@ impl CliBackend {
                 prompt_mode: PromptMode::Arg,
                 prompt_flag: None,
                 output_format: OutputFormat::Text,
+                env_vars: vec![],
             }),
         }
     }
@@ -228,6 +246,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -239,6 +258,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -250,6 +270,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -264,6 +285,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -279,6 +301,28 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
+        }
+    }
+
+    /// Creates the Claude interactive backend with Agent Teams support.
+    ///
+    /// Like `claude_interactive()` but with reduced `--disallowedTools` (only `TodoWrite`)
+    /// and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` env var.
+    pub fn claude_interactive_teams() -> Self {
+        Self {
+            command: "claude".to_string(),
+            args: vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--disallowedTools=TodoWrite".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![(
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+                "1".to_string(),
+            )],
         }
     }
 
@@ -309,6 +353,7 @@ impl CliBackend {
             "amp" => Ok(Self::amp_interactive()),
             "copilot" => Ok(Self::copilot_interactive()),
             "opencode" => Ok(Self::opencode_interactive()),
+            "pi" => Ok(Self::pi_interactive()),
             _ => Err(CustomBackendError),
         }
     }
@@ -324,6 +369,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None,
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -338,6 +384,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-i".to_string()), // NOT -p!
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -352,6 +399,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -366,6 +414,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -380,6 +429,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -399,6 +449,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -416,6 +467,7 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: None, // Positional argument
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -435,6 +487,42 @@ impl CliBackend {
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("--prompt".to_string()),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
+        }
+    }
+
+    /// Creates the Pi backend for headless execution.
+    ///
+    /// Uses `-p` for print mode with `--mode json` for NDJSON streaming output.
+    /// Emits `PiStreamJson` output format for structured event parsing.
+    pub fn pi() -> Self {
+        Self {
+            command: "pi".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "--mode".to_string(),
+                "json".to_string(),
+                "--no-session".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        }
+    }
+
+    /// Creates the Pi backend for interactive mode with initial prompt.
+    ///
+    /// Runs pi TUI without `-p` or `--mode json`, passing the prompt as a
+    /// positional argument. Used by `ralph plan` for interactive sessions.
+    pub fn pi_interactive() -> Self {
+        Self {
+            command: "pi".to_string(),
+            args: vec!["--no-session".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
         }
     }
 
@@ -456,6 +544,7 @@ impl CliBackend {
             prompt_mode,
             prompt_flag: config.prompt_flag.clone(),
             output_format: OutputFormat::Text,
+            env_vars: vec![],
         })
     }
 
@@ -1277,6 +1366,132 @@ mod tests {
         );
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for Pi backend
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_pi_backend() {
+        let backend = CliBackend::pi();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "pi");
+        assert_eq!(
+            args,
+            vec!["-p", "--mode", "json", "--no-session", "test prompt"]
+        );
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::PiStreamJson);
+        assert_eq!(backend.prompt_flag, None); // Positional argument
+    }
+
+    #[test]
+    fn test_pi_interactive_backend() {
+        let backend = CliBackend::pi_interactive();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "pi");
+        // No -p, no --mode json, just --no-session + positional prompt
+        assert_eq!(args, vec!["--no-session", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+    }
+
+    #[test]
+    fn test_from_name_pi() {
+        let backend = CliBackend::from_name("pi").unwrap();
+        assert_eq!(backend.command, "pi");
+        assert_eq!(backend.prompt_flag, None);
+        assert_eq!(backend.output_format, OutputFormat::PiStreamJson);
+    }
+
+    #[test]
+    fn test_for_interactive_prompt_pi() {
+        let backend = CliBackend::for_interactive_prompt("pi").unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "pi");
+        assert_eq!(args, vec!["--no-session", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+    }
+
+    #[test]
+    fn test_from_config_pi() {
+        let config = CliConfig {
+            backend: "pi".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            args: vec![
+                "--provider".to_string(),
+                "zai".to_string(),
+                "--model".to_string(),
+                "glm-5".to_string(),
+            ],
+            ..Default::default()
+        };
+        let backend = CliBackend::from_config(&config).unwrap();
+        let (_cmd, args, _stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(backend.command, "pi");
+        assert_eq!(backend.output_format, OutputFormat::PiStreamJson);
+        assert!(args.contains(&"--provider".to_string()));
+        assert!(args.contains(&"zai".to_string()));
+        assert!(args.contains(&"--model".to_string()));
+        assert!(args.contains(&"glm-5".to_string()));
+    }
+
+    #[test]
+    fn test_from_hat_backend_named_with_args_pi() {
+        let hat_backend = HatBackend::NamedWithArgs {
+            backend_type: "pi".to_string(),
+            args: vec![
+                "--provider".to_string(),
+                "anthropic".to_string(),
+                "--model".to_string(),
+                "claude-sonnet-4".to_string(),
+            ],
+        };
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        let (cmd, args, _, _) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "pi");
+        // Default args + extra args + prompt
+        assert!(args.contains(&"-p".to_string()));
+        assert!(args.contains(&"--mode".to_string()));
+        assert!(args.contains(&"json".to_string()));
+        assert!(args.contains(&"--no-session".to_string()));
+        assert!(args.contains(&"--provider".to_string()));
+        assert!(args.contains(&"anthropic".to_string()));
+        assert!(args.contains(&"--model".to_string()));
+        assert!(args.contains(&"claude-sonnet-4".to_string()));
+        assert!(args.contains(&"test prompt".to_string()));
+    }
+
+    #[test]
+    fn test_pi_large_prompt_no_temp_file() {
+        // Pi should NOT use temp files (only Claude does)
+        let backend = CliBackend::pi();
+        let large_prompt = "x".repeat(7001);
+        let (cmd, args, _stdin, temp) = backend.build_command(&large_prompt, false);
+
+        assert_eq!(cmd, "pi");
+        assert!(temp.is_none());
+        // Prompt should be passed directly as positional arg
+        assert!(args.last().unwrap().len() > 7000);
+    }
+
+    #[test]
+    fn test_pi_interactive_mode_unchanged() {
+        // Pi has no flags to filter in interactive mode
+        let backend = CliBackend::pi();
+        let (_, args_auto, _, _) = backend.build_command("test prompt", false);
+        let (_, args_interactive, _, _) = backend.build_command("test prompt", true);
+
+        assert_eq!(args_auto, args_interactive);
+    }
+
     #[test]
     fn test_custom_args_can_be_appended() {
         // Verify that custom args can be appended to backend args
@@ -1304,5 +1519,49 @@ mod tests {
             run_idx < model_idx,
             "Original args should come before custom args"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for Agent Teams backends
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_claude_interactive_teams_backend() {
+        let backend = CliBackend::claude_interactive_teams();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "claude");
+        assert_eq!(
+            args,
+            vec![
+                "--dangerously-skip-permissions",
+                "--disallowedTools=TodoWrite",
+                "test prompt"
+            ]
+        );
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+        assert_eq!(
+            backend.env_vars,
+            vec![(
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+                "1".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn test_env_vars_default_empty() {
+        // All non-teams constructors should have empty env_vars
+        assert!(CliBackend::claude().env_vars.is_empty());
+        assert!(CliBackend::claude_interactive().env_vars.is_empty());
+        assert!(CliBackend::kiro().env_vars.is_empty());
+        assert!(CliBackend::gemini().env_vars.is_empty());
+        assert!(CliBackend::codex().env_vars.is_empty());
+        assert!(CliBackend::amp().env_vars.is_empty());
+        assert!(CliBackend::copilot().env_vars.is_empty());
+        assert!(CliBackend::opencode().env_vars.is_empty());
+        assert!(CliBackend::pi().env_vars.is_empty());
     }
 }

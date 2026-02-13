@@ -1054,16 +1054,13 @@ fn test_default_publishes_injects_when_no_events() {
 
     let hat_id = HatId::new("test-hat");
 
-    // Record event count before execution
-    let before = event_loop.record_event_count();
+    // Agent wrote no events — process_events_from_jsonl would return Ok(false)
+    let had_events = event_loop.process_events_from_jsonl().unwrap();
+    assert!(!had_events, "No events should be found");
 
-    // Hat executes but writes no events
-    // (In real scenario, hat would write to events.jsonl, but we simulate none written)
+    // check_default_publishes should inject the default
+    event_loop.check_default_publishes(&hat_id);
 
-    // Check for default_publishes
-    event_loop.check_default_publishes(&hat_id, before);
-
-    // Verify default event was injected
     assert!(
         event_loop.has_pending_events(),
         "Default event should be injected"
@@ -1101,12 +1098,9 @@ fn test_default_publishes_not_injected_when_events_written() {
     event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
     event_loop.initialize("Test");
 
-    let hat_id = HatId::new("test-hat");
+    let _hat_id = HatId::new("test-hat");
 
-    // Record event count before execution
-    let before = event_loop.record_event_count();
-
-    // Hat writes an event
+    // Agent writes an event to the JSONL file
     let mut file = std::fs::File::create(&events_path).unwrap();
     writeln!(
         file,
@@ -1115,11 +1109,17 @@ fn test_default_publishes_not_injected_when_events_written() {
     .unwrap();
     file.flush().unwrap();
 
-    // Check for default_publishes
-    event_loop.check_default_publishes(&hat_id, before);
+    // process_events_from_jsonl reads them — caller should NOT call check_default_publishes
+    let had_events = event_loop.process_events_from_jsonl().unwrap();
+    assert!(had_events, "Events should be found from JSONL");
 
-    // Default should NOT be injected since hat wrote an event
-    // The event from file should be read by event_reader
+    // Verify: even if someone mistakenly calls check_default_publishes, the
+    // call site guards with `if !agent_wrote_events`, so defaults won't fire.
+    // But we assert the guard condition here:
+    assert!(
+        had_events,
+        "Caller should skip check_default_publishes when agent wrote events"
+    );
 }
 
 #[test]
@@ -1157,15 +1157,13 @@ fn test_default_publishes_not_injected_when_not_configured() {
     // Consume the initial event from initialize
     let _ = event_loop.build_prompt(&hat_id);
 
-    // Record event count before execution
-    let before = event_loop.record_event_count();
+    // Agent wrote no events
+    let had_events = event_loop.process_events_from_jsonl().unwrap();
+    assert!(!had_events);
 
-    // Hat executes but writes no events
+    // check_default_publishes should NOT inject since not configured
+    event_loop.check_default_publishes(&hat_id);
 
-    // Check for default_publishes
-    event_loop.check_default_publishes(&hat_id, before);
-
-    // No default should be injected since not configured
     assert!(
         !event_loop.has_pending_events(),
         "No default should be injected"
@@ -1571,6 +1569,41 @@ hats:
         "ralph",
         "Should return ralph when no pending events"
     );
+}
+
+#[test]
+fn test_get_active_hat_id_deterministic_with_multiple_pending() {
+    // Two hats with pending events → get_active_hat_id returns alphabetically first matching hat
+    let yaml = r#"
+hats:
+  zebra_hat:
+    name: "Zebra"
+    triggers: ["work.*"]
+  alpha_hat:
+    name: "Alpha"
+    triggers: ["work.*"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    // Publish event that both hats subscribe to
+    event_loop
+        .bus
+        .publish(Event::new("work.start", "Begin work"));
+
+    // Should deterministically return "alpha_hat" (alphabetically first)
+    let active = event_loop.get_active_hat_id();
+    assert_eq!(
+        active.as_str(),
+        "alpha_hat",
+        "get_active_hat_id should return alphabetically first matching hat"
+    );
+
+    // Run multiple times to confirm determinism
+    for _ in 0..100 {
+        let active = event_loop.get_active_hat_id();
+        assert_eq!(active.as_str(), "alpha_hat");
+    }
 }
 
 #[test]

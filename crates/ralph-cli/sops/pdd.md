@@ -2,7 +2,7 @@
 name: pdd
 description: Transforms a rough idea into a detailed design document with implementation plan. Follows Prompt-Driven Development — iterative requirements clarification, research, design, and planning.
 type: anthropic-skill
-version: "1.1"
+version: "1.2"
 ---
 
 # Prompt-Driven Development
@@ -20,6 +20,7 @@ These rules apply across ALL steps:
 - **Record as you go:** Append questions, answers, and findings to project files in real time — don't batch-write at the end.
 - **Mermaid diagrams:** Include diagrams for architectures, data flows, and component relationships in research and design documents.
 - **Sources:** Cite references and links in research documents when based on external materials.
+- **Planning only:** This SOP produces planning artifacts. You MUST NOT implement code, run containers, execute scripts, or begin any implementation work. If the user wants implementation, direct them to `ralph run`.
 
 ## Parameters
 
@@ -43,12 +44,16 @@ Create the directory and initial files:
 
 Inform the user the structure feeds into Ralph's spec-driven presets.
 
+**Gate:** You MUST NOT proceed to Step 2 until the user confirms the project structure is acceptable.
+
 ### 2. Initial Process Planning
 
 Ask the user their preferred starting point:
 - Requirements clarification (default)
 - Preliminary research on specific topics
 - Provide additional context first
+
+**Gate:** You MUST wait for the user to choose before proceeding. You MUST NOT automatically start requirements clarification or research without explicit user direction.
 
 ### 3. Requirements Clarification
 
@@ -66,6 +71,8 @@ Guide the user through questions to refine the idea into a thorough specificatio
 
 Cover edge cases, user experience, technical constraints, and success criteria. Suggest options when the user is unsure.
 
+**Gate:** You MUST NOT proceed to Research or Design until the user explicitly confirms requirements clarification is complete. You MUST offer the option to conduct research if questions arise that would benefit from additional information.
+
 ### 4. Research
 
 Conduct research on technologies, libraries, or existing code to inform the design.
@@ -76,12 +83,16 @@ Conduct research on technologies, libraries, or existing code to inform the desi
 - You MUST periodically check in with the user to share findings and confirm direction
 - You MUST summarize key findings before moving on
 
+**Gate:** You MUST NOT proceed to the Iteration Checkpoint until the user confirms research is sufficient. You MUST offer to return to requirements clarification if research uncovers new questions.
+
 ### 5. Iteration Checkpoint
 
 Summarize the current state of requirements and research, then ask the user:
 - Proceed to design?
 - Return to requirements clarification?
 - Conduct additional research?
+
+**Gate:** You MUST NOT proceed to design without explicit user confirmation. You MUST support iterating between requirements and research as many times as needed.
 
 ### 6. Create Detailed Design
 
@@ -102,6 +113,8 @@ Create `{project_dir}/design.md` as a standalone document with these sections:
 - You MUST include an appendix summarizing research (technology choices, alternatives, limitations)
 - You MUST review the design with the user and iterate on feedback
 
+**Gate:** You MUST NOT proceed to the implementation plan until the user explicitly approves the design. You MUST offer to return to requirements or research if gaps are identified during design review.
+
 ### 7. Develop Implementation Plan
 
 Create `{project_dir}/plan.md` — a numbered series of incremental implementation steps.
@@ -113,13 +126,15 @@ Create `{project_dir}/plan.md` — a numbered series of incremental implementati
 - You MUST format as "Step N:" with: objective, implementation guidance, test requirements, integration notes, and demo description
 - You MUST ensure the plan covers all aspects of the design without duplicating design details
 
+**Gate:** You MUST NOT proceed to the summary until the user reviews and approves the implementation plan.
+
 ### 8. Summarize and Present Results
 
 Create `{project_dir}/summary.md` listing all artifacts, a brief overview, and suggested next steps. Present this summary in the conversation.
 
 ### 9. Offer Ralph Integration
 
-Ask: "Would you like me to set up Ralph to implement this autonomously?"
+Ask: "Would you like me to create a PROMPT.md for Ralph to implement this autonomously?"
 
 If yes, create a concise PROMPT.md (under 100 lines) with:
 - Objective statement
@@ -130,6 +145,10 @@ If yes, create a concise PROMPT.md (under 100 lines) with:
 Suggest the appropriate command:
 - Full pipeline: `ralph run --config presets/pdd-to-code-assist.yml`
 - Simpler flow: `ralph run --config presets/spec-driven.yml`
+
+If the user declines, acknowledge and conclude the session.
+
+**Gate:** You MUST NOT run `ralph run` or begin any implementation. This SOP ends here. Implementation is a separate step the user initiates themselves.
 
 ## Example
 

@@ -752,6 +752,7 @@ impl EventLoop {
                 // Determine which hats are active based on regular events
                 let active_hat_ids = self.determine_active_hat_ids(&regular_events);
                 self.record_hat_activations(&active_hat_ids);
+                self.state.last_active_hat_ids = active_hat_ids.clone();
                 let active_hats = self.determine_active_hats(&regular_events);
 
                 // Format events for context
@@ -1328,6 +1329,7 @@ impl EventLoop {
 
     /// Returns the primary active hat ID for display purposes.
     /// Returns the first active hat, or "ralph" if no specific hat is active.
+    /// BTreeMap iteration is already sorted by key.
     pub fn get_active_hat_id(&self) -> HatId {
         // Peek at pending events (don't consume them)
         for hat_id in self.bus.hat_ids() {
@@ -1344,34 +1346,14 @@ impl EventLoop {
         HatId::new("ralph")
     }
 
-    /// Records the current event count before hat execution.
+    /// Injects a default event for a hat when the agent wrote no events.
     ///
-    /// Call this before executing a hat, then use `check_default_publishes`
-    /// after execution to inject a fallback event if needed.
-    pub fn record_event_count(&mut self) -> usize {
-        self.event_reader
-            .read_new_events()
-            .map(|r| r.events.len())
-            .unwrap_or(0)
-    }
-
-    /// Checks if hat wrote any events, and injects default if configured.
-    ///
-    /// Call this after hat execution with the count from `record_event_count`.
-    /// If no new events were written AND the hat has `default_publishes` configured,
-    /// this will inject the default event automatically.
-    pub fn check_default_publishes(&mut self, hat_id: &HatId, _events_before: usize) {
-        let events_after = self
-            .event_reader
-            .read_new_events()
-            .map(|r| r.events.len())
-            .unwrap_or(0);
-
-        if events_after == 0
-            && let Some(config) = self.registry.get_config(hat_id)
+    /// Call this after `process_events_from_jsonl` returns `Ok(false)` (no events found).
+    /// If the hat has `default_publishes` configured, this injects the default event.
+    pub fn check_default_publishes(&mut self, hat_id: &HatId) {
+        if let Some(config) = self.registry.get_config(hat_id)
             && let Some(default_topic) = &config.default_publishes
         {
-            // No new events written - inject default event
             let default_event = Event::new(default_topic.as_str(), "").with_source(hat_id.clone());
 
             debug!(
