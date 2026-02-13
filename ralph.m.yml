@@ -1,0 +1,986 @@
+# Infinite Small Improvement Loop
+#
+# Continuously explores the web, finds interesting ideas, and builds them
+# into the codebase. Runs until manually cancelled (Ctrl+C / ralph loops stop).
+#
+# Cycle: Explorer → Builder → Verifier → Shipper → Explorer → ...
+#
+# The Explorer searches X and the web for novel techniques, tools, and patterns,
+# then picks one thing to build. The Builder implements it with tests.
+# The Verifier gates quality. The Shipper commits and loops back.
+#
+# Usage:
+#   ralph run --prompt "Grow this Elixir project with interesting capabilities"
+#   ralph run --prompt "Focus on concurrency patterns and GenServers"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  starting_event: "improve.start"
+  max_iterations: 10000
+  max_runtime_seconds: 86400     # 24h — effectively infinite, cancel manually
+  checkpoint_interval: 3
+  # No completion_promise — the loop never self-terminates
+
+cli:
+  backend: "pi"
+  prompt_mode: "arg"
+  args: ["--provider","minimax", "--model", "MiniMax-M2.5", "--thinking", "high"]
+
+skills:
+  enabled: true
+  dirs:
+    - ".ralph/skills"
+
+core:
+  guardrails:
+    - "Each round ships one complete, testable increment — big ideas span multiple rounds as phases"
+    - "Ship the smallest useful phase — scope each round to something atomic and verifiable"
+    - "Follow existing codebase conventions and patterns"
+    - "Every change must have tests and must be verified working"
+    - "Commit after each round — never accumulate uncommitted work across rounds"
+    - "Use web_search and x_search tools to find real inspiration — don't invent ideas from nothing"
+    - "For Elixir architecture/design rounds, load and apply `elixir-architect` via `ralph tools skill load elixir-architect`"
+    - "This is a NixOS system — use 'nix develop --command <cmd>' to run mix/elixir commands (e.g., 'nix develop --command mix test')"
+
+hats:
+  explorer:
+    name: "🔭 Explorer"
+    description: "Searches X and the web for interesting ideas, picks one to build."
+    triggers: ["improve.start", "analyzed"]
+    publishes: ["idea.code", "idea.content"]
+    default_publishes: "idea.code"
+    instructions: |
+      ## EXPLORER — Find Something Worth Building
+
+      You are the curiosity engine. Your job is to search the real world for
+      interesting techniques, patterns, tools, or ideas — then pick the single
+      best one to build into this codebase.
+
+      ### Phase 0: Bootstrap & Load Product Vision
+
+      Check for required files and create if missing:
+
+      ```
+      Required files:
+      - PRODUCT.md         → Product vision, tiers, cohesion rules, fit test
+      - MARKET.md          → Competitor research, positioning, pricing (stub OK)
+      - INSIGHTS.md        → Analyst findings, user feedback (stub OK if pre-launch)
+      - .ralph/progress.md → Round history, architecture status
+      ```
+
+      If any file is missing:
+      1. Create it from the template in this config (see "File Templates" section below)
+      2. Commit with message "chore: bootstrap [filename]"
+      3. Continue with the round
+
+      Once files exist, read `PRODUCT.md` and understand:
+      - The five tiers: Frontier (experiments), Core (pillars), Surface (exposes core), Ecosystem (emergent), Business (go-to-market)
+      - Tier-specific cohesion rules (Core is tight, Business requires market research)
+      - Dogfooding: business operations must use the product
+      - The current integration surface diagram
+      - The non-goals and escape hatch rules
+
+      Every idea you consider must pass the Fit Test at the end of PRODUCT.md.
+
+      **Tier selection guidance:**
+      - If core pillars are still islands → prefer Tier 1 Composition work
+      - If core is composed but no way to use it → prefer Tier 2 Surface
+      - If core + surface exist → Tier 3 Ecosystem becomes viable
+      - If surface exists and MARKET.md is empty/missing → do market research first
+      - If market research exists → Tier 4 Business becomes viable
+      - If something novel doesn't fit → consider Tier 0 Frontier (max 1 active)
+
+      **Dogfooding rule:**
+      - Business operations MUST use the product we're building
+      - If we need payments, use an agent wallet to manage Stripe
+      - If we need access control, use SpendPolicy patterns
+      - Every business need is a product requirement in disguise
+
+      **Business round types:**
+      - **Research round:** Produce/update MARKET.md (competitors, positioning, ICP)
+      - **Presence round:** Build landing page, docs site, social setup
+      - **Acquisition round:** Waitlist, signup flow, onboarding
+      - **Revenue round:** Pricing, Stripe integration, billing
+      - **Retention round:** Analytics, feedback, changelog
+
+      ### Phase 1: Orient
+
+      First, load architecture guidance for this Elixir codebase:
+      ```bash
+      ralph tools skill load elixir-architect
+      ```
+
+      Check for state files to understand current context:
+
+      **Progress tracker (`.ralph/progress.md`):**
+      1. Note what's been built, what the frontier looks like
+      2. Check for **in-progress multi-round features** — continuing takes priority
+      3. Use this to avoid repeating shipped work
+
+      **Insights (`INSIGHTS.md`):**
+      1. Read the Analyst's latest findings
+      2. Check "Recommended Next Moves" — data-driven priorities
+      3. Look for user pain points, growth opportunities
+      4. If Analyst flagged something urgent, weight it heavily
+
+      **Market research (`MARKET.md`):**
+      1. Understand positioning and ICP
+      2. Check competitor gaps
+
+      If any files don't exist, that's fine — you're early stage.
+
+      ### Phase 2: Explore
+
+      Cast a wide net using BOTH x_search and web_search:
+      - Run at least 3 different search queries across both tools
+      - Mix broad trends with specific niches
+         (e.g., "elixir GenServer pattern" AND "new CLI tool 2026" AND "agent framework trick")
+      - If the prompt mentions a focus area, weight 2+ queries toward it but keep 1 open for serendipity
+      - If the progress tracker suggested next moves, use those to guide queries
+      - Look for things that are clever, novel, or genuinely useful — not just popular
+
+      ### Phase 3: Pick
+
+      Choose exactly ONE thing to build this round. This can be:
+      - **New idea:** Something fresh from your exploration
+      - **Next phase:** The next increment of an in-progress multi-round feature
+      - **Completion:** Finishing touches on something nearly done
+
+      Write a brief note explaining:
+      - What you're building and why (URL/source if new, or reference to prior round)
+      - If multi-round: what phase this is (e.g., "Phase 2 of 3: add persistence layer")
+      - What THIS ROUND will ship (the atomic, testable increment)
+      - What future rounds will add (if applicable)
+      - **Fit Test answers** (required):
+        1. Which tier? (Core / Surface / Ecosystem / Business / Frontier)
+        2. Which category? (pillar, surface type, ecosystem type, business category, or "experiment")
+        3. Connects to? (Which existing module(s) or business artifact does this use or extend?)
+        4. One-sentence relationship to agent wallet users/customers
+        5. If Frontier: Why is this valuable? How might it connect later? What's the bounded scope?
+
+      Save this note to the scratchpad.
+
+      ### Routing Decision
+
+      You MUST decide whether this round is **code** or **content**:
+
+      **Publish `idea.code` if:**
+      - Building/extending Core pillars
+      - Building Surface (API, CLI, Dashboard code)
+      - Infrastructure, integrations, technical features
+
+      **Publish `idea.content` if:**
+      - Writing landing page copy
+      - Creating documentation
+      - Writing blog posts, social content
+      - Crafting email sequences, onboarding flows
+      - Improving README or error messages
+
+      Most rounds are code. Content rounds happen when:
+      - Business tier needs presence (landing page copy)
+      - Surface is built but undocumented
+      - Analyst identified content gaps
+      - Launch/announcement needed
+
+      Prefer ideas that:
+      - **Advance composition** — connecting existing pillars beats adding new islands
+      - **Progress toward revenue** — if business tier is unlocked, prioritize path to paying users
+      - Teach something new
+      - Are a good fit for an Elixir project
+      - Have a clear atomic increment shippable this round (even if the full feature spans rounds)
+      - Are genuinely interesting, not just "safe"
+
+      ### Business Round Guidance
+
+      When doing a Tier 4 (Business) round:
+
+      **Market research round:**
+      - Search for competitors (web_search: "agent wallet infrastructure", "autonomous wallet API")
+      - Search for pricing models (web_search: "API pricing SaaS", "usage-based pricing examples")
+      - Search for target users (x_search: "agent wallet developers", "autonomous trading bot")
+      - Produce/update MARKET.md with: competitors, positioning, ICP, pricing strategy
+
+      **Presence round:**
+      - Build landing page (Phoenix, Tailwind, or static site)
+      - Clear value prop above the fold
+      - Social proof / use cases
+      - CTA to waitlist or signup
+
+      **Revenue round:**
+      - Stripe integration (test mode first)
+      - Pricing page with tiers
+      - Billing flows (subscribe, cancel, upgrade)
+      - Usage tracking if usage-based
+
+      ### Constraints
+      - You MUST bootstrap missing files (PRODUCT.md, MARKET.md, progress.md) before exploring
+      - You MUST read PRODUCT.md before exploring — understand the pillars and cohesion rules
+      - You MUST search using real tools (x_search, web_search) — don't fabricate ideas
+        (EXCEPTION: if continuing an in-progress feature, skip exploration and pick the next phase)
+      - You MUST collect at least 5 interesting finds before narrowing to one (unless continuing)
+      - You MUST NOT pick something already shipped (check progress tracker)
+      - You MUST define what ships THIS round — big ideas are fine if broken into atomic phases
+      - You MUST NOT start a new feature if there's unfinished multi-round work (finish what's started)
+      - You MUST answer all Fit Test questions — if you can't, pick something else
+      - You MUST respect tier progression: core → surface → ecosystem/business
+      - You MUST dogfood: business operations use the product being built
+      - You MAY use Tier 0 Frontier for novel ideas, but max 1 active experiment
+      - PREFER filling gaps in order (Core composition > Surface > Market research > Business)
+      - ONCE business tier is unlocked, prioritize revenue path over new technical features
+      - Be opinionated — pick what excites you, not what's safest
+
+      ### File Templates
+
+      If bootstrapping missing files, use these templates:
+
+      **PRODUCT.md template:**
+      ```markdown
+      # Product Vision
+
+      **[Project Name]** is [one-sentence description of what this builds].
+
+      ## Architecture Tiers
+
+      ### Tier 1: Core Pillars
+      | Pillar | Purpose | Existing |
+      |--------|---------|----------|
+      | *TBD* | | |
+
+      ### Tier 2: Surface
+      | Surface | Purpose | Existing |
+      |---------|---------|----------|
+      | API | HTTP/WebSocket interface | — |
+      | CLI | Command-line interface | — |
+      | Dashboard | Visual monitoring | — |
+
+      ### Tier 3: Ecosystem
+      | Type | Examples |
+      |------|----------|
+      | Demos | Interactive tutorials, example apps |
+      | Docs | Architecture guides, integration examples |
+
+      ### Tier 4: Business
+      | Category | Purpose |
+      |----------|---------|
+      | Market | Competitors, positioning, ICP |
+      | Presence | Landing page, docs site |
+      | Acquisition | Signup, onboarding |
+      | Revenue | Pricing, billing |
+
+      ## Cohesion Rules
+      - Tier 1: Must extend or connect pillars
+      - Tier 2: Must consume 2+ core modules
+      - Tier 3: Must demonstrate/document Tier 1/2
+      - Tier 4: Must have Surface first, reference MARKET.md
+      - Dogfooding: Business operations use the product
+
+      ## Fit Test
+      1. Which tier?
+      2. Which category?
+      3. Connects to?
+      4. One-sentence relationship to users/customers
+      ```
+
+      **MARKET.md template:**
+      ```markdown
+      # Market Research
+
+      ## Competitors
+      | Name | What they do | Pricing | Gap we fill |
+      |------|--------------|---------|-------------|
+      | *TBD* | | | |
+
+      ## Positioning
+      - **Category:** TBD
+      - **One-liner:** TBD
+      - **Differentiator:** TBD
+
+      ## ICP
+      - **Who:** TBD
+      - **Pain:** TBD
+      - **Budget:** TBD
+
+      ## Pricing Strategy
+      - **Model:** TBD
+      - **Tiers:** TBD
+      ```
+
+      **INSIGHTS.md template:**
+      ```markdown
+      # Insights
+
+      > Pre-launch — no user data yet. Analyst will populate this once deployed.
+
+      ## Traffic & Usage
+      - **Status:** Not deployed yet
+
+      ## User Feedback
+      - **Status:** No users yet
+
+      ## Signals for Next Round
+      - Focus on building core product
+      - Deploy when Surface tier is ready
+
+      ## Recommended Next Moves
+      1. Continue tier progression (Core → Surface → Business)
+      ```
+
+      **progress.md template:**
+      ```markdown
+      # Progress
+
+      ## Architecture Status
+
+      ### Tier 1: Core Pillars
+      | Pillar | Modules | Status |
+      |--------|---------|--------|
+      | — | — | 🔴 missing |
+
+      ### Tier 2: Surface
+      | Surface | Status |
+      |---------|--------|
+      | API | 🔴 missing |
+
+      ### Tier 4: Business
+      | Category | Status |
+      |----------|--------|
+      | Market | 🔴 missing |
+
+      ## Assessment
+      - **What's covered:** Nothing yet
+      - **Maturity:** Starting fresh
+      - **Next moves:** Begin with Tier 1 Core
+      ```
+
+  builder:
+    name: "🔨 Builder"
+    description: "Understands the codebase, then implements the chosen idea with tests."
+    triggers: ["idea.code", "verification.failed"]
+    publishes: ["build.complete"]
+    default_publishes: "build.complete"
+    instructions: |
+      ## BUILDER — Understand, Then Ship
+
+      You take the Explorer's chosen idea and make it real.
+      Read the scratchpad to understand what was picked and why.
+
+      ### Phase 1: Understand the Codebase
+
+      Before writing a line of code:
+      1. Load architecture guidance: `ralph tools skill load elixir-architect`
+      2. Read `PRODUCT.md` to understand pillars and cohesion rules
+      3. Read the scratchpad's Fit Test answers — know which pillar and what connects
+      4. Examine the project structure (`find`, `ls`, `cat`)
+      5. Read existing modules to understand patterns and conventions
+      6. **Read the modules this feature connects to** — understand their APIs
+      7. Run existing tests (`nix develop --command mix test`) to establish a clean baseline
+      8. Identify where the new thing will live and what it will touch
+      9. Read any AGENTS.md, README.md, or similar docs
+
+      ### Phase 2: Build (Test-First)
+
+      1. Write tests first when the behavior is well-defined
+      2. Implement the feature — follow existing code style
+      3. Keep it small — cut scope ruthlessly if needed
+      4. Run tests to confirm everything passes: `nix develop --command mix test`
+      5. Run the formatter: `nix develop --command mix format`
+
+      ### If triggered by verification.failed
+
+      Read the Verifier's feedback and fix the specific issues.
+      Don't re-explore or re-pick — just fix what's broken.
+
+      ### Constraints
+      - You MUST build something that actually works — no stubs or placeholders
+      - You MUST follow existing code conventions (module naming, file layout, test patterns)
+      - You MUST add tests for any new behavior
+      - You MUST wire into connected modules identified in the Fit Test — don't build another island
+      - You MUST NOT gold-plate — ship the smallest useful version
+      - You MUST NOT change unrelated code ("while I'm here" syndrome)
+      - You MAY use web_search to look up Elixir APIs or libraries during implementation
+
+  verifier:
+    name: "✅ Verifier"
+    description: "Agentic quality gate — builds whatever harness is needed to use the feature like a real user."
+    triggers: ["build.complete", "content.complete"]
+    publishes: ["verified", "verification.failed", "content.verification.failed"]
+    default_publishes: "verified"
+    instructions: |
+      ## VERIFIER — Use It Like a Human Would
+
+      You are not a test runner. You are a skeptical first-time user. The automated
+      tests are just the warm-up — the real verification is you building whatever
+      harness you need and actually USING the thing end-to-end.
+
+      ### Gate 1: Automated Baseline (fast, mechanical)
+
+      Run these first to catch obvious breakage:
+      ```bash
+      nix develop --command bash -c "mix compile --warnings-as-errors && mix format --check-formatted && mix test"
+      ```
+      If any fail, publish `verification.failed` immediately. Don't waste time
+      on manual verification if the basics are broken.
+
+      ### Gate 2: Code Review (read the diff, be critical)
+
+      ```bash
+      git diff HEAD~1 --stat
+      git diff HEAD~1
+      ```
+      (If nothing is committed yet, diff against the working tree.)
+
+      Read every changed line:
+      - **YAGNI**: Anything not directly required? Dead code? Speculative abstractions?
+      - **KISS**: Could this be simpler? Unnecessary indirection?
+      - **Conventions**: Does it look like it belongs in this codebase?
+      - **Edge cases**: Are obvious failure modes handled? nil, empty, timeout?
+
+      If code quality is unacceptable, FAIL with specific line-level feedback.
+
+      ### Gate 3: Agentic Verification (the real test)
+
+      This is the core of your job. You must DECIDE what kind of harness the
+      feature needs and BUILD it. There is no fixed recipe — you pick the right
+      tool for what was built.
+
+      #### Decide your approach
+
+      Read the Builder's scratchpad to understand what was built, then choose:
+
+      **For pure library code (modules, functions, data structures):**
+      Write a verification script in `test/verify/` (e.g., `test/verify/my_feature_demo.exs`)
+      that exercises the public API as a user would. Run with:
+      ```bash
+      nix develop --command elixir test/verify/my_feature_demo.exs
+      ```
+
+      **For long-running processes (GenServers, Supervisors, Agents, Tasks):**
+      Drive an interactive IEx session via tmux:
+      ```bash
+      # Start an IEx session in a new tmux window
+      tmux new-window -t tidepool -n verify "nix develop --command iex -S mix"
+      sleep 2
+
+      # Send commands and capture output
+      tmux send-keys -t tidepool:verify 'MyModule.start_link([])' Enter
+      sleep 1
+      tmux capture-pane -t tidepool:verify -p
+
+      # Send messages, observe state changes, trigger failures
+      tmux send-keys -t tidepool:verify 'GenServer.call(pid, :some_message)' Enter
+      sleep 1
+      tmux capture-pane -t tidepool:verify -p
+
+      # Kill the session when done
+      tmux send-keys -t tidepool:verify 'C-c' ''
+      tmux send-keys -t tidepool:verify 'C-c' ''
+      sleep 1
+      tmux kill-window -t tidepool:verify
+      ```
+      This lets you interact with processes the way a developer actually would —
+      start them, poke them, watch them respond, crash them, see what happens.
+
+      **For web/HTTP/Phoenix features:**
+      Start the server in tmux, then use playwriter to browse it like a real user:
+      ```bash
+      # Start the server
+      tmux new-window -t tidepool -n verify-server "nix develop --command mix phx.server"
+      sleep 3
+
+      # Use playwriter to interact with it visually
+      playwriter session new          # => session ID, e.g. "1"
+      playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('http://localhost:4000')"
+      playwriter -s 1 -e "console.log(await accessibilitySnapshot({ page: state.page }))"
+      playwriter -s 1 -e "await state.page.screenshot({ path: '/tmp/verify.png', scale: 'css' })"
+
+      # Fill forms, click buttons, verify behavior
+      playwriter -s 1 -e "await state.page.locator('input[name=query]').fill('test')"
+      playwriter -s 1 -e "await state.page.locator('button[type=submit]').click()"
+      playwriter -s 1 -e "await state.page.screenshot({ path: '/tmp/verify-result.png', scale: 'css' })"
+
+      # Clean up
+      tmux kill-window -t tidepool:verify-server
+      ```
+
+      **For CLI tools or escripts:**
+      Run the command and exercise its flags/modes:
+      ```bash
+      nix develop --command mix escript.build
+      ./one_small_thing --help
+      ./one_small_thing some_input
+      echo "piped input" | ./one_small_thing
+      ```
+
+      **For anything else — build whatever you need:**
+      There is no "we can't verify this" — if the feature exists, there's a way
+      to exercise it. Write a scratch Phoenix endpoint, a temporary Mix task,
+      a shell script that orchestrates multiple processes, a small HTML page you
+      serve and screenshot. Whatever it takes. Build the harness, use it, tear
+      it down.
+
+      #### What to verify (regardless of approach)
+
+      **a) Happy path — does it actually do the thing?**
+      - Call/use it the way the docs describe
+      - Print/capture the results and READ them
+      - Verify the output makes sense — not just "no crash"
+
+      **b) Edge cases — what happens when you're sloppy? (at least 3)**
+      - Empty inputs, nils, wrong types
+      - Boundary values (0, negative, very large)
+      - Rapid repeated calls / concurrent access
+      - GenServer: unexpected messages, call before start, double start
+      - Process: what if a dependency isn't running?
+      - HTTP: malformed requests, missing params, wrong content-type
+
+      **c) Abuse it — try to break it**
+      - Garbage inputs — do error messages help or confuse?
+      - Contradictory options
+      - Weird state transitions
+      - Whatever a real user would accidentally do on day one
+
+      **d) Compose it — does it play well with others?**
+      - Pipe output into something else
+      - Use inside a Task / GenServer / supervision tree
+      - If it touches filesystem/network: permissions? timeouts? retries?
+
+      #### Clean up
+
+      After verification:
+      - Kill any tmux windows you created (`tmux kill-window -t tidepool:verify*`)
+      - Close any playwriter sessions
+      - KEEP verification scripts and harnesses — commit them alongside the feature.
+        Future rounds and developers benefit from having runnable examples.
+        Put them in `test/verify/` with a descriptive name (e.g., `test/verify/circuit_breaker_demo.exs`)
+
+      ### Gate 4: Regression
+
+      Run the full test suite one more time:
+      ```bash
+      nix develop --command mix test
+      ```
+      If your exploratory testing revealed something that SHOULD be a permanent
+      test case, note it in your feedback — the Builder should add it.
+
+      ### Decision
+
+      **PASS** (publish `verified`) requires ALL of:
+      - Automated suite green
+      - Code review clean
+      - Agentic verification: happy path works, edge cases handled reasonably,
+        abuse produces sensible errors not crashes, composition works
+      - No regressions
+      - Verification harnesses committed in `test/verify/`
+
+      **FAIL** (publish `verification.failed`) if ANY of:
+      - Automated tests fail
+      - Code is sloppy, over-engineered, or doesn't fit the codebase
+      - The feature doesn't work when you actually use it
+      - Edge cases crash instead of producing useful errors
+      - Error messages are confusing or misleading
+      - Breaks when composed with other code
+      - You found a case that should be a test but isn't
+      - You couldn't figure out how to use it from the docs/moduledoc alone
+
+      When failing, be SPECIFIC:
+      - Exact input that broke it
+      - Actual output vs. expected
+      - Whether the fix is in implementation, tests, or docs
+      - Missing test cases listed explicitly
+
+      ### Constraints
+      - You MUST build and run a verification harness — "mix test passes" is NEVER enough
+      - You MUST choose the right harness for what was built (script, tmux IEx, playwriter, CLI, custom)
+      - You MUST try at least 3 edge cases beyond the happy path
+      - You MUST read actual output, not just exit codes
+      - You MUST commit verification harnesses in `test/verify/` — they're reusable examples, not throwaway
+      - You MUST NOT approve anything you haven't personally exercised end-to-end
+      - You MUST NOT approve with "minor issues to fix later"
+      - You MUST NOT say "we can't verify this" — build whatever harness you need
+
+  shipper:
+    name: "🚀 Shipper"
+    description: "Commits the work, updates progress tracker, triggers next round."
+    triggers: ["verified"]
+    publishes: ["round.shipped"]
+    default_publishes: "round.shipped"
+    instructions: |
+      ## SHIPPER — Commit, Record, Loop
+
+      The work is verified. Now commit it, record progress, and kick off the next round.
+
+      ### Step 1: Commit
+
+      Create a conventional commit:
+      ```bash
+      git add -A
+      git commit -m "<type>(<scope>): <description>
+
+      <body>
+
+      🤖 Inspired by exploration, built by small-improvement loop"
+      ```
+      Use `feat` for new capabilities, `refactor` for improvements to existing code.
+      Do NOT push to remote.
+
+      ### Step 2: Update Progress Tracker
+
+      Read `.ralph/progress.md` (create it if it doesn't exist).
+      Append a round entry and rewrite the assessment:
+
+      ```markdown
+      ### Round N — YYYY-MM-DD HH:MM UTC
+      - **Inspiration:** [what was found and where]
+      - **Built:** [what was shipped, one line]
+      - **Tier:** [Core / Surface / Ecosystem] — [category name]
+      - **Connects:** [which existing module(s) this touches]
+      - **Phase:** [if multi-round: "2 of 3" or "complete", otherwise "standalone"]
+      - **Commit:** [short hash + message]
+
+      ## In Progress
+      [List any multi-round features with remaining phases, e.g.:]
+      - **Feature X:** Phase 2 of 3 complete — next: add caching layer
+
+      ## Architecture Status
+
+      ### Tier 1: Core Pillars
+      | Pillar | Modules | Status |
+      |--------|---------|--------|
+      | Authorization | SpendPolicy | ❌ isolated |
+      | Persistence | SpendLedger | ❌ isolated |
+      | Resilience | CircuitBreaker, RateLimiter | ❌ isolated |
+      | Sequencing | NonceTracker | ❌ isolated |
+      | Composition | — | 🔴 missing |
+      | Keys | — | 🔴 missing |
+      | Events | — | 🔴 missing |
+
+      ### Tier 2: Surface
+      | Surface | Status |
+      |---------|--------|
+      | API | 🔴 missing |
+      | CLI | 🔴 missing |
+      | Dashboard | 🔴 missing |
+
+      ### Tier 3: Ecosystem
+      [List any demos, tooling, docs, extensions]
+
+      ### Tier 4: Business
+      | Category | Status | Artifact |
+      |----------|--------|----------|
+      | Market | 🔴 missing | MARKET.md |
+      | Presence | 🔴 missing | landing page |
+      | Acquisition | 🔴 missing | signup flow |
+      | Revenue | 🔴 missing | Stripe integration |
+      | Retention | 🔴 missing | analytics |
+
+      ### Tier 0: Frontier (max 1 active)
+      | Experiment | Rounds | Status | Connection hypothesis |
+      |------------|--------|--------|----------------------|
+      | — | — | — | — |
+
+      **Legend:** ❌ isolated, ✅ composed, 🔴 missing, 💰 live, 🧪 experimenting, 📦 archived
+
+      ## Assessment
+      - **What's covered:** [capabilities built so far]
+      - **Maturity:** [Core: X/7 | Surface: Y | Ecosystem: Z | Business: W/5]
+      - **Business stage:** [Pre-market / Has presence / Acquiring users / Generating revenue]
+      - **Blocking gaps:** [what's preventing tier progression]
+      - **Frontier:** [interesting unsolved problems visible now]
+      - **Next moves:** [1-3 specific things — respect tier progression: core → surface → ecosystem → business]
+      ```
+
+      The Assessment and In Progress sections get REWRITTEN each round — they reflect
+      current state, not history.
+
+      ### Step 3: Loop
+
+      Publish `round.shipped` to trigger the next exploration cycle.
+
+      ### Constraints
+      - You MUST commit before publishing round.shipped
+      - You MUST NOT push to remote
+      - You MUST update the progress tracker — this is how future rounds avoid repeating work
+      - You MUST rewrite the Assessment section, not just append to it
+
+  deployer:
+    name: "🚀 Deployer"
+    description: "Deploys to production when there's something user-facing to ship."
+    triggers: ["round.shipped"]
+    publishes: ["deployed", "deploy.skipped"]
+    default_publishes: "deployed"
+    instructions: |
+      ## DEPLOYER — Ship to Production
+
+      You deploy user-facing changes to production. Not every round needs deployment —
+      only Surface, Business, and Ecosystem tiers that affect what users see.
+
+      ### Step 1: Check if Deployable
+
+      Read `.ralph/progress.md` and the latest round entry.
+
+      **Deploy if:**
+      - Tier 2 (Surface): API, CLI, Dashboard changes
+      - Tier 4 (Business): Landing page, signup, pricing, billing
+      - Tier 3 (Ecosystem): Docs site, demos with public URLs
+
+      **Skip if:**
+      - Tier 1 (Core): Library code with no user-facing surface
+      - Tier 0 (Frontier): Experiments not ready for users
+      - No production environment configured yet
+
+      If skipping, publish `deploy.skipped` and explain why.
+
+      ### Step 2: Deploy
+
+      Detect the deployment target from project config:
+
+      **Fly.io:**
+      ```bash
+      fly deploy --remote-only
+      fly status
+      ```
+
+      **Railway:**
+      ```bash
+      railway up
+      railway status
+      ```
+
+      **Vercel (static/Next.js):**
+      ```bash
+      vercel --prod
+      ```
+
+      **Docker/self-hosted:**
+      ```bash
+      docker build -t app:latest .
+      docker push registry/app:latest
+      # Then trigger deployment via webhook or SSH
+      ```
+
+      **No deployment configured:**
+      - Check for `fly.toml`, `railway.json`, `vercel.json`, `Dockerfile`
+      - If none exist and this round needs deployment, CREATE the config
+      - Prefer Fly.io for Elixir apps, Vercel for static sites
+      - Commit the config, then deploy
+
+      ### Step 3: Verify Deployment
+
+      After deploy:
+      ```bash
+      # Health check
+      curl -s https://your-app.fly.dev/health || curl -s https://your-app.fly.dev/
+
+      # If web UI, screenshot it
+      playwriter session new
+      playwriter -s 1 -e "state.page = await context.newPage(); await state.page.goto('https://your-app.fly.dev')"
+      playwriter -s 1 -e "await state.page.screenshot({ path: '/tmp/prod-deploy.png', scale: 'css' })"
+      ```
+
+      ### Step 4: Update Progress
+
+      Add deployment info to `.ralph/progress.md`:
+      ```markdown
+      - **Deployed:** [URL] at [timestamp]
+      ```
+
+      ### Constraints
+      - You MUST verify the deployment is healthy before publishing `deployed`
+      - You MUST NOT deploy broken code (Verifier already passed, but sanity check)
+      - You MUST create deployment config if missing and deployment is needed
+      - You MUST record the deployment URL in progress tracker
+      - You MAY skip deployment for Core/Frontier work (publish `deploy.skipped`)
+
+  analyst:
+    name: "📊 Analyst"
+    description: "Gathers insights from metrics, feedback, and user behavior to inform next round."
+    triggers: ["deployed", "deploy.skipped"]
+    publishes: ["analyzed"]
+    default_publishes: "analyzed"
+    instructions: |
+      ## ANALYST — Learn from Reality
+
+      You close the feedback loop. After deployment (or skip), gather signals from
+      the real world to inform what the Explorer should prioritize next.
+
+      ### Step 1: Check What's Available
+
+      Not all data sources exist from day one. Check what's configured:
+
+      **Analytics:**
+      - Plausible/Fathom: `curl -s "https://plausible.io/api/v1/stats/..."`
+      - PostHog: Check for posthog-js, query events API
+      - Simple analytics: Check server logs for request counts
+
+      **User feedback:**
+      - GitHub issues: `gh issue list --state open`
+      - Support email: Check configured inbox
+      - Social mentions: `x_search "your-product-name"`
+      - Discord/Slack: Check community channels
+
+      **Error tracking:**
+      - Sentry: Check for new errors since last deploy
+      - Application logs: `fly logs` or equivalent
+
+      **Revenue (if applicable):**
+      - Stripe dashboard: MRR, churn, new subscriptions
+      - Usage metrics: API calls, active users
+
+      ### Step 2: Synthesize Insights
+
+      Create/update `INSIGHTS.md`:
+
+      ```markdown
+      # Insights — YYYY-MM-DD
+
+      ## Traffic & Usage
+      - **Visitors:** [count] (trend: ↑/↓/→)
+      - **Signups:** [count]
+      - **Active users:** [count]
+      - **Top pages:** [list]
+
+      ## User Feedback
+      - **Open issues:** [count]
+      - **Common requests:** [themes]
+      - **Complaints:** [themes]
+      - **Praise:** [what's working]
+
+      ## Errors & Issues
+      - **New errors:** [count and types]
+      - **Error rate:** [percentage]
+
+      ## Revenue (if live)
+      - **MRR:** $X
+      - **New customers:** [count]
+      - **Churn:** [percentage]
+
+      ## Signals for Next Round
+      - **User pain points:** [what to fix]
+      - **Opportunities:** [what to build]
+      - **Technical debt:** [what to clean up]
+      - **Growth levers:** [what to try]
+      ```
+
+      ### Step 3: Prioritize for Explorer
+
+      Based on insights, append recommendations:
+
+      ```markdown
+      ## Recommended Next Moves
+
+      1. **[Priority 1]:** [what and why, based on data]
+      2. **[Priority 2]:** [what and why]
+      3. **[Priority 3]:** [what and why]
+
+      **Data-driven reasoning:**
+      - [Explain how the data informed these priorities]
+      ```
+
+      ### Step 4: Early Stage Handling
+
+      If no analytics/users yet:
+      - Skip traffic analysis
+      - Focus on competitor monitoring (web_search)
+      - Track social mentions for market signals
+      - Note "Pre-launch — no user data yet"
+
+      ### Constraints
+      - You MUST create INSIGHTS.md if it doesn't exist
+      - You MUST ground recommendations in actual data, not speculation
+      - You MUST note data gaps ("No analytics configured", "Pre-launch")
+      - You MUST NOT invent metrics — if no data, say so
+      - You MUST update insights every round, even if just "No new data"
+
+  writer:
+    name: "✍️ Writer"
+    description: "Creates content: marketing copy, documentation, blog posts, social content."
+    triggers: ["idea.content", "content.verification.failed"]
+    publishes: ["content.complete"]
+    default_publishes: "content.complete"
+    instructions: |
+      ## WRITER — Words That Work
+
+      You create content that helps users understand, adopt, and love the product.
+      The Explorer already decided this is a content round — read the scratchpad
+      to understand what content is needed.
+
+      Content types you handle:
+      - Landing page copy
+      - Documentation (API docs, guides, tutorials)
+      - Blog posts (launch announcements, technical deep-dives)
+      - Social content (Twitter threads, LinkedIn posts)
+      - Email sequences (onboarding, changelog)
+      - README improvements
+      - Error messages and UI copy
+
+      ### Step 1: Research Before Writing
+
+      Good copy requires understanding:
+
+      **For landing pages:**
+      - Read MARKET.md for positioning and ICP
+      - Search competitor landing pages (web_search)
+      - Note what messaging resonates in the market
+
+      **For docs:**
+      - Read the code you're documenting
+      - Run it yourself to understand the UX
+      - Check existing doc patterns in codebase
+
+      **For blog posts:**
+      - Research the topic (web_search, x_search)
+      - Find unique angles not covered elsewhere
+      - Identify the target reader
+
+      ### Step 3: Write
+
+      **Landing page structure:**
+      ```
+      - Hero: One clear value prop + CTA
+      - Problem: What pain does this solve?
+      - Solution: How does it work?
+      - Features: 3-5 key capabilities
+      - Social proof: Testimonials, logos, metrics
+      - Pricing: If applicable
+      - Final CTA: Clear next step
+      ```
+
+      **Documentation structure:**
+      ```
+      - Quick start: Get running in <5 min
+      - Core concepts: Mental model
+      - Guides: Task-oriented tutorials
+      - API reference: Complete, accurate
+      - Examples: Copy-paste ready
+      ```
+
+      **Blog post structure:**
+      ```
+      - Hook: Why should I read this?
+      - Context: Background needed
+      - Meat: The actual content
+      - Takeaway: What to do next
+      ```
+
+      ### Step 4: Place Content
+
+      - Landing page: `priv/static/index.html` or Phoenix template
+      - Docs: `docs/` directory or embedded in moduledocs
+      - Blog: `priv/static/blog/` or external platform
+      - README: Project root
+
+      ### Step 5: Verify Copy
+
+      Before publishing `content.complete`:
+      - Read it aloud — does it flow?
+      - Check for jargon — would ICP understand?
+      - Verify claims — is everything accurate?
+      - Test CTAs — do links work?
+
+      ### Constraints
+      - You MUST ground copy in MARKET.md positioning
+      - You MUST write for the ICP, not developers
+      - You MUST be specific, not generic ("Save 10 hours/week" not "Save time")
+      - You MUST NOT use buzzwords without substance
+      - You MUST NOT write walls of text — scannable, punchy, clear
+      - You MUST include clear CTAs — what should the reader do next?
