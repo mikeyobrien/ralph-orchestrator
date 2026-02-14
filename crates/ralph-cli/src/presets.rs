@@ -52,6 +52,11 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/feature.yml"),
     },
     EmbeddedPreset {
+        name: "fresh-eyes",
+        description: "Implementation workflow with enforced repeated fresh-eyes self-review passes",
+        content: include_str!("../presets/fresh-eyes.yml"),
+    },
+    EmbeddedPreset {
         name: "gap-analysis",
         description: "Gap Analysis and Planning Workflow",
         content: include_str!("../presets/gap-analysis.yml"),
@@ -122,7 +127,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 15, "Expected 15 presets");
+        assert_eq!(presets.len(), 16, "Expected 16 presets");
     }
 
     #[test]
@@ -196,10 +201,11 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 16);
         assert!(names.contains(&"feature"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"merge-loop"));
         assert!(names.contains(&"code-assist"));
+        assert!(names.contains(&"fresh-eyes"));
     }
 }

@@ -30,6 +30,11 @@
     "category": "development"
   },
   {
+    "name": "fresh-eyes",
+    "description": "Implementation workflow with enforced repeated fresh-eyes self-review passes.",
+    "category": "review"
+  },
+  {
     "name": "gap-analysis",
     "description": "Deep comparison of specs against implementation.",
     "category": "research"

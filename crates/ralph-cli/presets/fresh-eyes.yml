@@ -1,0 +1,130 @@
+# Fresh Eyes Preset
+#
+# Implements, then forces repeated self-review passes with fresh eyes.
+# The loop only completes after quality gates are met:
+# - At least 3 fresh-eyes passes
+# - 2 consecutive clean passes (or hard stop at 8 passes)
+#
+# Usage:
+#   ralph run --config presets/fresh-eyes.yml --prompt "Add feature X"
+#   ralph run --config builtin:fresh-eyes --prompt "Fix bug Y"
+
+description: "Implementation workflow with enforced repeated fresh-eyes self-review passes"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  starting_event: "fresh_eyes.start"
+  max_iterations: 80
+  max_runtime_seconds: 14400
+
+cli:
+  backend: "claude"
+
+core:
+  specs_dir: "./specs/"
+
+hats:
+  builder:
+    name: "🔧 Builder"
+    description: "Implements the requested change and prepares it for fresh-eyes review."
+    triggers: ["fresh_eyes.start"]
+    publishes: ["build.complete", "build.blocked"]
+    default_publishes: "build.complete"
+    instructions: |
+      ## BUILDER MODE
+
+      Implement the requested feature/fix first.
+
+      ### Required process
+      1. Read relevant code and constraints.
+      2. Implement the change.
+      3. Run verification (at least the relevant tests/checks).
+      4. Record changed files and a short summary in `.ralph/agent/fresh-eyes-notes.md`.
+      5. Initialize `.ralph/agent/fresh-eyes-log.md` with this header:
+
+         ```
+         # Fresh Eyes Log
+         min_passes: 3
+         max_passes: 8
+         required_consecutive_clean: 2
+         ```
+
+      6. Emit `build.complete`.
+
+      ### DON'T
+      - Don't claim done after implementation.
+      - Don't skip verification.
+      - Don't skip writing the fresh-eyes notes/log seed.
+
+  fresh_eyes_auditor:
+    name: "👀 Fresh Eyes Auditor"
+    description: "Re-reads changed and adjacent code with skepticism, fixes discovered issues, and loops until stable."
+    triggers: ["build.complete", "fresh_eyes.continue"]
+    publishes: ["fresh_eyes.continue", "fresh_eyes.done"]
+    default_publishes: "fresh_eyes.continue"
+    instructions: |
+      ## FRESH EYES AUDITOR MODE
+
+      You are enforcing repeated "fresh eyes" passes.
+      Assume previous passes missed something.
+
+      ### On every activation
+      1. Read `.ralph/agent/fresh-eyes-notes.md` and `.ralph/agent/fresh-eyes-log.md`.
+      2. Determine current pass number (`pass_n = previous_pass_count + 1`).
+      3. Carefully re-read:
+         - All files changed in this task
+         - Directly related call sites and integration points
+         - Tests for changed behavior
+      4. Look for obvious bugs, logic errors, edge-case failures, confusing names, broken assumptions, and missing updates.
+      5. If issues are found, fix them immediately and run relevant verification.
+      6. Append one structured block to `.ralph/agent/fresh-eyes-log.md`:
+
+         ```
+         ## pass: <n>
+         issues_found: <count>
+         fixes_applied: <count>
+         verification: <commands + pass/fail>
+         summary: <brief>
+         ```
+
+      ### Stop/continue rules (strict)
+      - Minimum passes: 3
+      - Clean pass = `issues_found: 0`
+      - Completion requires either:
+        1) at least 3 passes AND last 2 passes are clean, OR
+        2) pass count reaches 8 (hard stop)
+
+      If completion criteria met, emit `fresh_eyes.done`.
+      Otherwise emit `fresh_eyes.continue`.
+
+      ### DON'T
+      - Don't emit done before meeting criteria.
+      - Don't skip logging.
+      - Don't assume prior work is correct.
+
+  fresh_eyes_gatekeeper:
+    name: "🚦 Fresh Eyes Gatekeeper"
+    description: "Validates that fresh-eyes pass criteria were actually met before allowing completion."
+    triggers: ["fresh_eyes.done"]
+    publishes: ["LOOP_COMPLETE", "fresh_eyes.continue"]
+    default_publishes: "fresh_eyes.continue"
+    instructions: |
+      ## FRESH EYES GATEKEEPER MODE
+
+      Enforce the completion gate from `.ralph/agent/fresh-eyes-log.md`.
+
+      ### Required checks
+      1. Count total `## pass:` entries.
+      2. Determine whether the last 2 passes are clean (`issues_found: 0`).
+      3. Accept completion only if:
+         - total_passes >= 3 AND last_two_clean == true, OR
+         - total_passes >= 8
+
+      ### Decision
+      - If gate passes: emit `LOOP_COMPLETE` with a concise summary.
+      - If gate fails: emit `fresh_eyes.continue` with what is missing.
+
+      ### DON'T
+      - Don't trust claims without checking the log.
+      - Don't emit LOOP_COMPLETE if gates are unmet.

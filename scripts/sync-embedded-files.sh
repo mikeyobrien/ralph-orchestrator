@@ -28,6 +28,7 @@ EMBEDDED_FILES=(
     "presets/deploy.yml:crates/ralph-cli/presets/deploy.yml"
     "presets/docs.yml:crates/ralph-cli/presets/docs.yml"
     "presets/feature.yml:crates/ralph-cli/presets/feature.yml"
+    "presets/fresh-eyes.yml:crates/ralph-cli/presets/fresh-eyes.yml"
     "presets/gap-analysis.yml:crates/ralph-cli/presets/gap-analysis.yml"
     "presets/hatless-baseline.yml:crates/ralph-cli/presets/hatless-baseline.yml"
     "presets/minimal/amp.yml:crates/ralph-cli/presets/minimal/amp.yml"

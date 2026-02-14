@@ -125,6 +125,17 @@ ralph init --preset pr-review
 **Hats:** Correctness Reviewer → Security Reviewer → Architecture Reviewer → Synthesizer
 **Best for:** Comprehensive PR reviews from multiple angles
 
+#### fresh-eyes
+
+Implementation workflow with repeated, enforced "fresh eyes" self-review passes.
+
+```bash
+ralph init --preset fresh-eyes
+```
+
+**Hats:** Builder → Fresh Eyes Auditor (loop) → Fresh Eyes Gatekeeper
+**Best for:** Catching post-implementation mistakes by forcing multiple skeptical review passes
+
 #### gap-analysis
 
 Compare specifications against implementation to find discrepancies.

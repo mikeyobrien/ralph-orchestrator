@@ -22,6 +22,7 @@ cp presets/feature.yml ralph.yml
 | **debug.yml** | investigator, tester, fixer, verifier | Bug investigation using scientific method |
 | **review.yml** | reviewer, analyzer | Code review without making changes |
 | **feature.yml** | planner, builder, reviewer | Feature development with integrated review |
+| **fresh-eyes.yml** | builder, fresh_eyes_auditor, fresh_eyes_gatekeeper | Implementation with enforced repeated fresh-eyes bug-catching passes |
 | **gap-analysis.yml** | analyzer, verifier, reporter | Deep spec-to-implementation comparison, outputs to ISSUES.md |
 
 ## Preset Details
@@ -183,6 +184,7 @@ event_loop:
 | Find and fix a bug | `debug.yml` |
 | Review someone's code | `review.yml` |
 | Build a new feature | `feature.yml` |
+| Force repeated skeptical post-implementation checks | `fresh-eyes.yml` |
 | Compare specs against implementation | `gap-analysis.yml` |
 
 ## Creating New Presets
