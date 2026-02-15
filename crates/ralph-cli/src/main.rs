@@ -12,6 +12,7 @@
 //! - Code task generation via `ralph code-task`
 //! - Work item tracking via `ralph task`
 
+mod backend_support;
 mod bot;
 mod display;
 mod doctor;
@@ -374,6 +375,7 @@ struct Cli {
     // Global options (available for all subcommands)
     // ─────────────────────────────────────────────────────────────────────────
     /// Configuration source: file path, builtin:preset, URL, or core.field=value override.
+    /// Not every command consumes all source types, but this flag is accepted by supported commands.
     /// Can be specified multiple times. Overrides are applied after config file loading.
     #[arg(short, long, default_value = "ralph.yml", global = true, action = ArgAction::Append)]
     config: Vec<String>,
@@ -412,7 +414,7 @@ enum Commands {
     /// Initialize a new ralph.yml configuration file
     Init(InitArgs),
 
-    /// Clean up Ralph artifacts (.agent/ directory)
+    /// Clean up Ralph artifacts from `.ralph/agent`.
     Clean(CleanArgs),
 
     /// Emit an event to the current run's events file with proper JSON formatting
@@ -424,7 +426,8 @@ enum Commands {
     /// Generate code task files from descriptions or plans
     CodeTask(CodeTaskArgs),
 
-    /// Create code tasks (alias for code-task)
+    /// Legacy alias for `code-task` (runtime tasks are `ralph tools task`).
+    #[command(hide = true)]
     Task(CodeTaskArgs),
 
     /// Ralph's runtime tools (agent-facing)
@@ -449,7 +452,7 @@ enum Commands {
 /// Arguments for the init subcommand.
 #[derive(Parser, Debug)]
 struct InitArgs {
-    /// Backend to use (claude, kiro, gemini, codex, amp, custom).
+    /// Backend to use (claude, kiro, gemini, codex, amp, copilot, opencode, pi, custom).
     /// When used alone, generates minimal config.
     /// When used with --preset, overrides the preset's backend.
     #[arg(long, conflicts_with = "list_presets")]
@@ -630,7 +633,7 @@ struct CleanArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// Clean diagnostic logs instead of .agent directory
+    /// Clean diagnostic logs instead of `.ralph/` directory
     #[arg(long)]
     diagnostics: bool,
 }
@@ -724,9 +727,25 @@ struct CompletionsArgs {
 
 fn completions_command(args: CompletionsArgs) -> Result<()> {
     use clap_complete::generate;
+    use std::io::ErrorKind;
 
     let mut cli = Cli::command();
-    generate(args.shell, &mut cli, "ralph", &mut std::io::stdout());
+
+    // Generate into a buffer first so we can handle broken pipe errors
+    // from shell consumers like `| head` without surfacing a panic.
+    let mut output = Vec::new();
+    generate(args.shell, &mut cli, "ralph", &mut output);
+
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    handle.write_all(&output).or_else(|e| {
+        if e.kind() == ErrorKind::BrokenPipe {
+            Ok(())
+        } else {
+            Err(e)
+        }
+    })?;
+
     Ok(())
 }
 
@@ -830,6 +849,15 @@ async fn main() -> Result<()> {
     let config_sources: Vec<ConfigSource> =
         cli.config.iter().map(|s| ConfigSource::parse(s)).collect();
 
+    if !is_default_config_only(&cli.config)
+        && !command_supports_config(&cli.command)
+    {
+        warn!(
+            "The -c/--config flag is not used by `{}`. Use `ralph --help` for commands that support config files.",
+            command_name(&cli.command)
+        );
+    }
+
     match cli.command {
         Some(Commands::Run(args)) => {
             run_command(&config_sources, cli.verbose, cli.color, args).await
@@ -848,13 +876,13 @@ async fn main() -> Result<()> {
         Some(Commands::Init(args)) => init_command(cli.color, args),
         Some(Commands::Clean(args)) => clean_command(&config_sources, cli.color, args),
         Some(Commands::Emit(args)) => emit_command(cli.color, args),
-        Some(Commands::Plan(args)) => plan_command(&config_sources, cli.color, args),
-        Some(Commands::CodeTask(args)) => code_task_command(&config_sources, cli.color, args),
-        Some(Commands::Task(args)) => code_task_command(&config_sources, cli.color, args),
+        Some(Commands::Plan(args)) => plan_command(&config_sources, cli.color, args).await,
+        Some(Commands::CodeTask(args)) => code_task_command(&config_sources, cli.color, args).await,
+        Some(Commands::Task(args)) => code_task_command(&config_sources, cli.color, args).await,
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
-            hats::execute(&config_sources, args, cli.color.should_use_colors())
+            hats::execute(&config_sources, args, cli.color.should_use_colors()).await
         }
         Some(Commands::Web(args)) => web::execute(args).await,
         Some(Commands::Bot(args)) => {
@@ -884,6 +912,51 @@ async fn main() -> Result<()> {
             };
             run_command(&config_sources, cli.verbose, cli.color, args).await
         }
+    }
+}
+
+fn is_default_config_only(raw: &[String]) -> bool {
+    raw.len() == 1 && raw.first().is_some_and(|s| s == "ralph.yml")
+}
+
+fn command_supports_config(command: &Option<Commands>) -> bool {
+    matches!(
+        command,
+        None
+            | Some(Commands::Run(_))
+            | Some(Commands::Preflight(_))
+            | Some(Commands::Doctor(_))
+            | Some(Commands::Resume(_))
+            | Some(Commands::Clean(_))
+            | Some(Commands::Plan(_))
+            | Some(Commands::CodeTask(_))
+            | Some(Commands::Task(_))
+            | Some(Commands::Hats(_))
+            | Some(Commands::Bot(_))
+    )
+}
+
+fn command_name(command: &Option<Commands>) -> &'static str {
+    match command {
+        None => "ralph run",
+        Some(Commands::Run(_)) => "ralph run",
+        Some(Commands::Preflight(_)) => "ralph preflight",
+        Some(Commands::Doctor(_)) => "ralph doctor",
+        Some(Commands::Tutorial(_)) => "ralph tutorial",
+        Some(Commands::Resume(_)) => "ralph resume",
+        Some(Commands::Events(_)) => "ralph events",
+        Some(Commands::Init(_)) => "ralph init",
+        Some(Commands::Clean(_)) => "ralph clean",
+        Some(Commands::Emit(_)) => "ralph emit",
+        Some(Commands::Plan(_)) => "ralph plan",
+        Some(Commands::CodeTask(_)) => "ralph code-task",
+        Some(Commands::Task(_)) => "ralph task",
+        Some(Commands::Tools(_)) => "ralph tools",
+        Some(Commands::Loops(_)) => "ralph loops",
+        Some(Commands::Hats(_)) => "ralph hats",
+        Some(Commands::Web(_)) => "ralph web",
+        Some(Commands::Bot(_)) => "ralph bot",
+        Some(Commands::Completions(_)) => "ralph completions",
     }
 }
 
@@ -1074,7 +1147,7 @@ async fn run_command(
                 let preset = presets::get_preset(name).ok_or_else(|| {
                     let available = presets::preset_names().join(", ");
                     anyhow::anyhow!(
-                        "Unknown preset '{}'. Run `ralph run --list-presets` to see available presets.\n\nAvailable: {}",
+                        "Unknown preset '{}'. Run `ralph init --list-presets` to see available presets.\n\nAvailable: {}",
                         name,
                         available
                     )
@@ -2087,7 +2160,7 @@ fn print_tutorial_outro(use_colors: bool) {
 ///
 /// This is a thin wrapper that bypasses Ralph's event loop entirely.
 /// It spawns the AI backend with the bundled PDD SOP for interactive planning.
-fn plan_command(
+async fn plan_command(
     config_sources: &[ConfigSource],
     color_mode: ColorMode,
     args: PlanArgs,
@@ -2108,17 +2181,14 @@ fn plan_command(
         println!("Starting {} session...", Sop::Pdd.name());
     }
 
-    // Extract first file source for config path
-    let config_path = config_sources.iter().find_map(|s| match s {
-        ConfigSource::File(path) => Some(path.clone()),
-        _ => None,
-    });
+    let config = preflight::load_config_for_preflight(config_sources).await?;
 
     let config = SopRunConfig {
         sop: Sop::Pdd,
         user_input: args.idea,
         backend_override: args.backend,
-        config_path,
+        config: Some(config),
+        config_path: None,
         custom_args: if args.custom_args.is_empty() {
             None
         } else {
@@ -2129,10 +2199,7 @@ fn plan_command(
 
     sop_runner::run_sop(config).map_err(|e| match e {
         SopRunError::NoBackend(no_backend) => anyhow::Error::new(no_backend),
-        SopRunError::UnknownBackend(name) => anyhow::anyhow!(
-            "Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp",
-            name
-        ),
+        SopRunError::UnknownBackend(msg) => anyhow::anyhow!("{}", msg),
         SopRunError::SpawnError(io_err) => anyhow::anyhow!("Failed to spawn backend: {}", io_err),
     })
 }
@@ -2141,7 +2208,7 @@ fn plan_command(
 ///
 /// This is a thin wrapper that bypasses Ralph's event loop entirely.
 /// It spawns the AI backend with the bundled code-task-generator SOP.
-fn code_task_command(
+async fn code_task_command(
     config_sources: &[ConfigSource],
     color_mode: ColorMode,
     args: CodeTaskArgs,
@@ -2162,17 +2229,14 @@ fn code_task_command(
         println!("Starting {} session...", Sop::CodeTaskGenerator.name());
     }
 
-    // Extract first file source for config path
-    let config_path = config_sources.iter().find_map(|s| match s {
-        ConfigSource::File(path) => Some(path.clone()),
-        _ => None,
-    });
+    let config = preflight::load_config_for_preflight(config_sources).await?;
 
     let config = SopRunConfig {
         sop: Sop::CodeTaskGenerator,
         user_input: args.input,
         backend_override: args.backend,
-        config_path,
+        config: Some(config),
+        config_path: None,
         custom_args: if args.custom_args.is_empty() {
             None
         } else {
@@ -2183,10 +2247,7 @@ fn code_task_command(
 
     sop_runner::run_sop(config).map_err(|e| match e {
         SopRunError::NoBackend(no_backend) => anyhow::Error::new(no_backend),
-        SopRunError::UnknownBackend(name) => anyhow::anyhow!(
-            "Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp",
-            name
-        ),
+        SopRunError::UnknownBackend(msg) => anyhow::anyhow!("{}", msg),
         SopRunError::SpawnError(io_err) => anyhow::anyhow!("Failed to spawn backend: {}", io_err),
     })
 }

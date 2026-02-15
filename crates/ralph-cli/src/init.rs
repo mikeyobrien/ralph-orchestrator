@@ -3,6 +3,7 @@
 //! Handles initialization of ralph.yml configuration files, either from
 //! a minimal backend template or from an embedded preset.
 
+use crate::backend_support;
 use crate::presets::{get_preset, list_presets, preset_names};
 use std::fs;
 use std::path::Path;
@@ -20,9 +21,7 @@ pub enum InitError {
     )]
     UnknownPreset(String, String),
 
-    #[error(
-        "Unknown backend '{0}'. Valid backends: claude, kiro, gemini, codex, amp, copilot, opencode, pi, custom.\nSee: docs/reference/troubleshooting.md#unknown-backend"
-    )]
+    #[error("{0}")]
     UnknownBackend(String),
 
     #[error("Failed to write ralph.yml: {0}")]
@@ -33,9 +32,7 @@ pub enum InitError {
 }
 
 /// Valid backend names.
-const VALID_BACKENDS: &[&str] = &[
-    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "pi", "custom",
-];
+const VALID_BACKENDS: &[&str] = backend_support::VALID_BACKENDS;
 
 /// Generates the minimal config template for a given backend.
 fn generate_template(backend: &str) -> String {
@@ -98,7 +95,9 @@ fn check_file_exists(force: bool) -> Result<(), InitError> {
 pub fn init_from_backend(backend: &str, force: bool) -> Result<(), InitError> {
     // Validate backend
     if !VALID_BACKENDS.contains(&backend) {
-        return Err(InitError::UnknownBackend(backend.to_string()));
+        return Err(InitError::UnknownBackend(backend_support::unknown_backend_message(
+            backend,
+        )));
     }
 
     check_file_exists(force)?;
@@ -132,7 +131,9 @@ pub fn init_from_preset(
     if let Some(backend) = backend_override
         && !VALID_BACKENDS.contains(&backend)
     {
-        return Err(InitError::UnknownBackend(backend.to_string()));
+        return Err(InitError::UnknownBackend(backend_support::unknown_backend_message(
+            backend,
+        )));
     }
 
     check_file_exists(force)?;
@@ -271,10 +272,13 @@ mod tests {
 
     #[test]
     fn test_unknown_backend_message_actionable() {
-        let err = InitError::UnknownBackend("invalid".to_string());
+        let result = init_from_backend("invalid-backend", false);
+        assert!(result.is_err());
+
+        let err = result.expect_err("expected init error");
         let msg = err.to_string();
+        assert!(msg.contains("Invalid-backend") || msg.contains("invalid-backend"));
         assert!(msg.contains("Valid backends"));
-        assert!(msg.contains("docs/reference/troubleshooting.md#unknown-backend"));
     }
 
     #[test]

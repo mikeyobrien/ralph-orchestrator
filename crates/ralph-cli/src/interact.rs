@@ -34,10 +34,10 @@ pub async fn execute(args: InteractArgs) -> Result<()> {
 
 async fn send_progress(args: ProgressArgs) -> Result<()> {
     let token = bot::resolve_token().context(
-        "No bot token. Run `ralph bot onboard --telegram` or set RALPH_TELEGRAM_BOT_TOKEN",
+        "No bot token. Run `ralph bot onboard` or set RALPH_TELEGRAM_BOT_TOKEN",
     )?;
     let chat_id = bot::resolve_chat_id()
-        .context("No chat_id found. Run `ralph bot onboard --telegram` to detect it")?;
+        .context("No chat_id found. Run `ralph bot onboard` to detect it")?;
 
     bot::telegram_send_message(&token, chat_id, &args.message).await?;
 

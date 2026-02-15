@@ -4,7 +4,7 @@ Complete reference for Ralph's command-line interface.
 
 ## Global Options
 
-These options work with all commands:
+These options are accepted by all commands. Note: not every subcommand consumes config sources; if `-c/--config` is provided to a subcommand that doesn't use it, behavior falls back to command defaults and a warning is shown.
 
 | Option | Description |
 |--------|-------------|
@@ -16,18 +16,19 @@ These options work with all commands:
 
 ### Config Sources (`-c`)
 
-The `-c` flag specifies where to load configuration from. If not provided, `ralph.yml` is loaded by default.
+The `-c` flag specifies where to load configuration from. If not provided, `ralph.yml` is loaded by default (for commands that support config loading).
 
 **Config source types:**
 
 | Format | Description |
 |--------|-------------|
 | `ralph.yml` | Local file path |
-| `builtin:preset-name` | Embedded preset |
+| `builtin:<name>` | Embedded preset |
 | `https://example.com/config.yml` | Remote URL |
-| `core.field=value` | Override a core config field |
+| `core.field=value` | Core config override |
 
-Only one config file/preset/URL is used (the first one specified). Overrides can be specified multiple times and layer on top.
+The first non-override source is used as the base config.
+Overrides (`core.field=value`) are applied in order and replace earlier values.
 
 **Supported override fields:**
 
@@ -46,10 +47,10 @@ ralph run -c production.yml
 ralph run -c builtin:tdd-red-green
 
 # Override scratchpad (loads ralph.yml + applies override)
-ralph run -c core.scratchpad=.agent/feature-x/scratchpad.md
+ralph run -c core.scratchpad=.ralph/agent/feature-x/scratchpad.md
 
 # Explicit config + override
-ralph run -c ralph.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
+ralph run -c ralph.yml -c core.scratchpad=.ralph/agent/feature-x/scratchpad.md
 
 # Multiple overrides
 ralph run -c core.scratchpad=.runs/task-123/scratchpad.md -c core.specs_dir=./my-specs/
@@ -99,7 +100,7 @@ ralph run -c production.yml
 ralph run -c builtin:tdd-red-green
 
 # Override scratchpad for parallel runs
-ralph run -c ralph.yml -c core.scratchpad=.agent/feature-x/scratchpad.md
+ralph run -c ralph.yml -c core.scratchpad=.ralph/agent/feature-x/scratchpad.md
 
 # Dry run
 ralph run --dry-run
@@ -126,7 +127,7 @@ ralph init [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode` |
+| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `pi`, `custom` |
 | `--preset <NAME>` | Use preset configuration |
 | `--list-presets` | List available presets |
 | `--force` | Overwrite existing config |
@@ -161,6 +162,8 @@ ralph plan [OPTIONS] [IDEA]
 |--------|-------------|
 | `<IDEA>` | Optional rough idea to develop |
 | `-b, --backend <BACKEND>` | Backend to use |
+| `--teams` | Enable Claude Code agent teams mode |
+| `-- <ARGUMENTS>` | Pass custom backend command/arguments |
 
 **Examples:**
 
@@ -177,6 +180,9 @@ ralph plan --backend kiro "my idea"
 
 ### ralph task
 
+> DEPRECATED: legacy alias for `ralph code-task`.
+> Runtime task management is `ralph tools task`.
+
 Generate code task files.
 
 ```bash
@@ -189,6 +195,8 @@ ralph task [OPTIONS] [INPUT]
 |--------|-------------|
 | `<INPUT>` | Description text or path to PDD plan file |
 | `-b, --backend <BACKEND>` | Backend to use |
+| `--teams` | Enable Claude Code agent teams mode |
+| `-- <ARGUMENTS>` | Pass custom backend command/arguments |
 
 **Examples:**
 
@@ -251,7 +259,7 @@ ralph emit "review.done" --json '{"status": "approved", "issues": 0}'
 
 ### ralph clean
 
-Clean up `.agent/` directory.
+Clean up `.ralph/agent/` directory.
 
 ```bash
 ralph clean [OPTIONS]
@@ -262,13 +270,16 @@ ralph clean [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--diagnostics` | Clean diagnostics directory |
-| `--all` | Clean everything |
+| `--dry-run` | Preview deletions without removing files |
 
 **Examples:**
 
 ```bash
 # Clean agent state
 ralph clean
+
+# Preview what would be deleted
+ralph clean --dry-run
 
 # Clean diagnostics
 ralph clean --diagnostics

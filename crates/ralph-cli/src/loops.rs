@@ -824,23 +824,24 @@ fn show_diff(args: DiffArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let (loop_id, _worktree_path) = resolve_loop(&cwd, &args.loop_id)?;
 
-    // Find the branch
     let branch = format!("ralph/{}", loop_id);
 
-    // Check if branch exists
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", &branch])
-        .current_dir(&cwd)
-        .output()
-        .context("Failed to run git")?;
-
-    if !output.status.success() {
+    // Check that branch exists.
+    if !git_ref_exists(&cwd, &branch) {
         bail!("Branch '{}' not found", branch);
     }
 
-    // Show diff from merge-base
-    // Note: three-dot syntax requires both refs in a single argument: "main...branch"
-    let diff_range = format!("main...{}", branch);
+    let base_branch = default_diff_base_branch(&cwd);
+    if !git_ref_exists(&cwd, &base_branch) {
+        bail!(
+            "Base branch '{}' not found in this repository.\n\nTry explicitly passing a base via upstream/main merge history.",
+            base_branch
+        );
+    }
+
+    // Show diff from base branch to loop branch.
+    // Note: three-dot syntax requires both refs in a single argument: "base...branch"
+    let diff_range = format!("{}...{}", base_branch, branch);
     let mut git_args = vec!["diff", &diff_range];
 
     if args.stat {
@@ -858,6 +859,52 @@ fn show_diff(args: DiffArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn default_diff_base_branch(cwd: &std::path::Path) -> String {
+    if let Some(output) = git_output(cwd, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]) {
+        let value = output.trim();
+        if let Some(base) = value.split('/').next_back() {
+            let direct = base.to_string();
+            let with_remote = format!("origin/{}", direct);
+            if git_ref_exists(cwd, &direct) {
+                return direct;
+            }
+            if git_ref_exists(cwd, &with_remote) {
+                return with_remote;
+            }
+        }
+    }
+
+    for candidate in ["origin/main", "main", "origin/master", "master"] {
+        if git_ref_exists(cwd, candidate) {
+            return candidate.to_string();
+        }
+    }
+
+    "main".to_string()
+}
+
+fn git_ref_exists(cwd: &std::path::Path, reference: &str) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--verify", reference])
+        .current_dir(cwd)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn git_output(cwd: &std::path::Path, args: [&str; 4]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        None
+    }
 }
 
 /// Merge a completed loop (or force retry).
@@ -1453,6 +1500,61 @@ mod tests {
             err.to_string()
                 .contains("Branch 'ralph/loop-missing-branch' not found")
         );
+    }
+
+    #[test]
+    fn test_default_diff_base_branch_prefers_main_branch() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-b", "main", "-q"])
+            .status()
+            .expect("git init -b main");
+
+        assert_eq!(default_diff_base_branch(temp_dir.path()), "main");
+    }
+
+    #[test]
+    fn test_default_diff_base_branch_falls_back_to_master() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-b", "master", "-q"])
+            .status()
+            .expect("git init -b master");
+
+        // Seed a commit so branch references are materialized.
+        let _ = Command::new("git")
+            .args(["config", "user.email", "ci@example.com"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "CI"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("sh")
+            .args(["-c", "printf 'init' > README.md && git add README.md && git commit -qm 'init'"])
+            .current_dir(temp_dir.path())
+            .status();
+
+        // Some environments inject template refs that can create a stale `main` branch.
+        // Ensure we test a clean fallback path.
+        let _ = Command::new("git")
+            .args(["branch", "-D", "-q", "main"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("git")
+            .args(["update-ref", "-d", "refs/remotes/origin/main"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("git")
+            .args(["update-ref", "-d", "refs/remotes/origin/HEAD"])
+            .current_dir(temp_dir.path())
+            .status();
+
+        assert_eq!(default_diff_base_branch(temp_dir.path()), "master");
     }
 
     #[test]

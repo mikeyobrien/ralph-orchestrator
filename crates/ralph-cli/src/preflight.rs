@@ -218,7 +218,7 @@ pub(crate) async fn load_config_for_preflight(
                 let preset = presets::get_preset(name).ok_or_else(|| {
                     let available = presets::preset_names().join(", ");
                     anyhow::anyhow!(
-                        "Unknown preset '{}'. Run `ralph run --list-presets` to see available presets.\n\nAvailable: {}",
+                        "Unknown preset '{}'. Run `ralph init --list-presets` to see available presets.\n\nAvailable: {}",
                         name,
                         available
                     )
