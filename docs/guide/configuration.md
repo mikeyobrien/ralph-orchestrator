@@ -24,7 +24,7 @@ You can override specific core fields from the command line without creating a s
 
 | Field | Description |
 |-------|-------------|
-| `core.scratchpad` | Path to scratchpad file |
+| `core.scratchpad` | Path to scratchpad file (string shorthand for `scratchpad.path`) |
 | `core.specs_dir` | Path to specs directory |
 
 **Examples:**
@@ -62,8 +62,11 @@ cli:
 
 # Core behaviors
 core:
-  specs_dir: "./specs/"                 # Specifications directory
-  guardrails:                           # Rules injected into every prompt
+  scratchpad:                            # Scratchpad configuration
+    enabled: true                        # Enable scratchpad (default: true)
+    path: .ralph/agent/scratchpad.md     # Scratchpad file path
+  specs_dir: "./specs/"                  # Specifications directory
+  guardrails:                            # Rules injected into every prompt
     - "Fresh context each iteration"
     - "Backpressure is law"
 
@@ -91,6 +94,8 @@ hats:
     default_publishes: "event.done"     # Default when no explicit
     max_activations: 10                 # Activation limit
     backend: "claude"                   # Backend override
+    scratchpad:                         # Per-hat scratchpad override
+      path: .ralph/agent/my-hat.md     #   (omit to inherit core.scratchpad)
     instructions: |
       Hat-specific instructions...
 ```
@@ -135,12 +140,31 @@ Backend configuration.
 
 ### core
 
-Core behaviors and guardrails.
+Core behaviors, scratchpad, and guardrails.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `scratchpad` | string or object | `{ enabled: true, path: ".ralph/agent/scratchpad.md" }` | Scratchpad configuration (see below) |
+| `scratchpad.enabled` | boolean | `true` | Enable the scratchpad |
+| `scratchpad.path` | string | `".ralph/agent/scratchpad.md"` | Scratchpad file path |
 | `specs_dir` | string | `"./specs/"` | Specifications directory |
 | `guardrails` | list | `[]` | Rules injected into every prompt |
+
+The `scratchpad` field accepts a plain string (shorthand for setting `path` with `enabled: true`) or a structured object with `enabled` and `path`:
+
+```yaml
+# String shorthand — sets path, enabled defaults to true
+core:
+  scratchpad: ".workspace/plan.md"
+
+# Structured object — full control
+core:
+  scratchpad:
+    enabled: true
+    path: .ralph/agent/scratchpad.md
+```
+
+> **Solo mode safety:** If scratchpad is disabled (`enabled: false`) but no hats are defined, Ralph force-enables it with a warning. Scratchpad is the only continuity mechanism in solo mode.
 
 ### memories
 
@@ -181,7 +205,29 @@ Specialized personas for hat-based mode.
 | `default_publishes` | string | No | Default event if none explicit |
 | `max_activations` | integer | No | Limit activations |
 | `backend` | string | No | Backend override |
+| `scratchpad` | string or object | No | Per-hat scratchpad override (inherits `core.scratchpad` if omitted) |
 | `instructions` | string | Yes | Hat-specific prompt |
+
+Each hat can override the global scratchpad with its own `scratchpad` field. Like the core-level setting, it accepts a plain string or a structured object:
+
+```yaml
+hats:
+  planner:
+    scratchpad: .ralph/agent/planner.md       # String shorthand
+    # ...
+  builder:
+    scratchpad:
+      path: .ralph/agent/builder.md           # Structured with custom path
+    # ...
+  validator:
+    scratchpad:
+      enabled: false                          # Disable scratchpad entirely
+    # ...
+  reviewer:                                   # No scratchpad key = inherits global
+    # ...
+```
+
+**Resolution order:** hat override → `core.scratchpad` → defaults.
 
 ## Example Configurations
 
@@ -238,6 +284,48 @@ memories:
 
 tasks:
   enabled: false
+```
+
+### With Per-Hat Scratchpads
+
+```yaml
+cli:
+  backend: "claude"
+
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  starting_event: "task.start"
+
+core:
+  scratchpad:
+    enabled: true
+    path: .ralph/agent/scratchpad.md
+
+hats:
+  planner:
+    name: "Planner"
+    scratchpad:
+      path: .ralph/agent/planner.md
+    triggers: ["task.start"]
+    publishes: ["plan.ready"]
+    instructions: |
+      Create an implementation plan.
+
+  builder:
+    name: "Builder"
+    triggers: ["plan.ready"]
+    publishes: ["build.done"]
+    instructions: |
+      Implement the plan.
+
+  reviewer:
+    name: "Reviewer"
+    scratchpad:
+      enabled: false
+    triggers: ["build.done"]
+    publishes: ["review.done"]
+    instructions: |
+      Review the implementation. No scratchpad needed.
 ```
 
 ### With Custom Guardrails

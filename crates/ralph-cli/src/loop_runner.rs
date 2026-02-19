@@ -610,7 +610,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -685,7 +685,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -726,7 +726,7 @@ pub async fn run_loop_impl(
                     handle_termination(
                         &reason,
                         event_loop.state(),
-                        &config.core.scratchpad,
+                        &config.core.scratchpad.path,
                         &loop_history,
                         &loop_context,
                         auto_merge,
@@ -761,7 +761,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -981,7 +981,7 @@ pub async fn run_loop_impl(
                 let reason = TerminationReason::Interrupted;
                 let terminate_event = event_loop.publish_terminate_event(&reason);
                 log_terminate_event(&mut event_logger, event_loop.state().iteration, &terminate_event);
-                handle_termination(&reason, event_loop.state(), &config.core.scratchpad, &loop_history, &loop_context, auto_merge, &prompt_content);
+                handle_termination(&reason, event_loop.state(), &config.core.scratchpad.path, &loop_history, &loop_context, auto_merge, &prompt_content);
                 // Signal TUI to exit immediately on interrupt
                 let _ = terminated_tx.send(true);
                 return Ok(reason);
@@ -998,7 +998,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -1048,7 +1048,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -1100,7 +1100,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
