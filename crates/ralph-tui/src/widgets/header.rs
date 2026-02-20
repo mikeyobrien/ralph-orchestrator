@@ -56,10 +56,17 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
 
     // Priority 3: Hat display - compressed at WIDTH_COMPRESS and below
     spans.push(Span::raw(" | "));
-    let hat_display = state
-        .current_iteration_hat_display()
-        .map(|display| display.to_string())
-        .unwrap_or_else(|| state.get_pending_hat_display());
+    let iteration_finished = state.current_iteration().and_then(|b| b.elapsed).is_some();
+    let hat_display = if iteration_finished && state.pending_hat.is_some() {
+        // Iteration done and next hat is known — show it instead of the stale frozen hat
+        state.get_pending_hat_display()
+    } else {
+        // In-progress / no iteration / no pending hat — frozen hat, fall back to pending
+        state
+            .current_iteration_hat_display()
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| state.get_pending_hat_display())
+    };
     let hat_with_backend = if let Some(backend) = state.current_iteration_backend()
         && width > WIDTH_COMPRESS
     {
@@ -721,6 +728,48 @@ mod tests {
         assert!(
             text.contains("[iter 1/0]"),
             "should show [iter 1/0] for empty state (position 1, 0 total), got: {}",
+            text
+        );
+    }
+
+    /// Regression: when the current iteration is finished (elapsed set) and
+    /// pending_hat has been updated, the header should show the NEW pending hat,
+    /// not the stale frozen hat from the completed iteration.
+    ///
+    /// Before the fix, the header always preferred the frozen iteration hat_display
+    /// over pending_hat, so during the gap between iterations the stale hat was shown.
+    #[test]
+    fn header_prefers_pending_hat_when_iteration_finished() {
+        let mut state = TuiState::new();
+
+        // Iteration 1: hat was "Planner" — now finished
+        state.start_new_iteration_with_metadata(
+            Some("📋 Planner".to_string()),
+            Some("claude".to_string()),
+        );
+        // Mark iteration as finished (elapsed is set)
+        if let Some(iteration) = state.iterations.first_mut() {
+            iteration.elapsed = Some(Duration::from_secs(60));
+        }
+        // current_view = 0 (still viewing the finished iteration, following latest)
+        state.current_view = 0;
+        state.following_latest = true;
+
+        // pending_hat updated to the NEXT hat (Builder) — this happens between
+        // iterations when the event loop selects the next hat
+        state.pending_hat = Some((HatId::new("builder"), "🔨 Builder".to_string()));
+
+        let text = render_to_string(&state);
+
+        // Should show the NEW pending hat, not the old frozen one
+        assert!(
+            text.contains("Builder"),
+            "should show pending hat 'Builder' when iteration is finished, got: {}",
+            text
+        );
+        assert!(
+            !text.contains("Planner"),
+            "should NOT show stale frozen hat 'Planner' when iteration is finished, got: {}",
             text
         );
     }

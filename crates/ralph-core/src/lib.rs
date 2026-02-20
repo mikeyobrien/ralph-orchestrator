@@ -63,7 +63,7 @@ pub use config::{
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
-pub use event_loop::{EventLoop, LoopState, TerminationReason, UserPrompt};
+pub use event_loop::{EventLoop, LoopState, ProcessedEvents, TerminationReason, UserPrompt};
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
 pub use file_lock::{FileLock, LockGuard as FileLockGuard, LockedFile};

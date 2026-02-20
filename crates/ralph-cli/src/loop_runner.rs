@@ -1067,12 +1067,11 @@ pub async fn run_loop_impl(
         }
 
         // Read events from JSONL that agent may have written
-        let agent_wrote_events = matches!(
-            event_loop
-                .process_events_from_jsonl()
-                .inspect_err(|e| warn!(error = %e, "Failed to read events from JSONL")),
-            Ok(true)
-        );
+        let agent_wrote_events = event_loop
+            .process_events_from_jsonl()
+            .inspect_err(|e| warn!(error = %e, "Failed to read events from JSONL"))
+            .map(|r| r.had_events)
+            .unwrap_or(false);
 
         // Inject default_publishes for active hats only when agent wrote no events
         if !agent_wrote_events {

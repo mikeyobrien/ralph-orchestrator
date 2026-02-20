@@ -25,6 +25,15 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+/// Result of processing events from JSONL.
+#[derive(Debug, Clone)]
+pub struct ProcessedEvents {
+    /// Whether any valid events were found and published.
+    pub had_events: bool,
+    /// Whether any events lacked specific hat subscribers (orphans handled by Ralph).
+    pub has_orphans: bool,
+}
+
 /// Reason the event loop terminated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminationReason {
@@ -1629,8 +1638,9 @@ impl EventLoop {
     /// 2. Tracking consecutive failures for termination check
     /// 3. Resetting counter when valid events are parsed
     ///
-    /// Returns true if Ralph should be invoked to handle orphaned events.
-    pub fn process_events_from_jsonl(&mut self) -> std::io::Result<bool> {
+    /// Returns [`ProcessedEvents`] indicating whether events were found and whether
+    /// any were orphans that Ralph should handle.
+    pub fn process_events_from_jsonl(&mut self) -> std::io::Result<ProcessedEvents> {
         let result = self.event_reader.read_new_events()?;
 
         // Handle malformed lines with backpressure
@@ -1655,7 +1665,10 @@ impl EventLoop {
         }
 
         if result.events.is_empty() && result.malformed.is_empty() {
-            return Ok(false);
+            return Ok(ProcessedEvents {
+                had_events: false,
+                has_orphans: false,
+            });
         }
 
         let mut has_orphans = false;
@@ -2032,6 +2045,9 @@ impl EventLoop {
             }
         }
 
+        // Track whether any events will be published (before the loop consumes them).
+        let had_events = !validated_events.is_empty();
+
         // Publish validated events to the bus.
         // Ralph is always registered with subscribe("*"), so every event has at least
         // one subscriber. Events without a specific hat subscriber are "orphaned" —
@@ -2065,7 +2081,10 @@ impl EventLoop {
             self.bus.publish(response);
         }
 
-        Ok(has_orphans)
+        Ok(ProcessedEvents {
+            had_events,
+            has_orphans,
+        })
     }
 
     /// Checks if output contains a completion event from Ralph.
