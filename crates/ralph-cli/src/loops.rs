@@ -20,7 +20,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use ralph_core::worktree::{list_ralph_worktrees, remove_worktree};
-use ralph_core::{LoopRegistry, MergeButtonState, MergeQueue, MergeState, merge_button_state};
+use ralph_core::{
+    LoopRegistry, MergeButtonState, MergeQueue, MergeState, merge_button_state,
+    truncate_with_ellipsis,
+};
 
 /// Manage parallel loops.
 #[derive(Parser, Debug)]
@@ -500,21 +503,7 @@ fn colorize_status(status: &str) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    // Use character count instead of byte count for UTF-8 safety
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        // Find the byte index of the max-th character for safe slicing
-        if max < 3 {
-            return "...".to_string();
-        }
-        let byte_idx = s
-            .char_indices()
-            .nth(max - 3)
-            .map(|(idx, _)| idx)
-            .unwrap_or(s.len());
-        format!("{}...", &s[..byte_idx])
-    }
+    truncate_with_ellipsis(s, max)
 }
 
 fn shorten_path(path: &str) -> String {
@@ -1129,7 +1118,7 @@ mod tests {
         assert_eq!(truncate(mixed, 6), mixed);
 
         // Test with max < 3 (edge case)
-        assert_eq!(truncate("hello", 2), "...");
+        assert_eq!(truncate("hello", 2), "he");
     }
 
     #[test]

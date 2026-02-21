@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_core::{MarkdownMemoryStore, Memory, MemoryType};
+use ralph_core::{truncate_with_ellipsis, MarkdownMemoryStore, Memory, MemoryType};
 use std::path::PathBuf;
 
 /// ANSI color codes for terminal output.
@@ -595,11 +595,7 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
             memory.tags.join(", ")
         };
         // Longer content preview (50 chars) for better readability
-        let content_preview = if memory.content.len() > 50 {
-            format!("{}…", &memory.content[..50].replace('\n', " "))
-        } else {
-            memory.content.replace('\n', " ")
-        };
+        let content_preview = truncate_with_ellipsis(&memory.content.replace('\n', " "), 50);
 
         if use_colors {
             println!(
@@ -608,7 +604,7 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
                 emoji,
                 type_name,
                 age,
-                truncate_str(&tags, 16),
+                truncate_with_ellipsis(&tags, 16),
                 content_preview
             );
         } else {
@@ -618,7 +614,7 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
                 emoji,
                 type_name,
                 age,
-                truncate_str(&tags, 16),
+                truncate_with_ellipsis(&tags, 16),
                 content_preview
             );
         }
@@ -770,14 +766,6 @@ fn truncate_to_budget(content: &str, budget: usize) -> String {
     }
 }
 
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len - 1])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,12 +856,6 @@ mod tests {
         let truncated = truncate_to_budget(content, 1);
         assert!(truncated.starts_with("abcd"));
         assert!(truncated.contains("truncated: budget 1 tokens exceeded"));
-    }
-
-    #[test]
-    fn truncate_str_handles_short_and_long_values() {
-        assert_eq!(truncate_str("short", 10), "short");
-        assert_eq!(truncate_str("1234567890", 5), "1234…");
     }
 
     #[test]

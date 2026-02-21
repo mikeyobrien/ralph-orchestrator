@@ -54,6 +54,7 @@
 //!            "/project/.worktrees/loop-1234-abcd/.ralph/events.jsonl");
 //! ```
 
+use crate::text::truncate_with_ellipsis;
 use std::path::{Path, PathBuf};
 
 /// Context for resolving paths within a Ralph loop.
@@ -519,11 +520,7 @@ impl LoopContext {
         let created = chrono::Utc::now().to_rfc3339();
 
         // Truncate prompt for readability
-        let prompt_preview = if prompt.len() > 200 {
-            format!("{}...", &prompt[..200])
-        } else {
-            prompt.to_string()
-        };
+        let prompt_preview = truncate_with_ellipsis(prompt, 200);
 
         let content = format!(
             r#"# Worktree Context

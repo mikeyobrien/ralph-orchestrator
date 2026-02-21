@@ -37,7 +37,7 @@ use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
 use ralph_adapters::detect_backend;
 use ralph_core::{
     CheckStatus, EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry,
-    PreflightReport, PreflightRunner, RalphConfig, TerminationReason,
+    PreflightReport, PreflightRunner, RalphConfig, TerminationReason, truncate_with_ellipsis,
     worktree::{WorktreeConfig, create_worktree, ensure_gitignore, remove_worktree},
 };
 use std::fs;
@@ -1294,11 +1294,7 @@ async fn run_command(
 
         // Show prompt source
         if let Some(ref inline) = config.event_loop.prompt {
-            let preview = if inline.len() > 60 {
-                format!("{}...", &inline[..60].replace('\n', " "))
-            } else {
-                inline.replace('\n', " ")
-            };
+            let preview = truncate_with_ellipsis(&inline.replace('\n', " "), 60);
             println!("  Prompt: inline text ({})", preview);
         } else {
             println!("  Prompt file: {}", config.event_loop.prompt_file);
@@ -2696,13 +2692,7 @@ core:
                     }
                 }
             })
-            .map(|p| {
-                if p.len() > 100 {
-                    format!("{}...", &p[..100])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate_with_ellipsis(&p, 100))
             .unwrap_or_else(|| "[no prompt]".to_string());
 
         // Assert: summary contains file content, NOT the file path
@@ -2741,17 +2731,11 @@ core:
                     }
                 }
             })
-            .map(|p| {
-                if p.len() > 100 {
-                    format!("{}...", &p[..100])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate_with_ellipsis(&p, 100))
             .unwrap_or_else(|| "[no prompt]".to_string());
 
-        // Assert: truncated to 100 chars + "..."
-        assert_eq!(prompt_summary.len(), 103); // 100 + "..."
+        // Assert: truncated to 100 chars total
+        assert_eq!(prompt_summary.len(), 100);
         assert!(prompt_summary.ends_with("..."));
     }
 
@@ -2779,13 +2763,7 @@ core:
                     }
                 }
             })
-            .map(|p| {
-                if p.len() > 100 {
-                    format!("{}...", &p[..100])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate_with_ellipsis(&p, 100))
             .unwrap_or_else(|| "[no prompt]".to_string());
 
         // Assert: returns "[no prompt]" for missing file

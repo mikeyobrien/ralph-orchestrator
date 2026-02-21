@@ -13,7 +13,7 @@ use crate::git_ops::{get_commit_summary, get_current_branch, get_head_sha, get_r
 use crate::loop_context::LoopContext;
 use crate::task::{Task, TaskStatus};
 use crate::task_store::TaskStore;
-use crate::text::truncate_with_ellipsis;
+use crate::text::floor_char_boundary;
 use std::io;
 use std::path::PathBuf;
 
@@ -279,7 +279,13 @@ impl HandoffWriter {
 /// Truncates a prompt to a maximum length, adding ellipsis if needed.
 /// Uses UTF-8 safe truncation to avoid panics on multi-byte characters.
 fn truncate_prompt(prompt: &str, max_len: usize) -> String {
-    truncate_with_ellipsis(prompt.trim(), max_len)
+    let prompt = prompt.trim();
+    if prompt.len() <= max_len {
+        prompt.to_string()
+    } else {
+        let safe_len = floor_char_boundary(prompt, max_len);
+        format!("{}...", &prompt[..safe_len])
+    }
 }
 
 #[cfg(test)]
@@ -374,5 +380,28 @@ mod tests {
         let result = truncate_prompt(&long_prompt, 50);
         assert_eq!(result.len(), 53); // 50 + "..."
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_prompt_with_emoji() {
+        // "✅" is 3 bytes (indices 0, 1, 2)
+        // truncate_prompt(prompt, 1) should safely slice at [..0]
+        let prompt = "✅rest";
+        let result = truncate_prompt(prompt, 1);
+        assert_eq!(result, "...");
+    }
+
+    #[test]
+    fn test_truncate_prompt_with_emoji_near_boundary() {
+        // "✅" is 3 bytes (indices 1, 2, 3)
+        let prompt = "x✅rest";
+        // truncate at 1 byte should keep "x"
+        assert_eq!(truncate_prompt(prompt, 1), "x...");
+        // truncate at 2 bytes should still only keep "x" to be safe
+        assert_eq!(truncate_prompt(prompt, 2), "x...");
+        // truncate at 3 bytes should still only keep "x"
+        assert_eq!(truncate_prompt(prompt, 3), "x...");
+        // truncate at 4 bytes should keep "x✅"
+        assert_eq!(truncate_prompt(prompt, 4), "x✅...");
     }
 }
