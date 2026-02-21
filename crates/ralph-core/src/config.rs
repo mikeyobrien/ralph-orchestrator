@@ -247,7 +247,15 @@ impl RalphConfig {
 
     /// Parses configuration from a YAML string.
     pub fn parse_yaml(content: &str) -> Result<Self, ConfigError> {
-        let config: Self = serde_yaml::from_str(content)?;
+        // Pre-flight check for deprecated/invalid keys to improve UX.
+        let value: serde_yaml::Value = serde_yaml::from_str(content)?;
+        if let Some(map) = value.as_mapping()
+            && map.contains_key(&serde_yaml::Value::String("project".to_string()))
+        {
+            return Err(ConfigError::DeprecatedProjectKey);
+        }
+
+        let config: Self = serde_yaml::from_value(value)?;
         debug!(
             backend = %config.cli.backend,
             has_v1_fields = config.agent.is_some(),
@@ -1243,6 +1251,12 @@ pub struct HatConfig {
     #[serde(default)]
     pub backend: Option<HatBackend>,
 
+    /// Custom args to append to the backend CLI when this hat is active.
+    ///
+    /// Accepts both `backend_args:` and shorthand `args:`.
+    #[serde(default, alias = "args")]
+    pub backend_args: Option<Vec<String>>,
+
     /// Default event to publish if hat forgets to write an event.
     #[serde(default)]
     pub default_publishes: Option<String>,
@@ -1414,6 +1428,11 @@ pub enum ConfigError {
         "RObot config error: {field} - {hint}\nSee: docs/reference/troubleshooting.md#robot-config"
     )]
     RobotMissingField { field: String, hint: String },
+
+    #[error(
+        "Invalid config key 'project'. Use 'core' instead (e.g. 'core.specs_dir' instead of 'project.specs_dir').\nSee: docs/guide/configuration.md"
+    )]
+    DeprecatedProjectKey,
 }
 
 #[cfg(test)]
@@ -1613,6 +1632,55 @@ future_feature: true
         let result: Result<RalphConfig, _> = serde_yaml::from_str(yaml);
         // Should parse successfully, ignoring unknown fields
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_custom_backend_args_shorthand() {
+        let yaml = r#"
+hats:
+  opencode_builder:
+    name: "Opencode"
+    description: "Opencode hat"
+    backend: "opencode"
+    args: ["-m", "model"]
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+        let hat = config.hats.get("opencode_builder").unwrap();
+        assert!(hat.backend_args.is_some());
+        assert_eq!(
+            hat.backend_args.as_ref().unwrap(),
+            &vec!["-m".to_string(), "model".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_custom_backend_args_explicit_key() {
+        let yaml = r#"
+hats:
+  opencode_builder:
+    name: "Opencode"
+    description: "Opencode hat"
+    backend: "opencode"
+    backend_args: ["-m", "model"]
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+        let hat = config.hats.get("opencode_builder").unwrap();
+        assert!(hat.backend_args.is_some());
+        assert_eq!(
+            hat.backend_args.as_ref().unwrap(),
+            &vec!["-m".to_string(), "model".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_project_key_rejected() {
+        let yaml = r#"
+project:
+  specs_dir: "my_specs"
+"#;
+        let result = RalphConfig::parse_yaml(yaml);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ConfigError::DeprecatedProjectKey));
     }
 
     #[test]

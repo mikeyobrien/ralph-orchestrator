@@ -431,6 +431,10 @@ fn validate_core_config_shape(value: &Value, label: &str) -> Result<()> {
         .as_mapping()
         .ok_or_else(|| anyhow::anyhow!("Core config '{}' must be a YAML mapping", label))?;
 
+    if mapping_get(mapping, "project").is_some() {
+        anyhow::bail!(ralph_core::ConfigError::DeprecatedProjectKey);
+    }
+
     let has_hats = mapping_get(mapping, "hats").is_some();
     let has_events = mapping_get(mapping, "events").is_some();
 
@@ -597,6 +601,20 @@ mod tests {
             Some(&HatsSource::Builtin("feature".to_string())),
         );
         assert_eq!(with_hats_label, "ralph.yml + hats:builtin:feature");
+    }
+
+    #[test]
+    fn validate_core_config_shape_rejects_project() {
+        let core: Value = serde_yaml::from_str(
+            r"
+project:
+  specs_dir: my_specs
+",
+        )
+        .unwrap();
+
+        let err = validate_core_config_shape(&core, "core.yml").unwrap_err();
+        assert!(err.to_string().contains("Invalid config key 'project'"));
     }
 
     #[test]

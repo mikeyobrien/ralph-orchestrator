@@ -840,11 +840,13 @@ pub async fn run_loop_impl(
 
         // Step 1: Get hat backend configuration for the active hat
         // Use display_hat (the active hat) instead of hat_id ("ralph" in multi-hat mode)
-        let hat_backend_opt = event_loop.get_hat_backend(&display_hat);
+        let hat_config_opt = event_loop.registry().get_config(&display_hat);
+        let hat_backend_opt = hat_config_opt.and_then(|c| c.backend.as_ref());
+        let hat_backend_args = hat_config_opt.and_then(|c| c.backend_args.clone());
 
         // Step 2: Resolve effective backend and determine backend name for timeout
         // Note: backend_name_for_timeout is owned String to avoid lifetime issues with hat_backend reference
-        let (effective_backend, backend_name_for_timeout): (CliBackend, String) =
+        let (mut effective_backend, backend_name_for_timeout): (CliBackend, String) =
             match hat_backend_opt {
                 Some(hat_backend) => {
                     // Hat has custom backend configuration
@@ -902,6 +904,11 @@ pub async fn run_loop_impl(
                     (backend.clone(), config.cli.backend.clone())
                 }
             };
+
+        // Step 2.5: Apply custom hat backend args if configured
+        if let Some(args) = hat_backend_args {
+            effective_backend.args.extend(args);
+        }
 
         // Step 3: Get timeout from config based on actual backend being used
         let timeout_secs = config.adapter_settings(&backend_name_for_timeout).timeout;
