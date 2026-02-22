@@ -653,14 +653,19 @@ pub fn smart_merge_summary(workspace: &Path, loop_id: &str) -> Result<String, Me
     let suffix_len = 8 + loop_id.len(); // " (loop " + loop_id + ")"
     let max_summary_len = 72 - prefix_len - suffix_len;
 
-    // Truncate if needed
-    let summary = if summary.len() > max_summary_len {
-        format!("{}...", &summary[..max_summary_len.saturating_sub(3)])
-    } else {
-        summary
-    };
+    let summary = truncate_merge_summary(&summary, max_summary_len);
 
     Ok(summary)
+}
+
+fn truncate_merge_summary(summary: &str, max_summary_len: usize) -> String {
+    if summary.len() > max_summary_len {
+        let prefix_limit = max_summary_len.saturating_sub(3);
+        let boundary = crate::text::floor_char_boundary(summary, prefix_limit);
+        format!("{}...", &summary[..boundary])
+    } else {
+        summary.to_string()
+    }
 }
 
 /// Extract summary from a git log --oneline line (removes commit hash prefix).
@@ -1047,5 +1052,13 @@ mod tests {
 
         assert!(ralph_dir.exists());
         assert!(queue_file.exists());
+    }
+
+    #[test]
+    fn test_truncate_merge_summary_utf8_boundary_safe() {
+        // prefix_limit=58 lands inside "中" (3-byte UTF-8 char), which previously panicked.
+        let summary = format!("{}中文提交", "a".repeat(57));
+        let truncated = truncate_merge_summary(&summary, 61);
+        assert_eq!(truncated, format!("{}...", "a".repeat(57)));
     }
 }

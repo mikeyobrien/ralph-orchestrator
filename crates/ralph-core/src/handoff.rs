@@ -278,10 +278,10 @@ impl HandoffWriter {
 /// Truncates a prompt to a maximum length, adding ellipsis if needed.
 fn truncate_prompt(prompt: &str, max_len: usize) -> String {
     let prompt = prompt.trim();
-    if prompt.len() <= max_len {
+    if prompt.chars().count() <= max_len {
         prompt.to_string()
     } else {
-        format!("{}...", &prompt[..max_len])
+        crate::text::truncate_with_ellipsis(prompt, max_len)
     }
 }
 
@@ -377,5 +377,13 @@ mod tests {
         let result = truncate_prompt(&long_prompt, 50);
         assert_eq!(result.len(), 53); // 50 + "..."
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_prompt_utf8_boundary_safe() {
+        // 50th byte lands inside "中" (3-byte UTF-8 char), which previously panicked.
+        let prompt = format!("{}中文", "a".repeat(49));
+        let result = truncate_prompt(&prompt, 50);
+        assert_eq!(result, format!("{}中...", "a".repeat(49)));
     }
 }

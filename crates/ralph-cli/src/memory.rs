@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_core::{MarkdownMemoryStore, Memory, MemoryType};
+use ralph_core::{MarkdownMemoryStore, Memory, MemoryType, floor_char_boundary};
 use std::path::PathBuf;
 
 /// ANSI color codes for terminal output.
@@ -582,7 +582,8 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
         };
         // Longer content preview (50 chars) for better readability
         let content_preview = if memory.content.len() > 50 {
-            format!("{}…", &memory.content[..50].replace('\n', " "))
+            let boundary = floor_char_boundary(&memory.content, 50);
+            format!("{}…", &memory.content[..boundary].replace('\n', " "))
         } else {
             memory.content.replace('\n', " ")
         };
@@ -721,8 +722,10 @@ fn truncate_to_budget(content: &str, budget: usize) -> String {
         return content.to_string();
     }
 
+    let safe_budget = floor_char_boundary(content, char_budget);
+
     // Find a good break point (end of a memory block)
-    let truncated = &content[..char_budget];
+    let truncated = &content[..safe_budget];
 
     // Try to find the last complete memory block (ends with -->)
     if let Some(last_complete) = truncated.rfind("-->") {
@@ -743,10 +746,15 @@ fn truncate_to_budget(content: &str, budget: usize) -> String {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
+    if max_len == 0 {
+        return String::new();
+    }
+
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}…", &s[..max_len - 1])
+        let boundary = floor_char_boundary(s, max_len.saturating_sub(1));
+        format!("{}…", &s[..boundary])
     }
 }
 

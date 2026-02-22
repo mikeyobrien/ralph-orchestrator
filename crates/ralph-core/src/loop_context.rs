@@ -520,7 +520,7 @@ impl LoopContext {
 
         // Truncate prompt for readability
         let prompt_preview = if prompt.len() > 200 {
-            format!("{}...", &prompt[..200])
+            crate::text::truncate_with_ellipsis(prompt, 200)
         } else {
             prompt.to_string()
         };
@@ -956,6 +956,27 @@ mod tests {
             .generate_context_file("ralph/loop-1234", "Add footer")
             .unwrap();
         assert!(!created_again);
+    }
+
+    #[test]
+    fn test_generate_context_file_handles_utf8_prompt_boundary() {
+        let temp = TempDir::new().unwrap();
+        let repo_root = temp.path().to_path_buf();
+        let worktree_path = repo_root.join(".worktrees/loop-utf8");
+
+        let ctx = LoopContext::worktree("loop-utf8", worktree_path.clone(), repo_root.clone());
+        ctx.ensure_agent_dir().unwrap();
+
+        // 200th byte lands inside "中" (3-byte UTF-8 char), which previously panicked.
+        let prompt = format!("{}中xyz", "a".repeat(199));
+        let created = ctx
+            .generate_context_file("ralph/loop-utf8", &prompt)
+            .unwrap();
+        assert!(created);
+
+        let content = std::fs::read_to_string(ctx.context_path()).unwrap();
+        let expected_preview = format!("{}中...", "a".repeat(199));
+        assert!(content.contains(&expected_preview));
     }
 
     #[cfg(unix)]

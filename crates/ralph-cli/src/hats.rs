@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use ralph_adapters::{CliBackend, detect_backend_default};
-use ralph_core::{HatRegistry, RalphConfig};
+use ralph_core::{HatRegistry, RalphConfig, truncate_with_ellipsis};
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -205,8 +205,8 @@ fn list_hats<W: Write>(writer: &mut W, registry: &HatRegistry, _use_colors: bool
         };
 
         // Truncate desc if too long
-        let desc = if desc.len() > 58 {
-            format!("{}...", &desc[..55])
+        let desc = if desc.chars().count() > 58 {
+            truncate_with_ellipsis(desc, 55)
         } else {
             desc.to_string()
         };

@@ -1234,11 +1234,8 @@ async fn run_command(
 
         // Show prompt source
         if let Some(ref inline) = config.event_loop.prompt {
-            let preview = if inline.len() > 60 {
-                format!("{}...", &inline[..60].replace('\n', " "))
-            } else {
-                inline.replace('\n', " ")
-            };
+            let inline_single_line = inline.replace('\n', " ");
+            let preview = truncate(&inline_single_line, 60);
             println!("  Prompt: inline text ({})", preview);
         } else {
             println!("  Prompt file: {}", config.event_loop.prompt_file);
@@ -2640,13 +2637,7 @@ core:
                     }
                 }
             })
-            .map(|p| {
-                if p.len() > 100 {
-                    format!("{}...", &p[..100])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate(&p, 100))
             .unwrap_or_else(|| "[no prompt]".to_string());
 
         // Assert: summary contains file content, NOT the file path
@@ -2685,17 +2676,11 @@ core:
                     }
                 }
             })
-            .map(|p| {
-                if p.len() > 100 {
-                    format!("{}...", &p[..100])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate(&p, 100))
             .unwrap_or_else(|| "[no prompt]".to_string());
 
-        // Assert: truncated to 100 chars + "..."
-        assert_eq!(prompt_summary.len(), 103); // 100 + "..."
+        // Assert: truncation uses shared UTF-8 safe helper
+        assert_eq!(prompt_summary, truncate(&long_content, 100));
         assert!(prompt_summary.ends_with("..."));
     }
 
@@ -2723,13 +2708,7 @@ core:
                     }
                 }
             })
-            .map(|p| {
-                if p.len() > 100 {
-                    format!("{}...", &p[..100])
-                } else {
-                    p
-                }
-            })
+            .map(|p| truncate(&p, 100))
             .unwrap_or_else(|| "[no prompt]".to_string());
 
         // Assert: returns "[no prompt]" for missing file

@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-use crate::display::{build_tui_hat_map, print_iteration_separator, print_termination};
+use crate::display::{build_tui_hat_map, print_iteration_separator, print_termination, truncate};
 use crate::process_management;
 use crate::{ColorMode, Verbosity};
 
@@ -1453,7 +1453,7 @@ fn get_last_commit_info() -> Option<String> {
 /// Note: CLI overrides are already applied to config before this function is called.
 fn resolve_prompt_content(event_loop_config: &ralph_core::EventLoopConfig) -> Result<String> {
     debug!(
-        inline_prompt = ?event_loop_config.prompt.as_ref().map(|s| format!("{}...", &s[..s.len().min(50)])),
+        inline_prompt = ?event_loop_config.prompt.as_ref().map(|s| truncate(s, 50)),
         prompt_file = %event_loop_config.prompt_file,
         "Resolving prompt content"
     );

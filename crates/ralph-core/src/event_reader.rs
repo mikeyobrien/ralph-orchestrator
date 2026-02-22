@@ -39,11 +39,7 @@ impl MalformedLine {
 
     /// Creates a new MalformedLine, truncating content if needed.
     pub fn new(line_number: u64, content: &str, error: String) -> Self {
-        let content = if content.len() > Self::MAX_CONTENT_LEN {
-            format!("{}...", &content[..Self::MAX_CONTENT_LEN])
-        } else {
-            content.to_string()
-        };
+        let content = crate::text::truncate_with_ellipsis(content, Self::MAX_CONTENT_LEN);
         Self {
             line_number,
             content,
@@ -278,6 +274,14 @@ mod tests {
         assert_eq!(result.malformed[0].line_number, 2);
         assert!(result.malformed[0].content.contains("corrupt json"));
         assert!(!result.malformed[0].error.is_empty());
+    }
+
+    #[test]
+    fn test_malformed_line_utf8_truncation_does_not_panic() {
+        // 100th byte lands inside "中" (3-byte UTF-8 char), which previously panicked.
+        let content = format!("{}中文后缀", "a".repeat(99));
+        let malformed = MalformedLine::new(1, &content, "bad json".to_string());
+        assert_eq!(malformed.content, format!("{}中...", "a".repeat(99)));
     }
 
     #[test]
