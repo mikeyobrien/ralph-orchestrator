@@ -8,7 +8,7 @@ These options are accepted by all commands.
 
 | Option | Description |
 |--------|-------------|
-| `-c, --config <SOURCE>` | Core config source (can be specified multiple times). Defaults to `ralph.yml`, or `$RALPH_CONFIG` when set. |
+| `-c, --config <SOURCE>` | Primary config source (can be specified multiple times). Defaults to `ralph.yml`, or `$RALPH_CONFIG` when set. |
 | `-H, --hats <SOURCE>` | Hat collection source (`file`, `builtin:<name>`, or URL). |
 | `-v, --verbose` | Verbose output |
 | `--color <MODE>` | Color output: `auto`, `always`, `never` |
@@ -33,6 +33,13 @@ The `-c` flag specifies where to load **core** configuration from. If not provid
 > `-c builtin:<name>` is no longer supported. Use `-H builtin:<name>` for hat collections.
 
 The first non-override core source is used as the base config. Later core overrides replace earlier values.
+
+Backward compatibility: a `-c` config file may still contain `hats`/`events` (single-file combined config).
+
+If `-H/--hats` is provided, it takes precedence over hats in `-c`:
+- `hats` and `events` from `-H` replace `hats`/`events` from `-c`
+- `event_loop` values from `-H` override matching `event_loop` keys from `-c`
+- `-c core.*=...` overrides are still applied last
 
 **Supported override fields:**
 

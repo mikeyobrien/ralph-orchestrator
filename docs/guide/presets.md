@@ -54,8 +54,13 @@ ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
 - `-c/--config` (core): backend, paths, guardrails, memories/tasks/skills, runtime defaults
 - `-H/--hats` (collection): hats, events, and workflow event-loop settings
 
-Core config must not contain `hats`/`events`.
-Hats files must not contain `cli`, `core`, or other core/runtime sections.
+Single-file combined configs remain supported (`-c` file may include `hats`/`events`).
+
+When `-H/--hats` is provided, it takes precedence:
+- `hats`/`events` from `-H` replace `hats`/`events` from `-c`
+- `event_loop` values from `-H` override matching `event_loop` keys from `-c`
+
+For maintainability, prefer keeping core/runtime settings in `-c` and workflow hats in `-H`.
 
 ## Creating Your Own Hat Collection
 

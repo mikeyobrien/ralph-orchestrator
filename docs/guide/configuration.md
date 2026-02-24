@@ -43,6 +43,17 @@ ralph run -c core.scratchpad=.runs/task-1/scratchpad.md -c core.specs_dir=./cust
 
 Overrides are applied after `ralph.yml` is loaded, so they take precedence. The scratchpad directory is auto-created if it doesn't exist.
 
+## Combined Config Compatibility (`-c` + `-H`)
+
+Ralph supports both styles:
+- **Single-file combined config**: `-c ralph.yml` with core + hats in one file
+- **Split config**: `-c <core>` plus `-H <hats source>`
+
+If both are used (`-c` contains hats and `-H` is provided), `-H` wins for workflow sections:
+- `hats` and `events` from `-H` replace `hats`/`events` from `-c`
+- `event_loop` values from `-H` override matching `event_loop` keys from `-c`
+- `-c core.*=...` overrides still apply last
+
 ## Full Configuration Reference
 
 ```yaml
