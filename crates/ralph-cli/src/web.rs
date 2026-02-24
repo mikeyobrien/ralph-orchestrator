@@ -739,16 +739,32 @@ mod tests {
         let backend_dir = root.join("server");
         std::fs::create_dir_all(&backend_dir).expect("backend dir");
 
-        preflight_with(
-            &root,
-            &backend_dir,
-            true,
-            node_path.as_os_str(),
-            npm_path.as_os_str(),
-            npx_path.as_os_str(),
-        )
-        .await
-        .expect("preflight");
+        // Retrying avoids rare CI flakes where executing freshly written
+        // fake scripts can transiently fail (e.g. ETXTBSY surfaced as
+        // "Node.js is not installed").
+        let mut preflight_ok = false;
+        for _ in 0..5 {
+            match preflight_with(
+                &root,
+                &backend_dir,
+                true,
+                node_path.as_os_str(),
+                npm_path.as_os_str(),
+                npx_path.as_os_str(),
+            )
+            .await
+            {
+                Ok(()) => {
+                    preflight_ok = true;
+                    break;
+                }
+                Err(err) if format!("{err}").contains("Node.js is not installed") => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(err) => panic!("preflight: {err}"),
+            }
+        }
+        assert!(preflight_ok, "preflight should succeed after retries");
         assert!(root.join("npm_install_called").exists());
     }
 
@@ -775,16 +791,29 @@ exit 1",
         std::fs::create_dir_all(root.join("node_modules")).expect("node_modules dir");
         std::fs::write(root.join("node_modules/.package-lock.json"), "").expect("lockfile");
 
-        preflight_with(
-            &root,
-            &backend_dir,
-            true,
-            node_path.as_os_str(),
-            npm_path.as_os_str(),
-            npx_path.as_os_str(),
-        )
-        .await
-        .expect("preflight");
+        let mut preflight_ok = false;
+        for _ in 0..5 {
+            match preflight_with(
+                &root,
+                &backend_dir,
+                true,
+                node_path.as_os_str(),
+                npm_path.as_os_str(),
+                npx_path.as_os_str(),
+            )
+            .await
+            {
+                Ok(()) => {
+                    preflight_ok = true;
+                    break;
+                }
+                Err(err) if format!("{err}").contains("Node.js is not installed") => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(err) => panic!("preflight: {err}"),
+            }
+        }
+        assert!(preflight_ok, "preflight should succeed after retries");
         assert!(!root.join("npm_install_called").exists());
     }
 
