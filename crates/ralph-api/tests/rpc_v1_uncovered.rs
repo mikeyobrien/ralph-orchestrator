@@ -167,7 +167,7 @@ async fn task_unarchive_restores_archived_task() -> Result<()> {
 }
 
 #[tokio::test]
-async fn task_clear_removes_done_and_closed_tasks() -> Result<()> {
+async fn task_clear_removes_all_tasks() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
 
@@ -212,11 +212,7 @@ async fn task_clear_removes_done_and_closed_tasks() -> Result<()> {
     let (status, payload) = post_rpc(&client, &server, &list).await?;
     assert_eq!(status, 200);
     let listed = payload["result"]["tasks"].as_array().unwrap();
-
-    let ids: Vec<&str> = listed.iter().map(|t| t["id"].as_str().unwrap()).collect();
-    assert!(ids.contains(&"task-clear-open"));
-    assert!(!ids.contains(&"task-clear-done"));
-    assert!(!ids.contains(&"task-clear-closed"));
+    assert!(listed.is_empty(), "task.clear should remove all tasks");
 
     server.stop().await;
     Ok(())

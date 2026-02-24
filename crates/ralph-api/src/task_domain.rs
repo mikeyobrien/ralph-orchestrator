@@ -289,8 +289,7 @@ impl TaskDomain {
     }
 
     pub fn clear(&mut self) -> Result<(), ApiError> {
-        self.tasks
-            .retain(|_, t| t.status != "done" && t.status != "closed");
+        self.tasks.clear();
         self.persist()?;
         Ok(())
     }
