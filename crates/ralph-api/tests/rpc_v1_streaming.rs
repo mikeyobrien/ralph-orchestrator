@@ -577,3 +577,89 @@ async fn token_mode_stream_requires_matching_ws_principal() -> Result<()> {
     server.stop().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn unsubscribe_removes_subscription() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    let subscribe = rpc_request(
+        "req-stream-unsubscribe-sub",
+        "stream.subscribe",
+        json!({
+            "topics": ["task.status.changed"],
+            "filters": { "resourceIds": ["task-unsub-1"] }
+        }),
+        None,
+    );
+    let (status, subscribe_payload) = post_rpc(&client, &server, &subscribe).await?;
+    assert_eq!(status, 200);
+
+    let subscription_id = subscribe_payload["result"]["subscriptionId"]
+        .as_str()
+        .expect("subscription id should be present")
+        .to_string();
+
+    let mut stream = open_stream(&server, &subscription_id).await?;
+
+    // Create task
+    let create = rpc_request(
+        "req-stream-unsubscribe-create",
+        "task.create",
+        json!({ "id": "task-unsub-1", "title": "Unsub Task", "status": "open", "priority": 1, "autoExecute": false }),
+        Some("idem-unsub-create"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // Verify event received
+    let event = recv_topic_event(&mut stream, "task.status.changed").await;
+    assert_eq!(event["resource"]["id"], "task-unsub-1");
+
+    // Unsubscribe
+    let unsubscribe = rpc_request(
+        "req-stream-unsubscribe-call",
+        "stream.unsubscribe",
+        json!({ "subscriptionId": subscription_id }),
+        Some("idem-unsub-call"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &unsubscribe).await?;
+    assert!(status == 200, "unsubscribe failed: {:?}", payload);
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["success"], true);
+
+    // Update task
+    let update = rpc_request(
+        "req-stream-unsubscribe-update",
+        "task.update",
+        json!({ "id": "task-unsub-1", "status": "running" }),
+        Some("idem-unsub-update"),
+    );
+    let (status, _) = post_rpc(&client, &server, &update).await?;
+    assert_eq!(status, 200);
+
+    // Verify no further event is received
+    let next_msg = timeout(Duration::from_millis(500), stream.next()).await;
+    match next_msg {
+        Err(_) => {}   // Timeout, meaning no event
+        Ok(None) => {} // Closed
+        Ok(Some(Ok(msg))) => {
+            if !msg.is_close() {
+                if let Message::Text(text) = &msg {
+                    let payload: Value = serde_json::from_str(text).unwrap();
+                    if payload["topic"] == "stream.keepalive" {
+                        // Keepalives are expected, but we shouldn't get the task.status.changed
+                    } else {
+                        panic!("Received unexpected message after unsubscribe: {:?}", msg);
+                    }
+                } else {
+                    panic!("Received unexpected message after unsubscribe: {:?}", msg);
+                }
+            }
+        }
+        Ok(Some(Err(_))) => {} // Error, probably closed
+    }
+
+    server.stop().await;
+    Ok(())
+}
