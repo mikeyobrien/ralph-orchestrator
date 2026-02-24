@@ -2977,7 +2977,7 @@ core:
     }
 
     #[tokio::test]
-    async fn test_run_command_rejects_monolithic_core_config() {
+    async fn test_run_command_allows_single_file_combined_config() {
         let temp_dir = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::set(temp_dir.path());
 
@@ -3000,7 +3000,7 @@ hats:
         args.dry_run = true;
         args.prompt_text = Some("Test inline prompt".to_string());
 
-        let err = run_command(
+        run_command(
             &[ConfigSource::File(std::path::PathBuf::from("ralph.yml"))],
             None,
             false,
@@ -3008,11 +3008,6 @@ hats:
             args,
         )
         .await
-        .expect_err("expected monolithic core config rejection");
-
-        assert!(
-            err.to_string()
-                .contains("contains hat collection keys (hats/events)")
-        );
+        .expect("combined config should be accepted");
     }
 }

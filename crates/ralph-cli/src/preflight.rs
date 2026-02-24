@@ -202,6 +202,16 @@ pub(crate) async fn load_config_for_preflight(
     validate_core_config_shape(&core_value, &core_label)?;
 
     if let Some(source) = hats_source {
+        if let Some(mapping) = core_value.as_mapping()
+            && (mapping_get(mapping, "hats").is_some() || mapping_get(mapping, "events").is_some())
+        {
+            warn!(
+                "Core config '{}' contains hats/events and hats source '{}' was provided; hats source takes precedence for hats/events",
+                core_label,
+                source.label()
+            );
+        }
+
         let hats_value = load_hats_value(source).await?;
         validate_hats_config_shape(&hats_value, &source.label())?;
         core_value = merge_hats_overlay(core_value, hats_value)?;
@@ -435,16 +445,6 @@ fn validate_core_config_shape(value: &Value, label: &str) -> Result<()> {
         anyhow::bail!(ralph_core::ConfigError::DeprecatedProjectKey);
     }
 
-    let has_hats = mapping_get(mapping, "hats").is_some();
-    let has_events = mapping_get(mapping, "events").is_some();
-
-    if has_hats || has_events {
-        anyhow::bail!(
-            "Core config '{}' contains hat collection keys (hats/events).\n\nSplit your config:\n  - keep backend/runtime settings in core config passed with -c/--config\n  - move hats/events to a hats file passed with -H/--hats\n\nExample:\n  ralph run -c ralph.yml -H hats/feature.yml\n  ralph run -c ralph.yml -H builtin:feature",
-            label
-        );
-    }
-
     Ok(())
 }
 
@@ -618,7 +618,7 @@ project:
     }
 
     #[test]
-    fn validate_core_config_shape_rejects_hats() {
+    fn validate_core_config_shape_allows_single_file_combined_config() {
         let core: Value = serde_yaml::from_str(
             r"
 cli:
@@ -630,8 +630,7 @@ hats:
         )
         .unwrap();
 
-        let err = validate_core_config_shape(&core, "core.yml").unwrap_err();
-        assert!(err.to_string().contains("contains hat collection keys"));
+        assert!(validate_core_config_shape(&core, "core.yml").is_ok());
     }
 
     #[test]
@@ -660,6 +659,9 @@ cli:
 event_loop:
   max_iterations: 100
   completion_promise: LOOP_COMPLETE
+hats:
+  builder:
+    name: Builder
 ",
         )
         .unwrap();
@@ -681,6 +683,55 @@ hats:
         assert_eq!(config.event_loop.max_iterations, 100);
         assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
         assert!(config.hats.contains_key("reviewer"));
+        assert!(!config.hats.contains_key("builder"));
+    }
+
+    #[tokio::test]
+    async fn load_config_for_preflight_hats_source_takes_precedence_over_core_hats() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let core_path = temp_dir.path().join("ralph.yml");
+        let hats_path = temp_dir.path().join("hats.yml");
+
+        std::fs::write(
+            &core_path,
+            r"
+cli:
+  backend: claude
+event_loop:
+  max_iterations: 50
+  completion_promise: LOOP_COMPLETE
+hats:
+  builder:
+    name: Builder
+    description: Core builder
+",
+        )
+        .unwrap();
+
+        std::fs::write(
+            &hats_path,
+            r"
+event_loop:
+  completion_promise: REVIEW_COMPLETE
+hats:
+  reviewer:
+    name: Reviewer
+    description: Hats reviewer
+",
+        )
+        .unwrap();
+
+        let config_sources = vec![ConfigSource::File(core_path)];
+        let hats_source = HatsSource::File(hats_path);
+
+        let config = load_config_for_preflight(&config_sources, Some(&hats_source))
+            .await
+            .unwrap();
+
+        assert_eq!(config.event_loop.max_iterations, 50);
+        assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
+        assert!(config.hats.contains_key("reviewer"));
+        assert!(!config.hats.contains_key("builder"));
     }
 
     #[test]
