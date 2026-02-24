@@ -13,6 +13,7 @@ use crate::git_ops::{get_commit_summary, get_current_branch, get_head_sha, get_r
 use crate::loop_context::LoopContext;
 use crate::task::{Task, TaskStatus};
 use crate::task_store::TaskStore;
+use crate::text::truncate_with_ellipsis;
 use std::io;
 use std::path::PathBuf;
 
@@ -276,13 +277,9 @@ impl HandoffWriter {
 }
 
 /// Truncates a prompt to a maximum length, adding ellipsis if needed.
+/// Uses UTF-8 safe truncation to avoid panics on multi-byte characters.
 fn truncate_prompt(prompt: &str, max_len: usize) -> String {
-    let prompt = prompt.trim();
-    if prompt.len() <= max_len {
-        prompt.to_string()
-    } else {
-        format!("{}...", &prompt[..max_len])
-    }
+    truncate_with_ellipsis(prompt.trim(), max_len)
 }
 
 #[cfg(test)]
