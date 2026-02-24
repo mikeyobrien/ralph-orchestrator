@@ -203,6 +203,47 @@ async fn loop_retry_spawns_merge_flow_command() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn loop_process_delegates_to_cli_without_marking_queued_entries_merged() -> Result<()> {
+    let (fake_bin, fake_ralph, call_log_path) = create_fake_ralph_command()?;
+
+    let mut config = ApiConfig::default();
+    config.ralph_command = fake_ralph.to_string_lossy().to_string();
+
+    let server = TestServer::start(config).await;
+    let client = Client::new();
+
+    let merge_queue = MergeQueue::new(server.workspace_path());
+    merge_queue.enqueue("loop-process-1", "Queued merge")?;
+
+    let process_request = rpc_request(
+        "req-loop-process-1",
+        "loop.process",
+        json!({}),
+        Some("idem-loop-process-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &process_request).await?;
+
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["success"], true);
+
+    let calls = fs::read_to_string(&call_log_path)?;
+    assert!(
+        calls.lines().any(|line| line.trim() == "loops process"),
+        "expected loops process command invocation, got: {calls}"
+    );
+
+    let queue_entry = merge_queue
+        .get_entry("loop-process-1")?
+        .expect("queued loop should remain in queue until merge execution completes");
+    assert_eq!(queue_entry.state, MergeState::Queued);
+
+    drop(fake_bin);
+    server.stop().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn loop_discard_removes_worktree_and_marks_discarded() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
@@ -247,6 +288,145 @@ async fn loop_discard_removes_worktree_and_marks_discarded() -> Result<()> {
         .expect("discarded loop should remain in merge queue history");
     assert_eq!(queue_entry.state, MergeState::Discarded);
 
+    server.stop().await;
+    Ok(())
+}
+
+// ── Real-flow integration helpers ────────────────────────────────────────────
+
+/// Locate the `ralph` binary built by this workspace.
+///
+/// Cargo places the binary at `target/{profile}/ralph`, while the test binary
+/// itself lives at `target/{profile}/deps/<test-name>-<hash>`. We navigate
+/// up one directory (deps → profile dir) to find the sibling binary.
+#[cfg(unix)]
+fn find_workspace_ralph_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    // exe: .../target/{profile}/deps/<test-binary>
+    let deps_dir = exe.parent()?;
+    // deps_dir: .../target/{profile}/deps
+    let build_dir = deps_dir.parent()?;
+    // build_dir: .../target/{profile}
+    let ralph = build_dir.join("ralph");
+    if ralph.exists() { Some(ralph) } else { None }
+}
+
+/// Create a wrapper script named `ralph` inside a fresh temp directory.
+///
+/// The wrapper:
+///  - Intercepts `ralph run ...` (exits 0 immediately) to prevent long-lived
+///    merge-ralph processes from being spawned during integration tests.
+///  - Prepends its own directory to `PATH` before delegating any other
+///    sub-command to the real binary, so that child processes spawned by the
+///    real ralph (e.g. the internal `ralph run` spawn in `loops process`) also
+///    hit the interceptor.
+///
+/// Returns `(TempDir, wrapper_path)`.  The caller must keep `TempDir` alive.
+#[cfg(unix)]
+fn create_ralph_run_interceptor() -> Option<(TempDir, PathBuf)> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_ralph = find_workspace_ralph_binary()?;
+    let bin_dir = tempfile::tempdir().ok()?;
+    let wrapper_path = bin_dir.path().join("ralph");
+
+    let script = format!(
+        "#!/bin/sh\n\
+         case \"$1\" in\n\
+             run) exit 0 ;;\n\
+             *)\n\
+                 PATH=\"$(dirname \"$0\"):$PATH\"\n\
+                 export PATH\n\
+                 exec \"{real_ralph}\" \"$@\"\n\
+                 ;;\n\
+         esac\n",
+        real_ralph = real_ralph.display()
+    );
+
+    fs::write(&wrapper_path, &script).ok()?;
+    let mut perms = fs::metadata(&wrapper_path).ok()?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&wrapper_path, perms).ok()?;
+
+    Some((bin_dir, wrapper_path))
+}
+
+// ── Real-flow integration test ────────────────────────────────────────────────
+
+/// Regression: `loop.process` must invoke the *real* `ralph loops process`
+/// path, not just a stub.
+///
+/// Setup:
+///   - Workspace with a queued merge entry.
+///   - `ralph_command` points to a wrapper that delegates `loops process` to
+///     the real ralph binary, but intercepts any `ralph run` spawns so no
+///     long-running merge-ralph processes are started.
+///
+/// Assertions:
+///   - API returns HTTP 200 with `result.success = true`.
+///   - `loop.status` shows `lastProcessedAt` was set (confirming the domain
+///     completed the flow, not an early-return short-circuit).
+///   - The queue entry remains in `Queued` state because no actual merge ran.
+#[cfg(unix)]
+#[tokio::test]
+async fn loop_process_real_ralph_flow_succeeds_with_queued_entry() -> Result<()> {
+    let Some((_bin_dir, wrapper)) = create_ralph_run_interceptor() else {
+        // Built binary not found; skip rather than fail (e.g. cross-compile CI).
+        eprintln!("skipping loop_process_real_ralph_flow_succeeds_with_queued_entry: ralph binary not found");
+        return Ok(());
+    };
+
+    let mut config = ApiConfig::default();
+    config.ralph_command = wrapper.to_string_lossy().to_string();
+
+    let server = TestServer::start(config).await;
+    let client = Client::new();
+
+    // A git repo is not strictly required by `ralph loops process` itself, but
+    // having one avoids spurious warnings from the real binary.
+    init_git_repo(server.workspace_path())?;
+
+    // Enqueue an entry so loop_domain.process() actually invokes the wrapper
+    // (an empty queue returns immediately without touching ralph).
+    let merge_queue = MergeQueue::new(server.workspace_path());
+    merge_queue.enqueue("loop-real-flow-1", "Real flow integration test")?;
+
+    let process_request = rpc_request(
+        "req-loop-real-flow-1",
+        "loop.process",
+        json!({}),
+        Some("idem-loop-real-flow-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &process_request).await?;
+
+    assert_eq!(status, 200, "loop.process must succeed: {payload}");
+    assert_eq!(
+        payload["result"]["success"], true,
+        "loop.process result.success must be true"
+    );
+
+    // Confirm lastProcessedAt was stamped — proves we went through the full
+    // process() code path rather than an early-return no-op.
+    let status_req = rpc_request("req-loop-status-real-1", "loop.status", json!({}), None);
+    let (http_status, status_payload) = post_rpc(&client, &server, &status_req).await?;
+    assert_eq!(http_status, 200);
+    assert!(
+        status_payload["result"]["lastProcessedAt"].is_string(),
+        "lastProcessedAt must be set after loop.process: {status_payload}"
+    );
+
+    // Queue entry must still be Queued: the interceptor exited the spawned
+    // merge-ralph immediately, so no state transition occurred.
+    let entry = merge_queue
+        .get_entry("loop-real-flow-1")?
+        .expect("queue entry must still exist");
+    assert_eq!(
+        entry.state,
+        MergeState::Queued,
+        "entry should remain Queued after intercepted run"
+    );
+
+    drop(_bin_dir);
     server.stop().await;
     Ok(())
 }

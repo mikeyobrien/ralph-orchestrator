@@ -191,13 +191,27 @@ impl LoopDomain {
             .list_by_state(MergeState::Queued)
             .map_err(map_merge_error)?;
 
-        for entry in pending_entries {
-            queue
-                .mark_merging(&entry.loop_id, std::process::id())
-                .map_err(map_merge_error)?;
-            queue
-                .mark_merged(&entry.loop_id, &current_commit(&self.workspace_root))
-                .map_err(map_merge_error)?;
+        if pending_entries.is_empty() {
+            self.last_processed_at = Some(now_ts());
+            return Ok(());
+        }
+
+        let status = Command::new(&self.ralph_command)
+            .args(["loops", "process"])
+            .current_dir(&self.workspace_root)
+            .status()
+            .map_err(|error| {
+                ApiError::internal(format!(
+                    "failed invoking '{}' for loop.process: {error}",
+                    self.ralph_command
+                ))
+            })?;
+
+        if !status.success() {
+            return Err(ApiError::internal(format!(
+                "loop.process command '{}' exited with status {status}",
+                self.ralph_command
+            )));
         }
 
         self.last_processed_at = Some(now_ts());

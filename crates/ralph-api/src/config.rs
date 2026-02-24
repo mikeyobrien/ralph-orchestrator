@@ -51,7 +51,7 @@ impl Default for ApiConfig {
         let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         Self {
-            host: "0.0.0.0".to_string(),
+            host: "127.0.0.1".to_string(),
             port: 3000,
             served_by: "ralph-api".to_string(),
             auth_mode: AuthMode::TrustedLocal,
@@ -128,6 +128,72 @@ impl ApiConfig {
             anyhow::bail!("RALPH_API_TOKEN must be configured when auth mode is token");
         }
 
+        if self.auth_mode == AuthMode::TrustedLocal && !is_loopback_host(&self.host) {
+            anyhow::bail!(
+                "trusted_local auth mode requires loopback host; set RALPH_API_HOST to 127.0.0.1/::1 (or localhost) or switch to token auth"
+            );
+        }
+
         Ok(())
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase();
+
+    matches!(normalized.as_str(), "127.0.0.1" | "localhost" | "::1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiConfig, AuthMode};
+
+    #[test]
+    fn defaults_are_localhost_and_trusted_local() {
+        let config = ApiConfig::default();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.auth_mode, AuthMode::TrustedLocal);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn trusted_local_allows_ipv6_loopback() {
+        let mut config = ApiConfig::default();
+        config.host = "::1".to_string();
+        assert!(
+            config.validate().is_ok(),
+            "RALPH_API_HOST=::1 must be accepted by trusted_local"
+        );
+    }
+
+    #[test]
+    fn trusted_local_allows_bracketed_ipv6_loopback() {
+        let mut config = ApiConfig::default();
+        config.host = "[::1]".to_string();
+        assert!(
+            config.validate().is_ok(),
+            "RALPH_API_HOST=[::1] must be accepted by trusted_local"
+        );
+    }
+
+    #[test]
+    fn trusted_local_rejects_non_loopback_hosts() {
+        let mut config = ApiConfig::default();
+        config.host = "0.0.0.0".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn token_auth_allows_non_loopback_hosts() {
+        let mut config = ApiConfig::default();
+        config.host = "0.0.0.0".to_string();
+        config.auth_mode = AuthMode::Token;
+        config.token = Some("secret-token".to_string());
+
+        assert!(config.validate().is_ok());
     }
 }

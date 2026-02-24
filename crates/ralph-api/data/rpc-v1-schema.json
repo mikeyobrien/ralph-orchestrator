@@ -353,6 +353,24 @@
         "id"
       ]
     },
+    "planningSessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "planningSessionIdParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/planningSessionId"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
     "taskListParams": {
       "type": "object",
       "additionalProperties": false,
@@ -509,7 +527,7 @@
       "additionalProperties": false,
       "properties": {
         "sessionId": {
-          "type": "string"
+          "$ref": "#/$defs/planningSessionId"
         },
         "promptId": {
           "type": "string"
@@ -529,10 +547,13 @@
       "additionalProperties": false,
       "properties": {
         "sessionId": {
-          "type": "string"
+          "$ref": "#/$defs/planningSessionId"
         },
         "filename": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9._-]+$"
         }
       },
       "required": [
@@ -709,11 +730,11 @@
         { "properties": { "method": { "const": "loop.trigger_merge_task" }, "params": { "$ref": "#/$defs/loopTriggerMergeTaskParams" } }, "required": ["method", "params"] },
 
         { "properties": { "method": { "const": "planning.list" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "planning.get" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.get" }, "params": { "$ref": "#/$defs/planningSessionIdParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "planning.start" }, "params": { "$ref": "#/$defs/planningStartParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "planning.respond" }, "params": { "$ref": "#/$defs/planningRespondParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "planning.resume" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "planning.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.resume" }, "params": { "$ref": "#/$defs/planningSessionIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.delete" }, "params": { "$ref": "#/$defs/planningSessionIdParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "planning.get_artifact" }, "params": { "$ref": "#/$defs/planningGetArtifactParams" } }, "required": ["method", "params"] },
 
         { "properties": { "method": { "const": "config.get" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },

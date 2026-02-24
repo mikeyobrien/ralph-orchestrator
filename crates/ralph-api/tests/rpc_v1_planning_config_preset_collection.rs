@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs as unix_fs;
 use std::path::Path;
 
 use anyhow::Result;
@@ -207,6 +209,176 @@ async fn planning_methods_cover_lifecycle_and_artifacts() -> Result<()> {
 }
 
 #[tokio::test]
+async fn planning_methods_reject_path_traversal_session_ids() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    let victim_dir = server.workspace_path().join("victim-dir");
+    fs::create_dir_all(&victim_dir)?;
+
+    let get = rpc_request(
+        "req-plan-get-invalid-1",
+        "planning.get",
+        json!({ "id": "../../victim-dir" }),
+        None,
+    );
+    let (status, payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 400);
+    assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+
+    let respond = rpc_request(
+        "req-plan-respond-invalid-1",
+        "planning.respond",
+        json!({
+            "sessionId": "../../victim-dir",
+            "promptId": "p1",
+            "response": "should fail"
+        }),
+        Some("idem-plan-respond-invalid-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &respond).await?;
+    assert_eq!(status, 400);
+    assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+
+    let resume = rpc_request(
+        "req-plan-resume-invalid-1",
+        "planning.resume",
+        json!({ "id": "../../victim-dir" }),
+        Some("idem-plan-resume-invalid-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &resume).await?;
+    assert_eq!(status, 400);
+    assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+
+    let delete = rpc_request(
+        "req-plan-delete-invalid-1",
+        "planning.delete",
+        json!({ "id": "../../victim-dir" }),
+        Some("idem-plan-delete-invalid-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &delete).await?;
+    assert_eq!(status, 400);
+    assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+
+    let get_artifact = rpc_request(
+        "req-plan-artifact-invalid-1",
+        "planning.get_artifact",
+        json!({
+            "sessionId": "../../victim-dir",
+            "filename": "plan.md"
+        }),
+        None,
+    );
+    let (status, payload) = post_rpc(&client, &server, &get_artifact).await?;
+    assert_eq!(status, 400);
+    assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+
+    assert!(victim_dir.exists(), "path traversal must not delete arbitrary directories");
+
+    server.stop().await;
+    Ok(())
+}
+
+/// Dot-files placed inside an artifact directory by an agent run (e.g. `.env`,
+/// `.git-credentials`) are intentionally excluded from `planning.get` artifact
+/// listings.  Direct access via `planning.get_artifact` must be equally
+/// restricted so the list/get contract stays consistent and hidden files are
+/// not leaked through the API.
+#[tokio::test]
+async fn planning_get_artifact_rejects_dot_file_names() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create a planning session.
+    let start = rpc_request(
+        "req-plan-dotfile-start-1",
+        "planning.start",
+        json!({ "prompt": "Test dot-file artifact guard" }),
+        Some("idem-plan-dotfile-start-1"),
+    );
+    let (status, start_payload) = post_rpc(&client, &server, &start).await?;
+    assert_eq!(status, 200);
+
+    let session_id = start_payload["result"]["session"]["id"]
+        .as_str()
+        .expect("session id should be present")
+        .to_string();
+
+    // Write a hidden file directly into the artifacts directory (simulating
+    // something an agent could produce).
+    let hidden_path = server
+        .workspace_path()
+        .join(".ralph/planning-sessions")
+        .join(&session_id)
+        .join("artifacts")
+        .join(".env");
+    fs::write(&hidden_path, "SECRET=hunter2")?;
+
+    // Write an artifact whose filename does not match the public contract.
+    let unsupported_name_path = server
+        .workspace_path()
+        .join(".ralph/planning-sessions")
+        .join(&session_id)
+        .join("artifacts")
+        .join("my plan.md");
+    fs::write(&unsupported_name_path, "# Private")?;
+
+    // The dot-file must NOT appear in the artifact listing.
+    let get = rpc_request(
+        "req-plan-dotfile-get-1",
+        "planning.get",
+        json!({ "id": session_id.clone() }),
+        None,
+    );
+    let (status, get_payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+    let artifacts = get_payload["result"]["session"]["artifacts"]
+        .as_array()
+        .expect("artifacts array must be present");
+    assert!(
+        !artifacts.iter().any(|a| a == ".env"),
+        "dot-files must not appear in artifact listing; got: {artifacts:?}"
+    );
+    assert!(
+        !artifacts.iter().any(|a| a == "my plan.md"),
+        "filenames outside the public contract must not appear in listings; got: {artifacts:?}"
+    );
+
+    // Direct get_artifact must also be rejected (404, not contents).
+    let get_artifact = rpc_request(
+        "req-plan-dotfile-artifact-1",
+        "planning.get_artifact",
+        json!({ "sessionId": session_id.clone(), "filename": ".env" }),
+        None,
+    );
+    let (status, artifact_payload) = post_rpc(&client, &server, &get_artifact).await?;
+    assert_eq!(status, 404, "dot-file artifact must return 404, not contents");
+    assert_eq!(artifact_payload["error"]["code"], "NOT_FOUND");
+
+    // Sanity: a normal artifact is still accessible.
+    let normal_path = server
+        .workspace_path()
+        .join(".ralph/planning-sessions")
+        .join(&session_id)
+        .join("artifacts")
+        .join("plan.md");
+    fs::write(&normal_path, "# Plan")?;
+
+    let get_normal = rpc_request(
+        "req-plan-dotfile-normal-1",
+        "planning.get_artifact",
+        json!({ "sessionId": session_id.clone(), "filename": "plan.md" }),
+        None,
+    );
+    let (status, normal_payload) = post_rpc(&client, &server, &get_normal).await?;
+    assert_eq!(status, 200);
+    assert_eq!(normal_payload["result"]["filename"], "plan.md");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn config_methods_validate_yaml_and_persist_atomically() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
@@ -409,6 +581,102 @@ hats:
     let (status, missing_payload) = post_rpc(&client, &server, &get_deleted).await?;
     assert_eq!(status, 404);
     assert_eq!(missing_payload["error"]["code"], "COLLECTION_NOT_FOUND");
+
+    server.stop().await;
+    Ok(())
+}
+
+/// Symlinks placed inside the artifacts directory must not be listed by
+/// `planning.get` and must not be readable via `planning.get_artifact`,
+/// regardless of what they point to.  This prevents an agent-controlled
+/// artifact directory from being used to exfiltrate arbitrary host files.
+#[cfg(unix)]
+#[tokio::test]
+async fn planning_symlink_in_artifacts_is_not_listed_or_fetchable() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Start a session.
+    let start = rpc_request(
+        "req-plan-symlink-start-1",
+        "planning.start",
+        json!({ "prompt": "Test symlink artifact guard" }),
+        Some("idem-plan-symlink-start-1"),
+    );
+    let (status, start_payload) = post_rpc(&client, &server, &start).await?;
+    assert_eq!(status, 200);
+
+    let session_id = start_payload["result"]["session"]["id"]
+        .as_str()
+        .expect("session id should be present")
+        .to_string();
+
+    let artifacts_dir = server
+        .workspace_path()
+        .join(".ralph/planning-sessions")
+        .join(&session_id)
+        .join("artifacts");
+
+    // Create a real file OUTSIDE the session directory that a symlink could
+    // point to.  Using a temp file in the workspace root keeps the test
+    // self-contained and avoids any dependency on /etc files existing.
+    let outside_file = server.workspace_path().join("outside-secret.txt");
+    fs::write(&outside_file, "TOP SECRET CONTENTS")?;
+
+    // Drop a symlink whose name passes the public-contract filter.
+    let symlink_path = artifacts_dir.join("escape.md");
+    unix_fs::symlink(&outside_file, &symlink_path)
+        .expect("symlink creation should succeed in test environment");
+
+    // Also write a legitimate plain artifact so we can confirm the listing
+    // itself still works.
+    fs::write(artifacts_dir.join("plan.md"), "# Plan")?;
+
+    // --- listing guard ---
+    let get = rpc_request(
+        "req-plan-symlink-get-1",
+        "planning.get",
+        json!({ "id": session_id.clone() }),
+        None,
+    );
+    let (status, get_payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+
+    let artifacts = get_payload["result"]["session"]["artifacts"]
+        .as_array()
+        .expect("artifacts array must be present");
+
+    assert!(
+        !artifacts.iter().any(|a| a == "escape.md"),
+        "symlink must not appear in artifact listing; got: {artifacts:?}"
+    );
+    assert!(
+        artifacts.iter().any(|a| a == "plan.md"),
+        "real artifact must still appear in listing; got: {artifacts:?}"
+    );
+
+    // --- fetch guard ---
+    let get_artifact = rpc_request(
+        "req-plan-symlink-artifact-1",
+        "planning.get_artifact",
+        json!({ "sessionId": session_id.clone(), "filename": "escape.md" }),
+        None,
+    );
+    let (status, artifact_payload) = post_rpc(&client, &server, &get_artifact).await?;
+    assert_eq!(
+        status, 404,
+        "symlink artifact must return 404, not file contents; payload: {artifact_payload}"
+    );
+    assert_eq!(
+        artifact_payload["error"]["code"], "NOT_FOUND",
+        "error code must be NOT_FOUND"
+    );
+    // Content of the outside file must not appear anywhere in the response.
+    let payload_str = artifact_payload.to_string();
+    assert!(
+        !payload_str.contains("TOP SECRET"),
+        "symlink target content must not leak into response; payload: {payload_str}"
+    );
 
     server.stop().await;
     Ok(())

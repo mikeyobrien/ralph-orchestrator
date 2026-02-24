@@ -38,8 +38,26 @@ pub fn router(runtime: RpcRuntime) -> Router {
         .with_state(AppState { runtime })
 }
 
+/// Format a host+port into a bind address string.
+///
+/// IPv6 addresses must be wrapped in brackets so the port is unambiguous:
+/// `::1` → `[::1]:3000`. Already-bracketed hosts (e.g. `[::1]`) are left
+/// as-is to prevent double-wrapping. IPv4 and hostnames are unchanged.
+pub(crate) fn bind_addr_string(host: &str, port: u16) -> String {
+    let trimmed = host.trim();
+    if trimmed.starts_with('[') {
+        // Already bracketed (e.g. "[::1]" from env var)
+        format!("{trimmed}:{port}")
+    } else if trimmed.contains(':') {
+        // Raw IPv6 literal — add brackets
+        format!("[{trimmed}]:{port}")
+    } else {
+        format!("{trimmed}:{port}")
+    }
+}
+
 pub async fn serve(config: ApiConfig) -> Result<()> {
-    let bind_address = format!("{}:{}", config.host, config.port);
+    let bind_address = bind_addr_string(&config.host, config.port);
     let listener = TcpListener::bind(&bind_address)
         .await
         .with_context(|| format!("failed binding listener at {bind_address}"))?;
@@ -220,4 +238,40 @@ async fn shutdown_signal() {
         error!(%error, "failed waiting for ctrl-c shutdown signal");
     }
     info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_addr_string;
+
+    #[test]
+    fn ipv4_loopback_formats_without_brackets() {
+        assert_eq!(bind_addr_string("127.0.0.1", 3000), "127.0.0.1:3000");
+    }
+
+    #[test]
+    fn hostname_formats_without_brackets() {
+        assert_eq!(bind_addr_string("localhost", 8080), "localhost:8080");
+    }
+
+    #[test]
+    fn ipv6_loopback_wraps_in_brackets() {
+        assert_eq!(bind_addr_string("::1", 3000), "[::1]:3000");
+    }
+
+    #[test]
+    fn ipv6_any_wraps_in_brackets() {
+        assert_eq!(bind_addr_string("::", 3000), "[::]:3000");
+    }
+
+    #[test]
+    fn ipv6_full_address_wraps_in_brackets() {
+        assert_eq!(bind_addr_string("2001:db8::1", 443), "[2001:db8::1]:443");
+    }
+
+    #[test]
+    fn pre_bracketed_ipv6_does_not_double_wrap() {
+        // RALPH_API_HOST=[::1] should not become [[::1]]:3000
+        assert_eq!(bind_addr_string("[::1]", 3000), "[::1]:3000");
+    }
 }

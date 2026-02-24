@@ -35,7 +35,6 @@ Persistence notes:
 - `preset.list` reads builtins from `presets/`, local files from `.ralph/hats/`, and collection-backed presets
 
 Intentional migration differences vs legacy Node backend:
-- `loop.process` performs immediate queue state transitions (`queued -> merged`) instead of spawning merge subprocesses.
 - `task.cancel` currently allows cancelling `pending` tasks (legacy allowed only `running`).
 - `planning.start` returns a full `session` object instead of just `{sessionId}`.
 
@@ -49,10 +48,11 @@ cargo run -p ralph-api
 
 Environment variables:
 
-- `RALPH_API_HOST` (default: `0.0.0.0`)
+- `RALPH_API_HOST` (default: `127.0.0.1`)
 - `RALPH_API_PORT` (default: `3000`)
 - `RALPH_API_SERVED_BY` (default: `ralph-api`)
 - `RALPH_API_AUTH_MODE` (`trusted_local` or `token`, default: `trusted_local`)
+  - `trusted_local` is restricted to loopback hosts (`127.0.0.1`, `::1`, `localhost`)
 - `RALPH_API_TOKEN` (required for practical token auth use)
 - `RALPH_API_IDEMPOTENCY_TTL_SECS` (default: `3600`)
 - `RALPH_API_WORKSPACE_ROOT` (default: current working directory)

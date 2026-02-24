@@ -110,6 +110,8 @@ pub struct PlanningDomain {
     sessions_dir: PathBuf,
 }
 
+const MAX_SESSION_ID_LEN: usize = 120;
+
 impl PlanningDomain {
     pub fn new(workspace_root: impl AsRef<Path>) -> Self {
         Self {
@@ -166,6 +168,8 @@ impl PlanningDomain {
     }
 
     pub fn get(&self, session_id: &str) -> Result<PlanningSessionDetail, ApiError> {
+        validate_session_id(session_id)?;
+
         let metadata = self.read_metadata(session_id)?;
         let conversation = self.read_conversation(session_id);
         let artifacts = self.read_artifacts(session_id);
@@ -226,6 +230,8 @@ impl PlanningDomain {
     }
 
     pub fn respond(&mut self, params: PlanningRespondParams) -> Result<(), ApiError> {
+        validate_session_id(&params.session_id)?;
+
         let mut metadata = self.read_metadata(&params.session_id)?;
 
         let entry = ConversationEntry {
@@ -242,6 +248,8 @@ impl PlanningDomain {
     }
 
     pub fn resume(&mut self, session_id: &str) -> Result<(), ApiError> {
+        validate_session_id(session_id)?;
+
         let mut metadata = self.read_metadata(session_id)?;
         metadata.status = "active".to_string();
         metadata.updated_at = now_ts();
@@ -249,6 +257,8 @@ impl PlanningDomain {
     }
 
     pub fn delete(&mut self, session_id: &str) -> Result<(), ApiError> {
+        validate_session_id(session_id)?;
+
         let session_dir = self.session_dir(session_id);
         if !session_dir.exists() {
             return Err(planning_session_not_found_error(session_id));
@@ -266,10 +276,21 @@ impl PlanningDomain {
         &self,
         params: PlanningGetArtifactParams,
     ) -> Result<ArtifactRecord, ApiError> {
+        validate_session_id(&params.session_id)?;
+
         if is_invalid_filename(&params.filename) {
             return Err(ApiError::invalid_params(
-                "planning.get_artifact filename cannot include path traversal",
+                "planning.get_artifact filename must be a plain file name",
             ));
+        }
+
+        // Keep get/list contract consistent: if a filename would not appear in
+        // `planning.get` artifact listings, reject direct access as not found.
+        if !is_listed_artifact_name(&params.filename) {
+            return Err(ApiError::not_found(format!(
+                "artifact '{}' not found for planning session '{}'",
+                params.filename, params.session_id
+            )));
         }
 
         let session_dir = self.session_dir(&params.session_id);
@@ -278,6 +299,23 @@ impl PlanningDomain {
         }
 
         let artifact_path = session_dir.join("artifacts").join(&params.filename);
+
+        // Use symlink_metadata so we inspect the path entry itself, not any
+        // target it may point to.  A symlink (or directory, device node, …)
+        // must be treated the same as "not found" so the API leaks nothing.
+        let fmeta = fs::symlink_metadata(&artifact_path).map_err(|_| {
+            ApiError::not_found(format!(
+                "artifact '{}' not found for planning session '{}'",
+                params.filename, params.session_id
+            ))
+        })?;
+        if !fmeta.is_file() {
+            return Err(ApiError::not_found(format!(
+                "artifact '{}' not found for planning session '{}'",
+                params.filename, params.session_id
+            )));
+        }
+
         let content = fs::read_to_string(&artifact_path).map_err(|error| {
             ApiError::not_found(format!(
                 "artifact '{}' not found for planning session '{}': {error}",
@@ -306,7 +344,7 @@ impl PlanningDomain {
 
             match fs::create_dir(&session_dir) {
                 Ok(()) => return Ok((session_id, session_dir)),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(error) => {
                     return Err(ApiError::internal(format!(
                         "failed creating planning session directory '{}': {error}",
@@ -343,6 +381,8 @@ impl PlanningDomain {
     }
 
     fn read_metadata(&self, session_id: &str) -> Result<SessionMetadata, ApiError> {
+        validate_session_id(session_id)?;
+
         let path = self.metadata_path(session_id);
 
         let content =
@@ -467,25 +507,62 @@ impl PlanningDomain {
         let mut artifacts: Vec<String> = entries
             .filter_map(Result::ok)
             .filter_map(|entry| {
+                // file_type() does NOT follow symlinks, so symlinks return
+                // is_symlink()=true / is_file()=false and are excluded here.
+                let ftype = entry.file_type().ok()?;
+                if !ftype.is_file() {
+                    return None;
+                }
                 entry
                     .file_name()
                     .to_str()
                     .map(std::string::ToString::to_string)
             })
-            .filter(|name| !name.starts_with('.'))
+            .filter(|name| is_listed_artifact_name(name))
             .collect();
         artifacts.sort();
         artifacts
     }
 }
 
-fn is_invalid_filename(filename: &str) -> bool {
-    Path::new(filename).components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+fn validate_session_id(session_id: &str) -> Result<(), ApiError> {
+    if session_id.is_empty() || session_id.len() > MAX_SESSION_ID_LEN {
+        return Err(ApiError::invalid_params(format!(
+            "planning session id must be 1..={MAX_SESSION_ID_LEN} characters"
+        ))
+        .with_details(serde_json::json!({ "sessionId": session_id })));
+    }
+
+    if !session_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err(ApiError::invalid_params(
+            "planning session id may only contain ASCII letters, digits, '-' or '_'",
         )
-    })
+        .with_details(serde_json::json!({ "sessionId": session_id })));
+    }
+
+    Ok(())
+}
+
+fn is_invalid_filename(filename: &str) -> bool {
+    let mut components = Path::new(filename).components();
+
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(name)), None) => name.to_string_lossy().is_empty(),
+        _ => true,
+    }
+}
+
+fn is_listed_artifact_name(filename: &str) -> bool {
+    !filename.starts_with('.')
+        && filename.len() <= 255
+        && !filename.is_empty()
+        && filename
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        && !is_invalid_filename(filename)
 }
 
 fn planning_session_not_found_error(session_id: &str) -> ApiError {

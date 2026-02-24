@@ -151,11 +151,27 @@ impl TaskDomain {
             );
         }
 
+        let requested_status = params.status.unwrap_or_else(|| "open".to_string());
+        let auto_execute = params.auto_execute.unwrap_or(true);
+
+        if auto_execute && requested_status != "open" {
+            return Err(ApiError::invalid_params(
+                "task.create autoExecute=true is only valid when status is 'open'",
+            )
+            .with_details(serde_json::json!({
+                "taskId": params.id,
+                "status": requested_status.clone(),
+                "autoExecute": auto_execute,
+            })));
+        }
+
         let now = now_ts();
+        let completed_at = is_terminal_status(&requested_status).then_some(now.clone());
+
         let task = TaskRecord {
             id: params.id.clone(),
             title: params.title,
-            status: params.status.unwrap_or_else(|| "open".to_string()),
+            status: requested_status,
             priority: params.priority.unwrap_or(2).clamp(1, 5),
             blocked_by: params.blocked_by,
             archived_at: None,
@@ -163,18 +179,18 @@ impl TaskDomain {
             merge_loop_prompt: params.merge_loop_prompt,
             created_at: now.clone(),
             updated_at: now,
-            completed_at: None,
+            completed_at,
             error_message: None,
         };
 
         let task_id = task.id.clone();
         self.tasks.insert(task_id.clone(), task);
 
-        let should_auto_execute = params.auto_execute.unwrap_or(true)
+        let should_auto_execute = auto_execute
             && self
                 .tasks
                 .get(&task_id)
-                .is_some_and(|task| task.blocked_by.is_none());
+                .is_some_and(|task| task.blocked_by.is_none() && task.status == "open");
 
         if should_auto_execute {
             let _ = self.run(&task_id)?;
@@ -197,9 +213,19 @@ impl TaskDomain {
         }
         if let Some(status) = input.status {
             task.status = status;
+
             if is_terminal_status(&task.status) {
                 task.completed_at = Some(now.clone());
                 task.queued_task_id = None;
+            } else {
+                task.completed_at = None;
+                if !matches!(task.status.as_str(), "pending" | "running") {
+                    task.queued_task_id = None;
+                }
+            }
+
+            if task.status != "failed" {
+                task.error_message = None;
             }
         }
         if let Some(priority) = input.priority {
@@ -392,9 +418,19 @@ impl TaskDomain {
         let now = now_ts();
         task.status = status.to_string();
         task.updated_at = now.clone();
+
         if is_terminal_status(status) {
             task.completed_at = Some(now);
             task.queued_task_id = None;
+        } else {
+            task.completed_at = None;
+            if !matches!(status, "pending" | "running") {
+                task.queued_task_id = None;
+            }
+        }
+
+        if status != "failed" {
+            task.error_message = None;
         }
 
         self.persist()?;

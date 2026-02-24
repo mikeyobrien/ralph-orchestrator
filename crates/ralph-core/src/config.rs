@@ -250,7 +250,7 @@ impl RalphConfig {
         // Pre-flight check for deprecated/invalid keys to improve UX.
         let value: serde_yaml::Value = serde_yaml::from_str(content)?;
         if let Some(map) = value.as_mapping()
-            && map.contains_key(&serde_yaml::Value::String("project".to_string()))
+            && map.contains_key(serde_yaml::Value::String("project".to_string()))
         {
             return Err(ConfigError::DeprecatedProjectKey);
         }

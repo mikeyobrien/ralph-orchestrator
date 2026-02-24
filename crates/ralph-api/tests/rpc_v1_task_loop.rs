@@ -293,6 +293,126 @@ async fn task_run_retry_status_and_idempotency_parity() -> Result<()> {
 }
 
 #[tokio::test]
+async fn task_update_clears_terminal_and_queue_fields_on_non_terminal_transition() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    let create = rpc_request(
+        "req-task-state-create-1",
+        "task.create",
+        json!({
+            "id": "task-state-1",
+            "title": "State transition task",
+            "autoExecute": false
+        }),
+        Some("idem-task-state-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    let run = rpc_request(
+        "req-task-state-run-1",
+        "task.run",
+        json!({ "id": "task-state-1" }),
+        Some("idem-task-state-run-1"),
+    );
+    let (status, run_payload) = post_rpc(&client, &server, &run).await?;
+    assert_eq!(status, 200);
+    assert_eq!(run_payload["result"]["success"], true);
+
+    let update_open = rpc_request(
+        "req-task-state-update-open-1",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "open" }),
+        Some("idem-task-state-update-open-1"),
+    );
+    let (status, update_open_payload) = post_rpc(&client, &server, &update_open).await?;
+    assert_eq!(status, 200);
+    assert!(update_open_payload["result"]["task"]["queuedTaskId"].is_null());
+    assert!(update_open_payload["result"]["task"]["completedAt"].is_null());
+
+    let run_again = rpc_request(
+        "req-task-state-run-2",
+        "task.run",
+        json!({ "id": "task-state-1" }),
+        Some("idem-task-state-run-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &run_again).await?;
+    assert_eq!(status, 200);
+
+    let cancel = rpc_request(
+        "req-task-state-cancel-1",
+        "task.cancel",
+        json!({ "id": "task-state-1" }),
+        Some("idem-task-state-cancel-1"),
+    );
+    let (status, cancel_payload) = post_rpc(&client, &server, &cancel).await?;
+    assert_eq!(status, 200);
+    assert_eq!(cancel_payload["result"]["task"]["status"], "failed");
+    assert_eq!(
+        cancel_payload["result"]["task"]["errorMessage"],
+        "Task cancelled by user"
+    );
+
+    let reopen = rpc_request(
+        "req-task-state-reopen-1",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "open" }),
+        Some("idem-task-state-reopen-1"),
+    );
+    let (status, reopen_payload) = post_rpc(&client, &server, &reopen).await?;
+    assert_eq!(status, 200);
+    assert_eq!(reopen_payload["result"]["task"]["status"], "open");
+    assert!(reopen_payload["result"]["task"]["completedAt"].is_null());
+    assert!(reopen_payload["result"]["task"]["queuedTaskId"].is_null());
+    assert!(reopen_payload["result"]["task"]["errorMessage"].is_null());
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_create_rejects_auto_execute_for_non_open_status() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    let invalid_create = rpc_request(
+        "req-task-create-invalid-status-1",
+        "task.create",
+        json!({
+            "id": "task-invalid-auto-1",
+            "title": "Invalid auto execute",
+            "status": "failed",
+            "autoExecute": true
+        }),
+        Some("idem-task-create-invalid-status-1"),
+    );
+    let (status, invalid_payload) = post_rpc(&client, &server, &invalid_create).await?;
+    assert_eq!(status, 400);
+    assert_eq!(invalid_payload["error"]["code"], "INVALID_PARAMS");
+
+    let valid_create = rpc_request(
+        "req-task-create-valid-status-1",
+        "task.create",
+        json!({
+            "id": "task-valid-auto-1",
+            "title": "Explicit terminal task",
+            "status": "failed",
+            "autoExecute": false
+        }),
+        Some("idem-task-create-valid-status-1"),
+    );
+    let (status, valid_payload) = post_rpc(&client, &server, &valid_create).await?;
+    assert_eq!(status, 200);
+    assert_eq!(valid_payload["result"]["task"]["status"], "failed");
+    assert!(valid_payload["result"]["task"]["completedAt"].is_string());
+    assert!(valid_payload["result"]["task"]["queuedTaskId"].is_null());
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn loop_methods_and_trigger_merge_task_parity() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
