@@ -30,6 +30,9 @@ pub struct HatlessRalph {
     /// Resolved scratchpad config for the currently active hat.
     /// Set by EventLoop before build_prompt() via set_active_scratchpad().
     active_scratchpad: ScratchpadConfig,
+    /// Current iteration number, set by EventLoop before build_prompt().
+    /// Used to determine if this is the first iteration (fresh start).
+    iteration: u32,
 }
 
 /// Hat topology for multi-hat mode prompt generation.
@@ -175,6 +178,7 @@ impl HatlessRalph {
             skill_index: String::new(),
             robot_guidance: Vec::new(),
             active_scratchpad,
+            iteration: 0,
         }
     }
 
@@ -189,6 +193,14 @@ impl HatlessRalph {
     /// Returns a reference to the active scratchpad config.
     pub fn active_scratchpad(&self) -> &ScratchpadConfig {
         &self.active_scratchpad
+    }
+
+    /// Sets the current iteration number.
+    ///
+    /// Called by EventLoop before build_prompt() to allow iteration-aware
+    /// decisions like fresh-start detection.
+    pub fn set_iteration(&mut self, iteration: u32) {
+        self.iteration = iteration;
     }
 
     /// Sets whether memories mode is enabled.
@@ -340,24 +352,30 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
         true
     }
 
-    /// Checks if this is a fresh start (starting_event set, no scratchpad).
+    /// Checks if this is a fresh start (first iteration with a starting_event).
     ///
     /// Used to enable fast path delegation that skips the PLAN step
     /// when immediate delegation to specialized hats is appropriate.
+    /// Only triggers on the first iteration to avoid repeated re-publication.
     fn is_fresh_start(&self) -> bool {
         // Fast path only applies when starting_event is configured
         if self.starting_event.is_none() {
             return false;
         }
 
-        // When scratchpad is disabled, no scratchpad to check — treat as fresh start
-        if !self.active_scratchpad.enabled {
-            return true;
+        // Only the first iteration can be a fresh start
+        if self.iteration > 0 {
+            return false;
         }
 
-        // Check if scratchpad exists
-        let path = Path::new(&self.active_scratchpad.path);
-        !path.exists()
+        // When scratchpad is enabled, check if it already exists
+        // (existing scratchpad means resumed session, not fresh)
+        if self.active_scratchpad.enabled {
+            return !Path::new(&self.active_scratchpad.path).exists();
+        }
+
+        // First iteration + scratchpad disabled = fresh start
+        true
     }
 
     fn core_prompt(&self) -> String {
@@ -2697,7 +2715,7 @@ hats:
         );
     }
 
-    /// AC11: Disabled scratchpad + is_fresh_start
+    /// AC11: Disabled scratchpad + first iteration triggers fresh start
     #[test]
     fn test_disabled_scratchpad_is_fresh_start() {
         use crate::config::ScratchpadConfig;
@@ -2722,11 +2740,20 @@ hats:
             path: ".ralph/agent/scratchpad.md".to_string(),
         });
 
-        // is_fresh_start should return true when scratchpad is disabled and starting_event is set
+        // First iteration (iteration=0): should trigger fast path
+        ralph.set_iteration(0);
         let prompt = ralph.build_prompt("", &[]);
         assert!(
             prompt.contains("FAST PATH"),
-            "Disabled scratchpad with starting_event should trigger fast path"
+            "First iteration with disabled scratchpad should trigger fast path"
+        );
+
+        // Second iteration (iteration=1): should NOT trigger fast path
+        ralph.set_iteration(1);
+        let prompt = ralph.build_prompt("", &[]);
+        assert!(
+            !prompt.contains("FAST PATH"),
+            "Second iteration should NOT trigger fast path even with disabled scratchpad"
         );
     }
 

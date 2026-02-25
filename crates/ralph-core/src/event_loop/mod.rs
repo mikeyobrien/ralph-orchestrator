@@ -383,12 +383,27 @@ impl EventLoop {
             .unwrap_or_else(|| PathBuf::from(".ralph/agent/tasks.jsonl"))
     }
 
-    /// Returns the scratchpad path based on loop context or active scratchpad config.
+    /// Returns the scratchpad path based on loop context and active scratchpad config.
+    ///
+    /// When a per-hat scratchpad override is active (path differs from global default),
+    /// the custom path is resolved relative to the loop context workspace for worktree
+    /// isolation. When using the default/global path, loop context's standard resolution
+    /// applies.
     fn scratchpad_path(&self) -> PathBuf {
-        self.loop_context
-            .as_ref()
-            .map(|ctx| ctx.scratchpad_path())
-            .unwrap_or_else(|| PathBuf::from(&self.ralph.active_scratchpad().path))
+        let active_path = &self.ralph.active_scratchpad().path;
+        let global_path = &self.config.core.scratchpad.path;
+
+        match self.loop_context.as_ref() {
+            Some(ctx) => {
+                if active_path == global_path {
+                    ctx.scratchpad_path()
+                } else {
+                    // Per-hat custom path: resolve relative to workspace
+                    ctx.workspace().join(active_path)
+                }
+            }
+            None => PathBuf::from(active_path),
+        }
     }
 
     /// Returns the global scratchpad path (ignoring per-hat overrides).
@@ -716,13 +731,14 @@ impl EventLoop {
                     .collect::<Vec<_>>()
                     .join("\n");
 
+                // Solo mode: set scratchpad and iteration before guidance persistence
+                self.ralph
+                    .set_active_scratchpad(self.config.core.scratchpad.clone());
+                self.ralph.set_iteration(self.state.iteration);
+
                 // Persist and inject human guidance into prompt if present
                 self.update_robot_guidance(guidance_events);
                 self.apply_robot_guidance();
-
-                // Solo mode: use global scratchpad config
-                self.ralph
-                    .set_active_scratchpad(self.config.core.scratchpad.clone());
 
                 // Build base prompt and prepend memories + scratchpad + ready tasks
                 let base_prompt = self.ralph.build_prompt(&events_context, &[]);
@@ -775,18 +791,14 @@ impl EventLoop {
                     .into_iter()
                     .partition(|e| e.topic.as_str() == "human.guidance");
 
-                // Persist and inject human guidance before building prompt (must happen before
-                // immutable borrows from determine_active_hats)
-                self.update_robot_guidance(guidance_events);
-                self.apply_robot_guidance();
-
                 // Determine which hats are active based on regular events
                 let active_hat_ids = self.determine_active_hat_ids(&regular_events);
                 self.record_hat_activations(&active_hat_ids);
                 self.state.last_active_hat_ids = active_hat_ids.clone();
 
-                // Resolve scratchpad config for the active hat (or global default)
-                // Must happen before determine_active_hats() which borrows self immutably
+                // Resolve scratchpad config for the active hat (or global default).
+                // Must happen BEFORE guidance persistence so guidance is written
+                // to the correct hat's scratchpad file.
                 let resolved_scratchpad = if let Some(hat_id) = active_hat_ids.first() {
                     let hat_scratchpad = self
                         .registry
@@ -798,6 +810,12 @@ impl EventLoop {
                     self.config.core.scratchpad.clone()
                 };
                 self.ralph.set_active_scratchpad(resolved_scratchpad);
+                self.ralph.set_iteration(self.state.iteration);
+
+                // Persist and inject human guidance after scratchpad resolution
+                // (must also happen before immutable borrows from determine_active_hats)
+                self.update_robot_guidance(guidance_events);
+                self.apply_robot_guidance();
 
                 let active_hats = self.determine_active_hats(&regular_events);
 
