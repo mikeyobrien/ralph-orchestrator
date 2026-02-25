@@ -31,6 +31,8 @@ Ralph Orchestrator follows Rust community conventions with project-specific addi
 - Use present tense ("adds" not "added")
 - Keep lines under 100 characters
 - Include examples for public APIs
+- Keep `plugins.llmstxt.sections` in `mkdocs.yml` in sync with docs IA changes
+- Validate llms map changes with `mkdocs build --strict` and `python scripts/validate_llms_txt.py site/llms.txt`
 
 ## See Also
 
