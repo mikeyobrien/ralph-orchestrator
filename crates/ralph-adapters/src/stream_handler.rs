@@ -517,7 +517,11 @@ impl StreamHandler for TuiStreamHandler {
     }
 
     fn on_tool_result(&mut self, _id: &str, output: &str) {
-        let clean = sanitize_tui_inline_text(output);
+        let display = format_tool_result(output);
+        if display.is_empty() {
+            return;
+        }
+        let clean = sanitize_tui_inline_text(&display);
         let line = Line::from(Span::styled(
             format!(" \u{2713} {}", truncate(&clean, 200)),
             Style::default().fg(RatatuiColor::DarkGray),
@@ -581,6 +585,66 @@ fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> 
         "TodoWrite" => Some("updating todo list".to_string()),
         _ => None,
     }
+}
+
+/// Extracts human-readable content from ACP tool result JSON envelopes.
+///
+/// ACP tool results arrive as `{"items":[{"Text":"..."} | {"Json":{...}}]}`.
+/// This function extracts the meaningful content:
+/// - Shell results (Json with stdout/stderr): shows stdout, or stderr on failure
+/// - Glob results (Json with filePaths): shows count and basenames
+/// - Text results: shows the text content directly
+/// - Falls back to raw string for non-JSON or unknown formats.
+fn format_tool_result(output: &str) -> String {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(output) else {
+        return output.to_string();
+    };
+    let Some(items) = val.get("items").and_then(|v| v.as_array()) else {
+        return output.to_string();
+    };
+    let Some(item) = items.first() else {
+        return String::new();
+    };
+
+    // {"Text": "..."}
+    if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+
+    // {"Json": {...}}
+    if let Some(json) = item.get("Json") {
+        // Shell: {exit_status, stdout, stderr}
+        if let Some(stdout) = json.get("stdout").and_then(|v| v.as_str()) {
+            let stderr = json.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+            let exit = json
+                .get("exit_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let failed = !exit.contains("status: 0");
+            return if failed && !stderr.is_empty() {
+                stderr.to_string()
+            } else if !stdout.is_empty() {
+                stdout.to_string()
+            } else {
+                stderr.to_string()
+            };
+        }
+        // Glob: {filePaths, totalFiles, truncated}
+        if let Some(paths) = json.get("filePaths").and_then(|v| v.as_array()) {
+            let total = json
+                .get("totalFiles")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(paths.len() as u64);
+            let names: Vec<&str> = paths
+                .iter()
+                .filter_map(|p| p.as_str())
+                .map(|p| p.rsplit('/').next().unwrap_or(p))
+                .collect();
+            return format!("{} files: {}", total, names.join(", "));
+        }
+    }
+
+    output.to_string()
 }
 
 /// Truncates a string to approximately `max_len` characters, adding "..." if truncated.
@@ -1584,6 +1648,94 @@ mod tests {
                 has_underline,
                 "Should have underlined styled span. Lines: {:?}",
                 lines
+            );
+        }
+
+        // ================================================================
+        // format_tool_result tests (ACP JSON envelope parsing)
+        // ================================================================
+
+        #[test]
+        fn format_tool_result_shell_extracts_stdout() {
+            let output = r#"{"items":[{"Json":{"exit_status":"exit status: 0","stderr":"","stdout":"diff --git a/ralph-config.txt b/ralph-config.txt\nindex ba67887..7a529aa 100644\n--- a/ralph-config.txt\n+++ b/ralph-config.txt\n@@ -1,2 +1,2 @@\n-timeout: 30\n+timeout: 60\n retries: 3\n"}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("diff --git"),
+                "Should extract stdout, got: {}",
+                result
+            );
+            assert!(
+                !result.contains("exit_status"),
+                "Should not contain JSON keys, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_shell_shows_stderr_on_failure() {
+            let output = r#"{"items":[{"Json":{"exit_status":"exit status: 1","stderr":"fatal: not a git repository","stdout":""}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("fatal: not a git repository"),
+                "Should show stderr, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_glob_shows_file_paths() {
+            let output = r#"{"items":[{"Json":{"filePaths":["/tmp/ralph-config.txt","/tmp/ralph-notes.md"],"totalFiles":2,"truncated":false}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("ralph-config.txt"),
+                "Should show filename, got: {}",
+                result
+            );
+            assert!(
+                result.contains("ralph-notes.md"),
+                "Should show filename, got: {}",
+                result
+            );
+            assert!(result.contains('2'), "Should show count, got: {}", result);
+        }
+
+        #[test]
+        fn format_tool_result_text_shows_content() {
+            let output = r#"{"items":[{"Text":"timeout: 30\nretries: 3"}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("timeout: 30"),
+                "Should show text content, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_empty_text_returns_empty() {
+            let output = r#"{"items":[{"Text":""}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.is_empty(),
+                "Empty text should return empty, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_plain_string_passthrough() {
+            let output = "just plain text output";
+            let result = format_tool_result(output);
+            assert_eq!(result, output, "Non-JSON should pass through unchanged");
+        }
+
+        #[test]
+        fn format_tool_result_shell_prefers_stderr_when_both_present() {
+            let output = r#"{"items":[{"Json":{"exit_status":"exit status: 1","stderr":"error: something broke","stdout":"partial output"}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("error: something broke"),
+                "Should prefer stderr on failure, got: {}",
+                result
             );
         }
 
