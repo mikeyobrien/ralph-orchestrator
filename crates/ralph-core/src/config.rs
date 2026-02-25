@@ -1199,7 +1199,7 @@ impl HatBackend {
         match self {
             HatBackend::Named(name) => name.clone(),
             HatBackend::NamedWithArgs { backend_type, .. } => backend_type.clone(),
-            HatBackend::KiroAgent { .. } => "kiro".to_string(),
+            HatBackend::KiroAgent { backend_type, .. } => backend_type.clone(),
             HatBackend::Custom { .. } => "custom".to_string(),
         }
     }

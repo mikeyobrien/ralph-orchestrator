@@ -82,6 +82,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 
 # Async stream utilities
 futures = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

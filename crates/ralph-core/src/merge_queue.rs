@@ -458,7 +458,7 @@ impl MergeQueue {
 
         // Sort by queued_at to maintain FIFO order
         let mut entries: Vec<_> = loop_states.into_values().collect();
-        entries.sort_by(|a, b| a.queued_at.cmp(&b.queued_at));
+        entries.sort_by_key(|a| a.queued_at);
         entries
     }
 

@@ -624,10 +624,10 @@ Still working..."#;
         let line = make_write_line("Quick output", 0);
         let fixture_path = create_fixture(temp_dir.path(), "quick.jsonl", &line);
 
-        let config = SmokeTestConfig::new(&fixture_path).with_timeout(Duration::from_secs(60));
+        let config = SmokeTestConfig::new(&fixture_path).with_timeout(Duration::from_mins(1));
 
         // Verify config was set
-        assert_eq!(config.timeout, Duration::from_secs(60));
+        assert_eq!(config.timeout, Duration::from_mins(1));
 
         let result = SmokeRunner::run(&config).expect("Should complete within 60s");
         assert!(result.completed_successfully());
@@ -845,6 +845,106 @@ mod kiro_smoke_tests {
             assert!(
                 result.is_ok(),
                 "Kiro fixture {:?} should be valid and runnable: {:?}",
+                fixture_path,
+                result.err()
+            );
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KIRO-ACP SMOKE TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod kiro_acp_smoke_tests {
+    use super::*;
+
+    fn kiro_acp_fixtures_dir() -> PathBuf {
+        fixtures_dir().join("kiro-acp")
+    }
+
+    #[test]
+    fn test_kiro_acp_fixtures_directory_exists() {
+        assert!(kiro_acp_fixtures_dir().exists());
+    }
+
+    #[test]
+    fn test_kiro_acp_has_at_least_two_fixtures() {
+        let fixtures =
+            list_fixtures(kiro_acp_fixtures_dir()).expect("Should list kiro-acp fixtures");
+        assert!(
+            fixtures.len() >= 2,
+            "Expected >= 2 fixtures, got {}",
+            fixtures.len()
+        );
+    }
+
+    #[test]
+    fn test_kiro_acp_readme_exists() {
+        assert!(kiro_acp_fixtures_dir().join("README.md").exists());
+    }
+
+    #[test]
+    fn test_kiro_acp_basic_session_fixture_loads() {
+        let fixture = kiro_acp_fixtures_dir().join("basic_kiro_acp_session.jsonl");
+        assert!(fixture.exists());
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should run kiro-acp fixture");
+        assert!(result.completed_successfully());
+    }
+
+    #[test]
+    fn test_kiro_acp_tool_use_events_parsed() {
+        let fixture = kiro_acp_fixtures_dir().join("kiro_acp_tool_use.jsonl");
+        assert!(fixture.exists());
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should run tool use fixture");
+        assert!(
+            result.event_count() >= 2,
+            "Expected >= 2 events, got {}",
+            result.event_count()
+        );
+    }
+
+    #[test]
+    fn test_kiro_acp_cross_backend_compatibility() {
+        let claude_fixture = fixtures_dir().join("basic_session.jsonl");
+        let claude_config = SmokeTestConfig::new(&claude_fixture);
+        let claude_result = SmokeRunner::run(&claude_config).expect("Claude fixture should run");
+
+        let kiro_acp_fixture = kiro_acp_fixtures_dir().join("basic_kiro_acp_session.jsonl");
+        let kiro_acp_config = SmokeTestConfig::new(&kiro_acp_fixture);
+        let kiro_acp_result =
+            SmokeRunner::run(&kiro_acp_config).expect("kiro-acp fixture should run");
+
+        assert!(claude_result.completed_successfully());
+        assert!(kiro_acp_result.completed_successfully());
+        assert!(claude_result.event_count() >= 2);
+        assert!(kiro_acp_result.event_count() >= 2);
+    }
+
+    #[test]
+    fn test_kiro_acp_full_replay_flow() {
+        let fixture = kiro_acp_fixtures_dir().join("basic_kiro_acp_session.jsonl");
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should run kiro-acp fixture");
+
+        assert!(result.iterations_run() >= 2);
+        assert!(result.output_bytes() > 0);
+        assert!(result.event_count() >= 2);
+        assert_eq!(*result.termination_reason(), TerminationReason::Completed);
+    }
+
+    #[test]
+    fn test_all_kiro_acp_fixtures_are_valid() {
+        let fixtures =
+            list_fixtures(kiro_acp_fixtures_dir()).expect("Should list kiro-acp fixtures");
+        for fixture_path in fixtures {
+            let config = SmokeTestConfig::new(&fixture_path);
+            let result = SmokeRunner::run(&config);
+            assert!(
+                result.is_ok(),
+                "kiro-acp fixture {:?} should be valid: {:?}",
                 fixture_path,
                 result.err()
             );

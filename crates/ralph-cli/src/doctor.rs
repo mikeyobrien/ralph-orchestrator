@@ -352,7 +352,7 @@ fn auth_backend_names(config: &RalphConfig) -> Vec<String> {
         let name = match backend {
             HatBackend::Named(name) => name.clone(),
             HatBackend::NamedWithArgs { backend_type, .. } => backend_type.clone(),
-            HatBackend::KiroAgent { .. } => "kiro".to_string(),
+            HatBackend::KiroAgent { backend_type, .. } => backend_type.clone(),
             HatBackend::Custom { command, .. } => canonical_backend_name("custom", Some(command)),
         };
 
@@ -368,6 +368,7 @@ fn auth_env_vars(backend: &str) -> Option<Vec<&'static str>> {
         "gemini" => Some(vec!["GEMINI_API_KEY"]),
         "codex" => Some(vec!["OPENAI_API_KEY", "CODEX_API_KEY"]),
         "kiro" => Some(vec!["KIRO_API_KEY"]),
+        "kiro-acp" => Some(vec!["KIRO_API_KEY"]),
         "opencode" => Some(vec![
             "OPENCODE_API_KEY",
             "ANTHROPIC_API_KEY",

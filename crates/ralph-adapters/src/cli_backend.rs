@@ -18,6 +18,8 @@ pub enum OutputFormat {
     StreamJson,
     /// Newline-delimited JSON stream (Pi with --mode json)
     PiStreamJson,
+    /// Agent Client Protocol over stdio (Kiro v2)
+    Acp,
 }
 
 /// Error when creating a custom backend without a command.
@@ -67,6 +69,7 @@ impl CliBackend {
         let mut backend = match config.backend.as_str() {
             "claude" => Self::claude(),
             "kiro" => Self::kiro(),
+            "kiro-acp" => Self::kiro_acp(),
             "gemini" => Self::gemini(),
             "codex" => Self::codex(),
             "amp" => Self::amp(),
@@ -180,6 +183,35 @@ impl CliBackend {
         backend
     }
 
+    /// Creates the Kiro ACP backend.
+    ///
+    /// Uses kiro-cli with the ACP subcommand for structured JSON-RPC
+    /// communication over stdio instead of PTY text scraping.
+    pub fn kiro_acp() -> Self {
+        Self::kiro_acp_with_options(None, None)
+    }
+
+    /// Creates the Kiro ACP backend with an optional agent and/or model.
+    pub fn kiro_acp_with_options(agent: Option<&str>, model: Option<&str>) -> Self {
+        let mut args = vec!["acp".to_string(), "--trust-all-tools".to_string()];
+        if let Some(name) = agent {
+            args.push("--agent".to_string());
+            args.push(name.to_string());
+        }
+        if let Some(m) = model {
+            args.push("--model".to_string());
+            args.push(m.to_string());
+        }
+        Self {
+            command: "kiro-cli".to_string(),
+            args,
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Acp,
+            env_vars: vec![],
+        }
+    }
+
     /// Creates a backend from a named backend with additional args.
     ///
     /// # Errors
@@ -204,6 +236,7 @@ impl CliBackend {
         match name {
             "claude" => Ok(Self::claude()),
             "kiro" => Ok(Self::kiro()),
+            "kiro-acp" => Ok(Self::kiro_acp()),
             "gemini" => Ok(Self::gemini()),
             "codex" => Ok(Self::codex()),
             "amp" => Ok(Self::amp()),
@@ -224,8 +257,16 @@ impl CliBackend {
             HatBackend::NamedWithArgs { backend_type, args } => {
                 Self::from_name_with_args(backend_type, args)
             }
-            HatBackend::KiroAgent { agent, args, .. } => {
-                Ok(Self::kiro_with_agent(agent.clone(), args))
+            HatBackend::KiroAgent {
+                backend_type,
+                agent,
+                args,
+            } => {
+                if backend_type == "kiro-acp" {
+                    Ok(Self::kiro_acp_with_options(Some(agent), None))
+                } else {
+                    Ok(Self::kiro_with_agent(agent.clone(), args))
+                }
             }
             HatBackend::Custom { command, args } => Ok(Self {
                 command: command.clone(),
@@ -1112,6 +1153,21 @@ mod tests {
         assert_eq!(cmd, "kiro-cli");
         assert!(args.contains(&"--agent".to_string()));
         assert!(args.contains(&"my-agent".to_string()));
+    }
+
+    #[test]
+    fn test_from_hat_backend_kiro_acp_agent_uses_acp_executor() {
+        let hat_backend = HatBackend::KiroAgent {
+            backend_type: "kiro-acp".to_string(),
+            agent: "my-agent".to_string(),
+            args: vec![],
+        };
+        let backend = CliBackend::from_hat_backend(&hat_backend).unwrap();
+        assert_eq!(backend.command, "kiro-cli");
+        assert_eq!(backend.output_format, OutputFormat::Acp);
+        assert!(backend.args.contains(&"acp".to_string()));
+        assert!(backend.args.contains(&"--agent".to_string()));
+        assert!(backend.args.contains(&"my-agent".to_string()));
     }
 
     #[test]
