@@ -700,7 +700,9 @@ fn stop_loop(args: StopArgs) -> Result<()> {
         .unwrap_or_else(|| cwd.clone());
 
     // Check if the worktree directory is gone (zombie loop)
-    let worktree_gone = worktree_path.as_ref().is_some_and(|p| !PathBuf::from(p).is_dir());
+    let worktree_gone = worktree_path
+        .as_ref()
+        .is_some_and(|p| !PathBuf::from(p).is_dir());
 
     if worktree_gone {
         // Worktree removed externally — fall back to registry PID
@@ -712,7 +714,11 @@ fn stop_loop(args: StopArgs) -> Result<()> {
                     use nix::sys::signal::{Signal, kill};
                     use nix::unistd::Pid;
 
-                    let signal = if args.force { Signal::SIGKILL } else { Signal::SIGTERM };
+                    let signal = if args.force {
+                        Signal::SIGKILL
+                    } else {
+                        Signal::SIGTERM
+                    };
                     println!(
                         "Worktree gone. Sending {} to orphan loop '{}' (PID {})...",
                         if args.force { "SIGKILL" } else { "SIGTERM" },
@@ -731,7 +737,10 @@ fn stop_loop(args: StopArgs) -> Result<()> {
             println!("Orphan loop '{}' cleaned up.", loop_id);
             return Ok(());
         }
-        bail!("Loop '{}' not found in registry and worktree is gone", loop_id);
+        bail!(
+            "Loop '{}' not found in registry and worktree is gone",
+            loop_id
+        );
     }
 
     let metadata = LoopLock::read_existing(&target_root)?
