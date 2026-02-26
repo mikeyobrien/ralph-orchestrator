@@ -624,10 +624,10 @@ Still working..."#;
         let line = make_write_line("Quick output", 0);
         let fixture_path = create_fixture(temp_dir.path(), "quick.jsonl", &line);
 
-        let config = SmokeTestConfig::new(&fixture_path).with_timeout(Duration::from_mins(1));
+        let config = SmokeTestConfig::new(&fixture_path).with_timeout(Duration::from_secs(60));
 
         // Verify config was set
-        assert_eq!(config.timeout, Duration::from_mins(1));
+        assert_eq!(config.timeout, Duration::from_secs(60));
 
         let result = SmokeRunner::run(&config).expect("Should complete within 60s");
         assert!(result.completed_successfully());

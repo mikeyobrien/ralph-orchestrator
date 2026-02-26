@@ -525,7 +525,7 @@ IMPORTANT: Use Bash for ralph commands and Write/Edit for files."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(phase1_prompt.to_string()),
             max_iterations: 3,
-            timeout: std::time::Duration::from_mins(2),
+            timeout: std::time::Duration::from_secs(120),
             extra_args: vec![],
         };
 
@@ -551,7 +551,7 @@ IMPORTANT: Use Bash for ralph commands and Write/Edit for files."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(phase2_prompt.to_string()),
             max_iterations: 3,
-            timeout: std::time::Duration::from_mins(2),
+            timeout: std::time::Duration::from_secs(120),
             extra_args: vec![],
         };
 
@@ -578,7 +578,7 @@ IMPORTANT: Use Bash for ralph commands and Write/Edit for files."#;
             config_file: "ralph.yml".into(),
             prompt: PromptSource::Inline(phase3_prompt.to_string()),
             max_iterations: 3,
-            timeout: std::time::Duration::from_mins(2),
+            timeout: std::time::Duration::from_secs(120),
             extra_args: vec![],
         };
 

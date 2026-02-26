@@ -462,12 +462,12 @@ coverage: pass
     #[test]
     fn test_config_builder_pattern() {
         let config = SmokeTestConfig::new("test.jsonl")
-            .with_timeout(Duration::from_mins(1))
+            .with_timeout(Duration::from_secs(60))
             .with_expected_iterations(5)
             .with_expected_termination("Completed");
 
         assert_eq!(config.fixture_path, PathBuf::from("test.jsonl"));
-        assert_eq!(config.timeout, Duration::from_mins(1));
+        assert_eq!(config.timeout, Duration::from_secs(60));
         assert_eq!(config.expected_iterations, Some(5));
         assert_eq!(config.expected_termination, Some("Completed".to_string()));
     }

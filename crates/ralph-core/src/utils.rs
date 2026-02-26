@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn format_elapsed_one_minute() {
-        assert_eq!(format_elapsed(Duration::from_mins(1)), "01:00");
+        assert_eq!(format_elapsed(Duration::from_secs(60)), "01:00");
     }
 
     #[test]

@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn replays_same_method_key_and_params() {
-        let store = InMemoryIdempotencyStore::new(Duration::from_mins(1));
+        let store = InMemoryIdempotencyStore::new(Duration::from_secs(60));
         let params = json!({ "value": 1 });
         let response = StoredResponse {
             status: 200,
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn detects_conflict_for_same_key_with_different_params() {
-        let store = InMemoryIdempotencyStore::new(Duration::from_mins(1));
+        let store = InMemoryIdempotencyStore::new(Duration::from_secs(60));
         store.store(
             "task.create",
             "idem-2",

@@ -80,7 +80,7 @@ pub struct AnalyzerConfig {
 impl Default for AnalyzerConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_mins(2),
+            timeout: Duration::from_secs(120),
             max_iterations: 1,
             backend: "claude".to_string(),
         }
@@ -733,7 +733,7 @@ mod tests {
         let workspace = PathBuf::from(".e2e-tests");
         let analyzer = MetaRalphAnalyzer::new(workspace.clone());
         assert_eq!(analyzer.workspace(), &workspace);
-        assert_eq!(analyzer.config().timeout, Duration::from_mins(2));
+        assert_eq!(analyzer.config().timeout, Duration::from_secs(120));
         assert_eq!(analyzer.config().max_iterations, 1);
         assert_eq!(analyzer.config().backend, "claude");
     }
@@ -742,12 +742,12 @@ mod tests {
     fn test_analyzer_with_config() {
         let workspace = PathBuf::from(".e2e-tests");
         let config = AnalyzerConfig {
-            timeout: Duration::from_mins(1),
+            timeout: Duration::from_secs(60),
             max_iterations: 2,
             backend: "kiro".to_string(),
         };
         let analyzer = MetaRalphAnalyzer::with_config(workspace.clone(), config);
-        assert_eq!(analyzer.config().timeout, Duration::from_mins(1));
+        assert_eq!(analyzer.config().timeout, Duration::from_secs(60));
         assert_eq!(analyzer.config().max_iterations, 2);
         assert_eq!(analyzer.config().backend, "kiro");
     }
@@ -804,7 +804,7 @@ mod tests {
     #[test]
     fn test_generate_analyzer_config_custom() {
         let config = AnalyzerConfig {
-            timeout: Duration::from_mins(1),
+            timeout: Duration::from_secs(60),
             max_iterations: 3,
             backend: "kiro".to_string(),
         };

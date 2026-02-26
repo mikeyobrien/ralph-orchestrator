@@ -2860,7 +2860,7 @@ fn test_format_duration_variants() {
 
     assert_eq!(format_duration(Duration::from_secs(45)), "45s");
     assert_eq!(format_duration(Duration::from_secs(61)), "1m 1s");
-    assert_eq!(format_duration(Duration::from_hours(1)), "1h 0m 0s");
+    assert_eq!(format_duration(Duration::from_secs(3600)), "1h 0m 0s");
     assert_eq!(format_duration(Duration::from_secs(3661)), "1h 1m 1s");
 }
 

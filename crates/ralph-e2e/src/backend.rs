@@ -35,8 +35,8 @@ impl Backend {
     /// Returns the default timeout for this backend.
     pub fn default_timeout(&self) -> Duration {
         match self {
-            Backend::Claude => Duration::from_mins(10), // 10 minutes - Claude iterations can take 60-120s each
-            Backend::Kiro | Backend::OpenCode => Duration::from_mins(5), // 5 minutes
+            Backend::Claude => Duration::from_secs(600), // 10 minutes - Claude iterations can take 60-120s each
+            Backend::Kiro | Backend::OpenCode => Duration::from_secs(300), // 5 minutes
         }
     }
 
