@@ -74,12 +74,20 @@ fn sanitize_tui_inline_text(text: &str) -> String {
 }
 
 /// Session completion result data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SessionResult {
     pub duration_ms: u64,
     pub total_cost_usd: f64,
     pub num_turns: u32,
     pub is_error: bool,
+    /// Total input tokens consumed in the session.
+    pub input_tokens: u64,
+    /// Total output tokens generated in the session.
+    pub output_tokens: u64,
+    /// Total cache-read tokens in the session.
+    pub cache_read_tokens: u64,
+    /// Total cache-write tokens in the session.
+    pub cache_write_tokens: u64,
 }
 
 /// Renders streaming output with colors and markdown.
@@ -702,6 +710,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 1,
             is_error: false,
+            ..Default::default()
         });
     }
 
@@ -719,6 +728,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 1,
             is_error: false,
+            ..Default::default()
         }); // Should be silent
     }
 
@@ -737,6 +747,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 1,
             is_error: false,
+            ..Default::default()
         });
     }
 
@@ -1194,6 +1205,7 @@ mod tests {
                 total_cost_usd: 0.0025,
                 num_turns: 3,
                 is_error: false,
+                ..Default::default()
             });
 
             // Then buffer is flushed and summary line appears
@@ -1224,6 +1236,7 @@ mod tests {
                 total_cost_usd: 0.01,
                 num_turns: 1,
                 is_error: true,
+                ..Default::default()
             });
 
             let lines = collect_lines(&handler);
@@ -1246,6 +1259,7 @@ mod tests {
                 total_cost_usd: 0.01,
                 num_turns: 1,
                 is_error: false,
+                ..Default::default()
             });
 
             let lines = collect_lines(&handler);

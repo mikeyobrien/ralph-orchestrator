@@ -151,6 +151,14 @@ pub struct PiSessionState {
     pub num_turns: u32,
     pub stream_provider: Option<String>,
     pub stream_model: Option<String>,
+    /// Accumulated input tokens across all turns.
+    pub input_tokens: u64,
+    /// Accumulated output tokens across all turns.
+    pub output_tokens: u64,
+    /// Accumulated cache-read tokens across all turns.
+    pub cache_read_tokens: u64,
+    /// Accumulated cache-write tokens across all turns.
+    pub cache_write_tokens: u64,
 }
 
 impl PiSessionState {
@@ -160,6 +168,10 @@ impl PiSessionState {
             num_turns: 0,
             stream_provider: None,
             stream_model: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         }
     }
 }
@@ -240,10 +252,14 @@ pub fn dispatch_pi_stream_event<H: StreamHandler>(
                 {
                     state.stream_model = Some(model.clone());
                 }
-                if let Some(usage) = &msg.usage
-                    && let Some(cost) = &usage.cost
-                {
-                    state.total_cost_usd += cost.total;
+                if let Some(usage) = &msg.usage {
+                    if let Some(cost) = &usage.cost {
+                        state.total_cost_usd += cost.total;
+                    }
+                    state.input_tokens += usage.input;
+                    state.output_tokens += usage.output;
+                    state.cache_read_tokens += usage.cache_read;
+                    state.cache_write_tokens += usage.cache_write;
                 }
             }
         }

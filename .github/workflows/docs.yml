@@ -37,10 +37,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install mkdocs mkdocs-material mkdocs-material-extensions pymdown-extensions mkdocs-minify-plugin
+          pip install mkdocs mkdocs-material mkdocs-material-extensions pymdown-extensions mkdocs-minify-plugin mkdocs-llmstxt==0.5.0
 
       - name: Build documentation
         run: mkdocs build --strict --verbose
+
+      - name: Validate llms.txt structure
+        run: python scripts/validate_llms_txt.py site/llms.txt
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

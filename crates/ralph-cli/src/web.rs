@@ -164,26 +164,99 @@ fn check_port_available(port: u16) -> Result<()> {
     }
 }
 
+const BLOCKED_TSX_VERSION: &str = "4.20.0";
+
 /// Check for tsx 4.20.0 which has known issues.
 fn check_tsx_version_with(backend_dir: &Path, npx_cmd: &OsStr) -> Result<()> {
-    let output = Command::new(npx_cmd)
-        .args(["tsx", "--version"])
-        .current_dir(backend_dir)
-        .output();
+    // On some CI filesystems, executing a just-written test helper script can
+    // transiently fail with ETXTBSY/Text file busy. Retry briefly to avoid flakes.
+    let output = run_tsx_version_command_with_retry(backend_dir, npx_cmd);
 
-    if let Ok(output) = output {
-        let version = String::from_utf8_lossy(&output.stdout);
-        let token = version.split_whitespace().last().unwrap_or("");
-        let cleaned = token.trim_start_matches('v');
-        if cleaned == "4.20.0" {
+    if let Some(output) = output {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if contains_blocked_tsx_version(&stdout) || contains_blocked_tsx_version(&stderr) {
             anyhow::bail!(
                 "tsx 4.20.0 has known issues that affect the web server.\n\
                  Fix: npm install tsx@^4.21.0 -w @ralph-web/server"
             );
         }
     }
-    // If we can't run tsx or it doesn't match, proceed silently
+
+    // If we can't run tsx or it doesn't match, proceed silently.
     Ok(())
+}
+
+fn run_tsx_version_command_with_retry(
+    backend_dir: &Path,
+    npx_cmd: &OsStr,
+) -> Option<std::process::Output> {
+    const MAX_ATTEMPTS: usize = 3;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match Command::new(npx_cmd)
+            .args(["tsx", "--version"])
+            .current_dir(backend_dir)
+            .output()
+        {
+            Ok(output) => {
+                // Success: parse this output.
+                if output.status.success() {
+                    return Some(output);
+                }
+
+                // Retry transient ETXTBSY/text-file-busy errors seen in CI.
+                let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+                let is_transient = stderr.contains("text file busy") || stderr.contains("etxtbsy");
+                if is_transient && attempt + 1 < MAX_ATTEMPTS {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+
+                // Non-transient failure: return output for best-effort parsing.
+                return Some(output);
+            }
+            Err(_) => {
+                // Command missing/unrunnable.
+                return None;
+            }
+        }
+    }
+
+    None
+}
+
+fn contains_blocked_tsx_version(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        // Bare outputs: "4.20.0" or "v4.20.0"
+        if trimmed == BLOCKED_TSX_VERSION
+            || trimmed
+                .strip_prefix('v')
+                .is_some_and(|version| version == BLOCKED_TSX_VERSION)
+        {
+            return true;
+        }
+
+        // Labeled output examples:
+        // - "tsx 4.20.0"
+        // - "tsx v4.20.0"
+        // - "tsx v4.20.0 (node v22.0.0)"
+        if trimmed.to_ascii_lowercase().contains("tsx") {
+            return trimmed.split_whitespace().any(|token| {
+                let cleaned = token
+                    .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.')
+                    .trim_start_matches('v');
+                cleaned == BLOCKED_TSX_VERSION
+            });
+        }
+
+        false
+    })
 }
 
 /// Run pre-flight checks: verify Node.js/npm and install frontend dependencies.
@@ -679,6 +752,23 @@ mod tests {
         let err = check_npm_with(OsStr::new("definitely-missing-npm-12345")).expect_err("missing");
         let msg = format!("{err}");
         assert!(msg.contains("npm is not installed"), "msg: {msg}");
+    }
+
+    #[test]
+    fn contains_blocked_tsx_version_detects_supported_formats() {
+        assert!(contains_blocked_tsx_version("4.20.0"));
+        assert!(contains_blocked_tsx_version("v4.20.0"));
+        assert!(contains_blocked_tsx_version("tsx 4.20.0"));
+        assert!(contains_blocked_tsx_version("tsx v4.20.0"));
+        assert!(contains_blocked_tsx_version("tsx v4.20.0 (node v22.20.0)"));
+        assert!(contains_blocked_tsx_version("tsx v4.20.0\nnode v22.20.0"));
+    }
+
+    #[test]
+    fn contains_blocked_tsx_version_ignores_other_versions() {
+        assert!(!contains_blocked_tsx_version("4.21.0"));
+        assert!(!contains_blocked_tsx_version("tsx v4.21.0"));
+        assert!(!contains_blocked_tsx_version("node v4.20.0"));
     }
 
     #[cfg(unix)]

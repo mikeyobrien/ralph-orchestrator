@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use ralph_adapters::{
-    AcpExecutor, CliBackend, CliExecutor, ConsoleStreamHandler,
+    AcpExecutor, CliBackend, CliExecutor, ConsoleStreamHandler, JsonRpcStreamHandler,
     OutputFormat as BackendOutputFormat, PrettyStreamHandler, PtyConfig, PtyExecutor,
     QuietStreamHandler, TuiStreamHandler,
 };
@@ -15,7 +15,7 @@ use ralph_core::{
     LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record, SessionRecorder,
     SummaryWriter, TerminationReason,
 };
-use ralph_proto::{Event, HatId};
+use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -28,6 +28,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::display::{build_tui_hat_map, print_iteration_separator, print_termination};
 use crate::process_management;
+use crate::rpc_stdin::{GuidanceMessage, RpcDispatcher, run_stdin_reader, run_stdout_emitter};
 use crate::{ColorMode, Verbosity};
 
 /// Outcome of executing a prompt via PTY or CLI executor.
@@ -35,6 +36,20 @@ pub(crate) struct ExecutionOutcome {
     pub output: String,
     pub success: bool,
     pub termination: Option<TerminationReason>,
+    pub total_cost_usd: f64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+}
+
+/// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
+struct RpcSharedState {
+    iteration: Arc<std::sync::atomic::AtomicU32>,
+    /// Current (hat id, hat display name) pair.
+    hat: Arc<std::sync::Mutex<(String, String)>>,
+    completed: Arc<std::sync::atomic::AtomicBool>,
+    total_cost_usd: Arc<std::sync::Mutex<f64>>,
 }
 
 /// Core loop implementation supporting both fresh start and continue modes.
@@ -51,6 +66,7 @@ pub async fn run_loop_impl(
     color_mode: ColorMode,
     resume: bool,
     enable_tui: bool,
+    enable_rpc: bool,
     verbosity: Verbosity,
     record_session: Option<PathBuf>,
     loop_context: Option<LoopContext>,
@@ -243,7 +259,117 @@ pub async fn run_loop_impl(
     // TUI is observation-only - works in both interactive and autonomous modes
     // Requirements: both stdin and stdout must be terminals for TUI
     // (Crossterm requires stdin for keyboard input, stdout for rendering)
-    let enable_tui = enable_tui && stdin().is_terminal() && stdout().is_terminal();
+    let enable_tui = enable_tui && !enable_rpc && stdin().is_terminal() && stdout().is_terminal();
+
+    // RPC mode state: channels for stdin commands and stdout events
+    let (rpc_event_tx, rpc_event_rx) = if enable_rpc {
+        let (tx, rx) = tokio::sync::mpsc::channel::<RpcEvent>(256);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
+    let (rpc_guidance_tx, mut rpc_guidance_rx) = if enable_rpc {
+        let (tx, rx) = tokio::sync::mpsc::channel::<GuidanceMessage>(64);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
+    // Shared stdout writer for RPC mode (thread-safe for JsonRpcStreamHandler)
+    let rpc_stdout: Option<Arc<std::sync::Mutex<std::io::Stdout>>> = if enable_rpc {
+        Some(Arc::new(std::sync::Mutex::new(std::io::stdout())))
+    } else {
+        None
+    };
+
+    // RPC mode: spawn stdin reader and stdout emitter tasks
+    let rpc_dispatcher_started = if enable_rpc {
+        let backend_name = config.cli.backend.clone();
+        let max_iters = config.event_loop.max_iterations;
+
+        // Create shared state for get_state responses
+        let rpc_state_iteration = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rpc_state_hat: Arc<std::sync::Mutex<(String, String)>> = Arc::new(
+            std::sync::Mutex::new(("unknown".to_string(), "Unknown".to_string())),
+        );
+        let rpc_state_completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let rpc_state_total_cost: Arc<std::sync::Mutex<f64>> = Arc::new(std::sync::Mutex::new(0.0));
+
+        let rpc_state_iteration_clone = rpc_state_iteration.clone();
+        let rpc_state_hat_clone = rpc_state_hat.clone();
+        let rpc_state_completed_clone = rpc_state_completed.clone();
+        let rpc_state_total_cost_clone = rpc_state_total_cost.clone();
+        let rpc_state_started_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let state_fn = move || {
+            let (hat, hat_display) = rpc_state_hat_clone
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| ("unknown".to_string(), "Unknown".to_string()));
+            let total_cost_usd = rpc_state_total_cost_clone.lock().map(|g| *g).unwrap_or(0.0);
+            RpcState {
+                iteration: rpc_state_iteration_clone.load(std::sync::atomic::Ordering::Relaxed),
+                max_iterations: Some(max_iters),
+                hat,
+                hat_display,
+                backend: backend_name.clone(),
+                completed: rpc_state_completed_clone.load(std::sync::atomic::Ordering::Relaxed),
+                started_at: rpc_state_started_at,
+                iteration_started_at: None,
+                task_counts: RpcTaskCounts::default(),
+                active_task: None,
+                total_cost_usd,
+            }
+        };
+
+        let dispatcher = RpcDispatcher::new(
+            interrupt_tx.clone(),
+            rpc_guidance_tx
+                .clone()
+                .expect("RPC guidance tx should exist"),
+            rpc_event_tx.clone().expect("RPC event tx should exist"),
+            state_fn,
+        );
+
+        // Mark loop as started
+        dispatcher.mark_loop_started();
+
+        // Spawn stdin reader
+        tokio::spawn(async move {
+            run_stdin_reader(dispatcher, tokio::io::stdin()).await;
+        });
+
+        // Spawn stdout emitter
+        let rx = rpc_event_rx.expect("RPC event rx should exist");
+        tokio::spawn(async move {
+            run_stdout_emitter(rx).await;
+        });
+
+        // Emit loop_started event
+        if let Some(ref tx) = rpc_event_tx {
+            let started_event = RpcEvent::LoopStarted {
+                prompt: prompt_content.clone(),
+                max_iterations: Some(config.event_loop.max_iterations),
+                backend: config.cli.backend.clone(),
+                started_at: rpc_state_started_at,
+            };
+            let _ = tx.try_send(started_event);
+        }
+
+        Some(RpcSharedState {
+            iteration: rpc_state_iteration,
+            hat: rpc_state_hat,
+            completed: rpc_state_completed,
+            total_cost_usd: rpc_state_total_cost,
+        })
+    } else {
+        None
+    };
+
     let (mut tui_handle, tui_state, guidance_next_queue) = if enable_tui {
         // Build hat map for dynamic topic-to-hat resolution
         // This allows TUI to display custom hats (e.g., "Security Reviewer")
@@ -272,6 +398,24 @@ pub async fn run_loop_impl(
     } else {
         (None, None, None)
     };
+
+    // Add RPC EventBus observer to map ralph_proto::Event topics to RpcEvent variants
+    // Per Task 04 requirement #4: "Add an EventBus observer that serializes Event → RpcEvent"
+    if let Some(ref tx) = rpc_event_tx {
+        let tx_clone = tx.clone();
+        event_loop.add_observer(move |event: &Event| {
+            // Map all event topics to RpcEvent::OrchestrationEvent
+            // This provides observability for: build.task, build.done, loop.terminate,
+            // task.start, task.resume, and any custom hat events
+            let rpc_event = RpcEvent::OrchestrationEvent {
+                topic: event.topic.as_str().to_string(),
+                payload: event.payload.clone(),
+                source: event.source.as_ref().map(|h| h.as_str().to_string()),
+                target: event.target.as_ref().map(|h| h.as_str().to_string()),
+            };
+            let _ = tx_clone.try_send(rpc_event);
+        });
+    }
 
     // Give TUI task time to initialize (enter alternate screen, enable raw mode)
     // before the main loop starts doing work
@@ -578,8 +722,51 @@ pub async fn run_loop_impl(
         }
 
         // Print termination info to console (skip in TUI mode - TUI handles display)
-        if !enable_tui {
+        // Skip in RPC mode - JSON events replace console output
+        if !enable_tui && !enable_rpc {
             print_termination(reason, state, use_colors);
+        }
+
+        // Mark RPC state as completed so get_state reflects termination
+        if let Some(ref shared) = rpc_dispatcher_started {
+            shared
+                .completed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        // Emit RPC loop_terminated event
+        if let Some(ref tx) = rpc_event_tx {
+            let terminated_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            let rpc_reason = match reason {
+                TerminationReason::CompletionPromise => {
+                    ralph_proto::json_rpc::TerminationReason::Completed
+                }
+                TerminationReason::MaxIterations => {
+                    ralph_proto::json_rpc::TerminationReason::MaxIterations
+                }
+                TerminationReason::Interrupted | TerminationReason::Stopped => {
+                    ralph_proto::json_rpc::TerminationReason::Interrupted
+                }
+                _ => ralph_proto::json_rpc::TerminationReason::Error,
+            };
+
+            let accumulated_cost = rpc_dispatcher_started
+                .as_ref()
+                .and_then(|s| s.total_cost_usd.lock().ok().map(|g| *g))
+                .unwrap_or(0.0);
+
+            let terminate_event = RpcEvent::LoopTerminated {
+                reason: rpc_reason,
+                total_iterations: state.iteration,
+                duration_ms: state.elapsed().as_millis() as u64,
+                total_cost_usd: accumulated_cost,
+                terminated_at,
+            };
+            let _ = tx.try_send(terminate_event);
         }
     };
 
@@ -624,54 +811,73 @@ pub async fn run_loop_impl(
 
         // Drain next-loop guidance queue and write as human.guidance events.
         // These will be picked up by process_events_from_jsonl() during build_prompt().
+        // Handle both TUI guidance queue and RPC guidance channel.
+        let mut guidance_messages: Vec<String> = Vec::new();
+
+        // Drain TUI guidance queue
         if let Some(ref queue) = guidance_next_queue {
             let messages: Vec<String> = {
                 let mut q = queue.lock().unwrap();
                 q.drain(..).collect()
             };
-            if !messages.is_empty() {
-                let events_path = resolve_current_events_path(&ctx);
+            guidance_messages.extend(messages);
+        }
 
-                use std::io::Write;
-                let file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&events_path);
-
-                let mut writer = match file {
-                    Ok(f) => std::io::BufWriter::new(f),
-                    Err(e) => {
-                        warn!(error = %e, path = ?events_path, "Failed to open events file for guidance flush");
-                        // Skip flushing - keep loop running
-                        continue;
+        // Drain RPC guidance channel (non-blocking)
+        if let Some(ref mut rx) = rpc_guidance_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg.target {
+                    GuidanceTarget::Current => {
+                        debug!("Received RPC steer(current); applying at next prompt boundary");
+                        guidance_messages.push(msg.message);
                     }
-                };
+                    GuidanceTarget::Next => guidance_messages.push(msg.message),
+                }
+            }
+        }
 
-                for msg in &messages {
-                    let timestamp = chrono::Utc::now().to_rfc3339();
-                    let event = serde_json::json!({
-                        "topic": "human.guidance",
-                        "payload": msg,
-                        "ts": timestamp,
-                    });
+        if !guidance_messages.is_empty() {
+            let events_path = resolve_current_events_path(&ctx);
 
-                    match serde_json::to_string(&event) {
-                        Ok(line) => {
-                            if writeln!(writer, "{}", line).is_err() {
-                                warn!(path = ?events_path, "Failed writing guidance event line");
-                                break;
-                            }
+            use std::io::Write;
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&events_path);
+
+            let mut writer = match file {
+                Ok(f) => std::io::BufWriter::new(f),
+                Err(e) => {
+                    warn!(error = %e, path = ?events_path, "Failed to open events file for guidance flush");
+                    // Skip flushing - keep loop running
+                    continue;
+                }
+            };
+
+            for msg in &guidance_messages {
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                let event = serde_json::json!({
+                    "topic": "human.guidance",
+                    "payload": msg,
+                    "ts": timestamp,
+                });
+
+                match serde_json::to_string(&event) {
+                    Ok(line) => {
+                        if writeln!(writer, "{}", line).is_err() {
+                            warn!(path = ?events_path, "Failed writing guidance event line");
+                            break;
                         }
-                        Err(e) => {
-                            warn!(error = %e, "Failed serializing guidance event");
-                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed serializing guidance event");
                     }
                 }
-                info!(
-                    count = messages.len(),
-                    "Wrote TUI guidance events to events.jsonl"
-                );
             }
+            info!(
+                count = guidance_messages.len(),
+                "Wrote guidance events to events.jsonl"
+            );
         }
 
         // Check termination before execution
@@ -778,6 +984,13 @@ pub async fn run_loop_impl(
 
         let iteration = event_loop.state().iteration + 1;
 
+        // Update RPC state iteration counter
+        if let Some(ref shared) = rpc_dispatcher_started {
+            shared
+                .iteration
+                .store(iteration, std::sync::atomic::Ordering::Relaxed);
+        }
+
         // Determine which hat to display in iteration separator
         // When Ralph is coordinating (hat_id == "ralph"), show the active hat being worked on
         let display_hat = if hat_id.as_str() == "ralph" {
@@ -786,11 +999,47 @@ pub async fn run_loop_impl(
             hat_id.clone()
         };
 
+        // Get hat display name for RPC events
+        let hat_display = event_loop
+            .registry()
+            .get(&display_hat)
+            .map(|hat| hat.name.clone())
+            .unwrap_or_else(|| display_hat.as_str().to_string());
+
+        // Update RPC shared hat state so get_state reflects the current iteration's hat
+        if let Some(ref shared) = rpc_dispatcher_started
+            && let Ok(mut guard) = shared.hat.lock()
+        {
+            *guard = (display_hat.as_str().to_string(), hat_display.clone());
+        }
+
+        // Track iteration start time for RPC iteration_end duration calculation
+        // (cheap to create even when not in RPC mode)
+        let iteration_started_at = std::time::Instant::now();
+
+        // Emit RPC iteration_start event
+        if let Some(ref tx) = rpc_event_tx {
+            let started_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let start_event = RpcEvent::IterationStart {
+                iteration,
+                max_iterations: Some(config.event_loop.max_iterations),
+                hat: display_hat.as_str().to_string(),
+                hat_display: hat_display.clone(),
+                backend: config.cli.backend.clone(),
+                started_at,
+            };
+            let _ = tx.try_send(start_event);
+        }
+
         // Per spec: Print iteration demarcation separator
         // "Each iteration must be clearly demarcated in the output so users can
         // visually distinguish where one iteration ends and another begins."
         // Skip when TUI is enabled - TUI has its own header showing iteration info
-        if tui_state.is_none() {
+        // Skip in RPC mode - JSON events replace console output
+        if tui_state.is_none() && !enable_rpc {
             print_iteration_separator(
                 iteration,
                 display_hat.as_str(),
@@ -802,8 +1051,9 @@ pub async fn run_loop_impl(
 
         // Log hat changes with appropriate messaging
         // Skip in TUI mode - TUI shows hat info in header, and stdout would corrupt display
+        // Skip in RPC mode - JSON events replace console output
         if last_hat.as_ref() != Some(&hat_id) {
-            if tui_state.is_none() {
+            if tui_state.is_none() && !enable_rpc {
                 if hat_id.as_str() == "ralph" {
                     info!("I'm Ralph. Let's do this.");
                 } else {
@@ -945,6 +1195,7 @@ pub async fn run_loop_impl(
         let mut interrupt_rx_clone = interrupt_rx.clone();
         let interrupt_rx_for_pty = interrupt_rx.clone();
         let tui_lines_for_pty = tui_lines.clone();
+        let rpc_stdout_for_pty = rpc_stdout.clone();
         let execute_future = async {
             if effective_backend.output_format == BackendOutputFormat::Acp {
                 execute_acp(
@@ -965,6 +1216,10 @@ pub async fn run_loop_impl(
                     interrupt_rx_for_pty,
                     verbosity,
                     tui_lines_for_pty,
+                    rpc_stdout_for_pty,
+                    iteration,
+                    display_hat.as_str(),
+                    &backend_name_for_timeout,
                 )
                 .await
             } else {
@@ -976,6 +1231,11 @@ pub async fn run_loop_impl(
                     output: result.output,
                     success: result.success,
                     termination: None,
+                    total_cost_usd: 0.0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
                 })
             }
         };
@@ -1037,6 +1297,30 @@ pub async fn run_loop_impl(
         // so no post-execution transfer is needed.
         if let Some(mut s) = tui_state.as_ref().and_then(|state| state.lock().ok()) {
             s.finish_latest_iteration();
+        }
+
+        // Emit RPC iteration_end event
+        if let Some(ref tx) = rpc_event_tx {
+            let duration_ms = iteration_started_at.elapsed().as_millis() as u64;
+            // Check if this iteration's output contains LOOP_COMPLETE
+            let loop_complete_triggered = output.contains(&config.event_loop.completion_promise);
+            let iteration_cost_usd = outcome.total_cost_usd;
+            if let Some(ref shared) = rpc_dispatcher_started
+                && let Ok(mut guard) = shared.total_cost_usd.lock()
+            {
+                *guard += iteration_cost_usd;
+            }
+            let end_event = RpcEvent::IterationEnd {
+                iteration,
+                duration_ms,
+                cost_usd: iteration_cost_usd,
+                input_tokens: outcome.input_tokens,
+                output_tokens: outcome.output_tokens,
+                cache_read_tokens: outcome.cache_read_tokens,
+                cache_write_tokens: outcome.cache_write_tokens,
+                loop_complete_triggered,
+            };
+            let _ = tx.try_send(end_event);
         }
 
         // Log events from output before processing
@@ -1279,6 +1563,10 @@ async fn execute_pty(
     interrupt_rx: tokio::sync::watch::Receiver<bool>,
     verbosity: Verbosity,
     tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>>,
+    rpc_stdout: Option<Arc<std::sync::Mutex<std::io::Stdout>>>,
+    iteration: u32,
+    hat: &str,
+    backend_name: &str,
 ) -> Result<ExecutionOutcome> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
@@ -1329,13 +1617,23 @@ async fn execute_pty(
     });
 
     // Run PTY executor with shared interrupt channel
-    let result = if interactive && tui_lines.is_none() {
-        // Raw interactive mode only when not using TUI (TUI handles its own terminal)
+    let result = if interactive && tui_lines.is_none() && rpc_stdout.is_none() {
+        // Raw interactive mode only when not using TUI or RPC (TUI/RPC handle their own I/O)
         exec.run_interactive(prompt, interrupt_rx).await
     } else if let Some(lines) = tui_lines {
         // TUI mode: use TuiStreamHandler to capture output for TUI display
         let verbose = verbosity == Verbosity::Verbose;
         let mut handler = TuiStreamHandler::with_lines(verbose, lines);
+        exec.run_observe_streaming(prompt, interrupt_rx, &mut handler)
+            .await
+    } else if let Some(stdout_writer) = rpc_stdout {
+        // RPC mode: use JsonRpcStreamHandler for JSON-lines output
+        let mut handler = JsonRpcStreamHandler::new(
+            stdout_writer,
+            iteration,
+            Some(hat.to_string()),
+            Some(backend_name.to_string()),
+        );
         exec.run_observe_streaming(prompt, interrupt_rx, &mut handler)
             .await
     } else {
@@ -1393,6 +1691,11 @@ async fn execute_pty(
                 output: output_for_parsing,
                 success: pty_result.success,
                 termination,
+                total_cost_usd: pty_result.total_cost_usd,
+                input_tokens: pty_result.input_tokens,
+                output_tokens: pty_result.output_tokens,
+                cache_read_tokens: pty_result.cache_read_tokens,
+                cache_write_tokens: pty_result.cache_write_tokens,
             })
         }
         Err(e) => {
@@ -1853,11 +2156,12 @@ pub async fn start_loop(
         ColorMode::Never,
         false, // not resume
         false, // no TUI
+        false, // no RPC
         Verbosity::Normal,
-        None, // no session recording
-        Some(loop_context),
-        Vec::new(), // no custom args
-        None,       // default auto-merge
+        None,               // no session recording
+        Some(loop_context), // loop context
+        Vec::new(),         // no custom args
+        None,               // default auto-merge
     )
     .await
 }
