@@ -24,6 +24,7 @@ mod loops;
 mod memory;
 mod preflight;
 mod presets;
+mod rpc_stdin;
 mod skill_cli;
 mod sop_runner;
 mod task_cli;

@@ -2613,13 +2613,17 @@ dependencies = [
  "ralph-core",
  "ralph-proto",
  "ratatui",
+ "reqwest 0.12.28",
  "scopeguard",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.24.0",
  "tracing",
+ "tungstenite 0.24.0",
  "unicode-width 0.2.0",
+ "url",
 ]
 
 [[package]]
@@ -3814,8 +3818,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls 0.23.36",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tungstenite 0.24.0",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -3970,6 +3978,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.5",
+ "rustls 0.23.36",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",
@@ -4332,6 +4342,15 @@ name = "webpki-roots"
 version = "0.25.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.5",
+]
 
 [[package]]
 name = "webpki-roots"

@@ -97,6 +97,8 @@ regex = "1"
 
 # HTTP client for remote presets
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tungstenite = "0.24"
 
 # Error handling
 thiserror = "2"
