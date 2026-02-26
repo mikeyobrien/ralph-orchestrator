@@ -1551,6 +1551,11 @@ async fn execute_acp(
         output,
         success: pty_result.success,
         termination: None,
+        total_cost_usd: pty_result.total_cost_usd,
+        input_tokens: pty_result.input_tokens,
+        output_tokens: pty_result.output_tokens,
+        cache_read_tokens: pty_result.cache_read_tokens,
+        cache_write_tokens: pty_result.cache_write_tokens,
     })
 }
 

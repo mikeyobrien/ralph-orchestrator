@@ -231,6 +231,10 @@ impl AcpExecutor {
             total_cost_usd: 0.0,
             num_turns: 1,
             is_error,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         });
 
         Ok(PtyExecutionResult {
@@ -240,6 +244,11 @@ impl AcpExecutor {
             success,
             exit_code: if success { Some(0) } else { Some(1) },
             termination: TerminationType::Natural,
+            total_cost_usd: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         })
     }
 }
