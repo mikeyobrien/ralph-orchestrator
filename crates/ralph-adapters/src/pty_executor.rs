@@ -514,6 +514,31 @@ impl PtyExecutor {
                     }
                 }
 
+                // Give the reader thread a brief window to flush any final bytes/EOF.
+                // This avoids races where fast-exiting commands can drop tail output.
+                let drain_deadline = Instant::now() + Duration::from_millis(200);
+                loop {
+                    let remaining = drain_deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    match tokio::time::timeout(remaining, output_rx.recv()).await {
+                        Ok(Some(OutputEvent::Data(data))) => {
+                            if !tui_connected {
+                                io::stdout().write_all(&data)?;
+                                io::stdout().flush()?;
+                            }
+                            output.extend_from_slice(&data);
+                        }
+                        Ok(Some(OutputEvent::Eof) | None) => break,
+                        Ok(Some(OutputEvent::Error(e))) => {
+                            debug!(error = %e, "PTY read error after exit");
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+
                 let final_termination = resolve_termination_type(exit_code, termination);
                 // run_observe doesn't parse JSON, so extracted_text is empty
                 return Ok(build_result(
@@ -899,6 +924,78 @@ impl PtyExecutor {
                                 handler.on_text(text);
                             }
                         }
+                    }
+                }
+
+                // Give the reader thread a brief window to flush any final bytes/EOF.
+                // This avoids races where fast-exiting commands can drop tail output.
+                let drain_deadline = Instant::now() + Duration::from_millis(200);
+                loop {
+                    let remaining = drain_deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    match tokio::time::timeout(remaining, output_rx.recv()).await {
+                        Ok(Some(OutputEvent::Data(data))) => {
+                            output.extend_from_slice(&data);
+                            if let Ok(text) = std::str::from_utf8(&data) {
+                                if is_stream_json {
+                                    // StreamJson: parse JSON lines
+                                    line_buffer.push_str(text);
+                                    while let Some(newline_pos) = line_buffer.find('\n') {
+                                        let line = line_buffer[..newline_pos].to_string();
+                                        line_buffer = line_buffer[newline_pos + 1..].to_string();
+                                        if let Some(event) = ClaudeStreamParser::parse_line(&line) {
+                                            if let ClaudeStreamEvent::Result {
+                                                duration_ms,
+                                                total_cost_usd,
+                                                num_turns,
+                                                is_error,
+                                            } = &event
+                                            {
+                                                completion = Some(SessionResult {
+                                                    duration_ms: *duration_ms,
+                                                    total_cost_usd: *total_cost_usd,
+                                                    num_turns: *num_turns,
+                                                    is_error: *is_error,
+                                                    ..Default::default()
+                                                });
+                                            }
+                                            dispatch_stream_event(
+                                                event,
+                                                handler,
+                                                &mut extracted_text,
+                                            );
+                                        }
+                                    }
+                                } else if is_pi_stream {
+                                    // PiStreamJson: parse NDJSON lines
+                                    line_buffer.push_str(text);
+                                    while let Some(newline_pos) = line_buffer.find('\n') {
+                                        let line = line_buffer[..newline_pos].to_string();
+                                        line_buffer = line_buffer[newline_pos + 1..].to_string();
+                                        if let Some(event) = PiStreamParser::parse_line(&line) {
+                                            dispatch_pi_stream_event(
+                                                event,
+                                                handler,
+                                                &mut extracted_text,
+                                                &mut pi_state,
+                                                show_pi_thinking,
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    // Text: stream raw output to handler
+                                    handler.on_text(text);
+                                }
+                            }
+                        }
+                        Ok(Some(OutputEvent::Eof) | None) => break,
+                        Ok(Some(OutputEvent::Error(e))) => {
+                            debug!(error = %e, "PTY read error after exit");
+                            break;
+                        }
+                        Err(_) => break,
                     }
                 }
 
