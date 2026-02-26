@@ -504,6 +504,9 @@ enum Commands {
     /// Manage configured hats
     Hats(hats::HatsArgs),
 
+    /// Attach a TUI to a running ralph-api server
+    Tui(TuiArgs),
+
     /// Run the web dashboard
     Web(web::WebArgs),
 
@@ -581,8 +584,14 @@ struct RunArgs {
 
     /// Force autonomous mode (headless, non-interactive).
     /// Overrides default_mode from config.
-    #[arg(short, long, conflicts_with = "no_tui")]
+    #[arg(short, long, conflicts_with = "no_tui", conflicts_with = "rpc")]
     autonomous: bool,
+
+    /// Run in RPC mode with JSON-lines protocol on stdin/stdout.
+    /// All output is valid JSON; input accepts RpcCommand messages.
+    /// Use this for IDE integrations and machine-readable interfaces.
+    #[arg(long, conflicts_with = "no_tui", conflicts_with = "autonomous")]
+    rpc: bool,
 
     /// Idle timeout in seconds for interactive mode (default: 30).
     /// Process is terminated after this many seconds of inactivity.
@@ -646,8 +655,12 @@ struct ResumeArgs {
     no_tui: bool,
 
     /// Force autonomous mode
-    #[arg(short, long, conflicts_with = "no_tui")]
+    #[arg(short, long, conflicts_with = "no_tui", conflicts_with = "rpc")]
     autonomous: bool,
+
+    /// Run in RPC mode with JSON-lines protocol on stdin/stdout.
+    #[arg(long, conflicts_with = "no_tui", conflicts_with = "autonomous")]
+    rpc: bool,
 
     /// Idle timeout in seconds for TUI mode
     #[arg(long)]
@@ -785,12 +798,37 @@ struct CodeTaskArgs {
     custom_args: Vec<String>,
 }
 
+/// Arguments for the `ralph tui` subcommand.
+#[derive(Parser, Debug)]
+struct TuiArgs {
+    /// ralph-api server URL to connect to.
+    /// Defaults to RALPH_API_URL env var, or http://127.0.0.1:3000.
+    #[arg(short = 'u', long = "url")]
+    url: Option<String>,
+}
+
 /// Arguments for the completions subcommand.
 #[derive(Parser, Debug)]
 struct CompletionsArgs {
     /// Shell to generate completions for
     #[arg(value_enum)]
     shell: clap_complete::Shell,
+}
+
+async fn tui_command(args: TuiArgs) -> Result<()> {
+    use ralph_tui::Tui;
+
+    let url = args
+        .url
+        .or_else(|| std::env::var("RALPH_API_URL").ok())
+        .unwrap_or_else(|| "http://127.0.0.1:3000".to_string());
+
+    info!(url = %url, "Attaching TUI to ralph-api server");
+
+    let tui =
+        Tui::connect(&url).with_context(|| format!("Failed to create TUI client for {url}"))?;
+
+    tui.run().await.context("TUI exited with error")
 }
 
 fn completions_command(args: CompletionsArgs) -> Result<()> {
@@ -826,11 +864,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Detect if TUI mode is requested - TUI owns the terminal, so logs must not go to stdout
-    // TUI is enabled by default unless --no-tui is specified or --autonomous is used
+    // TUI is enabled by default unless --no-tui, --autonomous, or --rpc is specified
+    // RPC mode also suppresses stdout logging (JSON-only output)
     let tui_enabled = match &cli.command {
-        Some(Commands::Run(args)) => !args.no_tui && !args.autonomous,
-        Some(Commands::Resume(args)) => !args.no_tui && !args.autonomous,
+        Some(Commands::Run(args)) => !args.no_tui && !args.autonomous && !args.rpc,
+        Some(Commands::Resume(args)) => !args.no_tui && !args.autonomous && !args.rpc,
         None => true,
+        _ => false,
+    };
+    let rpc_enabled = match &cli.command {
+        Some(Commands::Run(args)) => args.rpc,
+        Some(Commands::Resume(args)) => args.rpc,
         _ => false,
     };
 
@@ -882,6 +926,12 @@ async fn main() -> Result<()> {
             }
         }
         // If log file creation fails, silently continue without logging
+    } else if rpc_enabled {
+        // RPC mode: logs must go to stderr to keep stdout clean for JSON-lines
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init();
     } else {
         // Normal mode: logs go to stdout
         if diagnostics_enabled {
@@ -990,6 +1040,7 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Some(Commands::Tui(args)) => tui_command(args).await,
         Some(Commands::Web(args)) => web::execute(args).await,
         Some(Commands::Bot(args)) => {
             bot::execute(
@@ -1013,6 +1064,7 @@ async fn main() -> Result<()> {
                 continue_mode: false,
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
+                rpc: false,
                 idle_timeout: None,
                 exclusive: false,
                 no_auto_merge: false,
@@ -1514,8 +1566,9 @@ async fn run_command(
     }
 
     // Run the orchestration loop and exit with proper exit code
-    // TUI is enabled by default (unless --no-tui or --autonomous is specified)
-    let enable_tui = !args.no_tui && !args.autonomous;
+    // TUI is enabled by default (unless --no-tui, --autonomous, or --rpc is specified)
+    let enable_tui = !args.no_tui && !args.autonomous && !args.rpc;
+    let enable_rpc = args.rpc;
     let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
     let custom_args = args.custom_args;
     // --no-auto-merge CLI flag overrides config.features.auto_merge
@@ -1530,6 +1583,7 @@ async fn run_command(
         color_mode,
         resume,
         enable_tui,
+        enable_rpc,
         verbosity,
         args.record_session,
         Some(loop_context),
@@ -1659,14 +1713,16 @@ async fn resume_command(
     // Run the orchestration loop in resume mode
     // The key difference: we publish task.resume instead of task.start,
     // signaling the planner to read the existing scratchpad
-    // TUI is enabled by default (unless --no-tui or --autonomous is specified)
-    let enable_tui = !args.no_tui && !args.autonomous;
+    // TUI is enabled by default (unless --no-tui, --autonomous, or --rpc is specified)
+    let enable_tui = !args.no_tui && !args.autonomous && !args.rpc;
+    let enable_rpc = args.rpc;
     let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
     let reason = loop_runner::run_loop_impl(
         config,
         color_mode,
         true,
         enable_tui,
+        enable_rpc,
         verbosity,
         args.record_session,
         None,       // Deprecated resume command doesn't have loop_context
@@ -2938,6 +2994,7 @@ core:
             continue_mode: false,
             no_tui: true,
             autonomous: false,
+            rpc: false,
             idle_timeout: None,
             exclusive: false,
             no_auto_merge: false,

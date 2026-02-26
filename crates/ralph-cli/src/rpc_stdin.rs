@@ -361,11 +361,11 @@ where
 pub async fn run_stdout_emitter(mut rx: mpsc::Receiver<RpcEvent>) {
     use std::io::Write;
 
-    let stdout = std::io::stdout();
-    let mut stdout = stdout.lock();
-
     while let Some(event) = rx.recv().await {
         let line = emit_event_line(&event);
+        // Lock stdout for each write to avoid holding across await points
+        let stdout = std::io::stdout();
+        let mut stdout = stdout.lock();
         if stdout.write_all(line.as_bytes()).is_err() {
             warn!("Failed to write to stdout, stopping emitter");
             break;
@@ -373,6 +373,7 @@ pub async fn run_stdout_emitter(mut rx: mpsc::Receiver<RpcEvent>) {
         if stdout.flush().is_err() {
             warn!("Failed to flush stdout");
         }
+        // stdout lock is dropped here
     }
 
     debug!("Stdout emitter task finished");

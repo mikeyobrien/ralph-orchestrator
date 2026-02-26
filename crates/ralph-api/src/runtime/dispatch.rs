@@ -37,6 +37,7 @@ impl RpcRuntime {
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
+            "_internal.publish" => self.dispatch_internal_publish(request),
             _ => {
                 warn!(
                     method = %request.method,
@@ -342,6 +343,32 @@ impl RpcRuntime {
                 request.method
             ))),
         }
+    }
+}
+
+use serde::Deserialize as InternalDeserialize;
+
+#[derive(Debug, Clone, InternalDeserialize)]
+#[serde(rename_all = "camelCase")]
+struct InternalPublishParams {
+    topic: String,
+    resource_type: String,
+    resource_id: String,
+    payload: Value,
+}
+
+impl RpcRuntime {
+    /// Internal-only method for the orchestration loop to inject events
+    /// into the stream domain. Not part of the public RPC contract.
+    fn dispatch_internal_publish(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        let params: InternalPublishParams = self.parse_params(request)?;
+        self.stream_domain().publish(
+            &params.topic,
+            &params.resource_type,
+            &params.resource_id,
+            params.payload,
+        );
+        Ok(json!({ "success": true }))
     }
 }
 
