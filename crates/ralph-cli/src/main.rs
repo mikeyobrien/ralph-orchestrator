@@ -2617,7 +2617,9 @@ mod tests {
 
     #[test]
     fn test_color_mode_should_use_colors() {
-        assert!(ColorMode::Always.should_use_colors());
+        // `NO_COLOR` disables ANSI globally, including `--color always`.
+        let expected_always = std::env::var("NO_COLOR").is_err();
+        assert_eq!(ColorMode::Always.should_use_colors(), expected_always);
         assert!(!ColorMode::Never.should_use_colors());
     }
 
