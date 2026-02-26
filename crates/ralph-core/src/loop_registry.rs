@@ -328,8 +328,11 @@ impl LoopRegistry {
         // Read existing data using the locked file
         let mut data = self.read_data_from_file(&flock)?;
 
-        // Clean stale entries before any operation
-        data.loops.retain(|e| e.is_alive());
+        // Clean stale entries before any operation (dead PIDs only).
+        //
+        // Keep zombie worktree entries (PID alive, worktree gone) so callers can
+        // still discover and explicitly stop/clean them.
+        data.loops.retain(|e| e.is_pid_alive());
 
         // Execute the user function
         f(&mut data);
@@ -719,5 +722,32 @@ mod tests {
         let entry = LoopEntry::new("primary loop", None::<String>);
         assert!(entry.is_alive());
         assert!(entry.is_pid_alive());
+    }
+
+    #[test]
+    fn test_with_lock_keeps_zombie_until_explicit_cleanup() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = LoopRegistry::new(temp_dir.path());
+
+        // Create and register a live worktree loop entry.
+        let wt_dir = temp_dir.path().join("zombie-worktree");
+        fs::create_dir_all(&wt_dir).unwrap();
+
+        let entry = LoopEntry::new("zombie keep test", Some(wt_dir.display().to_string()));
+        let id = entry.id.clone();
+        registry.register(entry).unwrap();
+
+        // Remove worktree: entry becomes zombie (PID alive, worktree missing).
+        fs::remove_dir_all(&wt_dir).unwrap();
+
+        // Regular registry reads should keep the zombie entry available so CLI/API
+        // can report and clean it up.
+        let got = registry.get(&id).unwrap();
+        assert!(got.is_some());
+
+        // Explicit stale cleanup should remove zombie entries.
+        let removed = registry.clean_stale().unwrap();
+        assert_eq!(removed, 1);
+        assert!(registry.get(&id).unwrap().is_none());
     }
 }

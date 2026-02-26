@@ -124,6 +124,8 @@ impl LoopDomain {
         for entry in registry_entries {
             let status = if entry.is_alive() {
                 "running"
+            } else if entry.is_pid_alive() {
+                "orphan"
             } else {
                 "crashed"
             };
