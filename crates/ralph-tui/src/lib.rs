@@ -26,10 +26,10 @@ mod app;
 pub mod input;
 pub mod rpc_bridge;
 pub mod rpc_client;
-pub mod rpc_publisher;
 pub mod rpc_source;
 pub mod rpc_writer;
 pub mod state;
+pub mod state_mutations;
 pub mod text_renderer;
 pub mod widgets;
 
@@ -43,7 +43,6 @@ use tracing::info;
 
 pub use app::{App, dispatch_action};
 pub use rpc_client::RpcClient;
-pub use rpc_publisher::RpcPublisher;
 pub use rpc_source::run_rpc_event_reader;
 pub use rpc_writer::RpcWriter;
 pub use state::TuiState;

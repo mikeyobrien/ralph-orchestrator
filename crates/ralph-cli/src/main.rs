@@ -289,6 +289,16 @@ impl ConfigSource {
             ConfigSource::File(PathBuf::from(s))
         }
     }
+
+    /// Convert back to CLI string representation for forwarding to subprocess.
+    fn to_cli_string(&self) -> String {
+        match self {
+            ConfigSource::File(path) => path.display().to_string(),
+            ConfigSource::Builtin(name) => format!("builtin:{}", name),
+            ConfigSource::Remote(url) => url.clone(),
+            ConfigSource::Override { key, value } => format!("{}={}", key, value),
+        }
+    }
 }
 
 /// Source for hat collection configuration.
@@ -1274,7 +1284,7 @@ async fn run_command(
     }
 
     // Capture args for subprocess TUI mode BEFORE fields are consumed below
-    let subprocess_tui_args = SubprocessTuiArgs::from(&args);
+    let subprocess_tui_args = SubprocessTuiArgs::new(&args, config_sources, hats_source);
 
     // Apply CLI overrides (after normalization so they take final precedence)
     // Per spec: CLI -p and -P are mutually exclusive (enforced by clap)
@@ -1666,10 +1676,19 @@ struct SubprocessTuiArgs {
     exclusive: bool,
     no_auto_merge: bool,
     skip_preflight: bool,
+    /// Config sources to forward to child process (-c args)
+    config_sources: Vec<String>,
+    /// Hats source to forward to child process (-H arg)
+    hats_source: Option<String>,
 }
 
-impl From<&RunArgs> for SubprocessTuiArgs {
-    fn from(args: &RunArgs) -> Self {
+impl SubprocessTuiArgs {
+    /// Create from RunArgs with config/hats sources from Cli.
+    fn new(
+        args: &RunArgs,
+        config_sources: &[ConfigSource],
+        hats_source: Option<&HatsSource>,
+    ) -> Self {
         Self {
             prompt_text: args.prompt_text.clone(),
             prompt_file: args.prompt_file.clone(),
@@ -1684,6 +1703,8 @@ impl From<&RunArgs> for SubprocessTuiArgs {
             exclusive: args.exclusive,
             no_auto_merge: args.no_auto_merge,
             skip_preflight: args.skip_preflight,
+            config_sources: config_sources.iter().map(|s| s.to_cli_string()).collect(),
+            hats_source: hats_source.map(|h| h.label()),
         }
     }
 }
@@ -1701,8 +1722,25 @@ async fn run_subprocess_tui(
     use std::process::Stdio;
     use tokio::process::Command;
 
-    // Build child command: ralph run --rpc <forwarded args>
-    let mut child_args = vec!["run".to_string(), "--rpc".to_string()];
+    // Build child command: ralph [-c ...] [-H ...] run --rpc <forwarded args>
+    // Note: -c and -H are global options that must come BEFORE the subcommand
+    let mut child_args = Vec::new();
+
+    // Forward config sources (global option, before subcommand)
+    for config_source in &args.config_sources {
+        child_args.push("-c".to_string());
+        child_args.push(config_source.clone());
+    }
+
+    // Forward hats source (global option, before subcommand)
+    if let Some(ref hats) = args.hats_source {
+        child_args.push("-H".to_string());
+        child_args.push(hats.clone());
+    }
+
+    // Add subcommand and mode
+    child_args.push("run".to_string());
+    child_args.push("--rpc".to_string());
 
     // Forward prompt
     if let Some(ref prompt) = args.prompt_text {
@@ -2668,6 +2706,31 @@ mod tests {
             }
             _ => panic!("Expected Override variant"),
         }
+    }
+
+    #[test]
+    fn test_config_source_to_cli_string_roundtrips() {
+        // File path
+        let source = ConfigSource::File(PathBuf::from("ralph.yml"));
+        assert_eq!(source.to_cli_string(), "ralph.yml");
+
+        // Builtin (legacy)
+        let source = ConfigSource::Builtin("feature".to_string());
+        assert_eq!(source.to_cli_string(), "builtin:feature");
+
+        // Remote URL
+        let source = ConfigSource::Remote("https://example.com/ralph.yml".to_string());
+        assert_eq!(source.to_cli_string(), "https://example.com/ralph.yml");
+
+        // Override
+        let source = ConfigSource::Override {
+            key: "core.scratchpad".to_string(),
+            value: ".ralph/feature/scratchpad.md".to_string(),
+        };
+        assert_eq!(
+            source.to_cli_string(),
+            "core.scratchpad=.ralph/feature/scratchpad.md"
+        );
     }
 
     #[test]

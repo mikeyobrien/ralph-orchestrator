@@ -10,14 +10,16 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use serde_json::Value;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::rpc_client::{RpcClient, StreamEvent};
 use crate::state::{TaskCounts, TaskSummary, TuiState};
+use crate::state_mutations::{
+    append_error_line, apply_loop_completed, apply_task_active, apply_task_close,
+};
 
 /// Topics the TUI subscribes to via the RPC stream.
 const TUI_STREAM_TOPICS: &[&str] = &[
@@ -286,21 +288,10 @@ fn apply_task_status_change(event: &StreamEvent, state: &mut TuiState) {
 
     match to {
         "running" => {
-            state.set_active_task(Some(TaskSummary::new(task_id, task_id, "running")));
+            apply_task_active(state, task_id, task_id, "running");
         }
         "closed" | "done" => {
-            // Increment closed count
-            let mut counts = state.task_counts.clone();
-            counts.closed += 1;
-            if counts.open > 0 {
-                counts.open -= 1;
-            }
-            state.set_task_counts(counts);
-
-            // Clear active task if it matches
-            if state.get_active_task().is_some_and(|t| t.id == *task_id) {
-                state.set_active_task(None);
-            }
+            apply_task_close(state, task_id);
         }
         _ => {}
     }
@@ -340,9 +331,7 @@ fn apply_loop_status_change(event: &StreamEvent, state: &mut TuiState) {
             state.finish_latest_iteration();
         }
         "completed" | "terminated" => {
-            state.loop_completed = true;
-            state.final_iteration_elapsed = state.iteration_started.map(|start| start.elapsed());
-            state.finish_latest_iteration();
+            apply_loop_completed(state);
         }
         _ => {}
     }
@@ -362,8 +351,7 @@ fn apply_lifecycle(event: &StreamEvent, state: &mut TuiState) {
     if phase == "started" {
         state.loop_started = Some(std::time::Instant::now());
     } else if phase == "terminated" {
-        state.loop_completed = true;
-        state.final_loop_elapsed = state.loop_started.map(|s| s.elapsed());
+        apply_loop_completed(state);
     }
 
     state.last_event = Some("system.lifecycle".to_string());
@@ -383,20 +371,7 @@ fn apply_error(event: &StreamEvent, state: &mut TuiState) {
         .and_then(Value::as_str)
         .unwrap_or("UNKNOWN");
 
-    // Append error line to latest iteration
-    if let Some(handle) = state.latest_iteration_lines_handle()
-        && let Ok(mut lines) = handle.lock()
-    {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("⚠ [{code}] "),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(message.to_string()),
-        ]));
-    }
+    append_error_line(state, code, message);
 
     state.last_event = Some("error.raised".to_string());
     state.last_event_at = Some(std::time::Instant::now());

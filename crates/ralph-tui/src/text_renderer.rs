@@ -114,6 +114,23 @@ pub fn sanitize_tui_block_text(text: &str) -> Cow<'_, str> {
     Cow::Owned(s)
 }
 
+/// Truncates a string to approximately `max_len` characters, appending `"..."`.
+///
+/// Works on Unicode code-point boundaries, not bytes, so multi-byte characters
+/// are counted correctly.
+pub fn truncate(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        s.to_string()
+    } else {
+        let byte_idx = s
+            .char_indices()
+            .nth(max_len)
+            .map(|(idx, _)| idx)
+            .unwrap_or(s.len());
+        format!("{}...", &s[..byte_idx])
+    }
+}
+
 /// Sanitizes text that must stay on a *single* TUI line (tool summaries, errors).
 /// Removes embedded newlines and carriage returns entirely.
 pub fn sanitize_tui_inline_text(text: &str) -> String {

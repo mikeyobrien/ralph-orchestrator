@@ -53,6 +53,16 @@ pub struct PtyExecutionResult {
     pub exit_code: Option<i32>,
     /// How the process was terminated.
     pub termination: TerminationType,
+    /// Total session cost in USD, if available from stream metadata.
+    pub total_cost_usd: f64,
+    /// Total input tokens in the session.
+    pub input_tokens: u64,
+    /// Total output tokens in the session.
+    pub output_tokens: u64,
+    /// Total cache-read tokens in the session.
+    pub cache_read_tokens: u64,
+    /// Total cache-write tokens in the session.
+    pub cache_write_tokens: u64,
 }
 
 /// How the PTY process was terminated.
@@ -512,6 +522,7 @@ impl PtyExecutor {
                     Some(exit_code),
                     final_termination,
                     String::new(),
+                    None,
                 ));
             }
         }
@@ -546,6 +557,7 @@ impl PtyExecutor {
             exit_code,
             final_termination,
             String::new(),
+            None,
         ))
     }
 
@@ -621,6 +633,7 @@ impl PtyExecutor {
         let mut extracted_text = String::new();
         // Pi session state for accumulating cost/turns (wall-clock for duration)
         let mut pi_state = PiSessionState::new();
+        let mut completion: Option<SessionResult> = None;
         let start_time = Instant::now();
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
             None
@@ -723,6 +736,21 @@ impl PtyExecutor {
                                         line_buffer = line_buffer[newline_pos + 1..].to_string();
 
                                         if let Some(event) = ClaudeStreamParser::parse_line(&line) {
+                                            if let ClaudeStreamEvent::Result {
+                                                duration_ms,
+                                                total_cost_usd,
+                                                num_turns,
+                                                is_error,
+                                            } = &event
+                                            {
+                                                completion = Some(SessionResult {
+                                                    duration_ms: *duration_ms,
+                                                    total_cost_usd: *total_cost_usd,
+                                                    num_turns: *num_turns,
+                                                    is_error: *is_error,
+                                                    ..Default::default()
+                                                });
+                                            }
                                             dispatch_stream_event(event, handler, &mut extracted_text);
                                         }
                                     }
@@ -757,6 +785,21 @@ impl PtyExecutor {
                             if is_stream_json && !line_buffer.is_empty()
                                 && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                             {
+                                if let ClaudeStreamEvent::Result {
+                                    duration_ms,
+                                    total_cost_usd,
+                                    num_turns,
+                                    is_error,
+                                } = &event
+                                {
+                                    completion = Some(SessionResult {
+                                        duration_ms: *duration_ms,
+                                        total_cost_usd: *total_cost_usd,
+                                        num_turns: *num_turns,
+                                        is_error: *is_error,
+                                        ..Default::default()
+                                    });
+                                }
                                 dispatch_stream_event(event, handler, &mut extracted_text);
                             } else if is_pi_stream && !line_buffer.is_empty()
                                 && let Some(event) = PiStreamParser::parse_line(&line_buffer)
@@ -817,6 +860,21 @@ impl PtyExecutor {
                                     let line = line_buffer[..newline_pos].to_string();
                                     line_buffer = line_buffer[newline_pos + 1..].to_string();
                                     if let Some(event) = ClaudeStreamParser::parse_line(&line) {
+                                        if let ClaudeStreamEvent::Result {
+                                            duration_ms,
+                                            total_cost_usd,
+                                            num_turns,
+                                            is_error,
+                                        } = &event
+                                        {
+                                            completion = Some(SessionResult {
+                                                duration_ms: *duration_ms,
+                                                total_cost_usd: *total_cost_usd,
+                                                num_turns: *num_turns,
+                                                is_error: *is_error,
+                                                ..Default::default()
+                                            });
+                                        }
                                         dispatch_stream_event(event, handler, &mut extracted_text);
                                     }
                                 }
@@ -849,6 +907,21 @@ impl PtyExecutor {
                     && !line_buffer.is_empty()
                     && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                 {
+                    if let ClaudeStreamEvent::Result {
+                        duration_ms,
+                        total_cost_usd,
+                        num_turns,
+                        is_error,
+                    } = &event
+                    {
+                        completion = Some(SessionResult {
+                            duration_ms: *duration_ms,
+                            total_cost_usd: *total_cost_usd,
+                            num_turns: *num_turns,
+                            is_error: *is_error,
+                            ..Default::default()
+                        });
+                    }
                     dispatch_stream_event(event, handler, &mut extracted_text);
                 } else if is_pi_stream
                     && !line_buffer.is_empty()
@@ -875,12 +948,18 @@ impl PtyExecutor {
                             "Pi stream: provider={stream_provider}, model={stream_model}\n"
                         ));
                     }
-                    handler.on_complete(&SessionResult {
+                    let session_result = SessionResult {
                         duration_ms: start_time.elapsed().as_millis() as u64,
                         total_cost_usd: pi_state.total_cost_usd,
                         num_turns: pi_state.num_turns,
                         is_error: !status.success(),
-                    });
+                        input_tokens: pi_state.input_tokens,
+                        output_tokens: pi_state.output_tokens,
+                        cache_read_tokens: pi_state.cache_read_tokens,
+                        cache_write_tokens: pi_state.cache_write_tokens,
+                    };
+                    handler.on_complete(&session_result);
+                    completion = Some(session_result);
                 }
 
                 // Pass extracted_text for event parsing from NDJSON
@@ -890,6 +969,7 @@ impl PtyExecutor {
                     Some(exit_code),
                     final_termination,
                     extracted_text,
+                    completion.as_ref(),
                 ));
             }
         }
@@ -924,12 +1004,18 @@ impl PtyExecutor {
                     "Pi stream: provider={stream_provider}, model={stream_model}\n"
                 ));
             }
-            handler.on_complete(&SessionResult {
+            let session_result = SessionResult {
                 duration_ms: start_time.elapsed().as_millis() as u64,
                 total_cost_usd: pi_state.total_cost_usd,
                 num_turns: pi_state.num_turns,
                 is_error: !success,
-            });
+                input_tokens: pi_state.input_tokens,
+                output_tokens: pi_state.output_tokens,
+                cache_read_tokens: pi_state.cache_read_tokens,
+                cache_write_tokens: pi_state.cache_write_tokens,
+            };
+            handler.on_complete(&session_result);
+            completion = Some(session_result);
         }
 
         // Pass extracted_text for event parsing from NDJSON
@@ -939,6 +1025,7 @@ impl PtyExecutor {
             exit_code,
             final_termination,
             extracted_text,
+            completion.as_ref(),
         ))
     }
 
@@ -1174,6 +1261,7 @@ impl PtyExecutor {
                     Some(exit_code),
                     final_termination,
                     String::new(),
+                    None,
                 ));
             }
 
@@ -1392,6 +1480,7 @@ impl PtyExecutor {
             exit_code,
             final_termination,
             String::new(),
+            None,
         ))
     }
 
@@ -1630,6 +1719,7 @@ fn dispatch_stream_event<H: StreamHandler>(
                 total_cost_usd,
                 num_turns,
                 is_error,
+                ..Default::default()
             });
         }
     }
@@ -1649,7 +1739,21 @@ fn build_result(
     exit_code: Option<i32>,
     termination: TerminationType,
     extracted_text: String,
+    session_result: Option<&SessionResult>,
 ) -> PtyExecutionResult {
+    let (total_cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) =
+        if let Some(result) = session_result {
+            (
+                result.total_cost_usd,
+                result.input_tokens,
+                result.output_tokens,
+                result.cache_read_tokens,
+                result.cache_write_tokens,
+            )
+        } else {
+            (0.0, 0, 0, 0, 0)
+        };
+
     PtyExecutionResult {
         output: String::from_utf8_lossy(output).to_string(),
         stripped_output: strip_ansi(output),
@@ -1657,6 +1761,11 @@ fn build_result(
         success,
         exit_code,
         termination,
+        total_cost_usd,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
     }
 }
 
@@ -1848,6 +1957,11 @@ mod tests {
             success: true,
             exit_code: Some(0),
             termination: TerminationType::Natural,
+            total_cost_usd: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         };
 
         assert!(
@@ -1868,6 +1982,7 @@ mod tests {
             Some(0),
             TerminationType::Natural,
             extracted.to_string(),
+            None,
         );
 
         assert_eq!(result.extracted_text, extracted);
@@ -2103,6 +2218,7 @@ mod tests {
             Some(0),
             TerminationType::Natural,
             extracted.clone(),
+            None,
         );
 
         assert_eq!(result.output, String::from_utf8_lossy(output));

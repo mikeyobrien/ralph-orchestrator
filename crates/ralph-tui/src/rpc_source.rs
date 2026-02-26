@@ -10,7 +10,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
@@ -18,8 +18,11 @@ use tracing::{debug, warn};
 
 use ralph_proto::json_rpc::RpcEvent;
 
-use crate::state::{TaskCounts, TaskSummary, TuiState};
-use crate::text_renderer::text_to_lines;
+use crate::state::{TaskCounts, TuiState};
+use crate::state_mutations::{
+    append_error_line, apply_loop_completed, apply_task_active, apply_task_close,
+};
+use crate::text_renderer::{text_to_lines, truncate};
 
 /// Runs the RPC event reader, processing events from the given async reader.
 ///
@@ -217,21 +220,7 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>) {
         }
 
         RpcEvent::Error { code, message, .. } => {
-            let line = Line::from(vec![
-                Span::styled(
-                    format!("\u{26A0} [{}] ", code),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(message.clone()),
-            ]);
-
-            if let Some(handle) = s.latest_iteration_lines_handle()
-                && let Ok(mut buffer_lines) = handle.lock()
-            {
-                buffer_lines.push(line);
-            }
+            append_error_line(&mut s, code, message);
 
             s.last_event = Some("error".to_string());
             s.last_event_at = Some(Instant::now());
@@ -257,21 +246,10 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>) {
         } => {
             match to_status.as_str() {
                 "running" | "in_progress" => {
-                    s.set_active_task(Some(TaskSummary::new(task_id, title, to_status)));
+                    apply_task_active(&mut s, task_id, title, to_status);
                 }
                 "closed" | "done" | "completed" => {
-                    // Increment closed count
-                    let mut counts = s.task_counts.clone();
-                    counts.closed += 1;
-                    if counts.open > 0 {
-                        counts.open -= 1;
-                    }
-                    s.set_task_counts(counts);
-
-                    // Clear active task if it matches
-                    if s.get_active_task().is_some_and(|t| t.id == *task_id) {
-                        s.set_active_task(None);
-                    }
+                    apply_task_close(&mut s, task_id);
                 }
                 _ => {}
             }
@@ -301,11 +279,8 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>) {
         RpcEvent::LoopTerminated {
             total_iterations, ..
         } => {
-            s.loop_completed = true;
             s.iteration = *total_iterations;
-            s.final_iteration_elapsed = s.iteration_started.map(|start| start.elapsed());
-            s.final_loop_elapsed = s.loop_started.map(|start| start.elapsed());
-            s.finish_latest_iteration();
+            apply_loop_completed(&mut s);
 
             s.last_event = Some("loop_terminated".to_string());
             s.last_event_at = Some(Instant::now());
@@ -329,7 +304,11 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>) {
 /// Extracts the most relevant field from tool input for display.
 fn format_tool_summary(name: &str, input: &Value) -> Option<String> {
     match name {
-        "Read" | "Edit" | "Write" => input.get("file_path")?.as_str().map(|s| s.to_string()),
+        "Read" | "Edit" | "Write" => input
+            .get("path")
+            .or_else(|| input.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "Bash" => {
             let cmd = input.get("command")?.as_str()?;
             Some(truncate(cmd, 60))
@@ -347,20 +326,6 @@ fn format_tool_summary(name: &str, input: &Value) -> Option<String> {
         "NotebookEdit" => input.get("notebook_path")?.as_str().map(|s| s.to_string()),
         "TodoWrite" => Some("updating todo list".to_string()),
         _ => None,
-    }
-}
-
-/// Truncates a string to approximately `max_len` characters.
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let byte_idx = s
-            .char_indices()
-            .nth(max_len)
-            .map(|(idx, _)| idx)
-            .unwrap_or(s.len());
-        format!("{}...", &s[..byte_idx])
     }
 }
 
@@ -508,8 +473,14 @@ mod tests {
 
     #[test]
     fn test_format_tool_summary() {
+        // Primary key: "path" (Claude Code convention)
         assert_eq!(
-            format_tool_summary("Read", &json!({"file_path": "/foo/bar.rs"})),
+            format_tool_summary("Read", &json!({"path": "/foo/bar.rs"})),
+            Some("/foo/bar.rs".to_string())
+        );
+        // Fallback key: "file_path"
+        assert_eq!(
+            format_tool_summary("Edit", &json!({"file_path": "/foo/bar.rs"})),
             Some("/foo/bar.rs".to_string())
         );
         assert_eq!(
@@ -521,6 +492,7 @@ mod tests {
 
     #[test]
     fn test_truncate() {
+        use crate::text_renderer::truncate;
         assert_eq!(truncate("hello", 10), "hello");
         assert_eq!(truncate("hello world", 5), "hello...");
     }

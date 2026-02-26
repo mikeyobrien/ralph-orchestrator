@@ -15,7 +15,7 @@ use ralph_core::{
     LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record, SessionRecorder,
     SummaryWriter, TerminationReason,
 };
-use ralph_proto::{Event, HatId, RpcEvent, RpcState, RpcTaskCounts};
+use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -36,6 +36,20 @@ pub(crate) struct ExecutionOutcome {
     pub output: String,
     pub success: bool,
     pub termination: Option<TerminationReason>,
+    pub total_cost_usd: f64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+}
+
+/// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
+struct RpcSharedState {
+    iteration: Arc<std::sync::atomic::AtomicU32>,
+    /// Current (hat id, hat display name) pair.
+    hat: Arc<std::sync::Mutex<(String, String)>>,
+    completed: Arc<std::sync::atomic::AtomicBool>,
+    total_cost_usd: Arc<std::sync::Mutex<f64>>,
 }
 
 /// Core loop implementation supporting both fresh start and continue modes.
@@ -271,30 +285,45 @@ pub async fn run_loop_impl(
 
     // RPC mode: spawn stdin reader and stdout emitter tasks
     let rpc_dispatcher_started = if enable_rpc {
-        let events_path = resolve_current_events_path(&ctx);
         let backend_name = config.cli.backend.clone();
         let max_iters = config.event_loop.max_iterations;
 
         // Create shared state for get_state responses
         let rpc_state_iteration = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rpc_state_hat: Arc<std::sync::Mutex<(String, String)>> = Arc::new(
+            std::sync::Mutex::new(("unknown".to_string(), "Unknown".to_string())),
+        );
+        let rpc_state_completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let rpc_state_total_cost: Arc<std::sync::Mutex<f64>> = Arc::new(std::sync::Mutex::new(0.0));
+
         let rpc_state_iteration_clone = rpc_state_iteration.clone();
+        let rpc_state_hat_clone = rpc_state_hat.clone();
+        let rpc_state_completed_clone = rpc_state_completed.clone();
+        let rpc_state_total_cost_clone = rpc_state_total_cost.clone();
         let rpc_state_started_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let state_fn = move || RpcState {
-            iteration: rpc_state_iteration_clone.load(std::sync::atomic::Ordering::Relaxed),
-            max_iterations: Some(max_iters),
-            hat: "unknown".to_string(), // Will be updated per-iteration
-            hat_display: "Unknown".to_string(),
-            backend: backend_name.clone(),
-            completed: false,
-            started_at: rpc_state_started_at,
-            iteration_started_at: None,
-            task_counts: RpcTaskCounts::default(),
-            active_task: None,
-            total_cost_usd: 0.0,
+        let state_fn = move || {
+            let (hat, hat_display) = rpc_state_hat_clone
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| ("unknown".to_string(), "Unknown".to_string()));
+            let total_cost_usd = rpc_state_total_cost_clone.lock().map(|g| *g).unwrap_or(0.0);
+            RpcState {
+                iteration: rpc_state_iteration_clone.load(std::sync::atomic::Ordering::Relaxed),
+                max_iterations: Some(max_iters),
+                hat,
+                hat_display,
+                backend: backend_name.clone(),
+                completed: rpc_state_completed_clone.load(std::sync::atomic::Ordering::Relaxed),
+                started_at: rpc_state_started_at,
+                iteration_started_at: None,
+                task_counts: RpcTaskCounts::default(),
+                active_task: None,
+                total_cost_usd,
+            }
         };
 
         let dispatcher = RpcDispatcher::new(
@@ -304,8 +333,7 @@ pub async fn run_loop_impl(
                 .expect("RPC guidance tx should exist"),
             rpc_event_tx.clone().expect("RPC event tx should exist"),
             state_fn,
-        )
-        .with_events_path(events_path);
+        );
 
         // Mark loop as started
         dispatcher.mark_loop_started();
@@ -332,7 +360,12 @@ pub async fn run_loop_impl(
             let _ = tx.try_send(started_event);
         }
 
-        Some(rpc_state_iteration)
+        Some(RpcSharedState {
+            iteration: rpc_state_iteration,
+            hat: rpc_state_hat,
+            completed: rpc_state_completed,
+            total_cost_usd: rpc_state_total_cost,
+        })
     } else {
         None
     };
@@ -694,6 +727,13 @@ pub async fn run_loop_impl(
             print_termination(reason, state, use_colors);
         }
 
+        // Mark RPC state as completed so get_state reflects termination
+        if let Some(ref shared) = rpc_dispatcher_started {
+            shared
+                .completed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
         // Emit RPC loop_terminated event
         if let Some(ref tx) = rpc_event_tx {
             let terminated_at = std::time::SystemTime::now()
@@ -714,11 +754,16 @@ pub async fn run_loop_impl(
                 _ => ralph_proto::json_rpc::TerminationReason::Error,
             };
 
+            let accumulated_cost = rpc_dispatcher_started
+                .as_ref()
+                .and_then(|s| s.total_cost_usd.lock().ok().map(|g| *g))
+                .unwrap_or(0.0);
+
             let terminate_event = RpcEvent::LoopTerminated {
                 reason: rpc_reason,
                 total_iterations: state.iteration,
                 duration_ms: state.elapsed().as_millis() as u64,
-                total_cost_usd: 0.0, // Cost tracking not yet integrated
+                total_cost_usd: accumulated_cost,
                 terminated_at,
             };
             let _ = tx.try_send(terminate_event);
@@ -781,7 +826,13 @@ pub async fn run_loop_impl(
         // Drain RPC guidance channel (non-blocking)
         if let Some(ref mut rx) = rpc_guidance_rx {
             while let Ok(msg) = rx.try_recv() {
-                guidance_messages.push(msg.message);
+                match msg.target {
+                    GuidanceTarget::Current => {
+                        debug!("Received RPC steer(current); applying at next prompt boundary");
+                        guidance_messages.push(msg.message);
+                    }
+                    GuidanceTarget::Next => guidance_messages.push(msg.message),
+                }
             }
         }
 
@@ -934,8 +985,10 @@ pub async fn run_loop_impl(
         let iteration = event_loop.state().iteration + 1;
 
         // Update RPC state iteration counter
-        if let Some(ref counter) = rpc_dispatcher_started {
-            counter.store(iteration, std::sync::atomic::Ordering::Relaxed);
+        if let Some(ref shared) = rpc_dispatcher_started {
+            shared
+                .iteration
+                .store(iteration, std::sync::atomic::Ordering::Relaxed);
         }
 
         // Determine which hat to display in iteration separator
@@ -952,6 +1005,13 @@ pub async fn run_loop_impl(
             .get(&display_hat)
             .map(|hat| hat.name.clone())
             .unwrap_or_else(|| display_hat.as_str().to_string());
+
+        // Update RPC shared hat state so get_state reflects the current iteration's hat
+        if let Some(ref shared) = rpc_dispatcher_started
+            && let Ok(mut guard) = shared.hat.lock()
+        {
+            *guard = (display_hat.as_str().to_string(), hat_display.clone());
+        }
 
         // Track iteration start time for RPC iteration_end duration calculation
         // (cheap to create even when not in RPC mode)
@@ -1160,6 +1220,11 @@ pub async fn run_loop_impl(
                     output: result.output,
                     success: result.success,
                     termination: None,
+                    total_cost_usd: 0.0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
                 })
             }
         };
@@ -1228,14 +1293,20 @@ pub async fn run_loop_impl(
             let duration_ms = iteration_started_at.elapsed().as_millis() as u64;
             // Check if this iteration's output contains LOOP_COMPLETE
             let loop_complete_triggered = output.contains(&config.event_loop.completion_promise);
+            let iteration_cost_usd = outcome.total_cost_usd;
+            if let Some(ref shared) = rpc_dispatcher_started
+                && let Ok(mut guard) = shared.total_cost_usd.lock()
+            {
+                *guard += iteration_cost_usd;
+            }
             let end_event = RpcEvent::IterationEnd {
                 iteration,
                 duration_ms,
-                cost_usd: 0.0,         // Cost tracking not yet integrated
-                input_tokens: 0,       // Token tracking not yet integrated
-                output_tokens: 0,      // Token tracking not yet integrated
-                cache_read_tokens: 0,  // Token tracking not yet integrated
-                cache_write_tokens: 0, // Token tracking not yet integrated
+                cost_usd: iteration_cost_usd,
+                input_tokens: outcome.input_tokens,
+                output_tokens: outcome.output_tokens,
+                cache_read_tokens: outcome.cache_read_tokens,
+                cache_write_tokens: outcome.cache_write_tokens,
                 loop_complete_triggered,
             };
             let _ = tx.try_send(end_event);
@@ -1566,6 +1637,11 @@ async fn execute_pty(
                 output: output_for_parsing,
                 success: pty_result.success,
                 termination,
+                total_cost_usd: pty_result.total_cost_usd,
+                input_tokens: pty_result.input_tokens,
+                output_tokens: pty_result.output_tokens,
+                cache_read_tokens: pty_result.cache_read_tokens,
+                cache_write_tokens: pty_result.cache_write_tokens,
             })
         }
         Err(e) => {

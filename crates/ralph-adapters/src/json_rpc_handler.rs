@@ -134,10 +134,10 @@ impl<W: Write + Send> StreamHandler for JsonRpcStreamHandler<W> {
             iteration: self.iteration,
             duration_ms: result.duration_ms,
             cost_usd: result.total_cost_usd,
-            input_tokens: 0,  // Not available in SessionResult
-            output_tokens: 0, // Not available in SessionResult
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
+            input_tokens: result.input_tokens,
+            output_tokens: result.output_tokens,
+            cache_read_tokens: result.cache_read_tokens,
+            cache_write_tokens: result.cache_write_tokens,
             loop_complete_triggered: false, // Determined externally by orchestration
         });
     }
@@ -252,6 +252,7 @@ mod tests {
             total_cost_usd: 0.0054,
             num_turns: 3,
             is_error: false,
+            ..Default::default()
         };
         handler.on_complete(&result);
 

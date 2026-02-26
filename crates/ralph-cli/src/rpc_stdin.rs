@@ -8,11 +8,7 @@
 //! handlers. It runs as a background tokio task alongside the orchestration
 //! loop, communicating via channels.
 
-// Allow dead_code for now - these APIs are consumed by Task 04 (rpc execution mode)
-#![allow(dead_code)]
-
 use ralph_proto::{GuidanceTarget, RpcCommand, RpcEvent, RpcState, emit_event_line, parse_command};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::sync::{mpsc, watch};
@@ -35,14 +31,8 @@ where
     /// Closure to snapshot current loop state for `get_state` commands.
     pub state_fn: Arc<F>,
 
-    /// Path to events.jsonl for writing human.guidance events.
-    pub events_path: Option<PathBuf>,
-
     /// Tracks whether the loop has been started (for prompt validation).
     pub loop_started: Arc<std::sync::atomic::AtomicBool>,
-
-    /// Channel to send the initial prompt (before loop starts).
-    pub prompt_tx: Option<mpsc::Sender<PromptRequest>>,
 }
 
 /// A guidance message with its target (current iteration or next).
@@ -50,14 +40,6 @@ where
 pub struct GuidanceMessage {
     pub message: String,
     pub target: GuidanceTarget,
-}
-
-/// Request to start the loop with a prompt.
-#[derive(Debug, Clone)]
-pub struct PromptRequest {
-    pub prompt: String,
-    pub backend: Option<String>,
-    pub max_iterations: Option<u32>,
 }
 
 impl<F> RpcDispatcher<F>
@@ -76,22 +58,8 @@ where
             guidance_tx,
             response_tx,
             state_fn: Arc::new(state_fn),
-            events_path: None,
             loop_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            prompt_tx: None,
         }
-    }
-
-    /// Sets the events path for writing human.guidance events.
-    pub fn with_events_path(mut self, path: PathBuf) -> Self {
-        self.events_path = Some(path);
-        self
-    }
-
-    /// Sets the prompt channel for sending the initial prompt.
-    pub fn with_prompt_tx(mut self, tx: mpsc::Sender<PromptRequest>) -> Self {
-        self.prompt_tx = Some(tx);
-        self
     }
 
     /// Marks the loop as started (call this when the loop begins execution).
@@ -111,12 +79,7 @@ where
         let cmd_type = cmd.command_type();
 
         match cmd {
-            RpcCommand::Prompt {
-                prompt,
-                backend,
-                max_iterations,
-                ..
-            } => {
+            RpcCommand::Prompt { .. } => {
                 if self.loop_has_started() {
                     return RpcEvent::error_response(
                         cmd_type,
@@ -125,37 +88,15 @@ where
                     );
                 }
 
-                match &self.prompt_tx {
-                    Some(tx) => {
-                        let request = PromptRequest {
-                            prompt,
-                            backend,
-                            max_iterations,
-                        };
-                        match tx.send(request).await {
-                            Ok(()) => RpcEvent::success_response(cmd_type, id, None),
-                            Err(_) => {
-                                RpcEvent::error_response(cmd_type, id, "prompt channel closed")
-                            }
-                        }
-                    }
-                    None => RpcEvent::error_response(
-                        cmd_type,
-                        id,
-                        "prompt channel not configured; loop may already be starting",
-                    ),
-                }
+                RpcEvent::error_response(
+                    cmd_type,
+                    id,
+                    "prompt command is not supported after startup; pass -p/--prompt when launching",
+                )
             }
 
             RpcCommand::Guidance { message, .. } => {
-                // Write human.guidance event to events.jsonl
-                if let Some(ref path) = self.events_path
-                    && let Err(e) = write_guidance_event(path, &message)
-                {
-                    warn!(error = %e, "Failed to write guidance event");
-                }
-
-                // Also push to guidance channel for next iteration
+                // Push to guidance channel for next iteration
                 let msg = GuidanceMessage {
                     message: message.clone(),
                     target: GuidanceTarget::Next,
@@ -177,14 +118,7 @@ where
             }
 
             RpcCommand::Steer { message, .. } => {
-                // Steer is immediate injection - write directly to events file
-                if let Some(ref path) = self.events_path
-                    && let Err(e) = write_guidance_event(path, &message)
-                {
-                    warn!(error = %e, "Failed to write steer event");
-                }
-
-                // Also push to guidance channel with Current target
+                // Push to guidance channel with Current target for immediate injection
                 let msg = GuidanceMessage {
                     message: message.clone(),
                     target: GuidanceTarget::Current,
@@ -253,52 +187,15 @@ where
                 RpcEvent::success_response(cmd_type, id, Some(data))
             }
 
-            RpcCommand::SetHat { hat, .. } => {
-                // Hat changes require integration with EventLoop - emit event
-                // For now, acknowledge but note it requires further integration
-                debug!(hat = %hat, "Received set_hat command");
-                let data = serde_json::json!({
-                    "hat": hat,
-                    "note": "hat change will be applied to next iteration"
-                });
-                RpcEvent::success_response(cmd_type, id, Some(data))
+            RpcCommand::SetHat { .. } => {
+                RpcEvent::error_response(cmd_type, id, "not yet implemented")
             }
 
-            RpcCommand::ExtensionUiResponse {
-                request_id,
-                response,
-                ..
-            } => {
-                // Extension UI responses require specific handling
-                debug!(request_id = %request_id, "Received extension UI response");
-                let data = serde_json::json!({
-                    "request_id": request_id,
-                    "response": response
-                });
-                RpcEvent::success_response(cmd_type, id, Some(data))
+            RpcCommand::ExtensionUiResponse { .. } => {
+                RpcEvent::error_response(cmd_type, id, "not yet implemented")
             }
         }
     }
-}
-
-/// Writes a human.guidance event to the events JSONL file.
-fn write_guidance_event(path: &PathBuf, message: &str) -> std::io::Result<()> {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-
-    let timestamp = chrono::Utc::now().to_rfc3339();
-    let event = serde_json::json!({
-        "topic": "human.guidance",
-        "payload": message,
-        "ts": timestamp,
-    });
-
-    let line = serde_json::to_string(&event)?;
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{}", line)?;
-    file.flush()?;
-    info!(path = ?path, "Wrote guidance event to events.jsonl");
-    Ok(())
 }
 
 /// Runs the stdin reader loop, dispatching commands to the given dispatcher.
