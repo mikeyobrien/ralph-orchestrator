@@ -366,6 +366,24 @@ pub async fn run_loop_impl(
         (None, None, None)
     };
 
+    // Add RPC EventBus observer to map ralph_proto::Event topics to RpcEvent variants
+    // Per Task 04 requirement #4: "Add an EventBus observer that serializes Event → RpcEvent"
+    if let Some(ref tx) = rpc_event_tx {
+        let tx_clone = tx.clone();
+        event_loop.add_observer(move |event: &Event| {
+            // Map all event topics to RpcEvent::OrchestrationEvent
+            // This provides observability for: build.task, build.done, loop.terminate,
+            // task.start, task.resume, and any custom hat events
+            let rpc_event = RpcEvent::OrchestrationEvent {
+                topic: event.topic.as_str().to_string(),
+                payload: event.payload.clone(),
+                source: event.source.as_ref().map(|h| h.as_str().to_string()),
+                target: event.target.as_ref().map(|h| h.as_str().to_string()),
+            };
+            let _ = tx_clone.try_send(rpc_event);
+        });
+    }
+
     // Give TUI task time to initialize (enter alternate screen, enable raw mode)
     // before the main loop starts doing work
     if tui_handle.is_some() {
@@ -935,6 +953,10 @@ pub async fn run_loop_impl(
             .map(|hat| hat.name.clone())
             .unwrap_or_else(|| display_hat.as_str().to_string());
 
+        // Track iteration start time for RPC iteration_end duration calculation
+        // (cheap to create even when not in RPC mode)
+        let iteration_started_at = std::time::Instant::now();
+
         // Emit RPC iteration_start event
         if let Some(ref tx) = rpc_event_tx {
             let started_at = std::time::SystemTime::now()
@@ -1199,6 +1221,24 @@ pub async fn run_loop_impl(
         // so no post-execution transfer is needed.
         if let Some(mut s) = tui_state.as_ref().and_then(|state| state.lock().ok()) {
             s.finish_latest_iteration();
+        }
+
+        // Emit RPC iteration_end event
+        if let Some(ref tx) = rpc_event_tx {
+            let duration_ms = iteration_started_at.elapsed().as_millis() as u64;
+            // Check if this iteration's output contains LOOP_COMPLETE
+            let loop_complete_triggered = output.contains(&config.event_loop.completion_promise);
+            let end_event = RpcEvent::IterationEnd {
+                iteration,
+                duration_ms,
+                cost_usd: 0.0,         // Cost tracking not yet integrated
+                input_tokens: 0,       // Token tracking not yet integrated
+                output_tokens: 0,      // Token tracking not yet integrated
+                cache_read_tokens: 0,  // Token tracking not yet integrated
+                cache_write_tokens: 0, // Token tracking not yet integrated
+                loop_complete_triggered,
+            };
+            let _ = tx.try_send(end_event);
         }
 
         // Log events from output before processing

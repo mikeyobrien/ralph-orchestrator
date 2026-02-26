@@ -27,6 +27,8 @@ reqwest.workspace = true
 tokio-tungstenite.workspace = true
 tungstenite.workspace = true
 url = "2"
+termimad.workspace = true
+ansi-to-tui = "8"
 
 [dev-dependencies]
 insta = { version = "1.40", features = ["yaml", "filters"] }

@@ -322,6 +322,21 @@ pub enum RpcEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+
+    /// A generic orchestration event from the EventBus.
+    /// Maps ralph_proto::Event topics to RPC for observability.
+    OrchestrationEvent {
+        /// Event topic (e.g., "build.task", "build.done", "loop.terminate").
+        topic: String,
+        /// Event payload.
+        payload: String,
+        /// Source hat ID (if any).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        /// Target hat ID (if any).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
 }
 
 impl RpcEvent {
