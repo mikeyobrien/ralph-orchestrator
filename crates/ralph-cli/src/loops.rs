@@ -295,6 +295,9 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
     for entry in &loop_entries {
         let status = if entry.is_alive() {
             "running"
+        } else if entry.is_pid_alive() {
+            // PID alive but is_alive() false → worktree removed externally
+            "orphan"
         } else {
             "crashed"
         };
@@ -669,8 +672,12 @@ fn discard_loop(args: DiscardArgs) -> Result<()> {
 
     // Remove worktree if exists
     if let Some(wt_path) = worktree_path {
-        println!("Removing worktree at {}...", wt_path);
-        remove_worktree(&cwd, &wt_path)?;
+        if PathBuf::from(&wt_path).is_dir() {
+            println!("Removing worktree at {}...", wt_path);
+            remove_worktree(&cwd, &wt_path)?;
+        } else {
+            println!("Worktree already removed: {}", wt_path);
+        }
     }
 
     println!("Loop '{}' discarded.", loop_id);
@@ -692,6 +699,41 @@ fn stop_loop(args: StopArgs) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| cwd.clone());
 
+    // Check if the worktree directory is gone (zombie loop)
+    let worktree_gone = worktree_path.as_ref().is_some_and(|p| !PathBuf::from(p).is_dir());
+
+    if worktree_gone {
+        // Worktree removed externally — fall back to registry PID
+        let registry = LoopRegistry::new(&cwd);
+        if let Ok(Some(entry)) = registry.get(&loop_id) {
+            if is_process_alive(entry.pid) {
+                #[cfg(unix)]
+                {
+                    use nix::sys::signal::{Signal, kill};
+                    use nix::unistd::Pid;
+
+                    let signal = if args.force { Signal::SIGKILL } else { Signal::SIGTERM };
+                    println!(
+                        "Worktree gone. Sending {} to orphan loop '{}' (PID {})...",
+                        if args.force { "SIGKILL" } else { "SIGTERM" },
+                        loop_id,
+                        entry.pid
+                    );
+                    kill(Pid::from_raw(entry.pid as i32), signal)
+                        .context("Failed to send signal to orphan loop")?;
+                }
+                #[cfg(not(unix))]
+                {
+                    bail!("Signal sending not supported on this platform");
+                }
+            }
+            let _ = registry.deregister(&loop_id);
+            println!("Orphan loop '{}' cleaned up.", loop_id);
+            return Ok(());
+        }
+        bail!("Loop '{}' not found in registry and worktree is gone", loop_id);
+    }
+
     let metadata = LoopLock::read_existing(&target_root)?
         .context("Cannot determine active loop - it may have already stopped")?;
 
@@ -704,7 +746,6 @@ fn stop_loop(args: StopArgs) -> Result<()> {
     }
 
     if args.force {
-        // Force-stop with SIGKILL for immediate termination.
         #[cfg(unix)]
         {
             use nix::sys::signal::{Signal, kill};
@@ -1185,18 +1226,22 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let _cwd = CwdGuard::set(temp_dir.path());
 
+        // Create the worktree directory so is_alive() doesn't treat it as zombie
+        let wt_path = temp_dir.path().join("worktrees/loop-test-9999");
+        std::fs::create_dir_all(&wt_path).expect("create worktree dir");
+
         let registry = LoopRegistry::new(temp_dir.path());
         let entry = LoopEntry::with_id(
             "loop-test-9999",
             "resolve me",
-            Some("worktrees/loop-test-9999"),
+            Some(wt_path.display().to_string()),
             temp_dir.path().display().to_string(),
         );
         registry.register(entry).expect("register loop");
 
         let (id, worktree) = resolve_loop(temp_dir.path(), "loop-test-9999").expect("resolve");
         assert_eq!(id, "loop-test-9999");
-        assert_eq!(worktree, Some("worktrees/loop-test-9999".to_string()));
+        assert_eq!(worktree, Some(wt_path.display().to_string()));
     }
 
     #[test]

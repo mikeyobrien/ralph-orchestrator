@@ -530,6 +530,7 @@ fn format_termination_reason(reason: &TerminationReason) -> String {
         TerminationReason::Stopped => "Stopped".to_string(),
         TerminationReason::Interrupted => "Interrupted".to_string(),
         TerminationReason::RestartRequested => "RestartRequested".to_string(),
+        TerminationReason::WorkspaceGone => "WorkspaceGone".to_string(),
     }
 }
 

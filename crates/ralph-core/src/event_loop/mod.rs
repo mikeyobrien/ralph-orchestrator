@@ -57,6 +57,8 @@ pub enum TerminationReason {
     Interrupted,
     /// Restart requested via Telegram `/restart` command.
     RestartRequested,
+    /// Workspace directory (worktree) was removed externally.
+    WorkspaceGone,
 }
 
 impl TerminationReason {
@@ -73,7 +75,8 @@ impl TerminationReason {
             TerminationReason::ConsecutiveFailures
             | TerminationReason::LoopThrashing
             | TerminationReason::ValidationFailure
-            | TerminationReason::Stopped => 1,
+            | TerminationReason::Stopped
+            | TerminationReason::WorkspaceGone => 1,
             TerminationReason::MaxIterations
             | TerminationReason::MaxRuntime
             | TerminationReason::MaxCost => 2,
@@ -99,6 +102,7 @@ impl TerminationReason {
             TerminationReason::Stopped => "stopped",
             TerminationReason::Interrupted => "interrupted",
             TerminationReason::RestartRequested => "restart_requested",
+            TerminationReason::WorkspaceGone => "workspace_gone",
         }
     }
 
@@ -475,6 +479,11 @@ impl EventLoop {
             std::path::Path::new(&self.config.core.workspace_root).join(".ralph/restart-requested");
         if restart_path.exists() {
             return Some(TerminationReason::RestartRequested);
+        }
+
+        // Check if workspace directory has been removed (zombie worktree detection)
+        if !std::path::Path::new(&self.config.core.workspace_root).is_dir() {
+            return Some(TerminationReason::WorkspaceGone);
         }
 
         None
@@ -2241,5 +2250,6 @@ fn termination_status_text(reason: &TerminationReason) -> &'static str {
         TerminationReason::Stopped => "Manually stopped.",
         TerminationReason::Interrupted => "Interrupted by signal.",
         TerminationReason::RestartRequested => "Restarting by human request.",
+        TerminationReason::WorkspaceGone => "Workspace directory removed externally.",
     }
 }

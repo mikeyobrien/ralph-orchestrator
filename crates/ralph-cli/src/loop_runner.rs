@@ -575,6 +575,7 @@ pub async fn run_loop_impl(
                 TerminationReason::Stopped => "stopped",
                 TerminationReason::Interrupted => "interrupted",
                 TerminationReason::RestartRequested => "restart_requested",
+                TerminationReason::WorkspaceGone => "workspace_gone",
             };
 
             if matches!(reason, TerminationReason::Interrupted) {
@@ -643,6 +644,7 @@ pub async fn run_loop_impl(
                     TerminationReason::Interrupted => "interrupted by signal",
                     TerminationReason::CompletionPromise => unreachable!(),
                     TerminationReason::RestartRequested => "restart requested",
+                    TerminationReason::WorkspaceGone => "workspace directory removed",
                 };
                 if let Err(e) = queue.mark_needs_review(loop_id, reason_str) {
                     warn!(loop_id = %loop_id, error = %e, "Failed to mark merge as needs-review");

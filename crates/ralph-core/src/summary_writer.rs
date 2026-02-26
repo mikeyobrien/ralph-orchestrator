@@ -220,6 +220,7 @@ impl SummaryWriter {
             TerminationReason::Stopped => "Stopped manually",
             TerminationReason::Interrupted => "Interrupted by signal",
             TerminationReason::RestartRequested => "Restarting by human request",
+            TerminationReason::WorkspaceGone => "Failed: workspace directory removed",
         }
     }
 

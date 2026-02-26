@@ -125,20 +125,57 @@ impl LoopEntry {
     }
 
     /// Checks if the process for this loop is still running.
+    ///
+    /// For worktree loops, also verifies the worktree directory still exists.
+    /// A process whose worktree has been removed externally is considered dead
+    /// (zombie) even if the PID is still alive.
     #[cfg(unix)]
     pub fn is_alive(&self) -> bool {
         use nix::sys::signal::kill;
         use nix::unistd::Pid;
 
         // Signal 0 (None) checks if process exists without sending a signal
+        let pid_alive = kill(Pid::from_raw(self.pid as i32), None)
+            .map(|_| true)
+            .unwrap_or(false);
+
+        if !pid_alive {
+            return false;
+        }
+
+        // If this is a worktree loop, verify the directory still exists
+        if let Some(ref wt_path) = self.worktree_path {
+            return std::path::Path::new(wt_path).is_dir();
+        }
+
+        true
+    }
+
+    #[cfg(not(unix))]
+    pub fn is_alive(&self) -> bool {
+        // On non-Unix platforms, check worktree existence at minimum
+        if let Some(ref wt_path) = self.worktree_path {
+            return std::path::Path::new(wt_path).is_dir();
+        }
+        true
+    }
+
+    /// Checks if the PID is alive (regardless of worktree state).
+    ///
+    /// Use this when you need to know if the process itself is running,
+    /// e.g. to decide whether to send a signal.
+    #[cfg(unix)]
+    pub fn is_pid_alive(&self) -> bool {
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+
         kill(Pid::from_raw(self.pid as i32), None)
             .map(|_| true)
             .unwrap_or(false)
     }
 
     #[cfg(not(unix))]
-    pub fn is_alive(&self) -> bool {
-        // On non-Unix platforms, assume alive (conservative)
+    pub fn is_pid_alive(&self) -> bool {
         true
     }
 }
@@ -509,8 +546,12 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let registry = LoopRegistry::new(temp_dir.path());
 
+        // Create a real worktree directory so is_alive() doesn't treat it as zombie
+        let wt_dir = temp_dir.path().join("worktree");
+        fs::create_dir_all(&wt_dir).unwrap();
+
         let entry1 = LoopEntry::new("prompt 1", None::<String>);
-        let entry2 = LoopEntry::new("prompt 2", Some("/worktree"));
+        let entry2 = LoopEntry::new("prompt 2", Some(wt_dir.display().to_string()));
 
         // Both entries have the same PID (current process)
         assert_eq!(entry1.pid, entry2.pid);
@@ -646,5 +687,37 @@ mod tests {
         // Second deregister should return false (nothing to remove)
         let found = registry.deregister_current_process().unwrap();
         assert!(!found);
+    }
+
+    #[test]
+    fn test_zombie_worktree_detected_as_dead() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a worktree directory, then remove it
+        let wt_dir = temp_dir.path().join("fake-worktree");
+        fs::create_dir_all(&wt_dir).unwrap();
+
+        let mut entry = LoopEntry::new("zombie test", Some(wt_dir.display().to_string()));
+        // Use current PID so is_pid_alive() returns true
+        entry.pid = process::id();
+
+        // Worktree exists → alive
+        assert!(entry.is_alive());
+        assert!(entry.is_pid_alive());
+
+        // Remove the worktree directory
+        fs::remove_dir_all(&wt_dir).unwrap();
+
+        // PID still alive, but worktree gone → zombie → is_alive() returns false
+        assert!(!entry.is_alive());
+        assert!(entry.is_pid_alive());
+    }
+
+    #[test]
+    fn test_no_worktree_entry_unaffected() {
+        // Entries without worktree_path should not be affected by the new check
+        let entry = LoopEntry::new("primary loop", None::<String>);
+        assert!(entry.is_alive());
+        assert!(entry.is_pid_alive());
     }
 }
