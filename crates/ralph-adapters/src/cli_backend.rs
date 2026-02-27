@@ -193,7 +193,7 @@ impl CliBackend {
 
     /// Creates the Kiro ACP backend with an optional agent and/or model.
     pub fn kiro_acp_with_options(agent: Option<&str>, model: Option<&str>) -> Self {
-        let mut args = vec!["acp".to_string(), "--trust-all-tools".to_string()];
+        let mut args = vec!["acp".to_string()];
         if let Some(name) = agent {
             args.push("--agent".to_string());
             args.push(name.to_string());
