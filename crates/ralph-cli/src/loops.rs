@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -767,6 +768,22 @@ fn stop_loop(args: StopArgs) -> Result<()> {
                 {
                     bail!("Signal sending not supported on this platform");
                 }
+
+                if !wait_for_process_exit(entry.pid, Duration::from_secs(2)) {
+                    let signal_name = if args.force { "SIGKILL" } else { "SIGTERM" };
+                    let force_hint = if args.force {
+                        ""
+                    } else {
+                        " Try `ralph loops stop <id> --force`."
+                    };
+                    bail!(
+                        "Loop '{}' is still running (PID {}) after {}. Keeping orphan entry for visibility.{}",
+                        loop_id,
+                        entry.pid,
+                        signal_name,
+                        force_hint
+                    );
+                }
             }
             let _ = registry.deregister(&loop_id);
             println!("Orphan loop '{}' cleaned up.", loop_id);
@@ -982,6 +999,17 @@ fn git_output(cwd: &std::path::Path, args: [&str; 4]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !is_process_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    !is_process_alive(pid)
 }
 
 /// Merge a completed loop (or force retry).
@@ -1590,6 +1618,47 @@ mod tests {
         .expect("stop loop");
 
         assert!(temp_dir.path().join(".ralph/stop-requested").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_stop_loop_orphan_keeps_registry_when_term_ignored() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let mut child = Command::new("sh")
+            .args(["-c", "trap '' TERM; while true; do sleep 1; done"])
+            .spawn()
+            .expect("spawn child");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let missing_worktree_path = temp_dir.path().join(".worktrees/loop-orphan-term-ignore");
+        let mut entry = LoopEntry::with_id(
+            "loop-orphan-term-ignore",
+            "orphan loop",
+            Some(missing_worktree_path.display().to_string()),
+            temp_dir.path().display().to_string(),
+        );
+        entry.pid = child.id();
+        registry.register(entry).expect("register loop");
+
+        let err = stop_loop(StopArgs {
+            loop_id: Some("loop-orphan-term-ignore".to_string()),
+            force: false,
+        })
+        .expect_err("stop should fail when orphan ignores SIGTERM");
+
+        assert!(err.to_string().contains("still running"));
+        assert!(
+            registry
+                .get("loop-orphan-term-ignore")
+                .expect("registry get")
+                .is_some(),
+            "orphan entry should remain discoverable"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
