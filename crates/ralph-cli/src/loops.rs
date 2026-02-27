@@ -680,6 +680,9 @@ fn discard_loop(args: DiscardArgs) -> Result<()> {
             println!("Worktree already removed: {}", wt_path);
             cleanup_missing_worktree_artifacts(&cwd, &loop_id)?;
         }
+    } else {
+        // Registry/queue entry may still have stale worktree metadata or branch refs.
+        cleanup_missing_worktree_artifacts(&cwd, &loop_id)?;
     }
 
     println!("Loop '{}' discarded.", loop_id);
@@ -769,7 +772,8 @@ fn stop_loop(args: StopArgs) -> Result<()> {
                     bail!("Signal sending not supported on this platform");
                 }
 
-                if !wait_for_process_exit(entry.pid, Duration::from_secs(2)) {
+                let wait_timeout = orphan_stop_wait_timeout(args.force);
+                if !wait_for_process_exit(entry.pid, wait_timeout) {
                     let signal_name = if args.force { "SIGKILL" } else { "SIGTERM" };
                     let force_hint = if args.force {
                         ""
@@ -777,10 +781,11 @@ fn stop_loop(args: StopArgs) -> Result<()> {
                         " Try `ralph loops stop <id> --force`."
                     };
                     bail!(
-                        "Loop '{}' is still running (PID {}) after {}. Keeping orphan entry for visibility.{}",
+                        "Loop '{}' is still running (PID {}) after {} (waited {}ms). Keeping orphan entry for visibility.{}",
                         loop_id,
                         entry.pid,
                         signal_name,
+                        wait_timeout.as_millis(),
                         force_hint
                     );
                 }
@@ -1010,6 +1015,16 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(50));
     }
     !is_process_alive(pid)
+}
+
+fn orphan_stop_wait_timeout(force: bool) -> Duration {
+    let default_ms = if force { 2_000 } else { 5_000 };
+    let configured_ms = std::env::var("RALPH_LOOPS_STOP_WAIT_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|ms| *ms > 0);
+
+    Duration::from_millis(configured_ms.unwrap_or(default_ms))
 }
 
 /// Merge a completed loop (or force retry).
@@ -1601,6 +1616,59 @@ mod tests {
             .expect("get entry")
             .expect("entry exists");
         assert_eq!(entry.state, MergeState::Discarded);
+    }
+
+    #[test]
+    fn test_discard_loop_without_worktree_path_runs_fallback_cleanup() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .status()
+            .expect("git init");
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .expect("git config email");
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .status()
+            .expect("git config name");
+        std::fs::write("README.md", "# Test").expect("write README");
+        Command::new("git")
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        Command::new("git")
+            .args(["commit", "-m", "Initial commit", "--quiet"])
+            .status()
+            .expect("git commit");
+
+        Command::new("git")
+            .args(["branch", "ralph/loop-no-worktree-path-1"])
+            .status()
+            .expect("git branch");
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-no-worktree-path-1", "prompt")
+            .expect("enqueue");
+
+        discard_loop(DiscardArgs {
+            loop_id: "loop-no-worktree-path-1".to_string(),
+            yes: true,
+        })
+        .expect("discard loop");
+
+        assert!(!git_ref_exists(
+            temp_dir.path(),
+            "ralph/loop-no-worktree-path-1"
+        ));
     }
 
     #[cfg(unix)]
