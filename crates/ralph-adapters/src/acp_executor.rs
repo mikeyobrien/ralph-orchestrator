@@ -8,15 +8,17 @@
 //! to the caller via an unbounded channel for handler dispatch.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use agent_client_protocol::{
-    Agent, ClientSideConnection, ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest,
-    ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionNotification, SessionUpdate, StopReason, TextContent,
-    ToolCallStatus,
+    Agent, CancelNotification, ClientSideConnection, ContentBlock, InitializeRequest,
+    NewSessionRequest, PromptRequest, ProtocolVersion, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallStatus,
 };
 use anyhow::{Context, Result};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, warn};
@@ -80,10 +82,25 @@ impl agent_client_protocol::Client for RalphAcpClient {
                 }
             }
             SessionUpdate::ToolCall(tc) => {
+                // ACP sends two ToolCall notifications per tool:
+                // 1. Initial: no raw_input, no locations (just "tool started")
+                // 2. Update: has raw_input with actual parameters and a descriptive title
+                // Skip the first one to avoid showing bare "[Tool] ls" with no details.
+                if tc.raw_input.is_none() && tc.locations.is_empty() {
+                    return Ok(());
+                }
+
+                let input = tc.raw_input.clone().unwrap_or_else(|| {
+                    if let Some(loc) = tc.locations.first() {
+                        serde_json::json!({"path": loc.path.display().to_string()})
+                    } else {
+                        serde_json::Value::Null
+                    }
+                });
                 let _ = self.tx.send(AcpEvent::ToolCall {
                     name: tc.title.clone(),
                     id: tc.tool_call_id.to_string(),
-                    input: tc.raw_input.unwrap_or(serde_json::Value::Null),
+                    input,
                 });
             }
             SessionUpdate::ToolCallUpdate(update) => {
@@ -136,6 +153,29 @@ impl agent_client_protocol::Client for RalphAcpClient {
     }
 }
 
+/// Drop guard that terminates the ACP child process.
+///
+/// When the `execute` future is cancelled (e.g., by `tokio::select!` on
+/// interrupt), destructors still run. This ensures the child process tree
+/// is cleaned up even if the normal cleanup code is never reached.
+/// Sends SIGTERM first for graceful shutdown, then SIGKILL.
+struct ChildKillGuard(Arc<Mutex<Option<u32>>>);
+
+impl Drop for ChildKillGuard {
+    fn drop(&mut self) {
+        if let Ok(guard) = self.0.lock()
+            && let Some(pid) = *guard
+        {
+            // Kill the entire process group (negative PID) so grandchildren
+            // (e.g. MCP servers) are also terminated — not just the direct child.
+            let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+            let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGTERM);
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL);
+        }
+    }
+}
+
 /// Executor for ACP-based backends (kiro-acp).
 pub struct AcpExecutor {
     backend: CliBackend,
@@ -167,9 +207,15 @@ impl AcpExecutor {
         let workspace_root = self.workspace_root.clone();
         let prompt_owned = prompt.to_string();
 
+        // Shared child PID for cleanup. Wrapped in a drop guard so the child
+        // is killed even when this future is cancelled by tokio::select!.
+        let child_pid = Arc::new(Mutex::new(None::<u32>));
+        let child_pid_inner = Arc::clone(&child_pid);
+        let _kill_guard = ChildKillGuard(Arc::clone(&child_pid));
+
         // Run ACP lifecycle on a blocking thread with its own runtime
         // (ClientSideConnection / Client trait is !Send)
-        tokio::task::spawn_blocking(move || {
+        let join_handle = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -177,7 +223,7 @@ impl AcpExecutor {
             let local = tokio::task::LocalSet::new();
             local.block_on(
                 &rt,
-                run_acp_lifecycle(backend, workspace_root, prompt_owned, tx),
+                run_acp_lifecycle(backend, workspace_root, prompt_owned, tx, child_pid_inner),
             );
         });
 
@@ -209,6 +255,17 @@ impl AcpExecutor {
                 }
             }
         }
+
+        // Ensure the entire process tree is killed even if the blocking task is still running.
+        if let Ok(guard) = child_pid.lock()
+            && let Some(pid) = *guard
+        {
+            let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+            let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL);
+        }
+
+        // Wait for the blocking task to finish so it doesn't leak.
+        let _ = join_handle.await;
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let (success, is_error) = if let Some(reason) = stop_reason {
@@ -259,8 +316,11 @@ async fn run_acp_lifecycle(
     workspace_root: PathBuf,
     prompt: String,
     tx: mpsc::UnboundedSender<AcpEvent>,
+    child_pid: Arc<Mutex<Option<u32>>>,
 ) {
-    if let Err(e) = run_acp_lifecycle_inner(&backend, &workspace_root, &prompt, &tx).await {
+    if let Err(e) =
+        run_acp_lifecycle_inner(&backend, &workspace_root, &prompt, &tx, &child_pid).await
+    {
         let _ = tx.send(AcpEvent::Failed(e.to_string()));
     }
 }
@@ -270,16 +330,28 @@ async fn run_acp_lifecycle_inner(
     workspace_root: &PathBuf,
     prompt: &str,
     tx: &mpsc::UnboundedSender<AcpEvent>,
+    child_pid: &Arc<Mutex<Option<u32>>>,
 ) -> Result<()> {
-    // Spawn child process
-    let mut child = tokio::process::Command::new(&backend.command)
-        .args(&backend.args)
+    // Spawn child process in its own process group so we can kill the
+    // entire tree (including MCP servers) with a single group signal.
+    let mut cmd = tokio::process::Command::new(&backend.command);
+    cmd.args(&backend.args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .context("Failed to spawn ACP process")?;
+        .kill_on_drop(true);
+
+    #[cfg(unix)]
+    cmd.process_group(0);
+
+    let mut child = cmd.spawn().context("Failed to spawn ACP process")?;
+
+    // Record PID so the caller can kill the process if needed.
+    if let Some(pid) = child.id()
+        && let Ok(mut guard) = child_pid.lock()
+    {
+        *guard = Some(pid);
+    }
 
     let child_stdin = child.stdin.take().context("No stdin")?;
     let child_stdout = child.stdout.take().context("No stdout")?;
@@ -318,6 +390,7 @@ async fn run_acp_lifecycle_inner(
     debug!("ACP session created: {}", session.session_id);
 
     // Send prompt
+    let session_id = session.session_id.clone();
     let response = conn
         .prompt(PromptRequest::new(
             session.session_id,
@@ -328,8 +401,16 @@ async fn run_acp_lifecycle_inner(
 
     let _ = tx.send(AcpEvent::Done(response.stop_reason));
 
-    // Kill child
-    let _ = child.kill().await;
+    // Graceful shutdown: cancel the session so kiro-cli can clean up MCP servers
+    let _ = conn.cancel(CancelNotification::new(session_id)).await;
+
+    // Give the process a moment to exit cleanly, then force-kill
+    match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
+        Ok(_) => {}
+        Err(_) => {
+            let _ = child.kill().await;
+        }
+    }
 
     Ok(())
 }

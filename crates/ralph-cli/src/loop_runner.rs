@@ -1206,6 +1206,10 @@ pub async fn run_loop_impl(
                     &prompt,
                     verbosity,
                     tui_lines_for_pty,
+                    rpc_stdout_for_pty,
+                    iteration,
+                    display_hat.as_str(),
+                    &backend_name_for_timeout,
                 )
                 .await
             } else if use_pty {
@@ -1520,11 +1524,23 @@ async fn execute_acp(
     prompt: &str,
     verbosity: Verbosity,
     tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>>,
+    rpc_stdout: Option<Arc<std::sync::Mutex<std::io::Stdout>>>,
+    iteration: u32,
+    hat: &str,
+    backend_name: &str,
 ) -> Result<ExecutionOutcome> {
     let executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
 
     let pty_result = if let Some(lines) = tui_lines {
         let mut handler = TuiStreamHandler::with_lines(verbosity == Verbosity::Verbose, lines);
+        executor.execute(prompt, &mut handler).await?
+    } else if let Some(stdout_writer) = rpc_stdout {
+        let mut handler = JsonRpcStreamHandler::new(
+            stdout_writer,
+            iteration,
+            Some(hat.to_string()),
+            Some(backend_name.to_string()),
+        );
         executor.execute(prompt, &mut handler).await?
     } else {
         match verbosity {

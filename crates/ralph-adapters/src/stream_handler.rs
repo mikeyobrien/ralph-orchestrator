@@ -574,16 +574,24 @@ impl StreamHandler for TuiStreamHandler {
 /// Returns `None` for unknown tools or if the expected field is missing.
 fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> {
     match name {
-        "Read" | "Edit" | "Write" => input.get("file_path")?.as_str().map(|s| s.to_string()),
-        "Bash" => {
+        "Read" | "Edit" | "Write" | "read" | "write" => input
+            .get("file_path")
+            .or_else(|| input.get("path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "Bash" | "shell" => {
             let cmd = input.get("command")?.as_str()?;
             Some(truncate(cmd, 60))
         }
-        "Grep" => input.get("pattern")?.as_str().map(|s| s.to_string()),
-        "Glob" => input.get("pattern")?.as_str().map(|s| s.to_string()),
+        "Grep" | "grep" => input.get("pattern")?.as_str().map(|s| s.to_string()),
+        "Glob" | "glob" | "ls" => input
+            .get("pattern")
+            .or_else(|| input.get("path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "Task" => input.get("description")?.as_str().map(|s| s.to_string()),
-        "WebFetch" => input.get("url")?.as_str().map(|s| s.to_string()),
-        "WebSearch" => input.get("query")?.as_str().map(|s| s.to_string()),
+        "WebFetch" | "web_fetch" => input.get("url")?.as_str().map(|s| s.to_string()),
+        "WebSearch" | "web_search" => input.get("query")?.as_str().map(|s| s.to_string()),
         "LSP" => {
             let op = input.get("operation")?.as_str()?;
             let file = input.get("filePath")?.as_str()?;
@@ -591,7 +599,18 @@ fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> 
         }
         "NotebookEdit" => input.get("notebook_path")?.as_str().map(|s| s.to_string()),
         "TodoWrite" => Some("updating todo list".to_string()),
-        _ => None,
+        _ => {
+            // Generic fallback: try common keys
+            input
+                .get("path")
+                .or_else(|| input.get("file_path"))
+                .or_else(|| input.get("command"))
+                .or_else(|| input.get("pattern"))
+                .or_else(|| input.get("url"))
+                .or_else(|| input.get("query"))
+                .and_then(|v| v.as_str())
+                .map(|s| truncate(s, 60))
+        }
     }
 }
 
@@ -842,6 +861,42 @@ mod tests {
         assert_eq!(
             format_tool_summary("UnknownTool", &json!({"some_field": "value"})),
             None
+        );
+    }
+
+    #[test]
+    fn test_format_tool_summary_unknown_tool_with_common_key_uses_fallback() {
+        assert_eq!(
+            format_tool_summary("UnknownTool", &json!({"path": "/tmp/foo"})),
+            Some("/tmp/foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_format_tool_summary_acp_lowercase_tools() {
+        assert_eq!(
+            format_tool_summary("read", &json!({"path": "src/main.rs"})),
+            Some("src/main.rs".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("shell", &json!({"command": "ls -la"})),
+            Some("ls -la".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("ls", &json!({"path": "/tmp"})),
+            Some("/tmp".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("grep", &json!({"pattern": "TODO"})),
+            Some("TODO".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("glob", &json!({"pattern": "**/*.rs"})),
+            Some("**/*.rs".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("write", &json!({"path": "out.txt"})),
+            Some("out.txt".to_string())
         );
     }
 

@@ -1821,7 +1821,7 @@ async fn run_subprocess_tui(
         .args(&child_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit()) // Pass stderr through for debugging
+        .stderr(Stdio::null()) // Suppress — stderr corrupts the parent TUI
         .spawn()
         .context("Failed to spawn ralph subprocess for TUI")?;
 
