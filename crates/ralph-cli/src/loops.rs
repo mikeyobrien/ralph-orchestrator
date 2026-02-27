@@ -13,7 +13,7 @@
 //! - `attach`: Open shell in worktree
 //! - `diff`: Show changes from merge-base
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
@@ -677,10 +677,45 @@ fn discard_loop(args: DiscardArgs) -> Result<()> {
             remove_worktree(&cwd, &wt_path)?;
         } else {
             println!("Worktree already removed: {}", wt_path);
+            cleanup_missing_worktree_artifacts(&cwd, &loop_id)?;
         }
     }
 
     println!("Loop '{}' discarded.", loop_id);
+    Ok(())
+}
+
+fn cleanup_missing_worktree_artifacts(cwd: &Path, loop_id: &str) -> Result<()> {
+    let prune_output = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(cwd)
+        .output()
+        .context("Failed to run git worktree prune for missing-worktree cleanup")?;
+
+    if !prune_output.status.success() {
+        let stderr = String::from_utf8_lossy(&prune_output.stderr);
+        eprintln!(
+            "Warning: git worktree prune failed during cleanup: {}",
+            stderr.trim()
+        );
+    }
+
+    let branch = format!("ralph/{loop_id}");
+    let branch_delete_output = Command::new("git")
+        .args(["branch", "-D", &branch])
+        .current_dir(cwd)
+        .output()
+        .context("Failed to run git branch delete for missing-worktree cleanup")?;
+
+    if !branch_delete_output.status.success() && git_ref_exists(cwd, &branch) {
+        let stderr = String::from_utf8_lossy(&branch_delete_output.stderr);
+        eprintln!(
+            "Warning: failed to delete branch '{}': {}",
+            branch,
+            stderr.trim()
+        );
+    }
+
     Ok(())
 }
 
@@ -929,7 +964,7 @@ fn default_diff_base_branch(cwd: &std::path::Path) -> String {
 
 fn git_ref_exists(cwd: &std::path::Path, reference: &str) -> bool {
     Command::new("git")
-        .args(["rev-parse", "--verify", reference])
+        .args(["rev-parse", "--verify", "--quiet", reference])
         .current_dir(cwd)
         .status()
         .is_ok_and(|status| status.success())
@@ -1468,6 +1503,76 @@ mod tests {
         assert_eq!(entry.state, MergeState::Discarded);
 
         assert!(registry.get("loop-discard-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_discard_loop_missing_worktree_runs_fallback_cleanup() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .status()
+            .expect("git init");
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .expect("git config email");
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .status()
+            .expect("git config name");
+        std::fs::write("README.md", "# Test").expect("write README");
+        Command::new("git")
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        Command::new("git")
+            .args(["commit", "-m", "Initial commit", "--quiet"])
+            .status()
+            .expect("git commit");
+
+        Command::new("git")
+            .args(["branch", "ralph/loop-missing-worktree-1"])
+            .status()
+            .expect("git branch");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let missing_worktree_path = temp_dir.path().join(".worktrees/loop-missing-worktree-1");
+        let entry = LoopEntry::with_id(
+            "loop-missing-worktree-1",
+            "discard me",
+            Some(missing_worktree_path.display().to_string()),
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-missing-worktree-1", "prompt")
+            .expect("enqueue");
+
+        discard_loop(DiscardArgs {
+            loop_id: "loop-missing-worktree-1".to_string(),
+            yes: true,
+        })
+        .expect("discard loop");
+
+        assert!(!git_ref_exists(
+            temp_dir.path(),
+            "ralph/loop-missing-worktree-1"
+        ));
+        assert!(registry.get("loop-missing-worktree-1").unwrap().is_none());
+
+        let entry = queue
+            .get_entry("loop-missing-worktree-1")
+            .expect("get entry")
+            .expect("entry exists");
+        assert_eq!(entry.state, MergeState::Discarded);
     }
 
     #[cfg(unix)]
