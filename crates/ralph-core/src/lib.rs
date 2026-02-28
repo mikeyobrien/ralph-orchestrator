@@ -81,7 +81,8 @@ pub use hooks::{
     HookInvocationPayload, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
     HookPayloadContext, HookPayloadContextInput, HookPayloadIteration, HookPayloadLoop,
     HookPayloadMetadata, HookPhaseEvent, HookRunRequest, HookRunResult, HookSpec, HookStreamOutput,
-    HookSuspendMode, HooksConfig, ResolvedHookSpec,
+    HookSuspendMode, HooksConfig, ResolvedHookSpec, SUSPEND_STATE_SCHEMA_VERSION,
+    SuspendLifecycleState, SuspendStateRecord, SuspendStateStore, SuspendStateStoreError,
 };
 pub use instructions::InstructionBuilder;
 pub use landing::{LandingConfig, LandingError, LandingHandler, LandingResult};

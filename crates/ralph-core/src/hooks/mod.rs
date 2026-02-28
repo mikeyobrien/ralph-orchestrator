@@ -2,6 +2,7 @@
 
 mod engine;
 mod executor;
+mod suspend_state;
 
 pub use crate::config::{
     HookDefaults, HookMutationConfig, HookOnError, HookPhaseEvent, HookSpec, HookSuspendMode,
@@ -15,4 +16,8 @@ pub use engine::{
 pub use executor::{
     HookExecutor, HookExecutorContract, HookExecutorError, HookRunRequest, HookRunResult,
     HookStreamOutput,
+};
+pub use suspend_state::{
+    SUSPEND_STATE_SCHEMA_VERSION, SuspendLifecycleState, SuspendStateRecord, SuspendStateStore,
+    SuspendStateStoreError,
 };
