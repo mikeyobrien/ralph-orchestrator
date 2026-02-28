@@ -180,7 +180,7 @@ pub async fn run_loop_impl(
     let hook_engine = HookEngine::new(&config.hooks);
     let hook_executor = HookExecutor::new();
 
-    dispatch_phase_event_hooks(
+    let pre_loop_start_outcomes = dispatch_phase_event_hooks(
         &event_loop,
         hooks_dispatch_enabled,
         &loop_id,
@@ -195,6 +195,7 @@ pub async fn run_loop_impl(
             None,
         ),
     );
+    fail_if_blocking_loop_start_outcomes(&pre_loop_start_outcomes)?;
 
     // For resume mode, we initialize with a different event topic
     // This tells the planner to read existing scratchpad rather than creating a new one
@@ -204,7 +205,7 @@ pub async fn run_loop_impl(
         event_loop.initialize(&prompt_content);
     }
 
-    dispatch_phase_event_hooks(
+    let post_loop_start_outcomes = dispatch_phase_event_hooks(
         &event_loop,
         hooks_dispatch_enabled,
         &loop_id,
@@ -219,6 +220,7 @@ pub async fn run_loop_impl(
             Some(event_loop.get_active_hat_id().as_str().to_string()),
         ),
     );
+    fail_if_blocking_loop_start_outcomes(&post_loop_start_outcomes)?;
 
     // Set up session recording if requested
     // This records all events to a JSONL file for replay testing
@@ -1710,6 +1712,55 @@ fn dispatch_phase_event_hooks(
     outcomes
 }
 
+fn fail_if_blocking_loop_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked loop.start boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn format_blocking_hook_reason(outcome: &HookDispatchOutcome) -> String {
+    format!(
+        "Lifecycle hook '{}' blocked orchestration at '{}': {}",
+        outcome.hook_name,
+        outcome.phase_event.as_str(),
+        format_hook_failure_detail(outcome.failure.as_ref())
+    )
+}
+
+fn format_hook_failure_detail(failure: Option<&HookDispatchFailure>) -> String {
+    match failure {
+        Some(HookDispatchFailure::HookRunFailed {
+            exit_code,
+            timed_out,
+        }) => {
+            if *timed_out {
+                "hook timed out".to_string()
+            } else if let Some(code) = exit_code {
+                format!("hook exited with code {code}")
+            } else {
+                "hook exited unsuccessfully".to_string()
+            }
+        }
+        Some(HookDispatchFailure::HookExecutionError { message }) => {
+            format!("hook execution failed: {message}")
+        }
+        None => "hook failed without failure details".to_string(),
+    }
+}
+
 fn classify_hook_disposition(on_error: HookOnError, run_result: &HookRunResult) -> HookDisposition {
     if !run_result.timed_out && run_result.exit_code == Some(0) {
         HookDisposition::Pass
@@ -2922,6 +2973,65 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             }
             other => panic!("expected execution error failure context, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_fail_if_blocking_loop_start_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreLoopStart,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(7),
+                    timed_out: false,
+                }),
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostLoopStart,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                failure: None,
+            },
+        ];
+
+        assert!(fail_if_blocking_loop_start_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_loop_start_outcomes_surfaces_failure_context() {
+        let blocked_exit_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostLoopStart,
+            hook_name: "block-hook".to_string(),
+            disposition: HookDisposition::Block,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(42),
+                timed_out: false,
+            }),
+        }];
+
+        let blocked_exit_error = fail_if_blocking_loop_start_outcomes(&blocked_exit_outcomes)
+            .expect_err("block disposition should fail loop.start boundary");
+        let blocked_exit_message = blocked_exit_error.to_string();
+        assert!(blocked_exit_message.contains("block-hook"));
+        assert!(blocked_exit_message.contains("post.loop.start"));
+        assert!(blocked_exit_message.contains("hook exited with code 42"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreLoopStart,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+        }];
+
+        let blocked_exec_error = fail_if_blocking_loop_start_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail loop.start boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("pre.loop.start"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
     }
 
     #[test]
