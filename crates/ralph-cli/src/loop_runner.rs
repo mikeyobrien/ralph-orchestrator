@@ -176,13 +176,13 @@ pub async fn run_loop_impl(
     // Capture the robot service shutdown flag so signal handlers can interrupt wait_for_response()
     let robot_shutdown = event_loop.robot_shutdown_flag();
 
-    let hooks_enabled = config.hooks.enabled;
+    let hooks_dispatch_enabled = config.hooks.enabled && !config.hooks.events.is_empty();
     let hook_engine = HookEngine::new(&config.hooks);
     let hook_executor = HookExecutor::new();
 
     dispatch_phase_event_hooks(
         &event_loop,
-        hooks_enabled,
+        hooks_dispatch_enabled,
         &loop_id,
         &hook_engine,
         &hook_executor,
@@ -206,7 +206,7 @@ pub async fn run_loop_impl(
 
     dispatch_phase_event_hooks(
         &event_loop,
-        hooks_enabled,
+        hooks_dispatch_enabled,
         &loop_id,
         &hook_engine,
         &hook_executor,
@@ -946,6 +946,28 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
+        let iteration = event_loop.state().iteration + 1;
+
+        if event_loop.has_pending_events() {
+            dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PreIterationStart,
+                build_iteration_start_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    iteration,
+                    Some(event_loop.get_active_hat_id().as_str().to_string()),
+                    None,
+                    None,
+                ),
+            );
+        }
+
         // Get next hat to execute, with fallback recovery if no pending events
         let hat_id = match event_loop.next_hat() {
             Some(id) => {
@@ -1023,8 +1045,6 @@ pub async fn run_loop_impl(
             }
         };
 
-        let iteration = event_loop.state().iteration + 1;
-
         // Update RPC state iteration counter
         if let Some(ref shared) = rpc_dispatcher_started {
             shared
@@ -1046,6 +1066,24 @@ pub async fn run_loop_impl(
             .get(&display_hat)
             .map(|hat| hat.name.clone())
             .unwrap_or_else(|| display_hat.as_str().to_string());
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            hooks_dispatch_enabled,
+            &loop_id,
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostIterationStart,
+            build_iteration_start_payload_input(
+                &loop_id,
+                &ctx,
+                config.event_loop.max_iterations,
+                iteration,
+                Some(display_hat.as_str().to_string()),
+                Some(display_hat.as_str().to_string()),
+                None,
+            ),
+        );
 
         // Update RPC shared hat state so get_state reflects the current iteration's hat
         if let Some(ref shared) = rpc_dispatcher_started
@@ -1502,6 +1540,32 @@ fn build_loop_start_payload_input(
         iteration_max: max_iterations,
         context: HookPayloadContextInput {
             active_hat,
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn build_iteration_start_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    selected_hat: Option<String>,
+    selected_task: Option<String>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            selected_hat,
+            selected_task,
             ..HookPayloadContextInput::default()
         },
     }
