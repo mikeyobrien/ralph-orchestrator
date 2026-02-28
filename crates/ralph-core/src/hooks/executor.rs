@@ -616,3 +616,168 @@ fn duration_ms(started_at: DateTime<Utc>, ended_at: DateTime<Utc>) -> u64 {
 
     u64::try_from(milliseconds).unwrap_or(u64::MAX)
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use tempfile::{TempDir, tempdir};
+
+    fn write_executable_script(temp_dir: &TempDir, file_name: &str, body: &str) -> PathBuf {
+        let script_path = temp_dir.path().join(file_name);
+        let script = format!("#!/bin/sh\nset -eu\n{body}\n");
+
+        fs::write(&script_path, script).expect("write script file");
+
+        let mut permissions = fs::metadata(&script_path)
+            .expect("read script metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("set script permissions");
+
+        script_path
+    }
+
+    fn request_with_command(workspace_root: &Path, command: Vec<String>) -> HookRunRequest {
+        HookRunRequest {
+            phase_event: "pre.loop.start".to_string(),
+            hook_name: "test-hook".to_string(),
+            command,
+            workspace_root: workspace_root.to_path_buf(),
+            cwd: None,
+            env: HashMap::new(),
+            timeout_seconds: 2,
+            max_output_bytes: 1024,
+            stdin_payload: json!({"schema_version": 1, "phase_event": "pre.loop.start"}),
+        }
+    }
+
+    #[test]
+    fn run_reports_successful_exit_and_stream_content() {
+        let temp_dir = tempdir().expect("tempdir");
+        let script_path = write_executable_script(
+            &temp_dir,
+            "success.sh",
+            "printf 'ok-stdout'\nprintf 'ok-stderr' >&2",
+        );
+
+        let request = request_with_command(
+            temp_dir.path(),
+            vec![script_path.to_string_lossy().into_owned()],
+        );
+
+        let result = HookExecutor::new().run(request).expect("hook run succeeds");
+
+        assert_eq!(result.exit_code, Some(0));
+        assert!(!result.timed_out);
+        assert_eq!(result.stdout.content, "ok-stdout");
+        assert!(!result.stdout.truncated);
+        assert_eq!(result.stderr.content, "ok-stderr");
+        assert!(!result.stderr.truncated);
+        assert!(result.ended_at >= result.started_at);
+    }
+
+    #[test]
+    fn run_preserves_non_zero_exit_code_without_timeout() {
+        let temp_dir = tempdir().expect("tempdir");
+        let script_path = write_executable_script(
+            &temp_dir,
+            "nonzero.sh",
+            "printf 'failing-hook' >&2\nexit 17",
+        );
+
+        let request = request_with_command(
+            temp_dir.path(),
+            vec![script_path.to_string_lossy().into_owned()],
+        );
+
+        let result = HookExecutor::new()
+            .run(request)
+            .expect("hook run completes");
+
+        assert_eq!(result.exit_code, Some(17));
+        assert!(!result.timed_out);
+        assert_eq!(result.stderr.content, "failing-hook");
+        assert!(!result.stderr.truncated);
+    }
+
+    #[test]
+    fn run_marks_timed_out_when_command_exceeds_timeout() {
+        let temp_dir = tempdir().expect("tempdir");
+        let script_path = write_executable_script(&temp_dir, "timeout.sh", "while :; do :; done");
+
+        let mut request = request_with_command(
+            temp_dir.path(),
+            vec![script_path.to_string_lossy().into_owned()],
+        );
+        request.timeout_seconds = 1;
+
+        let result = HookExecutor::new()
+            .run(request)
+            .expect("hook run completes");
+
+        assert!(result.timed_out);
+        assert_ne!(result.exit_code, Some(0));
+    }
+
+    #[test]
+    fn run_truncates_stdout_and_stderr_at_max_output_bytes() {
+        let temp_dir = tempdir().expect("tempdir");
+        let script_path = write_executable_script(
+            &temp_dir,
+            "truncate.sh",
+            "printf '1234567890'\nprintf 'abcdefghij' >&2",
+        );
+
+        let mut request = request_with_command(
+            temp_dir.path(),
+            vec![script_path.to_string_lossy().into_owned()],
+        );
+        request.max_output_bytes = 8;
+
+        let result = HookExecutor::new().run(request).expect("hook run succeeds");
+
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.content, "12345678");
+        assert!(result.stdout.truncated);
+        assert_eq!(result.stderr.content, "abcdefgh");
+        assert!(result.stderr.truncated);
+    }
+
+    #[test]
+    fn run_writes_json_payload_to_hook_stdin() {
+        let temp_dir = tempdir().expect("tempdir");
+        let script_path = write_executable_script(&temp_dir, "stdin.sh", "cat > \"$1\"");
+        let captured_path = temp_dir.path().join("stdin-captured.json");
+
+        let mut request = request_with_command(
+            temp_dir.path(),
+            vec![
+                script_path.to_string_lossy().into_owned(),
+                captured_path.to_string_lossy().into_owned(),
+            ],
+        );
+        let payload = json!({
+            "schema_version": 1,
+            "phase": "pre",
+            "event": "loop.start",
+            "loop": {"id": "loop-test", "is_primary": true}
+        });
+        request.stdin_payload = payload.clone();
+
+        let result = HookExecutor::new().run(request).expect("hook run succeeds");
+
+        assert_eq!(result.exit_code, Some(0));
+        assert!(!result.timed_out);
+
+        let written_payload = fs::read_to_string(captured_path).expect("read captured stdin");
+        let parsed_payload: serde_json::Value =
+            serde_json::from_str(&written_payload).expect("parse captured stdin json");
+
+        assert_eq!(parsed_payload, payload);
+    }
+}
