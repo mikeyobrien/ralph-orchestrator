@@ -284,11 +284,13 @@ impl agent_client_protocol::Client for RalphAcpClient {
         // Take child out temporarily to await it (can't hold borrow across await)
         let (mut child, exit_rc) = {
             let mut terminals = self.terminals.borrow_mut();
-            let state = terminals.get_mut(args.terminal_id.0.as_ref()).ok_or_else(|| {
-                let mut err = agent_client_protocol::Error::invalid_params();
-                err.message = format!("unknown terminal: {}", args.terminal_id);
-                err
-            })?;
+            let state = terminals
+                .get_mut(args.terminal_id.0.as_ref())
+                .ok_or_else(|| {
+                    let mut err = agent_client_protocol::Error::invalid_params();
+                    err.message = format!("unknown terminal: {}", args.terminal_id);
+                    err
+                })?;
             let exit_rc = Rc::clone(&state.exit_status);
             // Check if already exited
             if let Some(status) = state.exit_status.borrow().as_ref() {
@@ -296,19 +298,16 @@ impl agent_client_protocol::Client for RalphAcpClient {
             }
             // Try non-blocking wait
             if let Ok(Some(status)) = state.child.try_wait() {
-                let es = TerminalExitStatus::new()
-                    .exit_code(status.code().map(|c| c as u32));
+                let es = TerminalExitStatus::new().exit_code(status.code().map(|c| c as u32));
                 *state.exit_status.borrow_mut() = Some(es.clone());
                 return Ok(WaitForTerminalExitResponse::new(es));
             }
             // Need to actually await — swap in a placeholder
-            let placeholder_child = tokio::process::Command::new("true")
-                .spawn()
-                .map_err(|e| {
-                    let mut err = agent_client_protocol::Error::internal_error();
-                    err.message = format!("internal error: {e}");
-                    err
-                })?;
+            let placeholder_child = tokio::process::Command::new("true").spawn().map_err(|e| {
+                let mut err = agent_client_protocol::Error::internal_error();
+                err.message = format!("internal error: {e}");
+                err
+            })?;
             let real_child = std::mem::replace(&mut state.child, placeholder_child);
             (real_child, exit_rc)
         };
@@ -347,22 +346,23 @@ impl agent_client_protocol::Client for RalphAcpClient {
         &self,
         args: KillTerminalCommandRequest,
     ) -> agent_client_protocol::Result<KillTerminalCommandResponse> {
-        let mut terminals = self.terminals.borrow_mut();
-        let state = terminals.get_mut(args.terminal_id.0.as_ref()).ok_or_else(|| {
-            let mut err = agent_client_protocol::Error::invalid_params();
-            err.message = format!("unknown terminal: {}", args.terminal_id);
-            err
-        })?;
+        let mut state = self
+            .terminals
+            .borrow_mut()
+            .remove(args.terminal_id.0.as_ref())
+            .ok_or_else(|| {
+                let mut err = agent_client_protocol::Error::invalid_params();
+                err.message = format!("unknown terminal: {}", args.terminal_id);
+                err
+            })?;
 
         let _ = state.child.kill().await;
         // Try to capture exit status after kill
-        if let Ok(status) = state.child.try_wait() {
-            if let Some(s) = status {
-                *state.exit_status.borrow_mut() = Some(
-                    TerminalExitStatus::new()
-                        .exit_code(s.code().map(|c| c as u32))
-                );
-            }
+        if let Ok(status) = state.child.try_wait()
+            && let Some(s) = status
+        {
+            *state.exit_status.borrow_mut() =
+                Some(TerminalExitStatus::new().exit_code(s.code().map(|c| c as u32)));
         }
 
         Ok(KillTerminalCommandResponse::new())
@@ -612,9 +612,7 @@ async fn run_acp_lifecycle_inner(
             "ralph-orchestrator",
             env!("CARGO_PKG_VERSION"),
         ))
-        .client_capabilities(
-            agent_client_protocol::ClientCapabilities::new().terminal(true),
-        );
+        .client_capabilities(agent_client_protocol::ClientCapabilities::new().terminal(true));
     conn.initialize(init_req)
         .await
         .context("ACP initialize failed")?;
@@ -643,7 +641,8 @@ async fn run_acp_lifecycle_inner(
     let _ = tx.send(AcpEvent::Done(response.stop_reason));
 
     // Kill all active terminals before shutting down
-    for (_, mut state) in terminals.borrow_mut().drain() {
+    let active_terminals: Vec<_> = terminals.borrow_mut().drain().collect();
+    for (_, mut state) in active_terminals {
         let _ = state.child.kill().await;
     }
 
@@ -767,10 +766,8 @@ mod tests {
                 assert!(terminals.borrow().contains_key(resp.terminal_id.0.as_ref()));
 
                 // Wait for exit
-                let wait_req = WaitForTerminalExitRequest::new(
-                    "test-session",
-                    resp.terminal_id.clone(),
-                );
+                let wait_req =
+                    WaitForTerminalExitRequest::new("test-session", resp.terminal_id.clone());
                 let wait_resp = client.wait_for_terminal_exit(wait_req).await.unwrap();
                 assert_eq!(wait_resp.exit_status.exit_code, Some(0));
 
@@ -779,8 +776,7 @@ mod tests {
                 tokio::task::yield_now().await;
 
                 // Get output
-                let out_req =
-                    TerminalOutputRequest::new("test-session", resp.terminal_id.clone());
+                let out_req = TerminalOutputRequest::new("test-session", resp.terminal_id.clone());
                 let out_resp = client.terminal_output(out_req).await.unwrap();
                 assert!(
                     out_resp.output.contains("hello world"),
@@ -799,8 +795,8 @@ mod tests {
             .run_until(async {
                 let (client, _rx, terminals) = test_client();
 
-                let req = CreateTerminalRequest::new("test-session", "sleep")
-                    .args(vec!["60".into()]);
+                let req =
+                    CreateTerminalRequest::new("test-session", "sleep").args(vec!["60".into()]);
                 let resp = client.create_terminal(req).await.unwrap();
                 let tid = resp.terminal_id.clone();
 
@@ -821,13 +817,12 @@ mod tests {
             .run_until(async {
                 let (client, _rx, terminals) = test_client();
 
-                let req = CreateTerminalRequest::new("test-session", "sleep")
-                    .args(vec!["60".into()]);
+                let req =
+                    CreateTerminalRequest::new("test-session", "sleep").args(vec!["60".into()]);
                 let resp = client.create_terminal(req).await.unwrap();
                 let tid = resp.terminal_id.clone();
 
-                let kill_req =
-                    KillTerminalCommandRequest::new("test-session", tid.clone());
+                let kill_req = KillTerminalCommandRequest::new("test-session", tid.clone());
                 client.kill_terminal_command(kill_req).await.unwrap();
 
                 // Should still be in the map
@@ -860,10 +855,8 @@ mod tests {
                 let req = CreateTerminalRequest::new("test-session", "false");
                 let resp = client.create_terminal(req).await.unwrap();
 
-                let wait_req = WaitForTerminalExitRequest::new(
-                    "test-session",
-                    resp.terminal_id.clone(),
-                );
+                let wait_req =
+                    WaitForTerminalExitRequest::new("test-session", resp.terminal_id.clone());
                 let wait_resp = client.wait_for_terminal_exit(wait_req).await.unwrap();
                 assert_ne!(wait_resp.exit_status.exit_code, Some(0));
             })
