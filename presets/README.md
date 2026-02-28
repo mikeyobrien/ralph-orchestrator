@@ -1,201 +1,153 @@
-# Ralph Presets
+# Ralph Hat Collections (Canonical Presets)
 
-Pre-configured hat collections for common workflows.
+This directory contains the canonical preset YAML files for Ralph hat collections.
 
-## Quick Start
+Built-ins are embedded from these files into the CLI (mirrored under `crates/ralph-cli/presets/`).
+
+## Quick Start (Current CLI)
 
 ```bash
-# Create core config once
+# 1) Create core config once
 ralph init --backend claude
 
-# Use a built-in hat collection
-ralph run -c ralph.yml -H builtin:research -p "How does auth work?"
+# 2) List built-in collections
+ralph init --list-presets
 
-# Switch collections without touching core settings
+# 3) Run with a built-in collection
 ralph run -c ralph.yml -H builtin:feature
 ```
 
-## Available Presets
+> `ralph init --preset <name>` is removed.
+> Use `ralph run -c ralph.yml -H builtin:<name>`.
 
-| Preset | Hats | Best For |
-|--------|------|----------|
-| **research.yml** | researcher, synthesizer | Codebase exploration, architecture analysis, no code changes |
-| **docs.yml** | planner, writer, reviewer | Documentation writing with edit/review cycles |
-| **refactor.yml** | planner, refactorer, verifier | Safe incremental refactoring with verification |
-| **debug.yml** | investigator, tester, fixer, verifier | Bug investigation using scientific method |
-| **review.yml** | reviewer, analyzer | Code review without making changes |
-| **feature.yml** | planner, builder, reviewer | Feature development with integrated review |
-| **fresh-eyes.yml** | builder, fresh_eyes_auditor, fresh_eyes_gatekeeper | Implementation with enforced repeated fresh-eyes bug-catching passes |
-| **gap-analysis.yml** | analyzer, verifier, reporter | Deep spec-to-implementation comparison, outputs to ISSUES.md |
+## Core vs Hats Responsibilities
 
-## Preset Details
+- `-c/--config` (core): backend, paths, guardrails, memories/tasks/skills, runtime defaults
+- `-H/--hats` (collection): hats, events, and workflow event-loop settings
 
-### research.yml
-**Completion Promise:** `RESEARCH_COMPLETE`
+Single-file combined configs remain supported (`-c` file may include `hats`/`events`).
 
-For exploration tasks where you need to understand something without changing code. Great for:
-- "How does X work in this codebase?"
-- "What are the dependencies between modules?"
-- "Analyze the performance characteristics of..."
+When `-H/--hats` is provided, it takes precedence:
+- `hats`/`events` from `-H` replace `hats`/`events` from `-c`
+- `event_loop` values from `-H` override matching `event_loop` keys from `-c`
+- `-c core.*=...` overrides are still applied last
 
-**Hat Flow:**
-```
-task.start → [researcher] → research.finding → [synthesizer] → research.followup → [researcher] → ...
-```
+## Available Built-in Collections
 
----
+`ralph init --list-presets` lists these collections.
 
-### docs.yml
-**Completion Promise:** `DOCS_COMPLETE`
+| Collection | Canonical source | Hats | Start event | Completion | Best for |
+|---|---|---|---|---|---|
+| `bugfix` | `presets/bugfix.yml` | `reproducer`, `fixer`, `verifier`, `committer` | `repro.start` | `LOOP_COMPLETE` (default) | Reproduce/fix/verify/commit bug workflow |
+| `code-assist` | `presets/code-assist.yml` | `planner`, `builder`, `validator`, `committer` | `build.start` | `LOOP_COMPLETE` | TDD implementation from specs/tasks/descriptions |
+| `debug` | `presets/debug.yml` | `investigator`, `tester`, `fixer`, `verifier` | `debug.start` | `DEBUG_COMPLETE` | Root-cause debugging and hypothesis testing |
+| `deploy` | `presets/deploy.yml` | `builder`, `deployer`, `verifier` | `task.start` (default) | `LOOP_COMPLETE` | Deployment and release workflows |
+| `docs` | `presets/docs.yml` | `writer`, `reviewer` | `task.start` (default) | `DOCS_COMPLETE` | Documentation writing and review |
+| `feature` | `presets/feature.yml` | `builder`, `reviewer` | `task.start` (default) | `LOOP_COMPLETE` | Feature development with integrated review |
+| `fresh-eyes` | `presets/fresh-eyes.yml` | `builder`, `fresh_eyes_auditor`, `fresh_eyes_gatekeeper` | `fresh_eyes.start` | `LOOP_COMPLETE` | Enforced repeated skeptical self-review passes |
+| `gap-analysis` | `presets/gap-analysis.yml` | `analyzer`, `verifier`, `reporter` | `gap.start` | `GAP_ANALYSIS_COMPLETE` | Spec-vs-implementation auditing |
+| `hatless-baseline` | `presets/hatless-baseline.yml` | _(none)_ | `task.start` | `LOOP_COMPLETE` | Baseline no-hat behavior for comparison |
+| `merge-loop` | `crates/ralph-cli/presets/merge-loop.yml` | `merger`, `resolver`, `tester`, `cleaner`, `failure_handler` | `merge.start` | `MERGE_COMPLETE` | Internal merge/worktree automation |
+| `pdd-to-code-assist` | `presets/pdd-to-code-assist.yml` | `inquisitor`, `architect`, `design_critic`, `explorer`, `planner`, `task_writer`, `builder`, `validator`, `committer` | `design.start` | `LOOP_COMPLETE` | Full idea → plan → implementation pipeline |
+| `pr-review` | `presets/pr-review.yml` | `correctness_reviewer`, `security_reviewer`, `architecture_reviewer`, `synthesizer` | `task.start` (default) | `LOOP_COMPLETE` | Multi-perspective PR review |
+| `refactor` | `presets/refactor.yml` | `refactorer`, `verifier` | `task.start` (default) | `REFACTOR_COMPLETE` | Incremental, verified refactoring |
+| `research` | `presets/research.yml` | `researcher`, `synthesizer` | `research.start` | `RESEARCH_COMPLETE` | Exploration and analysis without code changes |
+| `review` | `presets/review.yml` | `reviewer`, `analyzer` | `review.start` | `REVIEW_COMPLETE` | Review-only workflow |
+| `spec-driven` | `presets/spec-driven.yml` | `spec_writer`, `spec_reviewer`, `implementer`, `verifier` | `spec.start` | `LOOP_COMPLETE` (default) | Specification-driven implementation |
 
-For writing documentation with quality control. The writer/editor/reviewer cycle ensures accuracy and clarity.
+Notes:
+- If a collection omits `event_loop.completion_promise`, Ralph defaults to `LOOP_COMPLETE`.
+- `merge-loop` is primarily internal and used by merge queue/worktree flows.
 
-**Hat Flow:**
-```
-task.start → [planner] → write.section → [writer] → write.done → [reviewer] → review.done → [planner] → ...
-```
+## Usage Examples
 
----
-
-### refactor.yml
-**Completion Promise:** `REFACTOR_COMPLETE`
-
-For safe code refactoring. Each step is atomic and verified. Checkpoint interval is set to 3 for frequent git snapshots.
-
-**Key Principle:** Every step leaves the codebase in a working state.
-
-**Hat Flow:**
-```
-task.start → [planner] → refactor.task → [refactorer] → refactor.done → [verifier] → verify.passed → [planner] → ...
-```
-
----
-
-### debug.yml
-**Completion Promise:** `DEBUG_COMPLETE`
-
-For systematic bug investigation. Uses scientific method: hypothesize, test, narrow down.
-
-**Hat Flow:**
-```
-task.start → [investigator] → hypothesis.test → [tester] → hypothesis.rejected → [investigator] → ...
-                                                         → hypothesis.confirmed → fix.propose → [fixer] → ...
-```
-
----
-
-### review.yml
-**Completion Promise:** `REVIEW_COMPLETE`
-
-For code review without making changes. Produces structured feedback categorized by severity.
-
-**Categories:**
-- **Critical** — Must fix before merge
-- **Suggestions** — Should consider
-- **Nitpicks** — Optional improvements
-
-**Hat Flow:**
-```
-task.start → [reviewer] → review.section → [analyzer] → analysis.complete → [reviewer] → ...
-```
-
----
-
-### feature.yml
-**Completion Promise:** `LOOP_COMPLETE`
-
-Enhanced default workflow with integrated code review. Every implementation goes through review before being marked complete.
-
-**Hat Flow:**
-```
-task.start → [planner] → build.task → [builder] → build.done → [planner] → review.request → [reviewer] → review.approved → [planner] → ...
-```
-
----
-
-### gap-analysis.yml
-**Completion Promise:** `GAP_ANALYSIS_COMPLETE`
-
-Deep comparison of specs against implementation. Systematically verifies each acceptance criterion and documents discrepancies in ISSUES.md.
-
-**Self-contained preset:** Uses inline `prompt:` config—no separate PROMPT.md needed.
-
-**Output:** Writes structured findings to `ISSUES.md` with categories:
-- **Critical Gaps** — Spec violations (implementation contradicts spec)
-- **Missing Features** — Acceptance criteria not implemented
-- **Undocumented Behavior** — Code without spec coverage
-- **Spec Improvements** — Ambiguities, missing details
-
-**Hat Flow:**
-```
-task.start → [analyzer] → analyze.spec → [verifier] → verify.complete → [analyzer] → report.request → [reporter] → report.complete → [analyzer] → ...
-```
-
-**Usage:**
 ```bash
-# Full gap analysis of all specs
-ralph run --config presets/gap-analysis.yml
+# Feature work
+ralph run -c ralph.yml -H builtin:feature -p "Add user authentication"
 
-# Focus on specific spec
-ralph run --config presets/gap-analysis.yml -p "Focus on cli-adapters.spec.md"
+# Debug workflow
+ralph run -c ralph.yml -H builtin:debug -p "Investigate intermittent timeout"
+
+# Spec-driven workflow
+ralph run -c ralph.yml -H builtin:spec-driven -p "Build a rate limiter"
+
+# Research workflow (analysis without code changes)
+ralph run -c ralph.yml -H builtin:research -p "Map auth architecture"
+
+# Use a local hats file instead of a built-in
+ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
 ```
 
----
+## Common Workflow Patterns
 
-## Customizing Presets
+Ralph built-ins usually follow one of these shapes:
 
-### Adding a Hat
+### 1) Linear Pipeline
+A fixed sequence of specialist hats.
 
-```yaml
-hats:
-  # ... existing hats ...
+Examples: `feature`, `bugfix`, `deploy`, `docs`
 
-  my_custom_hat:
-    name: "My Custom Hat"
-    triggers: ["custom.trigger"]
-    publishes: ["custom.done"]
-    instructions: |
-      What this hat does and how.
+### 2) Critic / Actor Loop
+One hat proposes, another critiques/validates, then iterates.
+
+Examples: `spec-driven`, `review`, `fresh-eyes`
+
+### 3) Multi-Reviewer + Synthesis
+Parallel perspectives merged into one result.
+
+Example: `pr-review`
+
+### 4) Extended End-to-End Orchestration
+Large multi-stage pipelines from idea through implementation.
+
+Example: `pdd-to-code-assist`
+
+## Split Config vs Single-File Config
+
+Recommended:
+- Keep core/runtime config in `ralph.yml`
+- Select workflow via `-H builtin:<name>`
+
+Backward-compatible single-file mode (still supported):
+
+```bash
+# Uses one combined preset file as the main config
+ralph run -c presets/feature.yml -p "Add OAuth login"
 ```
 
-### Modifying Triggers
+## Creating Your Own Hat Collection
 
-To change the workflow, adjust which events trigger which hats:
-
-```yaml
-hats:
-  planner:
-    triggers: ["task.start", "build.done", "my.custom.event"]  # Added custom event
-```
-
-### Adjusting Safeguards
+Create a hats file with hats-related sections:
 
 ```yaml
 event_loop:
-  max_iterations: 50        # Fewer iterations for smaller tasks
-  max_runtime_seconds: 1800 # 30 minute timeout
-  checkpoint_interval: 2    # More frequent git checkpoints
+  starting_event: "build.start"
+  completion_promise: "LOOP_COMPLETE"
+
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+    instructions: |
+      Implement the requested change and verify it.
+
+  reviewer:
+    name: "Reviewer"
+    triggers: ["build.done"]
+    publishes: ["LOOP_COMPLETE"]
+    instructions: |
+      Review the change, request fixes if needed, and close when done.
 ```
 
-## Choosing a Preset
+Run it:
 
-| If you need to... | Use |
-|-------------------|-----|
-| Understand code without changing it | `research.yml` |
-| Write or update documentation | `docs.yml` |
-| Restructure code safely | `refactor.yml` |
-| Find and fix a bug | `debug.yml` |
-| Review someone's code | `review.yml` |
-| Build a new feature | `feature.yml` |
-| Force repeated skeptical post-implementation checks | `fresh-eyes.yml` |
-| Compare specs against implementation | `gap-analysis.yml` |
+```bash
+ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
+```
 
-## Creating New Presets
+## Source of Truth and Sync
 
-1. Copy the closest existing preset
-2. Modify hats for your workflow
-3. Adjust triggers to create your event flow
-4. Set appropriate safeguards
-5. Choose a meaningful completion promise
-
-**Tip:** Draw your hat flow diagram first, then implement it.
+- Canonical preset files: `presets/*.yml`
+- Embedded CLI mirror: `crates/ralph-cli/presets/*.yml`
+- Sync script: `./scripts/sync-embedded-files.sh`
