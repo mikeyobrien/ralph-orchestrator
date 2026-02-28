@@ -14,9 +14,9 @@ use ralph_core::diagnostics::{HookDisposition, HookRunTelemetryEntry};
 use ralph_core::{
     CompletionAction, EventLogger, EventLoop, EventParser, EventRecord, HookEngine, HookExecutor,
     HookExecutorContract, HookOnError, HookPayloadBuilderInput, HookPayloadContextInput,
-    HookPhaseEvent, HookRunRequest, HookRunResult, LoopCompletionHandler, LoopContext, LoopHistory,
-    LoopRegistry, MergeQueue, RalphConfig, Record, SessionRecorder, SummaryWriter,
-    TerminationReason,
+    HookPhaseEvent, HookRunRequest, HookRunResult, HookSuspendMode, LoopCompletionHandler,
+    LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record, SessionRecorder,
+    SummaryWriter, SuspendStateRecord, SuspendStateStore, TerminationReason,
 };
 use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
@@ -179,6 +179,7 @@ pub async fn run_loop_impl(
     let hooks_dispatch_enabled = config.hooks.enabled && !config.hooks.events.is_empty();
     let hook_engine = HookEngine::new(&config.hooks);
     let hook_executor = HookExecutor::new();
+    let suspend_state_store = SuspendStateStore::new(ctx.workspace());
 
     let pre_loop_start_outcomes = dispatch_phase_event_hooks(
         &event_loop,
@@ -196,31 +197,39 @@ pub async fn run_loop_impl(
         ),
     );
     fail_if_blocking_loop_start_outcomes(&pre_loop_start_outcomes)?;
+    let mut pending_suspend_termination_reason =
+        wait_for_resume_if_suspended(&pre_loop_start_outcomes, &loop_id, &suspend_state_store)
+            .await?;
 
-    // For resume mode, we initialize with a different event topic
-    // This tells the planner to read existing scratchpad rather than creating a new one
-    if resume {
-        event_loop.initialize_resume(&prompt_content);
-    } else {
-        event_loop.initialize(&prompt_content);
-    }
+    if pending_suspend_termination_reason.is_none() {
+        // For resume mode, we initialize with a different event topic
+        // This tells the planner to read existing scratchpad rather than creating a new one
+        if resume {
+            event_loop.initialize_resume(&prompt_content);
+        } else {
+            event_loop.initialize(&prompt_content);
+        }
 
-    let post_loop_start_outcomes = dispatch_phase_event_hooks(
-        &event_loop,
-        hooks_dispatch_enabled,
-        &loop_id,
-        &hook_engine,
-        &hook_executor,
-        HookPhaseEvent::PostLoopStart,
-        build_loop_start_payload_input(
+        let post_loop_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            hooks_dispatch_enabled,
             &loop_id,
-            &ctx,
-            config.event_loop.max_iterations,
-            event_loop.state().iteration,
-            Some(event_loop.get_active_hat_id().as_str().to_string()),
-        ),
-    );
-    fail_if_blocking_loop_start_outcomes(&post_loop_start_outcomes)?;
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input(
+                &loop_id,
+                &ctx,
+                config.event_loop.max_iterations,
+                event_loop.state().iteration,
+                Some(event_loop.get_active_hat_id().as_str().to_string()),
+            ),
+        );
+        fail_if_blocking_loop_start_outcomes(&post_loop_start_outcomes)?;
+        pending_suspend_termination_reason =
+            wait_for_resume_if_suspended(&post_loop_start_outcomes, &loop_id, &suspend_state_store)
+                .await?;
+    }
 
     // Set up session recording if requested
     // This records all events to a JSONL file for replay testing
@@ -813,6 +822,31 @@ pub async fn run_loop_impl(
         }
     };
 
+    if let Some(reason) = pending_suspend_termination_reason.take() {
+        let terminate_event = event_loop.publish_terminate_event(&reason);
+        log_terminate_event(
+            &mut event_logger,
+            event_loop.state().iteration,
+            &terminate_event,
+        );
+        handle_termination(
+            &reason,
+            event_loop.state(),
+            &config.core.scratchpad,
+            &loop_history,
+            &loop_context,
+            auto_merge,
+            &prompt_content,
+        );
+
+        // Wait for user to exit TUI (press 'q') on natural completion
+        if let Some(handle) = tui_handle.take() {
+            let _ = handle.await;
+        }
+
+        return Ok(reason);
+    }
+
     // Main orchestration loop
     loop {
         // Check for interrupt signal at start of each iteration
@@ -969,6 +1003,35 @@ pub async fn run_loop_impl(
                 ),
             );
             fail_if_blocking_iteration_start_outcomes(&pre_iteration_start_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &pre_iteration_start_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                // Wait for user to exit TUI (press 'q') on natural completion
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
         }
 
         // Get next hat to execute, with fallback recovery if no pending events
@@ -1088,6 +1151,35 @@ pub async fn run_loop_impl(
             ),
         );
         fail_if_blocking_iteration_start_outcomes(&post_iteration_start_outcomes)?;
+
+        if let Some(reason) = wait_for_resume_if_suspended(
+            &post_iteration_start_outcomes,
+            &loop_id,
+            &suspend_state_store,
+        )
+        .await?
+        {
+            let terminate_event = event_loop.publish_terminate_event(&reason);
+            log_terminate_event(
+                &mut event_logger,
+                event_loop.state().iteration,
+                &terminate_event,
+            );
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
+            // Wait for user to exit TUI (press 'q') on natural completion
+            if let Some(handle) = tui_handle.take() {
+                let _ = handle.await;
+            }
+            return Ok(reason);
+        }
 
         // Update RPC shared hat state so get_state reflects the current iteration's hat
         if let Some(ref shared) = rpc_dispatcher_started
@@ -1750,6 +1842,125 @@ fn fail_if_blocking_iteration_start_outcomes(outcomes: &[HookDispatchOutcome]) -
     );
 
     Err(anyhow::anyhow!(reason))
+}
+
+async fn wait_for_resume_if_suspended(
+    outcomes: &[HookDispatchOutcome],
+    loop_id: &str,
+    suspend_state_store: &SuspendStateStore,
+) -> Result<Option<TerminationReason>> {
+    const POLL_INTERVAL_MS: u64 = 250;
+
+    let Some(suspending_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Suspend)
+    else {
+        return Ok(None);
+    };
+
+    let reason = format_suspending_hook_reason(suspending_outcome);
+    let suspend_state = SuspendStateRecord::new(
+        loop_id,
+        suspending_outcome.phase_event,
+        &suspending_outcome.hook_name,
+        &reason,
+        HookSuspendMode::WaitForResume,
+        chrono::Utc::now(),
+    );
+
+    suspend_state_store
+        .write_suspend_state(&suspend_state)
+        .with_context(|| {
+            format!(
+                "Failed to persist suspend-state for hook '{}' at '{}'",
+                suspending_outcome.hook_name,
+                suspending_outcome.phase_event.as_str()
+            )
+        })?;
+
+    warn!(
+        phase_event = %suspending_outcome.phase_event,
+        hook_name = %suspending_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook requested suspend; entering wait_for_resume"
+    );
+
+    loop {
+        if consume_stop_requested_signal(suspend_state_store.workspace_root())? {
+            clear_suspend_wait_artifacts(suspend_state_store)?;
+            info!(
+                phase_event = %suspending_outcome.phase_event,
+                hook_name = %suspending_outcome.hook_name,
+                "Stop requested while suspended; terminating loop"
+            );
+            return Ok(Some(TerminationReason::Stopped));
+        }
+
+        if is_restart_requested(suspend_state_store.workspace_root()) {
+            clear_suspend_wait_artifacts(suspend_state_store)?;
+            info!(
+                phase_event = %suspending_outcome.phase_event,
+                hook_name = %suspending_outcome.hook_name,
+                "Restart requested while suspended; terminating loop for restart"
+            );
+            return Ok(Some(TerminationReason::RestartRequested));
+        }
+
+        if suspend_state_store
+            .consume_resume_requested()
+            .context("Failed to consume resume signal while suspended")?
+        {
+            suspend_state_store
+                .clear_suspend_state()
+                .context("Failed to clear suspend-state after resume signal")?;
+
+            info!(
+                phase_event = %suspending_outcome.phase_event,
+                hook_name = %suspending_outcome.hook_name,
+                "Resume signal consumed; leaving suspended wait_for_resume state"
+            );
+            return Ok(None);
+        }
+
+        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+    }
+}
+
+fn clear_suspend_wait_artifacts(suspend_state_store: &SuspendStateStore) -> Result<()> {
+    suspend_state_store
+        .clear_suspend_state()
+        .context("Failed to clear suspend-state artifact")?;
+    suspend_state_store
+        .consume_resume_requested()
+        .context("Failed to clear stale resume signal")?;
+    Ok(())
+}
+
+fn consume_stop_requested_signal(workspace_root: &Path) -> Result<bool> {
+    let stop_path = workspace_root.join(".ralph/stop-requested");
+    match fs::remove_file(&stop_path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(anyhow::Error::new(error)).with_context(|| {
+            format!(
+                "Failed to consume stop signal while suspended: {}",
+                stop_path.display()
+            )
+        }),
+    }
+}
+
+fn is_restart_requested(workspace_root: &Path) -> bool {
+    workspace_root.join(".ralph/restart-requested").exists()
+}
+
+fn format_suspending_hook_reason(outcome: &HookDispatchOutcome) -> String {
+    format!(
+        "Lifecycle hook '{}' suspended orchestration at '{}': {}",
+        outcome.hook_name,
+        outcome.phase_event.as_str(),
+        format_hook_failure_detail(outcome.failure.as_ref())
+    )
 }
 
 fn format_blocking_hook_reason(outcome: &HookDispatchOutcome) -> String {
@@ -2714,6 +2925,29 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             .collect()
     }
 
+    fn suspend_outcome(phase_event: HookPhaseEvent, hook_name: &str) -> HookDispatchOutcome {
+        HookDispatchOutcome {
+            phase_event,
+            hook_name: hook_name.to_string(),
+            disposition: HookDisposition::Suspend,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            }),
+        }
+    }
+
+    fn block_on_test_future<F>(future: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime")
+            .block_on(future)
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order() {
@@ -3292,6 +3526,118 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
         assert!(blocked_exec_message.contains("block-exec-hook"));
         assert!(blocked_exec_message.contains("post.iteration.start"));
         assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_is_noop_without_suspend_dispositions() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreLoopStart,
+            hook_name: "warn-hook".to_string(),
+            disposition: HookDisposition::Warn,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(7),
+                timed_out: false,
+            }),
+        }];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, None);
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_resumes_and_clears_suspend_artifacts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+        suspend_state_store
+            .write_resume_requested()
+            .expect("write resume signal");
+
+        let outcomes = vec![suspend_outcome(
+            HookPhaseEvent::PreLoopStart,
+            "suspend-hook",
+        )];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, None);
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_prioritizes_stop_over_resume() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/stop-requested"), "")
+            .expect("write stop signal");
+        suspend_state_store
+            .write_resume_requested()
+            .expect("write resume signal");
+
+        let outcomes = vec![suspend_outcome(
+            HookPhaseEvent::PreIterationStart,
+            "suspend-hook",
+        )];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::Stopped));
+        assert!(!temp_dir.path().join(".ralph/stop-requested").exists());
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_prioritizes_restart_over_resume() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/restart-requested"), "")
+            .expect("write restart signal");
+        suspend_state_store
+            .write_resume_requested()
+            .expect("write resume signal");
+
+        let outcomes = vec![suspend_outcome(
+            HookPhaseEvent::PostIterationStart,
+            "suspend-hook",
+        )];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::RestartRequested));
+        assert!(temp_dir.path().join(".ralph/restart-requested").exists());
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
     }
 
     #[test]
