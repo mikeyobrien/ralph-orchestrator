@@ -2520,6 +2520,208 @@ mod tests {
         path
     }
 
+    #[cfg(unix)]
+    fn hook_spec_with_command(name: &str, command: Vec<String>) -> ralph_core::HookSpec {
+        ralph_core::HookSpec {
+            name: name.to_string(),
+            command,
+            cwd: None,
+            env: std::collections::HashMap::new(),
+            timeout_seconds: None,
+            max_output_bytes: None,
+            on_error: Some(HookOnError::Warn),
+            suspend_mode: None,
+            mutate: ralph_core::HookMutationConfig::default(),
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn recording_hook(name: &str, log_path: &Path) -> ralph_core::HookSpec {
+        hook_spec_with_command(
+            name,
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                r#"payload="$(cat)"
+phase="$(printf '%s' "$payload" | grep -o '"phase_event":"[^"]*"' | cut -d'"' -f4)"
+printf '%s|%s\n' "$1" "$phase" >> "$2""#
+                    .to_string(),
+                "hook-recorder".to_string(),
+                name.to_string(),
+                log_path.to_string_lossy().into_owned(),
+            ],
+        )
+    }
+
+    #[cfg(unix)]
+    fn hook_engine_with_events(
+        events: std::collections::HashMap<HookPhaseEvent, Vec<ralph_core::HookSpec>>,
+    ) -> HookEngine {
+        let hooks_config = ralph_core::HooksConfig {
+            enabled: true,
+            events,
+            ..ralph_core::HooksConfig::default()
+        };
+        HookEngine::new(&hooks_config)
+    }
+
+    #[cfg(unix)]
+    fn dispatch_test_event_loop(workspace_root: &Path) -> EventLoop {
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = workspace_root.to_path_buf();
+        EventLoop::new(config)
+    }
+
+    #[cfg(unix)]
+    fn read_hook_log(log_path: &Path) -> Vec<String> {
+        std::fs::read_to_string(log_path)
+            .expect("read hook log")
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("hook-dispatch.log");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![
+                recording_hook("pre-iteration-first", &log_path),
+                recording_hook("pre-iteration-second", &log_path),
+            ],
+        );
+        events.insert(
+            HookPhaseEvent::PostLoopStart,
+            vec![recording_hook("post-loop-only", &log_path)],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("ralph".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        assert_eq!(
+            read_hook_log(&log_path),
+            vec![
+                "pre-iteration-first|pre.iteration.start".to_string(),
+                "pre-iteration-second|pre.iteration.start".to_string(),
+            ]
+        );
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(
+            read_hook_log(&log_path),
+            vec![
+                "pre-iteration-first|pre.iteration.start".to_string(),
+                "pre-iteration-second|pre.iteration.start".to_string(),
+                "post-loop-only|post.loop.start".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_noop_when_disabled_or_unconfigured() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("hook-noop.log");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![recording_hook("should-not-run", &log_path)],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let empty_engine = hook_engine_with_events(std::collections::HashMap::new());
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            false,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("ralph".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &empty_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("ralph".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert!(
+            !log_path.exists(),
+            "hook log should not be created on no-op paths"
+        );
+    }
+
     #[test]
     fn test_idle_timeout_interactive_mode_continues() {
         // Given: interactive mode and IdleTimeout termination
