@@ -951,7 +951,7 @@ pub async fn run_loop_impl(
         let iteration = event_loop.state().iteration + 1;
 
         if event_loop.has_pending_events() {
-            dispatch_phase_event_hooks(
+            let pre_iteration_start_outcomes = dispatch_phase_event_hooks(
                 &event_loop,
                 hooks_dispatch_enabled,
                 &loop_id,
@@ -968,6 +968,7 @@ pub async fn run_loop_impl(
                     None,
                 ),
             );
+            fail_if_blocking_iteration_start_outcomes(&pre_iteration_start_outcomes)?;
         }
 
         // Get next hat to execute, with fallback recovery if no pending events
@@ -1069,7 +1070,7 @@ pub async fn run_loop_impl(
             .map(|hat| hat.name.clone())
             .unwrap_or_else(|| display_hat.as_str().to_string());
 
-        dispatch_phase_event_hooks(
+        let post_iteration_start_outcomes = dispatch_phase_event_hooks(
             &event_loop,
             hooks_dispatch_enabled,
             &loop_id,
@@ -1086,6 +1087,7 @@ pub async fn run_loop_impl(
                 None,
             ),
         );
+        fail_if_blocking_iteration_start_outcomes(&post_iteration_start_outcomes)?;
 
         // Update RPC shared hat state so get_state reflects the current iteration's hat
         if let Some(ref shared) = rpc_dispatcher_started
@@ -1726,6 +1728,25 @@ fn fail_if_blocking_loop_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Res
         hook_name = %blocking_outcome.hook_name,
         reason = %reason,
         "Lifecycle hook blocked loop.start boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn fail_if_blocking_iteration_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked iteration.start boundary"
     );
 
     Err(anyhow::anyhow!(reason))
@@ -3031,6 +3052,66 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
         let blocked_exec_message = blocked_exec_error.to_string();
         assert!(blocked_exec_message.contains("block-exec-hook"));
         assert!(blocked_exec_message.contains("pre.loop.start"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_fail_if_blocking_iteration_start_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreIterationStart,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(9),
+                    timed_out: false,
+                }),
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostIterationStart,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                failure: None,
+            },
+        ];
+
+        assert!(fail_if_blocking_iteration_start_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_iteration_start_outcomes_surfaces_failure_context() {
+        let blocked_timeout_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreIterationStart,
+            hook_name: "block-timeout-hook".to_string(),
+            disposition: HookDisposition::Block,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: None,
+                timed_out: true,
+            }),
+        }];
+
+        let blocked_timeout_error =
+            fail_if_blocking_iteration_start_outcomes(&blocked_timeout_outcomes)
+                .expect_err("block disposition should fail iteration.start boundary");
+        let blocked_timeout_message = blocked_timeout_error.to_string();
+        assert!(blocked_timeout_message.contains("block-timeout-hook"));
+        assert!(blocked_timeout_message.contains("pre.iteration.start"));
+        assert!(blocked_timeout_message.contains("hook timed out"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostIterationStart,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+        }];
+
+        let blocked_exec_error = fail_if_blocking_iteration_start_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail iteration.start boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("post.iteration.start"));
         assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
     }
 
