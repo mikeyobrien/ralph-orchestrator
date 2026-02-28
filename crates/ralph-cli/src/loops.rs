@@ -870,13 +870,33 @@ fn resume_loop(args: ResumeArgs) -> Result<()> {
         .unwrap_or_else(|| cwd.clone());
 
     let suspend_state_store = SuspendStateStore::new(&target_root);
-    let _suspend_state = suspend_state_store
+    let suspend_state = suspend_state_store
         .read_suspend_state()
-        .with_context(|| format!("Failed to read suspend-state for loop '{}'", loop_id))?
-        .context(format!(
-            "Loop '{}' is not suspended (no suspend-state found)",
+        .with_context(|| format!("Failed to read suspend-state for loop '{}'", loop_id))?;
+    let resume_already_requested = suspend_state_store.is_resume_requested();
+
+    if suspend_state.is_none() {
+        if resume_already_requested {
+            println!(
+                "Resume was already requested for loop '{}'. The loop is not currently suspended; no action taken.",
+                loop_id
+            );
+        } else {
+            println!(
+                "Loop '{}' is not currently suspended. Nothing to resume.",
+                loop_id
+            );
+        }
+        return Ok(());
+    }
+
+    if resume_already_requested {
+        println!(
+            "Resume was already requested for loop '{}'. Waiting for the loop to continue.",
             loop_id
-        ))?;
+        );
+        return Ok(());
+    }
 
     suspend_state_store
         .write_resume_requested()
@@ -1845,7 +1865,38 @@ mod tests {
     }
 
     #[test]
-    fn test_resume_loop_rejects_non_suspended_loop() {
+    fn test_resume_loop_is_idempotent_when_resume_already_requested() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let loop_id = "loop-resume-idempotent-1";
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            loop_id,
+            "resume me",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let store = SuspendStateStore::new(temp_dir.path());
+        write_suspend_state(&store, loop_id);
+
+        resume_loop(ResumeArgs {
+            loop_id: loop_id.to_string(),
+        })
+        .expect("first resume request");
+        assert!(store.resume_requested_path().exists());
+
+        resume_loop(ResumeArgs {
+            loop_id: loop_id.to_string(),
+        })
+        .expect("repeat resume request should be no-op");
+        assert!(store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_resume_loop_noops_for_non_suspended_loop() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let _cwd = CwdGuard::set(temp_dir.path());
 
@@ -1859,12 +1910,14 @@ mod tests {
         );
         registry.register(entry).expect("register loop");
 
-        let err = resume_loop(ResumeArgs {
+        let store = SuspendStateStore::new(temp_dir.path());
+
+        resume_loop(ResumeArgs {
             loop_id: loop_id.to_string(),
         })
-        .expect_err("resume should fail without suspend-state");
+        .expect("resume should be no-op without suspend-state");
 
-        assert!(err.to_string().contains("not suspended"));
+        assert!(!store.resume_requested_path().exists());
     }
 
     #[test]
