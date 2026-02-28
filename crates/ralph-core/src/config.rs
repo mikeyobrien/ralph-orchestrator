@@ -2871,6 +2871,243 @@ skills:
         assert!(override_.tags.is_empty());
     }
 
+    #[test]
+    fn test_hooks_config_valid_yaml_parses_and_validates() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  defaults:
+    timeout_seconds: 45
+    max_output_bytes: 16384
+    suspend_mode: wait_for_resume
+  events:
+    pre.loop.start:
+      - name: env-guard
+        command: ["./scripts/hooks/env-guard.sh", "--check"]
+        on_error: block
+    post.loop.complete:
+      - name: notify
+        command: ["./scripts/hooks/notify.sh"]
+        on_error: warn
+        mutate:
+          enabled: true
+          format: json
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        assert!(config.hooks.enabled);
+        assert_eq!(config.hooks.defaults.timeout_seconds, 45);
+        assert_eq!(config.hooks.defaults.max_output_bytes, 16384);
+        assert_eq!(config.hooks.events.len(), 2);
+
+        let warnings = config.validate().unwrap();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_hooks_parse_rejects_invalid_phase_event_key() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.launch:
+      - name: bad-phase
+        command: ["./scripts/hooks/bad-phase.sh"]
+        on_error: warn
+"#;
+
+        let result = RalphConfig::parse_yaml(yaml);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::InvalidHookPhaseEvent { phase_event }
+            if phase_event == "pre.loop.launch"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_parse_rejects_invalid_on_error_enum_value() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: bad-on-error
+        command: ["./scripts/hooks/bad-on-error.sh"]
+        on_error: explode
+"#;
+
+        let result = RalphConfig::parse_yaml(yaml);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(&err, ConfigError::Yaml(_)));
+
+        let message = err.to_string();
+        assert!(message.contains("unknown variant `explode`"));
+        assert!(message.contains("warn"));
+        assert!(message.contains("block"));
+        assert!(message.contains("suspend"));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_missing_name() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - command: ["./scripts/hooks/no-name.sh"]
+        on_error: block
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.events.pre.loop.start[0].name"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_missing_command() {
+        let yaml = r"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: missing-command
+        on_error: block
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.events.pre.loop.start[0].command"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_missing_on_error() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: missing-on-error
+        command: ["./scripts/hooks/no-on-error.sh"]
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.events.pre.loop.start[0].on_error"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_zero_timeout_seconds() {
+        let yaml = r"
+hooks:
+  enabled: true
+  defaults:
+    timeout_seconds: 0
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.defaults.timeout_seconds"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_zero_max_output_bytes() {
+        let yaml = r"
+hooks:
+  enabled: true
+  defaults:
+    max_output_bytes: 0
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.defaults.max_output_bytes"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_parallel_non_v1_field() {
+        let yaml = r"
+hooks:
+  enabled: true
+  parallel: true
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::UnsupportedHookField { field, .. }
+            if field == "hooks.parallel"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_global_scope_non_v1_field() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: global-scope
+        command: ["./scripts/hooks/global.sh"]
+        on_error: warn
+        scope: global
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::UnsupportedHookField { field, .. }
+            if field == "hooks.events.pre.loop.start[0].scope"
+        ));
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // ROBOT CONFIG TESTS
     // ─────────────────────────────────────────────────────────────────────────
