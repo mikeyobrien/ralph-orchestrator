@@ -33,3 +33,17 @@ Sources:
 
 - Step 0.1 creates only the mapping skeleton; Step 0.2 will add `.feature` files + scenario placeholders.
 - Scenario titles intentionally embed stable AC labels for CI traceability.
+
+## Step 0.4 Red Baseline (CI-safe)
+
+- Command:
+  - `cargo run -p ralph-e2e -- --hooks-bdd --mock`
+- Exit status:
+  - `1` (expected red baseline while hooks implementation is pending)
+- Deterministic summary:
+  - `Summary: 0 passed, 18 failed, 18 total`
+- Reproducibility check:
+  - `cargo run -p ralph-e2e -- --hooks-bdd --mock --quiet`
+  - `Summary: 0 passed, 18 failed, 18 total`
+- Failure shape:
+  - All AC-labeled placeholders (`AC-01..AC-18`) fail with `pending: <AC-ID> placeholder scenario intentionally red until implementation`.
