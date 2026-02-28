@@ -1667,11 +1667,15 @@ fn build_iteration_start_payload_input(
     }
 }
 
+const RETRY_BACKOFF_DELAYS_MS: [u64; 3] = [100, 200, 400];
+const RETRY_BACKOFF_SIGNAL_POLL_INTERVAL_MS: u64 = 100;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HookDispatchOutcome {
     phase_event: HookPhaseEvent,
     hook_name: String,
     disposition: HookDisposition,
+    suspend_mode: HookSuspendMode,
     failure: Option<HookDispatchFailure>,
 }
 
@@ -1684,6 +1688,13 @@ enum HookDispatchFailure {
     HookExecutionError {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryBackoffDelayOutcome {
+    Elapsed,
+    StopRequested,
+    RestartRequested,
 }
 
 fn dispatch_phase_event_hooks(
@@ -1736,74 +1747,223 @@ fn dispatch_phase_event_hooks(
             stdin_payload: stdin_payload.clone(),
         };
 
-        match hook_executor.run(request) {
-            Ok(run_result) => {
-                let disposition = classify_hook_disposition(hook.on_error, &run_result);
+        let outcome = dispatch_hook_with_suspend_policy(
+            event_loop,
+            hook_executor,
+            loop_id,
+            &phase_event_key,
+            hook.phase_event,
+            &hook_name,
+            hook.on_error,
+            hook.suspend_mode,
+            &request,
+        );
+        outcomes.push(outcome);
+    }
 
-                event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(
-                    loop_id,
-                    &phase_event_key,
-                    &hook_name,
-                    disposition,
-                    &run_result,
-                ));
+    outcomes
+}
 
-                let failure = if disposition == HookDisposition::Pass {
-                    debug!(
-                        phase_event = %phase_event_key,
-                        hook_name = %hook_name,
-                        duration_ms = run_result.duration_ms,
-                        "Lifecycle hook executed successfully"
-                    );
-                    None
-                } else {
-                    // Step 5 captures telemetry but intentionally defers warn/block/suspend control-flow
-                    // changes to Step 6.
-                    warn!(
-                        phase_event = %phase_event_key,
-                        hook_name = %hook_name,
-                        disposition = ?disposition,
-                        exit_code = ?run_result.exit_code,
-                        timed_out = run_result.timed_out,
-                        "Lifecycle hook returned non-pass disposition; continuing"
-                    );
-                    Some(HookDispatchFailure::HookRunFailed {
-                        exit_code: run_result.exit_code,
-                        timed_out: run_result.timed_out,
-                    })
-                };
+#[allow(clippy::too_many_arguments)]
+fn dispatch_hook_with_suspend_policy(
+    event_loop: &EventLoop,
+    hook_executor: &HookExecutor,
+    loop_id: &str,
+    phase_event_key: &str,
+    phase_event: HookPhaseEvent,
+    hook_name: &str,
+    on_error: HookOnError,
+    suspend_mode: HookSuspendMode,
+    request: &HookRunRequest,
+) -> HookDispatchOutcome {
+    let mut outcome = execute_hook_attempt(
+        event_loop,
+        hook_executor,
+        loop_id,
+        phase_event_key,
+        phase_event,
+        hook_name,
+        on_error,
+        suspend_mode,
+        request,
+    );
 
-                outcomes.push(HookDispatchOutcome {
-                    phase_event: hook.phase_event,
-                    hook_name,
-                    disposition,
-                    failure,
-                });
+    if outcome.disposition != HookDisposition::Suspend
+        || suspend_mode != HookSuspendMode::RetryBackoff
+    {
+        return outcome;
+    }
+
+    for (retry_attempt, backoff_delay_ms) in RETRY_BACKOFF_DELAYS_MS.iter().copied().enumerate() {
+        match wait_for_retry_backoff_delay_with_signal_poll(
+            request.workspace_root.as_path(),
+            Duration::from_millis(backoff_delay_ms),
+        ) {
+            RetryBackoffDelayOutcome::Elapsed => {}
+            RetryBackoffDelayOutcome::StopRequested => {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    retry_attempt = retry_attempt + 1,
+                    "Stop requested while waiting for retry_backoff retry; deferring to suspend termination handling"
+                );
+                break;
             }
-            Err(error) => {
-                let disposition = disposition_from_on_error(hook.on_error);
+            RetryBackoffDelayOutcome::RestartRequested => {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    retry_attempt = retry_attempt + 1,
+                    "Restart requested while waiting for retry_backoff retry; deferring to suspend termination handling"
+                );
+                break;
+            }
+        }
 
+        outcome = execute_hook_attempt(
+            event_loop,
+            hook_executor,
+            loop_id,
+            phase_event_key,
+            phase_event,
+            hook_name,
+            on_error,
+            suspend_mode,
+            request,
+        );
+
+        if outcome.disposition == HookDisposition::Pass {
+            info!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                retry_attempt = retry_attempt + 1,
+                "Lifecycle hook recovered under retry_backoff"
+            );
+            return outcome;
+        }
+
+        if outcome.disposition != HookDisposition::Suspend {
+            return outcome;
+        }
+    }
+
+    warn!(
+        phase_event = %phase_event_key,
+        hook_name = %hook_name,
+        retry_attempts = RETRY_BACKOFF_DELAYS_MS.len(),
+        "Lifecycle hook retry_backoff policy exhausted; entering suspended wait_for_resume fallback"
+    );
+
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_hook_attempt(
+    event_loop: &EventLoop,
+    hook_executor: &HookExecutor,
+    loop_id: &str,
+    phase_event_key: &str,
+    phase_event: HookPhaseEvent,
+    hook_name: &str,
+    on_error: HookOnError,
+    suspend_mode: HookSuspendMode,
+    request: &HookRunRequest,
+) -> HookDispatchOutcome {
+    match hook_executor.run(request.clone()) {
+        Ok(run_result) => {
+            let disposition = classify_hook_disposition(on_error, &run_result);
+
+            event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(
+                loop_id,
+                phase_event_key,
+                hook_name,
+                disposition,
+                &run_result,
+            ));
+
+            let failure = if disposition == HookDisposition::Pass {
+                debug!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    duration_ms = run_result.duration_ms,
+                    "Lifecycle hook executed successfully"
+                );
+                None
+            } else {
                 warn!(
                     phase_event = %phase_event_key,
                     hook_name = %hook_name,
                     disposition = ?disposition,
-                    error = %error,
-                    "Lifecycle hook execution failed; continuing"
+                    exit_code = ?run_result.exit_code,
+                    timed_out = run_result.timed_out,
+                    "Lifecycle hook returned non-pass disposition; continuing"
                 );
+                Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: run_result.exit_code,
+                    timed_out: run_result.timed_out,
+                })
+            };
 
-                outcomes.push(HookDispatchOutcome {
-                    phase_event: hook.phase_event,
-                    hook_name,
-                    disposition,
-                    failure: Some(HookDispatchFailure::HookExecutionError {
-                        message: error.to_string(),
-                    }),
-                });
+            HookDispatchOutcome {
+                phase_event,
+                hook_name: hook_name.to_string(),
+                disposition,
+                suspend_mode,
+                failure,
+            }
+        }
+        Err(error) => {
+            let disposition = disposition_from_on_error(on_error);
+
+            warn!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                disposition = ?disposition,
+                error = %error,
+                "Lifecycle hook execution failed; continuing"
+            );
+
+            HookDispatchOutcome {
+                phase_event,
+                hook_name: hook_name.to_string(),
+                disposition,
+                suspend_mode,
+                failure: Some(HookDispatchFailure::HookExecutionError {
+                    message: error.to_string(),
+                }),
             }
         }
     }
+}
 
-    outcomes
+fn wait_for_retry_backoff_delay_with_signal_poll(
+    workspace_root: &Path,
+    backoff_delay: Duration,
+) -> RetryBackoffDelayOutcome {
+    if backoff_delay.is_zero() {
+        return RetryBackoffDelayOutcome::Elapsed;
+    }
+
+    let poll_interval = Duration::from_millis(RETRY_BACKOFF_SIGNAL_POLL_INTERVAL_MS);
+    let sleep_started_at = std::time::Instant::now();
+
+    loop {
+        if is_stop_requested(workspace_root) {
+            return RetryBackoffDelayOutcome::StopRequested;
+        }
+
+        if is_restart_requested(workspace_root) {
+            return RetryBackoffDelayOutcome::RestartRequested;
+        }
+
+        let elapsed = sleep_started_at.elapsed();
+        if elapsed >= backoff_delay {
+            return RetryBackoffDelayOutcome::Elapsed;
+        }
+
+        let remaining = backoff_delay.saturating_sub(elapsed);
+        std::thread::sleep(std::cmp::min(remaining, poll_interval));
+    }
 }
 
 fn fail_if_blocking_loop_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
@@ -1864,7 +2024,7 @@ async fn wait_for_resume_if_suspended(
         suspending_outcome.phase_event,
         &suspending_outcome.hook_name,
         &reason,
-        HookSuspendMode::WaitForResume,
+        suspending_outcome.suspend_mode,
         chrono::Utc::now(),
     );
 
@@ -1881,8 +2041,9 @@ async fn wait_for_resume_if_suspended(
     warn!(
         phase_event = %suspending_outcome.phase_event,
         hook_name = %suspending_outcome.hook_name,
+        suspend_mode = ?suspending_outcome.suspend_mode,
         reason = %reason,
-        "Lifecycle hook requested suspend; entering wait_for_resume"
+        "Lifecycle hook requested suspend; entering wait_for_resume gate"
     );
 
     loop {
@@ -1934,6 +2095,10 @@ fn clear_suspend_wait_artifacts(suspend_state_store: &SuspendStateStore) -> Resu
         .consume_resume_requested()
         .context("Failed to clear stale resume signal")?;
     Ok(())
+}
+
+fn is_stop_requested(workspace_root: &Path) -> bool {
+    workspace_root.join(".ralph/stop-requested").exists()
 }
 
 fn consume_stop_requested_signal(workspace_root: &Path) -> Result<bool> {
@@ -2855,10 +3020,11 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn hook_spec_with_command_and_on_error(
+    fn hook_spec_with_command_and_on_error_and_suspend_mode(
         name: &str,
         command: Vec<String>,
         on_error: HookOnError,
+        suspend_mode: Option<HookSuspendMode>,
     ) -> ralph_core::HookSpec {
         ralph_core::HookSpec {
             name: name.to_string(),
@@ -2868,10 +3034,19 @@ mod tests {
             timeout_seconds: None,
             max_output_bytes: None,
             on_error: Some(on_error),
-            suspend_mode: None,
+            suspend_mode,
             mutate: ralph_core::HookMutationConfig::default(),
             extra: std::collections::HashMap::new(),
         }
+    }
+
+    #[cfg(unix)]
+    fn hook_spec_with_command_and_on_error(
+        name: &str,
+        command: Vec<String>,
+        on_error: HookOnError,
+    ) -> ralph_core::HookSpec {
+        hook_spec_with_command_and_on_error_and_suspend_mode(name, command, on_error, None)
     }
 
     #[cfg(unix)]
@@ -2925,16 +3100,25 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             .collect()
     }
 
-    fn suspend_outcome(phase_event: HookPhaseEvent, hook_name: &str) -> HookDispatchOutcome {
+    fn suspend_outcome_with_mode(
+        phase_event: HookPhaseEvent,
+        hook_name: &str,
+        suspend_mode: HookSuspendMode,
+    ) -> HookDispatchOutcome {
         HookDispatchOutcome {
             phase_event,
             hook_name: hook_name.to_string(),
             disposition: HookDisposition::Suspend,
+            suspend_mode,
             failure: Some(HookDispatchFailure::HookRunFailed {
                 exit_code: Some(41),
                 timed_out: false,
             }),
         }
+    }
+
+    fn suspend_outcome(phase_event: HookPhaseEvent, hook_name: &str) -> HookDispatchOutcome {
+        suspend_outcome_with_mode(phase_event, hook_name, HookSuspendMode::WaitForResume)
     }
 
     fn block_on_test_future<F>(future: F) -> F::Output
@@ -3521,6 +3705,217 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_retry_backoff_recovers_before_exhaustion() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("retry-backoff-attempts.txt");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "retry-backoff-pre-iteration-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+if [ "$attempt" -lt 3 ]; then
+  exit 41
+fi
+exit 0"#
+                        .to_string(),
+                    "retry-backoff-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::RetryBackoff),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                None,
+                None,
+            ),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Pass);
+        assert_eq!(outcomes[0].suspend_mode, HookSuspendMode::RetryBackoff);
+        assert_eq!(outcomes[0].failure, None);
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(attempts.trim(), "3", "hook should recover on third attempt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_retry_backoff_exhausts_to_suspend() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("retry-backoff-attempts.txt");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PostIterationStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "retry-backoff-post-iteration-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+exit 51"#
+                        .to_string(),
+                    "retry-backoff-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::RetryBackoff),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Suspend);
+        assert_eq!(outcomes[0].suspend_mode, HookSuspendMode::RetryBackoff);
+        assert_eq!(
+            outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(51),
+                timed_out: false,
+            })
+        );
+
+        let attempts: usize = std::fs::read_to_string(&attempts_path)
+            .expect("read attempts")
+            .trim()
+            .parse()
+            .expect("parse attempts");
+        assert_eq!(
+            attempts,
+            RETRY_BACKOFF_DELAYS_MS.len() + 1,
+            "retry_backoff should cap retries at the configured schedule"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_retry_backoff_yields_to_stop_signal() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("retry-backoff-attempts.txt");
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/stop-requested"), "")
+            .expect("write stop signal");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "retry-backoff-pre-loop-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+exit 61"#
+                        .to_string(),
+                    "retry-backoff-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::RetryBackoff),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(
+            attempts.trim(),
+            "1",
+            "stop signal should short-circuit retry_backoff retries"
+        );
+
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::Stopped));
+        assert!(!temp_dir.path().join(".ralph/stop-requested").exists());
+    }
+
     #[test]
     fn test_fail_if_blocking_loop_start_outcomes_allows_non_blocking_dispositions() {
         let outcomes = vec![
@@ -3528,6 +3923,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
                 phase_event: HookPhaseEvent::PreLoopStart,
                 hook_name: "warn-hook".to_string(),
                 disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
                 failure: Some(HookDispatchFailure::HookRunFailed {
                     exit_code: Some(7),
                     timed_out: false,
@@ -3537,6 +3933,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
                 phase_event: HookPhaseEvent::PostLoopStart,
                 hook_name: "pass-hook".to_string(),
                 disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
                 failure: None,
             },
         ];
@@ -3550,6 +3947,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             phase_event: HookPhaseEvent::PostLoopStart,
             hook_name: "block-hook".to_string(),
             disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
             failure: Some(HookDispatchFailure::HookRunFailed {
                 exit_code: Some(42),
                 timed_out: false,
@@ -3567,6 +3965,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             phase_event: HookPhaseEvent::PreLoopStart,
             hook_name: "block-exec-hook".to_string(),
             disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
             failure: Some(HookDispatchFailure::HookExecutionError {
                 message: "spawn failed".to_string(),
             }),
@@ -3587,6 +3986,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
                 phase_event: HookPhaseEvent::PreIterationStart,
                 hook_name: "warn-hook".to_string(),
                 disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
                 failure: Some(HookDispatchFailure::HookRunFailed {
                     exit_code: Some(9),
                     timed_out: false,
@@ -3596,6 +3996,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
                 phase_event: HookPhaseEvent::PostIterationStart,
                 hook_name: "pass-hook".to_string(),
                 disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
                 failure: None,
             },
         ];
@@ -3609,6 +4010,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             phase_event: HookPhaseEvent::PreIterationStart,
             hook_name: "block-timeout-hook".to_string(),
             disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
             failure: Some(HookDispatchFailure::HookRunFailed {
                 exit_code: None,
                 timed_out: true,
@@ -3627,6 +4029,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             phase_event: HookPhaseEvent::PostIterationStart,
             hook_name: "block-exec-hook".to_string(),
             disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
             failure: Some(HookDispatchFailure::HookExecutionError {
                 message: "spawn failed".to_string(),
             }),
@@ -3649,6 +4052,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             phase_event: HookPhaseEvent::PreLoopStart,
             hook_name: "warn-hook".to_string(),
             disposition: HookDisposition::Warn,
+            suspend_mode: HookSuspendMode::WaitForResume,
             failure: Some(HookDispatchFailure::HookRunFailed {
                 exit_code: Some(7),
                 timed_out: false,
