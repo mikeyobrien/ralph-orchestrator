@@ -3,8 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
+use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Input contract for executing a single lifecycle hook command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +107,44 @@ pub enum HookExecutorError {
         command: String,
         cwd: String,
         #[source]
-        source: std::io::Error,
+        source: io::Error,
+    },
+
+    /// Serializing the JSON stdin payload failed.
+    #[error(
+        "failed to serialize stdin payload for hook '{hook_name}' phase-event '{phase_event}' with command '{command}': {source}"
+    )]
+    StdinSerialize {
+        phase_event: String,
+        hook_name: String,
+        command: String,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// Writing stdin payload bytes to the child process failed.
+    #[error(
+        "failed to write stdin payload for hook '{hook_name}' phase-event '{phase_event}' with command '{command}': {source}"
+    )]
+    StdinWrite {
+        phase_event: String,
+        hook_name: String,
+        command: String,
+        #[source]
+        source: io::Error,
+    },
+
+    /// Timeout enforcement attempted to terminate the process but kill failed.
+    #[error(
+        "hook '{hook_name}' for phase-event '{phase_event}' exceeded timeout ({timeout_seconds}s) and could not be terminated (command: '{command}'): {source}"
+    )]
+    TimeoutTerminate {
+        phase_event: String,
+        hook_name: String,
+        command: String,
+        timeout_seconds: u64,
+        #[source]
+        source: io::Error,
     },
 
     /// Waiting for spawned process completion failed.
@@ -115,7 +156,7 @@ pub enum HookExecutorError {
         hook_name: String,
         command: String,
         #[source]
-        source: std::io::Error,
+        source: io::Error,
     },
 }
 
@@ -162,13 +203,15 @@ impl HookExecutorContract for HookExecutor {
                     reason,
                 })?;
 
+        let command_display = request.command.join(" ");
+
         let mut command = Command::new(&resolved_command);
         command.args(request.command.iter().skip(1));
         command.current_dir(&resolved_cwd);
         command.envs(&request.env);
 
         // Step 3.3 wires JSON stdin payload delivery.
-        command.stdin(Stdio::null());
+        command.stdin(Stdio::piped());
 
         // Step 3.4 adds stdout/stderr capture + truncation.
         command.stdout(Stdio::null());
@@ -177,17 +220,26 @@ impl HookExecutorContract for HookExecutor {
         let mut child = command.spawn().map_err(|source| HookExecutorError::Spawn {
             phase_event: request.phase_event.clone(),
             hook_name: request.hook_name.clone(),
-            command: request.command.join(" "),
+            command: command_display.clone(),
             cwd: resolved_cwd.display().to_string(),
             source,
         })?;
 
-        let status = child.wait().map_err(|source| HookExecutorError::Wait {
-            phase_event: request.phase_event.clone(),
-            hook_name: request.hook_name.clone(),
-            command: request.command.join(" "),
-            source,
-        })?;
+        write_stdin_payload(
+            &mut child,
+            &request.stdin_payload,
+            &request.phase_event,
+            &request.hook_name,
+            &command_display,
+        )?;
+
+        let (status, timed_out) = wait_for_completion(
+            &mut child,
+            request.timeout_seconds,
+            &request.phase_event,
+            &request.hook_name,
+            &command_display,
+        )?;
 
         let ended_at = Utc::now();
 
@@ -196,11 +248,127 @@ impl HookExecutorContract for HookExecutor {
             ended_at,
             duration_ms: duration_ms(started_at, ended_at),
             exit_code: status.code(),
-            timed_out: false,
+            timed_out,
             stdout: HookStreamOutput::default(),
             stderr: HookStreamOutput::default(),
         })
     }
+}
+
+const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+fn write_stdin_payload(
+    child: &mut Child,
+    stdin_payload: &serde_json::Value,
+    phase_event: &str,
+    hook_name: &str,
+    command: &str,
+) -> Result<(), HookExecutorError> {
+    let Some(mut stdin) = child.stdin.take() else {
+        return Ok(());
+    };
+
+    let payload =
+        serde_json::to_vec(stdin_payload).map_err(|source| HookExecutorError::StdinSerialize {
+            phase_event: phase_event.to_string(),
+            hook_name: hook_name.to_string(),
+            command: command.to_string(),
+            source,
+        })?;
+
+    if let Err(source) = stdin.write_all(&payload)
+        && source.kind() != io::ErrorKind::BrokenPipe
+    {
+        return Err(HookExecutorError::StdinWrite {
+            phase_event: phase_event.to_string(),
+            hook_name: hook_name.to_string(),
+            command: command.to_string(),
+            source,
+        });
+    }
+
+    if let Err(source) = stdin.flush()
+        && source.kind() != io::ErrorKind::BrokenPipe
+    {
+        return Err(HookExecutorError::StdinWrite {
+            phase_event: phase_event.to_string(),
+            hook_name: hook_name.to_string(),
+            command: command.to_string(),
+            source,
+        });
+    }
+
+    Ok(())
+}
+
+fn wait_for_completion(
+    child: &mut Child,
+    timeout_seconds: u64,
+    phase_event: &str,
+    hook_name: &str,
+    command: &str,
+) -> Result<(ExitStatus, bool), HookExecutorError> {
+    let timeout = Duration::from_secs(timeout_seconds);
+    let wait_started_at = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok((status, false)),
+            Ok(None) => {
+                if wait_started_at.elapsed() >= timeout {
+                    let status = terminate_for_timeout(
+                        child,
+                        timeout_seconds,
+                        phase_event,
+                        hook_name,
+                        command,
+                    )?;
+                    return Ok((status, true));
+                }
+
+                let elapsed = wait_started_at.elapsed();
+                let remaining = timeout.saturating_sub(elapsed);
+                thread::sleep(remaining.min(WAIT_POLL_INTERVAL));
+            }
+            Err(source) => {
+                return Err(HookExecutorError::Wait {
+                    phase_event: phase_event.to_string(),
+                    hook_name: hook_name.to_string(),
+                    command: command.to_string(),
+                    source,
+                });
+            }
+        }
+    }
+}
+
+fn terminate_for_timeout(
+    child: &mut Child,
+    timeout_seconds: u64,
+    phase_event: &str,
+    hook_name: &str,
+    command: &str,
+) -> Result<ExitStatus, HookExecutorError> {
+    if let Err(source) = child.kill() {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Ok(status);
+        }
+
+        return Err(HookExecutorError::TimeoutTerminate {
+            phase_event: phase_event.to_string(),
+            hook_name: hook_name.to_string(),
+            command: command.to_string(),
+            timeout_seconds,
+            source,
+        });
+    }
+
+    child.wait().map_err(|source| HookExecutorError::Wait {
+        phase_event: phase_event.to_string(),
+        hook_name: hook_name.to_string(),
+        command: command.to_string(),
+        source,
+    })
 }
 
 fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
