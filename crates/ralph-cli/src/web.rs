@@ -48,18 +48,57 @@ pub struct WebArgs {
     pub no_open: bool,
 }
 
+fn is_transient_exec_error(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        const ETXTBSY: i32 = 26;
+        if err.raw_os_error() == Some(ETXTBSY) {
+            return true;
+        }
+    }
+
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("text file busy") || msg.contains("etxtbsy")
+}
+
+fn run_command_output_with_retry(
+    cmd: &OsStr,
+    args: &[&str],
+    current_dir: Option<&Path>,
+) -> std::io::Result<std::process::Output> {
+    const MAX_ATTEMPTS: usize = 5;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        let mut command = Command::new(cmd);
+        command.args(args);
+        if let Some(dir) = current_dir {
+            command.current_dir(dir);
+        }
+
+        match command.output() {
+            Ok(output) => return Ok(output),
+            Err(err) => {
+                if is_transient_exec_error(&err) && attempt + 1 < MAX_ATTEMPTS {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    unreachable!("retry loop should always return before exhausting attempts")
+}
+
 /// Check that Node.js is installed and >= 18. Returns the version string.
 fn check_node_with(node_cmd: &OsStr) -> Result<String> {
-    let output = Command::new(node_cmd)
-        .arg("--version")
-        .output()
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "Node.js is not installed or not in PATH.\n\
-                 Install Node.js 18+: https://nodejs.org/\n\
-                 Or via nvm: nvm install 18"
-            )
-        })?;
+    let output = run_command_output_with_retry(node_cmd, &["--version"], None).map_err(|_| {
+        anyhow::anyhow!(
+            "Node.js is not installed or not in PATH.\n\
+             Install Node.js 18+: https://nodejs.org/\n\
+             Or via nvm: nvm install 18"
+        )
+    })?;
 
     if !output.status.success() {
         anyhow::bail!(
@@ -90,15 +129,12 @@ fn check_node_with(node_cmd: &OsStr) -> Result<String> {
 
 /// Check that npm is installed and working. Returns the version string.
 fn check_npm_with(npm_cmd: &OsStr) -> Result<String> {
-    let output = Command::new(npm_cmd)
-        .arg("--version")
-        .output()
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "npm is not installed or not in PATH.\n\
-             npm should come with Node.js. Try reinstalling Node: https://nodejs.org/"
-            )
-        })?;
+    let output = run_command_output_with_retry(npm_cmd, &["--version"], None).map_err(|_| {
+        anyhow::anyhow!(
+            "npm is not installed or not in PATH.\n\
+         npm should come with Node.js. Try reinstalling Node: https://nodejs.org/"
+        )
+    })?;
 
     if !output.status.success() {
         anyhow::bail!(
@@ -191,7 +227,7 @@ fn run_tsx_version_command_with_retry(
     backend_dir: &Path,
     npx_cmd: &OsStr,
 ) -> Option<std::process::Output> {
-    const MAX_ATTEMPTS: usize = 3;
+    const MAX_ATTEMPTS: usize = 5;
 
     for attempt in 0..MAX_ATTEMPTS {
         match Command::new(npx_cmd)
@@ -216,7 +252,13 @@ fn run_tsx_version_command_with_retry(
                 // Non-transient failure: return output for best-effort parsing.
                 return Some(output);
             }
-            Err(_) => {
+            Err(err) => {
+                // Retry transient execution errors for freshly written helper scripts.
+                if is_transient_exec_error(&err) && attempt + 1 < MAX_ATTEMPTS {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+
                 // Command missing/unrunnable.
                 return None;
             }
