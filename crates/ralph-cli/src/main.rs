@@ -10,6 +10,7 @@
 //! - Project initialization via `ralph init`
 //! - SOP-based planning via `ralph plan`
 //! - Code task generation via `ralph code-task`
+//! - Hook config validation via `ralph hooks validate`
 //! - Work item tracking via `ralph task`
 
 mod backend_support;
@@ -17,6 +18,7 @@ mod bot;
 mod display;
 mod doctor;
 mod hats;
+mod hooks;
 mod init;
 mod interact;
 mod loop_runner;
@@ -471,6 +473,9 @@ enum Commands {
 
     /// Run preflight checks to validate configuration and environment
     Preflight(preflight::PreflightArgs),
+
+    /// Validate hooks configuration and command wiring
+    Hooks(hooks::HooksArgs),
 
     /// Run first-run diagnostics and environment checks
     Doctor(doctor::DoctorArgs),
@@ -1011,6 +1016,12 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Some(Commands::Hooks(args)) => hooks::execute(
+            &config_sources,
+            hats_source.as_ref(),
+            args,
+            cli.color.should_use_colors(),
+        ),
         Some(Commands::Doctor(args)) => {
             doctor::execute(
                 &config_sources,
