@@ -1571,6 +1571,25 @@ fn build_iteration_start_payload_input(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HookDispatchOutcome {
+    phase_event: HookPhaseEvent,
+    hook_name: String,
+    disposition: HookDisposition,
+    failure: Option<HookDispatchFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HookDispatchFailure {
+    HookRunFailed {
+        exit_code: Option<i32>,
+        timed_out: bool,
+    },
+    HookExecutionError {
+        message: String,
+    },
+}
+
 fn dispatch_phase_event_hooks(
     event_loop: &EventLoop,
     hooks_enabled: bool,
@@ -1579,14 +1598,14 @@ fn dispatch_phase_event_hooks(
     hook_executor: &HookExecutor,
     phase_event: HookPhaseEvent,
     payload_input: HookPayloadBuilderInput,
-) {
+) -> Vec<HookDispatchOutcome> {
     if !hooks_enabled {
-        return;
+        return Vec::new();
     }
 
     let resolved_hooks = hook_engine.resolve_phase_event(phase_event);
     if resolved_hooks.is_empty() {
-        return;
+        return Vec::new();
     }
 
     let workspace_root = payload_input.workspace.clone();
@@ -1599,9 +1618,11 @@ fn dispatch_phase_event_hooks(
                 error = %error,
                 "Failed to serialize lifecycle hook payload; skipping phase-event dispatch"
             );
-            return;
+            return Vec::new();
         }
     };
+
+    let mut outcomes = Vec::with_capacity(resolved_hooks.len());
 
     for hook in resolved_hooks {
         let hook_name = hook.name.clone();
@@ -1631,13 +1652,14 @@ fn dispatch_phase_event_hooks(
                     &run_result,
                 ));
 
-                if disposition == HookDisposition::Pass {
+                let failure = if disposition == HookDisposition::Pass {
                     debug!(
                         phase_event = %phase_event_key,
                         hook_name = %hook_name,
                         duration_ms = run_result.duration_ms,
                         "Lifecycle hook executed successfully"
                     );
+                    None
                 } else {
                     // Step 5 captures telemetry but intentionally defers warn/block/suspend control-flow
                     // changes to Step 6.
@@ -1649,29 +1671,58 @@ fn dispatch_phase_event_hooks(
                         timed_out = run_result.timed_out,
                         "Lifecycle hook returned non-pass disposition; continuing"
                     );
-                }
+                    Some(HookDispatchFailure::HookRunFailed {
+                        exit_code: run_result.exit_code,
+                        timed_out: run_result.timed_out,
+                    })
+                };
+
+                outcomes.push(HookDispatchOutcome {
+                    phase_event: hook.phase_event,
+                    hook_name,
+                    disposition,
+                    failure,
+                });
             }
             Err(error) => {
+                let disposition = disposition_from_on_error(hook.on_error);
+
                 warn!(
                     phase_event = %phase_event_key,
                     hook_name = %hook_name,
+                    disposition = ?disposition,
                     error = %error,
                     "Lifecycle hook execution failed; continuing"
                 );
+
+                outcomes.push(HookDispatchOutcome {
+                    phase_event: hook.phase_event,
+                    hook_name,
+                    disposition,
+                    failure: Some(HookDispatchFailure::HookExecutionError {
+                        message: error.to_string(),
+                    }),
+                });
             }
         }
     }
+
+    outcomes
 }
 
 fn classify_hook_disposition(on_error: HookOnError, run_result: &HookRunResult) -> HookDisposition {
     if !run_result.timed_out && run_result.exit_code == Some(0) {
         HookDisposition::Pass
     } else {
-        match on_error {
-            HookOnError::Warn => HookDisposition::Warn,
-            HookOnError::Block => HookDisposition::Block,
-            HookOnError::Suspend => HookDisposition::Suspend,
-        }
+        disposition_from_on_error(on_error)
+    }
+}
+
+fn disposition_from_on_error(on_error: HookOnError) -> HookDisposition {
+    match on_error {
+        HookOnError::Warn => HookDisposition::Warn,
+        HookOnError::Block => HookDisposition::Block,
+        HookOnError::Suspend => HookDisposition::Suspend,
     }
 }
 
@@ -2521,7 +2572,11 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn hook_spec_with_command(name: &str, command: Vec<String>) -> ralph_core::HookSpec {
+    fn hook_spec_with_command_and_on_error(
+        name: &str,
+        command: Vec<String>,
+        on_error: HookOnError,
+    ) -> ralph_core::HookSpec {
         ralph_core::HookSpec {
             name: name.to_string(),
             command,
@@ -2529,11 +2584,16 @@ mod tests {
             env: std::collections::HashMap::new(),
             timeout_seconds: None,
             max_output_bytes: None,
-            on_error: Some(HookOnError::Warn),
+            on_error: Some(on_error),
             suspend_mode: None,
             mutate: ralph_core::HookMutationConfig::default(),
             extra: std::collections::HashMap::new(),
         }
+    }
+
+    #[cfg(unix)]
+    fn hook_spec_with_command(name: &str, command: Vec<String>) -> ralph_core::HookSpec {
+        hook_spec_with_command_and_on_error(name, command, HookOnError::Warn)
     }
 
     #[cfg(unix)]
@@ -2670,7 +2730,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
         let event_loop = dispatch_test_event_loop(temp_dir.path());
         let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
 
-        dispatch_phase_event_hooks(
+        let disabled_outcomes = dispatch_phase_event_hooks(
             &event_loop,
             false,
             "loop-test",
@@ -2688,7 +2748,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             ),
         );
 
-        dispatch_phase_event_hooks(
+        let empty_outcomes = dispatch_phase_event_hooks(
             &event_loop,
             true,
             "loop-test",
@@ -2706,7 +2766,7 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
             ),
         );
 
-        dispatch_phase_event_hooks(
+        let mismatched_phase_outcomes = dispatch_phase_event_hooks(
             &event_loop,
             true,
             "loop-test",
@@ -2717,9 +2777,151 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
         );
 
         assert!(
+            disabled_outcomes.is_empty(),
+            "disabled hooks must be a no-op"
+        );
+        assert!(
+            empty_outcomes.is_empty(),
+            "empty hooks config must be a no-op"
+        );
+        assert!(
+            mismatched_phase_outcomes.is_empty(),
+            "dispatching a phase without hooks must be a no-op"
+        );
+        assert!(
             !log_path.exists(),
             "hook log should not be created on no-op paths"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_returns_dispositions_and_failure_context() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![
+                hook_spec_with_command(
+                    "hook-pass",
+                    vec!["sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+                ),
+                hook_spec_with_command(
+                    "hook-warn",
+                    vec!["sh".to_string(), "-c".to_string(), "exit 7".to_string()],
+                ),
+                hook_spec_with_command_and_on_error(
+                    "hook-block",
+                    vec!["sh".to_string(), "-c".to_string(), "exit 23".to_string()],
+                    HookOnError::Block,
+                ),
+            ],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 3);
+
+        assert_eq!(outcomes[0].hook_name, "hook-pass");
+        assert_eq!(outcomes[0].phase_event, HookPhaseEvent::PreLoopStart);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Pass);
+        assert!(outcomes[0].failure.is_none());
+
+        assert_eq!(outcomes[1].hook_name, "hook-warn");
+        assert_eq!(outcomes[1].disposition, HookDisposition::Warn);
+        assert_eq!(
+            outcomes[1].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(7),
+                timed_out: false,
+            })
+        );
+
+        assert_eq!(outcomes[2].hook_name, "hook-block");
+        assert_eq!(outcomes[2].disposition, HookDisposition::Block);
+        assert_eq!(
+            outcomes[2].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(23),
+                timed_out: false,
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_maps_executor_failures_to_on_error_disposition() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![
+                hook_spec_with_command(
+                    "warn-exec-error",
+                    vec!["definitely-not-a-real-exec-warn".to_string()],
+                ),
+                hook_spec_with_command_and_on_error(
+                    "block-exec-error",
+                    vec!["definitely-not-a-real-exec-block".to_string()],
+                    HookOnError::Block,
+                ),
+            ],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].hook_name, "warn-exec-error");
+        assert_eq!(outcomes[0].disposition, HookDisposition::Warn);
+        match &outcomes[0].failure {
+            Some(HookDispatchFailure::HookExecutionError { message }) => {
+                assert!(
+                    message.contains("definitely-not-a-real-exec-warn"),
+                    "executor failure context should include missing command"
+                );
+            }
+            other => panic!("expected execution error failure context, got {other:?}"),
+        }
+
+        assert_eq!(outcomes[1].hook_name, "block-exec-error");
+        assert_eq!(outcomes[1].disposition, HookDisposition::Block);
+        match &outcomes[1].failure {
+            Some(HookDispatchFailure::HookExecutionError { message }) => {
+                assert!(
+                    message.contains("definitely-not-a-real-exec-block"),
+                    "executor failure context should include missing command"
+                );
+            }
+            other => panic!("expected execution error failure context, got {other:?}"),
+        }
     }
 
     #[test]
