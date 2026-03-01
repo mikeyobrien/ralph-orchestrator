@@ -120,9 +120,14 @@ Mutation target scope:
 - `crates/ralph-core/src/preflight.rs`
 - `crates/ralph-cli/src/loop_runner.rs` (hook disposition + suspend control path)
 
-Mutation score calibration starts at **>=70%**, aligned with
+Global mutation quality parsing remains anchored at **>=70%** via
 `QualityReport::MUTATION_THRESHOLD` in
 `crates/ralph-core/src/event_parser.rs`.
+
+For the scoped hooks rollout, baseline calibration is documented in
+`docs/06-analysis/hooks-mutation-baseline-2026-03-01.md` and sets an initial
+operational gate of **>=55%** (`caught / (caught + missed)`), with timeouts and
+critical-path no-survivor checks enforced separately.
 
 ### Behavioral Gates
 
