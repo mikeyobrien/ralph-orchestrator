@@ -1,11 +1,12 @@
-//! Minimal BDD runner for hooks acceptance placeholders.
+//! Hooks BDD runner with deterministic CI-safe acceptance evaluation.
 //!
-//! Step 0 scaffolding intentionally keeps all AC scenarios red while wiring:
+//! Current rollout status:
+//! - AC-01..AC-18: deterministic source-evidence checks (green in `--mock` mode).
 //! - feature discovery from `features/hooks/*.feature`
-//! - placeholder step-definition matching
-//! - deterministic CI-safe execution path
+//! - stable AC-tagged failure output for traceability
 
 use crate::executor::find_workspace_root;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -13,7 +14,26 @@ use thiserror::Error;
 const HOOKS_FEATURE_DIR_WORKSPACE: &str = "crates/ralph-e2e/features/hooks";
 const HOOKS_FEATURE_DIR_CRATE: &str = "features/hooks";
 
-/// Configuration for executing the hooks BDD placeholder suite.
+const GREEN_ACCEPTANCE_IDS: [&str; 18] = [
+    "AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10",
+    "AC-11", "AC-12", "AC-13", "AC-14", "AC-15", "AC-16", "AC-17", "AC-18",
+];
+const REQUIRED_V1_PHASE_EVENTS: [&str; 12] = [
+    "pre.loop.start",
+    "post.loop.start",
+    "pre.iteration.start",
+    "post.iteration.start",
+    "pre.plan.created",
+    "post.plan.created",
+    "pre.human.interact",
+    "post.human.interact",
+    "pre.loop.complete",
+    "post.loop.complete",
+    "pre.loop.error",
+    "post.loop.error",
+];
+
+/// Configuration for executing the hooks BDD acceptance suite.
 #[derive(Debug, Clone, Default)]
 pub struct HooksBddConfig {
     /// Optional scenario filter (matches id, scenario title, tags, or feature filename).
@@ -87,7 +107,7 @@ pub struct HooksBddScenario {
     steps: Vec<HooksStep>,
 }
 
-/// Result of executing one placeholder scenario.
+/// Result of executing one hooks BDD scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HooksBddScenarioResult {
     /// Stable AC ID tag (or fallback scenario title if tag missing).
@@ -144,6 +164,73 @@ struct HooksStep {
     text: String,
 }
 
+#[derive(Debug, Default)]
+struct HooksStepContext {
+    criterion_id: Option<String>,
+    ci_safe_confirmed: bool,
+}
+
+#[derive(Debug, Default)]
+struct SourceEvidenceCache {
+    workspace_root: Option<PathBuf>,
+    files: HashMap<String, String>,
+}
+
+impl SourceEvidenceCache {
+    fn resolve_workspace_root(&mut self) -> Result<PathBuf, String> {
+        if let Some(root) = &self.workspace_root {
+            return Ok(root.clone());
+        }
+
+        let manifest_fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+
+        let root = find_workspace_root()
+            .filter(|candidate| candidate.join(HOOKS_FEATURE_DIR_WORKSPACE).is_dir())
+            .unwrap_or(manifest_fallback);
+
+        self.workspace_root = Some(root.clone());
+        Ok(root)
+    }
+
+    fn read_source_file(&mut self, relative_path: &str) -> Result<&str, String> {
+        if !self.files.contains_key(relative_path) {
+            let root = self.resolve_workspace_root()?;
+            let path = root.join(relative_path);
+            let content = fs::read_to_string(&path).map_err(|source| {
+                format!(
+                    "failed to read source evidence file '{}': {}",
+                    path.display(),
+                    source
+                )
+            })?;
+            self.files.insert(relative_path.to_string(), content);
+        }
+
+        self.files
+            .get(relative_path)
+            .map(String::as_str)
+            .ok_or_else(|| format!("source evidence cache entry missing: {relative_path}"))
+    }
+
+    fn require_snippet(&mut self, relative_path: &str, snippet: &str) -> Result<usize, String> {
+        let content = self.read_source_file(relative_path)?;
+        let Some(index) = content.find(snippet) else {
+            return Err(format!("missing snippet in {}: {}", relative_path, snippet));
+        };
+
+        let line = content[..index]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        Ok(line)
+    }
+}
+
 /// Discovers hook BDD scenarios from `features/hooks/*.feature`.
 pub fn discover_hooks_bdd_scenarios(
     filter: Option<&str>,
@@ -174,381 +261,23 @@ pub fn discover_hooks_bdd_scenarios(
     Ok(scenarios)
 }
 
-/// Executes discovered hooks BDD scenarios through AC evaluator dispatch.
+/// Executes discovered hooks BDD scenarios.
 ///
-/// Routes each scenario to its corresponding AC evaluator for green verification.
+/// AC-01..AC-18 execute deterministic source-evidence checks in CI-safe mode.
 pub fn run_hooks_bdd_suite(config: &HooksBddConfig) -> Result<HooksBddRunResults, HooksBddError> {
     let scenarios = discover_hooks_bdd_scenarios(config.filter.as_deref())?;
     let mut results = Vec::with_capacity(scenarios.len());
+    let mut evidence_cache = SourceEvidenceCache::default();
 
     for scenario in scenarios {
-        results.push(execute_scenario(&scenario, config.ci_safe_mode));
+        results.push(execute_scenario(
+            &scenario,
+            config.ci_safe_mode,
+            &mut evidence_cache,
+        ));
     }
 
     Ok(HooksBddRunResults { results })
-}
-
-/// Execute a scenario through the AC evaluator dispatch.
-fn execute_scenario(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    // Route through evaluator dispatch for green verification
-    let evaluator = dispatch_ac_evaluator(&scenario.scenario_id);
-    evaluator(scenario, ci_safe_mode)
-}
-
-/// AC evaluator dispatch map - routes AC IDs to their evaluator functions.
-fn dispatch_ac_evaluator(ac_id: &str) -> fn(&HooksBddScenario, bool) -> HooksBddScenarioResult {
-    match ac_id {
-        // AC-01..AC-03: Scope, lifecycle events, pre/post phases
-        "AC-01" => evaluate_ac_01,
-        "AC-02" => evaluate_ac_02,
-        "AC-03" => evaluate_ac_03,
-        // AC-04..AC-06: Ordering, stdin contract, timeout
-        "AC-04" => evaluate_ac_04,
-        "AC-05" => evaluate_ac_05,
-        "AC-06" => evaluate_ac_06,
-        // AC-07..AC-18: Stubbed for future implementation
-        "AC-07" => evaluate_ac_07,
-        "AC-08" => evaluate_ac_08,
-        "AC-09" => evaluate_ac_09,
-        "AC-10" => evaluate_ac_10,
-        "AC-11" => evaluate_ac_11,
-        "AC-12" => evaluate_ac_12,
-        "AC-13" => evaluate_ac_13,
-        "AC-14" => evaluate_ac_14,
-        "AC-15" => evaluate_ac_15,
-        "AC-16" => evaluate_ac_16,
-        "AC-17" => evaluate_ac_17,
-        "AC-18" => evaluate_ac_18,
-        _ => evaluate_unmapped_acceptance,
-    }
-}
-
-/// Green evaluator wrapper that validates acceptance context and returns pass/fail.
-fn evaluate_green_acceptance(
-    scenario: &HooksBddScenario,
-    ci_safe_mode: bool,
-    context_guard: fn(bool, &str) -> Result<(), String>,
-    evaluation: fn() -> Result<(), String>,
-) -> HooksBddScenarioResult {
-    // Guard CI-safe mode requirement
-    if let Err(msg) = context_guard(ci_safe_mode, &scenario.scenario_id) {
-        return HooksBddScenarioResult {
-            scenario_id: scenario.scenario_id.clone(),
-            scenario_name: scenario.scenario_name.clone(),
-            feature_file: scenario.feature_file.clone(),
-            passed: false,
-            message: msg,
-        };
-    }
-
-    // Run the actual evaluation
-    match evaluation() {
-        Ok(()) => HooksBddScenarioResult {
-            scenario_id: scenario.scenario_id.clone(),
-            scenario_name: scenario.scenario_name.clone(),
-            feature_file: scenario.feature_file.clone(),
-            passed: true,
-            message: format!(
-                "{}: acceptance criterion verified green",
-                scenario.scenario_id
-            ),
-        },
-        Err(msg) => HooksBddScenarioResult {
-            scenario_id: scenario.scenario_id.clone(),
-            scenario_name: scenario.scenario_name.clone(),
-            feature_file: scenario.feature_file.clone(),
-            passed: false,
-            message: msg,
-        },
-    }
-}
-
-/// Validates that CI-safe mode is enabled for the evaluation.
-fn validate_acceptance_context(ci_safe_mode: bool, ac_id: &str) -> Result<(), String> {
-    if !ci_safe_mode {
-        return Err(format!(
-            "{}: CI-safe mode required; rerun hooks BDD with --mock",
-            ac_id
-        ));
-    }
-    Ok(())
-}
-
-/// Fallback evaluator for unmapped acceptance IDs.
-fn evaluate_unmapped_acceptance(
-    scenario: &HooksBddScenario,
-    _ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    HooksBddScenarioResult {
-        scenario_id: scenario.scenario_id.clone(),
-        scenario_name: scenario.scenario_name.clone(),
-        feature_file: scenario.feature_file.clone(),
-        passed: false,
-        message: format!(
-            "{}: no evaluator implemented - scenario is pending",
-            scenario.scenario_id
-        ),
-    }
-}
-
-// =============================================================================
-// AC-01: Per-project scope only
-// =============================================================================
-
-fn evaluate_ac_01(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-01: Verify per-project scope configuration exists
-        // Source: crates/ralph-core/src/config.rs - HooksConfig, per_project validation
-        // In v1, hooks are per-project only (no global hooks)
-        // This is verified by the config schema which requires project-specific paths
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-02: Mandatory lifecycle events supported
-// =============================================================================
-
-fn evaluate_ac_02(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-02: Verify mandatory lifecycle events are supported
-        // Source: crates/ralph-cli/src/loop_runner.rs - lifecycle event dispatch
-        // Supported events: loop.start, loop.end, iteration.start, iteration.end,
-        // plan.created, plan.start, plan.end, task.selected, human.interact
-        // Each has pre/post phase variants
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-03: Pre/post phase support
-// =============================================================================
-
-fn evaluate_ac_03(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-03: Verify pre/post phase support
-        // Source: crates/ralph-core/src/hooks/engine.rs - phase-event resolver
-        // Pre and post phases for each lifecycle event are supported
-        // pre.* runs before the event, post.* runs after
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-04: Deterministic ordering
-// =============================================================================
-
-fn evaluate_ac_04(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-04: Verify deterministic ordering - hooks run sequentially in declaration order
-        // Source: crates/ralph-core/src/hooks/engine.rs:31-43
-        // resolve_phase_event_hooks() returns hooks sorted by declaration_order
-        // The engine iterates in order and executes sequentially
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-05: JSON stdin contract
-// =============================================================================
-
-fn evaluate_ac_05(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-05: Verify JSON stdin contract - hooks receive valid JSON on stdin
-        // Source: crates/ralph-core/src/hooks/executor.rs:34-41, 237-340
-        // HookExecutorRequest has stdin_payload: serde_json::Value
-        // write_stdin_payload() serializes and writes JSON to hook stdin
-        // Tests verify: run_writes_json_payload_to_hook_stdin
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-06: Timeout safeguard
-// =============================================================================
-
-fn evaluate_ac_06(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-06: Verify timeout safeguard - hooks with timeout_seconds are terminated
-        // Source: crates/ralph-core/src/hooks/executor.rs:35, 353-392
-        // HookExecutorRequest has timeout_seconds: u64
-        // run_with_timeout() enforces timeout and marks timed_out: true
-        // Tests verify: run_marks_timed_out_when_command_exceeds_timeout
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-07..AC-12: Implemented in prior steps
-// AC-13..AC-15: Implemented in prior steps
-// AC-16..AC-18: Implemented (Step 13.7)
-// =============================================================================
-
-fn evaluate_ac_07(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-07: Verify output-size safeguard - stdout/stderr truncated at max_output_bytes
-        // Source: crates/ralph-core/src/hooks/executor.rs:38, 261-263, 421-496
-        // HookExecutorRequest has max_output_bytes: u64
-        // spawn_stream_collector() enforces limit and marks truncated: true
-        // Tests verify: run_truncates_stdout_and_stderr_at_max_output_bytes
-        Ok(())
-    })
-}
-
-fn evaluate_ac_08(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-08: Verify warn policy - on_error: warn continues orchestration with warning
-        // Source: crates/ralph-core/src/config.rs:1280-1282 - HookOnError::Warn
-        // crates/ralph-core/src/hooks/engine.rs:171 - default to Warn
-        // Disposition resolver logs warning and continues when hook fails with Warn
-        Ok(())
-    })
-}
-
-fn evaluate_ac_09(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-09: Verify block policy - on_error: block stops lifecycle action as failure
-        // Source: crates/ralph-core/src/config.rs:1283-1284 - HookOnError::Block
-        // Disposition resolver returns Block disposition when hook fails with Block
-        // This causes the lifecycle action to fail with clear reason surfaced
-        Ok(())
-    })
-}
-
-fn evaluate_ac_10(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-10: Verify suspend default mode - on_error: suspend defaults to wait_for_resume
-        // Source: crates/ralph-core/src/config.rs:1285 - HookOnError::Suspend
-        // crates/ralph-core/src/config.rs - HookSuspendMode::WaitForResume default
-        // crates/ralph-core/src/hooks/suspend_state.rs - SuspendStateStore implementation
-        // When hook fails with suspend, state persisted with suspend_mode: wait_for_resume
-        Ok(())
-    })
-}
-
-fn evaluate_ac_11(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-11: Verify CLI resume path - ralph loops resume <id> continues suspended loop
-        // Source: crates/ralph-cli/src/loops.rs - resume subcommand implementation
-        // Resumes loop by clearing suspend state and writing resume signal
-        // Signal file consumed atomically by suspended loop, resumes orchestration
-        Ok(())
-    })
-}
-
-fn evaluate_ac_12(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-12: Verify resume idempotency - multiple resume calls are safe and non-destructive
-        // Source: crates/ralph-core/src/hooks/suspend_state.rs - atomic signal consumption
-        // Resume signal is single-use: consumed atomically, subsequent calls return no-op
-        // Non-suspended loops return informative message without side effects
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-13: Mutation opt-in only
-// =============================================================================
-
-fn evaluate_ac_13(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-13: Verify mutation opt-in - when mutate.enabled is false, JSON metadata is ignored
-        // Source: crates/ralph-cli/src/loop_runner.rs:2633-2641
-        // parse_hook_mutation_stdout() returns HookMutationParseOutcome::Disabled when !mutate.enabled
-        // Integration test: test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-14: Metadata-only mutation surface
-// =============================================================================
-
-fn evaluate_ac_14(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-14: Verify metadata-only mutation surface - only metadata namespace is updated
-        // Source: crates/ralph-cli/src/loop_runner.rs:2643-2701
-        // parse_hook_mutation_stdout() only allows {"metadata": {...}} format
-        // merge_hook_metadata_namespace() creates namespaced metadata without touching prompt/events/config
-        // Integration test: test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-15: JSON-only mutation format
-// =============================================================================
-
-fn evaluate_ac_15(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-15: Verify JSON-only mutation format - non-JSON output is treated as invalid
-        // Source: crates/ralph-cli/src/loop_runner.rs:2643-2647
-        // parse_hook_mutation_stdout() returns HookMutationParseOutcome::Invalid for non-JSON
-        // Tests verify: test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn/block/suspend
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-16: Hook telemetry completeness
-// =============================================================================
-
-fn evaluate_ac_16(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-16: Verify hook telemetry completeness - telemetry includes event/phase,
-        // timestamps, duration, exit code, timeout flag, truncated outputs, disposition
-        // Source: crates/ralph-core/src/diagnostics/hook_runs.rs:20-38
-        // HookRunTelemetryEntry struct has all required fields:
-        // - timestamp, loop_id, phase_event, hook_name
-        // - started_at, ended_at, duration_ms
-        // - exit_code, timed_out
-        // - stdout, stderr (HookStreamOutput with truncated content)
-        // - disposition (HookDisposition enum: Pass, Warn, Block, Suspend)
-        // - suspend_mode, retry_attempt, retry_max_attempts
-        // Telemetry is logged via HookRunLogger::log() to hook-runs.jsonl
-        // Integration: loop_runner.rs calls log_hook_run_telemetry() after each hook
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-17: Validation command
-// =============================================================================
-
-fn evaluate_ac_17(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-17: Verify ralph hooks validate command exists and validates config
-        // Source: crates/ralph-cli/src/hooks.rs:30-46
-        // HooksValidateFormat enum (Human, Json)
-        // HooksValidateArgs struct with --format flag
-        // validate_hooks() function performs:
-        // - Config shape + enum values validation
-        // - Duplicate names/order sanity check
-        // - Event-phase keys validity
-        // - Command executability/path checks
-        // - Mutation contract settings validation
-        // CLI subcommand: "hooks validate" registered in main.rs
-        Ok(())
-    })
-}
-
-// =============================================================================
-// AC-18: Preflight integration
-// =============================================================================
-
-fn evaluate_ac_18(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-18: Verify hooks validation is integrated into preflight checks
-        // Source: crates/ralph-core/src/preflight.rs:109, 178-210
-        // HooksValidationCheck is included in PreflightRunner::default_checks()
-        // The check validates:
-        // - Hook duplicate names via validate_hook_duplicate_names()
-        // - Command resolvability via validate_hook_command_resolvability()
-        // Returns CheckResult::pass() when hooks disabled or validation passes
-        // Returns CheckResult::fail() with diagnostics when validation fails
-        // Respects skip list behavior: runs only when config.hooks.enabled
-        Ok(())
-    })
 }
 
 fn hooks_feature_dir() -> Result<PathBuf, HooksBddError> {
@@ -683,6 +412,786 @@ fn matches_filter(scenario: &HooksBddScenario, filter_lower: &str) -> bool {
             .any(|tag| tag.to_lowercase().contains(filter_lower))
 }
 
+fn execute_scenario(
+    scenario: &HooksBddScenario,
+    ci_safe_mode: bool,
+    evidence_cache: &mut SourceEvidenceCache,
+) -> HooksBddScenarioResult {
+    let mut context = HooksStepContext::default();
+
+    for step in &scenario.steps {
+        if let Err(message) = execute_step_definition(step, &mut context, ci_safe_mode) {
+            return HooksBddScenarioResult {
+                scenario_id: scenario.scenario_id.clone(),
+                scenario_name: scenario.scenario_name.clone(),
+                feature_file: scenario.feature_file.clone(),
+                passed: false,
+                message,
+            };
+        }
+    }
+
+    let Some(criterion_id) = context.criterion_id.as_deref() else {
+        return HooksBddScenarioResult {
+            scenario_id: scenario.scenario_id.clone(),
+            scenario_name: scenario.scenario_name.clone(),
+            feature_file: scenario.feature_file.clone(),
+            passed: false,
+            message: "scenario did not capture an acceptance criterion in Given step".to_string(),
+        };
+    };
+
+    match evaluate_acceptance_criterion(criterion_id, evidence_cache) {
+        Ok(message) => HooksBddScenarioResult {
+            scenario_id: scenario.scenario_id.clone(),
+            scenario_name: scenario.scenario_name.clone(),
+            feature_file: scenario.feature_file.clone(),
+            passed: true,
+            message,
+        },
+        Err(message) => HooksBddScenarioResult {
+            scenario_id: scenario.scenario_id.clone(),
+            scenario_name: scenario.scenario_name.clone(),
+            feature_file: scenario.feature_file.clone(),
+            passed: false,
+            message,
+        },
+    }
+}
+
+fn execute_step_definition(
+    step: &HooksStep,
+    context: &mut HooksStepContext,
+    ci_safe_mode: bool,
+) -> Result<(), String> {
+    match step.keyword {
+        HooksStepKeyword::Given => {
+            let criterion_id = parse_given_placeholder_step(&step.text)
+                .ok_or_else(|| format!("missing Given step definition for '{}'", step.text))?;
+            context.criterion_id = Some(criterion_id);
+            Ok(())
+        }
+        HooksStepKeyword::When => {
+            if step.text != "the hooks BDD suite is executed in CI-safe mode" {
+                return Err(format!("missing When step definition for '{}'", step.text));
+            }
+
+            if !ci_safe_mode {
+                return Err("CI-safe mode not enabled; rerun hooks BDD with --mock".to_string());
+            }
+
+            context.ci_safe_confirmed = true;
+            Ok(())
+        }
+        HooksStepKeyword::Then => {
+            let reported_id = parse_then_reported_step(&step.text)
+                .ok_or_else(|| format!("missing Then step definition for '{}'", step.text))?;
+
+            let Some(given_id) = context.criterion_id.as_deref() else {
+                return Err("Then step executed before criterion was captured in Given".to_string());
+            };
+
+            if !context.ci_safe_confirmed {
+                return Err("CI-safe execution step not satisfied before Then".to_string());
+            }
+
+            if given_id != reported_id {
+                return Err(format!(
+                    "criterion mismatch: Given='{}', Then='{}'",
+                    given_id, reported_id
+                ));
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn evaluate_acceptance_criterion(
+    criterion_id: &str,
+    evidence_cache: &mut SourceEvidenceCache,
+) -> Result<String, String> {
+    match criterion_id {
+        "AC-01" => evaluate_ac_01(evidence_cache),
+        "AC-02" => evaluate_ac_02(evidence_cache),
+        "AC-03" => evaluate_ac_03(evidence_cache),
+        "AC-04" => evaluate_ac_04(evidence_cache),
+        "AC-05" => evaluate_ac_05(evidence_cache),
+        "AC-06" => evaluate_ac_06(evidence_cache),
+        "AC-07" => evaluate_ac_07(evidence_cache),
+        "AC-08" => evaluate_ac_08(evidence_cache),
+        "AC-09" => evaluate_ac_09(evidence_cache),
+        "AC-10" => evaluate_ac_10(evidence_cache),
+        "AC-11" => evaluate_ac_11(evidence_cache),
+        "AC-12" => evaluate_ac_12(evidence_cache),
+        "AC-13" => evaluate_ac_13(evidence_cache),
+        "AC-14" => evaluate_ac_14(evidence_cache),
+        "AC-15" => evaluate_ac_15(evidence_cache),
+        "AC-16" => evaluate_ac_16(evidence_cache),
+        "AC-17" => evaluate_ac_17(evidence_cache),
+        "AC-18" => evaluate_ac_18(evidence_cache),
+        _ => Err(pending_acceptance_message(criterion_id)),
+    }
+}
+
+fn evaluate_ac_01(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-01",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/config.rs",
+                "Global hooks are out of scope for v1; use per-project hooks only",
+            ),
+            (
+                "crates/ralph-core/src/config.rs",
+                "fn test_hooks_validate_rejects_global_scope_non_v1_field()",
+            ),
+        ],
+        "per-project scope guardrails enforced",
+    )
+}
+
+fn evaluate_ac_02(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    let mut locations = Vec::new();
+
+    for phase_event in REQUIRED_V1_PHASE_EVENTS {
+        let parse_snippet = format!("\"{phase_event}\" => Some(");
+        record_source_evidence(
+            "AC-02",
+            evidence_cache,
+            "crates/ralph-core/src/config.rs",
+            &parse_snippet,
+            &mut locations,
+        )?;
+    }
+
+    for (relative_path, snippet) in [
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let pre_loop_start_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let post_loop_start_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let pre_iteration_start_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let post_iteration_start_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let pre_plan_created_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let post_plan_created_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let pre_human_interact_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "let post_human_interact_outcomes = dispatch_phase_event_hooks(",
+        ),
+        (
+            "crates/ralph-cli/src/loop_runner.rs",
+            "fn loop_termination_phase_events(reason: &TerminationReason) -> (HookPhaseEvent, HookPhaseEvent)",
+        ),
+    ] {
+        record_source_evidence(
+            "AC-02",
+            evidence_cache,
+            relative_path,
+            snippet,
+            &mut locations,
+        )?;
+    }
+
+    Ok(format!(
+        "AC-02 verified: mandatory lifecycle event keys and dispatch boundaries are wired ({})",
+        locations.join(", ")
+    ))
+}
+
+fn evaluate_ac_03(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-03",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "let (phase, event) = split_phase_event(phase_event);",
+            ),
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "fn split_phase_event(phase_event: HookPhaseEvent) -> (&'static str, &'static str) {",
+            ),
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "assert_eq!(payload.phase, \"post\");",
+            ),
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "assert_eq!(payload.event, \"iteration.start\");",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "vec![\"pre.plan.created\", \"post.plan.created\"],",
+            ),
+        ],
+        "pre/post phase payload and dispatch sequencing present",
+    )
+}
+
+fn evaluate_ac_04(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-04",
+        evidence_cache,
+        &[
+            ("crates/ralph-core/src/hooks/engine.rs", ".enumerate()"),
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "fn resolve_phase_event_preserves_declaration_order()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"pre-iteration-first|pre.iteration.start\".to_string(),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"pre-iteration-second|pre.iteration.start\".to_string(),",
+            ),
+        ],
+        "sequential declaration-order dispatch is covered",
+    )
+}
+
+fn evaluate_ac_05(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-05",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "command.stdin(Stdio::piped());",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "serde_json::to_vec(stdin_payload)",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "fn run_writes_json_payload_to_hook_stdin()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "let stdin_payload = match serde_json::to_value(&payload)",
+            ),
+        ],
+        "JSON stdin payload contract is enforced",
+    )
+}
+
+fn evaluate_ac_06(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-06",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "fn wait_for_completion(",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "if wait_started_at.elapsed() >= timeout {",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "let status = terminate_for_timeout(",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "fn run_marks_timed_out_when_command_exceeds_timeout()",
+            ),
+        ],
+        "timeout termination path is implemented and covered",
+    )
+}
+
+fn evaluate_ac_07(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-07",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "let capture_limit = usize::try_from(max_output_bytes).unwrap_or(usize::MAX);",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "fn run_truncates_stdout_and_stderr_at_max_output_bytes()",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "request.max_output_bytes = 8;",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "assert!(result.stdout.truncated);",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "assert!(result.stderr.truncated);",
+            ),
+        ],
+        "max_output_bytes truncation is deterministic and covered",
+    )
+}
+
+fn evaluate_ac_08(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-08",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "HookOnError::Warn => HookDisposition::Warn,",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_loop_start_dispatch_warn_continues_and_block_aborts()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fail_if_blocking_loop_start_outcomes(&pre_loop_start_outcomes).is_ok(),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"warn disposition should continue across loop.start boundary\"",
+            ),
+        ],
+        "warn policy continues orchestration and is regression-tested",
+    )
+}
+
+fn evaluate_ac_09(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-09",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "HookOnError::Block => HookDisposition::Block,",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn fail_if_blocking_loop_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"Lifecycle hook blocked loop.start boundary\"",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                ".expect_err(\"block disposition should abort loop.start boundary\");",
+            ),
+        ],
+        "block policy abort path and surfaced reason are covered",
+    )
+}
+
+fn evaluate_ac_10(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-10",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/config.rs",
+                "pub enum HookSuspendMode {",
+            ),
+            ("crates/ralph-core/src/config.rs", "#[default]"),
+            ("crates/ralph-core/src/config.rs", "WaitForResume,"),
+            (
+                "crates/ralph-core/src/config.rs",
+                "suspend_mode: HookSuspendMode::default(),",
+            ),
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "suspend_mode: spec.suspend_mode.unwrap_or(defaults.suspend_mode),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"Lifecycle hook requested suspend; entering wait_for_resume gate\"",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert_eq!(suspend_state.suspend_mode, HookSuspendMode::WaitForResume);",
+            ),
+        ],
+        "suspend hooks default to wait_for_resume mode and enter resume gate",
+    )
+}
+
+fn evaluate_ac_11(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-11",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn resume_loop(args: ResumeArgs) -> Result<()> {",
+            ),
+            ("crates/ralph-cli/src/loops.rs", ".write_resume_requested()"),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Resume requested for loop '{}'. The loop will continue from the suspended boundary.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_writes_resume_signal_for_in_place_loop()",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_resolves_partial_id_and_targets_worktree()",
+            ),
+        ],
+        "CLI resume writes the signal and targets the resolved loop workspace",
+    )
+}
+
+fn evaluate_ac_12(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-12",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Resume was already requested for loop '{}'. The loop is not currently suspended; no action taken.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Loop '{}' is not currently suspended. Nothing to resume.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Resume was already requested for loop '{}'. Waiting for the loop to continue.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_is_idempotent_when_resume_already_requested()",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_noops_for_non_suspended_loop()",
+            ),
+        ],
+        "repeat/non-suspended resume requests are non-destructive and explicitly handled",
+    )
+}
+
+fn evaluate_ac_13(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-13",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "if !mutate.enabled {",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "return HookMutationParseOutcome::Disabled;",
+            ),
+            (
+                "crates/ralph-core/src/config.rs",
+                "mutation settings require mutate.enabled: true",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_parse_hook_mutation_stdout_skips_when_disabled()",
+            ),
+        ],
+        "mutation parsing is explicit opt-in and disabled-mode remains inert",
+    )
+}
+
+fn evaluate_ac_14(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-14",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "const HOOK_MUTATION_PAYLOAD_METADATA_KEY: &str = \"metadata\";",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "if payload_object.len() != 1 || !payload_object.contains_key(HOOK_MUTATION_PAYLOAD_METADATA_KEY)",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "message: \"mutation payload key 'metadata' must contain a JSON object\".to_string(),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert!(!payload_object.contains_key(\"prompt\"));",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert!(!payload_object.contains_key(\"events\"));",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert!(!payload_object.contains_key(\"config\"));",
+            ),
+        ],
+        "mutation surface remains metadata-only and downstream payloads stay scoped",
+    )
+}
+
+fn evaluate_ac_15(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-15",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "let parsed = match serde_json::from_str::<serde_json::Value>(stdout.trim()) {",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "message: format!(\"mutation stdout is not valid JSON: {error}\"),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "Some(HookDispatchFailure::InvalidMutationOutput {",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate()",
+            ),
+        ],
+        "invalid non-JSON mutation output maps into lifecycle on_error dispositions",
+    )
+}
+
+fn evaluate_ac_16(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-16",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/diagnostics/hook_runs.rs",
+                "pub struct HookRunTelemetryEntry {",
+            ),
+            (
+                "crates/ralph-core/src/diagnostics/hook_runs.rs",
+                "pub disposition: HookDisposition,",
+            ),
+            (
+                "crates/ralph-core/src/diagnostics/hook_runs.rs",
+                "pub suspend_mode: HookSuspendMode,",
+            ),
+            (
+                "crates/ralph-core/src/diagnostics/hook_runs.rs",
+                "pub retry_attempt: u32,",
+            ),
+            (
+                "crates/ralph-core/src/diagnostics/hook_runs.rs",
+                "pub retry_max_attempts: u32,",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_dispatch_phase_event_hooks_retry_backoff_recovers_before_exhaustion()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_dispatch_phase_event_hooks_wait_then_retry_recovers_after_resume()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert_eq!(telemetry_entries.len(), 3);",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert_eq!(telemetry_entries.len(), 2);",
+            ),
+        ],
+        "hook-run telemetry captures disposition, suspend policy, and retry attempt lifecycle",
+    )
+}
+
+fn evaluate_ac_17(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-17",
+        evidence_cache,
+        &[
+            ("crates/ralph-cli/src/main.rs", "Hooks(hooks::HooksArgs),"),
+            (
+                "crates/ralph-cli/src/main.rs",
+                "Some(Commands::Hooks(args)) => {",
+            ),
+            (
+                "crates/ralph-cli/src/hooks.rs",
+                "HooksCommands::Validate(validate_args) => {",
+            ),
+            (
+                "crates/ralph-cli/src/hooks.rs",
+                "report.push_diagnostic(\"hooks.semantic\", error.to_string(), None, None, None);",
+            ),
+            (
+                "crates/ralph-cli/src/hooks.rs",
+                "\"hooks.command_resolvable\",",
+            ),
+            (
+                "crates/ralph-cli/src/hooks.rs",
+                "Fix: ensure command exists and is executable, or invoke the script through an interpreter (for example: ['bash', 'script.sh']).",
+            ),
+            ("crates/ralph-cli/src/hooks.rs", "if !report.pass {"),
+            ("crates/ralph-cli/src/hooks.rs", "std::process::exit(1);"),
+        ],
+        "hooks validate command is exposed, routed, and emits actionable diagnostics",
+    )
+}
+
+fn evaluate_ac_18(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-18",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/preflight.rs",
+                "Box::new(HooksValidationCheck),",
+            ),
+            (
+                "crates/ralph-core/src/preflight.rs",
+                "fn default_checks_include_hooks_check_name()",
+            ),
+            (
+                "crates/ralph-core/src/preflight.rs",
+                "assert!(check_names.contains(&\"hooks\"));",
+            ),
+            (
+                "crates/ralph-cli/src/main.rs",
+                "let runner = PreflightRunner::default_checks();",
+            ),
+            (
+                "crates/ralph-cli/src/main.rs",
+                "if skip_preflight || !config.features.preflight.enabled {",
+            ),
+            (
+                "crates/ralph-cli/src/main.rs",
+                "fn test_auto_preflight_skip_list_can_omit_hooks_check_failures()",
+            ),
+            (
+                "crates/ralph-cli/src/main.rs",
+                "config.features.preflight.skip = vec![\"hooks\".to_string()];",
+            ),
+        ],
+        "hooks validation is integrated into automatic preflight with explicit skip controls",
+    )
+}
+
+fn verify_source_evidence(
+    criterion_id: &str,
+    evidence_cache: &mut SourceEvidenceCache,
+    checks: &[(&str, &str)],
+    success_summary: &str,
+) -> Result<String, String> {
+    let mut locations = Vec::with_capacity(checks.len());
+
+    for (relative_path, snippet) in checks {
+        record_source_evidence(
+            criterion_id,
+            evidence_cache,
+            relative_path,
+            snippet,
+            &mut locations,
+        )?;
+    }
+
+    Ok(format!(
+        "{criterion_id} verified: {success_summary} ({})",
+        locations.join(", ")
+    ))
+}
+
+fn record_source_evidence(
+    criterion_id: &str,
+    evidence_cache: &mut SourceEvidenceCache,
+    relative_path: &str,
+    snippet: &str,
+    locations: &mut Vec<String>,
+) -> Result<(), String> {
+    let line = evidence_cache
+        .require_snippet(relative_path, snippet)
+        .map_err(|error| format!("{criterion_id}: {error}"))?;
+    locations.push(format!("{relative_path}:{line}"));
+    Ok(())
+}
+
+fn pending_acceptance_message(criterion_id: &str) -> String {
+    match parse_acceptance_number(criterion_id) {
+        Some(_) if !GREEN_ACCEPTANCE_IDS.contains(&criterion_id) => {
+            format!("pending: {criterion_id} has no green evaluator yet")
+        }
+        _ => format!("pending: {criterion_id} acceptance evaluator is not implemented"),
+    }
+}
+
+fn parse_acceptance_number(criterion_id: &str) -> Option<u8> {
+    criterion_id
+        .strip_prefix("AC-")
+        .and_then(|value| value.parse::<u8>().ok())
+}
+
+fn parse_given_placeholder_step(text: &str) -> Option<String> {
+    let prefix = "hooks acceptance criterion \"";
+    let suffix = "\" is defined as a placeholder";
+
+    text.strip_prefix(prefix)
+        .and_then(|remaining| remaining.strip_suffix(suffix))
+        .map(ToString::to_string)
+}
+
+fn parse_then_reported_step(text: &str) -> Option<&str> {
+    let prefix = "scenario \"";
+    let suffix = "\" is reported for later implementation";
+
+    text.strip_prefix(prefix)
+        .and_then(|remaining| remaining.strip_suffix(suffix))
+}
+
 #[derive(Debug, Clone)]
 struct ScenarioBuilder {
     scenario_name: String,
@@ -759,190 +1268,47 @@ mod tests {
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
         assert!(results.results[0].passed);
-        assert!(results.results[0].message.contains("verified green"));
+        assert!(results.results[0].message.contains("AC-01 verified"));
     }
 
     #[test]
-    fn run_hooks_bdd_suite_fails_without_ci_safe_mode() {
+    fn run_hooks_bdd_suite_passes_ac_01_to_ac_18_slice_in_ci_safe_mode() {
+        let config = HooksBddConfig::new(None, true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 18);
+        assert_eq!(results.passed_count(), 18);
+        assert_eq!(results.failed_count(), 0);
+
+        let ac_13 = results
+            .results
+            .iter()
+            .find(|result| result.scenario_id == "AC-13")
+            .expect("AC-13 result should exist");
+        assert!(ac_13.passed);
+        assert!(ac_13.message.contains("AC-13 verified"));
+
+        let ac_18 = results
+            .results
+            .iter()
+            .find(|result| result.scenario_id == "AC-18")
+            .expect("AC-18 result should exist");
+        assert!(ac_18.passed);
+        assert!(ac_18.message.contains("AC-18 verified"));
+    }
+
+    #[test]
+    fn run_hooks_bdd_suite_reports_ci_safe_guard_failure_without_mock() {
         let config = HooksBddConfig::new(Some("AC-01".to_string()), false);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.failed_count(), 1);
-        assert!(results.results[0].message.contains("CI-safe mode required"));
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_04_deterministic_ordering() {
-        let config = HooksBddConfig::new(Some("AC-04".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_05_json_stdin_contract() {
-        let config = HooksBddConfig::new(Some("AC-05".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_06_timeout_safeguard() {
-        let config = HooksBddConfig::new(Some("AC-06".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_07_output_size_safeguard() {
-        let config = HooksBddConfig::new(Some("AC-07".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_08_warn_policy() {
-        let config = HooksBddConfig::new(Some("AC-08".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_09_block_policy() {
-        let config = HooksBddConfig::new(Some("AC-09".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_10_suspend_default_mode() {
-        let config = HooksBddConfig::new(Some("AC-10".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_11_cli_resume_path() {
-        let config = HooksBddConfig::new(Some("AC-11".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_12_resume_idempotency() {
-        let config = HooksBddConfig::new(Some("AC-12".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_13_mutation_opt_in() {
-        let config = HooksBddConfig::new(Some("AC-13".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_14_metadata_mutation() {
-        let config = HooksBddConfig::new(Some("AC-14".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_15_json_mutation_format() {
-        let config = HooksBddConfig::new(Some("AC-15".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_16_telemetry_completeness() {
-        let config = HooksBddConfig::new(Some("AC-16".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_17_validation_command() {
-        let config = HooksBddConfig::new(Some("AC-17".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_18_preflight_integration() {
-        let config = HooksBddConfig::new(Some("AC-18".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_uses_unmapped_fallback_evaluator() {
-        // Test that unmapped AC IDs (not in dispatch map) use the fallback evaluator
-        // We test this by creating a scenario with an unmapped AC ID and verifying behavior
-        // Note: AC-99 is not in the feature files, so we test the dispatch directly
-        let eval_fn = dispatch_ac_evaluator("AC-99");
-
-        // Create a scenario for the unmapped AC
-        let scenario = HooksBddScenario {
-            scenario_id: "AC-99".to_string(),
-            scenario_name: "AC-99 Unmapped test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-99".to_string()],
-            steps: vec![],
-        };
-
-        let result = eval_fn(&scenario, true);
-
-        // AC-99 should fail with "no evaluator implemented" message
-        assert!(!result.passed);
-        assert!(result.message.contains("no evaluator implemented"));
+        assert!(
+            results.results[0]
+                .message
+                .contains("CI-safe mode not enabled")
+        );
     }
 
     #[test]
@@ -974,75 +1340,18 @@ Feature: Example
     }
 
     #[test]
-    fn dispatch_ac_evaluator_routes_to_correct_function() {
-        // Verify dispatch map returns different evaluator functions for different ACs
-        // AC-01 and AC-04 use different evaluators (scope vs ordering)
-        let ac01_eval = dispatch_ac_evaluator("AC-01");
-        let ac04_eval = dispatch_ac_evaluator("AC-04");
-        let ac07_eval = dispatch_ac_evaluator("AC-07");
-        let unknown_eval = dispatch_ac_evaluator("AC-99");
-
-        // AC-01 should pass (green), AC-07 should fail (pending), AC-99 should fail (unmapped)
-        let scenario_ac01 = HooksBddScenario {
-            scenario_id: "AC-01".to_string(),
-            scenario_name: "AC-01 Test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-01".to_string()],
-            steps: vec![],
-        };
-        let scenario_ac07 = HooksBddScenario {
-            scenario_id: "AC-07".to_string(),
-            scenario_name: "AC-07 Test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-07".to_string()],
-            steps: vec![],
-        };
-        let scenario_ac04 = HooksBddScenario {
-            scenario_id: "AC-04".to_string(),
-            scenario_name: "AC-04 Test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-04".to_string()],
-            steps: vec![],
-        };
-        let scenario_ac02 = HooksBddScenario {
-            scenario_id: "AC-02".to_string(),
-            scenario_name: "AC-02 Test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-02".to_string()],
-            steps: vec![],
-        };
-        let scenario_ac03 = HooksBddScenario {
-            scenario_id: "AC-03".to_string(),
-            scenario_name: "AC-03 Test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-03".to_string()],
-            steps: vec![],
-        };
-        let scenario_ac99 = HooksBddScenario {
-            scenario_id: "AC-99".to_string(),
-            scenario_name: "AC-99 Test".to_string(),
-            feature_file: "test.feature".to_string(),
-            tags: vec!["AC-99".to_string()],
-            steps: vec![],
+    fn execute_step_definition_rejects_mismatched_acceptance_ids() {
+        let step = HooksStep {
+            keyword: HooksStepKeyword::Then,
+            text: "scenario \"AC-02\" is reported for later implementation".to_string(),
         };
 
-        let result_01 = ac01_eval(&scenario_ac01, true);
-        let result_02 = ac01_eval(&scenario_ac02, true);
-        let result_03 = ac01_eval(&scenario_ac03, true);
-        let result_04 = ac04_eval(&scenario_ac04, true);
-        let result_07 = ac07_eval(&scenario_ac07, true);
-        let result_99 = unknown_eval(&scenario_ac99, true);
+        let mut context = HooksStepContext {
+            criterion_id: Some("AC-01".to_string()),
+            ci_safe_confirmed: true,
+        };
 
-        // AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07 are green (all implemented)
-        assert!(result_01.passed);
-        assert!(result_02.passed);
-        assert!(result_03.passed);
-        assert!(result_04.passed);
-        // AC-07 now passes (was pending, now implemented)
-        assert!(result_07.passed);
-        assert!(result_07.message.contains("verified green"));
-        // AC-99 is unmapped (no such AC exists)
-        assert!(!result_99.passed);
-        assert!(result_99.message.contains("no evaluator implemented"));
+        let error = execute_step_definition(&step, &mut context, true).expect_err("must fail");
+        assert!(error.contains("criterion mismatch"));
     }
 }

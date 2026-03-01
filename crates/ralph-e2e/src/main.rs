@@ -170,7 +170,7 @@ pub struct TestOpts {
     #[arg(long)]
     pub filter: Option<String>,
 
-    /// Run the hooks BDD placeholder suite from `features/hooks/*.feature`
+    /// Run the hooks BDD acceptance suite from `features/hooks/*.feature`
     #[arg(long)]
     pub hooks_bdd: bool,
 
@@ -377,7 +377,7 @@ fn run_hooks_bdd_placeholder_suite(opts: &TestOpts, verbosity: Verbosity) {
     };
 
     if verbosity != Verbosity::Quiet {
-        println!("\n{}", "Running hooks BDD placeholder suite".bold());
+        println!("\n{}", "Running hooks BDD acceptance suite".bold());
         if opts.mock {
             println!("{}", "Mode: CI-safe (--mock enabled)".dimmed());
         } else {

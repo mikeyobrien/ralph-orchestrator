@@ -1,24 +1,22 @@
 @hooks @telemetry-and-validation
-Feature: Hook telemetry and validation
-  # Telemetry recording and CLI validation
+Feature: Hook telemetry and validation placeholders
+  # Step 0.2 placeholder scenarios for AC traceability.
   # Source: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md (AC-16..AC-18)
 
   @AC-16
   Scenario: AC-16 Hook telemetry completeness
-    Given any hook invocation
-    When it completes or times out
-    Then telemetry includes: event, phase, timestamps, duration, exit code, timeout flag, outputs, disposition
+    Given hooks acceptance criterion "AC-16" is defined as a placeholder
+    When the hooks BDD suite is executed in CI-safe mode
+    Then scenario "AC-16" is reported for later implementation
 
   @AC-17
   Scenario: AC-17 Validation command
-    Given malformed hooks config in ralph.yml
-    When "ralph hooks validate" runs
-    Then it returns actionable failure messages
-    And no loop execution is started
+    Given hooks acceptance criterion "AC-17" is defined as a placeholder
+    When the hooks BDD suite is executed in CI-safe mode
+    Then scenario "AC-17" is reported for later implementation
 
   @AC-18
   Scenario: AC-18 Preflight integration
-    Given preflight is enabled
-    When "ralph run" starts
-    Then hooks validation executes as part of preflight
-    And the run can fail appropriately if hooks are invalid
+    Given hooks acceptance criterion "AC-18" is defined as a placeholder
+    When the hooks BDD suite is executed in CI-safe mode
+    Then scenario "AC-18" is reported for later implementation

@@ -41,6 +41,17 @@ clean:
 ci: fmt-check lint test
     @echo "✅ CI checks passed"
 
+# Calibrated hooks mutation rollout threshold (see docs/06-analysis/hooks-mutation-baseline-2026-03-01.md)
+HOOKS_MUTATION_THRESHOLD := "55"
+
+# Baseline mutation command (tooling: cargo-mutants) scoped to hooks-critical paths
+mutants-baseline:
+    cargo mutants --file crates/ralph-core/src/hooks/executor.rs --file crates/ralph-core/src/hooks/engine.rs --file crates/ralph-core/src/preflight.rs --file crates/ralph-cli/src/loop_runner.rs
+
+# Enforced hooks mutation CI gate (threshold + critical-path no-MISS invariant)
+mutants-hooks-gate:
+    HOOKS_MUTATION_THRESHOLD={{HOOKS_MUTATION_THRESHOLD}} ./scripts/hooks-mutation-gate.sh
+
 # Setup development environment (install hooks)
 setup:
     @echo "Development environment is managed by devenv.sh"

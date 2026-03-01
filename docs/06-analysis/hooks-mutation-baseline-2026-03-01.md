@@ -61,66 +61,109 @@ Target critical ranges:
 
 Current baseline in those ranges:
 
+- No `MISS` survivors in either critical range (`3467-3560`, `3623-3635`).
 - `TIMEOUT crates/ralph-cli/src/loop_runner.rs:3475:45: replace == with != in wait_for_resume_if_suspended`
-- No `MISS` survivors in `3623-3635`.
-- `disposition_from_on_error` currently has an `unviable` mutant at `3632` (non-survivor class, but still important context).
+- `unviable` mutants in disposition mapping at `3624` and `3632` (non-survivor class).
 
 ## Step 12.4: Critical no-survivor invariant enforcement
 
 ### Invariant definition
 
-**Critical-path no-survivor invariant**: Mutations in disposition mapping and suspend/resume transition code MUST either be:
-1. Caught by existing tests, OR
-2. Documented as intentionally blocking (indefinite wait), OR
-3. Unviable (compiler/type error)
+For Step 12.5 CI wiring, critical-path mutation enforcement is:
 
-**MISS survivors are NOT permitted** in the critical ranges.
+- **Hard fail** if any `MISS` mutant appears in:
+  - `crates/ralph-cli/src/loop_runner.rs:3467-3560` (suspend/resume transition)
+  - `crates/ralph-cli/src/loop_runner.rs:3623-3635` (on_error disposition mapping)
+- Treat `TIMEOUT` and `unviable` as separate classes that must be explained in gate output.
 
 ### Current invariant status
 
 | Critical range | MISS | TIMEOUT | Unviable | Status |
-|---|---|---|---|---|
-| `loop_runner.rs:3467-3560` (suspend/resume) | 0 | 6 | 0 | ✅ PASS (timeouts are intentional) |
-| `loop_runner.rs:3623-3635` (disposition mapping) | 0 | 0 | 1 | ✅ PASS |
+|---|---:|---:|---:|---|
+| `loop_runner.rs:3467-3560` (suspend/resume) | 0 | 1 | 0 | ✅ PASS |
+| `loop_runner.rs:3623-3635` (disposition mapping) | 0 | 0 | 2 | ✅ PASS |
 
-### Timeout rationale
+Evidence from baseline artifacts:
 
-The 6 TIMEOUT mutants in the suspend/resume range are **expected** because:
+- `docs/06-analysis/hooks-mutation-baseline-2026-03-01-survivors.txt`
+  - no `MISS` lines in either critical range
+  - one `TIMEOUT` line at `3475` (`wait_for_resume_if_suspended`)
+- `/tmp/hooks-mutants-baseline/mutants.out/unviable.txt`
+  - `3624`: `classify_hook_disposition -> Default::default()`
+  - `3632`: `disposition_from_on_error -> Default::default()`
 
-- `wait_for_resume_if_suspended` (line 3475): Waits indefinitely for resume signal
-- `consume_stop_requested_signal` (line 3564): Polls indefinitely for stop file
-- `format_suspending_hook_reason` (line 3582): Pure formatting, but called from blocking context
-- `format_hook_failure_detail` (line 3600): Pure formatting, but called from blocking context
+### TIMEOUT rationale for Step 12.5 gate
 
-These functions use `tokio::time::sleep` or file-system polling that blocks for external signals. Mutation testing cannot reasonably terminate infinite waits, so these are tracked as a separate failure class.
+The `TIMEOUT` at `3475` is expected in mutation mode: `wait_for_resume_if_suspended` loops until external `.ralph/resume-requested`, `.ralph/stop-requested`, or `.ralph/restart-requested` signals are observed. The mutant flips the resume check and can create a non-terminating wait. This is a **blocking-control-flow timeout**, not a silent `MISS` survivor.
+
+Step 12.5 gate behavior should therefore be:
+
+1. Reject any `MISS` in critical ranges.
+2. Report critical-range `TIMEOUT` entries separately with explicit rationale.
+3. Keep timeout count visible for ratcheting, but do not classify it as a no-survivor violation.
+
+### Unviable rationale for Step 12.5 gate
+
+Both critical-range unviable mutants are type-invalid replacements:
+
+- `classify_hook_disposition` and `disposition_from_on_error` return `HookDisposition`
+- Replacing these functions with `Default::default()` is not compilable because `HookDisposition` has no `Default` implementation
+
+These are compiler-rejected mutants and should be treated as **non-survivor** evidence in Step 12.5 reporting.
 
 ### Test coverage verification
 
-Existing tests in `loop_runner.rs` cover the critical paths:
+Existing tests in `loop_runner.rs` exercise suspend/resume control flow in this critical region:
 
 ```rust
-// Line 7513: No-op when no suspend disposition
+// Line 7513: no-op when no suspend disposition
 fn test_wait_for_resume_if_suspended_is_noop_without_suspend_dispositions()
 
-// Line 7543: Resumes and clears artifacts  
+// Line 7543: resume signal clears suspend artifacts
 fn test_wait_for_resume_if_suspended_resumes_and_clears_suspend_artifacts()
 
-// Line 7562: Stop prioritizes over resume
+// Line 7568: stop signal is prioritized over resume
 fn test_wait_for_resume_if_suspended_prioritizes_stop_over_resume()
-```
 
-These tests use `block_on_test_future` with pre-written signal files to simulate the suspend/resume/stop lifecycle without blocking indefinitely.
+// Line 7598: restart signal is prioritized over resume
+fn test_wait_for_resume_if_suspended_prioritizes_restart_over_resume()
+```
 
 ### Invariant enforcement decision
 
-✅ **Invariant enforced**: No MISS survivors in disposition/suspend critical paths.
-
-- TIMEOUTs are tracked as separate failure class (expected for blocking I/O)
-- Test coverage exists and is verified to catch mutations in critical paths
-- No action required for Step 12.4 - invariant holds
+✅ **Step 12.4 complete:** no `MISS` survivors in disposition/suspend critical paths, with `TIMEOUT` and `unviable` classes explicitly characterized for Step 12.5 CI gate wiring.
 
 ## Actionable survivor output
 
 Full actionable survivor list (all `MISS` + `TIMEOUT` entries, line-resolved):
 
 - [`docs/06-analysis/hooks-mutation-baseline-2026-03-01-survivors.txt`](./hooks-mutation-baseline-2026-03-01-survivors.txt)
+
+## Step 12.6 verification gate run (2026-03-01)
+
+Required Step 12 verification commands were executed in nix shells:
+
+- `cargo fmt --all -- --check` → `EXIT:0`
+- `cargo clippy --all-targets --all-features -- -D warnings` → `EXIT:0`
+- `cargo test -p ralph-core -q` → `734 passed; 0 failed`
+- `cargo test -p ralph-cli -q` → first run failed in `web::tests::check_tsx_version_blocks_known_bad_release_with_v_prefix`; immediate rerun passed (`320 passed; 0 failed; 2 ignored`)
+- `just mutants-hooks-gate` → `PASS`
+
+Mutation gate artifact summary (`.artifacts/hooks-mutation/hooks-mutation-summary.json`):
+
+- status: `pass`
+- threshold: `55%`
+- operational score: `55.11%` (`178 caught / (178 caught + 145 missed)`)
+- strict score: `53.45%`
+- critical-path counts: `MISS=0`, `TIMEOUT=1`, `unviable=3`
+
+Artifacts produced for CI upload/debugging:
+
+- `.artifacts/hooks-mutation/hooks-mutation-report.md`
+- `.artifacts/hooks-mutation/hooks-mutation-survivors.txt`
+- `.artifacts/hooks-mutation/critical-miss.txt`
+- `.artifacts/hooks-mutation/critical-timeout.txt`
+- `.artifacts/hooks-mutation/critical-unviable.txt`
+- `.artifacts/hooks-mutation/mutants.out/{caught,missed,timeout,unviable}.txt`
+
+Implementation note: `Justfile` threshold variable is quoted (`HOOKS_MUTATION_THRESHOLD := "55"`) so `just` parses and injects it correctly into `scripts/hooks-mutation-gate.sh`.
