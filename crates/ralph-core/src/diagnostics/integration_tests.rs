@@ -5,7 +5,7 @@ mod tests {
     use crate::config::RalphConfig;
     use crate::diagnostics::{DiagnosticsCollector, HookDisposition, HookRunTelemetryEntry};
     use crate::event_loop::EventLoop;
-    use crate::hooks::{HookRunResult, HookStreamOutput};
+    use crate::hooks::{HookRunResult, HookStreamOutput, HookSuspendMode};
     use chrono::{TimeZone, Utc};
     use std::fs::File;
     use std::io::{BufRead, BufReader};
@@ -39,6 +39,9 @@ mod tests {
             "pre.loop.start",
             "env-guard",
             disposition,
+            HookSuspendMode::RetryBackoff,
+            3,
+            4,
             &run_result,
         )
     }
@@ -290,6 +293,9 @@ mod tests {
             "stdout",
             "stderr",
             "disposition",
+            "suspend_mode",
+            "retry_attempt",
+            "retry_max_attempts",
         ] {
             assert!(
                 entry.get(field).is_some(),
@@ -308,6 +314,9 @@ mod tests {
         assert_eq!(entry["stderr"]["content"], "stderr-clean");
         assert_eq!(entry["stderr"]["truncated"], false);
         assert_eq!(entry["disposition"], "block");
+        assert_eq!(entry["suspend_mode"], "retry_backoff");
+        assert_eq!(entry["retry_attempt"], 3);
+        assert_eq!(entry["retry_max_attempts"], 4);
     }
 
     #[test]

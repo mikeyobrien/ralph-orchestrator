@@ -1671,6 +1671,14 @@ const RETRY_BACKOFF_DELAYS_MS: [u64; 3] = [100, 200, 400];
 const RETRY_BACKOFF_SIGNAL_POLL_INTERVAL_MS: u64 = 100;
 const SUSPEND_WAIT_SIGNAL_POLL_INTERVAL_MS: u64 = 250;
 
+fn max_retry_attempts_for_suspend_mode(suspend_mode: HookSuspendMode) -> u32 {
+    match suspend_mode {
+        HookSuspendMode::WaitForResume => 1,
+        HookSuspendMode::RetryBackoff => RETRY_BACKOFF_DELAYS_MS.len() as u32 + 1,
+        HookSuspendMode::WaitThenRetry => 2,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SuspendWaitOutcome {
     Resume,
@@ -1784,6 +1792,7 @@ fn dispatch_hook_with_suspend_policy(
     suspend_mode: HookSuspendMode,
     request: &HookRunRequest,
 ) -> HookDispatchOutcome {
+    let retry_max_attempts = max_retry_attempts_for_suspend_mode(suspend_mode);
     let outcome = execute_hook_attempt(
         event_loop,
         hook_executor,
@@ -1793,6 +1802,8 @@ fn dispatch_hook_with_suspend_policy(
         hook_name,
         on_error,
         suspend_mode,
+        1,
+        retry_max_attempts,
         request,
     );
 
@@ -1811,6 +1822,7 @@ fn dispatch_hook_with_suspend_policy(
             hook_name,
             on_error,
             suspend_mode,
+            retry_max_attempts,
             request,
             outcome,
         ),
@@ -1823,6 +1835,7 @@ fn dispatch_hook_with_suspend_policy(
             hook_name,
             on_error,
             suspend_mode,
+            retry_max_attempts,
             request,
             outcome,
         ),
@@ -1839,6 +1852,7 @@ fn dispatch_retry_backoff_suspend_policy(
     hook_name: &str,
     on_error: HookOnError,
     suspend_mode: HookSuspendMode,
+    retry_max_attempts: u32,
     request: &HookRunRequest,
     mut outcome: HookDispatchOutcome,
 ) -> HookDispatchOutcome {
@@ -1877,6 +1891,8 @@ fn dispatch_retry_backoff_suspend_policy(
             hook_name,
             on_error,
             suspend_mode,
+            retry_attempt as u32 + 2,
+            retry_max_attempts,
             request,
         );
 
@@ -1915,6 +1931,7 @@ fn dispatch_wait_then_retry_suspend_policy(
     hook_name: &str,
     on_error: HookOnError,
     suspend_mode: HookSuspendMode,
+    retry_max_attempts: u32,
     request: &HookRunRequest,
     outcome: HookDispatchOutcome,
 ) -> HookDispatchOutcome {
@@ -1995,6 +2012,8 @@ fn dispatch_wait_then_retry_suspend_policy(
                 hook_name,
                 on_error,
                 suspend_mode,
+                2,
+                retry_max_attempts,
                 request,
             );
 
@@ -2021,6 +2040,8 @@ fn execute_hook_attempt(
     hook_name: &str,
     on_error: HookOnError,
     suspend_mode: HookSuspendMode,
+    retry_attempt: u32,
+    retry_max_attempts: u32,
     request: &HookRunRequest,
 ) -> HookDispatchOutcome {
     match hook_executor.run(request.clone()) {
@@ -2032,6 +2053,9 @@ fn execute_hook_attempt(
                 phase_event_key,
                 hook_name,
                 disposition,
+                suspend_mode,
+                retry_attempt,
+                retry_max_attempts,
                 &run_result,
             ));
 
@@ -3269,6 +3293,37 @@ printf '%s|%s\n' "$1" "$phase" >> "$2""#
     }
 
     #[cfg(unix)]
+    fn dispatch_test_event_loop_with_diagnostics(workspace_root: &Path) -> EventLoop {
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = workspace_root.to_path_buf();
+        let diagnostics =
+            ralph_core::diagnostics::DiagnosticsCollector::with_enabled(workspace_root, true)
+                .expect("create diagnostics collector");
+        EventLoop::with_diagnostics(config, diagnostics)
+    }
+
+    #[cfg(unix)]
+    fn read_hook_run_telemetry_entries(workspace_root: &Path) -> Vec<HookRunTelemetryEntry> {
+        let diagnostics_root = workspace_root.join(".ralph").join("diagnostics");
+        let mut session_dirs: Vec<_> = std::fs::read_dir(&diagnostics_root)
+            .expect("read diagnostics root")
+            .filter_map(Result::ok)
+            .collect();
+        session_dirs.sort_by_key(|entry| entry.path());
+
+        let latest_session = session_dirs
+            .last()
+            .expect("at least one diagnostics session should exist");
+        let hook_runs_path = latest_session.path().join("hook-runs.jsonl");
+        let content = std::fs::read_to_string(&hook_runs_path).expect("read hook-runs.jsonl");
+
+        content
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("parse hook run telemetry entry"))
+            .collect()
+    }
+
+    #[cfg(unix)]
     fn read_hook_log(log_path: &Path) -> Vec<String> {
         std::fs::read_to_string(log_path)
             .expect("read hook log")
@@ -3918,7 +3973,7 @@ exit 0"#
 
         let hook_engine = hook_engine_with_events(events);
         let hook_executor = HookExecutor::new();
-        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let event_loop = dispatch_test_event_loop_with_diagnostics(temp_dir.path());
         let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
 
         let outcomes = dispatch_phase_event_hooks(
@@ -3946,6 +4001,37 @@ exit 0"#
 
         let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
         assert_eq!(attempts.trim(), "3", "hook should recover on third attempt");
+
+        let telemetry_entries = read_hook_run_telemetry_entries(temp_dir.path());
+        assert_eq!(telemetry_entries.len(), 3);
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.retry_attempt)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.retry_max_attempts == 4)
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.suspend_mode == HookSuspendMode::RetryBackoff)
+        );
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.disposition)
+                .collect::<Vec<_>>(),
+            vec![
+                HookDisposition::Suspend,
+                HookDisposition::Suspend,
+                HookDisposition::Pass,
+            ]
+        );
     }
 
     #[cfg(unix)]
@@ -4129,7 +4215,7 @@ exit 0"#
 
         let hook_engine = hook_engine_with_events(events);
         let hook_executor = HookExecutor::new();
-        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let event_loop = dispatch_test_event_loop_with_diagnostics(temp_dir.path());
         let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
         let suspend_state_store = SuspendStateStore::new(temp_dir.path());
 
@@ -4192,6 +4278,33 @@ exit 0"#
         assert!(
             !suspend_state_store.resume_requested_path().exists(),
             "resume signal should be consumed under wait_then_retry"
+        );
+
+        let telemetry_entries = read_hook_run_telemetry_entries(temp_dir.path());
+        assert_eq!(telemetry_entries.len(), 2);
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.retry_attempt)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.retry_max_attempts == 2)
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.suspend_mode == HookSuspendMode::WaitThenRetry)
+        );
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.disposition)
+                .collect::<Vec<_>>(),
+            vec![HookDisposition::Suspend, HookDisposition::Pass]
         );
     }
 

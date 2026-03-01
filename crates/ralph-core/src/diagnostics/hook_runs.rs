@@ -1,4 +1,4 @@
-use crate::hooks::{HookRunResult, HookStreamOutput};
+use crate::hooks::{HookRunResult, HookStreamOutput, HookSuspendMode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -30,6 +30,9 @@ pub struct HookRunTelemetryEntry {
     pub stdout: HookStreamOutput,
     pub stderr: HookStreamOutput,
     pub disposition: HookDisposition,
+    pub suspend_mode: HookSuspendMode,
+    pub retry_attempt: u32,
+    pub retry_max_attempts: u32,
 }
 
 impl HookRunTelemetryEntry {
@@ -40,6 +43,9 @@ impl HookRunTelemetryEntry {
         phase_event: impl Into<String>,
         hook_name: impl Into<String>,
         disposition: HookDisposition,
+        suspend_mode: HookSuspendMode,
+        retry_attempt: u32,
+        retry_max_attempts: u32,
         run_result: &HookRunResult,
     ) -> Self {
         Self {
@@ -55,6 +61,9 @@ impl HookRunTelemetryEntry {
             stdout: run_result.stdout.clone(),
             stderr: run_result.stderr.clone(),
             disposition,
+            suspend_mode,
+            retry_attempt,
+            retry_max_attempts,
         }
     }
 }
@@ -118,6 +127,9 @@ mod tests {
                 truncated: true,
             },
             disposition,
+            suspend_mode: HookSuspendMode::RetryBackoff,
+            retry_attempt: 2,
+            retry_max_attempts: 4,
         }
     }
 
@@ -158,6 +170,9 @@ mod tests {
             "stdout",
             "stderr",
             "disposition",
+            "suspend_mode",
+            "retry_attempt",
+            "retry_max_attempts",
         ] {
             assert!(
                 value.get(field).is_some(),
@@ -173,6 +188,9 @@ mod tests {
         assert_eq!(value["stdout"]["truncated"], false);
         assert_eq!(value["stderr"]["content"], "hook-stderr");
         assert_eq!(value["stderr"]["truncated"], true);
+        assert_eq!(value["suspend_mode"], "retry_backoff");
+        assert_eq!(value["retry_attempt"], 2);
+        assert_eq!(value["retry_max_attempts"], 4);
     }
 
     #[test]
@@ -199,6 +217,9 @@ mod tests {
             "post.iteration.start",
             "manual-gate",
             HookDisposition::Block,
+            HookSuspendMode::WaitThenRetry,
+            2,
+            2,
             &run_result,
         );
         let timestamp_after = Utc::now();
@@ -216,6 +237,9 @@ mod tests {
         assert_eq!(entry.stderr.content, run_result.stderr.content);
         assert_eq!(entry.stderr.truncated, run_result.stderr.truncated);
         assert_eq!(entry.disposition, HookDisposition::Block);
+        assert_eq!(entry.suspend_mode, HookSuspendMode::WaitThenRetry);
+        assert_eq!(entry.retry_attempt, 2);
+        assert_eq!(entry.retry_max_attempts, 2);
         assert!(entry.timestamp >= timestamp_before);
         assert!(entry.timestamp <= timestamp_after);
     }
@@ -240,6 +264,9 @@ mod tests {
         assert_eq!(parsed.phase_event, "pre.loop.start");
         assert_eq!(parsed.hook_name, "env-guard");
         assert_eq!(parsed.disposition, HookDisposition::Warn);
+        assert_eq!(parsed.suspend_mode, HookSuspendMode::RetryBackoff);
+        assert_eq!(parsed.retry_attempt, 2);
+        assert_eq!(parsed.retry_max_attempts, 4);
         assert_eq!(parsed.stdout.content, "hook-stdout");
         assert_eq!(parsed.stderr.content, "hook-stderr");
         assert!(parsed.stderr.truncated);
