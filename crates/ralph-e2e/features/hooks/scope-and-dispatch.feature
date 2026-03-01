@@ -1,28 +1,28 @@
 @hooks @scope-and-dispatch
-Feature: Hooks scope and dispatch placeholders
-  # Step 0.2 placeholder scenarios for AC traceability.
+Feature: Hooks scope and dispatch
+  # Per-project scope and lifecycle event dispatch
   # Source: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md (AC-01..AC-04)
 
   @AC-01
   Scenario: AC-01 Per-project scope only
-    Given hooks acceptance criterion "AC-01" is defined as a placeholder
-    When the hooks BDD suite is executed in CI-safe mode
-    Then scenario "AC-01" is reported for later implementation
+    Given a project with hooks configured
+    When Ralph runs in that project
+    Then hooks from that project config are loaded and no global hook source is required
 
   @AC-02
   Scenario: AC-02 Mandatory lifecycle events supported
-    Given hooks acceptance criterion "AC-02" is defined as a placeholder
-    When the hooks BDD suite is executed in CI-safe mode
-    Then scenario "AC-02" is reported for later implementation
+    Given hooks for all required v1 events
+    When those lifecycle boundaries occur
+    Then corresponding hook phases are dispatched with structured payloads
 
   @AC-03
   Scenario: AC-03 Pre/post phase support
-    Given hooks acceptance criterion "AC-03" is defined as a placeholder
-    When the hooks BDD suite is executed in CI-safe mode
-    Then scenario "AC-03" is reported for later implementation
+    Given `pre.E` and `post.E` hooks
+    When event `E` occurs
+    Then pre hooks run before and post hooks run after the lifecycle boundary
 
   @AC-04
   Scenario: AC-04 Deterministic ordering
-    Given hooks acceptance criterion "AC-04" is defined as a placeholder
-    When the hooks BDD suite is executed in CI-safe mode
-    Then scenario "AC-04" is reported for later implementation
+    Given multiple hooks for a phase
+    When phase dispatch executes
+    Then hooks run sequentially in declaration order
