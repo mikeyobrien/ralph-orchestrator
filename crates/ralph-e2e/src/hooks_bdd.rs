@@ -770,20 +770,106 @@ fn evaluate_ac_07(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_08(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-08: Verify warn policy - on_error: warn continues orchestration with warning
-        // Source: crates/ralph-core/src/config.rs:1280-1282 - HookOnError::Warn
-        // crates/ralph-core/src/hooks/engine.rs:171 - default to Warn
-        // Disposition resolver logs warning and continues when hook fails with Warn
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[
+                (
+                    "HookOnError enum exposes warn policy",
+                    "pub enum HookOnError {",
+                ),
+                (
+                    "warn policy documents continue-on-failure behavior",
+                    "/// Continue orchestration and record warning telemetry.",
+                ),
+                ("warn policy variant exists", "Warn,"),
+                (
+                    "hook validation requires explicit warn|block|suspend policy",
+                    "is required in v1 (warn | block | suspend)",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/loop_runner.rs",
+            &[
+                (
+                    "warn policy maps to warn disposition",
+                    "HookOnError::Warn => HookDisposition::Warn,",
+                ),
+                (
+                    "warn/non-pass outcomes are logged as continuing",
+                    "\"Lifecycle hook returned non-pass disposition; continuing\"",
+                ),
+                (
+                    "hook dispatch logs telemetry entries with computed disposition",
+                    "event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(",
+                ),
+                (
+                    "lifecycle integration test asserts warn continues across boundary",
+                    "warn disposition should continue across loop.start boundary",
+                ),
+                (
+                    "blocking gate helper allows non-blocking dispositions",
+                    "fn test_fail_if_blocking_loop_start_outcomes_allows_non_blocking_dispositions() {",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
 
 fn evaluate_ac_09(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-09: Verify block policy - on_error: block stops lifecycle action as failure
-        // Source: crates/ralph-core/src/config.rs:1283-1284 - HookOnError::Block
-        // Disposition resolver returns Block disposition when hook fails with Block
-        // This causes the lifecycle action to fail with clear reason surfaced
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[
+                (
+                    "HookOnError enum exposes block policy",
+                    "pub enum HookOnError {",
+                ),
+                (
+                    "block policy documents lifecycle-action failure behavior",
+                    "/// Stop the current lifecycle action as a failure.",
+                ),
+                ("block policy variant exists", "Block,"),
+                (
+                    "hook validation requires explicit warn|block|suspend policy",
+                    "is required in v1 (warn | block | suspend)",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/loop_runner.rs",
+            &[
+                (
+                    "block policy maps to block disposition",
+                    "HookOnError::Block => HookDisposition::Block,",
+                ),
+                (
+                    "blocking gate detects block dispositions",
+                    ".find(|outcome| outcome.disposition == HookDisposition::Block)",
+                ),
+                (
+                    "blocking gate fails lifecycle boundary when block is present",
+                    "Err(anyhow::anyhow!(reason))",
+                ),
+                (
+                    "blocking failure reason includes hook, phase-event, and failure detail",
+                    "\"Lifecycle hook '{}' blocked orchestration at '{}': {}\"",
+                ),
+                (
+                    "loop-start integration test asserts block disposition aborts boundary",
+                    "expect_err(\"block disposition should abort loop.start boundary\")",
+                ),
+                (
+                    "failure-context test asserts surfaced block reason",
+                    "expect_err(\"block disposition should fail loop.start boundary\")",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
