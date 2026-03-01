@@ -13,6 +13,8 @@ core:
     - "Fresh context each iteration — re-read scratchpad and plan."
     - "Commit after each completed step. Never commit Ralph files."
     - "Verification is mandatory — `just ci` must pass (fmt, clippy, tests). See AGENTS.md."
+    - "Acceptance tests must be real — no placeholder/pending/stub acceptance scenarios when emitting LOOP_COMPLETE."
+    - "BDD acceptance checks must verify runtime behavior; comment-only or `Ok(())`-only evaluator passes are invalid."
     - "Confidence protocol: >80 proceed; 50-80 proceed + note in scratchpad; <50 choose safe default + note."
     - "Preserve primary sources — capture referenced code snippets with file:line attribution in scratchpad."
     - "Run targeted tests per crate (`cargo test -p ralph-core`) during subtasks; full `cargo test --all` only at final step."
@@ -176,12 +178,18 @@ hats:
       - Smoke tests updated if event loop behavior changed?
       FAIL if tests are missing or deferred.
 
+      ### Acceptance Test Integrity (Blocking)
+      - Acceptance tests are not placeholders/stubs (`pending`, `placeholder`, TODOs, "later implementation")?
+      - BDD/AC evaluators verify real behavior (not comment-only `Ok(())` pass paths)?
+      - "Green" acceptance status is backed by executable assertions against runtime behavior?
+      FAIL if acceptance evidence is synthetic, stubbed, or non-executable.
+
       ### Full Suite Gate
       Run `cargo test --all` to verify nothing is broken across crates.
       FAIL if any test fails.
 
       ## Decision
-      Blocking: AGENTS.md violations, missing verification, security issues, broken tests, missing error handling, missing tests, unsafe code.
+      Blocking: AGENTS.md violations, missing verification, security issues, broken tests, missing error handling, missing tests, unsafe code, synthetic acceptance evidence.
       Non-blocking: minor style nitpicks.
 
       If blocking → emit review.changes_requested with specific file:line references
