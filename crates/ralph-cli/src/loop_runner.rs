@@ -1607,11 +1607,125 @@ pub async fn run_loop_impl(
             }
         }
 
+        let pending_human_interact_context = event_loop
+            .pending_human_interact_context_in_jsonl()
+            .inspect_err(|e| {
+                warn!(
+                    error = %e,
+                    "Failed to inspect unread JSONL events for human.interact boundary"
+                )
+            })
+            .ok()
+            .flatten();
+
+        if let Some(human_interact_context) = pending_human_interact_context {
+            let pre_human_interact_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PreHumanInteract,
+                build_human_interact_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    event_loop.state().iteration,
+                    Some(display_hat.as_str().to_string()),
+                    Some(display_hat.as_str().to_string()),
+                    None,
+                    Some(human_interact_context),
+                ),
+            );
+            fail_if_blocking_human_interact_outcomes(&pre_human_interact_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &pre_human_interact_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
+
         // Read events from JSONL that agent may have written
         let processed_events = event_loop
             .process_events_from_jsonl()
             .inspect_err(|e| warn!(error = %e, "Failed to read events from JSONL"))
             .ok();
+
+        if let Some(human_interact_context) = processed_events
+            .as_ref()
+            .and_then(|events| events.human_interact_context.clone())
+        {
+            let post_human_interact_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PostHumanInteract,
+                build_human_interact_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    event_loop.state().iteration,
+                    Some(display_hat.as_str().to_string()),
+                    Some(display_hat.as_str().to_string()),
+                    None,
+                    Some(human_interact_context),
+                ),
+            );
+            fail_if_blocking_human_interact_outcomes(&post_human_interact_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &post_human_interact_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
 
         if processed_events
             .as_ref()
@@ -1804,6 +1918,34 @@ fn build_plan_created_payload_input(
             active_hat,
             selected_hat,
             selected_task,
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn build_human_interact_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    selected_hat: Option<String>,
+    selected_task: Option<String>,
+    human_interact: Option<serde_json::Value>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            selected_hat,
+            selected_task,
+            human_interact,
             ..HookPayloadContextInput::default()
         },
     }
@@ -2419,6 +2561,25 @@ fn fail_if_blocking_plan_created_outcomes(outcomes: &[HookDispatchOutcome]) -> R
         hook_name = %blocking_outcome.hook_name,
         reason = %reason,
         "Lifecycle hook blocked plan.created boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn fail_if_blocking_human_interact_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked human.interact boundary"
     );
 
     Err(anyhow::anyhow!(reason))
@@ -5042,6 +5203,70 @@ exit 73"#
         let blocked_exec_message = blocked_exec_error.to_string();
         assert!(blocked_exec_message.contains("block-exec-hook"));
         assert!(blocked_exec_message.contains("post.iteration.start"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_fail_if_blocking_human_interact_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreHumanInteract,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(9),
+                    timed_out: false,
+                }),
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostHumanInteract,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: None,
+            },
+        ];
+
+        assert!(fail_if_blocking_human_interact_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_human_interact_outcomes_surfaces_failure_context() {
+        let blocked_timeout_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostHumanInteract,
+            hook_name: "block-timeout-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: None,
+                timed_out: true,
+            }),
+        }];
+
+        let blocked_timeout_error =
+            fail_if_blocking_human_interact_outcomes(&blocked_timeout_outcomes)
+                .expect_err("block disposition should fail human.interact boundary");
+        let blocked_timeout_message = blocked_timeout_error.to_string();
+        assert!(blocked_timeout_message.contains("block-timeout-hook"));
+        assert!(blocked_timeout_message.contains("post.human.interact"));
+        assert!(blocked_timeout_message.contains("hook timed out"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreHumanInteract,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+        }];
+
+        let blocked_exec_error = fail_if_blocking_human_interact_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail human.interact boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("pre.human.interact"));
         assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
     }
 
