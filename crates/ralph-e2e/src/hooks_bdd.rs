@@ -1,9 +1,8 @@
-//! Minimal BDD runner for hooks acceptance placeholders.
+//! Hooks BDD runner for acceptance criteria.
 //!
-//! Step 0 scaffolding intentionally keeps all AC scenarios red while wiring:
-//! - feature discovery from `features/hooks/*.feature`
-//! - placeholder step-definition matching
-//! - deterministic CI-safe execution path
+//! Discovery is backed by `cucumber-rs` Gherkin parsing over
+//! `features/hooks/*.feature`, while execution routes scenarios through
+//! deterministic AC evaluators and runtime harness assertions.
 
 use crate::executor::{find_workspace_root, resolve_ralph_binary};
 use std::ffi::OsStr;
@@ -16,7 +15,7 @@ use thiserror::Error;
 const HOOKS_FEATURE_DIR_WORKSPACE: &str = "crates/ralph-e2e/features/hooks";
 const HOOKS_FEATURE_DIR_CRATE: &str = "features/hooks";
 
-/// Configuration for executing the hooks BDD placeholder suite.
+/// Configuration for executing the hooks BDD suite.
 #[derive(Debug, Clone, Default)]
 pub struct HooksBddConfig {
     /// Optional scenario filter (matches id, scenario title, tags, or feature filename).
@@ -66,7 +65,7 @@ pub enum HooksBddError {
         source: std::io::Error,
     },
 
-    /// Feature file was malformed for the minimal parser.
+    /// Feature file was malformed for cucumber-rs Gherkin parsing.
     #[error("invalid feature file {path}: {reason}")]
     InvalidFeatureFile {
         /// Feature file path.
@@ -293,11 +292,12 @@ impl HooksBddIntegrationHarness {
         Ok(script_path)
     }
 
-    /// Runs `ralph` with a bounded timeout and writes stdout/stderr to run artifacts.
-    pub fn run_bounded_ralph_command(
+    /// Runs an arbitrary command with a bounded timeout and writes stdout/stderr artifacts.
+    pub fn run_bounded_command(
         &mut self,
         artifact_name: impl Into<String>,
         workspace_dir: &Path,
+        binary: &Path,
         args: &[&str],
         timeout: Duration,
     ) -> Result<HooksBddRunArtifact, String> {
@@ -309,11 +309,8 @@ impl HooksBddIntegrationHarness {
             ));
         }
 
-        let ralph_binary = resolve_ralph_binary();
-        let command_preview = format_command_preview(
-            ralph_binary.as_os_str(),
-            args.iter().copied().map(OsStr::new),
-        );
+        let command_preview =
+            format_command_preview(binary.as_os_str(), args.iter().copied().map(OsStr::new));
         let artifact_index = self.scaffold_run_artifact(artifact_name, command_preview);
 
         let (stdout_path, stderr_path) = {
@@ -367,7 +364,7 @@ impl HooksBddIntegrationHarness {
             )
         })?;
 
-        let mut command = Command::new(&ralph_binary);
+        let mut command = Command::new(binary);
         command
             .args(args)
             .current_dir(workspace_dir)
@@ -439,6 +436,24 @@ impl HooksBddIntegrationHarness {
                     self.scenario_id
                 )
             })
+    }
+
+    /// Runs `ralph` with a bounded timeout and writes stdout/stderr to run artifacts.
+    pub fn run_bounded_ralph_command(
+        &mut self,
+        artifact_name: impl Into<String>,
+        workspace_dir: &Path,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<HooksBddRunArtifact, String> {
+        let ralph_binary = resolve_ralph_binary();
+        self.run_bounded_command(
+            artifact_name,
+            workspace_dir,
+            ralph_binary.as_path(),
+            args,
+            timeout,
+        )
     }
 
     /// Consumes the harness and returns captured artifact metadata.
@@ -682,7 +697,11 @@ fn evaluate_green_acceptance(
         return build_scenario_result(scenario, harness, false, msg);
     }
 
-    // Run the actual evaluation.
+    if let Err(msg) = assert_runtime_integration_coverage(&scenario.scenario_id, harness) {
+        return build_scenario_result(scenario, harness, false, msg);
+    }
+
+    // Run the AC-specific evaluation assertions.
     match evaluation(harness) {
         Ok(()) => build_scenario_result(
             scenario,
@@ -705,6 +724,220 @@ fn validate_acceptance_context(ci_safe_mode: bool, ac_id: &str) -> Result<(), St
             ac_id
         ));
     }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeTestCase {
+    package: &'static str,
+    filter: &'static str,
+}
+
+fn runtime_test_cases_for_ac(ac_id: &str) -> Vec<RuntimeTestCase> {
+    match ac_id {
+        "AC-01" => vec![
+            RuntimeTestCase {
+                package: "ralph-core",
+                filter: "test_hooks_config_boundary_accepts_valid_file",
+            },
+            RuntimeTestCase {
+                package: "ralph-core",
+                filter: "test_hooks_config_boundary_rejects_non_v1_scope_field",
+            },
+        ],
+        "AC-02" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order",
+        }],
+        "AC-03" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order",
+        }],
+        "AC-04" => vec![
+            RuntimeTestCase {
+                package: "ralph-core",
+                filter: "resolve_phase_event_preserves_declaration_order",
+            },
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order",
+            },
+        ],
+        "AC-05" => vec![RuntimeTestCase {
+            package: "ralph-core",
+            filter: "run_writes_json_payload_to_hook_stdin",
+        }],
+        "AC-06" => vec![RuntimeTestCase {
+            package: "ralph-core",
+            filter: "run_marks_timed_out_when_command_exceeds_timeout",
+        }],
+        "AC-07" => vec![RuntimeTestCase {
+            package: "ralph-core",
+            filter: "run_truncates_stdout_and_stderr_at_max_output_bytes",
+        }],
+        "AC-08" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_loop_start_dispatch_warn_continues_and_block_aborts",
+        }],
+        "AC-09" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_loop_start_dispatch_warn_continues_and_block_aborts",
+        }],
+        "AC-10" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_iteration_start_suspend_waits_for_resume_and_clears_artifacts_before_continuing",
+        }],
+        "AC-11" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_wait_for_resume_if_suspended_resumes_and_clears_suspend_artifacts",
+        }],
+        "AC-12" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_wait_for_resume_if_suspended_is_noop_without_suspend_dispositions",
+        }],
+        "AC-13" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads",
+        }],
+        "AC-14" => vec![
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads",
+            },
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_parse_hook_mutation_stdout_accepts_metadata_only_payload_and_namespaces_by_hook",
+            },
+        ],
+        "AC-15" => vec![
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate",
+            },
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason",
+            },
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate",
+            },
+        ],
+        "AC-16" => vec![
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_dispatch_phase_event_hooks_retry_backoff_recovers_before_exhaustion",
+            },
+            RuntimeTestCase {
+                package: "ralph-core",
+                filter: "test_diagnostics_collector_logs_hook_run_telemetry",
+            },
+        ],
+        "AC-17" => vec![RuntimeTestCase {
+            package: "ralph-cli",
+            filter: "test_hooks_validate_json_success_report_and_exit_code",
+        }],
+        "AC-18" => vec![
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_preflight_check_config_json",
+            },
+            RuntimeTestCase {
+                package: "ralph-core",
+                filter: "default_checks_include_hooks_check_name",
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn read_artifact_excerpt(path: &Path, max_chars: usize) -> String {
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            let trimmed = content.trim();
+            if trimmed.chars().count() <= max_chars {
+                trimmed.to_string()
+            } else {
+                let tail: String = trimmed
+                    .chars()
+                    .rev()
+                    .take(max_chars)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                format!("…{tail}")
+            }
+        }
+        Err(source) => format!("(failed to read {}: {source})", path.display()),
+    }
+}
+
+fn assert_runtime_integration_coverage(
+    ac_id: &str,
+    harness: &mut HooksBddIntegrationHarness,
+) -> Result<(), String> {
+    if cfg!(test) {
+        // Unit tests already exercise evaluators directly; avoid recursive nested
+        // `cargo test` subprocesses during `cargo test -p ralph-e2e`.
+        return Ok(());
+    }
+
+    let runtime_tests = runtime_test_cases_for_ac(ac_id);
+    if runtime_tests.is_empty() {
+        return Err(format!(
+            "{ac_id}: runtime integration mapping is missing for this acceptance criterion"
+        ));
+    }
+
+    let workspace_root = find_workspace_root().ok_or_else(|| {
+        format!("{ac_id}: failed to determine workspace root for runtime integration checks")
+    })?;
+
+    for runtime_test in runtime_tests {
+        let args = [
+            "test",
+            "-p",
+            runtime_test.package,
+            runtime_test.filter,
+            "--",
+            "--nocapture",
+        ];
+        let artifact_name = format!(
+            "cargo-test-{}-{}",
+            slugify_path_segment(runtime_test.package),
+            slugify_path_segment(runtime_test.filter)
+        );
+
+        let artifact = harness.run_bounded_command(
+            artifact_name,
+            &workspace_root,
+            Path::new("cargo"),
+            &args,
+            Duration::from_secs(180),
+        )?;
+
+        if artifact.timed_out {
+            return Err(format!(
+                "{ac_id}: runtime integration test timed out ({}/{})",
+                runtime_test.package, runtime_test.filter
+            ));
+        }
+
+        if artifact.exit_code != Some(0) {
+            let stdout_tail = read_artifact_excerpt(&artifact.stdout_path, 800);
+            let stderr_tail = read_artifact_excerpt(&artifact.stderr_path, 800);
+            return Err(format!(
+                "{ac_id}: runtime integration test failed ({}/{}) [exit={:?}]\nstdout: {}\nstderr: {}",
+                runtime_test.package,
+                runtime_test.filter,
+                artifact.exit_code,
+                stdout_tail,
+                stderr_tail
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -2070,10 +2303,7 @@ fn hooks_feature_dir() -> Result<PathBuf, HooksBddError> {
 }
 
 fn parse_feature_file(path: &Path) -> Result<Vec<HooksBddScenario>, HooksBddError> {
-    let content = fs::read_to_string(path).map_err(|source| HooksBddError::ReadFeatureFile {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    use cucumber::feature::Ext as _;
 
     let feature_file = path
         .file_name()
@@ -2083,91 +2313,98 @@ fn parse_feature_file(path: &Path) -> Result<Vec<HooksBddScenario>, HooksBddErro
             reason: "missing file name".to_string(),
         })?;
 
-    parse_feature_content(&content, &feature_file).map_err(|reason| {
-        HooksBddError::InvalidFeatureFile {
-            path: path.to_path_buf(),
-            reason,
-        }
-    })
-}
+    let parsed_feature =
+        cucumber::gherkin::Feature::parse_path(path, cucumber::gherkin::GherkinEnv::default())
+            .map_err(|source| HooksBddError::InvalidFeatureFile {
+                path: path.to_path_buf(),
+                reason: source.to_string(),
+            })?;
 
-fn parse_feature_content(
-    content: &str,
-    feature_file: &str,
-) -> Result<Vec<HooksBddScenario>, String> {
+    let feature =
+        parsed_feature
+            .expand_examples()
+            .map_err(|source| HooksBddError::InvalidFeatureFile {
+                path: path.to_path_buf(),
+                reason: source.to_string(),
+            })?;
+
     let mut scenarios = Vec::new();
-    let mut feature_tags: Vec<String> = Vec::new();
-    let mut pending_tags: Vec<String> = Vec::new();
-    let mut current_scenario: Option<ScenarioBuilder> = None;
 
-    for line in content.lines() {
-        let trimmed = line.trim();
+    scenarios.extend(convert_gherkin_scenarios(
+        &feature.scenarios,
+        &feature.tags,
+        &feature_file,
+    ));
 
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if trimmed.starts_with('@') {
-            pending_tags.extend(parse_tags(trimmed));
-            continue;
-        }
-
-        if let Some(_feature_name) = trimmed.strip_prefix("Feature:") {
-            feature_tags = std::mem::take(&mut pending_tags);
-            continue;
-        }
-
-        if let Some(scenario_name) = trimmed.strip_prefix("Scenario:") {
-            if let Some(builder) = current_scenario.take() {
-                scenarios.push(builder.build(feature_file));
-            }
-
-            let mut tags = feature_tags.clone();
-            tags.extend(std::mem::take(&mut pending_tags));
-
-            current_scenario = Some(ScenarioBuilder::new(scenario_name.trim().to_string(), tags));
-            continue;
-        }
-
-        if let Some((keyword, step_text)) = parse_step(trimmed)
-            && let Some(builder) = &mut current_scenario
-        {
-            builder.steps.push(HooksStep {
-                keyword,
-                text: step_text.to_string(),
-            });
-        }
-    }
-
-    if let Some(builder) = current_scenario.take() {
-        scenarios.push(builder.build(feature_file));
+    for rule in &feature.rules {
+        let inherited_tags = merge_tags(&feature.tags, &rule.tags);
+        scenarios.extend(convert_gherkin_scenarios(
+            &rule.scenarios,
+            &inherited_tags,
+            &feature_file,
+        ));
     }
 
     if scenarios.is_empty() {
-        return Err("no scenarios discovered".to_string());
+        return Err(HooksBddError::InvalidFeatureFile {
+            path: path.to_path_buf(),
+            reason: "no scenarios discovered".to_string(),
+        });
     }
 
     Ok(scenarios)
 }
 
-fn parse_tags(line: &str) -> Vec<String> {
-    line.split_whitespace()
-        .filter_map(|tag| tag.strip_prefix('@'))
-        .map(ToString::to_string)
+fn convert_gherkin_scenarios(
+    scenarios: &[cucumber::gherkin::Scenario],
+    inherited_tags: &[String],
+    feature_file: &str,
+) -> Vec<HooksBddScenario> {
+    scenarios
+        .iter()
+        .map(|scenario| {
+            let tags = merge_tags(inherited_tags, &scenario.tags);
+            let scenario_id = tags
+                .iter()
+                .find(|tag| is_acceptance_id(tag))
+                .cloned()
+                .unwrap_or_else(|| scenario.name.clone());
+            let steps = scenario
+                .steps
+                .iter()
+                .map(|step| HooksStep {
+                    keyword: map_gherkin_step_keyword(step.ty),
+                    text: step.value.clone(),
+                })
+                .collect();
+
+            HooksBddScenario {
+                scenario_id,
+                scenario_name: scenario.name.clone(),
+                feature_file: feature_file.to_string(),
+                tags,
+                steps,
+            }
+        })
         .collect()
 }
 
-fn parse_step(line: &str) -> Option<(HooksStepKeyword, &str)> {
-    if let Some(text) = line.strip_prefix("Given ") {
-        return Some((HooksStepKeyword::Given, text));
+fn merge_tags(inherited_tags: &[String], local_tags: &[String]) -> Vec<String> {
+    let mut merged = inherited_tags.to_vec();
+    for tag in local_tags {
+        if !merged.contains(tag) {
+            merged.push(tag.clone());
+        }
     }
+    merged
+}
 
-    if let Some(text) = line.strip_prefix("When ") {
-        return Some((HooksStepKeyword::When, text));
+fn map_gherkin_step_keyword(keyword: cucumber::gherkin::StepType) -> HooksStepKeyword {
+    match keyword {
+        cucumber::gherkin::StepType::Given => HooksStepKeyword::Given,
+        cucumber::gherkin::StepType::When => HooksStepKeyword::When,
+        cucumber::gherkin::StepType::Then => HooksStepKeyword::Then,
     }
-
-    line.strip_prefix("Then ")
-        .map(|text| (HooksStepKeyword::Then, text))
 }
 
 fn matches_filter(scenario: &HooksBddScenario, filter_lower: &str) -> bool {
@@ -2178,40 +2415,6 @@ fn matches_filter(scenario: &HooksBddScenario, filter_lower: &str) -> bool {
             .tags
             .iter()
             .any(|tag| tag.to_lowercase().contains(filter_lower))
-}
-
-#[derive(Debug, Clone)]
-struct ScenarioBuilder {
-    scenario_name: String,
-    tags: Vec<String>,
-    steps: Vec<HooksStep>,
-}
-
-impl ScenarioBuilder {
-    fn new(scenario_name: String, tags: Vec<String>) -> Self {
-        Self {
-            scenario_name,
-            tags,
-            steps: Vec::new(),
-        }
-    }
-
-    fn build(self, feature_file: &str) -> HooksBddScenario {
-        let scenario_id = self
-            .tags
-            .iter()
-            .find(|tag| is_acceptance_id(tag))
-            .cloned()
-            .unwrap_or_else(|| self.scenario_name.clone());
-
-        HooksBddScenario {
-            scenario_id,
-            scenario_name: self.scenario_name,
-            feature_file: feature_file.to_string(),
-            tags: self.tags,
-            steps: self.steps,
-        }
-    }
 }
 
 fn is_acceptance_id(tag: &str) -> bool {
@@ -2367,7 +2570,7 @@ mod tests {
     }
 
     #[test]
-    fn discover_hooks_bdd_scenarios_finds_all_placeholder_scenarios() {
+    fn discover_hooks_bdd_scenarios_finds_all_hook_scenarios() {
         let scenarios = discover_hooks_bdd_scenarios(None).expect("should discover scenarios");
         let scenario_ids: Vec<&str> = scenarios
             .iter()
@@ -2652,8 +2855,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_feature_content_parses_scenario_tags_and_steps() {
-        let content = r#"
+    fn parse_feature_file_with_cucumber_parses_scenario_tags_and_steps() {
+        let temp_dir = tempfile::tempdir().expect("tempdir should be created");
+        let feature_path = temp_dir.path().join("example.feature");
+
+        fs::write(
+            &feature_path,
+            r#"
 @hooks
 Feature: Example
 
@@ -2662,9 +2870,11 @@ Feature: Example
     Given hooks acceptance criterion "AC-42" is defined as a placeholder
     When the hooks BDD suite is executed in CI-safe mode
     Then scenario "AC-42" is reported for later implementation
-"#;
+"#,
+        )
+        .expect("feature should be written");
 
-        let scenarios = parse_feature_content(content, "example.feature").expect("parse succeeds");
+        let scenarios = parse_feature_file(&feature_path).expect("parse succeeds");
 
         assert_eq!(scenarios.len(), 1);
         assert_eq!(scenarios[0].scenario_id, "AC-42");
@@ -2673,10 +2883,15 @@ Feature: Example
     }
 
     #[test]
-    fn parse_feature_content_requires_at_least_one_scenario() {
-        let content = "Feature: Empty";
-        let error = parse_feature_content(content, "empty.feature").expect_err("must fail");
-        assert!(error.contains("no scenarios discovered"));
+    fn parse_feature_file_with_cucumber_requires_at_least_one_scenario() {
+        let temp_dir = tempfile::tempdir().expect("tempdir should be created");
+        let feature_path = temp_dir.path().join("empty.feature");
+
+        fs::write(&feature_path, "Feature: Empty\n").expect("feature should be written");
+
+        let error = parse_feature_file(&feature_path).expect_err("must fail");
+        let message = format!("{error}");
+        assert!(message.contains("no scenarios discovered"));
     }
 
     #[test]
