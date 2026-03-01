@@ -258,7 +258,7 @@ impl HookExecutorContract for HookExecutor {
                     return Err(HookExecutorError::Spawn {
                         phase_event: request.phase_event.clone(),
                         hook_name: request.hook_name.clone(),
-                        command: command_display.clone(),
+                        command: command_display,
                         cwd: resolved_cwd.display().to_string(),
                         source,
                     });

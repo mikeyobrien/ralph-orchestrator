@@ -538,7 +538,7 @@ fn show_logs(args: LogsArgs) -> Result<()> {
     let base_path = if let Some(ref wt_path) = worktree_path {
         PathBuf::from(wt_path)
     } else {
-        cwd.clone()
+        cwd
     };
 
     let events_path = base_path.join(".ralph/events.jsonl");
@@ -1212,14 +1212,14 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
 
     // Try exact match in registry
     if let Ok(Some(entry)) = registry.get(id) {
-        return Ok((entry.id.clone(), entry.worktree_path.clone()));
+        return Ok((entry.id.clone(), entry.worktree_path));
     }
 
     // Try partial match (e.g., "a3f2" matches "ralph-20250124-143052-a3f2")
     if let Ok(entries) = registry.list() {
         for entry in entries {
             if entry.id.ends_with(id) || entry.id.contains(id) {
-                return Ok((entry.id.clone(), entry.worktree_path.clone()));
+                return Ok((entry.id.clone(), entry.worktree_path));
             }
         }
     }
@@ -1233,7 +1233,7 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
             .find(|wt| wt.branch.ends_with(&entry.loop_id))
             .map(|wt| wt.path.to_string_lossy().to_string());
 
-        return Ok((entry.loop_id.clone(), wt_path));
+        return Ok((entry.loop_id, wt_path));
     }
 
     // Try partial match in merge queue
@@ -1245,7 +1245,7 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
                     .iter()
                     .find(|wt| wt.branch.ends_with(&entry.loop_id))
                     .map(|wt| wt.path.to_string_lossy().to_string());
-                return Ok((entry.loop_id.clone(), wt_path));
+                return Ok((entry.loop_id, wt_path));
             }
         }
     }

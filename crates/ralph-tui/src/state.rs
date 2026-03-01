@@ -357,7 +357,7 @@ impl TuiState {
                 self.pending_backend = saved_pending_backend;
                 self.guidance_next_queue = saved_guidance_next_queue;
                 self.events_path = saved_events_path;
-                if let Some((hat_id, hat_display)) = custom_hat.clone() {
+                if let Some((hat_id, hat_display)) = custom_hat {
                     self.pending_hat = Some((hat_id, hat_display));
                 } else {
                     self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));

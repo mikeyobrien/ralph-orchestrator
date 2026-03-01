@@ -295,14 +295,15 @@ impl RpcRuntime {
         })?;
 
         if !is_known_method(&method) {
-            return Err(ApiError::method_not_found(method.clone())
-                .with_context(request_id.clone(), Some(method)));
+            return Err(
+                ApiError::method_not_found(method.clone()).with_context(request_id, Some(method))
+            );
         }
 
         if let Err(errors) = validate_request_schema(&raw) {
             return Err(
                 ApiError::invalid_params("request does not match rpc-v1 schema")
-                    .with_context(request_id.clone(), Some(method.clone()))
+                    .with_context(request_id, Some(method))
                     .with_details(json!({ "errors": errors })),
             );
         }

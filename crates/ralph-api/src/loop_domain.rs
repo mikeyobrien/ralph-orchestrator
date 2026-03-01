@@ -437,7 +437,6 @@ impl LoopDomain {
                 "Merge: {}",
                 loop_info
                     .prompt
-                    .clone()
                     .unwrap_or_else(|| params.loop_id.clone())
                     .chars()
                     .take(50)

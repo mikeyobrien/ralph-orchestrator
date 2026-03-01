@@ -160,7 +160,7 @@ impl TaskDomain {
             )
             .with_details(serde_json::json!({
                 "taskId": params.id,
-                "status": requested_status.clone(),
+                "status": requested_status,
                 "autoExecute": auto_execute,
             })));
         }
