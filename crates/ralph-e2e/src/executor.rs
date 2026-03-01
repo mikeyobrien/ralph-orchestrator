@@ -165,7 +165,17 @@ pub fn find_workspace_root() -> Option<PathBuf> {
 ///
 /// This ensures e2e tests run against the locally built code, not a system-installed version.
 pub fn resolve_ralph_binary() -> PathBuf {
-    if let Some(root) = find_workspace_root() {
+    // Try workspace root from cwd first, then CARGO_MANIFEST_DIR (covers
+    // cases where cwd has been changed to a temp/artifacts directory).
+    let roots = [
+        find_workspace_root(),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf),
+    ];
+
+    for root in roots.into_iter().flatten() {
         // Check for release binary first (faster)
         let release_binary = root.join("target/release/ralph");
         if release_binary.exists() {
