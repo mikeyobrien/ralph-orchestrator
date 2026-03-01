@@ -6,6 +6,29 @@
 
 This release implements Ralph v1 per-project lifecycle hooks, enabling operators to define external commands/scripts that execute at specific points in the orchestration loop lifecycle.
 
+## 2026-03-01 — Hooks BDD Finalization (AC-01..AC-18)
+
+### Added
+
+- Executable AC evaluators in `crates/ralph-e2e/src/hooks_bdd.rs` now assert concrete source evidence for AC-01 through AC-18 instead of returning stubbed `Ok(())`.
+- Explicit AC-10..AC-12 suspend/resume coverage in `crates/ralph-e2e/features/hooks/suspend-resume.feature` and evaluator dispatch.
+- Failure-path tests that verify actionable missing-evidence diagnostics (`assert_workspace_source_contains_reports_missing_snippets`, `evaluate_green_acceptance_reports_actionable_missing_evidence_failures`).
+
+### Changed
+
+- Updated hooks feature scenarios to spec-aligned Given/When/Then text with stable `@AC-01`..`@AC-18` traceability tags across:
+  - `scope-and-dispatch.feature`
+  - `executor-safeguards.feature`
+  - `error-dispositions.feature`
+  - `suspend-resume.feature`
+  - `metadata-mutation.feature`
+  - `telemetry-and-validation.feature`
+- Replaced evaluator placeholders with primary-source checks covering dispatch, safeguards, dispositions, suspend/resume, mutation, telemetry, validation command wiring, and preflight integration.
+
+### Crates Affected
+
+- **ralph-e2e** — hooks feature files and `hooks_bdd.rs` acceptance evaluator/test harness.
+
 ## Added
 
 ### Core Hooks System
@@ -89,9 +112,9 @@ This release implements Ralph v1 per-project lifecycle hooks, enabling operators
 
 ## Suggested AGENTS.md Updates
 
-1. **Hook debugging** - Consider adding diagnostic entry capture for hook execution failures similar to agent-output.jsonl
-2. **Parallel loop hooks** - When implementing parallel loops (worktrees), ensure hooks configuration is properly symlinked/accessible from worktree context
-3. **Hooks telemetry** - Consider integrating hook_runs.rs diagnostics into the main diagnostics folder structure for consistency
+1. **Source-evidence evaluator pattern** — For BDD acceptance checks that verify implementation by source inspection, require file:line mapping plus actionable missing-snippet errors (path + description + exact missing literal).
+2. **NixOS `/bin/bash` compatibility gate** — Document that full-suite runs can fail locally when tests execute shebang scripts with `#!/bin/bash`; use a bound shell path (for example `proot -b /run/current-system/sw/bin/bash:/bin/bash`) when validating `cargo test --all` on NixOS.
+3. **Cargo test filter usage** — Note that `cargo test` accepts one positional test filter; avoid passing multiple positional filters when running targeted BDD discovery tests.
 
 ---
 
