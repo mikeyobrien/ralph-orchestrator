@@ -5,14 +5,12 @@ Feature: Hook error dispositions
 
   @AC-08
   Scenario: AC-08 Per-hook warn policy
-    Given a hook configured with "on_error: warn"
-    When the hook exits with a non-zero code
-    Then orchestration continues
-    And warning telemetry is recorded for the hook
+    Given `on_error: warn`
+    When the hook exits non-zero
+    Then orchestration continues and warning telemetry is recorded
 
   @AC-09
   Scenario: AC-09 Per-hook block policy
-    Given a hook configured with "on_error: block"
+    Given `on_error: block`
     When the hook fails
-    Then the current lifecycle action is blocked
-    And a clear failure reason is surfaced to the operator
+    Then orchestration step is blocked and reason is surfaced
