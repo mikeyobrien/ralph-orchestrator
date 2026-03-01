@@ -1,6 +1,6 @@
 # Minimal lifecycle hooks example (v1)
 # Validate with:
-#   ralph hooks validate --config examples/hooks/minimal/ralph.hooks.yml
+#   ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml
 hooks:
   enabled: true
   defaults:
