@@ -1,0 +1,153 @@
+MISS crates/ralph-cli/src/loop_runner.rs:88:74: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:88:57: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:88:77: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:179:55: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:179:58: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:294:8: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:306:13: delete field interactive from struct PtyConfig expression in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:307:13: delete field idle_timeout_secs from struct PtyConfig expression in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:308:13: delete field workspace_root from struct PtyConfig expression in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:323:73: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:323:48: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:323:33: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:323:36: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:721:40: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:789:24: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:789:12: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:789:27: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:808:17: delete match arm TerminationReason::CompletionPromise in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:811:17: delete match arm TerminationReason::MaxIterations in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:814:17: delete match arm TerminationReason::Interrupted | TerminationReason::Stopped in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:984:12: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1082:54: replace + with - in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1082:54: replace + with * in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1178:39: replace += with -= in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1180:42: replace > with < in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1310:46: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1438:32: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1438:35: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1451:30: replace != with == in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1452:39: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1453:36: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1476:22: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1596:48: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1628:68: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1768:24: replace += with -= in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:1795:23: replace == with != in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2233:12: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2302:12: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2315:25: replace && with || in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2315:21: replace > with == in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2315:21: replace > with < in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2315:21: replace > with >= in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2315:28: delete ! in run_loop_impl
+MISS crates/ralph-cli/src/loop_runner.rs:2368:13: delete field active_hat from struct HookPayloadContextInput expression in build_iteration_start_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2369:13: delete field selected_hat from struct HookPayloadContextInput expression in build_iteration_start_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2370:13: delete field selected_task from struct HookPayloadContextInput expression in build_iteration_start_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2371:13: delete field metadata from struct HookPayloadContextInput expression in build_iteration_start_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2396:13: delete field active_hat from struct HookPayloadContextInput expression in build_plan_created_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2397:13: delete field selected_hat from struct HookPayloadContextInput expression in build_plan_created_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2425:13: delete field active_hat from struct HookPayloadContextInput expression in build_human_interact_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2427:13: delete field selected_task from struct HookPayloadContextInput expression in build_human_interact_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2429:13: delete field metadata from struct HookPayloadContextInput expression in build_human_interact_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:2459:13: delete field metadata from struct HookPayloadContextInput expression in build_loop_termination_payload_input
+MISS crates/ralph-cli/src/loop_runner.rs:3197:42: replace == with != in run_wait_then_retry_policy
+MISS crates/ralph-cli/src/loop_runner.rs:3264:28: replace == with != in execute_hook_attempt
+MISS crates/ralph-cli/src/loop_runner.rs:3339:20: replace >= with < in wait_for_retry_backoff_delay_with_signal_poll
+MISS crates/ralph-cli/src/loop_runner.rs:3412:5: replace fail_if_blocking_plan_created_outcomes -> Result<()> with Ok(())
+MISS crates/ralph-cli/src/loop_runner.rs:3567:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in consume_stop_requested_signal
+MISS crates/ralph-cli/src/loop_runner.rs:3681:5: replace resolve_current_events_path -> PathBuf with Default::default()
+MISS crates/ralph-cli/src/loop_runner.rs:3803:13: delete field interactive from struct PtyConfig expression in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3804:13: delete field idle_timeout_secs from struct PtyConfig expression in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3805:13: delete field workspace_root from struct PtyConfig expression in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3820:20: replace && with || in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3820:23: delete ! in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3833:56: replace && with || in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3833:33: replace && with || in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3838:33: replace == with != in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3857:70: replace && with || in execute_pty
+MISS crates/ralph-cli/src/loop_runner.rs:3955:31: replace != with == in log_events_from_output
+MISS crates/ralph-cli/src/loop_runner.rs:4019:5: replace get_last_commit_info -> Option<String> with None
+MISS crates/ralph-cli/src/loop_runner.rs:4019:5: replace get_last_commit_info -> Option<String> with Some(String::new())
+MISS crates/ralph-cli/src/loop_runner.rs:4019:5: replace get_last_commit_info -> Option<String> with Some("xyzzy".into())
+MISS crates/ralph-cli/src/loop_runner.rs:4105:19: replace match guard e.kind() == std::io::ErrorKind::NotFound with true in check_planning_session_responses_for_session
+MISS crates/ralph-cli/src/loop_runner.rs:4105:19: replace match guard e.kind() == std::io::ErrorKind::NotFound with false in check_planning_session_responses_for_session
+MISS crates/ralph-cli/src/loop_runner.rs:4105:28: replace == with != in check_planning_session_responses_for_session
+MISS crates/ralph-cli/src/loop_runner.rs:4285:5: replace process_pending_merges with ()
+MISS crates/ralph-cli/src/loop_runner.rs:4292:5: replace process_pending_merges_cli with ()
+MISS crates/ralph-cli/src/loop_runner.rs:4340:27: replace == with != in start_loop
+MISS crates/ralph-cli/src/loop_runner.rs:4390:5: replace create_robot_service -> Option<Box<dyn ralph_proto::RobotService>> with None
+MISS crates/ralph-core/src/preflight.rs:161:29: replace match guard warnings.is_empty() with false in <impl PreflightCheck for ConfigValidCheck>::run
+MISS crates/ralph-core/src/preflight.rs:214:5: replace count_configured_hooks -> usize with 1
+MISS crates/ralph-core/src/preflight.rs:275:5: replace hook_path_override -> Option<&str> with None
+MISS crates/ralph-core/src/preflight.rs:275:5: replace hook_path_override -> Option<&str> with Some("")
+MISS crates/ralph-core/src/preflight.rs:283:23: replace match guard path.is_absolute() with true in resolve_hook_cwd
+MISS crates/ralph-core/src/preflight.rs:283:23: replace match guard path.is_absolute() with false in resolve_hook_cwd
+MISS crates/ralph-core/src/preflight.rs:295:72: replace > with >= in resolve_hook_command
+MISS crates/ralph-core/src/preflight.rs:355:5: replace is_executable_file -> bool with true
+MISS crates/ralph-core/src/preflight.rs:364:59: replace & with | in is_executable_file
+MISS crates/ralph-core/src/preflight.rs:364:59: replace & with ^ in is_executable_file
+MISS crates/ralph-core/src/preflight.rs:379:9: replace <impl PreflightCheck for BackendAvailableCheck>::name -> &'static str with ""
+MISS crates/ralph-core/src/preflight.rs:397:9: replace <impl PreflightCheck for TelegramTokenCheck>::name -> &'static str with ""
+MISS crates/ralph-core/src/preflight.rs:427:9: replace <impl PreflightCheck for GitCleanCheck>::name -> &'static str with ""
+MISS crates/ralph-core/src/preflight.rs:427:9: replace <impl PreflightCheck for GitCleanCheck>::name -> &'static str with "xyzzy"
+MISS crates/ralph-core/src/preflight.rs:466:9: replace <impl PreflightCheck for PathsExistCheck>::name -> &'static str with ""
+MISS crates/ralph-core/src/preflight.rs:533:9: replace <impl PreflightCheck for ToolsInPathCheck>::name -> &'static str with ""
+MISS crates/ralph-core/src/preflight.rs:533:9: replace <impl PreflightCheck for ToolsInPathCheck>::name -> &'static str with "xyzzy"
+MISS crates/ralph-core/src/preflight.rs:570:16: delete ! in <impl PreflightCheck for ToolsInPathCheck>::run
+MISS crates/ralph-core/src/preflight.rs:587:9: replace <impl PreflightCheck for SpecCompletenessCheck>::name -> &'static str with ""
+MISS crates/ralph-core/src/preflight.rs:587:9: replace <impl PreflightCheck for SpecCompletenessCheck>::name -> &'static str with "xyzzy"
+MISS crates/ralph-core/src/preflight.rs:738:13: replace || with && in has_acceptance_criteria
+MISS crates/ralph-core/src/preflight.rs:737:13: replace || with && in has_acceptance_criteria
+MISS crates/ralph-core/src/preflight.rs:736:13: replace || with && in has_acceptance_criteria
+MISS crates/ralph-core/src/preflight.rs:750:34: replace && with || in has_acceptance_criteria
+MISS crates/ralph-core/src/preflight.rs:901:29: replace || with && in telegram_get_me
+MISS crates/ralph-core/src/preflight.rs:901:8: delete ! in telegram_get_me
+MISS crates/ralph-core/src/preflight.rs:901:47: replace != with == in telegram_get_me
+MISS crates/ralph-core/src/preflight.rs:934:12: delete ! in check_auto_backend
+MISS crates/ralph-core/src/preflight.rs:1000:5: replace backend_command -> Option<String> with None
+MISS crates/ralph-core/src/preflight.rs:1000:5: replace backend_command -> Option<String> with Some(String::new())
+MISS crates/ralph-core/src/preflight.rs:1000:5: replace backend_command -> Option<String> with Some("xyzzy".into())
+MISS crates/ralph-core/src/preflight.rs:1012:9: delete match arm "kiro" in backend_command
+MISS crates/ralph-core/src/preflight.rs:1018:5: replace command_supports_version -> bool with false
+MISS crates/ralph-core/src/preflight.rs:1018:5: delete ! in command_supports_version
+MISS crates/ralph-core/src/preflight.rs:1022:5: replace command_available -> bool with true
+MISS crates/ralph-core/src/preflight.rs:1022:5: replace command_available -> bool with false
+MISS crates/ralph-core/src/preflight.rs:1043:5: replace find_executable -> Option<PathBuf> with None
+MISS crates/ralph-core/src/preflight.rs:1044:34: replace > with < in find_executable
+MISS crates/ralph-core/src/preflight.rs:1044:34: replace > with >= in find_executable
+MISS crates/ralph-core/src/preflight.rs:1073:5: replace executable_extensions -> Vec<OsString> with vec![]
+MISS crates/ralph-core/src/preflight.rs:1073:5: replace executable_extensions -> Vec<OsString> with vec![Default::default()]
+MISS crates/ralph-core/src/preflight.rs:1076:27: delete ! in executable_extensions
+MISS crates/ralph-core/src/hooks/executor.rs:327:26: replace != with == in write_stdin_payload
+MISS crates/ralph-core/src/hooks/executor.rs:338:26: replace != with == in write_stdin_payload
+MISS crates/ralph-core/src/hooks/executor.rs:474:27: replace < with <= in capture_stream_output
+MISS crates/ralph-core/src/hooks/executor.rs:475:43: replace - with + in capture_stream_output
+MISS crates/ralph-core/src/hooks/executor.rs:501:23: replace match guard path.is_absolute() with true in resolve_hook_cwd
+MISS crates/ralph-core/src/hooks/executor.rs:501:23: replace match guard path.is_absolute() with false in resolve_hook_cwd
+MISS crates/ralph-core/src/hooks/executor.rs:508:5: replace hook_path_override -> Option<&str> with Some("")
+MISS crates/ralph-core/src/hooks/executor.rs:508:5: replace hook_path_override -> Option<&str> with Some("xyzzy")
+MISS crates/ralph-core/src/hooks/executor.rs:520:35: replace || with && in resolve_hook_command
+MISS crates/ralph-core/src/hooks/executor.rs:520:72: replace > with == in resolve_hook_command
+MISS crates/ralph-core/src/hooks/executor.rs:520:72: replace > with < in resolve_hook_command
+MISS crates/ralph-core/src/hooks/executor.rs:520:72: replace > with >= in resolve_hook_command
+MISS crates/ralph-core/src/hooks/executor.rs:557:12: delete ! in resolve_hook_command
+MISS crates/ralph-core/src/hooks/executor.rs:578:5: replace executable_extensions -> Vec<OsString> with vec![]
+MISS crates/ralph-core/src/hooks/executor.rs:578:5: replace executable_extensions -> Vec<OsString> with vec![Default::default()]
+MISS crates/ralph-core/src/hooks/executor.rs:581:27: delete ! in executable_extensions
+MISS crates/ralph-core/src/hooks/executor.rs:590:5: replace is_executable_file -> bool with true
+MISS crates/ralph-core/src/hooks/executor.rs:599:59: replace & with | in is_executable_file
+MISS crates/ralph-core/src/hooks/executor.rs:599:59: replace & with ^ in is_executable_file
+MISS crates/ralph-core/src/hooks/executor.rs:610:5: replace duration_ms -> u64 with 0
+MISS crates/ralph-core/src/hooks/executor.rs:610:5: replace duration_ms -> u64 with 1
+MISS crates/ralph-core/src/hooks/executor.rs:613:21: replace <= with > in duration_ms
+TIMEOUT crates/ralph-cli/src/loop_runner.rs:3475:45: replace == with != in wait_for_resume_if_suspended
+TIMEOUT crates/ralph-cli/src/loop_runner.rs:3564:5: replace consume_stop_requested_signal -> Result<bool> with Ok(false)
+TIMEOUT crates/ralph-cli/src/loop_runner.rs:3582:5: replace format_suspending_hook_reason -> String with String::new()
+TIMEOUT crates/ralph-cli/src/loop_runner.rs:3582:5: replace format_suspending_hook_reason -> String with "xyzzy".into()
+TIMEOUT crates/ralph-cli/src/loop_runner.rs:3600:5: replace format_hook_failure_detail -> String with String::new()
+TIMEOUT crates/ralph-cli/src/loop_runner.rs:3600:5: replace format_hook_failure_detail -> String with "xyzzy".into()
+TIMEOUT crates/ralph-core/src/hooks/executor.rs:358:5: replace wait_for_completion -> Result<(ExitStatus, bool), HookExecutorError> with Ok((Default::default(), true))
+TIMEOUT crates/ralph-core/src/hooks/executor.rs:358:5: replace wait_for_completion -> Result<(ExitStatus, bool), HookExecutorError> with Ok((Default::default(), false))
+TIMEOUT crates/ralph-core/src/hooks/executor.rs:399:5: replace terminate_for_timeout -> Result<ExitStatus, HookExecutorError> with Ok(Default::default())
+TIMEOUT crates/ralph-core/src/hooks/executor.rs:470:23: replace == with != in capture_stream_output
