@@ -382,8 +382,42 @@ fn assert_workspace_source_contains(
 
 fn evaluate_ac_01(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // Step 2.1: helper wiring only; concrete AC-01 snippet checks land in 2.2.
-        assert_workspace_source_contains("crates/ralph-core/src/config.rs", &[])?;
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[
+                (
+                    "RalphConfig carries hooks config at project scope",
+                    "pub hooks: HooksConfig,",
+                ),
+                (
+                    "RalphConfig default initializes hooks without global source",
+                    "hooks: HooksConfig::default(),",
+                ),
+                (
+                    "hooks docs explicitly describe per-project scope",
+                    "Controls per-project orchestrator lifecycle hooks.",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/hooks/engine.rs",
+            &[
+                (
+                    "HookEngine is constructed directly from HooksConfig",
+                    "pub fn new(config: &HooksConfig) -> Self {",
+                ),
+                (
+                    "HookEngine clones defaults from project config",
+                    "defaults: config.defaults.clone(),",
+                ),
+                (
+                    "HookEngine clones event map from project config",
+                    "hooks_by_phase_event: config.events.clone(),",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -394,11 +428,92 @@ fn evaluate_ac_01(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_02(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-02: Verify mandatory lifecycle events are supported
-        // Source: crates/ralph-cli/src/loop_runner.rs - lifecycle event dispatch
-        // Supported events: loop.start, loop.end, iteration.start, iteration.end,
-        // plan.created, plan.start, plan.end, task.selected, human.interact
-        // Each has pre/post phase variants
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[
+                (
+                    "pre.loop.start phase-event parses",
+                    "\"pre.loop.start\" => Some(Self::PreLoopStart),",
+                ),
+                (
+                    "post.loop.start phase-event parses",
+                    "\"post.loop.start\" => Some(Self::PostLoopStart),",
+                ),
+                (
+                    "pre.iteration.start phase-event parses",
+                    "\"pre.iteration.start\" => Some(Self::PreIterationStart),",
+                ),
+                (
+                    "post.iteration.start phase-event parses",
+                    "\"post.iteration.start\" => Some(Self::PostIterationStart),",
+                ),
+                (
+                    "pre.plan.created phase-event parses",
+                    "\"pre.plan.created\" => Some(Self::PrePlanCreated),",
+                ),
+                (
+                    "post.plan.created phase-event parses",
+                    "\"post.plan.created\" => Some(Self::PostPlanCreated),",
+                ),
+                (
+                    "pre.human.interact phase-event parses",
+                    "\"pre.human.interact\" => Some(Self::PreHumanInteract),",
+                ),
+                (
+                    "post.human.interact phase-event parses",
+                    "\"post.human.interact\" => Some(Self::PostHumanInteract),",
+                ),
+                (
+                    "pre.loop.complete phase-event parses",
+                    "\"pre.loop.complete\" => Some(Self::PreLoopComplete),",
+                ),
+                (
+                    "post.loop.complete phase-event parses",
+                    "\"post.loop.complete\" => Some(Self::PostLoopComplete),",
+                ),
+                (
+                    "pre.loop.error phase-event parses",
+                    "\"pre.loop.error\" => Some(Self::PreLoopError),",
+                ),
+                (
+                    "post.loop.error phase-event parses",
+                    "\"post.loop.error\" => Some(Self::PostLoopError),",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/hooks/engine.rs",
+            &[
+                (
+                    "phase-event resolver dispatches parsed canonical keys",
+                    "HookPhaseEvent::parse(phase_event)",
+                ),
+                ("payload builder carries phase", "phase: phase.to_string(),"),
+                ("payload builder carries event", "event: event.to_string(),"),
+                (
+                    "payload builder carries canonical phase_event",
+                    "phase_event: phase_event.as_str().to_string(),",
+                ),
+                (
+                    "payload includes loop block",
+                    "loop_context: HookPayloadLoop {",
+                ),
+                (
+                    "payload includes iteration block",
+                    "iteration: HookPayloadIteration {",
+                ),
+                (
+                    "payload includes context block",
+                    "context: HookPayloadContext {",
+                ),
+                (
+                    "payload includes metadata block",
+                    "metadata: HookPayloadMetadata {",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -409,10 +524,78 @@ fn evaluate_ac_02(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_03(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-03: Verify pre/post phase support
-        // Source: crates/ralph-core/src/hooks/engine.rs - phase-event resolver
-        // Pre and post phases for each lifecycle event are supported
-        // pre.* runs before the event, post.* runs after
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[
+                (
+                    "pre.loop.start serde key exists",
+                    "#[serde(rename = \"pre.loop.start\")]",
+                ),
+                (
+                    "post.loop.start serde key exists",
+                    "#[serde(rename = \"post.loop.start\")]",
+                ),
+                (
+                    "pre.iteration.start serde key exists",
+                    "#[serde(rename = \"pre.iteration.start\")]",
+                ),
+                (
+                    "post.iteration.start serde key exists",
+                    "#[serde(rename = \"post.iteration.start\")]",
+                ),
+                (
+                    "pre.plan.created serde key exists",
+                    "#[serde(rename = \"pre.plan.created\")]",
+                ),
+                (
+                    "post.plan.created serde key exists",
+                    "#[serde(rename = \"post.plan.created\")]",
+                ),
+                (
+                    "pre.human.interact serde key exists",
+                    "#[serde(rename = \"pre.human.interact\")]",
+                ),
+                (
+                    "post.human.interact serde key exists",
+                    "#[serde(rename = \"post.human.interact\")]",
+                ),
+                (
+                    "pre.loop.complete serde key exists",
+                    "#[serde(rename = \"pre.loop.complete\")]",
+                ),
+                (
+                    "post.loop.complete serde key exists",
+                    "#[serde(rename = \"post.loop.complete\")]",
+                ),
+                (
+                    "pre.loop.error serde key exists",
+                    "#[serde(rename = \"pre.loop.error\")]",
+                ),
+                (
+                    "post.loop.error serde key exists",
+                    "#[serde(rename = \"post.loop.error\")]",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/hooks/engine.rs",
+            &[
+                (
+                    "phase/event splitting helper exists",
+                    "fn split_phase_event(phase_event: HookPhaseEvent) -> (&'static str, &'static str) {",
+                ),
+                (
+                    "split helper derives phase and event from canonical key",
+                    "phase_event.as_str().split_once('.')",
+                ),
+                (
+                    "payload build uses split pre/post phase",
+                    "let (phase, event) = split_phase_event(phase_event);",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -423,10 +606,44 @@ fn evaluate_ac_03(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_04(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-04: Verify deterministic ordering - hooks run sequentially in declaration order
-        // Source: crates/ralph-core/src/hooks/engine.rs:31-43
-        // resolve_phase_event_hooks() returns hooks sorted by declaration_order
-        // The engine iterates in order and executes sequentially
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[(
+                "phase-event hook lists preserve declaration order via Vec",
+                "pub events: HashMap<HookPhaseEvent, Vec<HookSpec>>,",
+            )],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/hooks/engine.rs",
+            &[
+                (
+                    "resolved hook spec stores declaration order",
+                    "pub declaration_order: usize,",
+                ),
+                (
+                    "resolver enumerates hooks in declaration order",
+                    ".enumerate()",
+                ),
+                (
+                    "resolver forwards declaration order into resolved spec",
+                    "ResolvedHookSpec::from_spec(",
+                ),
+                (
+                    "engine unit test guards declaration-order contract",
+                    "fn resolve_phase_event_preserves_declaration_order() {",
+                ),
+                (
+                    "declaration order assertion for first hook",
+                    "assert_eq!(resolved[0].declaration_order, 0);",
+                ),
+                (
+                    "declaration order assertion for second hook",
+                    "assert_eq!(resolved[1].declaration_order, 1);",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
