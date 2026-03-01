@@ -42,7 +42,7 @@ ci: fmt-check lint test
     @echo "✅ CI checks passed"
 
 # Calibrated hooks mutation rollout threshold (see docs/06-analysis/hooks-mutation-baseline-2026-03-01.md)
-HOOKS_MUTATION_THRESHOLD := 55
+HOOKS_MUTATION_THRESHOLD := "55"
 
 # Baseline mutation command (tooling: cargo-mutants) scoped to hooks-critical paths
 mutants-baseline:

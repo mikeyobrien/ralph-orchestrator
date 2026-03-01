@@ -138,3 +138,32 @@ fn test_wait_for_resume_if_suspended_prioritizes_restart_over_resume()
 Full actionable survivor list (all `MISS` + `TIMEOUT` entries, line-resolved):
 
 - [`docs/06-analysis/hooks-mutation-baseline-2026-03-01-survivors.txt`](./hooks-mutation-baseline-2026-03-01-survivors.txt)
+
+## Step 12.6 verification gate run (2026-03-01)
+
+Required Step 12 verification commands were executed in nix shells:
+
+- `cargo fmt --all -- --check` → `EXIT:0`
+- `cargo clippy --all-targets --all-features -- -D warnings` → `EXIT:0`
+- `cargo test -p ralph-core -q` → `734 passed; 0 failed`
+- `cargo test -p ralph-cli -q` → first run failed in `web::tests::check_tsx_version_blocks_known_bad_release_with_v_prefix`; immediate rerun passed (`320 passed; 0 failed; 2 ignored`)
+- `just mutants-hooks-gate` → `PASS`
+
+Mutation gate artifact summary (`.artifacts/hooks-mutation/hooks-mutation-summary.json`):
+
+- status: `pass`
+- threshold: `55%`
+- operational score: `55.11%` (`178 caught / (178 caught + 145 missed)`)
+- strict score: `53.45%`
+- critical-path counts: `MISS=0`, `TIMEOUT=1`, `unviable=3`
+
+Artifacts produced for CI upload/debugging:
+
+- `.artifacts/hooks-mutation/hooks-mutation-report.md`
+- `.artifacts/hooks-mutation/hooks-mutation-survivors.txt`
+- `.artifacts/hooks-mutation/critical-miss.txt`
+- `.artifacts/hooks-mutation/critical-timeout.txt`
+- `.artifacts/hooks-mutation/critical-unviable.txt`
+- `.artifacts/hooks-mutation/mutants.out/{caught,missed,timeout,unviable}.txt`
+
+Implementation note: `Justfile` threshold variable is quoted (`HOOKS_MUTATION_THRESHOLD := "55"`) so `just` parses and injects it correctly into `scripts/hooks-mutation-gate.sh`.
