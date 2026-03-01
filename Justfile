@@ -69,3 +69,28 @@ pre-commit:
     @just fmt-check
     @just lint
     @echo "✅ Pre-commit checks passed!"
+
+# Hooks mutation baseline - run mutation tests on hooks-critical modules
+# Requires cargo-mutants: cargo install cargo-mutants
+# Outputs to /tmp/hooks-mutants-output
+# Gates: operational score >= 55%, no MISS survivors in critical paths
+mutants-baseline:
+    @echo "Running mutation baseline on hooks-critical modules..."
+    cargo mutants \
+      --baseline skip \
+      --file crates/ralph-core/src/hooks/executor.rs \
+      --file crates/ralph-core/src/hooks/engine.rs \
+      --file crates/ralph-core/src/preflight.rs \
+      --file crates/ralph-cli/src/loop_runner.rs \
+      -o /tmp/hooks-mutants-output \
+      --no-times \
+      --colors never \
+      --caught \
+      --unviable
+    @echo ""
+    @echo "Results in /tmp/hooks-mutants-output/"
+    @echo "Run: cat /tmp/hooks-mutants-output/{caught,missed,timeout}.txt"
+    @echo ""
+    @echo "Gate checks:"
+    @echo "1. Operational score >= 55%: Calculate as: caught / (caught + missed)"
+    @echo "2. No MISS survivors in critical paths (loop_runner.rs:3467-3560, 3623-3635)"
