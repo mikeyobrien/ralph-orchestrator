@@ -106,6 +106,41 @@ jobs:
       - run: npm run test:server
       - run: npm run test -w @ralph-web/dashboard
 
+  hooks-mutation-gate:
+    name: Hooks Mutation Gate
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+      - name: Run hooks mutation gate
+        run: ./scripts/hooks-mutation-gate.sh
+      - name: Upload hooks mutation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hooks-mutation-gate
+          path: |
+            .artifacts/hooks-mutation/hooks-mutation-report.md
+            .artifacts/hooks-mutation/hooks-mutation-summary.json
+            .artifacts/hooks-mutation/hooks-mutation-survivors.txt
+            .artifacts/hooks-mutation/critical-miss.txt
+            .artifacts/hooks-mutation/critical-timeout.txt
+            .artifacts/hooks-mutation/critical-unviable.txt
+            .artifacts/hooks-mutation/mutants.out/caught.txt
+            .artifacts/hooks-mutation/mutants.out/missed.txt
+            .artifacts/hooks-mutation/mutants.out/timeout.txt
+            .artifacts/hooks-mutation/mutants.out/unviable.txt
+          if-no-files-found: warn
+          retention-days: 30
+
   # Verify the crate can be packaged (catches include_str! issues)
   # Only runs on PRs - main pushes are either merges (already verified) or
   # version bumps (Release workflow handles publishing with correct deps)

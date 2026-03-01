@@ -97,7 +97,7 @@ hats:
 | Audit | `cargo audit`, `npm audit` | Known vulnerabilities |
 | Format | `cargo fmt --check` | Style violations |
 | Build | `cargo build` | Compilation errors |
-| Mutation | `just mutants-baseline` | Untested logic gaps (warning-only) |
+| Mutation | `just mutants-baseline` (baseline), `just mutants-hooks-gate` (CI gate) | Untested logic gaps; hooks rollout gate enforces threshold + critical no-`MISS` invariants |
 | Specs | Verify acceptance criteria | Spec criteria not met by tests (optional, fail blocks) |
 
 ### Repository Mutation Baseline
@@ -128,6 +128,19 @@ For the scoped hooks rollout, baseline calibration is documented in
 `docs/06-analysis/hooks-mutation-baseline-2026-03-01.md` and sets an initial
 operational gate of **>=55%** (`caught / (caught + missed)`), with timeouts and
 critical-path no-survivor checks enforced separately.
+
+The enforced hooks mutation CI gate is:
+
+```bash
+just mutants-hooks-gate
+```
+
+`mutants-hooks-gate` runs `scripts/hooks-mutation-gate.sh` and:
+
+- enforces `>= HOOKS_MUTATION_THRESHOLD` operational score,
+- hard-fails on any `MISS` in `crates/ralph-cli/src/loop_runner.rs:3467-3560,3623-3635`,
+- reports `TIMEOUT` + `unviable` classes separately,
+- writes actionable artifacts to `.artifacts/hooks-mutation/` for CI upload.
 
 ### Behavioral Gates
 

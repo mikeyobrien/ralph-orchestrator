@@ -48,6 +48,10 @@ HOOKS_MUTATION_THRESHOLD := 55
 mutants-baseline:
     cargo mutants --file crates/ralph-core/src/hooks/executor.rs --file crates/ralph-core/src/hooks/engine.rs --file crates/ralph-core/src/preflight.rs --file crates/ralph-cli/src/loop_runner.rs
 
+# Enforced hooks mutation CI gate (threshold + critical-path no-MISS invariant)
+mutants-hooks-gate:
+    HOOKS_MUTATION_THRESHOLD={{HOOKS_MUTATION_THRESHOLD}} ./scripts/hooks-mutation-gate.sh
+
 # Setup development environment (install hooks)
 setup:
     @echo "Development environment is managed by devenv.sh"
