@@ -108,12 +108,17 @@ For this repository, the mutation tooling baseline is **cargo-mutants**, invoked
 just mutants-baseline
 ```
 
-This command expands to:
+This command is scoped to hooks-critical modules and expands to:
 
 ```bash
-git diff > /tmp/ralph-mutants.diff
-cargo mutants --in-diff /tmp/ralph-mutants.diff
+cargo mutants --file crates/ralph-core/src/hooks/executor.rs --file crates/ralph-core/src/hooks/engine.rs --file crates/ralph-core/src/preflight.rs --file crates/ralph-cli/src/loop_runner.rs
 ```
+
+Mutation target scope:
+- `crates/ralph-core/src/hooks/executor.rs`
+- `crates/ralph-core/src/hooks/engine.rs`
+- `crates/ralph-core/src/preflight.rs`
+- `crates/ralph-cli/src/loop_runner.rs` (hook disposition + suspend control path)
 
 Mutation score calibration starts at **>=70%**, aligned with
 `QualityReport::MUTATION_THRESHOLD` in

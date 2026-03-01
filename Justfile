@@ -41,10 +41,9 @@ clean:
 ci: fmt-check lint test
     @echo "✅ CI checks passed"
 
-# Baseline mutation command (tooling: cargo-mutants)
+# Baseline mutation command (tooling: cargo-mutants) scoped to hooks-critical paths
 mutants-baseline:
-    git diff > /tmp/ralph-mutants.diff
-    cargo mutants --in-diff /tmp/ralph-mutants.diff
+    cargo mutants --file crates/ralph-core/src/hooks/executor.rs --file crates/ralph-core/src/hooks/engine.rs --file crates/ralph-core/src/preflight.rs --file crates/ralph-cli/src/loop_runner.rs
 
 # Setup development environment (install hooks)
 setup:
