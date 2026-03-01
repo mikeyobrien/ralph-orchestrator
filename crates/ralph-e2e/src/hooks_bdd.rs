@@ -206,7 +206,7 @@ fn dispatch_ac_evaluator(ac_id: &str) -> fn(&HooksBddScenario, bool) -> HooksBdd
         "AC-04" => evaluate_ac_04,
         "AC-05" => evaluate_ac_05,
         "AC-06" => evaluate_ac_06,
-        // AC-07..AC-18: Stubbed for future implementation
+        // AC-07..AC-18: Safeguards, dispositions, suspend/resume, mutation, telemetry
         "AC-07" => evaluate_ac_07,
         "AC-08" => evaluate_ac_08,
         "AC-09" => evaluate_ac_09,
@@ -1155,18 +1155,121 @@ fn evaluate_ac_15(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_16(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-16: Verify hook telemetry completeness - telemetry includes event/phase,
-        // timestamps, duration, exit code, timeout flag, truncated outputs, disposition
-        // Source: crates/ralph-core/src/diagnostics/hook_runs.rs:20-38
-        // HookRunTelemetryEntry struct has all required fields:
-        // - timestamp, loop_id, phase_event, hook_name
-        // - started_at, ended_at, duration_ms
-        // - exit_code, timed_out
-        // - stdout, stderr (HookStreamOutput with truncated content)
-        // - disposition (HookDisposition enum: Pass, Warn, Block, Suspend)
-        // - suspend_mode, retry_attempt, retry_max_attempts
-        // Telemetry is logged via HookRunLogger::log() to hook-runs.jsonl
-        // Integration: loop_runner.rs calls log_hook_run_telemetry() after each hook
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/diagnostics/hook_runs.rs",
+            &[
+                (
+                    "telemetry schema defines structured hook-run entry",
+                    "pub struct HookRunTelemetryEntry {",
+                ),
+                (
+                    "telemetry captures canonical phase-event key",
+                    "pub phase_event: String,",
+                ),
+                ("telemetry captures hook name", "pub hook_name: String,"),
+                (
+                    "telemetry captures lifecycle timing bounds",
+                    "pub started_at: DateTime<Utc>,",
+                ),
+                (
+                    "telemetry captures duration in milliseconds",
+                    "pub duration_ms: u64,",
+                ),
+                (
+                    "telemetry captures process exit code",
+                    "pub exit_code: Option<i32>,",
+                ),
+                (
+                    "telemetry captures timeout indicator",
+                    "pub timed_out: bool,",
+                ),
+                (
+                    "telemetry captures stdout payload with truncation metadata",
+                    "pub stdout: HookStreamOutput,",
+                ),
+                (
+                    "telemetry captures stderr payload with truncation metadata",
+                    "pub stderr: HookStreamOutput,",
+                ),
+                (
+                    "telemetry captures final disposition",
+                    "pub disposition: HookDisposition,",
+                ),
+                (
+                    "telemetry captures suspend mode used for failures",
+                    "pub suspend_mode: HookSuspendMode,",
+                ),
+                (
+                    "telemetry captures retry attempt index",
+                    "pub retry_attempt: u32,",
+                ),
+                (
+                    "telemetry captures retry attempt ceiling",
+                    "pub retry_max_attempts: u32,",
+                ),
+                (
+                    "telemetry builder maps executor output into entry",
+                    "pub fn from_run_result(",
+                ),
+                (
+                    "hook-run logger writes to hook-runs diagnostics file",
+                    "let log_file = session_dir.join(\"hook-runs.jsonl\");",
+                ),
+                (
+                    "hook-run logger serializes telemetry entries as JSON",
+                    "serde_json::to_writer(&mut self.writer, entry)?;",
+                ),
+                (
+                    "hook-run logger uses newline-delimited records",
+                    "self.writer.write_all(b\"\\n\")?;",
+                ),
+                (
+                    "telemetry unit test verifies required serialized fields",
+                    "fn telemetry_entry_serializes_required_fields() {",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/loop_runner.rs",
+            &[
+                (
+                    "loop runner emits hook-run telemetry after each attempt",
+                    "event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(",
+                ),
+                (
+                    "telemetry emission includes canonical phase-event key",
+                    "phase_event_key,",
+                ),
+                ("telemetry emission includes hook identifier", "hook_name,"),
+                (
+                    "telemetry emission includes computed disposition",
+                    "disposition,",
+                ),
+                ("telemetry emission includes suspend mode", "suspend_mode,"),
+                (
+                    "telemetry emission includes retry attempt",
+                    "retry_attempt,",
+                ),
+                (
+                    "telemetry emission includes retry ceiling",
+                    "retry_max_attempts,",
+                ),
+                (
+                    "telemetry emission includes executor run result",
+                    "&run_result,",
+                ),
+                (
+                    "retry-backoff integration test asserts telemetry row count",
+                    "assert_eq!(telemetry_entries.len(), 3);",
+                ),
+                (
+                    "wait-then-retry integration test asserts telemetry row count",
+                    "assert_eq!(telemetry_entries.len(), 2);",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -1177,17 +1280,88 @@ fn evaluate_ac_16(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_17(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-17: Verify ralph hooks validate command exists and validates config
-        // Source: crates/ralph-cli/src/hooks.rs:30-46
-        // HooksValidateFormat enum (Human, Json)
-        // HooksValidateArgs struct with --format flag
-        // validate_hooks() function performs:
-        // - Config shape + enum values validation
-        // - Duplicate names/order sanity check
-        // - Event-phase keys validity
-        // - Command executability/path checks
-        // - Mutation contract settings validation
-        // CLI subcommand: "hooks validate" registered in main.rs
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/hooks.rs",
+            &[
+                (
+                    "hooks namespace defines validate subcommand",
+                    "Validate(ValidateArgs),",
+                ),
+                (
+                    "hooks validate supports machine-readable format selection",
+                    "pub enum HooksValidateFormat {",
+                ),
+                ("hooks validate includes human format", "Human,"),
+                ("hooks validate includes json format", "Json,"),
+                (
+                    "hooks validate defaults --format to human",
+                    "#[arg(long, value_enum, default_value_t = HooksValidateFormat::Human)]",
+                ),
+                (
+                    "hooks command execution routes validate subcommand",
+                    "HooksCommands::Validate(validate_args) => {",
+                ),
+                (
+                    "validate subcommand delegates to execute_validate implementation",
+                    "execute_validate(config_sources, hats_source, validate_args, use_colors).await",
+                ),
+                (
+                    "validate command loads a structured report from current config sources",
+                    "let report = build_report(config_sources, hats_source).await;",
+                ),
+                (
+                    "json mode renders report as pretty-printed JSON",
+                    "serde_json::to_string_pretty(&report)?",
+                ),
+                (
+                    "human mode renders report with human formatter",
+                    "print_human_report(&report, use_colors);",
+                ),
+                (
+                    "validate command exits non-zero when report fails",
+                    "std::process::exit(1);",
+                ),
+                (
+                    "report builder runs semantic config validation",
+                    "if let Err(error) = config.validate() {",
+                ),
+                (
+                    "semantic validation failure is captured as hooks diagnostic",
+                    "report.push_diagnostic(\"hooks.semantic\", error.to_string(), None, None, None);",
+                ),
+                (
+                    "report builder includes duplicate hook-name validation",
+                    "validate_duplicate_names(&config, &mut report);",
+                ),
+                (
+                    "report builder includes command resolvability validation",
+                    "validate_command_resolvability(&config, &mut report);",
+                ),
+            ],
+        )?;
+
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/main.rs",
+            &[
+                (
+                    "top-level CLI command enum registers hooks namespace",
+                    "Hooks(hooks::HooksArgs),",
+                ),
+                (
+                    "main command dispatcher routes hooks invocations",
+                    "Some(Commands::Hooks(args)) => {",
+                ),
+                (
+                    "hooks dispatcher invokes hooks::execute handler",
+                    "hooks::execute(",
+                ),
+                (
+                    "hooks dispatcher forwards color preference to validation output",
+                    "cli.color.should_use_colors(),",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -1198,15 +1372,64 @@ fn evaluate_ac_17(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_18(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-18: Verify hooks validation is integrated into preflight checks
-        // Source: crates/ralph-core/src/preflight.rs:109, 178-210
-        // HooksValidationCheck is included in PreflightRunner::default_checks()
-        // The check validates:
-        // - Hook duplicate names via validate_hook_duplicate_names()
-        // - Command resolvability via validate_hook_command_resolvability()
-        // Returns CheckResult::pass() when hooks disabled or validation passes
-        // Returns CheckResult::fail() with diagnostics when validation fails
-        // Respects skip list behavior: runs only when config.hooks.enabled
+        assert_workspace_source_contains(
+            "crates/ralph-core/src/preflight.rs",
+            &[
+                (
+                    "preflight default checks register hooks validation check",
+                    "Box::new(HooksValidationCheck),",
+                ),
+                (
+                    "hooks preflight check type exists",
+                    "struct HooksValidationCheck;",
+                ),
+                (
+                    "hooks preflight check is named hooks for skip-list integration",
+                    "\"hooks\"",
+                ),
+                (
+                    "hooks preflight check skips when hooks are disabled",
+                    "if !config.hooks.enabled {",
+                ),
+                (
+                    "disabled hooks preflight result is a passing skip status",
+                    "return CheckResult::pass(self.name(), \"Hooks disabled (skipping)\");",
+                ),
+                (
+                    "hooks preflight check validates duplicate names",
+                    "validate_hook_duplicate_names(config, &mut diagnostics);",
+                ),
+                (
+                    "hooks preflight check validates command resolvability",
+                    "validate_hook_command_resolvability(config, &mut diagnostics);",
+                ),
+                (
+                    "hooks preflight check reports pass label with checked hook count",
+                    "\"Hooks validation passed ({} hook(s))\"",
+                ),
+                (
+                    "hooks preflight check reports failing diagnostics count",
+                    "\"Hooks validation failed ({} issue(s))\"",
+                ),
+                (
+                    "unit test verifies hooks check registration in default preflight set",
+                    "fn default_checks_include_hooks_check_name() {",
+                ),
+                (
+                    "unit test verifies hooks check skip behavior when disabled",
+                    "async fn hooks_check_skips_when_hooks_are_disabled() {",
+                ),
+                (
+                    "unit test verifies hooks check emits actionable failures",
+                    "async fn hooks_check_fails_with_actionable_duplicate_and_command_diagnostics() {",
+                ),
+                (
+                    "unit test verifies selected preflight checks can omit hooks failures",
+                    "async fn run_selected_can_skip_hooks_check_failures() {",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
