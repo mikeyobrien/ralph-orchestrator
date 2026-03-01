@@ -2683,6 +2683,7 @@ dependencies = [
  "ralph-proto",
  "serde",
  "serde_json",
+ "serde_yaml",
  "teloxide",
  "tempfile",
  "thiserror 2.0.17",

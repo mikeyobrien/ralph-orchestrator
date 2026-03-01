@@ -275,11 +275,15 @@ impl TelegramService {
                             "Received Telegram message"
                         );
 
-                        // Handle bot commands before routing to handler
-                        if crate::commands::is_command(text)
-                            && let Some(response) =
-                                crate::commands::handle_command(text, &workspace_root)
-                        {
+                        // Handle bot commands before routing to handler.
+                        // Unknown slash-commands are rejected here (not treated as guidance).
+                        if crate::commands::is_command(text) {
+                            let response = crate::commands::handle_command(text, &workspace_root)
+                                .unwrap_or_else(|| {
+                                    "Unknown command. Use /help for the supported commands."
+                                        .to_string()
+                                });
+
                             use teloxide::payloads::SendMessageSetters;
                             let send_result = bot
                                 .send_message(teloxide::types::ChatId(chat_id), &response)
@@ -364,6 +368,9 @@ impl TelegramService {
             BotCommand::new("tasks", "Open tasks"),
             BotCommand::new("memories", "Recent memories"),
             BotCommand::new("tail", "Last 20 events"),
+            BotCommand::new("model", "Show current backend/model"),
+            BotCommand::new("models", "Show configured model options"),
+            BotCommand::new("restart", "Restart the loop"),
             BotCommand::new("stop", "Stop the loop"),
             BotCommand::new("help", "List available commands"),
         ];
