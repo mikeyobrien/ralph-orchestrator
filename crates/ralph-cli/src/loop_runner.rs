@@ -1854,71 +1854,35 @@ fn dispatch_retry_backoff_suspend_policy(
     suspend_mode: HookSuspendMode,
     retry_max_attempts: u32,
     request: &HookRunRequest,
-    mut outcome: HookDispatchOutcome,
+    outcome: HookDispatchOutcome,
 ) -> HookDispatchOutcome {
-    for (retry_attempt, backoff_delay_ms) in RETRY_BACKOFF_DELAYS_MS.iter().copied().enumerate() {
-        match wait_for_retry_backoff_delay_with_signal_poll(
-            request.workspace_root.as_path(),
-            Duration::from_millis(backoff_delay_ms),
-        ) {
-            RetryBackoffDelayOutcome::Elapsed => {}
-            RetryBackoffDelayOutcome::StopRequested => {
-                info!(
-                    phase_event = %phase_event_key,
-                    hook_name = %hook_name,
-                    retry_attempt = retry_attempt + 1,
-                    "Stop requested while waiting for retry_backoff retry; deferring to suspend termination handling"
-                );
-                break;
-            }
-            RetryBackoffDelayOutcome::RestartRequested => {
-                info!(
-                    phase_event = %phase_event_key,
-                    hook_name = %hook_name,
-                    retry_attempt = retry_attempt + 1,
-                    "Restart requested while waiting for retry_backoff retry; deferring to suspend termination handling"
-                );
-                break;
-            }
-        }
-
-        outcome = execute_hook_attempt(
-            event_loop,
-            hook_executor,
-            loop_id,
-            phase_event_key,
-            phase_event,
-            hook_name,
-            on_error,
-            suspend_mode,
-            retry_attempt as u32 + 2,
-            retry_max_attempts,
-            request,
-        );
-
-        if outcome.disposition == HookDisposition::Pass {
-            info!(
-                phase_event = %phase_event_key,
-                hook_name = %hook_name,
-                retry_attempt = retry_attempt + 1,
-                "Lifecycle hook recovered under retry_backoff"
-            );
-            return outcome;
-        }
-
-        if outcome.disposition != HookDisposition::Suspend {
-            return outcome;
-        }
-    }
-
-    warn!(
-        phase_event = %phase_event_key,
-        hook_name = %hook_name,
-        retry_attempts = RETRY_BACKOFF_DELAYS_MS.len(),
-        "Lifecycle hook retry_backoff policy exhausted; entering suspended wait_for_resume fallback"
-    );
-
-    outcome
+    run_retry_backoff_policy(
+        phase_event_key,
+        hook_name,
+        &RETRY_BACKOFF_DELAYS_MS,
+        |backoff_delay, _retry_attempt| {
+            wait_for_retry_backoff_delay_with_signal_poll(
+                request.workspace_root.as_path(),
+                backoff_delay,
+            )
+        },
+        |retry_attempt| {
+            execute_hook_attempt(
+                event_loop,
+                hook_executor,
+                loop_id,
+                phase_event_key,
+                phase_event,
+                hook_name,
+                on_error,
+                suspend_mode,
+                retry_attempt,
+                retry_max_attempts,
+                request,
+            )
+        },
+        outcome,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1962,7 +1926,111 @@ fn dispatch_wait_then_retry_suspend_policy(
         "Lifecycle hook requested suspend(wait_then_retry); entering wait-for-resume gate before single retry"
     );
 
-    let wait_outcome = match wait_for_suspend_signal_with_poll(&suspend_state_store) {
+    run_wait_then_retry_policy(
+        phase_event_key,
+        hook_name,
+        || wait_for_suspend_signal_with_poll(&suspend_state_store),
+        || {
+            suspend_state_store
+                .clear_suspend_state()
+                .context("Failed to clear wait_then_retry suspend-state after resume")?;
+            Ok(())
+        },
+        || {
+            execute_hook_attempt(
+                event_loop,
+                hook_executor,
+                loop_id,
+                phase_event_key,
+                phase_event,
+                hook_name,
+                on_error,
+                suspend_mode,
+                2,
+                retry_max_attempts,
+                request,
+            )
+        },
+        outcome,
+    )
+}
+
+fn run_retry_backoff_policy<FWaitForDelay, FRunRetryAttempt>(
+    phase_event_key: &str,
+    hook_name: &str,
+    backoff_delays_ms: &[u64],
+    mut wait_for_delay: FWaitForDelay,
+    mut run_retry_attempt: FRunRetryAttempt,
+    mut outcome: HookDispatchOutcome,
+) -> HookDispatchOutcome
+where
+    FWaitForDelay: FnMut(Duration, usize) -> RetryBackoffDelayOutcome,
+    FRunRetryAttempt: FnMut(u32) -> HookDispatchOutcome,
+{
+    for (retry_attempt, backoff_delay_ms) in backoff_delays_ms.iter().copied().enumerate() {
+        match wait_for_delay(Duration::from_millis(backoff_delay_ms), retry_attempt + 1) {
+            RetryBackoffDelayOutcome::Elapsed => {}
+            RetryBackoffDelayOutcome::StopRequested => {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    retry_attempt = retry_attempt + 1,
+                    "Stop requested while waiting for retry_backoff retry; deferring to suspend termination handling"
+                );
+                break;
+            }
+            RetryBackoffDelayOutcome::RestartRequested => {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    retry_attempt = retry_attempt + 1,
+                    "Restart requested while waiting for retry_backoff retry; deferring to suspend termination handling"
+                );
+                break;
+            }
+        }
+
+        outcome = run_retry_attempt(retry_attempt as u32 + 2);
+
+        if outcome.disposition == HookDisposition::Pass {
+            info!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                retry_attempt = retry_attempt + 1,
+                "Lifecycle hook recovered under retry_backoff"
+            );
+            return outcome;
+        }
+
+        if outcome.disposition != HookDisposition::Suspend {
+            return outcome;
+        }
+    }
+
+    warn!(
+        phase_event = %phase_event_key,
+        hook_name = %hook_name,
+        retry_attempts = backoff_delays_ms.len(),
+        "Lifecycle hook retry_backoff policy exhausted; entering suspended wait_for_resume fallback"
+    );
+
+    outcome
+}
+
+fn run_wait_then_retry_policy<FWaitForSignal, FClearSuspendState, FRunRetryAttempt>(
+    phase_event_key: &str,
+    hook_name: &str,
+    mut wait_for_signal: FWaitForSignal,
+    mut clear_suspend_state: FClearSuspendState,
+    mut run_retry_attempt: FRunRetryAttempt,
+    outcome: HookDispatchOutcome,
+) -> HookDispatchOutcome
+where
+    FWaitForSignal: FnMut() -> Result<SuspendWaitOutcome>,
+    FClearSuspendState: FnMut() -> Result<()>,
+    FRunRetryAttempt: FnMut() -> HookDispatchOutcome,
+{
+    let wait_outcome = match wait_for_signal() {
         Ok(wait_outcome) => wait_outcome,
         Err(error) => {
             warn!(
@@ -1993,7 +2061,7 @@ fn dispatch_wait_then_retry_suspend_policy(
             outcome
         }
         SuspendWaitOutcome::Resume => {
-            if let Err(error) = suspend_state_store.clear_suspend_state() {
+            if let Err(error) = clear_suspend_state() {
                 warn!(
                     phase_event = %phase_event_key,
                     hook_name = %hook_name,
@@ -2003,19 +2071,7 @@ fn dispatch_wait_then_retry_suspend_policy(
                 return outcome;
             }
 
-            let retry_outcome = execute_hook_attempt(
-                event_loop,
-                hook_executor,
-                loop_id,
-                phase_event_key,
-                phase_event,
-                hook_name,
-                on_error,
-                suspend_mode,
-                2,
-                retry_max_attempts,
-                request,
-            );
+            let retry_outcome = run_retry_attempt();
 
             if retry_outcome.disposition == HookDisposition::Pass {
                 info!(
@@ -4482,6 +4538,223 @@ exit 73"#
         assert_eq!(wait_result, Some(TerminationReason::Stopped));
         assert!(!temp_dir.path().join(".ralph/stop-requested").exists());
         assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_run_retry_backoff_policy_replays_configured_schedule_deterministically() {
+        let mut observed_delays_ms = Vec::new();
+        let mut observed_retry_attempts = Vec::new();
+
+        let outcome = run_retry_backoff_policy(
+            "pre.iteration.start",
+            "retry-hook",
+            &[3, 5, 8],
+            |delay, retry_attempt| {
+                observed_delays_ms.push(delay.as_millis() as u64);
+                assert_eq!(retry_attempt, observed_delays_ms.len());
+                RetryBackoffDelayOutcome::Elapsed
+            },
+            |retry_attempt| {
+                observed_retry_attempts.push(retry_attempt);
+                if retry_attempt == 4 {
+                    HookDispatchOutcome {
+                        phase_event: HookPhaseEvent::PreIterationStart,
+                        hook_name: "retry-hook".to_string(),
+                        disposition: HookDisposition::Pass,
+                        suspend_mode: HookSuspendMode::RetryBackoff,
+                        failure: None,
+                    }
+                } else {
+                    suspend_outcome_with_mode(
+                        HookPhaseEvent::PreIterationStart,
+                        "retry-hook",
+                        HookSuspendMode::RetryBackoff,
+                    )
+                }
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PreIterationStart,
+                "retry-hook",
+                HookSuspendMode::RetryBackoff,
+            ),
+        );
+
+        assert_eq!(observed_delays_ms, vec![3, 5, 8]);
+        assert_eq!(observed_retry_attempts, vec![2, 3, 4]);
+        assert_eq!(outcome.disposition, HookDisposition::Pass);
+        assert_eq!(outcome.failure, None);
+    }
+
+    #[test]
+    fn test_run_retry_backoff_policy_exhausts_after_last_configured_delay() {
+        let mut observed_retry_attempts = Vec::new();
+
+        let outcome = run_retry_backoff_policy(
+            "post.iteration.start",
+            "retry-hook",
+            &[11, 13],
+            |_delay, _retry_attempt| RetryBackoffDelayOutcome::Elapsed,
+            |retry_attempt| {
+                observed_retry_attempts.push(retry_attempt);
+                suspend_outcome_with_mode(
+                    HookPhaseEvent::PostIterationStart,
+                    "retry-hook",
+                    HookSuspendMode::RetryBackoff,
+                )
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PostIterationStart,
+                "retry-hook",
+                HookSuspendMode::RetryBackoff,
+            ),
+        );
+
+        assert_eq!(observed_retry_attempts, vec![2, 3]);
+        assert_eq!(outcome.disposition, HookDisposition::Suspend);
+        assert_eq!(
+            outcome.failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_retry_backoff_policy_stop_signal_short_circuits_before_retry_attempt() {
+        let initial_outcome = suspend_outcome_with_mode(
+            HookPhaseEvent::PreLoopStart,
+            "retry-hook",
+            HookSuspendMode::RetryBackoff,
+        );
+        let mut retry_attempt_called = false;
+
+        let outcome = run_retry_backoff_policy(
+            "pre.loop.start",
+            "retry-hook",
+            &[21, 34],
+            |_delay, _retry_attempt| RetryBackoffDelayOutcome::StopRequested,
+            |_retry_attempt| {
+                retry_attempt_called = true;
+                initial_outcome.clone()
+            },
+            initial_outcome.clone(),
+        );
+
+        assert!(!retry_attempt_called);
+        assert_eq!(outcome, initial_outcome);
+    }
+
+    #[test]
+    fn test_run_wait_then_retry_policy_resume_retries_once_and_returns_retry_result() {
+        let mut clear_suspend_calls = 0usize;
+        let mut retry_calls = 0usize;
+
+        let outcome = run_wait_then_retry_policy(
+            "pre.iteration.start",
+            "wait-hook",
+            || Ok(SuspendWaitOutcome::Resume),
+            || {
+                clear_suspend_calls += 1;
+                Ok(())
+            },
+            || {
+                retry_calls += 1;
+                HookDispatchOutcome {
+                    phase_event: HookPhaseEvent::PreIterationStart,
+                    hook_name: "wait-hook".to_string(),
+                    disposition: HookDisposition::Pass,
+                    suspend_mode: HookSuspendMode::WaitThenRetry,
+                    failure: None,
+                }
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PreIterationStart,
+                "wait-hook",
+                HookSuspendMode::WaitThenRetry,
+            ),
+        );
+
+        assert_eq!(clear_suspend_calls, 1);
+        assert_eq!(retry_calls, 1);
+        assert_eq!(outcome.disposition, HookDisposition::Pass);
+        assert_eq!(outcome.failure, None);
+    }
+
+    #[test]
+    fn test_run_wait_then_retry_policy_retry_failure_returns_suspend() {
+        let mut clear_suspend_calls = 0usize;
+        let mut retry_calls = 0usize;
+
+        let outcome = run_wait_then_retry_policy(
+            "post.iteration.start",
+            "wait-hook",
+            || Ok(SuspendWaitOutcome::Resume),
+            || {
+                clear_suspend_calls += 1;
+                Ok(())
+            },
+            || {
+                retry_calls += 1;
+                suspend_outcome_with_mode(
+                    HookPhaseEvent::PostIterationStart,
+                    "wait-hook",
+                    HookSuspendMode::WaitThenRetry,
+                )
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PostIterationStart,
+                "wait-hook",
+                HookSuspendMode::WaitThenRetry,
+            ),
+        );
+
+        assert_eq!(clear_suspend_calls, 1);
+        assert_eq!(retry_calls, 1);
+        assert_eq!(outcome.disposition, HookDisposition::Suspend);
+        assert_eq!(
+            outcome.failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_wait_then_retry_policy_stop_skips_retry_path() {
+        let initial_outcome = suspend_outcome_with_mode(
+            HookPhaseEvent::PreLoopStart,
+            "wait-hook",
+            HookSuspendMode::WaitThenRetry,
+        );
+        let mut clear_suspend_called = false;
+        let mut retry_called = false;
+
+        let outcome = run_wait_then_retry_policy(
+            "pre.loop.start",
+            "wait-hook",
+            || Ok(SuspendWaitOutcome::Stop),
+            || {
+                clear_suspend_called = true;
+                Ok(())
+            },
+            || {
+                retry_called = true;
+                HookDispatchOutcome {
+                    phase_event: HookPhaseEvent::PreLoopStart,
+                    hook_name: "wait-hook".to_string(),
+                    disposition: HookDisposition::Pass,
+                    suspend_mode: HookSuspendMode::WaitThenRetry,
+                    failure: None,
+                }
+            },
+            initial_outcome.clone(),
+        );
+
+        assert!(!clear_suspend_called);
+        assert!(!retry_called);
+        assert_eq!(outcome, initial_outcome);
     }
 
     #[test]
