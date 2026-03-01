@@ -803,6 +803,66 @@ mod tests {
     }
 
     #[test]
+    fn run_hooks_bdd_suite_passes_ac_07_output_size_safeguard() {
+        let config = HooksBddConfig::new(Some("AC-07".to_string()), true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.passed_count(), 1);
+        assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn run_hooks_bdd_suite_passes_ac_08_warn_policy() {
+        let config = HooksBddConfig::new(Some("AC-08".to_string()), true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.passed_count(), 1);
+        assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn run_hooks_bdd_suite_passes_ac_09_block_policy() {
+        let config = HooksBddConfig::new(Some("AC-09".to_string()), true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.passed_count(), 1);
+        assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn run_hooks_bdd_suite_passes_ac_10_suspend_default_mode() {
+        let config = HooksBddConfig::new(Some("AC-10".to_string()), true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.passed_count(), 1);
+        assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn run_hooks_bdd_suite_passes_ac_11_cli_resume_path() {
+        let config = HooksBddConfig::new(Some("AC-11".to_string()), true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.passed_count(), 1);
+        assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn run_hooks_bdd_suite_passes_ac_12_resume_idempotency() {
+        let config = HooksBddConfig::new(Some("AC-12".to_string()), true);
+        let results = run_hooks_bdd_suite(&config).expect("suite should run");
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.passed_count(), 1);
+        assert!(results.results[0].passed);
+    }
+
+    #[test]
     fn run_hooks_bdd_suite_passes_ac_13_mutation_opt_in() {
         let config = HooksBddConfig::new(Some("AC-13".to_string()), true);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
