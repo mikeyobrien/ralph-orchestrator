@@ -1430,112 +1430,128 @@ async fn run_command(
 
     let mut pending_worktree_registration: Option<LoopEntry> = None;
 
+    // Determine TUI mode early (before lock acquisition) to avoid self-lock contention
+    // in subprocess TUI mode. The child RPC process will acquire the lock itself.
+    let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let use_subprocess_tui =
+        !args.no_tui && !args.autonomous && !args.rpc && !args.legacy_tui && is_tty;
+
     // Try to acquire the loop lock for multi-loop concurrency support
     // This implements the lock detection flow from the multi-loop spec
+    // Skip lock acquisition in subprocess TUI mode - let the child acquire it
     let workspace_root = &config.core.workspace_root;
-    let (loop_context, _lock_guard) = match LoopLock::try_acquire(workspace_root, &prompt_summary) {
-        Ok(guard) => {
-            // We're the primary loop - run in place
-            debug!("Acquired loop lock, running as primary loop");
-            let context = LoopContext::primary(workspace_root.clone());
-            (context, Some(guard))
-        }
-        Err(LockError::AlreadyLocked(existing)) => {
-            // Another loop is running
-            if args.exclusive {
-                // --exclusive: wait for the lock instead of spawning worktree
-                info!(
-                    "Loop lock held by PID {} (started {}), waiting for lock (--exclusive mode)...",
-                    existing.pid, existing.started
-                );
-                let guard = LoopLock::acquire_blocking(workspace_root, &prompt_summary)
-                    .context("Failed to acquire loop lock in exclusive mode")?;
-                debug!("Acquired loop lock after waiting");
+    let (loop_context, _lock_guard) = if use_subprocess_tui {
+        // In subprocess TUI mode, don't acquire lock here - the child RPC process will do it
+        // This avoids the self-lock contention where parent holds lock and child sees it,
+        // then incorrectly spawns a worktree thinking there's another concurrent loop
+        debug!("Skipping lock acquisition in subprocess TUI mode (child will acquire)");
+        let context = LoopContext::primary(workspace_root.clone());
+        (context, None)
+    } else {
+        match LoopLock::try_acquire(workspace_root, &prompt_summary) {
+            Ok(guard) => {
+                // We're the primary loop - run in place
+                debug!("Acquired loop lock, running as primary loop");
                 let context = LoopContext::primary(workspace_root.clone());
                 (context, Some(guard))
-            } else if !config.features.parallel {
-                // Parallel loops disabled via config - error out
-                anyhow::bail!(
-                    "Another loop is already running (PID {}, prompt: \"{}\"). \
+            }
+            Err(LockError::AlreadyLocked(existing)) => {
+                // Another loop is running
+                if args.exclusive {
+                    // --exclusive: wait for the lock instead of spawning worktree
+                    info!(
+                        "Loop lock held by PID {} (started {}), waiting for lock (--exclusive mode)...",
+                        existing.pid, existing.started
+                    );
+                    let guard = LoopLock::acquire_blocking(workspace_root, &prompt_summary)
+                        .context("Failed to acquire loop lock in exclusive mode")?;
+                    debug!("Acquired loop lock after waiting");
+                    let context = LoopContext::primary(workspace_root.clone());
+                    (context, Some(guard))
+                } else if !config.features.parallel {
+                    // Parallel loops disabled via config - error out
+                    anyhow::bail!(
+                        "Another loop is already running (PID {}, prompt: \"{}\"). \
                     Parallel loops are disabled in config (features.parallel: false). \
                     Use --exclusive to wait for the lock, or enable parallel loops.",
-                    existing.pid,
-                    existing.prompt.chars().take(50).collect::<String>()
-                );
-            } else {
-                // Auto-spawn into worktree
-                info!(
-                    "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
-                    existing.pid,
-                    existing.prompt.chars().take(50).collect::<String>()
-                );
+                        existing.pid,
+                        existing.prompt.chars().take(50).collect::<String>()
+                    );
+                } else {
+                    // Auto-spawn into worktree
+                    info!(
+                        "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
+                        existing.pid,
+                        existing.prompt.chars().take(50).collect::<String>()
+                    );
 
-                let worktree_config = WorktreeConfig::default();
+                    let worktree_config = WorktreeConfig::default();
 
-                // Generate memorable loop ID (adjective-noun only, no prompt keywords)
-                // This ID will be used consistently for: registry ID, worktree path, and branch name
-                let name_generator =
-                    ralph_core::LoopNameGenerator::from_config(&config.features.loop_naming);
-                let loop_id = name_generator.generate_memorable_unique(|name| {
-                    ralph_core::worktree_exists(workspace_root, name, &worktree_config)
-                });
+                    // Generate memorable loop ID (adjective-noun only, no prompt keywords)
+                    // This ID will be used consistently for: registry ID, worktree path, and branch name
+                    let name_generator =
+                        ralph_core::LoopNameGenerator::from_config(&config.features.loop_naming);
+                    let loop_id = name_generator.generate_memorable_unique(|name| {
+                        ralph_core::worktree_exists(workspace_root, name, &worktree_config)
+                    });
 
-                // Ensure worktree directory is in .gitignore
-                ensure_gitignore(workspace_root, ".worktrees")
-                    .context("Failed to update .gitignore for worktrees")?;
+                    // Ensure worktree directory is in .gitignore
+                    ensure_gitignore(workspace_root, ".worktrees")
+                        .context("Failed to update .gitignore for worktrees")?;
 
-                // Create the worktree
-                let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
-                    .context("Failed to create worktree for parallel loop")?;
+                    // Create the worktree
+                    let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
+                        .context("Failed to create worktree for parallel loop")?;
 
-                info!(
-                    "Created worktree at {} on branch {}",
-                    worktree.path.display(),
-                    worktree.branch
-                );
+                    info!(
+                        "Created worktree at {} on branch {}",
+                        worktree.path.display(),
+                        worktree.branch
+                    );
 
-                // Create loop context for the worktree
-                let context = LoopContext::worktree(
-                    loop_id.clone(),
-                    worktree.path.clone(),
-                    workspace_root.clone(),
-                );
+                    // Create loop context for the worktree
+                    let context = LoopContext::worktree(
+                        loop_id.clone(),
+                        worktree.path.clone(),
+                        workspace_root.clone(),
+                    );
 
-                // Set up all worktree symlinks (memories, specs, code tasks)
-                context
-                    .setup_worktree_symlinks()
-                    .context("Failed to create symlinks in worktree")?;
+                    // Set up all worktree symlinks (memories, specs, code tasks)
+                    context
+                        .setup_worktree_symlinks()
+                        .context("Failed to create symlinks in worktree")?;
 
-                // Generate context file with worktree metadata
-                context
-                    .generate_context_file(&worktree.branch, &prompt_summary)
-                    .context("Failed to generate context file in worktree")?;
+                    // Generate context file with worktree metadata
+                    context
+                        .generate_context_file(&worktree.branch, &prompt_summary)
+                        .context("Failed to generate context file in worktree")?;
 
-                // Register this loop after preflight succeeds so failed runs
-                // don't leave stale registry entries behind.
-                let entry = LoopEntry::with_id(
-                    &loop_id,
-                    &prompt_summary,
-                    Some(worktree.path.to_string_lossy().to_string()),
-                    worktree.path.to_string_lossy().to_string(),
-                );
-                pending_worktree_registration = Some(entry);
+                    // Register this loop after preflight succeeds so failed runs
+                    // don't leave stale registry entries behind.
+                    let entry = LoopEntry::with_id(
+                        &loop_id,
+                        &prompt_summary,
+                        Some(worktree.path.to_string_lossy().to_string()),
+                        worktree.path.to_string_lossy().to_string(),
+                    );
+                    pending_worktree_registration = Some(entry);
 
-                // Update config to use worktree paths
-                // The scratchpad and other paths should resolve to the worktree
-                // Note: We keep the lock guard as None since worktree loops don't hold the primary lock
+                    // Update config to use worktree paths
+                    // The scratchpad and other paths should resolve to the worktree
+                    // Note: We keep the lock guard as None since worktree loops don't hold the primary lock
 
+                    (context, None)
+                }
+            }
+            Err(LockError::UnsupportedPlatform) => {
+                // Non-Unix: just run without locking (single-loop fallback)
+                warn!("Loop locking not supported on this platform, running without lock");
+                let context = LoopContext::primary(workspace_root.clone());
                 (context, None)
             }
-        }
-        Err(LockError::UnsupportedPlatform) => {
-            // Non-Unix: just run without locking (single-loop fallback)
-            warn!("Loop locking not supported on this platform, running without lock");
-            let context = LoopContext::primary(workspace_root.clone());
-            (context, None)
-        }
-        Err(e) => {
-            return Err(anyhow::Error::new(e).context("Failed to acquire loop lock"));
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context("Failed to acquire loop lock"));
+            }
         }
     };
 
@@ -1604,9 +1620,7 @@ async fn run_command(
     // 2. Legacy TUI: In-process TUI (--legacy-tui escape hatch)
     // 3. RPC mode: Headless JSON-lines output (--rpc)
     // 4. CLI mode: No TUI (--no-tui or --autonomous)
-    let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let use_subprocess_tui = wants_tui && !use_legacy_tui && is_tty;
-
+    // Note: use_subprocess_tui is now determined earlier (before lock acquisition)
     let reason = if use_subprocess_tui {
         // Subprocess TUI mode: spawn child with --rpc and attach TUI
         run_subprocess_tui(subprocess_tui_args, resume, custom_args).await?
