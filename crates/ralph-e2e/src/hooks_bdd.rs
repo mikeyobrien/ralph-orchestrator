@@ -1,8 +1,8 @@
 //! Hooks BDD runner with deterministic CI-safe acceptance evaluation.
 //!
 //! Current rollout status:
-//! - AC-01..AC-06: deterministic source-evidence checks (green in `--mock` mode).
-//! - AC-07..AC-18: intentionally pending (red) until later Step 13 slices.
+//! - AC-01..AC-12: deterministic source-evidence checks (green in `--mock` mode).
+//! - AC-13..AC-18: intentionally pending (red) until later Step 13 slices.
 //! - feature discovery from `features/hooks/*.feature`
 //! - stable AC-tagged failure output for traceability
 
@@ -15,7 +15,10 @@ use thiserror::Error;
 const HOOKS_FEATURE_DIR_WORKSPACE: &str = "crates/ralph-e2e/features/hooks";
 const HOOKS_FEATURE_DIR_CRATE: &str = "features/hooks";
 
-const GREEN_ACCEPTANCE_IDS: [&str; 6] = ["AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06"];
+const GREEN_ACCEPTANCE_IDS: [&str; 12] = [
+    "AC-01", "AC-02", "AC-03", "AC-04", "AC-05", "AC-06", "AC-07", "AC-08", "AC-09", "AC-10",
+    "AC-11", "AC-12",
+];
 const REQUIRED_V1_PHASE_EVENTS: [&str; 12] = [
     "pre.loop.start",
     "post.loop.start",
@@ -261,8 +264,8 @@ pub fn discover_hooks_bdd_scenarios(
 
 /// Executes discovered hooks BDD scenarios.
 ///
-/// AC-01..AC-06 execute deterministic source-evidence checks in CI-safe mode,
-/// while AC-07..AC-18 remain intentionally pending for later Step 13 slices.
+/// AC-01..AC-12 execute deterministic source-evidence checks in CI-safe mode,
+/// while AC-13..AC-18 remain intentionally pending for later Step 13 slices.
 pub fn run_hooks_bdd_suite(config: &HooksBddConfig) -> Result<HooksBddRunResults, HooksBddError> {
     let scenarios = discover_hooks_bdd_scenarios(config.filter.as_deref())?;
     let mut results = Vec::with_capacity(scenarios.len());
@@ -517,6 +520,12 @@ fn evaluate_acceptance_criterion(
         "AC-04" => evaluate_ac_04(evidence_cache),
         "AC-05" => evaluate_ac_05(evidence_cache),
         "AC-06" => evaluate_ac_06(evidence_cache),
+        "AC-07" => evaluate_ac_07(evidence_cache),
+        "AC-08" => evaluate_ac_08(evidence_cache),
+        "AC-09" => evaluate_ac_09(evidence_cache),
+        "AC-10" => evaluate_ac_10(evidence_cache),
+        "AC-11" => evaluate_ac_11(evidence_cache),
+        "AC-12" => evaluate_ac_12(evidence_cache),
         _ => Err(pending_acceptance_message(criterion_id)),
     }
 }
@@ -715,6 +724,177 @@ fn evaluate_ac_06(evidence_cache: &mut SourceEvidenceCache) -> Result<String, St
     )
 }
 
+fn evaluate_ac_07(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-07",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "let capture_limit = usize::try_from(max_output_bytes).unwrap_or(usize::MAX);",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "fn run_truncates_stdout_and_stderr_at_max_output_bytes()",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "request.max_output_bytes = 8;",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "assert!(result.stdout.truncated);",
+            ),
+            (
+                "crates/ralph-core/src/hooks/executor.rs",
+                "assert!(result.stderr.truncated);",
+            ),
+        ],
+        "max_output_bytes truncation is deterministic and covered",
+    )
+}
+
+fn evaluate_ac_08(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-08",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "HookOnError::Warn => HookDisposition::Warn,",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn test_loop_start_dispatch_warn_continues_and_block_aborts()",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fail_if_blocking_loop_start_outcomes(&pre_loop_start_outcomes).is_ok(),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"warn disposition should continue across loop.start boundary\"",
+            ),
+        ],
+        "warn policy continues orchestration and is regression-tested",
+    )
+}
+
+fn evaluate_ac_09(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-09",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "HookOnError::Block => HookDisposition::Block,",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "fn fail_if_blocking_loop_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"Lifecycle hook blocked loop.start boundary\"",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                ".expect_err(\"block disposition should abort loop.start boundary\");",
+            ),
+        ],
+        "block policy abort path and surfaced reason are covered",
+    )
+}
+
+fn evaluate_ac_10(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-10",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-core/src/config.rs",
+                "pub enum HookSuspendMode {",
+            ),
+            ("crates/ralph-core/src/config.rs", "#[default]"),
+            ("crates/ralph-core/src/config.rs", "WaitForResume,"),
+            (
+                "crates/ralph-core/src/config.rs",
+                "suspend_mode: HookSuspendMode::default(),",
+            ),
+            (
+                "crates/ralph-core/src/hooks/engine.rs",
+                "suspend_mode: spec.suspend_mode.unwrap_or(defaults.suspend_mode),",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "\"Lifecycle hook requested suspend; entering wait_for_resume gate\"",
+            ),
+            (
+                "crates/ralph-cli/src/loop_runner.rs",
+                "assert_eq!(suspend_state.suspend_mode, HookSuspendMode::WaitForResume);",
+            ),
+        ],
+        "suspend hooks default to wait_for_resume mode and enter resume gate",
+    )
+}
+
+fn evaluate_ac_11(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-11",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn resume_loop(args: ResumeArgs) -> Result<()> {",
+            ),
+            ("crates/ralph-cli/src/loops.rs", ".write_resume_requested()"),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Resume requested for loop '{}'. The loop will continue from the suspended boundary.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_writes_resume_signal_for_in_place_loop()",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_resolves_partial_id_and_targets_worktree()",
+            ),
+        ],
+        "CLI resume writes the signal and targets the resolved loop workspace",
+    )
+}
+
+fn evaluate_ac_12(evidence_cache: &mut SourceEvidenceCache) -> Result<String, String> {
+    verify_source_evidence(
+        "AC-12",
+        evidence_cache,
+        &[
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Resume was already requested for loop '{}'. The loop is not currently suspended; no action taken.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Loop '{}' is not currently suspended. Nothing to resume.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "\"Resume was already requested for loop '{}'. Waiting for the loop to continue.\"",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_is_idempotent_when_resume_already_requested()",
+            ),
+            (
+                "crates/ralph-cli/src/loops.rs",
+                "fn test_resume_loop_noops_for_non_suspended_loop()",
+            ),
+        ],
+        "repeat/non-suspended resume requests are non-destructive and explicitly handled",
+    )
+}
+
 fn verify_source_evidence(
     criterion_id: &str,
     evidence_cache: &mut SourceEvidenceCache,
@@ -755,9 +935,6 @@ fn record_source_evidence(
 
 fn pending_acceptance_message(criterion_id: &str) -> String {
     match parse_acceptance_number(criterion_id) {
-        Some(7..=12) => {
-            format!("pending: {criterion_id} remains red for Step 13.2 (AC-07..AC-12)")
-        }
         Some(13..=18) => {
             format!("pending: {criterion_id} remains red for Step 13.3 (AC-13..AC-18)")
         }
@@ -871,28 +1048,28 @@ mod tests {
     }
 
     #[test]
-    fn run_hooks_bdd_suite_passes_ac_01_to_ac_06_slice_and_keeps_rest_pending() {
+    fn run_hooks_bdd_suite_passes_ac_01_to_ac_12_slice_and_keeps_rest_pending() {
         let config = HooksBddConfig::new(None, true);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
 
         assert_eq!(results.total_count(), 18);
-        assert_eq!(results.passed_count(), 6);
-        assert_eq!(results.failed_count(), 12);
+        assert_eq!(results.passed_count(), 12);
+        assert_eq!(results.failed_count(), 6);
 
-        let ac_06 = results
+        let ac_12 = results
             .results
             .iter()
-            .find(|result| result.scenario_id == "AC-06")
-            .expect("AC-06 result should exist");
-        assert!(ac_06.passed);
+            .find(|result| result.scenario_id == "AC-12")
+            .expect("AC-12 result should exist");
+        assert!(ac_12.passed);
 
-        let ac_07 = results
+        let ac_13 = results
             .results
             .iter()
-            .find(|result| result.scenario_id == "AC-07")
-            .expect("AC-07 result should exist");
-        assert!(!ac_07.passed);
-        assert!(ac_07.message.contains("Step 13.2"));
+            .find(|result| result.scenario_id == "AC-13")
+            .expect("AC-13 result should exist");
+        assert!(!ac_13.passed);
+        assert!(ac_13.message.contains("Step 13.3"));
     }
 
     #[test]
