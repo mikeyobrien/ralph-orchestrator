@@ -1007,10 +1007,40 @@ fn evaluate_ac_12(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_13(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-13: Verify mutation opt-in - when mutate.enabled is false, JSON metadata is ignored
-        // Source: crates/ralph-cli/src/loop_runner.rs:2633-2641
-        // parse_hook_mutation_stdout() returns HookMutationParseOutcome::Disabled when !mutate.enabled
-        // Integration test: test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/loop_runner.rs",
+            &[
+                (
+                    "mutation parser short-circuits when mutate.enabled is false",
+                    "if !mutate.enabled {",
+                ),
+                (
+                    "disabled mutation path yields explicit disabled parse outcome",
+                    "return HookMutationParseOutcome::Disabled;",
+                ),
+                (
+                    "metadata merge processes only parsed mutation outcomes",
+                    "} = &outcome.mutation_parse_outcome",
+                ),
+                (
+                    "non-parsed mutation outcomes are skipped during metadata merge",
+                    "else {\n            continue;\n        };",
+                ),
+                (
+                    "AC-13 integration test verifies disabled mutations stay inert",
+                    "fn test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads() {",
+                ),
+                (
+                    "AC-13 integration test asserts downstream payload excludes hook_metadata namespace",
+                    "assert!(!payload_accumulated.contains_key(\"hook_metadata\"));",
+                ),
+                (
+                    "unit test verifies parser skips mutation parsing when disabled",
+                    "fn test_parse_hook_mutation_stdout_skips_when_disabled() {",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -1021,11 +1051,44 @@ fn evaluate_ac_13(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_14(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-14: Verify metadata-only mutation surface - only metadata namespace is updated
-        // Source: crates/ralph-cli/src/loop_runner.rs:2643-2701
-        // parse_hook_mutation_stdout() only allows {"metadata": {...}} format
-        // merge_hook_metadata_namespace() creates namespaced metadata without touching prompt/events/config
-        // Integration test: test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/loop_runner.rs",
+            &[
+                (
+                    "mutation payload parser enforces metadata-only top-level schema",
+                    "if payload_object.len() != 1 || !payload_object.contains_key(HOOK_MUTATION_PAYLOAD_METADATA_KEY)",
+                ),
+                (
+                    "schema error message documents metadata-only mutation contract",
+                    "mutation payload supports only '{{\\\"{HOOK_MUTATION_PAYLOAD_METADATA_KEY}\\\": {{...}}}}'; found keys: {keys:?}",
+                ),
+                (
+                    "metadata payload value must be a JSON object",
+                    "message: \"mutation payload key 'metadata' must contain a JSON object\".to_string(),",
+                ),
+                (
+                    "parsed metadata is namespaced under hook_metadata by emitting hook",
+                    "namespace_object.insert(hook_name.to_string(), serde_json::Value::Object(metadata));",
+                ),
+                (
+                    "AC-14 integration test validates metadata-only downstream mutation behavior",
+                    "fn test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads() {",
+                ),
+                (
+                    "AC-14 integration test guards mutation surface from prompt field injection",
+                    "assert!(!payload_object.contains_key(\"prompt\"));",
+                ),
+                (
+                    "AC-14 integration test guards mutation surface from events field injection",
+                    "assert!(!payload_object.contains_key(\"events\"));",
+                ),
+                (
+                    "unit test rejects payloads that include non-metadata keys",
+                    "fn test_parse_hook_mutation_stdout_rejects_non_metadata_payload_shape() {",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
@@ -1036,10 +1099,52 @@ fn evaluate_ac_14(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddSc
 
 fn evaluate_ac_15(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-15: Verify JSON-only mutation format - non-JSON output is treated as invalid
-        // Source: crates/ralph-cli/src/loop_runner.rs:2643-2647
-        // parse_hook_mutation_stdout() returns HookMutationParseOutcome::Invalid for non-JSON
-        // Tests verify: test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn/block/suspend
+        assert_workspace_source_contains(
+            "crates/ralph-cli/src/loop_runner.rs",
+            &[
+                (
+                    "mutation parser attempts JSON decode of hook stdout",
+                    "let parsed = match serde_json::from_str::<serde_json::Value>(stdout.trim()) {",
+                ),
+                (
+                    "non-JSON mutation output maps to invalid-json parse outcome",
+                    "return HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidJson {",
+                ),
+                (
+                    "invalid-json failure message is surfaced with parse error context",
+                    "message: format!(\"mutation stdout is not valid JSON: {error}\"),",
+                ),
+                (
+                    "invalid mutation parse outcomes are converted into dispatch failures",
+                    "Some(HookDispatchFailure::InvalidMutationOutput {",
+                ),
+                (
+                    "mutation parse failures are dispositioned via on_error policy",
+                    "let disposition = if mutation_failure.is_some() {",
+                ),
+                (
+                    "mutation parse failure branch maps through disposition_from_on_error",
+                    "disposition_from_on_error(on_error)",
+                ),
+                (
+                    "unit test verifies parser rejects non-JSON mutation stdout",
+                    "fn test_parse_hook_mutation_stdout_rejects_non_json_payload_when_enabled() {",
+                ),
+                (
+                    "AC-15 warn-path test verifies non-JSON mutation remains non-blocking",
+                    "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate() {",
+                ),
+                (
+                    "AC-15 block-path test verifies non-JSON mutation surfaces blocking reason",
+                    "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason()",
+                ),
+                (
+                    "AC-15 suspend-path test verifies non-JSON mutation enters wait_for_resume gate",
+                    "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate() {",
+                ),
+            ],
+        )?;
+
         Ok(())
     })
 }
