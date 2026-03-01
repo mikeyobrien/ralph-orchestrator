@@ -4,6 +4,7 @@ use crate::config::ConfigWarning;
 use crate::{RalphConfig, git_ops};
 use async_trait::async_trait;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -105,6 +106,7 @@ impl PreflightRunner {
         Self {
             checks: vec![
                 Box::new(ConfigValidCheck),
+                Box::new(HooksValidationCheck),
                 Box::new(BackendAvailableCheck),
                 Box::new(TelegramTokenCheck),
                 Box::new(GitCleanCheck),
@@ -170,6 +172,202 @@ impl PreflightCheck for ConfigValidCheck {
             }
             Err(err) => CheckResult::fail(self.name(), "Configuration invalid", format!("{err}")),
         }
+    }
+}
+
+struct HooksValidationCheck;
+
+#[async_trait]
+impl PreflightCheck for HooksValidationCheck {
+    fn name(&self) -> &'static str {
+        "hooks"
+    }
+
+    async fn run(&self, config: &RalphConfig) -> CheckResult {
+        if !config.hooks.enabled {
+            return CheckResult::pass(self.name(), "Hooks disabled (skipping)");
+        }
+
+        let mut diagnostics = Vec::new();
+        validate_hook_duplicate_names(config, &mut diagnostics);
+        validate_hook_command_resolvability(config, &mut diagnostics);
+
+        if diagnostics.is_empty() {
+            CheckResult::pass(
+                self.name(),
+                format!(
+                    "Hooks validation passed ({} hook(s))",
+                    count_configured_hooks(config)
+                ),
+            )
+        } else {
+            CheckResult::fail(
+                self.name(),
+                format!("Hooks validation failed ({} issue(s))", diagnostics.len()),
+                diagnostics.join("\n"),
+            )
+        }
+    }
+}
+
+fn count_configured_hooks(config: &RalphConfig) -> usize {
+    config.hooks.events.values().map(Vec::len).sum()
+}
+
+fn validate_hook_duplicate_names(config: &RalphConfig, diagnostics: &mut Vec<String>) {
+    let mut phase_events: Vec<_> = config.hooks.events.iter().collect();
+    phase_events.sort_by_key(|(phase_event, _)| phase_event.as_str());
+
+    for (phase_event, hooks) in phase_events {
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+
+        for (index, hook) in hooks.iter().enumerate() {
+            let name = hook.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+
+            if let Some(first_index) = seen.insert(name, index) {
+                diagnostics.push(format!(
+                    "hooks.events.{}[{}].name: duplicate hook name '{}' (first defined at index {}). Hook names must be unique per phase-event.",
+                    phase_event.as_str(),
+                    index,
+                    name,
+                    first_index
+                ));
+            }
+        }
+    }
+}
+
+fn validate_hook_command_resolvability(config: &RalphConfig, diagnostics: &mut Vec<String>) {
+    let mut phase_events: Vec<_> = config.hooks.events.iter().collect();
+    phase_events.sort_by_key(|(phase_event, _)| phase_event.as_str());
+
+    for (phase_event, hooks) in phase_events {
+        for (index, hook) in hooks.iter().enumerate() {
+            let Some(command) = hook
+                .command
+                .first()
+                .map(|entry| entry.trim())
+                .filter(|entry| !entry.is_empty())
+            else {
+                continue;
+            };
+
+            let cwd = resolve_hook_cwd(&config.core.workspace_root, hook.cwd.as_deref());
+            let path_override = hook_path_override(&hook.env);
+
+            if let Err(message) = resolve_hook_command(command, &cwd, path_override) {
+                diagnostics.push(format!(
+                    "hooks.events.{}[{}].command '{}': {}\nFix: ensure command exists and is executable, or invoke the script through an interpreter (for example: ['bash', 'script.sh']).",
+                    phase_event.as_str(),
+                    index,
+                    command,
+                    message
+                ));
+            }
+        }
+    }
+}
+
+fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
+    env_map
+        .get("PATH")
+        .or_else(|| env_map.get("Path"))
+        .map(String::as_str)
+}
+
+fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
+    match hook_cwd {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => workspace_root.join(path),
+        None => workspace_root.to_path_buf(),
+    }
+}
+
+fn resolve_hook_command(
+    command: &str,
+    cwd: &Path,
+    path_override: Option<&str>,
+) -> std::result::Result<PathBuf, String> {
+    let command_path = Path::new(command);
+    if command_path.is_absolute() || command_path.components().count() > 1 {
+        let resolved = if command_path.is_absolute() {
+            command_path.to_path_buf()
+        } else {
+            cwd.join(command_path)
+        };
+
+        if !resolved.exists() {
+            return Err(format!(
+                "resolves to '{}' but the file does not exist.",
+                resolved.display()
+            ));
+        }
+
+        if !is_executable_file(&resolved) {
+            return Err(format!(
+                "resolves to '{}' but it is not executable.",
+                resolved.display()
+            ));
+        }
+
+        return Ok(resolved);
+    }
+
+    let path_value = path_override
+        .map(OsString::from)
+        .or_else(|| env::var_os("PATH"))
+        .ok_or_else(|| {
+            format!(
+                "PATH is not set while resolving command '{}'. Set PATH in the environment or hook env override.",
+                command
+            )
+        })?;
+
+    let extensions = executable_extensions();
+
+    for dir in env::split_paths(&path_value) {
+        for extension in &extensions {
+            let candidate = if extension.is_empty() {
+                dir.join(command)
+            } else {
+                dir.join(format!("{command}{}", extension.to_string_lossy()))
+            };
+
+            if is_executable_file(&candidate) {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    let path_source = if path_override.is_some() {
+        "hook env PATH"
+    } else {
+        "process PATH"
+    };
+
+    Err(format!("was not found in {path_source}."))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 
@@ -913,6 +1111,14 @@ mod tests {
         assert_eq!(report.warnings, 1);
         assert_eq!(report.failures, 1);
         assert!(!report.passed);
+    }
+
+    #[test]
+    fn default_checks_include_hooks_check_name() {
+        let runner = PreflightRunner::default_checks();
+        let check_names = runner.check_names();
+
+        assert!(check_names.contains(&"hooks"));
     }
 
     #[tokio::test]
