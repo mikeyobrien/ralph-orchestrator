@@ -2543,12 +2543,32 @@ mod tests {
             .prepare_temp_workspace("command timeout capture")
             .expect("workspace should be created");
 
+        // Write a minimal ralph.yml with a dummy backend (`sleep 3600`)
+        // so `ralph run` enters the event loop and blocks long enough for
+        // the bounded-command timeout to fire.
+        harness
+            .write_workspace_file(
+                &workspace_dir,
+                "ralph.yml",
+                "cli:\n  backend: custom\n  command: sleep\n  args: [\"3600\"]\n  prompt_mode: stdin\n",
+            )
+            .expect("should write ralph.yml");
+
+        // The workspace needs a git repo for ralph to start.
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&workspace_dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git init should succeed");
+
         let artifact = harness
             .run_bounded_ralph_command(
                 "ralph.run-timeout",
                 &workspace_dir,
                 &["run", "-p", "hooks-bdd-timeout", "--max-iterations", "1"],
-                Duration::from_millis(10),
+                Duration::from_secs(2),
             )
             .expect("bounded command should return timeout artifact");
 
