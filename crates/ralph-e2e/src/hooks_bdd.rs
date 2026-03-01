@@ -292,15 +292,98 @@ fn evaluate_unmapped_acceptance(
 }
 
 // =============================================================================
+// Source evidence helpers (Step 2.1)
+// =============================================================================
+
+fn load_workspace_source_file(relative_path: &str) -> Result<String, String> {
+    let relative = Path::new(relative_path);
+
+    let source_path = if relative.is_absolute() {
+        relative.to_path_buf()
+    } else {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifest_workspace_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                format!(
+                    "failed to derive workspace root from CARGO_MANIFEST_DIR={}",
+                    manifest_dir.display()
+                )
+            })?;
+
+        let manifest_candidate = manifest_workspace_root.join(relative);
+        if manifest_candidate.is_file() {
+            manifest_candidate
+        } else if let Some(discovered_root) = find_workspace_root() {
+            let discovered_candidate = discovered_root.join(relative);
+            if discovered_candidate.is_file() {
+                discovered_candidate
+            } else {
+                return Err(format!(
+                    "source evidence file not found: {} (checked {} and {})",
+                    relative_path,
+                    manifest_candidate.display(),
+                    discovered_candidate.display()
+                ));
+            }
+        } else {
+            return Err(format!(
+                "source evidence file not found: {} (checked {})",
+                relative_path,
+                manifest_candidate.display()
+            ));
+        }
+    };
+
+    fs::read_to_string(&source_path).map_err(|source| {
+        format!(
+            "failed to read source evidence file {}: {source}",
+            source_path.display()
+        )
+    })
+}
+
+fn assert_required_source_snippets(
+    source_file: &str,
+    source_content: &str,
+    required_snippets: &[(&str, &str)],
+) -> Result<(), String> {
+    let missing: Vec<String> = required_snippets
+        .iter()
+        .filter_map(|(description, snippet)| {
+            (!source_content.contains(snippet))
+                .then_some(format!("{description} (snippet: `{snippet}`)"))
+        })
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "source evidence assertion failed for {source_file}: missing {}",
+        missing.join(", ")
+    ))
+}
+
+fn assert_workspace_source_contains(
+    relative_path: &str,
+    required_snippets: &[(&str, &str)],
+) -> Result<(), String> {
+    let source_content = load_workspace_source_file(relative_path)?;
+    assert_required_source_snippets(relative_path, &source_content, required_snippets)
+}
+
+// =============================================================================
 // AC-01: Per-project scope only
 // =============================================================================
 
 fn evaluate_ac_01(scenario: &HooksBddScenario, ci_safe_mode: bool) -> HooksBddScenarioResult {
     evaluate_green_acceptance(scenario, ci_safe_mode, validate_acceptance_context, || {
-        // AC-01: Verify per-project scope configuration exists
-        // Source: crates/ralph-core/src/config.rs - HooksConfig, per_project validation
-        // In v1, hooks are per-project only (no global hooks)
-        // This is verified by the config schema which requires project-specific paths
+        // Step 2.1: helper wiring only; concrete AC-01 snippet checks land in 2.2.
+        assert_workspace_source_contains("crates/ralph-core/src/config.rs", &[])?;
         Ok(())
     })
 }
@@ -749,6 +832,29 @@ mod tests {
 
         assert_eq!(scenarios.len(), 1);
         assert_eq!(scenarios[0].scenario_id, "AC-03");
+    }
+
+    #[test]
+    fn load_workspace_source_file_reads_workspace_relative_path() {
+        let source = load_workspace_source_file("crates/ralph-e2e/src/hooks_bdd.rs")
+            .expect("should load source file from workspace root");
+
+        assert!(source.contains("run_hooks_bdd_suite"));
+    }
+
+    #[test]
+    fn assert_workspace_source_contains_reports_missing_snippets() {
+        let error = assert_workspace_source_contains(
+            "crates/ralph-core/src/config.rs",
+            &[(
+                "nonexistent marker",
+                "__never_present_marker_for_hooks_bdd_test__",
+            )],
+        )
+        .expect_err("missing snippet should fail");
+
+        assert!(error.contains("crates/ralph-core/src/config.rs"));
+        assert!(error.contains("nonexistent marker"));
     }
 
     #[test]
