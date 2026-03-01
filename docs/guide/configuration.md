@@ -264,6 +264,12 @@ Mutation scope in v1 is intentionally narrow:
 - Only metadata namespace updates are allowed (`metadata.accumulated.hook_metadata.<hook_name>`).
 - Prompt/event/config mutation is out of scope for v1.
 
+Minimal runnable example:
+
+- Config: [`examples/hooks/minimal/ralph.hooks.yml`](../../examples/hooks/minimal/ralph.hooks.yml)
+- Scripts: [`examples/hooks/scripts/env-guard.sh`](../../examples/hooks/scripts/env-guard.sh), [`examples/hooks/scripts/notify.sh`](../../examples/hooks/scripts/notify.sh)
+- Validate: `ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml`
+
 ### hats
 
 Specialized personas for hat-based mode.

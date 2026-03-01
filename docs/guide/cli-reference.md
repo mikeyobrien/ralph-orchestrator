@@ -172,6 +172,12 @@ ralph hooks <COMMAND>
 - `--format human` (default): readable report with diagnostics.
 - `--format json`: structured report (`pass`, `source`, `hooks_enabled`, `checked_hooks`, `diagnostics`).
 
+Try it against the minimal sample hooks config:
+
+- `ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml`
+- Config: [`examples/hooks/minimal/ralph.hooks.yml`](../../examples/hooks/minimal/ralph.hooks.yml)
+- Scripts: [`examples/hooks/scripts/env-guard.sh`](../../examples/hooks/scripts/env-guard.sh), [`examples/hooks/scripts/notify.sh`](../../examples/hooks/scripts/notify.sh)
+
 ### ralph doctor
 
 Run environment and first-run diagnostic checks.
