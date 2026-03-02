@@ -526,10 +526,13 @@ fn format_termination_reason(reason: &TerminationReason) -> String {
         TerminationReason::MaxCost => "MaxCost".to_string(),
         TerminationReason::ConsecutiveFailures => "ConsecutiveFailures".to_string(),
         TerminationReason::LoopThrashing => "LoopThrashing".to_string(),
+        TerminationReason::LoopStale => "LoopStale".to_string(),
         TerminationReason::ValidationFailure => "ValidationFailure".to_string(),
         TerminationReason::Stopped => "Stopped".to_string(),
         TerminationReason::Interrupted => "Interrupted".to_string(),
         TerminationReason::RestartRequested => "RestartRequested".to_string(),
+        TerminationReason::WorkspaceGone => "WorkspaceGone".to_string(),
+        TerminationReason::Cancelled => "Cancelled".to_string(),
     }
 }
 

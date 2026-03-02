@@ -33,6 +33,7 @@ use crate::models::TestResult;
 use crate::runner::{ProgressEvent, RunResults};
 use chrono::{DateTime, Utc};
 use colored::Colorize;
+use ralph_core::truncate_with_ellipsis;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -389,11 +390,7 @@ impl IncrementalState {
 /// Truncates a string for report display.
 fn truncate_for_report(s: &str, max_len: usize) -> String {
     let s = s.replace('\n', " ").replace('\r', "");
-    if s.len() <= max_len {
-        s
-    } else {
-        format!("{}...", &s[..max_len])
-    }
+    truncate_with_ellipsis(&s, max_len)
 }
 
 /// Creates a progress callback that writes incremental reports as tests complete.
@@ -1222,11 +1219,7 @@ impl MarkdownReporter {
                     .map(|t| t.join(", "))
                     .unwrap_or_else(|| "-".to_string());
                 // Truncate if too long
-                let tests_display = if tests.len() > 50 {
-                    format!("{}...", &tests[..47])
-                } else {
-                    tests
-                };
+                let tests_display = truncate_with_ellipsis(&tests, 50);
                 report.push_str(&format!(
                     "| {} | {} | {} |\n",
                     quality, count, tests_display

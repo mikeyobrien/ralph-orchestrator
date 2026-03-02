@@ -23,6 +23,7 @@ mod git_ops;
 mod handoff;
 mod hat_registry;
 mod hatless_ralph;
+pub mod hooks;
 mod instructions;
 mod landing;
 pub mod loop_completion;
@@ -63,7 +64,7 @@ pub use config::{
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
-pub use event_loop::{EventLoop, LoopState, TerminationReason, UserPrompt};
+pub use event_loop::{EventLoop, LoopState, ProcessedEvents, TerminationReason, UserPrompt};
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
 pub use file_lock::{FileLock, LockGuard as FileLockGuard, LockedFile};
@@ -75,6 +76,14 @@ pub use git_ops::{
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hat_registry::HatRegistry;
 pub use hatless_ralph::{HatInfo, HatTopology, HatlessRalph};
+pub use hooks::{
+    HookDefaults, HookEngine, HookExecutor, HookExecutorContract, HookExecutorError,
+    HookInvocationPayload, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
+    HookPayloadContext, HookPayloadContextInput, HookPayloadIteration, HookPayloadLoop,
+    HookPayloadMetadata, HookPhaseEvent, HookRunRequest, HookRunResult, HookSpec, HookStreamOutput,
+    HookSuspendMode, HooksConfig, ResolvedHookSpec, SUSPEND_STATE_SCHEMA_VERSION,
+    SuspendLifecycleState, SuspendStateRecord, SuspendStateStore, SuspendStateStoreError,
+};
 pub use instructions::InstructionBuilder;
 pub use landing::{LandingConfig, LandingError, LandingHandler, LandingResult};
 pub use loop_completion::{CompletionAction, CompletionError, LoopCompletionHandler};

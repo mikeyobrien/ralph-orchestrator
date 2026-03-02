@@ -5,6 +5,7 @@
 //! scroll, and search functionality.
 
 use crate::input::{Action, map_key};
+use crate::rpc_writer::RpcWriter;
 use crate::state::TuiState;
 use crate::widgets::{content::ContentPane, footer, header, help};
 use anyhow::Result;
@@ -26,6 +27,7 @@ use ratatui::{
 use scopeguard::defer;
 use std::io;
 use std::sync::{Arc, Mutex};
+use tokio::io::AsyncWrite;
 use tokio::sync::watch;
 use tokio::time::{Duration, interval};
 use tracing::info;
@@ -90,7 +92,7 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
 }
 
 /// Main TUI application for read-only observation.
-pub struct App {
+pub struct App<W = tokio::process::ChildStdin> {
     state: Arc<Mutex<TuiState>>,
     /// Receives notification when the underlying process terminates.
     /// This is the ONLY exit path for the TUI event loop (besides Action::Quit).
@@ -99,9 +101,11 @@ pub struct App {
     /// In raw terminal mode, SIGINT is not generated, so TUI must signal
     /// the main orchestration loop through this channel.
     interrupt_tx: Option<watch::Sender<bool>>,
+    /// RPC writer for subprocess mode (replaces interrupt_tx for abort).
+    rpc_writer: Option<RpcWriter<W>>,
 }
 
-impl App {
+impl App<tokio::process::ChildStdin> {
     /// Creates a new App with shared state, termination signal, and optional interrupt channel.
     pub fn new(
         state: Arc<Mutex<TuiState>>,
@@ -112,6 +116,23 @@ impl App {
             state,
             terminated_rx,
             interrupt_tx,
+            rpc_writer: None,
+        }
+    }
+}
+
+impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
+    /// Creates a new App for subprocess mode with an RPC writer.
+    pub fn new_subprocess(
+        state: Arc<Mutex<TuiState>>,
+        terminated_rx: watch::Receiver<bool>,
+        rpc_writer: RpcWriter<W>,
+    ) -> Self {
+        Self {
+            state,
+            terminated_rx,
+            interrupt_tx: None,
+            rpc_writer: Some(rpc_writer),
         }
     }
 
@@ -153,13 +174,20 @@ impl App {
                             match event {
                                 // Handle Ctrl+C: signal main loop and exit.
                                 // In raw mode, SIGINT is not generated, so we must signal the
-                                // main orchestration loop through interrupt_tx channel.
+                                // main orchestration loop through interrupt_tx channel or RPC writer.
                                 Event::Key(key) if key.kind == KeyEventKind::Press
                                     && key.code == KeyCode::Char('c')
                                     && key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
-                                    info!("Ctrl+C detected, signaling main loop");
-                                    if let Some(ref tx) = self.interrupt_tx {
+                                    info!("Ctrl+C detected, signaling abort");
+                                    if let Some(ref writer) = self.rpc_writer {
+                                        // Subprocess mode: send abort via RPC
+                                        let writer = writer.clone();
+                                        tokio::spawn(async move {
+                                            let _ = writer.send_abort().await;
+                                        });
+                                    } else if let Some(ref tx) = self.interrupt_tx {
+                                        // In-process mode: signal via channel
                                         let _ = tx.send(true);
                                     }
                                     break;
@@ -201,7 +229,28 @@ impl App {
                                                     state.cancel_guidance();
                                                 }
                                                 KeyCode::Enter => {
-                                                    state.send_guidance();
+                                                    // In subprocess mode, send via RPC
+                                                    if let Some(ref writer) = self.rpc_writer {
+                                                        let message = state.guidance_input.trim().to_string();
+                                                        let mode = state.guidance_mode;
+                                                        state.cancel_guidance(); // Clear input
+                                                        if !message.is_empty() {
+                                                            let writer = writer.clone();
+                                                            tokio::spawn(async move {
+                                                                let _ = match mode {
+                                                                    Some(crate::state::GuidanceMode::Now) => {
+                                                                        writer.send_steer(&message).await
+                                                                    }
+                                                                    _ => {
+                                                                        writer.send_guidance(&message).await
+                                                                    }
+                                                                };
+                                                            });
+                                                        }
+                                                    } else {
+                                                        // In-process mode: use existing state method
+                                                        state.send_guidance();
+                                                    }
                                                 }
                                                 KeyCode::Backspace => {
                                                     state.guidance_input.pop();

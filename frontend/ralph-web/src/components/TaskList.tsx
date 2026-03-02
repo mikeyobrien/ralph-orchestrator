@@ -146,7 +146,7 @@ export function TaskList({
       </div>
 
       <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-        {tasks.map((task) => {
+        {tasks.map((task: any) => {
           const isSelected = selectedTaskId === task.id;
           return (
             <li

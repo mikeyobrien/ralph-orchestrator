@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Setup git hooks for development
 # Run this once after cloning the repository
 
@@ -28,5 +28,7 @@ echo ""
 echo "🎉 Git hooks installed successfully!"
 echo ""
 echo "The pre-commit hook will now run before each commit to check:"
-echo "  • cargo fmt --check (formatting)"
-echo "  • cargo clippy (linting)"
+echo "  • ./scripts/sync-embedded-files.sh check"
+echo "  • cargo fmt --all -- --check (formatting)"
+echo "  • cargo clippy --all-targets --all-features -- -D warnings"
+echo "  • cargo test"

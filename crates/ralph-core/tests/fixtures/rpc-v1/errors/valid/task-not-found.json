@@ -1,0 +1,15 @@
+{
+  "apiVersion": "v1",
+  "id": "req-task-get-404",
+  "method": "task.get",
+  "error": {
+    "code": "TASK_NOT_FOUND",
+    "message": "Task with id 'task-missing' not found",
+    "retryable": false,
+    "details": { "taskId": "task-missing" }
+  },
+  "meta": {
+    "servedBy": "ralph-api",
+    "servedAt": "2026-02-20T00:00:04Z"
+  }
+}

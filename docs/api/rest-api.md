@@ -1,6 +1,6 @@
 # REST API Reference
 
-Ralph Web Server exposes a REST API at `/api/v1/*` for external consumers that cannot use the tRPC client. The server runs on port 3000 by default.
+Legacy Node Web Server exposes a REST API at `/api/v1/*` for consumers that still depend on the old tRPC/REST surface. This API is deprecated; RPC v1 (`/rpc/v1`) is the canonical control plane.
 
 ## Base URL
 
@@ -222,11 +222,11 @@ All error responses follow this structure:
 }
 ```
 
-## Running the Server
+## Running the Legacy Server
 
 ```bash
-ralph web                    # Launch backend (port 3000) and frontend (port 5173)
-npm run dev:server           # Backend only in dev mode
+ralph web --legacy-node-api  # Launch deprecated Node backend + frontend
+npm run dev:legacy-server    # Node backend only
 ```
 
 ## Authentication

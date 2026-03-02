@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ralph-orchestrator.dev/rpc/v1/rpc-v1-events.json",
+  "title": "Ralph RPC v1 stream event envelopes",
+  "type": "object",
+  "$defs": {
+    "apiVersion": {
+      "type": "string",
+      "const": "v1"
+    },
+    "streamName": {
+      "type": "string",
+      "const": "events.v1"
+    },
+    "eventTopic": {
+      "type": "string",
+      "enum": [
+        "system.heartbeat",
+        "system.lifecycle",
+        "task.log.line",
+        "task.status.changed",
+        "loop.status.changed",
+        "loop.merge.progress",
+        "planning.prompt.issued",
+        "planning.response.recorded",
+        "planning.artifact.updated",
+        "config.updated",
+        "collection.updated",
+        "preset.refreshed",
+        "error.raised",
+        "stream.keepalive"
+      ]
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "system",
+            "task",
+            "loop",
+            "planning",
+            "config",
+            "collection",
+            "preset",
+            "stream"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "live",
+            "replay",
+            "resume"
+          ]
+        },
+        "requestedCursor": {
+          "type": "string"
+        },
+        "batch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "heartbeatPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uptimeMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "queueDepth": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "uptimeMs",
+        "queueDepth"
+      ]
+    },
+    "lifecyclePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "ready",
+            "shutting_down"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "taskLogLinePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "line": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "stdout",
+            "stderr"
+          ]
+        },
+        "lineNumber": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "taskId",
+        "line",
+        "source"
+      ]
+    },
+    "statusChangedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "loopMergeProgressPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loopId": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "merging",
+            "needs-review",
+            "merged",
+            "discarded"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "loopId",
+        "stage"
+      ]
+    },
+    "planningPromptIssuedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "promptId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "promptId",
+        "prompt"
+      ]
+    },
+    "planningResponseRecordedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "promptId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "promptId"
+      ]
+    },
+    "planningArtifactUpdatedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "filename"
+      ]
+    },
+    "configUpdatedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "updatedBy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "collectionUpdatedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "collectionId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "created",
+            "updated",
+            "deleted",
+            "imported"
+          ]
+        }
+      },
+      "required": [
+        "collectionId",
+        "action"
+      ]
+    },
+    "presetRefreshedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "builtin",
+            "directory",
+            "collection"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source",
+        "count"
+      ]
+    },
+    "errorRaisedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ]
+    },
+    "keepalivePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "intervalMs": {
+          "type": "integer",
+          "minimum": 1000
+        }
+      },
+      "required": [
+        "intervalMs"
+      ]
+    },
+    "eventByTopic": {
+      "oneOf": [
+        { "properties": { "topic": { "const": "system.heartbeat" }, "payload": { "$ref": "#/$defs/heartbeatPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "system.lifecycle" }, "payload": { "$ref": "#/$defs/lifecyclePayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "task.log.line" }, "payload": { "$ref": "#/$defs/taskLogLinePayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "task.status.changed" }, "payload": { "$ref": "#/$defs/statusChangedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "loop.status.changed" }, "payload": { "$ref": "#/$defs/statusChangedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "loop.merge.progress" }, "payload": { "$ref": "#/$defs/loopMergeProgressPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "planning.prompt.issued" }, "payload": { "$ref": "#/$defs/planningPromptIssuedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "planning.response.recorded" }, "payload": { "$ref": "#/$defs/planningResponseRecordedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "planning.artifact.updated" }, "payload": { "$ref": "#/$defs/planningArtifactUpdatedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "config.updated" }, "payload": { "$ref": "#/$defs/configUpdatedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "collection.updated" }, "payload": { "$ref": "#/$defs/collectionUpdatedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "preset.refreshed" }, "payload": { "$ref": "#/$defs/presetRefreshedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "error.raised" }, "payload": { "$ref": "#/$defs/errorRaisedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "stream.keepalive" }, "payload": { "$ref": "#/$defs/keepalivePayload" } }, "required": ["topic", "payload"] }
+      ]
+    },
+    "eventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/apiVersion" },
+        "stream": { "$ref": "#/$defs/streamName" },
+        "topic": { "$ref": "#/$defs/eventTopic" },
+        "cursor": {
+          "type": "string",
+          "pattern": "^[0-9]{10,}-[0-9]+$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resource": { "$ref": "#/$defs/resource" },
+        "replay": { "$ref": "#/$defs/replay" },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "stream",
+        "topic",
+        "cursor",
+        "sequence",
+        "ts",
+        "resource",
+        "replay",
+        "payload"
+      ],
+      "allOf": [
+        { "$ref": "#/$defs/eventByTopic" }
+      ]
+    }
+  }
+}

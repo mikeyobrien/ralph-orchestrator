@@ -246,6 +246,7 @@ core:
         .arg(temp_path.join("ralph.yml"))
         .arg("--color")
         .arg("always")
+        .env_remove("NO_COLOR")
         .current_dir(temp_path)
         .output()?;
 

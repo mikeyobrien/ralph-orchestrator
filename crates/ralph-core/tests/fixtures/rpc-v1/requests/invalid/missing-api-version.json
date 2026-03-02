@@ -1,0 +1,5 @@
+{
+  "id": "req-missing-version-001",
+  "method": "task.list",
+  "params": {}
+}

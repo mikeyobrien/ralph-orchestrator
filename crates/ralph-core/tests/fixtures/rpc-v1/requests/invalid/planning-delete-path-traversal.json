@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "id": "req-plan-delete-traversal-1",
+  "method": "planning.delete",
+  "params": {
+    "id": "../../victim"
+  },
+  "meta": {
+    "idempotencyKey": "idem-plan-delete-traversal-1"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "apiVersion": "v1",
+  "id": "req-loop-merge-001",
+  "method": "loop.merge",
+  "params": {
+    "id": "loop-20260220-143052-a3f2",
+    "force": false
+  },
+  "meta": {
+    "idempotencyKey": "idem-loop-merge-20260220-0001",
+    "auth": { "mode": "token", "token": "dev-token" }
+  }
+}

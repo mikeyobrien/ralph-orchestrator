@@ -1,0 +1,18 @@
+{
+  "apiVersion": "v1",
+  "stream": "events.v1",
+  "topic": "stream.keepalive",
+  "cursor": "1708478400000-45",
+  "sequence": 45,
+  "ts": "2026-02-20T00:00:08Z",
+  "resource": {
+    "type": "stream",
+    "id": "sub-123"
+  },
+  "replay": {
+    "mode": "live"
+  },
+  "payload": {
+    "intervalMs": 15000
+  }
+}

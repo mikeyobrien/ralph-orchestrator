@@ -31,10 +31,10 @@ ralph run
 
 ### Hat-Based Mode
 
-Using the TDD preset:
+Using a built-in hat collection:
 
 ```bash
-ralph init --preset tdd-red-green
+ralph init --backend claude
 
 cat > PROMPT.md << 'EOF'
 Implement a URL validator function.
@@ -45,7 +45,7 @@ Must handle:
 - Port numbers
 EOF
 
-ralph run
+ralph run -c ralph.yml -H builtin:spec-driven
 ```
 
 ### Inline Prompts
@@ -69,8 +69,8 @@ ralph run --max-iterations 50 -p "Refactor the authentication module"
 ### Feature Development
 
 ```bash
-# Initialize with feature preset
-ralph init --preset feature
+# Initialize core config
+ralph init --backend claude
 
 # Create detailed prompt
 cat > PROMPT.md << 'EOF'
@@ -85,28 +85,22 @@ Use React components.
 Follow existing UI patterns.
 EOF
 
-# Run Ralph
-ralph run
+# Run Ralph with feature hats
+ralph run -c ralph.yml -H builtin:feature
 ```
 
 ### Bug Investigation
 
 ```bash
-# Initialize with debug preset
-ralph init --preset debug
-
-# Describe the bug
-ralph run -p "Users report login fails on Safari. Error: 'Invalid token'. Investigate and fix."
+# Use debug hat collection
+ralph run -c ralph.yml -H builtin:debug -p "Users report login fails on Safari. Error: 'Invalid token'. Investigate and fix."
 ```
 
 ### Code Review
 
 ```bash
-# Initialize with review preset
-ralph init --preset review
-
-# Review specific files
-ralph run -p "Review the changes in src/api/auth.rs for security issues"
+# Use review hat collection
+ralph run -c ralph.yml -H builtin:review -p "Review the changes in src/api/auth.rs for security issues"
 ```
 
 ## Full Examples

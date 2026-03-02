@@ -1,0 +1,19 @@
+{
+  "apiVersion": "v1",
+  "id": "req-task-list-001",
+  "method": "task.list",
+  "result": {
+    "tasks": [
+      {
+        "id": "task-20260220-a1b2",
+        "title": "Implement contract fixtures",
+        "status": "open",
+        "priority": 2
+      }
+    ]
+  },
+  "meta": {
+    "servedBy": "ralph-api",
+    "servedAt": "2026-02-20T00:00:01Z"
+  }
+}

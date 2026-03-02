@@ -14,10 +14,7 @@
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
-    "@ralph-web/server": "*",
     "@tanstack/react-query": "^5.80.0",
-    "@trpc/client": "^11.8.1",
-    "@trpc/react-query": "^11.8.1",
     "@types/uuid": "^10.0.0",
     "@xyflow/react": "^12.10.0",
     "class-variance-authority": "^0.7.1",

@@ -4,9 +4,10 @@ Complete reference for Ralph's YAML configuration.
 
 ## Configuration File
 
-Ralph uses `ralph.yml` by default. Override with:
+Ralph uses `ralph.yml` by default. Override with `$RALPH_CONFIG` or:
 
 ```bash
+RALPH_CONFIG=/path/to/config.yml ralph run ...
 ralph run -c custom-config.yml
 ```
 
@@ -31,16 +32,27 @@ You can override specific core fields from the command line without creating a s
 
 ```bash
 # Override scratchpad (loads ralph.yml + applies override)
-ralph run -c core.scratchpad=.agent/feature-auth/scratchpad.md
+ralph run -c core.scratchpad=.ralph/agent/feature-auth/scratchpad.md
 
 # Explicit config + override
-ralph run -c ralph.yml -c core.scratchpad=.agent/feature-auth/scratchpad.md
+ralph run -c ralph.yml -c core.scratchpad=.ralph/agent/feature-auth/scratchpad.md
 
 # Multiple overrides
 ralph run -c core.scratchpad=.runs/task-1/scratchpad.md -c core.specs_dir=./custom-specs/
 ```
 
 Overrides are applied after `ralph.yml` is loaded, so they take precedence. The scratchpad directory is auto-created if it doesn't exist.
+
+## Combined Config Compatibility (`-c` + `-H`)
+
+Ralph supports both styles:
+- **Single-file combined config**: `-c ralph.yml` with core + hats in one file
+- **Split config**: `-c <core>` plus `-H <hats source>`
+
+If both are used (`-c` contains hats and `-H` is provided), `-H` wins for workflow sections:
+- `hats` and `events` from `-H` replace `hats`/`events` from `-c`
+- `event_loop` values from `-H` override matching `event_loop` keys from `-c`
+- `-c core.*=...` overrides still apply last
 
 ## Full Configuration Reference
 
@@ -68,7 +80,7 @@ core:
   specs_dir: "./specs/"                  # Specifications directory
   guardrails:                            # Rules injected into every prompt
     - "Fresh context each iteration"
-    - "Backpressure is law"
+    - "Never modify production database"
 
 # Memories — persistent learning
 memories:
@@ -77,12 +89,36 @@ memories:
   budget: 2000                          # Max tokens to inject
   filter:
     types: []                           # Filter by memory type
-    tags: []                            # Filter by tags
+    tags: []                            # Filter by memory tags
     recent: 0                           # Days limit (0 = no limit)
 
 # Tasks — runtime work tracking
 tasks:
   enabled: true                         # Enable task system
+
+# Optional features
+features:
+  parallel: true                        # Allow worktree loops when primary lock is held
+  auto_merge: false                     # Auto-merge worktree loops on completion
+  preflight:
+    enabled: false                      # Run preflight automatically on `ralph run`
+    strict: false                       # Treat warnings as failures
+    skip: []                            # Skip checks by name (for example: ["hooks"])
+
+# Lifecycle hooks (v1)
+hooks:
+  enabled: false
+  defaults:
+    timeout_seconds: 30
+    max_output_bytes: 8192
+    suspend_mode: wait_for_resume
+  events:
+    pre.loop.start:
+      - name: env-guard
+        command: ["./scripts/hooks/env-guard.sh"]
+        on_error: block
+        mutate:
+          enabled: false
 
 # Hats — specialized personas
 hats:
@@ -133,6 +169,8 @@ Backend configuration.
 - `amp` — Amp
 - `copilot` — Copilot CLI
 - `opencode` — OpenCode
+- `pi` — Pi
+- `custom` — Custom adapter/backend
 
 **Prompt mode values:**
 - `arg` — Pass as CLI argument: `cli -p "prompt"`
@@ -191,6 +229,70 @@ Runtime work tracking.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable task system |
+
+### features
+
+Optional runtime capabilities.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `parallel` | boolean | `true` | Spawn worktree loops when another loop holds the primary lock |
+| `auto_merge` | boolean | `false` | Auto-merge completed worktree loops |
+| `preflight.enabled` | boolean | `false` | Run `ralph preflight` checks automatically before `ralph run` |
+| `preflight.strict` | boolean | `false` | Treat preflight warnings as failures |
+| `preflight.skip` | list | `[]` | Skip checks by name (for example `hooks`, `git`) |
+
+When `features.preflight.enabled: true`, `ralph run` uses the default preflight suite:
+`config`, `hooks`, `backend`, `telegram`, `git`, `paths`, `tools`, and `specs`.
+
+### hooks
+
+Per-project lifecycle hooks for orchestrator phase-events (v1).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable hook dispatch for lifecycle events |
+| `defaults.timeout_seconds` | integer | `30` | Default per-hook timeout in seconds |
+| `defaults.max_output_bytes` | integer | `8192` | Default stdout/stderr cap per stream |
+| `defaults.suspend_mode` | enum | `wait_for_resume` | Default suspend mode for `on_error: suspend` |
+| `events` | map | `{}` | Mapping from lifecycle phase-event key to list of hook specs |
+
+Supported v1 lifecycle phase-event keys under `hooks.events`:
+
+- `pre.loop.start`, `post.loop.start`
+- `pre.iteration.start`, `post.iteration.start`
+- `pre.plan.created`, `post.plan.created`
+- `pre.human.interact`, `post.human.interact`
+- `pre.loop.complete`, `post.loop.complete`
+- `pre.loop.error`, `post.loop.error`
+
+Hook spec (`HookSpec`) fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Stable identifier used in telemetry/diagnostics |
+| `command` | Yes | Command argv array (`command[0]` must resolve to an executable) |
+| `cwd` | No | Working directory override (absolute or workspace-relative) |
+| `env` | No | Environment variable overrides for the hook process |
+| `timeout_seconds` | No | Per-hook timeout override (must be > 0) |
+| `max_output_bytes` | No | Per-hook output cap override per stream (must be > 0) |
+| `on_error` | Yes | Failure disposition: `warn`, `block`, or `suspend` |
+| `suspend_mode` | No | Suspend strategy override (`wait_for_resume`, `retry_backoff`, `wait_then_retry`) |
+| `mutate.enabled` | No | Opt-in hook stdout mutation parsing (default `false`) |
+| `mutate.format` | No | Optional format guardrail; only `json` is allowed in v1 |
+
+Mutation scope in v1 is intentionally narrow:
+
+- Mutation parsing only happens when `mutate.enabled: true`.
+- Hook stdout must be JSON using the v1 contract: `{"metadata": { ... }}`.
+- Only metadata namespace updates are allowed (`metadata.accumulated.hook_metadata.<hook_name>`).
+- Prompt/event/config mutation is out of scope for v1.
+
+Minimal runnable example:
+
+- Config: [`examples/hooks/minimal/ralph.hooks.yml`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/minimal/ralph.hooks.yml)
+- Scripts: [`examples/hooks/scripts/env-guard.sh`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/scripts/env-guard.sh), [`examples/hooks/scripts/notify.sh`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/scripts/notify.sh)
+- Validate: `ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml`
 
 ### hats
 

@@ -1,18 +1,19 @@
 //! Bot setup and management commands.
 //!
 //! Provides:
-//! - `ralph bot onboard --telegram` — Interactive wizard for Telegram bot setup
+//! - `ralph bot onboard` — Interactive wizard for Telegram bot setup
 //! - `ralph bot status` — Check current bot configuration status
 //! - `ralph bot test` — Send a test message to verify the bot works
 //! - `ralph bot token set <token>` — Store/overwrite the bot token
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use ralph_core::RalphConfig;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
-use crate::ConfigSource;
+use crate::{ConfigSource, HatsSource};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI STRUCTS
@@ -40,10 +41,6 @@ pub enum BotCommands {
 
 #[derive(Parser, Debug)]
 pub struct OnboardArgs {
-    /// Set up Telegram bot (default, only option for now)
-    #[arg(long, default_value = "true")]
-    pub telegram: bool,
-
     /// Skip interactive token prompt, provide token directly
     #[arg(long)]
     pub token: Option<String>,
@@ -97,6 +94,7 @@ pub struct DaemonArgs {}
 pub async fn execute(
     args: BotArgs,
     config_sources: &[ConfigSource],
+    hats_source: Option<&HatsSource>,
     use_colors: bool,
 ) -> Result<()> {
     match args.command {
@@ -105,7 +103,7 @@ pub async fn execute(
         BotCommands::Test(test_args) => bot_test(test_args, use_colors).await,
         BotCommands::Token(token_args) => bot_token(token_args, use_colors),
         BotCommands::Daemon(daemon_args) => {
-            run_daemon(daemon_args, config_sources, use_colors).await
+            run_daemon(daemon_args, config_sources, hats_source, use_colors).await
         }
     }
 }
@@ -137,10 +135,7 @@ fn bot_token_set(args: SetTokenArgs, use_colors: bool) -> Result<()> {
     }
 
     let has_config = args.config.is_some();
-    let config_path = args
-        .config
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("ralph.yml"));
+    let config_path = args.config.unwrap_or_else(|| PathBuf::from("ralph.yml"));
 
     let should_write_config = has_config || !keychain_ok;
     if should_write_config {
@@ -438,7 +433,7 @@ async fn bot_status(use_colors: bool) -> Result<()> {
     } else {
         print_error(
             use_colors,
-            "No token available. Run `ralph bot onboard --telegram` to set up.",
+            "No token available. Run `ralph bot onboard` to set up.",
         );
     }
 
@@ -452,12 +447,12 @@ async fn bot_status(use_colors: bool) -> Result<()> {
 async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
     // Resolve token
     let token = resolve_token().context(
-        "No bot token available. Run `ralph bot onboard --telegram` or set RALPH_TELEGRAM_BOT_TOKEN",
+        "No bot token available. Run `ralph bot onboard` or set RALPH_TELEGRAM_BOT_TOKEN",
     )?;
 
     // Resolve chat_id
-    let chat_id = resolve_chat_id()
-        .context("No chat_id found. Run `ralph bot onboard --telegram` to detect it")?;
+    let chat_id =
+        resolve_chat_id().context("No chat_id found. Run `ralph bot onboard` to detect it")?;
 
     print!("  Sending message to chat {}...", chat_id);
     io::stdout().flush()?;
@@ -488,54 +483,80 @@ async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
 async fn run_daemon(
     _args: DaemonArgs,
     config_sources: &[ConfigSource],
+    hats_source: Option<&HatsSource>,
     use_colors: bool,
 ) -> Result<()> {
     use ralph_proto::DaemonAdapter;
 
     let workspace_root = std::env::current_dir().context("Failed to get current directory")?;
-    let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
+    let primary_sources: Vec<_> = config_sources
         .iter()
-        .partition(|s| !matches!(s, ConfigSource::Override { .. }));
+        .filter(|s| !matches!(s, ConfigSource::Override { .. }))
+        .collect();
+
     if primary_sources.len() > 1 {
         warn!("Multiple config sources specified, using first one. Others ignored.");
     }
-    if !overrides.is_empty() {
-        warn!("Config overrides are ignored for bot daemon loops.");
+
+    let has_overrides = config_sources
+        .iter()
+        .any(|s| matches!(s, ConfigSource::Override { .. }));
+    if has_overrides || hats_source.is_some() {
+        warn!("Config overrides/hats will be resolved into a temporary runtime config.");
     }
 
-    let config_path = match primary_sources.first() {
-        Some(ConfigSource::File(path)) => Some(if path.is_absolute() {
+    let direct_file = if let Some(ConfigSource::File(path)) = primary_sources.first() {
+        let path = if path.is_absolute() {
             path.clone()
         } else {
             workspace_root.join(path)
-        }),
-        Some(ConfigSource::Builtin(_)) => {
-            anyhow::bail!(
-                "Builtin presets are not supported for `ralph bot daemon`. Use a file path via -c/--config."
-            );
+        };
+
+        if !path.exists() {
+            anyhow::bail!("Config file not found: {}", path.display());
         }
-        Some(ConfigSource::Remote(_)) => {
-            anyhow::bail!(
-                "Remote config URLs are not supported for `ralph bot daemon`. Use a file path via -c/--config."
-            );
+
+        if has_overrides || hats_source.is_some() {
+            None
+        } else {
+            let config = RalphConfig::from_file(&path)
+                .with_context(|| format!("Failed to load config from {}", path.display()))?;
+
+            Some((config, path))
         }
-        Some(ConfigSource::Override { .. }) => unreachable!("Partitioned out overrides"),
-        None => Some(workspace_root.join("ralph.yml")),
+    } else {
+        None
     };
-    if let Some(ref path) = config_path
-        && !path.exists()
-    {
-        anyhow::bail!("Config file not found: {}", path.display());
+
+    let used_direct_file = direct_file.is_some();
+
+    let (config, config_path) = if let Some((config, path)) = direct_file {
+        (config, path)
+    } else {
+        let config = crate::preflight::load_config_for_preflight(config_sources, hats_source)
+            .await
+            .context("Failed to load config for bot daemon")?;
+        let path = write_temp_config_for_daemon(&workspace_root, &config)
+            .context("Failed to write temporary runtime config")?;
+        (config, path)
+    };
+
+    // Preserve previous behavior for plain default run.
+    let default_path = workspace_root.join("ralph.yml");
+    if primary_sources.is_empty() && !has_overrides && !default_path.exists() {
+        anyhow::bail!("Config file not found: {}", default_path.display());
+    }
+
+    if !primary_sources.is_empty() && !used_direct_file {
+        warn!("Using resolved runtime config: {}", config_path.display());
     }
 
     // Resolve bot token and chat_id for Telegram adapter
-    let token = resolve_token()
-        .or_else(|| config_path.as_ref().and_then(|path| load_config_bot_token_from(path)))
-        .context(
-            "No bot token available. Run `ralph bot onboard --telegram` or set RALPH_TELEGRAM_BOT_TOKEN",
-        )?;
-    let chat_id = resolve_chat_id()
-        .context("No chat_id found. Run `ralph bot onboard --telegram` to detect it")?;
+    let token = config.robot.resolve_bot_token().context(
+        "No bot token available. Run `ralph bot onboard` or set RALPH_TELEGRAM_BOT_TOKEN",
+    )?;
+    let chat_id =
+        resolve_chat_id().context("No chat_id found. Run `ralph bot onboard` to detect it")?;
 
     if use_colors {
         println!("\x1b[1mRalph Daemon\x1b[0m (Telegram)");
@@ -548,7 +569,7 @@ async fn run_daemon(
 
     // Build the start_loop callback — wraps our CLI loop runner
     let start_loop: ralph_proto::StartLoopFn = Box::new(move |prompt: String| {
-        let config_path = config_path.clone();
+        let config_path = Some(config_path.clone());
         Box::pin(async move {
             let ws = std::env::current_dir()?;
             let reason = crate::loop_runner::start_loop(prompt, ws, config_path).await?;
@@ -826,6 +847,27 @@ fn save_robot_config(timeout: u64, bot_token: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Write resolved config to a temporary runtime file so loop_runner receives a config path.
+fn write_temp_config_for_daemon(workspace_root: &Path, config: &RalphConfig) -> Result<PathBuf> {
+    let state_dir = workspace_root.join(".ralph");
+    std::fs::create_dir_all(&state_dir).context("Failed to create .ralph directory")?;
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| anyhow::anyhow!("Failed to generate runtime config filename: {e}"))?
+        .as_nanos();
+    let path = state_dir.join(format!(
+        "daemon-config-{}-{}.yml",
+        std::process::id(),
+        nanos
+    ));
+
+    let yaml = serde_yaml::to_string(config).context("Failed to serialize runtime config")?;
+    std::fs::write(&path, yaml).context("Failed to write temporary runtime config")?;
+
+    Ok(path)
+}
+
 /// Save only the bot token into a config file, preserving other keys.
 fn save_bot_token_config(path: &Path, token: &str) -> Result<()> {
     let doc = if path.exists() {
@@ -1070,13 +1112,14 @@ mod tests {
     #[tokio::test]
     async fn test_run_daemon_rejects_builtin_config() {
         let sources = vec![ConfigSource::Builtin("tdd".to_string())];
-        let err = run_daemon(DaemonArgs {}, &sources, false)
+
+        let err = run_daemon(DaemonArgs {}, &sources, None, false)
             .await
-            .expect_err("expected builtin config error");
+            .expect_err("expected daemon setup error");
         assert!(
-            err.to_string()
+            !err.to_string()
                 .contains("Builtin presets are not supported"),
-            "unexpected error: {err}"
+            "unexpected unsupported-config error: {err}"
         );
     }
 
@@ -1085,12 +1128,13 @@ mod tests {
         let sources = vec![ConfigSource::Remote(
             "https://example.com/ralph.yml".to_string(),
         )];
-        let err = run_daemon(DaemonArgs {}, &sources, false)
+
+        let err = run_daemon(DaemonArgs {}, &sources, None, false)
             .await
             .expect_err("expected remote config error");
         assert!(
             err.to_string()
-                .contains("Remote config URLs are not supported"),
+                .contains("Failed to load config for bot daemon"),
             "unexpected error: {err}"
         );
     }
@@ -1101,7 +1145,7 @@ mod tests {
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];
-        let err = run_daemon(DaemonArgs {}, &sources, false)
+        let err = run_daemon(DaemonArgs {}, &sources, None, false)
             .await
             .expect_err("expected missing config error");
         assert!(

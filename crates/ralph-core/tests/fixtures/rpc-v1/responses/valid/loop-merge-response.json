@@ -1,0 +1,12 @@
+{
+  "apiVersion": "v1",
+  "id": "req-loop-merge-001",
+  "method": "loop.merge",
+  "result": {
+    "success": true
+  },
+  "meta": {
+    "servedBy": "ralph-api",
+    "servedAt": "2026-02-20T00:00:02Z"
+  }
+}

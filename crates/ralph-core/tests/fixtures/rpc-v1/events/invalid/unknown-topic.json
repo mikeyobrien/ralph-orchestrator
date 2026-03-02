@@ -1,0 +1,18 @@
+{
+  "apiVersion": "v1",
+  "stream": "events.v1",
+  "topic": "task.unknown",
+  "cursor": "1708478400000-50",
+  "sequence": 50,
+  "ts": "2026-02-20T00:00:09Z",
+  "resource": {
+    "type": "task",
+    "id": "task-20260220-a1b2"
+  },
+  "replay": {
+    "mode": "live"
+  },
+  "payload": {
+    "taskId": "task-20260220-a1b2"
+  }
+}

@@ -19,13 +19,13 @@ export default defineConfig({
         host: true, // Listen on all interfaces (0.0.0.0)
         allowedHosts: ["studio", "localhost"],
         proxy: {
-            "/trpc": {
-                target: backendTarget,
-                changeOrigin: true,
-            },
-            "/ws": {
+            "/rpc": {
                 target: backendTarget,
                 ws: true,
+                changeOrigin: true,
+            },
+            "/health": {
+                target: backendTarget,
                 changeOrigin: true,
             },
         },

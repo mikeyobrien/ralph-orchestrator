@@ -1,278 +1,153 @@
-# Presets
+# Hat Collections (Built-ins)
 
-Presets are pre-configured workflows for common development patterns. They save you from writing hat configurations from scratch.
+Built-in hat collections are pre-configured workflows for common development patterns.
 
-## Using Presets
+Use them with `-H/--hats` alongside a core config loaded via `-c/--config`.
+
+## Quick Start (Current CLI)
 
 ```bash
-# List all presets
+# 1) Create core config once
+ralph init --backend claude
+
+# 2) List built-in collections
 ralph init --list-presets
 
-# Initialize with a preset
-ralph init --preset feature
-
-# Combine with backend
-ralph init --preset spec-driven --backend kiro
-
-# Overwrite existing config
-ralph init --preset debug --force
+# 3) Run with a built-in collection
+ralph run -c ralph.yml -H builtin:feature
 ```
 
-## Available Presets
+> `ralph init --preset <name>` is removed.
+> Use `ralph run -c ralph.yml -H builtin:<name>`.
 
-### Development Workflows
+## Core vs Hats Responsibilities
 
-#### feature
+- `-c/--config` (core): backend, paths, guardrails, memories/tasks/skills, runtime defaults
+- `-H/--hats` (collection): hats, events, and workflow event-loop settings
 
-Standard feature development with planning and building.
+Single-file combined configs remain supported (`-c` file may include `hats`/`events`).
+
+When `-H/--hats` is provided, it takes precedence:
+- `hats`/`events` from `-H` replace `hats`/`events` from `-c`
+- `event_loop` values from `-H` override matching `event_loop` keys from `-c`
+- `-c core.*=...` overrides are still applied last
+
+## Available Built-in Collections
+
+`ralph init --list-presets` lists these collections.
+
+| Collection | Canonical source | Hats | Start event | Completion | Best for |
+|---|---|---|---|---|---|
+| `bugfix` | `presets/bugfix.yml` | `reproducer`, `fixer`, `verifier`, `committer` | `repro.start` | `LOOP_COMPLETE` (default) | Reproduce/fix/verify/commit bug workflow |
+| `code-assist` | `presets/code-assist.yml` | `planner`, `builder`, `validator`, `committer` | `build.start` | `LOOP_COMPLETE` | TDD implementation from specs/tasks/descriptions |
+| `debug` | `presets/debug.yml` | `investigator`, `tester`, `fixer`, `verifier` | `debug.start` | `DEBUG_COMPLETE` | Root-cause debugging and hypothesis testing |
+| `deploy` | `presets/deploy.yml` | `builder`, `deployer`, `verifier` | `task.start` (default) | `LOOP_COMPLETE` | Deployment and release workflows |
+| `docs` | `presets/docs.yml` | `writer`, `reviewer` | `task.start` (default) | `DOCS_COMPLETE` | Documentation writing and review |
+| `feature` | `presets/feature.yml` | `builder`, `reviewer` | `task.start` (default) | `LOOP_COMPLETE` | Feature development with integrated review |
+| `fresh-eyes` | `presets/fresh-eyes.yml` | `builder`, `fresh_eyes_auditor`, `fresh_eyes_gatekeeper` | `fresh_eyes.start` | `LOOP_COMPLETE` | Enforced repeated skeptical self-review passes |
+| `gap-analysis` | `presets/gap-analysis.yml` | `analyzer`, `verifier`, `reporter` | `gap.start` | `GAP_ANALYSIS_COMPLETE` | Spec-vs-implementation auditing |
+| `hatless-baseline` | `presets/hatless-baseline.yml` | _(none)_ | `task.start` | `LOOP_COMPLETE` | Baseline no-hat behavior for comparison |
+| `merge-loop` | `crates/ralph-cli/presets/merge-loop.yml` | `merger`, `resolver`, `tester`, `cleaner`, `failure_handler` | `merge.start` | `MERGE_COMPLETE` | Internal merge/worktree automation |
+| `pdd-to-code-assist` | `presets/pdd-to-code-assist.yml` | `inquisitor`, `architect`, `design_critic`, `explorer`, `planner`, `task_writer`, `builder`, `validator`, `committer` | `design.start` | `LOOP_COMPLETE` | Full idea → plan → implementation pipeline |
+| `pr-review` | `presets/pr-review.yml` | `correctness_reviewer`, `security_reviewer`, `architecture_reviewer`, `synthesizer` | `task.start` (default) | `LOOP_COMPLETE` | Multi-perspective PR review |
+| `refactor` | `presets/refactor.yml` | `refactorer`, `verifier` | `task.start` (default) | `REFACTOR_COMPLETE` | Incremental, verified refactoring |
+| `research` | `presets/research.yml` | `researcher`, `synthesizer` | `research.start` | `RESEARCH_COMPLETE` | Exploration and analysis without code changes |
+| `review` | `presets/review.yml` | `reviewer`, `analyzer` | `review.start` | `REVIEW_COMPLETE` | Review-only workflow |
+| `spec-driven` | `presets/spec-driven.yml` | `spec_writer`, `spec_reviewer`, `implementer`, `verifier` | `spec.start` | `LOOP_COMPLETE` (default) | Specification-driven implementation |
+
+Notes:
+- If a collection omits `event_loop.completion_promise`, Ralph defaults to `LOOP_COMPLETE`.
+- `merge-loop` is primarily internal and used by merge queue/worktree flows.
+
+## Usage Examples
 
 ```bash
-ralph init --preset feature
+# Feature work
+ralph run -c ralph.yml -H builtin:feature -p "Add user authentication"
+
+# Debug workflow
+ralph run -c ralph.yml -H builtin:debug -p "Investigate intermittent timeout"
+
+# Spec-driven workflow
+ralph run -c ralph.yml -H builtin:spec-driven -p "Build a rate limiter"
+
+# Research workflow (analysis without code changes)
+ralph run -c ralph.yml -H builtin:research -p "Map auth architecture"
+
+# Use a local hats file instead of a built-in
+ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
 ```
 
-**Hats:** Builder → Reviewer
-**Best for:** General feature implementation
+## Common Workflow Patterns
 
-#### code-assist
+Ralph built-ins usually follow one of these shapes:
 
-TDD implementation from specs, tasks, or rough descriptions.
+### 1) Linear Pipeline
+A fixed sequence of specialist hats.
+
+Examples: `feature`, `bugfix`, `deploy`, `docs`
+
+### 2) Critic / Actor Loop
+One hat proposes, another critiques/validates, then iterates.
+
+Examples: `spec-driven`, `review`, `fresh-eyes`
+
+### 3) Multi-Reviewer + Synthesis
+Parallel perspectives merged into one result.
+
+Example: `pr-review`
+
+### 4) Extended End-to-End Orchestration
+Large multi-stage pipelines from idea through implementation.
+
+Example: `pdd-to-code-assist`
+
+## Split Config vs Single-File Config
+
+Recommended:
+- Keep core/runtime config in `ralph.yml`
+- Select workflow via `-H builtin:<name>`
+
+Backward-compatible single-file mode (still supported):
 
 ```bash
-ralph init --preset code-assist
+# Uses one combined preset file as the main config
+ralph run -c presets/feature.yml -p "Add OAuth login"
 ```
 
-**Hats:** Planner → Builder → Validator → Committer
-**Best for:** Structured TDD development, working from specs or task definitions
+## Creating Your Own Hat Collection
 
-#### spec-driven
-
-Specification-first development with contract-based implementation.
-
-```bash
-ralph init --preset spec-driven
-```
-
-**Hats:** Spec Writer → Spec Critic → Implementer → Verifier
-**Best for:** Complex features with clear requirements, given-when-then acceptance criteria
-
-#### refactor
-
-Code refactoring workflow with atomic steps.
-
-```bash
-ralph init --preset refactor
-```
-
-**Hats:** Refactorer → Verifier
-**Best for:** Large refactors, technical debt cleanup
-
-#### pdd-to-code-assist
-
-Full autonomous idea-to-code pipeline (9-hat orchestration).
-
-```bash
-ralph init --preset pdd-to-code-assist
-```
-
-**Hats:** Inquisitor → Architect → Design Critic → Explorer → Planner → Task Writer → Builder → Validator → Committer
-**Best for:** End-to-end autonomous development from a rough idea
-
-### Bug Fixing & Debugging
-
-#### bugfix
-
-Systematic bug reproduction, fix, and verification.
-
-```bash
-ralph init --preset bugfix
-```
-
-**Hats:** Reproducer → Fixer → Verifier → Committer
-**Best for:** Bug fixes with reproducible test cases
-
-#### debug
-
-Bug investigation and root cause analysis using hypothesis-driven approach.
-
-```bash
-ralph init --preset debug
-```
-
-**Hats:** Investigator → Tester → Fixer → Verifier
-**Best for:** Bug hunting, issue resolution, unknown root causes
-
-### Review & Quality
-
-#### review
-
-Code review workflow producing structured feedback.
-
-```bash
-ralph init --preset review
-```
-
-**Hats:** Reviewer → Analyzer
-**Best for:** Code quality checks, structured feedback
-
-#### pr-review
-
-Multi-perspective PR review with specialized reviewers.
-
-```bash
-ralph init --preset pr-review
-```
-
-**Hats:** Correctness Reviewer → Security Reviewer → Architecture Reviewer → Synthesizer
-**Best for:** Comprehensive PR reviews from multiple angles
-
-#### fresh-eyes
-
-Implementation workflow with repeated, enforced "fresh eyes" self-review passes.
-
-```bash
-ralph init --preset fresh-eyes
-```
-
-**Hats:** Builder → Fresh Eyes Auditor (loop) → Fresh Eyes Gatekeeper
-**Best for:** Catching post-implementation mistakes by forcing multiple skeptical review passes
-
-#### gap-analysis
-
-Compare specifications against implementation to find discrepancies.
-
-```bash
-ralph init --preset gap-analysis
-```
-
-**Hats:** Analyzer → Verifier → Reporter
-**Best for:** Audit, compliance, spec-vs-implementation comparison
-
-### Documentation & Research
-
-#### docs
-
-Documentation writing with writer/editor review cycle.
-
-```bash
-ralph init --preset docs
-```
-
-**Hats:** Writer → Reviewer
-**Best for:** Creating and updating documentation
-
-#### research
-
-Deep exploration and analysis (no code changes).
-
-```bash
-ralph init --preset research
-```
-
-**Hats:** Researcher → Synthesizer
-**Best for:** Codebase exploration, technical investigation, market research
-
-### Operations
-
-#### deploy
-
-Deployment and release workflow with validation and monitoring.
-
-```bash
-ralph init --preset deploy
-```
-
-**Hats:** Builder → Deployer → Verifier
-**Best for:** Deployment pipelines, release management
-
-## Preset Patterns
-
-### Pipeline
-
-Linear A → B → C flow:
-
-```mermaid
-flowchart LR
-    A[Hat A] --> B[Hat B]
-    B --> C[Hat C]
-```
-
-**Examples:** feature, bugfix, docs
-
-### Supervisor-Worker
-
-Coordinator with specialists:
-
-```mermaid
-flowchart TB
-    S[Supervisor] --> A[Worker A]
-    S --> B[Worker B]
-    A --> S
-    B --> S
-```
-
-**Examples:** pr-review, pdd-to-code-assist
-
-### Critic-Actor
-
-One proposes, another critiques:
-
-```mermaid
-flowchart LR
-    A[Actor] --> C[Critic]
-    C -->|approved| Done
-    C -->|rejected| A
-```
-
-**Examples:** spec-driven, review
-
-## Customizing Presets
-
-After initializing with a preset, modify `ralph.yml`:
+Create a hats file with hats-related sections:
 
 ```yaml
-# Start with preset
-ralph init --preset feature
-
-# Edit ralph.yml to customize
-hats:
-  builder:
-    instructions: |
-      Custom instructions for your project...
-```
-
-## Creating Your Own Presets
-
-Presets are stored in `/presets/`. Create a new one:
-
-```yaml
-# presets/my-workflow.yml
-name: "My Workflow"
-description: "Custom workflow for my team"
-
 event_loop:
-  starting_event: "task.start"
+  starting_event: "build.start"
   completion_promise: "LOOP_COMPLETE"
 
 hats:
-  first_hat:
-    triggers: ["task.start"]
-    publishes: ["step.done"]
-    instructions: "..."
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+    instructions: |
+      Implement the requested change and verify it.
 
-  second_hat:
-    triggers: ["step.done"]
+  reviewer:
+    name: "Reviewer"
+    triggers: ["build.done"]
     publishes: ["LOOP_COMPLETE"]
-    instructions: "..."
+    instructions: |
+      Review the change, request fixes if needed, and close when done.
 ```
 
-Then use it:
+Run it:
 
 ```bash
-ralph init --preset my-workflow
+ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
 ```
 
-## Next Steps
+## Source of Truth and Sync
 
-- Learn about [Configuration](configuration.md) for full options
-- Explore [Writing Prompts](prompts.md) for better results
-- See [Creating Custom Hats](../advanced/custom-hats.md) for advanced workflows
+- Canonical preset files: `presets/*.yml`
+- Embedded CLI mirror: `crates/ralph-cli/presets/*.yml`
+- Sync script: `./scripts/sync-embedded-files.sh`

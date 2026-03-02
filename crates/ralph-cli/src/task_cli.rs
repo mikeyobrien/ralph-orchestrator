@@ -486,7 +486,7 @@ fn execute_close(args: CloseArgs, root: Option<&PathBuf>, use_colors: bool) -> R
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
-    let task_id = args.id.clone();
+    let task_id = args.id;
     let title = store
         .close(&task_id)
         .context(format!("Task {} not found", task_id))?
@@ -514,7 +514,7 @@ fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
-    let task_id = args.id.clone();
+    let task_id = args.id;
     let title = store
         .fail(&task_id)
         .context(format!("Task {} not found", task_id))?

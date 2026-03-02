@@ -56,6 +56,8 @@ pub struct HatInfo {
     pub instructions: String,
     /// Maps each published event to the hats that receive it.
     pub event_receivers: HashMap<String, Vec<EventReceiver>>,
+    /// Tools the hat is not allowed to use (prompt-level enforcement).
+    pub disallowed_tools: Vec<String>,
 }
 
 impl HatInfo {
@@ -124,6 +126,11 @@ impl HatTopology {
                     })
                     .collect();
 
+                let disallowed_tools = registry
+                    .get_config(&hat.id)
+                    .map(|c| c.disallowed_tools.clone())
+                    .unwrap_or_default();
+
                 HatInfo {
                     name: hat.name.clone(),
                     description: hat.description.clone(),
@@ -139,6 +146,7 @@ impl HatTopology {
                         .collect(),
                     instructions: hat.instructions.clone(),
                     event_receivers,
+                    disallowed_tools,
                 }
             })
             .collect();
@@ -825,6 +833,21 @@ You MUST continue.\n\
                     section.push_str(&guide);
                     section.push('\n');
                 }
+
+                // Add Tool Restrictions section (prompt-level enforcement)
+                if let Some(info) = hat_info
+                    && !info.disallowed_tools.is_empty()
+                {
+                    section.push_str("### TOOL RESTRICTIONS\n\n");
+                    section.push_str("You MUST NOT use these tools in this hat:\n");
+                    for tool in &info.disallowed_tools {
+                        section.push_str(&format!("- **{}** — blocked for this hat\n", tool));
+                    }
+                    section.push_str(
+                        "\nUsing a restricted tool is a scope violation. \
+                         File modifications are audited after each iteration.\n\n",
+                    );
+                }
             }
         }
 
@@ -833,6 +856,20 @@ You MUST continue.\n\
 
     /// Generates a Mermaid flowchart showing event flow between hats.
     fn generate_mermaid_diagram(&self, topology: &HatTopology, ralph_publishes: &[&str]) -> String {
+        // Pre-compute sanitized Mermaid node IDs (strip emojis/special chars)
+        let node_ids: std::collections::HashMap<&str, String> = topology
+            .hats
+            .iter()
+            .map(|h| {
+                let id = h
+                    .name
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>();
+                (h.name.as_str(), id)
+            })
+            .collect();
+
         let mut diagram = String::from("```mermaid\nflowchart LR\n");
 
         // Entry point: task.start -> Ralph
@@ -840,18 +877,12 @@ You MUST continue.\n\
 
         // Ralph -> hats (via ralph_publishes which are hat triggers)
         for hat in &topology.hats {
+            let node_id = &node_ids[hat.name.as_str()];
             for trigger in &hat.subscribes_to {
                 if ralph_publishes.contains(&trigger.as_str()) {
-                    // Sanitize hat name for Mermaid (remove emojis and special chars for node ID)
-                    let node_id = hat
-                        .name
-                        .chars()
-                        .filter(|c| c.is_alphanumeric())
-                        .collect::<String>();
-                    if node_id == hat.name {
+                    if node_id == &hat.name {
                         diagram.push_str(&format!("    Ralph -->|{}| {}\n", trigger, hat.name));
                     } else {
-                        // If name has special chars, use label syntax
                         diagram.push_str(&format!(
                             "    Ralph -->|{}| {}[{}]\n",
                             trigger, node_id, hat.name
@@ -863,11 +894,7 @@ You MUST continue.\n\
 
         // Hats -> Ralph (via hat publishes)
         for hat in &topology.hats {
-            let node_id = hat
-                .name
-                .chars()
-                .filter(|c| c.is_alphanumeric())
-                .collect::<String>();
+            let node_id = &node_ids[hat.name.as_str()];
             for pub_event in &hat.publishes {
                 diagram.push_str(&format!("    {} -->|{}| Ralph\n", node_id, pub_event));
             }
@@ -875,21 +902,13 @@ You MUST continue.\n\
 
         // Hat -> Hat connections (when one hat publishes what another triggers on)
         for source_hat in &topology.hats {
-            let source_id = source_hat
-                .name
-                .chars()
-                .filter(|c| c.is_alphanumeric())
-                .collect::<String>();
+            let source_id = &node_ids[source_hat.name.as_str()];
             for pub_event in &source_hat.publishes {
                 for target_hat in &topology.hats {
                     if target_hat.name != source_hat.name
                         && target_hat.subscribes_to.contains(pub_event)
                     {
-                        let target_id = target_hat
-                            .name
-                            .chars()
-                            .filter(|c| c.is_alphanumeric())
-                            .collect::<String>();
+                        let target_id = &node_ids[target_hat.name.as_str()];
                         diagram.push_str(&format!(
                             "    {} -->|{}| {}\n",
                             source_id, pub_event, target_id

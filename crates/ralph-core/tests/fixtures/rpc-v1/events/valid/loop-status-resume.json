@@ -1,0 +1,21 @@
+{
+  "apiVersion": "v1",
+  "stream": "events.v1",
+  "topic": "loop.status.changed",
+  "cursor": "1708478400000-44",
+  "sequence": 44,
+  "ts": "2026-02-20T00:00:07Z",
+  "resource": {
+    "type": "loop",
+    "id": "loop-20260220-143052-a3f2"
+  },
+  "replay": {
+    "mode": "resume",
+    "requestedCursor": "1708478400000-40",
+    "batch": 4
+  },
+  "payload": {
+    "from": "queued",
+    "to": "merging"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "apiVersion": "v1",
+  "id": "req-config-update-unauth",
+  "method": "config.update",
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Missing or invalid token",
+    "retryable": false,
+    "details": null
+  },
+  "meta": {
+    "servedBy": "ralph-api",
+    "servedAt": "2026-02-20T00:00:05Z"
+  }
+}

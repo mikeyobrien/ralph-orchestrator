@@ -9,7 +9,7 @@ use tracing::debug;
 
 /// Default priority order for backend detection.
 pub const DEFAULT_PRIORITY: &[&str] = &[
-    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "pi",
+    "claude", "kiro", "kiro-acp", "gemini", "codex", "amp", "copilot", "opencode", "pi",
 ];
 
 /// Maps backend config names to their actual CLI command names.
@@ -18,7 +18,7 @@ pub const DEFAULT_PRIORITY: &[&str] = &[
 /// For example, the "kiro" backend uses the "kiro-cli" binary.
 fn detection_command(backend: &str) -> &str {
     match backend {
-        "kiro" => "kiro-cli",
+        "kiro" | "kiro-acp" => "kiro-cli",
         _ => backend,
     }
 }

@@ -1,0 +1,8 @@
+{
+  "apiVersion": "v1",
+  "id": "req-unknown-method-001",
+  "method": "task.unknown",
+  "result": {
+    "tasks": []
+  }
+}

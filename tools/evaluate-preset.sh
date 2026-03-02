@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # evaluate-preset.sh - Evaluate a single hat collection preset
 #
 # Usage: ./tools/evaluate-preset.sh <preset-name> [backend]

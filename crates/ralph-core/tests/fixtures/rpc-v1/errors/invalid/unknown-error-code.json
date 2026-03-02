@@ -1,0 +1,10 @@
+{
+  "apiVersion": "v1",
+  "id": "req-bad-error-code",
+  "method": "task.get",
+  "error": {
+    "code": "NOT_A_REAL_CODE",
+    "message": "bogus",
+    "retryable": false
+  }
+}

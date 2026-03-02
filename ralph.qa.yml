@@ -1,0 +1,407 @@
+# QA Preset — Event Loop & TUI Validation
+#
+# Superset of ralph.yml that adds a QA gate for event loop and TUI changes.
+# Same planner→builder→reviewer pipeline, but after review.approved,
+# QA diffs origin/main to scope changes, builds a targeted test plan,
+# and executes each target via tmux splits with `ralph run`.
+# P1 issues feed back to the planner for fixes. Hard stop after 3 QA rounds.
+#
+# Use this when changes touch the event loop, TUI, hat routing, backpressure,
+# or config parsing. For docs-only or preset-only changes, the QA planner
+# will detect no impacting changes and skip QA automatically.
+#
+# Usage:
+#   ralph run -H ralph.qa.yml -p "QA the event loop and TUI changes"
+
+event_loop:
+  starting_event: "work.start"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 200
+  max_runtime_seconds: 28800
+
+core:
+  scratchpad: ".ralph/scratchpad.md"
+  guardrails:
+    - "Fresh context each iteration - re-read scratchpad and plan"
+    - "Commit after each completed step. Never commit Ralph files."
+    - "Verification is mandatory — evidence required, not just claims."
+    - "Confidence protocol: >80 proceed; 50-80 proceed + note in scratchpad; <50 choose safe default + note."
+    - "Preserve primary sources — capture referenced code snippets with file:line attribution in scratchpad."
+    - "Max 3 QA rounds — hard stop if issues persist after 3 fix cycles."
+
+hats:
+  planner:
+    name: "📋 Planner"
+    description: "Breaks steps into sub-tasks and assigns them one at a time"
+    triggers: ["work.start", "subtask.done", "qa.issues_found"]
+    publishes: ["subtask.ready", "all_steps.done"]
+    default_publishes: "subtask.ready"
+    instructions: |
+      Manage sub-task breakdown and assignment.
+
+      ## Read State
+      1. Read PROMPT.md for the implementation plan/steps
+      2. Read scratchpad for current progress
+
+      ## Logic
+
+      ### If no current step in scratchpad:
+      - Identify the next incomplete step from the plan
+      - Break it into the smallest possible sub-tasks (one file, one function, one test)
+      - Write sub-task checklist to scratchpad under "## Current Step: Step N - {name}"
+      - Each sub-task should be independently verifiable
+      - Include test sub-tasks immediately after implementation sub-tasks
+      - Emit subtask.ready with first sub-task
+
+      ### If current step has incomplete sub-tasks:
+      - Find next unchecked sub-task in scratchpad
+      - Emit subtask.ready with that sub-task
+
+      ### If current step complete (all sub-tasks checked):
+      - Move step to "## Completed Steps" section in scratchpad
+      - Clear "## Current Step" section
+      - If more steps remain → identify next step, break into sub-tasks
+      - If all steps complete → emit all_steps.done
+
+      ### If triggered by qa.issues_found:
+      Read `.ralph/agent/qa-event-loop-log.md` for the QA Report.
+      - Create fix sub-tasks from P1 issues under
+        "## Current Step: QA Fix Round N"
+      - Each P1 issue = one sub-task with file:line reference from QA report
+      - Emit subtask.ready with first fix task
+
+      ## Sub-task Granularity Examples
+      Good: "Add timeout check to event_loop.rs run()", "Write test for max_iterations termination"
+      Bad: "Fix all event loop issues", "Add tests for everything"
+
+      ## Scratchpad Format
+      ```markdown
+      # Implementation Progress
+
+      ## Current Step: Step 1 - {name}
+
+      ### Sub-tasks:
+      - [x] 1.1 First sub-task
+      - [ ] 1.2 Second sub-task
+      - [ ] 1.3 Write tests for above
+      ...
+
+      ### Notes:
+      (any relevant context)
+
+      ## Completed Steps:
+      - Step 0: (if any)
+      ```
+
+  builder:
+    name: "⚡ Builder"
+    description: "Implements one sub-task at a time"
+    triggers: ["subtask.ready", "review.changes_requested"]
+    publishes: ["subtask.done", "implementation.done"]
+    default_publishes: "subtask.done"
+    instructions: |
+      Implement the assigned sub-task only.
+
+      ## Scope
+      CRITICAL: Implement ONLY the single sub-task assigned. Do not work ahead.
+      - One sub-task = one small, focused change
+      - If it's a test sub-task, write the tests
+      - If it's an implementation sub-task, write the code
+
+      ## Verification
+      Before emitting subtask.done, you MUST have evidence:
+      - `cargo test -p ralph-core` passes
+      - `cargo test -p ralph-cli` passes (if CLI changes)
+      Include actual pass/fail results in scratchpad Notes.
+
+      ## On Completion
+      1. Mark sub-task as complete in scratchpad: `- [x] 1.1 ...`
+      2. Add any relevant notes to scratchpad Notes section
+      3. Commit with conventional format: `<type>(<scope>): <description>`
+      4. Emit subtask.done
+
+      On review.changes_requested → address feedback, emit implementation.done
+
+  reviewer:
+    name: "👀 Reviewer"
+    description: "Reviews implementation quality at step completion"
+    triggers: ["all_steps.done", "implementation.done"]
+    publishes: ["review.approved", "review.changes_requested"]
+    default_publishes: "review.approved"
+    instructions: |
+      Review implementation changes.
+
+      ## Quality Checks
+
+      ### Verification Evidence
+      Check scratchpad for verification evidence from the builder.
+      FAIL if no evidence was recorded.
+
+      ### Idiomatic Check
+      - Naming conventions match surrounding Rust code?
+      - Error handling follows existing patterns (anyhow, thiserror)?
+      - File organization consistent with crate structure?
+      FAIL if code looks foreign to the codebase.
+
+      ### Correctness & Safety
+      - Does it match the plan requirements?
+      - Error handling present and appropriate?
+      - No unsafe blocks without justification?
+
+      ### Test Coverage
+      - Each new function should have test coverage
+      - Tests should cover happy path and edge cases
+      - Reject if tests are missing or deferred
+
+      ## Decision
+      Blocking: missing verification evidence, security, broken functionality, missing tests.
+      Don't block for minor style nitpicks.
+
+      If blocking → emit review.changes_requested with specific file:line references
+      If solid → emit review.approved
+
+  qa_planner:
+    name: "🧪 QA Planner"
+    description: "Diffs origin/main, builds targeted test plan, drives QA execution"
+    triggers: ["review.approved", "qa-test.done"]
+    publishes: ["qa-test.ready", "qa.passed", "qa.issues_found"]
+    default_publishes: "qa-test.ready"
+    instructions: |
+      Analyze changes and manage QA test execution.
+      State lives in `.ralph/agent/qa-event-loop-log.md` (NOT the main scratchpad).
+
+      ## Read State
+      1. Read scratchpad for implementation context
+      2. Read `.ralph/agent/qa-event-loop-log.md` if it exists (prior QA state)
+
+      ## Logic
+
+      ### If no qa-event-loop-log.md (first trigger from review.approved):
+
+      #### Impact Assessment
+      Check which crates/files were changed (git diff origin/main --stat + scratchpad):
+      - **QA-impacting** — changes in crates/ralph-core/src/event_loop*,
+        crates/ralph-cli/src/tui*, crates/ralph-core/src/hat*,
+        crates/ralph-core/src/backpressure*, config parsing
+      - **Non-impacting** — only docs/, presets/, README, CI config
+
+      If non-impacting → emit qa.passed immediately. Do nothing else.
+
+      #### Classify changes into test targets
+      For each changed area, create a test target:
+
+      **Event loop changes** → integration test via `ralph run` with minimal config:
+      - Termination: does it stop at max_iterations? max_runtime?
+      - Backpressure: does `build.done` without evidence get blocked?
+      - Hat routing: do events reach the right hat?
+      - Completion: does the completion promise end the loop?
+      - Hat exhaustion: does max_activations trigger `<hat>.exhausted`?
+      - Default publishes: does the fallback event fire when agent is silent?
+
+      **TUI/display changes** → manual test via `ralph run --tui`:
+      - Iteration separator renders correctly (hat name, emoji, counter)
+      - Hat transitions display in the right order
+      - Termination message shows reason and stats
+
+      **Config changes** → integration test with the changed config:
+      - New starting_event works
+      - New hat topology flows correctly
+      - default_publishes fires when agent is silent
+
+      #### Write `.ralph/agent/qa-event-loop-log.md`:
+      ```markdown
+      # Event Loop QA Log
+      qa_round: 1
+      max_rounds: 3
+
+      ## Changes Summary
+      - file: what changed (from diff)
+
+      ## Test Targets
+      - [ ] 1. <scenario> — <why it matters>
+        - Type: manual | integration
+        - Config: /tmp/ralph-qa/<name>.yml
+        - Command: `ralph run ...`
+        - Verify: what to check in output
+        - Pass criteria: specific observable behavior
+      ```
+
+      Hard limit: 10 targets. Prioritize by risk — changed code paths first.
+      Targets can declare `Depends on: N` — keep chains max one level deep.
+      Order targets so dependencies come first.
+      Emit qa-test.ready with the first unchecked target.
+
+      ### If qa-event-loop-log.md exists with incomplete targets (triggered by qa-test.done):
+      - Read tester's latest result
+      - If BLOCKER → stop testing, compile report immediately
+        with remaining targets marked as "blocked by: <issue>"
+      - If a target failed and others depend on it → skip dependents,
+        mark them as "blocked by: #N"
+      - If next eligible unchecked target exists → emit qa-test.ready
+      - If all targets checked → compile report (see below)
+
+      ### If all targets checked but re-entering after fixes:
+      - If `qa_round` >= 3 → hard stop. Append final report noting
+        "QA_HARD_STOP: P1 issues unresolved after 3 rounds", emit qa.passed
+      - Otherwise → increment qa_round
+      - Re-test targets that previously failed or were blocked
+      - Uncheck those targets, emit qa-test.ready with the first one
+
+      ### Compile Report (all targets checked):
+      Append to qa-event-loop-log.md:
+      ```markdown
+      ## QA Report — Round N
+      targets_tested: N
+      p1_issues: N
+      p2_issues: N
+
+      ### Issues
+      - **[P1]** description — reproduction steps
+      - **[P2]** description
+
+      ### Verified Working
+      - ✅ items
+      ```
+      - ANY P1 issues → emit qa.issues_found (planner will create fix tasks)
+      - No P1 issues → emit qa.passed
+
+  qa_tester:
+    name: "🔍 QA Tester"
+    description: "Executes one test target using tmux split panes"
+    triggers: ["qa-test.ready"]
+    publishes: ["qa-test.done"]
+    default_publishes: "qa-test.done"
+    instructions: |
+      Execute one test target from `.ralph/agent/qa-event-loop-log.md`.
+
+      ## Tmux Setup
+      ```bash
+      tmux kill-session -t ralph-qa 2>/dev/null
+      tmux new-session -d -s ralph-qa -x 200 -y 50
+      tmux split-window -h -t ralph-qa
+      ```
+
+      ## Create test config
+      Write a minimal YAML to `/tmp/ralph-qa/<scenario>.yml` per target.
+
+      Examples:
+
+      **Termination (max_iterations)**:
+      ```yaml
+      event_loop:
+        max_iterations: 3
+        completion_promise: "TEST_DONE"
+        starting_event: "task.start"
+      cli:
+        backend: "echo"
+      hats:
+        worker:
+          triggers: ["task.start", "task.done"]
+          publishes: ["task.done"]
+          instructions: "Emit task.done each time."
+      ```
+
+      **Backpressure**:
+      ```yaml
+      event_loop:
+        max_iterations: 5
+        starting_event: "task.start"
+      hats:
+        worker:
+          triggers: ["task.start", "build.blocked"]
+          publishes: ["build.done"]
+          instructions: "Emit build.done with payload 'finished' (no evidence)."
+      ```
+
+      **Hat exhaustion**:
+      ```yaml
+      event_loop:
+        max_iterations: 10
+        starting_event: "task.start"
+      hats:
+        limited:
+          triggers: ["task.start", "work.done"]
+          publishes: ["work.done"]
+          max_activations: 2
+          instructions: "Emit work.done."
+      ```
+
+      **Default publishes**:
+      ```yaml
+      event_loop:
+        max_iterations: 3
+        starting_event: "task.start"
+      hats:
+        silent:
+          triggers: ["task.start", "fallback.event"]
+          publishes: ["fallback.event"]
+          default_publishes: "fallback.event"
+          instructions: "Do nothing. Do not emit any events."
+      ```
+
+      ## Run the test
+      ```bash
+      tmux send-keys -t ralph-qa:0.0 \
+        'mkdir -p /tmp/ralph-qa && ralph run -H /tmp/ralph-qa/<scenario>.yml -p "test" 2>&1 | tee /tmp/ralph-qa/output.log' Enter
+      ```
+
+      ```bash
+      tmux send-keys -t ralph-qa:0.1 'tail -f /tmp/ralph-qa/output.log' Enter
+      ```
+
+      ### For TUI tests — capture pane buffer
+      ```bash
+      tmux send-keys -t ralph-qa:0.0 \
+        'ralph run --tui -H /tmp/ralph-qa/<scenario>.yml -p "test"' Enter
+      sleep 15
+      tmux capture-pane -t ralph-qa:0.0 -p > /tmp/ralph-qa/tui-capture.txt
+      cat /tmp/ralph-qa/tui-capture.txt
+      ```
+
+      ## Verify pass criteria
+      ```bash
+      grep -c "ITERATION" /tmp/ralph-qa/output.log
+      grep "max_iterations\|exhausted\|build.blocked\|terminated" /tmp/ralph-qa/output.log
+      ```
+
+      ## Cleanup
+      ```bash
+      tmux kill-session -t ralph-qa 2>/dev/null
+      ```
+
+      ## Record results
+      Update `.ralph/agent/qa-event-loop-log.md`:
+      ```markdown
+      - [x] 1. <scenario> — ✅ PASS | ❌ FAIL | 🚫 BLOCKER
+        - Command: ralph run -H /tmp/ralph-qa/<scenario>.yml -p "test"
+        - Output: (relevant snippet)
+        - Issues: (if any) **[P1]** description
+      ```
+
+      Emit qa-test.done.
+
+  finalizer:
+    name: "📝 Finalizer"
+    description: "Creates changelog and completes loop"
+    triggers: ["qa.passed"]
+    publishes: ["LOOP_COMPLETE"]
+    instructions: |
+      Document the implementation.
+
+      ## Changelog
+      Create or update specs/<feature>/CHANGELOG.md with:
+      - Date header
+      - Added: new features
+      - Changed: modifications
+
+      Commit: `docs(changelog): update for <feature>`
+
+      ## Recommendations
+      Review changes and recommend updates to project docs:
+      - New patterns introduced that future work should follow
+      - Conventions discovered during implementation
+      - Gotchas worth documenting
+      Add to CHANGELOG.md under "## Suggested Doc Updates"
+      Do NOT auto-apply.
+
+      Output: LOOP_COMPLETE

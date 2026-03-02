@@ -5,6 +5,7 @@
 
 mod agent_output;
 mod errors;
+mod hook_runs;
 mod log_rotation;
 mod orchestration;
 mod performance;
@@ -16,6 +17,7 @@ mod integration_tests;
 
 pub use agent_output::{AgentOutputContent, AgentOutputEntry, AgentOutputLogger};
 pub use errors::{DiagnosticError, ErrorLogger};
+pub use hook_runs::{HookDisposition, HookRunLogger, HookRunTelemetryEntry};
 pub use log_rotation::{create_log_file, rotate_logs};
 pub use orchestration::{OrchestrationEvent, OrchestrationLogger};
 pub use performance::{PerformanceLogger, PerformanceMetric};
@@ -37,6 +39,7 @@ pub struct DiagnosticsCollector {
     orchestration_logger: Option<Arc<Mutex<orchestration::OrchestrationLogger>>>,
     performance_logger: Option<Arc<Mutex<performance::PerformanceLogger>>>,
     error_logger: Option<Arc<Mutex<errors::ErrorLogger>>>,
+    hook_run_logger: Option<Arc<Mutex<hook_runs::HookRunLogger>>>,
 }
 
 impl DiagnosticsCollector {
@@ -53,26 +56,29 @@ impl DiagnosticsCollector {
 
     /// Creates a diagnostics collector with explicit enabled flag (for testing).
     pub fn with_enabled(base_path: &Path, enabled: bool) -> std::io::Result<Self> {
-        let (session_dir, orchestration_logger, performance_logger, error_logger) = if enabled {
-            let timestamp = Local::now().format("%Y-%m-%dT%H-%M-%S");
-            let dir = base_path
-                .join(".ralph")
-                .join("diagnostics")
-                .join(timestamp.to_string());
-            fs::create_dir_all(&dir)?;
+        let (session_dir, orchestration_logger, performance_logger, error_logger, hook_run_logger) =
+            if enabled {
+                let timestamp = Local::now().format("%Y-%m-%dT%H-%M-%S");
+                let dir = base_path
+                    .join(".ralph")
+                    .join("diagnostics")
+                    .join(timestamp.to_string());
+                fs::create_dir_all(&dir)?;
 
-            let orch_logger = orchestration::OrchestrationLogger::new(&dir)?;
-            let perf_logger = performance::PerformanceLogger::new(&dir)?;
-            let err_logger = errors::ErrorLogger::new(&dir)?;
-            (
-                Some(dir),
-                Some(Arc::new(Mutex::new(orch_logger))),
-                Some(Arc::new(Mutex::new(perf_logger))),
-                Some(Arc::new(Mutex::new(err_logger))),
-            )
-        } else {
-            (None, None, None, None)
-        };
+                let orch_logger = orchestration::OrchestrationLogger::new(&dir)?;
+                let perf_logger = performance::PerformanceLogger::new(&dir)?;
+                let err_logger = errors::ErrorLogger::new(&dir)?;
+                let hook_logger = hook_runs::HookRunLogger::new(&dir)?;
+                (
+                    Some(dir),
+                    Some(Arc::new(Mutex::new(orch_logger))),
+                    Some(Arc::new(Mutex::new(perf_logger))),
+                    Some(Arc::new(Mutex::new(err_logger))),
+                    Some(Arc::new(Mutex::new(hook_logger))),
+                )
+            } else {
+                (None, None, None, None, None)
+            };
 
         Ok(Self {
             enabled,
@@ -80,6 +86,7 @@ impl DiagnosticsCollector {
             orchestration_logger,
             performance_logger,
             error_logger,
+            hook_run_logger,
         })
     }
 
@@ -91,6 +98,7 @@ impl DiagnosticsCollector {
             orchestration_logger: None,
             performance_logger: None,
             error_logger: None,
+            hook_run_logger: None,
         }
     }
 
@@ -152,6 +160,17 @@ impl DiagnosticsCollector {
         {
             logger.set_context(iteration, hat);
             logger.log(error);
+        }
+    }
+
+    /// Logs a hook run telemetry entry.
+    ///
+    /// Does nothing if diagnostics are disabled.
+    pub fn log_hook_run(&self, entry: HookRunTelemetryEntry) {
+        if let Some(logger) = &self.hook_run_logger
+            && let Ok(mut logger) = logger.lock()
+        {
+            let _ = logger.log(&entry);
         }
     }
 }

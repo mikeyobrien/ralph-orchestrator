@@ -9,18 +9,23 @@
 //! - `retry`: Re-run merge for failed loop
 //! - `discard`: Abandon loop and cleanup
 //! - `stop`: Terminate running loop
+//! - `resume`: Resume a suspended loop
 //! - `prune`: Clean up stale loops
 //! - `attach`: Open shell in worktree
 //! - `diff`: Show changes from merge-base
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use ralph_core::worktree::{list_ralph_worktrees, remove_worktree};
-use ralph_core::{LoopRegistry, MergeButtonState, MergeQueue, MergeState, merge_button_state};
+use ralph_core::{
+    LoopRegistry, MergeButtonState, MergeQueue, MergeState, SuspendStateStore, merge_button_state,
+    truncate_with_ellipsis,
+};
 
 /// Manage parallel loops.
 #[derive(Parser, Debug)]
@@ -48,6 +53,9 @@ pub enum LoopsCommands {
 
     /// Stop a running loop
     Stop(StopArgs),
+
+    /// Resume a suspended loop
+    Resume(ResumeArgs),
 
     /// Clean up stale loops (crashed processes)
     Prune,
@@ -127,6 +135,12 @@ pub struct StopArgs {
 }
 
 #[derive(Parser, Debug)]
+pub struct ResumeArgs {
+    /// Loop ID
+    pub loop_id: String,
+}
+
+#[derive(Parser, Debug)]
 pub struct AttachArgs {
     /// Loop ID
     pub loop_id: String,
@@ -174,6 +188,7 @@ pub fn execute(args: LoopsArgs, use_colors: bool) -> Result<()> {
         Some(LoopsCommands::Retry(retry_args)) => retry_merge(retry_args),
         Some(LoopsCommands::Discard(discard_args)) => discard_loop(discard_args),
         Some(LoopsCommands::Stop(stop_args)) => stop_loop(stop_args),
+        Some(LoopsCommands::Resume(resume_args)) => resume_loop(resume_args),
         Some(LoopsCommands::Prune) => prune_stale(),
         Some(LoopsCommands::Attach(attach_args)) => attach_to_loop(attach_args),
         Some(LoopsCommands::Diff(diff_args)) => show_diff(diff_args),
@@ -292,6 +307,9 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
     for entry in &loop_entries {
         let status = if entry.is_alive() {
             "running"
+        } else if entry.is_pid_alive() {
+            // PID alive but is_alive() false → worktree removed externally
+            "orphan"
         } else {
             "crashed"
         };
@@ -500,21 +518,7 @@ fn colorize_status(status: &str) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    // Use character count instead of byte count for UTF-8 safety
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        // Find the byte index of the max-th character for safe slicing
-        if max < 3 {
-            return "...".to_string();
-        }
-        let byte_idx = s
-            .char_indices()
-            .nth(max - 3)
-            .map(|(idx, _)| idx)
-            .unwrap_or(s.len());
-        format!("{}...", &s[..byte_idx])
-    }
+    truncate_with_ellipsis(s, max)
 }
 
 fn shorten_path(path: &str) -> String {
@@ -534,7 +538,7 @@ fn show_logs(args: LogsArgs) -> Result<()> {
     let base_path = if let Some(ref wt_path) = worktree_path {
         PathBuf::from(wt_path)
     } else {
-        cwd.clone()
+        cwd
     };
 
     let events_path = base_path.join(".ralph/events.jsonl");
@@ -680,11 +684,53 @@ fn discard_loop(args: DiscardArgs) -> Result<()> {
 
     // Remove worktree if exists
     if let Some(wt_path) = worktree_path {
-        println!("Removing worktree at {}...", wt_path);
-        remove_worktree(&cwd, &wt_path)?;
+        if PathBuf::from(&wt_path).is_dir() {
+            println!("Removing worktree at {}...", wt_path);
+            remove_worktree(&cwd, &wt_path)?;
+        } else {
+            println!("Worktree already removed: {}", wt_path);
+            cleanup_missing_worktree_artifacts(&cwd, &loop_id)?;
+        }
+    } else {
+        // Registry/queue entry may still have stale worktree metadata or branch refs.
+        cleanup_missing_worktree_artifacts(&cwd, &loop_id)?;
     }
 
     println!("Loop '{}' discarded.", loop_id);
+    Ok(())
+}
+
+fn cleanup_missing_worktree_artifacts(cwd: &Path, loop_id: &str) -> Result<()> {
+    let prune_output = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(cwd)
+        .output()
+        .context("Failed to run git worktree prune for missing-worktree cleanup")?;
+
+    if !prune_output.status.success() {
+        let stderr = String::from_utf8_lossy(&prune_output.stderr);
+        eprintln!(
+            "Warning: git worktree prune failed during cleanup: {}",
+            stderr.trim()
+        );
+    }
+
+    let branch = format!("ralph/{loop_id}");
+    let branch_delete_output = Command::new("git")
+        .args(["branch", "-D", &branch])
+        .current_dir(cwd)
+        .output()
+        .context("Failed to run git branch delete for missing-worktree cleanup")?;
+
+    if !branch_delete_output.status.success() && git_ref_exists(cwd, &branch) {
+        let stderr = String::from_utf8_lossy(&branch_delete_output.stderr);
+        eprintln!(
+            "Warning: failed to delete branch '{}': {}",
+            branch,
+            stderr.trim()
+        );
+    }
+
     Ok(())
 }
 
@@ -703,6 +749,68 @@ fn stop_loop(args: StopArgs) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| cwd.clone());
 
+    // Check if the worktree directory is gone (zombie loop)
+    let worktree_gone = worktree_path
+        .as_ref()
+        .is_some_and(|p| !PathBuf::from(p).is_dir());
+
+    if worktree_gone {
+        // Worktree removed externally — fall back to registry PID
+        let registry = LoopRegistry::new(&cwd);
+        if let Ok(Some(entry)) = registry.get(&loop_id) {
+            if is_process_alive(entry.pid) {
+                #[cfg(unix)]
+                {
+                    use nix::sys::signal::{Signal, kill};
+                    use nix::unistd::Pid;
+
+                    let signal = if args.force {
+                        Signal::SIGKILL
+                    } else {
+                        Signal::SIGTERM
+                    };
+                    println!(
+                        "Worktree gone. Sending {} to orphan loop '{}' (PID {})...",
+                        if args.force { "SIGKILL" } else { "SIGTERM" },
+                        loop_id,
+                        entry.pid
+                    );
+                    kill(Pid::from_raw(entry.pid as i32), signal)
+                        .context("Failed to send signal to orphan loop")?;
+                }
+                #[cfg(not(unix))]
+                {
+                    bail!("Signal sending not supported on this platform");
+                }
+
+                let wait_timeout = orphan_stop_wait_timeout(args.force);
+                if !wait_for_process_exit(entry.pid, wait_timeout) {
+                    let signal_name = if args.force { "SIGKILL" } else { "SIGTERM" };
+                    let force_hint = if args.force {
+                        ""
+                    } else {
+                        " Try `ralph loops stop <id> --force`."
+                    };
+                    bail!(
+                        "Loop '{}' is still running (PID {}) after {} (waited {}ms). Keeping orphan entry for visibility.{}",
+                        loop_id,
+                        entry.pid,
+                        signal_name,
+                        wait_timeout.as_millis(),
+                        force_hint
+                    );
+                }
+            }
+            let _ = registry.deregister(&loop_id);
+            println!("Orphan loop '{}' cleaned up.", loop_id);
+            return Ok(());
+        }
+        bail!(
+            "Loop '{}' not found in registry and worktree is gone",
+            loop_id
+        );
+    }
+
     let metadata = LoopLock::read_existing(&target_root)?
         .context("Cannot determine active loop - it may have already stopped")?;
 
@@ -715,7 +823,6 @@ fn stop_loop(args: StopArgs) -> Result<()> {
     }
 
     if args.force {
-        // Force-stop with SIGKILL for immediate termination.
         #[cfg(unix)]
         {
             use nix::sys::signal::{Signal, kill};
@@ -747,6 +854,57 @@ fn stop_loop(args: StopArgs) -> Result<()> {
     println!(
         "Stop requested for loop '{}' (PID {}). The loop will stop at the next iteration boundary.",
         loop_id, metadata.pid
+    );
+
+    Ok(())
+}
+
+/// Resume a suspended loop.
+fn resume_loop(args: ResumeArgs) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let (loop_id, worktree_path) = resolve_loop(&cwd, &args.loop_id)?;
+
+    let target_root = worktree_path
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| cwd.clone());
+
+    let suspend_state_store = SuspendStateStore::new(&target_root);
+    let suspend_state = suspend_state_store
+        .read_suspend_state()
+        .with_context(|| format!("Failed to read suspend-state for loop '{}'", loop_id))?;
+    let resume_already_requested = suspend_state_store.is_resume_requested();
+
+    if suspend_state.is_none() {
+        if resume_already_requested {
+            println!(
+                "Resume was already requested for loop '{}'. The loop is not currently suspended; no action taken.",
+                loop_id
+            );
+        } else {
+            println!(
+                "Loop '{}' is not currently suspended. Nothing to resume.",
+                loop_id
+            );
+        }
+        return Ok(());
+    }
+
+    if resume_already_requested {
+        println!(
+            "Resume was already requested for loop '{}'. Waiting for the loop to continue.",
+            loop_id
+        );
+        return Ok(());
+    }
+
+    suspend_state_store
+        .write_resume_requested()
+        .with_context(|| format!("Failed to write resume signal for loop '{}'", loop_id))?;
+
+    println!(
+        "Resume requested for loop '{}'. The loop will continue from the suspended boundary.",
+        loop_id
     );
 
     Ok(())
@@ -824,23 +982,24 @@ fn show_diff(args: DiffArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let (loop_id, _worktree_path) = resolve_loop(&cwd, &args.loop_id)?;
 
-    // Find the branch
     let branch = format!("ralph/{}", loop_id);
 
-    // Check if branch exists
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", &branch])
-        .current_dir(&cwd)
-        .output()
-        .context("Failed to run git")?;
-
-    if !output.status.success() {
+    // Check that branch exists.
+    if !git_ref_exists(&cwd, &branch) {
         bail!("Branch '{}' not found", branch);
     }
 
-    // Show diff from merge-base
-    // Note: three-dot syntax requires both refs in a single argument: "main...branch"
-    let diff_range = format!("main...{}", branch);
+    let base_branch = default_diff_base_branch(&cwd);
+    if !git_ref_exists(&cwd, &base_branch) {
+        bail!(
+            "Base branch '{}' not found in this repository.\n\nTry explicitly passing a base via upstream/main merge history.",
+            base_branch
+        );
+    }
+
+    // Show diff from base branch to loop branch.
+    // Note: three-dot syntax requires both refs in a single argument: "base...branch"
+    let diff_range = format!("{}...{}", base_branch, branch);
     let mut git_args = vec!["diff", &diff_range];
 
     if args.stat {
@@ -858,6 +1017,76 @@ fn show_diff(args: DiffArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn default_diff_base_branch(cwd: &std::path::Path) -> String {
+    if let Some(output) = git_output(
+        cwd,
+        ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"],
+    ) {
+        let value = output.trim();
+        if let Some(base) = value.split('/').next_back() {
+            let direct = base.to_string();
+            let with_remote = format!("origin/{}", direct);
+            if git_ref_exists(cwd, &direct) {
+                return direct;
+            }
+            if git_ref_exists(cwd, &with_remote) {
+                return with_remote;
+            }
+        }
+    }
+
+    for candidate in ["origin/main", "main", "origin/master", "master"] {
+        if git_ref_exists(cwd, candidate) {
+            return candidate.to_string();
+        }
+    }
+
+    "main".to_string()
+}
+
+fn git_ref_exists(cwd: &std::path::Path, reference: &str) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", reference])
+        .current_dir(cwd)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn git_output(cwd: &std::path::Path, args: [&str; 4]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        None
+    }
+}
+
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !is_process_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    !is_process_alive(pid)
+}
+
+fn orphan_stop_wait_timeout(force: bool) -> Duration {
+    let default_ms = if force { 2_000 } else { 5_000 };
+    let configured_ms = std::env::var("RALPH_LOOPS_STOP_WAIT_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|ms| *ms > 0);
+
+    Duration::from_millis(configured_ms.unwrap_or(default_ms))
 }
 
 /// Merge a completed loop (or force retry).
@@ -934,11 +1163,22 @@ fn merge_loop(args: MergeArgs) -> Result<()> {
 
 /// Helper to spawn merge-ralph
 fn spawn_merge_ralph(cwd: &std::path::Path, loop_id: &str) -> Result<()> {
-    // Get the merge-loop preset and write to config file
+    // Get the merge-loop preset and write a core-only config file.
     let preset = crate::presets::get_preset("merge-loop").context("merge-loop preset not found")?;
 
+    let mut core_value: serde_yaml::Value =
+        serde_yaml::from_str(preset.content).context("Failed to parse merge-loop preset YAML")?;
+    if let Some(mapping) = core_value.as_mapping_mut() {
+        let hats_key = serde_yaml::Value::String("hats".to_string());
+        let events_key = serde_yaml::Value::String("events".to_string());
+        mapping.remove(&hats_key);
+        mapping.remove(&events_key);
+    }
+    let core_yaml = serde_yaml::to_string(&core_value)
+        .context("Failed to serialize core-only merge-loop config")?;
+
     let config_path = cwd.join(".ralph/merge-loop-config.yml");
-    std::fs::write(&config_path, preset.content).context("Failed to write merge config file")?;
+    std::fs::write(&config_path, core_yaml).context("Failed to write merge config file")?;
 
     // Spawn merge-ralph
     println!("Spawning merge-ralph for loop '{}'...", loop_id);
@@ -948,6 +1188,8 @@ fn spawn_merge_ralph(cwd: &std::path::Path, loop_id: &str) -> Result<()> {
             "run",
             "-c",
             ".ralph/merge-loop-config.yml",
+            "-H",
+            "builtin:merge-loop",
             "--exclusive",
             "-p",
             &format!("Merge loop {} from branch ralph/{}", loop_id, loop_id),
@@ -970,14 +1212,14 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
 
     // Try exact match in registry
     if let Ok(Some(entry)) = registry.get(id) {
-        return Ok((entry.id.clone(), entry.worktree_path.clone()));
+        return Ok((entry.id, entry.worktree_path));
     }
 
     // Try partial match (e.g., "a3f2" matches "ralph-20250124-143052-a3f2")
     if let Ok(entries) = registry.list() {
         for entry in entries {
             if entry.id.ends_with(id) || entry.id.contains(id) {
-                return Ok((entry.id.clone(), entry.worktree_path.clone()));
+                return Ok((entry.id, entry.worktree_path));
             }
         }
     }
@@ -991,7 +1233,7 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
             .find(|wt| wt.branch.ends_with(&entry.loop_id))
             .map(|wt| wt.path.to_string_lossy().to_string());
 
-        return Ok((entry.loop_id.clone(), wt_path));
+        return Ok((entry.loop_id, wt_path));
     }
 
     // Try partial match in merge queue
@@ -1003,7 +1245,7 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
                     .iter()
                     .find(|wt| wt.branch.ends_with(&entry.loop_id))
                     .map(|wt| wt.path.to_string_lossy().to_string());
-                return Ok((entry.loop_id.clone(), wt_path));
+                return Ok((entry.loop_id, wt_path));
             }
         }
     }
@@ -1024,9 +1266,26 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
 mod tests {
     use super::*;
     use crate::test_support::CwdGuard;
-    use ralph_core::LoopLock;
+    use chrono::Utc;
     use ralph_core::loop_registry::LoopEntry;
+    use ralph_core::{
+        HookPhaseEvent, HookSuspendMode, LoopLock, SuspendStateRecord, SuspendStateStore,
+    };
     use std::process::Command;
+
+    fn write_suspend_state(store: &SuspendStateStore, loop_id: &str) {
+        let state = SuspendStateRecord::new(
+            loop_id,
+            HookPhaseEvent::PreLoopStart,
+            "hook-test",
+            "hook failed",
+            HookSuspendMode::WaitForResume,
+            Utc::now(),
+        );
+        store
+            .write_suspend_state(&state)
+            .expect("write suspend-state");
+    }
 
     #[test]
     fn test_truncate() {
@@ -1069,7 +1328,7 @@ mod tests {
         assert_eq!(truncate(mixed, 6), mixed);
 
         // Test with max < 3 (edge case)
-        assert_eq!(truncate("hello", 2), "...");
+        assert_eq!(truncate("hello", 2), "he");
     }
 
     #[test]
@@ -1133,18 +1392,22 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let _cwd = CwdGuard::set(temp_dir.path());
 
+        // Create the worktree directory so is_alive() doesn't treat it as zombie
+        let wt_path = temp_dir.path().join("worktrees/loop-test-9999");
+        std::fs::create_dir_all(&wt_path).expect("create worktree dir");
+
         let registry = LoopRegistry::new(temp_dir.path());
         let entry = LoopEntry::with_id(
             "loop-test-9999",
             "resolve me",
-            Some("worktrees/loop-test-9999"),
+            Some(wt_path.display().to_string()),
             temp_dir.path().display().to_string(),
         );
         registry.register(entry).expect("register loop");
 
         let (id, worktree) = resolve_loop(temp_dir.path(), "loop-test-9999").expect("resolve");
         assert_eq!(id, "loop-test-9999");
-        assert_eq!(worktree, Some("worktrees/loop-test-9999".to_string()));
+        assert_eq!(worktree, Some(wt_path.display().to_string()));
     }
 
     #[test]
@@ -1364,6 +1627,129 @@ mod tests {
         assert!(registry.get("loop-discard-1").unwrap().is_none());
     }
 
+    #[test]
+    fn test_discard_loop_missing_worktree_runs_fallback_cleanup() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .status()
+            .expect("git init");
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .expect("git config email");
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .status()
+            .expect("git config name");
+        std::fs::write("README.md", "# Test").expect("write README");
+        Command::new("git")
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        Command::new("git")
+            .args(["commit", "-m", "Initial commit", "--quiet"])
+            .status()
+            .expect("git commit");
+
+        Command::new("git")
+            .args(["branch", "ralph/loop-missing-worktree-1"])
+            .status()
+            .expect("git branch");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let missing_worktree_path = temp_dir.path().join(".worktrees/loop-missing-worktree-1");
+        let entry = LoopEntry::with_id(
+            "loop-missing-worktree-1",
+            "discard me",
+            Some(missing_worktree_path.display().to_string()),
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-missing-worktree-1", "prompt")
+            .expect("enqueue");
+
+        discard_loop(DiscardArgs {
+            loop_id: "loop-missing-worktree-1".to_string(),
+            yes: true,
+        })
+        .expect("discard loop");
+
+        assert!(!git_ref_exists(
+            temp_dir.path(),
+            "ralph/loop-missing-worktree-1"
+        ));
+        assert!(registry.get("loop-missing-worktree-1").unwrap().is_none());
+
+        let entry = queue
+            .get_entry("loop-missing-worktree-1")
+            .expect("get entry")
+            .expect("entry exists");
+        assert_eq!(entry.state, MergeState::Discarded);
+    }
+
+    #[test]
+    fn test_discard_loop_without_worktree_path_runs_fallback_cleanup() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .status()
+            .expect("git init");
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .expect("git config email");
+        Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .status()
+            .expect("git config name");
+        std::fs::write("README.md", "# Test").expect("write README");
+        Command::new("git")
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        Command::new("git")
+            .args(["commit", "-m", "Initial commit", "--quiet"])
+            .status()
+            .expect("git commit");
+
+        Command::new("git")
+            .args(["branch", "ralph/loop-no-worktree-path-1"])
+            .status()
+            .expect("git branch");
+
+        let queue = MergeQueue::new(temp_dir.path());
+        queue
+            .enqueue("loop-no-worktree-path-1", "prompt")
+            .expect("enqueue");
+
+        discard_loop(DiscardArgs {
+            loop_id: "loop-no-worktree-path-1".to_string(),
+            yes: true,
+        })
+        .expect("discard loop");
+
+        assert!(!git_ref_exists(
+            temp_dir.path(),
+            "ralph/loop-no-worktree-path-1"
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_stop_loop_writes_stop_requested_file() {
@@ -1379,6 +1765,159 @@ mod tests {
         .expect("stop loop");
 
         assert!(temp_dir.path().join(".ralph/stop-requested").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_stop_loop_orphan_keeps_registry_when_term_ignored() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let mut child = Command::new("sh")
+            .args(["-c", "trap '' TERM; while true; do sleep 1; done"])
+            .spawn()
+            .expect("spawn child");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let missing_worktree_path = temp_dir.path().join(".worktrees/loop-orphan-term-ignore");
+        let mut entry = LoopEntry::with_id(
+            "loop-orphan-term-ignore",
+            "orphan loop",
+            Some(missing_worktree_path.display().to_string()),
+            temp_dir.path().display().to_string(),
+        );
+        entry.pid = child.id();
+        registry.register(entry).expect("register loop");
+
+        let err = stop_loop(StopArgs {
+            loop_id: Some("loop-orphan-term-ignore".to_string()),
+            force: false,
+        })
+        .expect_err("stop should fail when orphan ignores SIGTERM");
+
+        assert!(err.to_string().contains("still running"));
+        assert!(
+            registry
+                .get("loop-orphan-term-ignore")
+                .expect("registry get")
+                .is_some(),
+            "orphan entry should remain discoverable"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_resume_loop_writes_resume_signal_for_in_place_loop() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let loop_id = "loop-resume-in-place-1";
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            loop_id,
+            "resume me",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let store = SuspendStateStore::new(temp_dir.path());
+        write_suspend_state(&store, loop_id);
+
+        resume_loop(ResumeArgs {
+            loop_id: loop_id.to_string(),
+        })
+        .expect("resume loop");
+
+        assert!(store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_resume_loop_resolves_partial_id_and_targets_worktree() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let loop_id = "loop-resume-worktree-9876";
+        let worktree_path = temp_dir.path().join(".worktrees/loop-resume-worktree-9876");
+        std::fs::create_dir_all(&worktree_path).expect("create worktree dir");
+
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            loop_id,
+            "resume me",
+            Some(worktree_path.display().to_string()),
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let store = SuspendStateStore::new(&worktree_path);
+        write_suspend_state(&store, loop_id);
+
+        resume_loop(ResumeArgs {
+            loop_id: "9876".to_string(),
+        })
+        .expect("resume loop");
+
+        assert!(store.resume_requested_path().exists());
+        assert!(!temp_dir.path().join(".ralph/resume-requested").exists());
+    }
+
+    #[test]
+    fn test_resume_loop_is_idempotent_when_resume_already_requested() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let loop_id = "loop-resume-idempotent-1";
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            loop_id,
+            "resume me",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let store = SuspendStateStore::new(temp_dir.path());
+        write_suspend_state(&store, loop_id);
+
+        resume_loop(ResumeArgs {
+            loop_id: loop_id.to_string(),
+        })
+        .expect("first resume request");
+        assert!(store.resume_requested_path().exists());
+
+        resume_loop(ResumeArgs {
+            loop_id: loop_id.to_string(),
+        })
+        .expect("repeat resume request should be no-op");
+        assert!(store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_resume_loop_noops_for_non_suspended_loop() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        let loop_id = "loop-not-suspended-1";
+        let registry = LoopRegistry::new(temp_dir.path());
+        let entry = LoopEntry::with_id(
+            loop_id,
+            "resume me",
+            None::<String>,
+            temp_dir.path().display().to_string(),
+        );
+        registry.register(entry).expect("register loop");
+
+        let store = SuspendStateStore::new(temp_dir.path());
+
+        resume_loop(ResumeArgs {
+            loop_id: loop_id.to_string(),
+        })
+        .expect("resume should be no-op without suspend-state");
+
+        assert!(!store.resume_requested_path().exists());
     }
 
     #[test]
@@ -1453,6 +1992,64 @@ mod tests {
             err.to_string()
                 .contains("Branch 'ralph/loop-missing-branch' not found")
         );
+    }
+
+    #[test]
+    fn test_default_diff_base_branch_prefers_main_branch() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-b", "main", "-q"])
+            .status()
+            .expect("git init -b main");
+
+        assert_eq!(default_diff_base_branch(temp_dir.path()), "main");
+    }
+
+    #[test]
+    fn test_default_diff_base_branch_falls_back_to_master() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        Command::new("git")
+            .args(["init", "-b", "master", "-q"])
+            .status()
+            .expect("git init -b master");
+
+        // Seed a commit so branch references are materialized.
+        let _ = Command::new("git")
+            .args(["config", "user.email", "ci@example.com"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "CI"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("sh")
+            .args([
+                "-c",
+                "printf 'init' > README.md && git add README.md && git commit -qm 'init'",
+            ])
+            .current_dir(temp_dir.path())
+            .status();
+
+        // Some environments inject template refs that can create a stale `main` branch.
+        // Ensure we test a clean fallback path.
+        let _ = Command::new("git")
+            .args(["branch", "-D", "-q", "main"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("git")
+            .args(["update-ref", "-d", "refs/remotes/origin/main"])
+            .current_dir(temp_dir.path())
+            .status();
+        let _ = Command::new("git")
+            .args(["update-ref", "-d", "refs/remotes/origin/HEAD"])
+            .current_dir(temp_dir.path())
+            .status();
+
+        assert_eq!(default_diff_base_branch(temp_dir.path()), "master");
     }
 
     #[test]

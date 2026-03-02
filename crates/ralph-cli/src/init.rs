@@ -3,7 +3,10 @@
 //! Handles initialization of ralph.yml configuration files, either from
 //! a minimal backend template or from an embedded preset.
 
-use crate::presets::{get_preset, list_presets, preset_names};
+use crate::backend_support;
+use crate::presets::list_presets;
+#[cfg(test)]
+use crate::presets::{get_preset, preset_names};
 use std::fs;
 use std::path::Path;
 
@@ -15,27 +18,25 @@ pub enum InitError {
     )]
     FileExists,
 
+    #[cfg(test)]
     #[error(
         "Unknown preset '{0}'. Available presets: {1}\nSee: docs/reference/troubleshooting.md#unknown-preset"
     )]
     UnknownPreset(String, String),
 
-    #[error(
-        "Unknown backend '{0}'. Valid backends: claude, kiro, gemini, codex, amp, copilot, opencode, pi, custom.\nSee: docs/reference/troubleshooting.md#unknown-backend"
-    )]
+    #[error("{0}")]
     UnknownBackend(String),
 
     #[error("Failed to write ralph.yml: {0}")]
     WriteError(#[from] std::io::Error),
 
+    #[cfg(test)]
     #[error("Failed to parse/generate YAML: {0}")]
     YamlError(String),
 }
 
 /// Valid backend names.
-const VALID_BACKENDS: &[&str] = &[
-    "claude", "kiro", "gemini", "codex", "amp", "copilot", "opencode", "pi", "custom",
-];
+const VALID_BACKENDS: &[&str] = backend_support::VALID_BACKENDS;
 
 /// Generates the minimal config template for a given backend.
 fn generate_template(backend: &str) -> String {
@@ -98,7 +99,9 @@ fn check_file_exists(force: bool) -> Result<(), InitError> {
 pub fn init_from_backend(backend: &str, force: bool) -> Result<(), InitError> {
     // Validate backend
     if !VALID_BACKENDS.contains(&backend) {
-        return Err(InitError::UnknownBackend(backend.to_string()));
+        return Err(InitError::UnknownBackend(
+            backend_support::unknown_backend_message(backend),
+        ));
     }
 
     check_file_exists(force)?;
@@ -118,6 +121,7 @@ pub fn init_from_backend(backend: &str, force: bool) -> Result<(), InitError> {
 ///
 /// # Errors
 /// Returns error if file exists (without force) or preset doesn't exist.
+#[cfg(test)]
 pub fn init_from_preset(
     preset_name: &str,
     backend_override: Option<&str>,
@@ -132,7 +136,9 @@ pub fn init_from_preset(
     if let Some(backend) = backend_override
         && !VALID_BACKENDS.contains(&backend)
     {
-        return Err(InitError::UnknownBackend(backend.to_string()));
+        return Err(InitError::UnknownBackend(
+            backend_support::unknown_backend_message(backend),
+        ));
     }
 
     check_file_exists(force)?;
@@ -150,6 +156,7 @@ pub fn init_from_preset(
 
 /// Overrides the backend field in YAML content using regex for surgical replacement.
 /// Preserves all comments and formatting.
+#[cfg(test)]
 fn override_backend_in_yaml(content: &str, backend: &str) -> Result<String, InitError> {
     use regex::Regex;
 
@@ -193,13 +200,15 @@ fn override_backend_in_yaml(content: &str, backend: &str) -> Result<String, Init
 
 /// Formats the list of presets for display.
 pub fn format_preset_list() -> String {
-    let mut output = String::from("Available presets:\n\n");
+    let mut output = String::from("Available hat collections:\n\n");
 
     for preset in list_presets() {
         output.push_str(&format!("  {:<25} {}\n", preset.name, preset.description));
     }
 
-    output.push_str("\nUsage: ralph init --preset <preset-name>\n");
+    output.push_str("\nUsage:\n");
+    output.push_str("  ralph init --backend <backend>\n");
+    output.push_str("  ralph run -c ralph.yml -H builtin:<collection>\n");
     output
 }
 
@@ -240,11 +249,12 @@ mod tests {
     #[test]
     fn test_format_preset_list() {
         let output = format_preset_list();
-        assert!(output.contains("Available presets:"));
+        assert!(output.contains("Available hat collections:"));
         assert!(output.contains("feature"));
         assert!(output.contains("code-assist"));
         assert!(output.contains("debug"));
         assert!(output.contains("Usage:"));
+        assert!(output.contains("-H builtin:<collection>"));
     }
 
     #[test]
@@ -271,10 +281,13 @@ mod tests {
 
     #[test]
     fn test_unknown_backend_message_actionable() {
-        let err = InitError::UnknownBackend("invalid".to_string());
+        let result = init_from_backend("invalid-backend", false);
+        assert!(result.is_err());
+
+        let err = result.expect_err("expected init error");
         let msg = err.to_string();
+        assert!(msg.contains("Invalid-backend") || msg.contains("invalid-backend"));
         assert!(msg.contains("Valid backends"));
-        assert!(msg.contains("docs/reference/troubleshooting.md#unknown-backend"));
     }
 
     #[test]

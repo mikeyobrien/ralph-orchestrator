@@ -35,10 +35,12 @@ cargo build --release
 ./scripts/setup-hooks.sh
 ```
 
-This installs pre-commit hooks that run:
+This installs pre-commit hooks that mirror CI Rust checks:
 
-- `cargo fmt --check`
-- `cargo clippy`
+- `./scripts/sync-embedded-files.sh check`
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test`
 
 ## Verify Setup
 

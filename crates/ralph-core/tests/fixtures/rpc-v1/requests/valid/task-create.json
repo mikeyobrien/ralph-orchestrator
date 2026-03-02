@@ -1,0 +1,17 @@
+{
+  "apiVersion": "v1",
+  "id": "req-task-create-001",
+  "method": "task.create",
+  "params": {
+    "id": "task-20260220-a1b2",
+    "title": "Implement contract fixtures",
+    "status": "open",
+    "priority": 2
+  },
+  "meta": {
+    "idempotencyKey": "idem-task-create-20260220-0001",
+    "auth": { "mode": "trusted_local" },
+    "timeoutMs": 30000,
+    "requestTs": "2026-02-20T00:00:00Z"
+  }
+}

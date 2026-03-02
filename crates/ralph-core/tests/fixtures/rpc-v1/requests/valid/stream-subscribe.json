@@ -1,0 +1,13 @@
+{
+  "apiVersion": "v1",
+  "id": "req-stream-subscribe-001",
+  "method": "stream.subscribe",
+  "params": {
+    "topics": ["task.status.changed", "task.log.line"],
+    "cursor": "1708478400000-42",
+    "replayLimit": 100
+  },
+  "meta": {
+    "auth": { "mode": "trusted_local" }
+  }
+}

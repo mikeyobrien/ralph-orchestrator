@@ -210,7 +210,12 @@ Install hooks:
 ./scripts/setup-hooks.sh
 ```
 
-Hooks run `cargo fmt --check` and `cargo clippy` before each commit.
+Hooks run CI-parity Rust checks before each commit:
+
+- `./scripts/sync-embedded-files.sh check`
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test`
 
 ## Testing Best Practices
 

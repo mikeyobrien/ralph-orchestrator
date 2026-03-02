@@ -1,0 +1,21 @@
+{
+  "apiVersion": "v1",
+  "stream": "events.v1",
+  "topic": "task.log.line",
+  "cursor": "1708478400000-43",
+  "sequence": 43,
+  "ts": "2026-02-20T00:00:06Z",
+  "resource": {
+    "type": "task",
+    "id": "task-20260220-a1b2"
+  },
+  "replay": {
+    "mode": "live"
+  },
+  "payload": {
+    "taskId": "task-20260220-a1b2",
+    "line": "Running tests...",
+    "source": "stdout",
+    "lineNumber": 17
+  }
+}

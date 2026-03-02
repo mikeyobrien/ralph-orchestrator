@@ -1,22 +1,20 @@
-# Ralph configuration for pi-coding-agent backend.
-#
-# Simple form: just set cli.backend to "pi"
-# Pi-specific options (provider, model, thinking) are passed as extra args
-# via the hat backend configuration.
-#
-# For a minimal setup with defaults:
-#   cli:
-#     backend: pi
+# ABOUTME: Ralph configuration for pi-coding-agent backend.
+# ABOUTME: Uses Pi with Kiro provider and Claude Opus 4.6 model.
+
+cli:
+  backend: pi
 
 hats:
   default:
+    name: "📋 Planner @pi"
+    description: "General-purpose hat using Pi with Kiro/Claude Opus 4.6"
     backend:
       type: pi
       args:
         - "--provider"
-        - "openai-codex"
+        - "kiro"
         - "--model"
-        - "gpt-5.2-codex"
+        - "claude-opus-4.6"
         - "--thinking"
         - "high"
 

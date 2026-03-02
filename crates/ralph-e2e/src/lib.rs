@@ -41,6 +41,10 @@ pub use crate::executor::{
     EventRecord, ExecutionResult, ExecutorError, PromptSource, RalphExecutor, ScenarioConfig,
     find_workspace_root, resolve_ralph_binary,
 };
+pub use crate::hooks_bdd::{
+    HooksBddConfig, HooksBddError, HooksBddRunResults, HooksBddScenario, HooksBddScenarioResult,
+    discover_hooks_bdd_scenarios, run_hooks_bdd_suite,
+};
 pub use crate::mock::{
     CassetteError, CassetteResolver, DEFAULT_CASSETTE_DIR, MockConfig, build_mock_cli_args,
 };
@@ -106,6 +110,7 @@ pub mod analyzer;
 pub mod auth;
 mod backend;
 pub mod executor;
+pub mod hooks_bdd;
 pub mod mock;
 pub mod mock_cli;
 mod models;

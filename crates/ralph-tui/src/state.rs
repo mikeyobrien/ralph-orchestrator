@@ -199,6 +199,25 @@ pub struct TuiState {
     /// Brief flash message after attempting to send guidance.
     /// (mode, result, when)
     pub guidance_flash: Option<(GuidanceMode, GuidanceResult, Instant)>,
+
+    // ========================================================================
+    // Subprocess Error State
+    // ========================================================================
+    /// Error message set when subprocess exits before sending any RPC events.
+    /// When set, the TUI displays an error state instead of empty content.
+    pub subprocess_error: Option<String>,
+
+    // ========================================================================
+    // RPC Text Accumulation State
+    // ========================================================================
+    /// Buffer for accumulating streaming text deltas received via RPC.
+    /// Text is rendered as a group when frozen (on tool call, error, or iteration end)
+    /// rather than rendering each small delta independently.
+    pub rpc_text_buffer: String,
+    /// Number of lines in the current iteration buffer that belong to the
+    /// current (unfrozen) text. When new text arrives, these lines are
+    /// replaced with a fresh render of the full accumulated text.
+    pub rpc_text_line_count: usize,
 }
 
 impl TuiState {
@@ -240,6 +259,11 @@ impl TuiState {
             guidance_next_queue: Arc::new(Mutex::new(Vec::new())),
             events_path: None,
             guidance_flash: None,
+            // Subprocess error state
+            subprocess_error: None,
+            // RPC text accumulation state
+            rpc_text_buffer: String::new(),
+            rpc_text_line_count: 0,
         }
     }
 
@@ -282,6 +306,11 @@ impl TuiState {
             guidance_next_queue: Arc::new(Mutex::new(Vec::new())),
             events_path: None,
             guidance_flash: None,
+            // Subprocess error state
+            subprocess_error: None,
+            // RPC text accumulation state
+            rpc_text_buffer: String::new(),
+            rpc_text_line_count: 0,
         }
     }
 
@@ -328,7 +357,7 @@ impl TuiState {
                 self.pending_backend = saved_pending_backend;
                 self.guidance_next_queue = saved_guidance_next_queue;
                 self.events_path = saved_events_path;
-                if let Some((hat_id, hat_display)) = custom_hat.clone() {
+                if let Some((hat_id, hat_display)) = custom_hat {
                     self.pending_hat = Some((hat_id, hat_display));
                 } else {
                     self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
@@ -481,6 +510,10 @@ impl TuiState {
         hat_display: Option<String>,
         backend: Option<String>,
     ) {
+        // Reset text accumulation buffer for the new iteration
+        self.rpc_text_buffer.clear();
+        self.rpc_text_line_count = 0;
+
         let hat_display = hat_display.or_else(|| {
             self.pending_hat
                 .as_ref()

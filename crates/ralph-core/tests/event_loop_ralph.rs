@@ -43,13 +43,16 @@ event_loop:
     std::env::set_current_dir(temp_dir.path()).unwrap();
 
     // Process events from JSONL
-    let has_orphans = event_loop.process_events_from_jsonl().unwrap();
+    let result = event_loop.process_events_from_jsonl().unwrap();
 
     // Restore original directory
     std::env::set_current_dir(original_dir).unwrap();
 
     // Verify: Ralph should handle the orphaned event
-    assert!(has_orphans, "Expected orphaned event to trigger Ralph");
+    assert!(
+        result.has_orphans,
+        "Expected orphaned event to trigger Ralph"
+    );
 }
 
 #[test]

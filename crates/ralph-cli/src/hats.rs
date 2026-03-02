@@ -6,19 +6,19 @@
 //! - `list`: Show all configured hats (Name, Description)
 //! - `show`: Show detailed configuration for a specific hat
 
-use crate::ConfigSource;
+use crate::backend_support;
 use crate::display::colors;
-use crate::presets;
+use crate::preflight;
+use crate::{ConfigSource, HatsSource};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use ralph_adapters::{CliBackend, detect_backend_default};
-use ralph_core::{HatRegistry, RalphConfig};
+use ralph_core::{HatRegistry, RalphConfig, truncate_with_ellipsis};
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use tracing::warn;
 
 /// Manage configured hats.
 #[derive(Parser, Debug)]
@@ -36,7 +36,7 @@ pub enum HatsCommands {
         /// Output format (unicode, ascii, compact, mermaid)
         #[arg(long, default_value = "unicode")]
         format: GraphFormat,
-        /// Backend to use for AI-generated diagrams (claude, kiro, gemini, codex, amp)
+        /// Backend for AI-generated diagrams (claude, kiro, gemini, codex, amp, copilot, opencode, pi, custom)
         #[arg(short = 'b', long = "backend")]
         backend: Option<String>,
     },
@@ -77,8 +77,15 @@ pub struct ShowArgs {
 }
 
 /// Execute a hats command.
-pub fn execute(config_sources: &[ConfigSource], args: HatsArgs, use_colors: bool) -> Result<()> {
-    let config = load_config(config_sources)?;
+pub async fn execute(
+    config_sources: &[ConfigSource],
+    hats_source: Option<&HatsSource>,
+    args: HatsArgs,
+    use_colors: bool,
+) -> Result<()> {
+    let config = preflight::load_config_for_preflight(config_sources, hats_source)
+        .await
+        .context("Failed to load config for hats")?;
 
     let registry = HatRegistry::from_config(&config);
     let mut stdout = std::io::stdout();
@@ -97,79 +104,6 @@ pub fn execute(config_sources: &[ConfigSource], args: HatsArgs, use_colors: bool
         Some(HatsCommands::Validate) => validate_hats(&mut stdout, &config, &registry, use_colors),
         Some(HatsCommands::Graph { format, backend }) => {
             graph_hats(&mut stdout, &config, &registry, format, backend.as_deref())
-        }
-    }
-}
-
-/// Load configuration from config sources, with proper error handling.
-///
-/// Supports:
-/// - File paths (local config files)
-/// - Builtin presets (e.g., `builtin:confession-loop`)
-///
-/// Remote URLs and overrides are not supported; returns an error with guidance.
-fn load_config(config_sources: &[ConfigSource]) -> Result<RalphConfig> {
-    // Filter out overrides and remote URLs - not supported for hats command
-    let sources: Vec<_> = config_sources
-        .iter()
-        .filter(|s| !matches!(s, ConfigSource::Override { .. }))
-        .collect();
-
-    if sources.is_empty() {
-        // No config source specified - use defaults
-        warn!("No config source specified, using defaults");
-        return Ok(RalphConfig::default());
-    }
-
-    if sources.len() > 1 {
-        warn!("Multiple config sources specified, using first one. Others ignored.");
-    }
-
-    let source = &sources[0];
-
-    match source {
-        ConfigSource::File(path) => {
-            if path.exists() {
-                RalphConfig::from_file(path)
-                    .with_context(|| format!("Failed to load config from {:?}", path))
-            } else if path.as_path() == std::path::Path::new("ralph.yml") {
-                // Default path doesn't exist - this is fine, use defaults
-                warn!("Config file 'ralph.yml' not found, using defaults");
-                Ok(RalphConfig::default())
-            } else {
-                // User explicitly specified a config file that doesn't exist - this is an error
-                Err(anyhow::anyhow!(
-                    "Config file not found: {:?}\n\nTo use default configuration, omit the -c/--config flag.\nTo see available presets, run: ralph init --list-presets\nSee: docs/reference/troubleshooting.md#config-not-found",
-                    path
-                ))
-            }
-        }
-        ConfigSource::Builtin(name) => {
-            let preset = presets::get_preset(name).ok_or_else(|| {
-                let available = presets::preset_names().join(", ");
-                anyhow::anyhow!(
-                    "Unknown preset '{}'. Run `ralph init --list-presets` to see available presets.\n\nAvailable: {}",
-                    name,
-                    available
-                )
-            })?;
-            RalphConfig::parse_yaml(preset.content)
-                .with_context(|| format!("Failed to parse builtin preset '{}'", name))
-        }
-        ConfigSource::Remote(url) => {
-            // Remote configs require async - not supported in hats command
-            Err(anyhow::anyhow!(
-                "Remote config URLs are not supported for `ralph hats`.\n\nPlease use a local config file or builtin preset instead.\nURL: {}",
-                url
-            ))
-        }
-        ConfigSource::Override { key, value } => {
-            // This should never happen since we filter out overrides above
-            Err(anyhow::anyhow!(
-                "Config overrides are not supported for `ralph hats`.\n\nPlease use a local config file or builtin preset instead.\nOverride: {}={}",
-                key,
-                value
-            ))
         }
     }
 }
@@ -205,11 +139,7 @@ fn list_hats<W: Write>(writer: &mut W, registry: &HatRegistry, _use_colors: bool
         };
 
         // Truncate desc if too long
-        let desc = if desc.len() > 58 {
-            format!("{}...", &desc[..55])
-        } else {
-            desc.to_string()
-        };
+        let desc = truncate_with_ellipsis(desc, 55);
 
         writeln!(writer, "{:<20} {}", hat.name, desc)?;
     }
@@ -373,8 +303,11 @@ fn graph_hats<W: Write>(
             write!(writer, "{}", generate_mermaid_string(registry))?;
             writeln!(writer, "```")?;
         }
-        GraphFormat::Unicode | GraphFormat::Ascii | GraphFormat::Compact => {
-            // Generate ASCII diagram via AI backend
+        GraphFormat::Compact => {
+            write!(writer, "{}", generate_compact_graph(registry))?;
+        }
+        GraphFormat::Unicode | GraphFormat::Ascii => {
+            // Generate diagram via AI backend
             let rendered = render_hat_dag_via_ai(config, registry, backend_override)?;
             write!(writer, "{}", rendered)?;
         }
@@ -492,13 +425,14 @@ fn resolve_backend(flag_override: Option<&str>, config: &RalphConfig) -> Result<
 
 /// Validates a backend name.
 fn validate_backend_name(name: &str) -> Result<()> {
-    match name {
-        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "pi" => Ok(()),
-        _ => Err(anyhow::anyhow!(
-            "Unknown backend: {}\n\nValid backends: claude, kiro, gemini, codex, amp, copilot, opencode, pi",
-            name
-        )),
+    if !backend_support::is_known_backend(name) {
+        return Err(anyhow::anyhow!(
+            "{}",
+            backend_support::unknown_backend_message(name)
+        ));
     }
+
+    Ok(())
 }
 
 /// Builds the prompt for diagram generation.
@@ -592,6 +526,38 @@ fn extract_diagram(response: &str) -> String {
     } else {
         format!("{}\n", result)
     }
+}
+
+fn generate_compact_graph(registry: &HatRegistry) -> String {
+    if registry.is_empty() {
+        return "No hats configured.\n".to_string();
+    }
+
+    let mut output = String::new();
+    output.push_str("Graph:\n");
+    output.push_str("  task.start -> Ralph\n");
+
+    // Sort hats for deterministic output
+    let mut hats: Vec<_> = registry.all().collect();
+    hats.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for hat in &hats {
+        output.push_str(&format!("  Ralph -> {}\n", hat.name));
+
+        for publish in &hat.publishes {
+            output.push_str(&format!("    {} => {}\n", hat.name, publish.as_str()));
+        }
+
+        for subscription in &hat.subscriptions {
+            output.push_str(&format!("    {} <= {}\n", hat.name, subscription.as_str()));
+        }
+    }
+
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+
+    output
 }
 
 /// Generate Mermaid flowchart syntax for the hat topology.
@@ -782,21 +748,23 @@ mod tests {
     }
 
     #[test]
-    fn test_graph_hats_mermaid() {
+    fn test_graph_hats_compact() {
         let mut registry = HatRegistry::new();
-        registry.register(mock_hat("A", &["start"], &["mid"]));
-        registry.register(mock_hat("B", &["mid"], &["end"]));
+        registry.register(mock_hat("Builder", &["build.task"], &["build.done"]));
+        registry.register(mock_hat("Planner", &["planner.start"], &["planner.done"]));
 
         let config = RalphConfig::default();
         let mut buf = Vec::new();
 
-        graph_hats(&mut buf, &config, &registry, GraphFormat::Mermaid, None).unwrap();
+        graph_hats(&mut buf, &config, &registry, GraphFormat::Compact, None).unwrap();
         let output = String::from_utf8(buf).unwrap();
 
-        assert!(output.contains("flowchart LR"));
-        assert!(output.contains("Ralph -->|start| A"));
-        assert!(output.contains("A -->|mid| Ralph"));
-        assert!(output.contains("Ralph -->|mid| B"));
+        assert!(output.contains("Graph:"));
+        assert!(output.contains("task.start -> Ralph"));
+        assert!(output.contains("Ralph -> Builder"));
+        assert!(
+            output.contains("Builder => build.task") || output.contains("Builder <= build.task")
+        );
     }
 
     #[test]
@@ -968,50 +936,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_config_missing_explicit_file_errors() {
-        // When user explicitly specifies a non-existent config file, it should error
-        let source = ConfigSource::File(std::path::PathBuf::from(
-            "nonexistent-config-that-does-not-exist.yml",
-        ));
-        let result = load_config(&[source]);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Config file not found"));
-    }
-
-    #[test]
-    fn test_load_config_remote_url_not_supported() {
-        // Remote URLs should error with a clear message
-        let source = ConfigSource::Remote("http://example.com/config.yml".to_string());
-        let result = load_config(&[source]);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Remote config URLs are not supported"));
-    }
-
-    #[test]
-    fn test_load_config_unknown_preset_errors() {
-        // Unknown builtin preset should error with helpful message
-        let source = ConfigSource::Builtin("nonexistent-preset-name".to_string());
-        let result = load_config(&[source]);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Unknown preset"));
-        assert!(err.contains("nonexistent-preset-name"));
-    }
-
-    #[test]
-    fn test_load_config_builtin_preset_works() {
-        // Builtin preset should load successfully
-        let source = ConfigSource::Builtin("feature".to_string());
-        let result = load_config(&[source]);
-        assert!(result.is_ok());
-        let config = result.unwrap();
-        // feature preset has hats defined
-        assert!(!config.hats.is_empty());
-    }
-
-    #[test]
     fn test_build_diagram_prompt() {
         let mut registry = HatRegistry::new();
         registry.register(mock_hat("Builder", &["build.task"], &["build.done"]));
@@ -1059,13 +983,16 @@ mod tests {
         assert!(validate_backend_name("gemini").is_ok());
         assert!(validate_backend_name("codex").is_ok());
         assert!(validate_backend_name("amp").is_ok());
+        assert!(validate_backend_name("custom").is_ok());
     }
 
     #[test]
     fn test_validate_backend_name_invalid() {
         let result = validate_backend_name("unknown-backend");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown backend"));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown backend"));
+        assert!(err.contains("Valid backends"));
     }
 
     #[test]

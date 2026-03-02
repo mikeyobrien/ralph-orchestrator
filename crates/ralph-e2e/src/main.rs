@@ -43,6 +43,7 @@ use ralph_e2e::{
     HatInstructionsScenario,
     HatMultiWorkflowScenario,
     HatSingleScenario,
+    HooksBddConfig,
     MaxIterationsScenario,
     // Tier 6: Memory System
     MemoryAddScenario,
@@ -69,7 +70,9 @@ use ralph_e2e::{
     Verbosity,
     WorkspaceManager,
     create_incremental_progress_callback,
+    discover_hooks_bdd_scenarios,
     resolve_ralph_binary,
+    run_hooks_bdd_suite,
     run_mock_cli,
 };
 
@@ -166,6 +169,10 @@ pub struct TestOpts {
     /// Run only tests matching this pattern
     #[arg(long)]
     pub filter: Option<String>,
+
+    /// Run the hooks BDD acceptance suite from `features/hooks/*.feature`
+    #[arg(long)]
+    pub hooks_bdd: bool,
 
     /// Generate report in specified format
     #[arg(long, value_enum, default_value_t = ReportFormat::Markdown)]
@@ -292,6 +299,15 @@ fn main() {
         Verbosity::Normal
     };
 
+    if cli.test_opts.hooks_bdd {
+        if cli.test_opts.list {
+            list_hooks_bdd_scenarios(&cli.test_opts, verbosity);
+        } else {
+            run_hooks_bdd_placeholder_suite(&cli.test_opts, verbosity);
+        }
+        return;
+    }
+
     // Run the tests
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
@@ -301,6 +317,112 @@ fn main() {
     }
 
     rt.block_on(run_tests(&cli.test_opts, verbosity));
+}
+
+fn list_hooks_bdd_scenarios(opts: &TestOpts, verbosity: Verbosity) {
+    let scenarios = match discover_hooks_bdd_scenarios(opts.filter.as_deref()) {
+        Ok(scenarios) => scenarios,
+        Err(error) => {
+            eprintln!("\n{} {}", "Error:".red().bold(), error);
+            std::process::exit(1);
+        }
+    };
+
+    println!("\n{}\n", "Available hooks BDD scenarios:".bold());
+
+    let mut current_feature = String::new();
+    for scenario in &scenarios {
+        if scenario.feature_file != current_feature {
+            current_feature = scenario.feature_file.clone();
+            println!("  {}", current_feature.bold().underline());
+        }
+
+        println!(
+            "    {}  {}",
+            scenario.scenario_id.cyan(),
+            scenario.scenario_name.dimmed()
+        );
+    }
+
+    if scenarios.is_empty() {
+        println!("  {}", "No hooks BDD scenarios discovered".yellow());
+    }
+
+    if !opts.mock && verbosity != Verbosity::Quiet {
+        println!(
+            "\n  {}",
+            "Tip: run with --mock to satisfy CI-safe step definitions".yellow()
+        );
+    }
+
+    println!(
+        "\n  {}",
+        format!(
+            "Total: {} scenario{}",
+            scenarios.len(),
+            if scenarios.len() == 1 { "" } else { "s" }
+        )
+        .dimmed()
+    );
+}
+
+fn run_hooks_bdd_placeholder_suite(opts: &TestOpts, verbosity: Verbosity) {
+    let config = HooksBddConfig::new(opts.filter.clone(), opts.mock);
+    let results = match run_hooks_bdd_suite(&config) {
+        Ok(results) => results,
+        Err(error) => {
+            eprintln!("\n{} {}", "Error:".red().bold(), error);
+            std::process::exit(1);
+        }
+    };
+
+    if verbosity != Verbosity::Quiet {
+        println!("\n{}", "Running hooks BDD acceptance suite".bold());
+        if opts.mock {
+            println!("{}", "Mode: CI-safe (--mock enabled)".dimmed());
+        } else {
+            println!(
+                "{}",
+                "Mode: non-CI-safe (--mock disabled)".yellow().dimmed()
+            );
+        }
+        println!();
+    }
+
+    for result in &results.results {
+        let status = if result.passed {
+            "✅ PASS".green()
+        } else {
+            "❌ FAIL".red()
+        };
+
+        println!(
+            "{} {} {} ({})",
+            status,
+            result.scenario_id.cyan(),
+            result.scenario_name,
+            result.feature_file.dimmed()
+        );
+
+        if verbosity != Verbosity::Quiet {
+            println!("    {}", result.message.dimmed());
+        }
+    }
+
+    println!(
+        "\n{}",
+        format!(
+            "Summary: {} passed, {} failed, {} total",
+            results.passed_count(),
+            results.failed_count(),
+            results.total_count()
+        )
+        .bold()
+    );
+
+    if !results.all_passed() {
+        std::process::exit(1);
+    }
 }
 
 async fn list_scenarios(opts: &TestOpts, verbosity: Verbosity) {

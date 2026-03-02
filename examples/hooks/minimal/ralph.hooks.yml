@@ -1,0 +1,18 @@
+# Minimal lifecycle hooks example (v1)
+# Validate with:
+#   ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml
+hooks:
+  enabled: true
+  defaults:
+    timeout_seconds: 30
+    max_output_bytes: 8192
+    suspend_mode: wait_for_resume
+  events:
+    pre.loop.start:
+      - name: env-guard
+        command: ["./examples/hooks/scripts/env-guard.sh"]
+        on_error: block
+    post.loop.complete:
+      - name: notify
+        command: ["./examples/hooks/scripts/notify.sh"]
+        on_error: warn

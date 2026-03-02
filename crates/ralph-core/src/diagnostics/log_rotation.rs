@@ -54,8 +54,9 @@ pub fn create_log_file(base_path: &Path) -> io::Result<(fs::File, PathBuf)> {
 
     rotate_logs(&logs_dir, MAX_LOG_FILES)?;
 
-    let timestamp = Local::now().format("%Y-%m-%dT%H-%M-%S");
-    let log_path = logs_dir.join(format!("ralph-{}.log", timestamp));
+    let timestamp = Local::now().format("%Y-%m-%dT%H-%M-%S-%3f");
+    let pid = std::process::id();
+    let log_path = logs_dir.join(format!("ralph-{}-{}.log", timestamp, pid));
     let file = fs::File::create(&log_path)?;
 
     Ok((file, log_path))

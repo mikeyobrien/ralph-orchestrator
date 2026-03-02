@@ -1,0 +1,12 @@
+{
+  "apiVersion": "v1",
+  "id": "req-task-list-001",
+  "method": "task.list",
+  "params": {
+    "status": "open",
+    "includeArchived": false,
+    "pagination": {
+      "limit": 50
+    }
+  }
+}

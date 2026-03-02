@@ -2,6 +2,21 @@
 
 All notable changes to ralph-orchestrator are documented here.
 
+## [2.6.0] - 2026-02-25
+
+### Added
+
+- Rust RPC v1 control plane and web client migration to the new RPC contract.
+- Shell completions support for `ralph` CLI.
+- `fresh-eyes` preset with enforced review passes.
+
+### Fixed
+
+- Hat display no longer gets stuck on the previous iteration's hat.
+- UTF-8 safe truncation to prevent panics on multi-byte characters.
+- Hat-level backend shorthand `args` is honored for custom hats (including OpenCode).
+- Deprecated `project.*` config keys now fail fast with a clear migration hint to `core.*`.
+
 ## [2.5.1] - 2026-02-14
 
 ### Changed
@@ -91,6 +106,7 @@ All notable changes to ralph-orchestrator are documented here.
 
 - Modularized codebase and fixed TUI mode
 
+[2.6.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.0...v2.5.1
 [2.3.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.5...v2.3.0
 [2.2.5]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.4...v2.2.5

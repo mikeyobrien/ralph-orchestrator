@@ -184,7 +184,7 @@ export function PlanLanding({ onStart }: PlanLandingProps) {
             </div>
           ) : (
             <div className="space-y-3">
-              {sessions.map((session) => (
+              {sessions.map((session: any) => (
                 <div
                   key={session.id}
                   className={cn(

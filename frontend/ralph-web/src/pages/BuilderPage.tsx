@@ -96,7 +96,7 @@ function CollectionList({
         </Card>
       ) : (
         <div className="grid gap-3">
-          {collections.map((collection) => (
+          {collections.map((collection: any) => (
             <Card
               key={collection.id}
               className="cursor-pointer hover:border-primary/50 transition-colors"
@@ -168,7 +168,7 @@ export function BuilderPage() {
 
   // Mutations
   const createMutation = trpc.collection.create.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       setSelectedId(data.id);
       setViewMode("edit");
     },

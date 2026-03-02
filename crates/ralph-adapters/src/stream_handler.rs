@@ -74,12 +74,20 @@ fn sanitize_tui_inline_text(text: &str) -> String {
 }
 
 /// Session completion result data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SessionResult {
     pub duration_ms: u64,
     pub total_cost_usd: f64,
     pub num_turns: u32,
     pub is_error: bool,
+    /// Total input tokens consumed in the session.
+    pub input_tokens: u64,
+    /// Total output tokens generated in the session.
+    pub output_tokens: u64,
+    /// Total cache-read tokens in the session.
+    pub cache_read_tokens: u64,
+    /// Total cache-write tokens in the session.
+    pub cache_write_tokens: u64,
 }
 
 /// Renders streaming output with colors and markdown.
@@ -254,6 +262,7 @@ impl ConsoleStreamHandler {
 impl StreamHandler for ConsoleStreamHandler {
     fn on_text(&mut self, text: &str) {
         let _ = write!(self.stdout, "{}", text);
+        let _ = self.stdout.flush();
         self.last_was_newline = text.ends_with('\n');
     }
 
@@ -517,7 +526,11 @@ impl StreamHandler for TuiStreamHandler {
     }
 
     fn on_tool_result(&mut self, _id: &str, output: &str) {
-        let clean = sanitize_tui_inline_text(output);
+        let display = format_tool_result(output);
+        if display.is_empty() {
+            return;
+        }
+        let clean = sanitize_tui_inline_text(&display);
         let line = Line::from(Span::styled(
             format!(" \u{2713} {}", truncate(&clean, 200)),
             Style::default().fg(RatatuiColor::DarkGray),
@@ -562,16 +575,24 @@ impl StreamHandler for TuiStreamHandler {
 /// Returns `None` for unknown tools or if the expected field is missing.
 fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> {
     match name {
-        "Read" | "Edit" | "Write" => input.get("file_path")?.as_str().map(|s| s.to_string()),
-        "Bash" => {
+        "Read" | "Edit" | "Write" | "read" | "write" => input
+            .get("file_path")
+            .or_else(|| input.get("path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        "Bash" | "shell" => {
             let cmd = input.get("command")?.as_str()?;
             Some(truncate(cmd, 60))
         }
-        "Grep" => input.get("pattern")?.as_str().map(|s| s.to_string()),
-        "Glob" => input.get("pattern")?.as_str().map(|s| s.to_string()),
+        "Grep" | "grep" => input.get("pattern")?.as_str().map(|s| s.to_string()),
+        "Glob" | "glob" | "ls" => input
+            .get("pattern")
+            .or_else(|| input.get("path"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         "Task" => input.get("description")?.as_str().map(|s| s.to_string()),
-        "WebFetch" => input.get("url")?.as_str().map(|s| s.to_string()),
-        "WebSearch" => input.get("query")?.as_str().map(|s| s.to_string()),
+        "WebFetch" | "web_fetch" => input.get("url")?.as_str().map(|s| s.to_string()),
+        "WebSearch" | "web_search" => input.get("query")?.as_str().map(|s| s.to_string()),
         "LSP" => {
             let op = input.get("operation")?.as_str()?;
             let file = input.get("filePath")?.as_str()?;
@@ -579,8 +600,97 @@ fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> 
         }
         "NotebookEdit" => input.get("notebook_path")?.as_str().map(|s| s.to_string()),
         "TodoWrite" => Some("updating todo list".to_string()),
-        _ => None,
+        _ => {
+            // Generic fallback: try common keys
+            input
+                .get("path")
+                .or_else(|| input.get("file_path"))
+                .or_else(|| input.get("command"))
+                .or_else(|| input.get("pattern"))
+                .or_else(|| input.get("url"))
+                .or_else(|| input.get("query"))
+                .and_then(|v| v.as_str())
+                .map(|s| truncate(s, 60))
+        }
     }
+}
+
+/// Extracts human-readable content from ACP tool result JSON envelopes.
+///
+/// ACP tool results arrive as `{"items":[{"Text":"..."} | {"Json":{...}}]}`.
+/// This function extracts the meaningful content:
+/// - Shell results (Json with stdout/stderr): shows stdout, or stderr on failure
+/// - Glob results (Json with filePaths): shows count and basenames
+/// - Text results: shows the text content directly
+/// - Falls back to raw string for non-JSON or unknown formats.
+fn format_tool_result(output: &str) -> String {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(output) else {
+        return output.to_string();
+    };
+    let Some(items) = val.get("items").and_then(|v| v.as_array()) else {
+        return output.to_string();
+    };
+    let Some(item) = items.first() else {
+        return String::new();
+    };
+
+    // {"Text": "..."}
+    if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+
+    // {"Json": {...}}
+    if let Some(json) = item.get("Json") {
+        // Shell: {exit_status, stdout, stderr}
+        if let Some(stdout) = json.get("stdout").and_then(|v| v.as_str()) {
+            let stderr = json.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+            let exit = json
+                .get("exit_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let failed = !exit.contains("status: 0");
+            return if failed && !stderr.is_empty() {
+                stderr.to_string()
+            } else if !stdout.is_empty() {
+                stdout.to_string()
+            } else {
+                stderr.to_string()
+            };
+        }
+        // Glob: {filePaths, totalFiles, truncated}
+        if let Some(paths) = json.get("filePaths").and_then(|v| v.as_array()) {
+            let total = json
+                .get("totalFiles")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(paths.len() as u64);
+            let names: Vec<&str> = paths
+                .iter()
+                .filter_map(|p| p.as_str())
+                .map(|p| p.rsplit('/').next().unwrap_or(p))
+                .collect();
+            return format!("{} files: {}", total, names.join(", "));
+        }
+        // Grep: {numFiles, numMatches, results: [{file, matches: [...]}]}
+        if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
+            let num_matches = json.get("numMatches").and_then(|v| v.as_u64()).unwrap_or(0);
+            let first_match = results.first().and_then(|r| {
+                let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                let basename = file.rsplit('/').next().unwrap_or(file);
+                let matches = r.get("matches").and_then(|v| v.as_array())?;
+                let first = matches.first().and_then(|m| m.as_str())?;
+                Some(format!("{}: {}", basename, first.trim()))
+            });
+            return match first_match {
+                Some(m) => format!("{} matches: {}", num_matches, m),
+                None => format!("{} matches", num_matches),
+            };
+        }
+
+        // Unknown Json: compact stringify
+        return json.to_string();
+    }
+
+    output.to_string()
 }
 
 /// Truncates a string to approximately `max_len` characters, adding "..." if truncated.
@@ -620,6 +730,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 1,
             is_error: false,
+            ..Default::default()
         });
     }
 
@@ -637,6 +748,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 1,
             is_error: false,
+            ..Default::default()
         }); // Should be silent
     }
 
@@ -655,6 +767,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 1,
             is_error: false,
+            ..Default::default()
         });
     }
 
@@ -749,6 +862,42 @@ mod tests {
         assert_eq!(
             format_tool_summary("UnknownTool", &json!({"some_field": "value"})),
             None
+        );
+    }
+
+    #[test]
+    fn test_format_tool_summary_unknown_tool_with_common_key_uses_fallback() {
+        assert_eq!(
+            format_tool_summary("UnknownTool", &json!({"path": "/tmp/foo"})),
+            Some("/tmp/foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_format_tool_summary_acp_lowercase_tools() {
+        assert_eq!(
+            format_tool_summary("read", &json!({"path": "src/main.rs"})),
+            Some("src/main.rs".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("shell", &json!({"command": "ls -la"})),
+            Some("ls -la".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("ls", &json!({"path": "/tmp"})),
+            Some("/tmp".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("grep", &json!({"pattern": "TODO"})),
+            Some("TODO".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("glob", &json!({"pattern": "**/*.rs"})),
+            Some("**/*.rs".to_string())
+        );
+        assert_eq!(
+            format_tool_summary("write", &json!({"path": "out.txt"})),
+            Some("out.txt".to_string())
         );
     }
 
@@ -1112,6 +1261,7 @@ mod tests {
                 total_cost_usd: 0.0025,
                 num_turns: 3,
                 is_error: false,
+                ..Default::default()
             });
 
             // Then buffer is flushed and summary line appears
@@ -1142,6 +1292,7 @@ mod tests {
                 total_cost_usd: 0.01,
                 num_turns: 1,
                 is_error: true,
+                ..Default::default()
             });
 
             let lines = collect_lines(&handler);
@@ -1164,6 +1315,7 @@ mod tests {
                 total_cost_usd: 0.01,
                 num_turns: 1,
                 is_error: false,
+                ..Default::default()
             });
 
             let lines = collect_lines(&handler);
@@ -1584,6 +1736,131 @@ mod tests {
                 has_underline,
                 "Should have underlined styled span. Lines: {:?}",
                 lines
+            );
+        }
+
+        // ================================================================
+        // format_tool_result tests (ACP JSON envelope parsing)
+        // ================================================================
+
+        #[test]
+        fn format_tool_result_shell_extracts_stdout() {
+            let output = r#"{"items":[{"Json":{"exit_status":"exit status: 0","stderr":"","stdout":"diff --git a/ralph-config.txt b/ralph-config.txt\nindex ba67887..7a529aa 100644\n--- a/ralph-config.txt\n+++ b/ralph-config.txt\n@@ -1,2 +1,2 @@\n-timeout: 30\n+timeout: 60\n retries: 3\n"}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("diff --git"),
+                "Should extract stdout, got: {}",
+                result
+            );
+            assert!(
+                !result.contains("exit_status"),
+                "Should not contain JSON keys, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_shell_shows_stderr_on_failure() {
+            let output = r#"{"items":[{"Json":{"exit_status":"exit status: 1","stderr":"fatal: not a git repository","stdout":""}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("fatal: not a git repository"),
+                "Should show stderr, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_glob_shows_file_paths() {
+            let output = r#"{"items":[{"Json":{"filePaths":["/tmp/ralph-config.txt","/tmp/ralph-notes.md"],"totalFiles":2,"truncated":false}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("ralph-config.txt"),
+                "Should show filename, got: {}",
+                result
+            );
+            assert!(
+                result.contains("ralph-notes.md"),
+                "Should show filename, got: {}",
+                result
+            );
+            assert!(result.contains('2'), "Should show count, got: {}", result);
+        }
+
+        #[test]
+        fn format_tool_result_text_shows_content() {
+            let output = r#"{"items":[{"Text":"timeout: 30\nretries: 3"}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("timeout: 30"),
+                "Should show text content, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_empty_text_returns_empty() {
+            let output = r#"{"items":[{"Text":""}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.is_empty(),
+                "Empty text should return empty, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_plain_string_passthrough() {
+            let output = "just plain text output";
+            let result = format_tool_result(output);
+            assert_eq!(result, output, "Non-JSON should pass through unchanged");
+        }
+
+        #[test]
+        fn format_tool_result_grep_shows_matches() {
+            let output = r#"{"items":[{"Json":{"numFiles":1,"numMatches":1,"results":[{"count":1,"file":"/Users/test/.github/workflows/deploy.yml","matches":["197:      sudo apt-get install -y libwebkit2"]}]}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("deploy.yml"),
+                "Should show filename, got: {}",
+                result
+            );
+            assert!(
+                result.contains("apt-get"),
+                "Should show match content, got: {}",
+                result
+            );
+            assert!(
+                !result.contains("numFiles"),
+                "Should not contain JSON keys, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_unknown_json_compacts() {
+            let output = r#"{"items":[{"Json":{"someNewField":"value"}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                !result.contains("items"),
+                "Should strip envelope, got: {}",
+                result
+            );
+            assert!(
+                result.contains("someNewField"),
+                "Should contain inner json, got: {}",
+                result
+            );
+        }
+
+        #[test]
+        fn format_tool_result_shell_prefers_stderr_when_both_present() {
+            let output = r#"{"items":[{"Json":{"exit_status":"exit status: 1","stderr":"error: something broke","stdout":"partial output"}}]}"#;
+            let result = format_tool_result(output);
+            assert!(
+                result.contains("error: something broke"),
+                "Should prefer stderr on failure, got: {}",
+                result
             );
         }
 

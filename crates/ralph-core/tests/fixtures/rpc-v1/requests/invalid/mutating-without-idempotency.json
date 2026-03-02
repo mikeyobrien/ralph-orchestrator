@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "id": "req-missing-idempotency-001",
+  "method": "task.close",
+  "params": {
+    "id": "task-20260220-a1b2"
+  },
+  "meta": {
+    "auth": { "mode": "trusted_local" }
+  }
+}

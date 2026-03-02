@@ -10,6 +10,10 @@
     just
     cargo-watch
     cargo-nextest
+    nodejs_22
+    pkg-config
+    openssl
+    python3
   ];
 
   # https://devenv.sh/languages/
@@ -35,26 +39,34 @@
     echo "  just lint      - Run clippy"
     echo "  just test      - Run tests"
     echo "  just build     - Build release binary"
+    echo "  verify         - Run full test suite + smoke tests"
   '';
 
   scripts.pre-commit-check.exec = ''
     echo "🔍 Running pre-commit checks..."
-    
+
     # Check formatting
     echo "📐 Checking formatting..."
     if ! cargo fmt --all -- --check; then
       echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
       exit 1
     fi
-    
+
     # Run clippy
     echo "🔧 Running clippy..."
     if ! cargo clippy --all-targets --all-features -- -D warnings; then
       echo "❌ Clippy check failed. Fix warnings before committing."
       exit 1
     fi
-    
+
     echo "✅ Pre-commit checks passed!"
+  '';
+
+  scripts.verify.exec = ''
+    set -euo pipefail
+
+    cargo test
+    cargo test -p ralph-core smoke_runner
   '';
 
   # https://devenv.sh/pre-commit-hooks/
@@ -71,6 +83,13 @@
     rustc --version | grep "1."
     rustfmt --version | grep "rustfmt"
     cargo-clippy --version | grep "clippy"
+  '';
+
+  enterShell = ''
+    echo "devenv shell ready for ralph-orchestrator verification"
+    rustc --version
+    cargo --version
+    echo "Run: verify"
   '';
 
   # https://devenv.sh/git-hooks/

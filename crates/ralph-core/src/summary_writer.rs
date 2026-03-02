@@ -216,10 +216,13 @@ impl SummaryWriter {
             TerminationReason::MaxCost => "Stopped: max cost exceeded",
             TerminationReason::ConsecutiveFailures => "Failed: too many consecutive failures",
             TerminationReason::LoopThrashing => "Failed: loop thrashing detected",
+            TerminationReason::LoopStale => "Failed: stale loop detected",
             TerminationReason::ValidationFailure => "Failed: too many malformed JSONL events",
             TerminationReason::Stopped => "Stopped manually",
             TerminationReason::Interrupted => "Interrupted by signal",
             TerminationReason::RestartRequested => "Restarting by human request",
+            TerminationReason::WorkspaceGone => "Failed: workspace directory removed",
+            TerminationReason::Cancelled => "Cancelled gracefully (human rejection or timeout)",
         }
     }
 
@@ -320,6 +323,10 @@ mod tests {
             exhausted_hats: std::collections::HashSet::new(),
             last_checkin_at: None,
             last_active_hat_ids: Vec::new(),
+            seen_topics: std::collections::HashSet::new(),
+            last_emitted_topic: None,
+            consecutive_same_topic: 0,
+            cancellation_requested: false,
         }
     }
 

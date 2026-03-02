@@ -84,3 +84,11 @@ Use this template for new entries:
 - Alternatives: (A) Only fall back when skills.dirs is empty and ignore configured dirs. (B) Force users to pass --root or fix ralph.yml to point at the repo root.
 - Reasoning: Honors configured relative paths while fixing nested-workspace layouts (e.g., `ralph.yml` inside a subdir) without surprising users with unrelated default discovery.
 - Reversibility: High; revert to root-only resolution or gate the parent search behind a flag if it causes unexpected discovery.
+
+## DEC-011 (2026-02-21T00:23Z)
+- Decision: Update failing `integration_run_presets` expectations to use `--hats builtin:*` instead of legacy `--config builtin:*` syntax.
+- Confidence: 76
+- Alternatives Considered: (A) Ignore the failures as unrelated pre-existing drift. (B) Reintroduce compatibility path for legacy preset syntax.
+- Reasoning: Full `cargo test` is required verification gate; adapting tests to current CLI behavior is lower risk than reviving deprecated flags.
+- Reversibility: High
+- Timestamp: 2026-02-21T00:23:00Z

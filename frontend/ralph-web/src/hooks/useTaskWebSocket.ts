@@ -1,59 +1,47 @@
-/**
- * useTaskWebSocket Hook
- *
- * Manages WebSocket connection for real-time task log streaming.
- * Extracts reusable WebSocket logic from LogViewer for use across components.
- *
- * Features:
- * - Automatic reconnection with exponential backoff
- * - Subscription/unsubscription lifecycle management
- * - Connection state tracking
- * - Log persistence via Zustand store (survives component unmount)
- */
+/** Streams task logs/events via RPC v1 subscription + stream websocket. */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import {
+  RpcClientError,
+  buildStreamWebSocketUrl,
+  rpcAck,
+  rpcSubscribe,
+  rpcUnsubscribe,
+  type StreamEventEnvelope,
+} from "@/rpc/client";
 import { useLogStore } from "@/stores/logStore";
 
 /** Stable empty array to avoid creating new references in selectors */
 const EMPTY_ENTRIES: LogEntry[] = [];
+const STREAM_TOPICS = ["task.log.line", "task.status.changed", "error.raised", "stream.keepalive"];
+const MAX_EVENTS = 200;
+const ACK_DEBOUNCE_MS = 250;
+
+type TimeoutHandle = ReturnType<typeof setTimeout>;
 
 /**
- * Log entry from the server (mirrors LogEntry from LogStream.ts)
+ * Log entry from the stream.
  */
 export interface LogEntry {
-  /** Optional persisted log id */
+  /** Monotonic stream sequence id (used for dedupe) */
   id?: number;
+  /** Stream cursor for replay resume */
+  cursor?: string;
   line: string;
   timestamp: string | Date;
   source: "stdout" | "stderr";
 }
 
 /**
- * Ralph orchestrator event (mirrors RalphEvent from RalphEventParser.ts)
+ * Ralph orchestrator event for lightweight UI status previews.
  */
 export interface RalphEvent {
-  /** ISO timestamp of the event */
   ts: string;
-  /** Iteration number (optional) */
   iteration?: number;
-  /** Hat that emitted the event (optional) */
   hat?: string;
-  /** Event topic (e.g., "build.done", "confession.clean") */
   topic: string;
-  /** Event that triggered this one (optional) */
   triggered?: string;
-  /** Event payload - can be string, object, or null */
   payload: string | Record<string, unknown> | null;
-}
-
-/**
- * Message received from WebSocket (mirrors LogMessage from LogBroadcaster.ts)
- */
-interface LogMessage {
-  type: "log" | "status" | "error" | "event";
-  taskId: string;
-  data: LogEntry | { status: string } | { error: string } | RalphEvent;
-  timestamp: string;
 }
 
 /**
@@ -62,7 +50,7 @@ interface LogMessage {
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
 interface UseTaskWebSocketOptions {
-  /** Custom WebSocket URL (default: derives from window.location) */
+  /** Optional explicit stream WebSocket URL */
   wsUrl?: string;
   /** Whether to automatically connect (default: true) */
   autoConnect?: boolean;
@@ -72,66 +60,96 @@ interface UseTaskWebSocketOptions {
   onStatusChange?: (status: string) => void;
   /** Called when a new log entry is received */
   onLogEntry?: (entry: LogEntry) => void;
-  /** Called when a Ralph orchestrator event is received */
+  /** Called when a new stream event is received */
   onEvent?: (event: RalphEvent) => void;
 }
 
 interface UseTaskWebSocketReturn {
-  /** All log entries received */
   entries: LogEntry[];
-  /** Latest log entry (most recent) */
   latestEntry: LogEntry | null;
-  /** All Ralph orchestrator events received */
   events: RalphEvent[];
-  /** Latest Ralph event (most recent) */
   latestEvent: RalphEvent | null;
-  /** Current connection state */
   connectionState: ConnectionState;
-  /** Task status from server */
   taskStatus: string;
-  /** Current error message, if any */
   error: string | null;
-  /** Manually connect to WebSocket */
   connect: () => void;
-  /** Manually disconnect from WebSocket */
   disconnect: () => void;
-  /** Clear all log entries */
   clearEntries: () => void;
 }
 
-/**
- * Determine WebSocket URL from current location
- */
-function getDefaultWsUrl(): string {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const host = window.location.host;
-  return `${protocol}//${host}/ws/logs`;
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizePayload(payload: unknown): string | Record<string, unknown> | null {
+  if (payload === null || payload === undefined) {
+    return null;
+  }
+  if (typeof payload === "string") {
+    return payload;
+  }
+  if (typeof payload === "object" && !Array.isArray(payload)) {
+    return payload as Record<string, unknown>;
+  }
+  return String(payload);
+}
+
+function toRalphEvent(event: StreamEventEnvelope): RalphEvent {
+  const payload = asRecord(event.payload);
+  return {
+    ts: event.ts,
+    iteration: typeof payload?.iteration === "number" ? payload.iteration : undefined,
+    hat: typeof payload?.hat === "string" ? payload.hat : undefined,
+    topic: event.topic,
+    triggered: typeof payload?.triggered === "string" ? payload.triggered : undefined,
+    payload: normalizePayload(event.payload),
+  };
+}
+
+function toLogEntry(event: StreamEventEnvelope): LogEntry {
+  const payload = asRecord(event.payload);
+  const source = payload?.source === "stderr" ? "stderr" : "stdout";
+  const lineCandidate = payload?.line ?? payload?.message ?? payload?.text;
+  const line =
+    typeof lineCandidate === "string"
+      ? lineCandidate
+      : payload
+        ? JSON.stringify(payload)
+        : "";
+
+  return {
+    id: Number.isFinite(event.sequence) ? event.sequence : undefined,
+    cursor: event.cursor,
+    line,
+    timestamp: typeof payload?.timestamp === "string" ? payload.timestamp : event.ts,
+    source,
+  };
+}
+
+function rpcErrorMessage(error: unknown): string {
+  if (error instanceof RpcClientError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Stream connection failed";
 }
 
 /**
- * Hook for managing WebSocket connection to a task's log stream.
- *
- * @param taskId - The task ID to subscribe to
- * @param options - Configuration options
+ * Hook for streaming a task's logs/events from RPC v1.
  */
 export function useTaskWebSocket(
   taskId: string | null,
   options: UseTaskWebSocketOptions = {}
 ): UseTaskWebSocketReturn {
-  const {
-    wsUrl,
-    autoConnect = true,
-    onConnectionChange,
-    onStatusChange,
-    onLogEntry,
-    onEvent,
-  } = options;
+  const { wsUrl, autoConnect = true, onConnectionChange, onStatusChange, onLogEntry, onEvent } = options;
 
-  // Use Zustand store for log persistence across mount/unmount cycles
   const appendLogs = useLogStore((state) => state.appendLogs);
   const clearLogs = useLogStore((state) => state.clearLogs);
-  // Use direct property access with stable empty array to avoid infinite re-renders
-  // IMPORTANT: Never create new arrays in selectors - use stable references
   const entries = useLogStore((state) =>
     taskId ? (state.taskLogs[taskId] ?? EMPTY_ENTRIES) : EMPTY_ENTRIES
   );
@@ -143,15 +161,16 @@ export function useTaskWebSocket(
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef<number>(0);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const subscribedTaskIdRef = useRef<string | null>(null);
-  const logBufferRef = useRef<LogEntry[]>([]);
-  const flushTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<TimeoutHandle | null>(null);
+  const flushTimeoutRef = useRef<TimeoutHandle | null>(null);
+  const ackTimeoutRef = useRef<TimeoutHandle | null>(null);
   const connectRef = useRef<() => void>(() => {});
-  // Flag to prevent processing messages after disconnect starts
+  const logBufferRef = useRef<LogEntry[]>([]);
+  const subscriptionIdRef = useRef<string | null>(null);
+  const pendingAckCursorRef = useRef<string | null>(null);
+  const lastCursorRef = useRef<string | null>(null);
   const isDisconnectingRef = useRef<boolean>(false);
 
-  // Memoize callbacks to prevent unnecessary reconnections
   const onConnectionChangeRef = useRef(onConnectionChange);
   const onStatusChangeRef = useRef(onStatusChange);
   const onLogEntryRef = useRef(onLogEntry);
@@ -164,13 +183,11 @@ export function useTaskWebSocket(
     onEventRef.current = onEvent;
   }, [onConnectionChange, onStatusChange, onLogEntry, onEvent]);
 
-  // Update connection state and notify callback
   const updateConnectionState = useCallback((state: ConnectionState) => {
     setConnectionState(state);
     onConnectionChangeRef.current?.(state);
   }, []);
 
-  // Update task status and notify callback
   const updateTaskStatus = useCallback((status: string) => {
     setTaskStatus(status);
     onStatusChangeRef.current?.(status);
@@ -195,157 +212,237 @@ export function useTaskWebSocket(
     }, 50);
   }, [flushLogBuffer]);
 
-  // Disconnect from WebSocket
+  const scheduleAck = useCallback((cursor: string) => {
+    pendingAckCursorRef.current = cursor;
+    if (ackTimeoutRef.current) return;
+
+    ackTimeoutRef.current = setTimeout(() => {
+      ackTimeoutRef.current = null;
+      const subscriptionId = subscriptionIdRef.current;
+      const ackCursor = pendingAckCursorRef.current;
+      pendingAckCursorRef.current = null;
+
+      if (!subscriptionId || !ackCursor || isDisconnectingRef.current) {
+        return;
+      }
+
+      void rpcAck(subscriptionId, ackCursor).catch(() => {
+        // Best-effort checkpointing; reconnect flow uses last seen cursor anyway.
+      });
+    }, ACK_DEBOUNCE_MS);
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (!taskId || isDisconnectingRef.current) {
+      return;
+    }
+
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
+    const attempt = reconnectAttemptRef.current;
+    const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+    reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectAttemptRef.current += 1;
+      connectRef.current();
+    }, delay);
+  }, [taskId]);
+
   const disconnect = useCallback(() => {
-    // Set flag FIRST to prevent any late-arriving messages from being processed
     isDisconnectingRef.current = true;
 
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+
     if (flushTimeoutRef.current) {
       clearTimeout(flushTimeoutRef.current);
       flushTimeoutRef.current = null;
     }
+
+    if (ackTimeoutRef.current) {
+      clearTimeout(ackTimeoutRef.current);
+      ackTimeoutRef.current = null;
+    }
+
     flushLogBuffer();
+
     if (wsRef.current) {
+      wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
-    subscribedTaskIdRef.current = null;
+
+    const subscriptionId = subscriptionIdRef.current;
+    subscriptionIdRef.current = null;
+    pendingAckCursorRef.current = null;
+
+    if (subscriptionId) {
+      void rpcUnsubscribe(subscriptionId).catch(() => {
+        // If unsubscribe fails, the server-side retention window will eventually reclaim state.
+      });
+    }
+
     updateConnectionState("disconnected");
   }, [flushLogBuffer, updateConnectionState]);
 
-  // Connect to WebSocket
   const connect = useCallback(() => {
-    // Don't connect if no taskId
     if (!taskId) {
       disconnect();
       return;
     }
 
-    // Reset disconnecting flag for new connection
     isDisconnectingRef.current = false;
 
-    // Clean up existing connection
-    if (wsRef.current) {
-      wsRef.current.close();
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
 
-    const url = wsUrl ?? getDefaultWsUrl();
+    if (ackTimeoutRef.current) {
+      clearTimeout(ackTimeoutRef.current);
+      ackTimeoutRef.current = null;
+    }
+
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    const priorSubscription = subscriptionIdRef.current;
+    subscriptionIdRef.current = null;
+    if (priorSubscription) {
+      void rpcUnsubscribe(priorSubscription).catch(() => {
+        // Best effort cleanup.
+      });
+    }
+
     updateConnectionState("connecting");
     setError(null);
 
-    try {
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
+    const resumeCursor =
+      lastCursorRef.current ?? useLogStore.getState().getLastCursor(taskId) ?? undefined;
 
-      ws.onopen = () => {
-        updateConnectionState("connected");
-        reconnectAttemptRef.current = 0;
-        setError(null); // Clear any previous error on successful connection
+    void (async () => {
+      try {
+        const subscription = await rpcSubscribe({
+          topics: STREAM_TOPICS,
+          cursor: resumeCursor,
+          replayLimit: 400,
+          filters: { taskId },
+        });
 
-        // Subscribe to the task
-        const lastLogId = useLogStore.getState().getLastLogId(taskId);
-        ws.send(
-          JSON.stringify({
-            type: "subscribe",
-            taskId,
-            sinceId: lastLogId ?? undefined,
-          })
-        );
-        subscribedTaskIdRef.current = taskId;
-      };
-
-      ws.onmessage = (event) => {
-        // Skip processing if we're disconnecting (prevents race condition duplicates)
         if (isDisconnectingRef.current) {
+          void rpcUnsubscribe(subscription.subscriptionId).catch(() => {});
           return;
         }
 
-        try {
-          const message: LogMessage = JSON.parse(event.data);
+        subscriptionIdRef.current = subscription.subscriptionId;
+        lastCursorRef.current = subscription.cursor;
 
-          // Only process messages for our task (or empty taskId for system messages)
-          if (message.taskId !== taskId && message.taskId !== "") {
+        const ws = new WebSocket(buildStreamWebSocketUrl(subscription.subscriptionId, wsUrl));
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          updateConnectionState("connected");
+          reconnectAttemptRef.current = 0;
+          setError(null);
+        };
+
+        ws.onmessage = (message) => {
+          if (isDisconnectingRef.current) {
             return;
           }
 
-          switch (message.type) {
-            case "log": {
-              const logEntry = message.data as LogEntry;
-              // Buffer log entries to reduce render churn
-              logBufferRef.current.push(logEntry);
-              scheduleFlush();
-              onLogEntryRef.current?.(logEntry);
-              break;
-            }
+          let event: StreamEventEnvelope;
+          try {
+            event = JSON.parse(String(message.data)) as StreamEventEnvelope;
+          } catch {
+            return;
+          }
 
-            case "status": {
-              const statusData = message.data as { status: string };
-              updateTaskStatus(statusData.status);
-              break;
-            }
+          if (!event || typeof event.topic !== "string" || typeof event.cursor !== "string") {
+            return;
+          }
 
-            case "error": {
-              const errorData = message.data as { error: string };
-              setError(errorData.error);
-              break;
-            }
+          lastCursorRef.current = event.cursor;
+          scheduleAck(event.cursor);
 
-            case "event": {
-              const eventData = message.data as RalphEvent;
-              setEvents((prev) => [...prev, eventData]);
-              onEventRef.current?.(eventData);
-              break;
+          if (event.topic === "task.log.line") {
+            if (event.resource?.id !== taskId) {
+              return;
+            }
+            const logEntry = toLogEntry(event);
+            logBufferRef.current.push(logEntry);
+            scheduleFlush();
+            onLogEntryRef.current?.(logEntry);
+            return;
+          }
+
+          if (event.topic === "task.status.changed" && event.resource?.id === taskId) {
+            const payload = asRecord(event.payload);
+            const status =
+              (typeof payload?.to === "string" && payload.to) ||
+              (typeof payload?.status === "string" && payload.status);
+            if (status) {
+              updateTaskStatus(status);
             }
           }
-        } catch {
-          // Invalid JSON - ignore
-        }
-      };
 
-      ws.onclose = () => {
-        updateConnectionState("disconnected");
-        flushLogBuffer();
+          if (event.topic === "error.raised") {
+            const payload = asRecord(event.payload);
+            const messageText =
+              typeof payload?.message === "string" ? payload.message : "Stream error";
+            const code = typeof payload?.code === "string" ? payload.code : "INTERNAL";
+            if (code === "BACKPRESSURE_DROPPED") {
+              setError(messageText);
+            }
+          }
 
-        // Only attempt reconnection if we still have a taskId
-        if (taskId && subscribedTaskIdRef.current === taskId) {
-          const attempt = reconnectAttemptRef.current;
-          const delay = Math.min(1000 * Math.pow(2, attempt), 30000); // Max 30s
+          if (event.topic !== "stream.keepalive") {
+            const normalized = toRalphEvent(event);
+            setEvents((prev) => {
+              const next = [...prev, normalized];
+              return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+            });
+            onEventRef.current?.(normalized);
+          }
+        };
 
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttemptRef.current++;
-            connectRef.current();
-          }, delay);
-        }
-      };
+        ws.onclose = () => {
+          updateConnectionState("disconnected");
+          flushLogBuffer();
 
-      ws.onerror = () => {
+          const closedSubscription = subscriptionIdRef.current;
+          subscriptionIdRef.current = null;
+          if (closedSubscription) {
+            void rpcUnsubscribe(closedSubscription).catch(() => {});
+          }
+
+          if (!isDisconnectingRef.current) {
+            scheduleReconnect();
+          }
+        };
+
+        ws.onerror = () => {
+          updateConnectionState("error");
+          setError("WebSocket stream connection failed");
+        };
+      } catch (err) {
         updateConnectionState("error");
-        setError("WebSocket connection failed");
-      };
-    } catch (err) {
-      updateConnectionState("error");
-      setError(err instanceof Error ? err.message : "Failed to connect");
-    }
-  }, [
-    taskId,
-    wsUrl,
-    scheduleFlush,
-    flushLogBuffer,
-    updateConnectionState,
-    updateTaskStatus,
-    disconnect,
-  ]);
+        setError(rpcErrorMessage(err));
+        scheduleReconnect();
+      }
+    })();
+  }, [taskId, wsUrl, disconnect, flushLogBuffer, scheduleAck, scheduleFlush, scheduleReconnect, updateConnectionState, updateTaskStatus]);
 
-  // Keep connectRef in sync with connect function for recursive calls
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
 
-  // Clear entries from store
   const clearEntries = useCallback(() => {
     if (taskId) {
       clearLogs(taskId);
@@ -353,15 +450,11 @@ export function useTaskWebSocket(
     setError(null);
   }, [taskId, clearLogs]);
 
-  // Connect on mount when autoConnect is true, or when taskId changes
-  // State resets are legitimate when taskId changes - this is a controlled reset
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (autoConnect && taskId) {
-      // Note: We intentionally do NOT clear logs when taskId changes.
-      // Logs are preserved in the Zustand store to survive component unmounts.
-      // Users can explicitly clear via the clearEntries function if needed.
-      // Events are cleared since they're not persisted.
+      const resumeCursor = useLogStore.getState().getLastCursor(taskId);
+      lastCursorRef.current = resumeCursor;
       setTaskStatus("unknown");
       setError(null);
       setEvents([]);
@@ -376,12 +469,10 @@ export function useTaskWebSocket(
   }, [taskId, autoConnect, connect, disconnect]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Compute latest entry
   const latestEntry = useMemo(() => {
     return entries.length > 0 ? entries[entries.length - 1] : null;
   }, [entries]);
 
-  // Compute latest event
   const latestEvent = useMemo(() => {
     return events.length > 0 ? events[events.length - 1] : null;
   }, [events]);

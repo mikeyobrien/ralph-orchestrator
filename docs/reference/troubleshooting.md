@@ -126,10 +126,11 @@ chmod +x ralph
    ralph init --list-presets
    ```
 
-2. Use a known preset:
+2. Use a known built-in hat collection:
 
    ```bash
-   ralph init --preset confession-loop
+   ralph init --backend claude
+   ralph run -c ralph.yml -H builtin:feature
    ```
 
 #### Custom Backend Command

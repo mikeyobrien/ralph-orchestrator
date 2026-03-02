@@ -6,7 +6,7 @@
 use crate::state::IterationBuffer;
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Widget,
@@ -67,6 +67,7 @@ impl Widget for ContentPane<'_> {
             // Render the line into the buffer with soft wrapping
             let mut x = area.x;
             let right_edge = area.x + area.width;
+            let buf_area = *buf.area();
             for span in &rendered_line.spans {
                 let content = span.content.as_ref();
                 for ch in content.chars() {
@@ -81,7 +82,9 @@ impl Widget for ContentPane<'_> {
                     if x + char_width > right_edge {
                         // Clear any remaining cells on this row
                         while x < right_edge {
-                            buf[(x, y)].set_char(' ').set_style(Style::default());
+                            if buf_area.contains((x, y).into()) {
+                                buf[(x, y)].set_char(' ').set_style(Style::default());
+                            }
                             x += 1;
                         }
                         y += 1;
@@ -92,12 +95,20 @@ impl Widget for ContentPane<'_> {
                         }
                     }
 
+                    // Defensive: skip if position is outside the buffer
+                    if !buf_area.contains((x, y).into()) {
+                        x += char_width;
+                        continue;
+                    }
+
                     buf[(x, y)].set_char(ch).set_style(span.style);
                     // Reset trailing cells for wide characters
                     let next_x = x + char_width;
                     x += 1;
                     while x < next_x {
-                        buf[(x, y)].reset();
+                        if buf_area.contains((x, y).into()) {
+                            buf[(x, y)].reset();
+                        }
                         x += 1;
                     }
                 }
@@ -105,7 +116,9 @@ impl Widget for ContentPane<'_> {
 
             // Clear remaining cells on this row after the line content
             while x < area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(Style::default());
+                if buf_area.contains(Position::new(x, y)) {
+                    buf[(x, y)].set_char(' ').set_style(Style::default());
+                }
                 x += 1;
             }
 
@@ -117,7 +130,9 @@ impl Widget for ContentPane<'_> {
         // when switching to an iteration with fewer lines
         while y < area.y + area.height {
             for x in area.x..area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(Style::default());
+                if buf.area().contains(Position::new(x, y)) {
+                    buf[(x, y)].set_char(' ').set_style(Style::default());
+                }
             }
             y += 1;
         }

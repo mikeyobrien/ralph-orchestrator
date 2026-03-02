@@ -1,0 +1,9 @@
+{
+  "apiVersion": "v1",
+  "id": "req-missing-retryable",
+  "method": "task.get",
+  "error": {
+    "code": "TASK_NOT_FOUND",
+    "message": "Task missing"
+  }
+}

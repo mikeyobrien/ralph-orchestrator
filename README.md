@@ -65,13 +65,18 @@ ralph run -p "Add input validation to the /users endpoint"
 Ralph includes a web dashboard for monitoring and managing orchestration loops.
 
 ```bash
-ralph web                              # starts both servers + opens browser
+ralph web                              # starts Rust RPC API + frontend + opens browser
 ralph web --no-open                    # skip browser auto-open
-ralph web --backend-port 4000          # custom backend port
+ralph web --backend-port 4000          # custom RPC API port
 ralph web --frontend-port 8080         # custom frontend port
+ralph web --legacy-node-api            # opt into deprecated Node tRPC backend
 ```
 
-**Requirements:** Node.js >= 18 and npm. On first run, `ralph web` will auto-detect missing `node_modules` and run `npm install` for you.
+**Requirements:**
+- Rust toolchain (for `ralph-api`)
+- Node.js >= 18 + npm (for the frontend)
+
+On first run, `ralph web` auto-detects missing `node_modules` and runs `npm install`.
 
 To set up Node.js:
 
@@ -86,10 +91,12 @@ nvm install    # reads .nvmrc
 For development:
 
 ```bash
-npm install          # install dependencies
-npm run dev          # run both servers (backend:3000, frontend:5173)
-npm run test:server  # backend tests
-npm run test         # all tests
+npm install              # install frontend + legacy backend deps
+npm run dev:api          # Rust RPC API (port 3000)
+npm run dev:web          # frontend (port 5173)
+npm run dev              # frontend only (default)
+npm run dev:legacy-server  # deprecated Node backend (optional)
+npm run test             # all frontend/backend workspace tests
 ```
 
 ## What is Ralph?

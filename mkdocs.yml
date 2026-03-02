@@ -123,6 +123,69 @@ nav:
 plugins:
   - search:
       separator: '[\s\u200b\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - llmstxt:
+      markdown_description: >
+        Ralph Orchestrator is a hat-based orchestration framework for autonomous AI agents.
+        This llms.txt provides an LLM-friendly map of the most important project documentation.
+      sections:
+        Getting Started:
+          - getting-started/index.md: Start here for first-time setup and orientation.
+          - getting-started/installation.md: Installation methods and prerequisites.
+          - getting-started/quick-start.md: Fast path to running Ralph.
+          - getting-started/first-task.md: First end-to-end task walkthrough.
+        Concepts:
+          - concepts/index.md: Concept overview and mental model.
+          - concepts/ralph-wiggum-technique.md
+          - concepts/tenets.md
+          - concepts/hats-and-events.md
+          - concepts/coordination-patterns.md
+          - concepts/memories-and-tasks.md
+          - concepts/backpressure.md
+        User Guide:
+          - guide/index.md
+          - guide/configuration.md
+          - guide/presets.md
+          - guide/cli-reference.md
+          - guide/backends.md
+          - guide/prompts.md
+          - guide/cost-management.md
+        Advanced:
+          - advanced/index.md
+          - advanced/architecture.md
+          - advanced/custom-hats.md
+          - advanced/event-system.md
+          - advanced/memory-system.md
+          - advanced/task-system.md
+          - advanced/testing.md
+          - advanced/diagnostics.md
+          - advanced/parallel-loops.md
+        API Reference:
+          - api/index.md
+          - api/ralph-proto.md
+          - api/ralph-core.md
+          - api/ralph-adapters.md
+          - api/ralph-tui.md
+          - api/ralph-cli.md
+        Examples:
+          - examples/index.md
+          - examples/simple-task.md
+          - examples/tdd-workflow.md
+          - examples/spec-driven.md
+          - examples/multi-hat.md
+          - examples/debugging.md
+        Contributing:
+          - contributing/index.md
+          - contributing/setup.md
+          - contributing/style.md
+          - contributing/testing.md
+          - contributing/pull-requests.md
+        Reference:
+          - reference/index.md
+          - reference/changelog.md
+          - reference/faq.md
+          - reference/glossary.md
+          - reference/migration-v1.md
+          - reference/troubleshooting.md
   - minify:
       minify_html: true
 

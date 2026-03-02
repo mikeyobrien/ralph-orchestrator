@@ -159,6 +159,18 @@ impl EventReader {
         Ok(result)
     }
 
+    /// Reads new events without advancing the internal file position.
+    ///
+    /// This is used by callers that need to inspect unread events before
+    /// deciding whether to process them.
+    pub fn peek_new_events(&self) -> std::io::Result<ParseResult> {
+        let mut reader = Self {
+            path: self.path.clone(),
+            position: self.position,
+        };
+        reader.read_new_events()
+    }
+
     /// Counts lines before the current position (for line numbering).
     fn count_lines_before_position(&self) -> u64 {
         if self.position == 0 || !self.path.exists() {
@@ -243,6 +255,25 @@ mod tests {
         let result = reader.read_new_events().unwrap();
         assert_eq!(result.events.len(), 1);
         assert_eq!(result.events[0].topic, "second");
+    }
+
+    #[test]
+    fn test_peek_new_events_does_not_advance_position() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, r#"{{"topic":"first","ts":"2024-01-01T00:00:00Z"}}"#).unwrap();
+        file.flush().unwrap();
+
+        let mut reader = EventReader::new(file.path());
+        let peeked = reader.peek_new_events().unwrap();
+        assert_eq!(peeked.events.len(), 1);
+        assert_eq!(peeked.events[0].topic, "first");
+
+        // Position should remain unchanged after peek.
+        assert_eq!(reader.position(), 0);
+
+        let consumed = reader.read_new_events().unwrap();
+        assert_eq!(consumed.events.len(), 1);
+        assert_eq!(consumed.events[0].topic, "first");
     }
 
     #[test]

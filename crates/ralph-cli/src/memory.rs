@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_core::{MarkdownMemoryStore, Memory, MemoryType};
+use ralph_core::{MarkdownMemoryStore, Memory, MemoryType, truncate_with_ellipsis};
 use std::path::PathBuf;
 
 /// ANSI color codes for terminal output.
@@ -250,7 +250,16 @@ fn add_command(store: &MarkdownMemoryStore, args: AddArgs, use_colors: bool) -> 
             let json = serde_json::to_string_pretty(&memory)?;
             println!("{}", json);
         }
-        _ => {
+        OutputFormat::Markdown => {
+            println!(
+                "### {}\n> {}\n<!-- tags: {} | created: {} -->",
+                memory.id,
+                memory.content.replace('\n', "\n> "),
+                memory.tags.join(", "),
+                memory.created
+            );
+        }
+        OutputFormat::Table => {
             if use_colors {
                 println!("{}📝 Memory stored:{} {}", colors::GREEN, colors::RESET, id);
             } else {
@@ -461,8 +470,15 @@ fn prime_command(store: &MarkdownMemoryStore, args: PrimeArgs) -> Result<()> {
     // Generate output
     let output = match args.format {
         OutputFormat::Json => serde_json::to_string_pretty(&memories)?,
-        OutputFormat::Markdown | OutputFormat::Table | OutputFormat::Quiet => {
-            format_memories_as_markdown(&memories)
+        OutputFormat::Markdown => format_memories_as_markdown(&memories),
+        OutputFormat::Table => format_memories_as_text(&memories),
+        OutputFormat::Quiet => {
+            memories
+                .iter()
+                .map(|m| m.id.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + if memories.is_empty() { "" } else { "\n" }
         }
     };
 
@@ -581,11 +597,7 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
             memory.tags.join(", ")
         };
         // Longer content preview (50 chars) for better readability
-        let content_preview = if memory.content.len() > 50 {
-            format!("{}…", &memory.content[..50].replace('\n', " "))
-        } else {
-            memory.content.replace('\n', " ")
-        };
+        let content_preview = truncate_with_ellipsis(&memory.content.replace('\n', " "), 50);
 
         if use_colors {
             println!(
@@ -594,7 +606,7 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
                 emoji,
                 type_name,
                 age,
-                truncate_str(&tags, 16),
+                truncate_with_ellipsis(&tags, 16),
                 content_preview
             );
         } else {
@@ -604,7 +616,7 @@ fn print_memories_table(memories: &[Memory], use_colors: bool) {
                 emoji,
                 type_name,
                 age,
-                truncate_str(&tags, 16),
+                truncate_with_ellipsis(&tags, 16),
                 content_preview
             );
         }
@@ -710,6 +722,25 @@ fn format_memories_as_markdown(memories: &[Memory]) -> String {
     output
 }
 
+fn format_memories_as_text(memories: &[Memory]) -> String {
+    let mut output = String::new();
+
+    for memory in memories {
+        output.push_str(&format!(
+            "# {} [{}]\n{}\n",
+            memory.id,
+            memory.memory_type.section_name(),
+            memory.content
+        ));
+        if !memory.tags.is_empty() {
+            output.push_str(&format!("Tags: {}\n", memory.tags.join(", ")));
+        }
+        output.push_str(&format!("Created: {}\n\n", memory.created));
+    }
+
+    output
+}
+
 /// Truncate content to approximately fit within a token budget.
 ///
 /// Uses a simple heuristic of ~4 characters per token.
@@ -739,14 +770,6 @@ fn truncate_to_budget(content: &str, budget: usize) -> String {
             "{}\n\n<!-- truncated: budget {} tokens exceeded -->",
             truncated, budget
         )
-    }
-}
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len - 1])
     }
 }
 
@@ -843,12 +866,6 @@ mod tests {
     }
 
     #[test]
-    fn truncate_str_handles_short_and_long_values() {
-        assert_eq!(truncate_str("short", 10), "short");
-        assert_eq!(truncate_str("1234567890", 5), "1234…");
-    }
-
-    #[test]
     fn format_memories_as_markdown_groups_by_type() {
         let memories = vec![
             Memory {
@@ -874,5 +891,22 @@ mod tests {
         assert!(!output.contains("## Decisions"));
         assert!(output.contains("mem-1"));
         assert!(output.contains("mem-2"));
+    }
+
+    #[test]
+    fn format_memories_as_text_has_plain_fields() {
+        let memories = vec![Memory {
+            id: "mem-1".to_string(),
+            memory_type: MemoryType::Decision,
+            content: "beta".to_string(),
+            tags: vec!["tag1".to_string()],
+            created: "2026-01-31".to_string(),
+        }];
+
+        let output = format_memories_as_text(&memories);
+        assert!(output.contains("# mem-1"));
+        assert!(output.contains("beta"));
+        assert!(output.contains("Tags: tag1"));
+        assert!(output.contains("Created: 2026-01-31"));
     }
 }

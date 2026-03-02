@@ -9,6 +9,7 @@
 //! 4. Merge commit conventional format
 
 use anyhow::Result;
+use ralph_core::truncate_with_ellipsis;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
@@ -438,11 +439,7 @@ fn test_merge_commit_subject_length_limit() -> Result<()> {
     // Summary should be truncated if too long
     let long_summary =
         "This is a very long summary that exceeds the maximum allowed length for commit subjects";
-    let truncated_summary = if long_summary.len() > max_summary_len {
-        &long_summary[..max_summary_len]
-    } else {
-        long_summary
-    };
+    let truncated_summary = truncate_with_ellipsis(long_summary, max_summary_len);
 
     let commit_message = format!("merge(ralph): {} (loop {})", truncated_summary, loop_id);
 

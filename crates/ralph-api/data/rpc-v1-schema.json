@@ -1,0 +1,1146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ralph-orchestrator.dev/rpc/v1/rpc-v1-schema.json",
+  "title": "Ralph RPC v1 request/response/error envelopes",
+  "type": "object",
+  "$defs": {
+    "apiVersion": {
+      "type": "string",
+      "const": "v1"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "methodName": {
+      "type": "string",
+      "enum": [
+        "system.health",
+        "system.version",
+        "system.capabilities",
+        "task.list",
+        "task.get",
+        "task.ready",
+        "task.create",
+        "task.update",
+        "task.close",
+        "task.archive",
+        "task.unarchive",
+        "task.delete",
+        "task.clear",
+        "task.run",
+        "task.run_all",
+        "task.retry",
+        "task.cancel",
+        "task.status",
+        "loop.list",
+        "loop.status",
+        "loop.process",
+        "loop.prune",
+        "loop.retry",
+        "loop.discard",
+        "loop.stop",
+        "loop.merge",
+        "loop.merge_button_state",
+        "loop.trigger_merge_task",
+        "planning.list",
+        "planning.get",
+        "planning.start",
+        "planning.respond",
+        "planning.resume",
+        "planning.delete",
+        "planning.get_artifact",
+        "config.get",
+        "config.update",
+        "preset.list",
+        "collection.list",
+        "collection.get",
+        "collection.create",
+        "collection.update",
+        "collection.delete",
+        "collection.import",
+        "collection.export",
+        "stream.subscribe",
+        "stream.unsubscribe",
+        "stream.ack"
+      ]
+    },
+    "mutatingMethodName": {
+      "type": "string",
+      "enum": [
+        "task.create",
+        "task.update",
+        "task.close",
+        "task.archive",
+        "task.unarchive",
+        "task.delete",
+        "task.clear",
+        "task.run",
+        "task.run_all",
+        "task.retry",
+        "task.cancel",
+        "loop.process",
+        "loop.prune",
+        "loop.retry",
+        "loop.discard",
+        "loop.stop",
+        "loop.merge",
+        "loop.trigger_merge_task",
+        "planning.start",
+        "planning.respond",
+        "planning.resume",
+        "planning.delete",
+        "config.update",
+        "collection.create",
+        "collection.update",
+        "collection.delete",
+        "collection.import"
+      ]
+    },
+    "authMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "trusted_local",
+            "token"
+          ]
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "token"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "token"
+            ]
+          }
+        }
+      ]
+    },
+    "requestMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        },
+        "auth": {
+          "$ref": "#/$defs/authMeta"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        },
+        "requestTs": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "responseMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "servedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deprecated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "blockedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "status"
+      ]
+    },
+    "loop": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "location"
+      ]
+    },
+    "preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "builtin",
+            "directory",
+            "collection"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source"
+      ]
+    },
+    "collectionSummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "graph": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "emptyParams": {
+      "type": "object",
+      "maxProperties": 0,
+      "additionalProperties": false
+    },
+    "idOnlyParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "planningSessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "planningSessionIdParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/planningSessionId"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "taskListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "includeArchived": {
+          "type": "boolean"
+        },
+        "pagination": {
+          "$ref": "#/$defs/pagination"
+        }
+      }
+    },
+    "taskCreateParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "blockedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "autoExecute": {
+          "type": "boolean"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "mergeLoopPrompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "taskUpdateParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "blockedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "loopListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "includeTerminal": {
+          "type": "boolean"
+        }
+      }
+    },
+    "loopRetryParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "steeringInput": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "loopStopMergeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "loopTriggerMergeTaskParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loopId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "loopId"
+      ]
+    },
+    "planningStartParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "prompt"
+      ]
+    },
+    "planningRespondParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/planningSessionId"
+        },
+        "promptId": {
+          "type": "string"
+        },
+        "response": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "promptId",
+        "response"
+      ]
+    },
+    "planningGetArtifactParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/planningSessionId"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        }
+      },
+      "required": [
+        "sessionId",
+        "filename"
+      ]
+    },
+    "configUpdateParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "content"
+      ]
+    },
+    "collectionCreateParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "graph": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "collectionUpdateParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "graph": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "collectionImportParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "yaml": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "yaml",
+        "name"
+      ]
+    },
+    "streamSubscribeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "replayLimit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "filters": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "topics"
+      ]
+    },
+    "streamUnsubscribeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ]
+    },
+    "streamAckParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "cursor"
+      ]
+    },
+    "requestByMethod": {
+      "oneOf": [
+        { "properties": { "method": { "const": "system.health" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "system.version" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "system.capabilities" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "task.list" }, "params": { "$ref": "#/$defs/taskListParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.get" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.ready" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.create" }, "params": { "$ref": "#/$defs/taskCreateParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.update" }, "params": { "$ref": "#/$defs/taskUpdateParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.close" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.archive" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.unarchive" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.clear" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.run" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.run_all" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.retry" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.cancel" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "task.status" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "loop.list" }, "params": { "$ref": "#/$defs/loopListParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.status" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.process" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.prune" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.retry" }, "params": { "$ref": "#/$defs/loopRetryParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.discard" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.stop" }, "params": { "$ref": "#/$defs/loopStopMergeParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.merge" }, "params": { "$ref": "#/$defs/loopStopMergeParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.merge_button_state" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "loop.trigger_merge_task" }, "params": { "$ref": "#/$defs/loopTriggerMergeTaskParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "planning.list" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.get" }, "params": { "$ref": "#/$defs/planningSessionIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.start" }, "params": { "$ref": "#/$defs/planningStartParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.respond" }, "params": { "$ref": "#/$defs/planningRespondParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.resume" }, "params": { "$ref": "#/$defs/planningSessionIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.delete" }, "params": { "$ref": "#/$defs/planningSessionIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "planning.get_artifact" }, "params": { "$ref": "#/$defs/planningGetArtifactParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "config.get" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "config.update" }, "params": { "$ref": "#/$defs/configUpdateParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "preset.list" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "collection.list" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.get" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.create" }, "params": { "$ref": "#/$defs/collectionCreateParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.update" }, "params": { "$ref": "#/$defs/collectionUpdateParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.import" }, "params": { "$ref": "#/$defs/collectionImportParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.export" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "stream.subscribe" }, "params": { "$ref": "#/$defs/streamSubscribeParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "stream.unsubscribe" }, "params": { "$ref": "#/$defs/streamUnsubscribeParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "stream.ack" }, "params": { "$ref": "#/$defs/streamAckParams" } }, "required": ["method", "params"] }
+      ]
+    },
+    "requestEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/apiVersion" },
+        "id": { "$ref": "#/$defs/requestId" },
+        "method": { "$ref": "#/$defs/methodName" },
+        "params": { "type": "object" },
+        "meta": { "$ref": "#/$defs/requestMeta" }
+      },
+      "required": [
+        "apiVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "allOf": [
+        { "$ref": "#/$defs/requestByMethod" },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "$ref": "#/$defs/mutatingMethodName"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "meta"
+            ],
+            "properties": {
+              "meta": {
+                "required": [
+                  "idempotencyKey"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "systemHealthResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string", "enum": ["ok", "degraded"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["status", "timestamp"]
+    },
+    "systemVersionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/apiVersion" },
+        "serverVersion": { "type": "string" }
+      },
+      "required": ["apiVersion", "serverVersion"]
+    },
+    "systemCapabilitiesResult": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "methods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/methodName" }
+        },
+        "streamTopics": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["methods", "streamTopics"]
+    },
+    "taskListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } }
+      },
+      "required": ["tasks"]
+    },
+    "taskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task": { "$ref": "#/$defs/task" }
+      },
+      "required": ["task"]
+    },
+    "successResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" }
+      },
+      "required": ["success"]
+    },
+    "taskRunResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" },
+        "queuedTaskId": { "type": "string" },
+        "task": { "$ref": "#/$defs/task" }
+      },
+      "required": ["success", "queuedTaskId"]
+    },
+    "taskRunAllResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enqueued": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["enqueued", "errors"]
+    },
+    "taskStatusResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "isQueued": { "type": "boolean" },
+        "queuePosition": { "type": "integer", "minimum": 0 },
+        "runnerPid": { "type": ["integer", "null"] }
+      },
+      "required": ["isQueued"]
+    },
+    "loopListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loops": { "type": "array", "items": { "$ref": "#/$defs/loop" } }
+      },
+      "required": ["loops"]
+    },
+    "loopStatusResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "running": { "type": "boolean" },
+        "intervalMs": { "type": "integer", "minimum": 0 },
+        "lastProcessedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["running", "intervalMs"]
+    },
+    "loopMergeButtonStateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "action": { "type": "string" }
+      },
+      "required": ["enabled"]
+    },
+    "loopTriggerMergeTaskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" },
+        "taskId": { "type": "string" },
+        "queuedTaskId": { "type": "string" }
+      },
+      "required": ["success", "taskId"]
+    },
+    "planningListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/session" } }
+      },
+      "required": ["sessions"]
+    },
+    "planningSessionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session": { "$ref": "#/$defs/session" }
+      },
+      "required": ["session"]
+    },
+    "artifactResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filename": { "type": "string" },
+        "content": { "type": "string" }
+      },
+      "required": ["filename", "content"]
+    },
+    "configGetResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "raw": { "type": "string" },
+        "parsed": { "type": "object" }
+      },
+      "required": ["raw", "parsed"]
+    },
+    "configUpdateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" },
+        "parsed": { "type": "object" }
+      },
+      "required": ["success", "parsed"]
+    },
+    "presetListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "presets": { "type": "array", "items": { "$ref": "#/$defs/preset" } }
+      },
+      "required": ["presets"]
+    },
+    "collectionListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "collections": { "type": "array", "items": { "$ref": "#/$defs/collectionSummary" } }
+      },
+      "required": ["collections"]
+    },
+    "collectionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "collection": { "$ref": "#/$defs/collection" }
+      },
+      "required": ["collection"]
+    },
+    "collectionExportResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "yaml": { "type": "string", "minLength": 1 }
+      },
+      "required": ["yaml"]
+    },
+    "streamSubscribeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subscriptionId": { "type": "string" },
+        "acceptedTopics": { "type": "array", "items": { "type": "string" } },
+        "cursor": { "type": "string" }
+      },
+      "required": ["subscriptionId", "acceptedTopics", "cursor"]
+    },
+    "responseByMethod": {
+      "oneOf": [
+        { "properties": { "method": { "const": "system.health" }, "result": { "$ref": "#/$defs/systemHealthResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "system.version" }, "result": { "$ref": "#/$defs/systemVersionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "system.capabilities" }, "result": { "$ref": "#/$defs/systemCapabilitiesResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "task.list" }, "result": { "$ref": "#/$defs/taskListResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.get" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.ready" }, "result": { "$ref": "#/$defs/taskListResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.create" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.update" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.close" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.archive" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.unarchive" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.clear" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.run" }, "result": { "$ref": "#/$defs/taskRunResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.run_all" }, "result": { "$ref": "#/$defs/taskRunAllResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.retry" }, "result": { "$ref": "#/$defs/taskRunResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.cancel" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.status" }, "result": { "$ref": "#/$defs/taskStatusResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "loop.list" }, "result": { "$ref": "#/$defs/loopListResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.status" }, "result": { "$ref": "#/$defs/loopStatusResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.process" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.prune" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.retry" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.discard" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.stop" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.merge" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.merge_button_state" }, "result": { "$ref": "#/$defs/loopMergeButtonStateResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "loop.trigger_merge_task" }, "result": { "$ref": "#/$defs/loopTriggerMergeTaskResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "planning.list" }, "result": { "$ref": "#/$defs/planningListResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "planning.get" }, "result": { "$ref": "#/$defs/planningSessionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "planning.start" }, "result": { "$ref": "#/$defs/planningSessionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "planning.respond" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "planning.resume" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "planning.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "planning.get_artifact" }, "result": { "$ref": "#/$defs/artifactResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "config.get" }, "result": { "$ref": "#/$defs/configGetResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "config.update" }, "result": { "$ref": "#/$defs/configUpdateResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "preset.list" }, "result": { "$ref": "#/$defs/presetListResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "collection.list" }, "result": { "$ref": "#/$defs/collectionListResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.get" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.create" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.update" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.import" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.export" }, "result": { "$ref": "#/$defs/collectionExportResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "stream.subscribe" }, "result": { "$ref": "#/$defs/streamSubscribeResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "stream.unsubscribe" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "stream.ack" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] }
+      ]
+    },
+    "responseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/apiVersion" },
+        "id": { "$ref": "#/$defs/requestId" },
+        "method": { "$ref": "#/$defs/methodName" },
+        "result": { "type": "object" },
+        "meta": { "$ref": "#/$defs/responseMeta" }
+      },
+      "required": [
+        "apiVersion",
+        "id",
+        "method",
+        "result"
+      ],
+      "allOf": [
+        { "$ref": "#/$defs/responseByMethod" }
+      ]
+    },
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "INVALID_REQUEST",
+        "METHOD_NOT_FOUND",
+        "INVALID_PARAMS",
+        "UNAUTHORIZED",
+        "FORBIDDEN",
+        "NOT_FOUND",
+        "CONFLICT",
+        "PRECONDITION_FAILED",
+        "RATE_LIMITED",
+        "TIMEOUT",
+        "SERVICE_UNAVAILABLE",
+        "INTERNAL",
+        "TASK_NOT_FOUND",
+        "LOOP_NOT_FOUND",
+        "PLANNING_SESSION_NOT_FOUND",
+        "COLLECTION_NOT_FOUND",
+        "CONFIG_INVALID",
+        "IDEMPOTENCY_CONFLICT",
+        "BACKPRESSURE_DROPPED"
+      ]
+    },
+    "rpcError": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/errorCode" },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": ["object", "null"] }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ]
+    },
+    "errorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": { "$ref": "#/$defs/apiVersion" },
+        "id": { "$ref": "#/$defs/requestId" },
+        "method": { "$ref": "#/$defs/methodName" },
+        "error": { "$ref": "#/$defs/rpcError" },
+        "meta": { "$ref": "#/$defs/responseMeta" }
+      },
+      "required": [
+        "apiVersion",
+        "id",
+        "error"
+      ]
+    }
+  }
+}

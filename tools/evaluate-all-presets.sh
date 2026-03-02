@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # evaluate-all-presets.sh - Evaluate all hat collection presets
 #
 # Usage: ./tools/evaluate-all-presets.sh [backend]

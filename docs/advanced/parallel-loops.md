@@ -108,6 +108,9 @@ ralph loops retry <id>
 ralph loops stop <id>              # SIGTERM
 ralph loops stop <id> --force      # SIGKILL
 
+# Resume a suspended loop
+ralph loops resume <id>
+
 # Abandon loop and cleanup
 ralph loops discard <id>           # With confirmation
 ralph loops discard <id> -y        # Skip confirmation
@@ -201,6 +204,19 @@ ralph loops discard <loop-id>
 - Let one loop complete before starting conflicting work
 
 ## Troubleshooting
+
+### Loop suspended waiting for operator input
+
+```bash
+# Check loop state and logs
+ralph loops
+ralph loops logs <loop-id>
+
+# Resume from the suspended boundary
+ralph loops resume <loop-id>
+```
+
+`ralph loops resume` is safe to run repeatedly (idempotent).
 
 ### Loop stuck in `queued` state
 

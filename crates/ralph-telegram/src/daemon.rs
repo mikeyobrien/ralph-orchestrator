@@ -30,8 +30,9 @@ async fn wait_for_shutdown(shutdown: Arc<AtomicBool>) {
 /// A Telegram-based daemon adapter.
 ///
 /// Polls Telegram for messages while idle and delegates loop execution
-/// to the provided [`StartLoopFn`] callback. Supports `/status` commands
-/// and graceful shutdown via `SIGINT`/`SIGTERM`.
+/// to the provided [`StartLoopFn`] callback. Supports the shared slash-command
+/// set (`/status`, `/tasks`, `/model`, etc.) and graceful shutdown via
+/// `SIGINT`/`SIGTERM`.
 pub struct TelegramDaemon {
     bot_token: String,
     chat_id: i64,
@@ -130,31 +131,13 @@ impl DaemonAdapter for TelegramDaemon {
 
                 info!(text = %text, "Daemon received message");
 
-                // Handle daemon-only commands
+                // Handle slash-commands while idle using the shared command parser.
                 if text.starts_with('/') {
-                    match text.split_whitespace().next().unwrap_or("") {
-                        "/status" => {
-                            let msg = match lock_state(&workspace_root) {
-                                Ok(LockState::Active) => "A loop is running.".to_string(),
-                                Ok(LockState::Stale) => {
-                                    "No active loop (stale lock file found).".to_string()
-                                }
-                                Ok(LockState::Inactive) => {
-                                    "Idle — waiting for messages.".to_string()
-                                }
-                                Err(e) => format!("Failed to check lock state: {}", e),
-                            };
-                            let _ = bot.send_message(chat_id, &msg).await;
-                        }
-                        _ => {
-                            let _ = bot
-                                .send_message(
-                                    chat_id,
-                                    "Unknown command. I only handle /status while idle.",
-                                )
-                                .await;
-                        }
-                    }
+                    let response = crate::commands::handle_command(text, &workspace_root)
+                        .unwrap_or_else(|| {
+                            "Unknown command. Use /help for the supported commands.".to_string()
+                        });
+                    let _ = bot.send_message(chat_id, &response).await;
                     continue;
                 }
 

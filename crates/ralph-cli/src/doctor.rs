@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
-use crate::ConfigSource;
+use crate::{ConfigSource, HatsSource};
 
 /// Run first-run diagnostics and environment validation.
 #[derive(Parser, Debug)]
@@ -18,11 +18,12 @@ pub struct DoctorArgs {}
 
 pub async fn execute(
     config_sources: &[ConfigSource],
+    hats_source: Option<&HatsSource>,
     _args: DoctorArgs,
     use_colors: bool,
 ) -> Result<()> {
-    let source_label = crate::preflight::config_source_label(config_sources);
-    let config = crate::preflight::load_config_for_preflight(config_sources).await?;
+    let source_label = crate::preflight::config_source_label(config_sources, hats_source);
+    let config = crate::preflight::load_config_for_preflight(config_sources, hats_source).await?;
 
     let runner = ralph_core::PreflightRunner::default_checks();
     let preflight_report = runner.run_all(&config).await;
@@ -351,7 +352,7 @@ fn auth_backend_names(config: &RalphConfig) -> Vec<String> {
         let name = match backend {
             HatBackend::Named(name) => name.clone(),
             HatBackend::NamedWithArgs { backend_type, .. } => backend_type.clone(),
-            HatBackend::KiroAgent { .. } => "kiro".to_string(),
+            HatBackend::KiroAgent { backend_type, .. } => backend_type.clone(),
             HatBackend::Custom { command, .. } => canonical_backend_name("custom", Some(command)),
         };
 
@@ -367,6 +368,7 @@ fn auth_env_vars(backend: &str) -> Option<Vec<&'static str>> {
         "gemini" => Some(vec!["GEMINI_API_KEY"]),
         "codex" => Some(vec!["OPENAI_API_KEY", "CODEX_API_KEY"]),
         "kiro" => Some(vec!["KIRO_API_KEY"]),
+        "kiro-acp" => Some(vec!["KIRO_API_KEY"]),
         "opencode" => Some(vec![
             "OPENCODE_API_KEY",
             "ANTHROPIC_API_KEY",
@@ -608,10 +610,12 @@ mod tests {
             publishes: vec![],
             instructions: String::new(),
             extra_instructions: vec![],
+            backend_args: None,
             backend,
             default_publishes: None,
             max_activations: None,
             scratchpad: None,
+            disallowed_tools: vec![],
         }
     }
 

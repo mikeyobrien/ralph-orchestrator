@@ -76,13 +76,19 @@ cargo test
 
 For more complex tasks, use hats to separate concerns.
 
-### 1. Initialize with a Preset
+### 1. Initialize Core Config
 
 ```bash
-ralph init --preset tdd-red-green
+ralph init --backend claude
 ```
 
-This creates a configuration with specialized hats:
+Then run with a specialized hat collection (example: spec-driven):
+
+```bash
+ralph run -c ralph.yml -H builtin:spec-driven
+```
+
+This uses specialized hats:
 
 - **Tester** - Writes failing tests first
 - **Implementer** - Makes tests pass

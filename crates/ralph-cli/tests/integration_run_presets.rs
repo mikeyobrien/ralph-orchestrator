@@ -19,7 +19,7 @@ fn test_run_dry_run_with_builtin_preset() {
         &[
             "--color",
             "never",
-            "--config",
+            "--hats",
             "builtin:feature",
             "run",
             "--dry-run",
@@ -86,7 +86,7 @@ fn test_run_dry_run_with_unknown_preset_fails() {
         &[
             "--color",
             "never",
-            "--config",
+            "--hats",
             "builtin:not-a-preset",
             "run",
             "--dry-run",
@@ -104,7 +104,7 @@ fn test_run_dry_run_with_unknown_preset_fails() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
     assert!(
-        combined.contains("Unknown preset"),
+        combined.contains("Unknown hat collection"),
         "unexpected output: {combined}"
     );
 }

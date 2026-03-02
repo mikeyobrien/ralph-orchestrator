@@ -8,6 +8,8 @@
 
 use ralph_adapters::{CliBackend, CustomBackendError, NoBackendError, detect_backend_default};
 use ralph_core::RalphConfig;
+
+use crate::backend_support;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -63,6 +65,8 @@ pub struct SopRunConfig {
     pub user_input: Option<String>,
     /// Explicit backend override (takes precedence over config and auto-detect).
     pub backend_override: Option<String>,
+    /// Loaded config for runtime use.
+    pub config: Option<RalphConfig>,
     /// Path to config file (for backend resolution fallback).
     pub config_path: Option<PathBuf>,
     /// Custom backend command and arguments (from CLI args).
@@ -77,7 +81,7 @@ pub enum SopRunError {
     #[error("No supported backend found.\n\n{0}")]
     NoBackend(#[from] NoBackendError),
 
-    #[error("Unknown backend: {0}\n\nValid backends: claude, kiro, gemini, codex, amp")]
+    #[error("{0}")]
     UnknownBackend(String),
 
     #[error("Failed to spawn backend: {0}")]
@@ -86,7 +90,7 @@ pub enum SopRunError {
 
 impl From<CustomBackendError> for SopRunError {
     fn from(_: CustomBackendError) -> Self {
-        SopRunError::UnknownBackend("custom".to_string())
+        SopRunError::UnknownBackend(backend_support::unknown_backend_message("custom"))
     }
 }
 
@@ -98,6 +102,7 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
     // 1. Resolve backend
     let backend_name = resolve_backend(
         config.backend_override.as_deref(),
+        config.config.as_ref(),
         config.config_path.as_ref(),
     )?;
 
@@ -136,24 +141,30 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
                 env_vars: vec![],
             }
         } else {
-            // For custom backend from config, we need to load the configuration to get the command/args
-            let config_path = config
-                .config_path
-                .as_deref()
-                .unwrap_or_else(|| Path::new("ralph.yml"));
-
-            if config_path.exists() {
-                let ralph_config = RalphConfig::from_file(config_path).map_err(|e| {
-                    SopRunError::SpawnError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    ))
-                })?;
-                CliBackend::custom(&ralph_config.cli)?
+            // For custom backend from config, use loaded config if available, otherwise file path fallback.
+            if let Some(config_obj) = &config.config {
+                CliBackend::custom(&config_obj.cli)?
             } else {
-                return Err(SopRunError::UnknownBackend(
-                    "custom (configuration file not found and no CLI args provided)".to_string(),
-                ));
+                let config_path = config
+                    .config_path
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new("ralph.yml"));
+
+                if config_path.exists() {
+                    let ralph_config = RalphConfig::from_file(config_path).map_err(|e| {
+                        SopRunError::SpawnError(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        ))
+                    })?;
+                    CliBackend::custom(&ralph_config.cli)?
+                } else {
+                    return Err(SopRunError::UnknownBackend(
+                        backend_support::unknown_backend_message(
+                            "custom (configuration file not found and no CLI args provided)",
+                        ),
+                    ));
+                }
             }
         }
     } else if config.agent_teams && is_claude {
@@ -176,6 +187,7 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
 /// 3. Auto-detect (first available from claude → kiro → gemini → codex → amp)
 fn resolve_backend(
     flag_override: Option<&str>,
+    config: Option<&RalphConfig>,
     config_path: Option<&PathBuf>,
 ) -> Result<String, SopRunError> {
     // 1. CLI flag takes precedence
@@ -184,7 +196,14 @@ fn resolve_backend(
         return Ok(backend.to_string());
     }
 
-    // 2. Check config file
+    // 2. Check provided config object
+    if let Some(config) = config
+        && config.cli.backend != "auto"
+    {
+        return Ok(config.cli.backend.clone());
+    }
+
+    // 3. Check config file
     if let Some(path) = config_path
         && path.exists()
         && let Ok(config) = RalphConfig::from_file(path)
@@ -193,16 +212,18 @@ fn resolve_backend(
         return Ok(config.cli.backend);
     }
 
-    // 3. Auto-detect
+    // 4. Auto-detect
     detect_backend_default().map_err(SopRunError::NoBackend)
 }
 
 /// Validates a backend name.
 fn validate_backend_name(name: &str) -> Result<(), SopRunError> {
-    match name {
-        "claude" | "kiro" | "gemini" | "codex" | "amp" | "copilot" | "opencode" | "pi"
-        | "custom" => Ok(()),
-        _ => Err(SopRunError::UnknownBackend(name.to_string())),
+    if backend_support::is_known_backend(name) {
+        Ok(())
+    } else {
+        Err(SopRunError::UnknownBackend(
+            backend_support::unknown_backend_message(name),
+        ))
     }
 }
 
@@ -335,8 +356,8 @@ mod tests {
         let result = validate_backend_name("invalid_backend");
         assert!(result.is_err());
 
-        if let Err(SopRunError::UnknownBackend(name)) = result {
-            assert_eq!(name, "invalid_backend");
+        if let Err(SopRunError::UnknownBackend(msg)) = result {
+            assert!(msg.contains("invalid_backend"));
         } else {
             panic!("Expected UnknownBackend error");
         }
@@ -344,15 +365,15 @@ mod tests {
 
     #[test]
     fn test_resolve_backend_from_flag() {
-        let backend = resolve_backend(Some("claude"), None).expect("backend");
+        let backend = resolve_backend(Some("claude"), None, None).expect("backend");
         assert_eq!(backend, "claude");
     }
 
     #[test]
     fn test_resolve_backend_invalid_flag() {
-        let err = resolve_backend(Some("unknown"), None).expect_err("invalid backend");
-        if let SopRunError::UnknownBackend(name) = err {
-            assert_eq!(name, "unknown");
+        let err = resolve_backend(Some("unknown"), None, None).expect_err("invalid backend");
+        if let SopRunError::UnknownBackend(msg) = err {
+            assert!(msg.contains("Unknown backend: unknown"));
         } else {
             panic!("expected UnknownBackend");
         }
@@ -360,11 +381,9 @@ mod tests {
 
     #[test]
     fn test_resolve_backend_from_config_file() {
-        let temp_dir = tempfile::tempdir().expect("temp dir");
-        let config_path = temp_dir.path().join("ralph.yml");
-        std::fs::write(&config_path, "cli:\n  backend: gemini\n").expect("write config");
-
-        let backend = resolve_backend(None, Some(&config_path)).expect("backend");
+        let config = RalphConfig::parse_yaml("cli:\n  backend: gemini\n").expect("parse config");
+        let config_path = std::path::PathBuf::from("ralph.yml");
+        let backend = resolve_backend(None, Some(&config), Some(&config_path)).expect("backend");
         assert_eq!(backend, "gemini");
     }
 
@@ -377,6 +396,7 @@ mod tests {
             sop: Sop::Pdd,
             user_input: None,
             backend_override: Some("custom".to_string()),
+            config: None,
             config_path: None,
             custom_args: None,
             agent_teams: false,
@@ -400,6 +420,7 @@ mod tests {
             sop: Sop::Pdd,
             user_input: Some("Build a REST API".to_string()),
             backend_override: Some("custom".to_string()),
+            config: None,
             config_path: None,
             custom_args: Some(vec![
                 "sh".to_string(),

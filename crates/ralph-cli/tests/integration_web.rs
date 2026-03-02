@@ -22,8 +22,12 @@ mod web_integration {
         let temp_dir = TempDir::new().expect("temp dir");
         let workspace = temp_dir.path();
 
-        fs::create_dir_all(workspace.join("backend/ralph-web-server")).expect("backend dir");
-        fs::create_dir_all(workspace.join("frontend/ralph-web")).expect("frontend dir");
+        let backend_dir = workspace.join("backend/ralph-web-server");
+        let frontend_dir = workspace.join("frontend/ralph-web");
+        fs::create_dir_all(&backend_dir).expect("backend dir");
+        fs::create_dir_all(&frontend_dir).expect("frontend dir");
+        fs::write(backend_dir.join("package.json"), "{}\n").expect("backend package.json");
+        fs::write(frontend_dir.join("package.json"), "{}\n").expect("frontend package.json");
         fs::create_dir_all(workspace.join("node_modules")).expect("node_modules dir");
         fs::write(workspace.join("node_modules/.package-lock.json"), "").expect("lockfile");
 
@@ -74,6 +78,7 @@ exit 1",
                 "web",
                 "--workspace",
                 workspace.to_str().expect("workspace path"),
+                "--legacy-node-api",
                 "--no-open",
                 "--backend-port",
                 &backend_port.to_string(),

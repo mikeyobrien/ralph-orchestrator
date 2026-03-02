@@ -4,7 +4,7 @@
 //! iteration separators, termination messages, event tables,
 //! and other terminal UI elements.
 
-use ralph_core::{EventRecord, TerminationReason};
+use ralph_core::{EventRecord, TerminationReason, floor_char_boundary, truncate_with_ellipsis};
 use ralph_proto::HatId;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -94,39 +94,7 @@ pub fn format_elapsed(d: Duration) -> String {
 
 /// Truncates a string to max_len characters, adding ellipsis if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
-    // Note: `max_len` keeps the legacy behavior (byte-count-ish), but we must slice only on a
-    // valid UTF-8 character boundary. Otherwise, multi-byte characters (e.g. CJK, emoji) can make
-    // `&s[..N]` panic.
-    if max_len == 0 {
-        return String::new();
-    }
-
-    if s.len() <= max_len {
-        return s.to_string();
-    }
-
-    truncate_prefix_bytes(s, max_len.saturating_sub(1))
-}
-
-/// Truncates the string to at most `prefix_max_bytes` bytes (as close as possible) and appends "...".
-///
-/// Key point: always use `char_indices()` to find a valid UTF-8 boundary before slicing, so we
-/// never slice through a multi-byte character and panic.
-fn truncate_prefix_bytes(s: &str, prefix_max_bytes: usize) -> String {
-    if s.len() <= prefix_max_bytes {
-        return s.to_string();
-    }
-
-    // Find the last character start before `prefix_max_bytes`, then add its byte length to get a
-    // valid boundary.
-    let boundary = s
-        .char_indices()
-        .take_while(|(i, _)| *i < prefix_max_bytes)
-        .last()
-        .map(|(i, c)| i + c.len_utf8())
-        .unwrap_or(0);
-
-    format!("{}...", &s[..boundary])
+    truncate_with_ellipsis(s, max_len)
 }
 
 /// Prints termination message with status.
@@ -145,10 +113,13 @@ pub fn print_termination(
         TerminationReason::MaxCost => (YELLOW, "?", "Maximum cost exceeded"),
         TerminationReason::ConsecutiveFailures => (RED, "?", "Too many consecutive failures"),
         TerminationReason::LoopThrashing => (RED, "?", "Loop thrashing detected"),
+        TerminationReason::LoopStale => (RED, "?", "Stale loop detected"),
         TerminationReason::ValidationFailure => (RED, "?", "Too many malformed JSONL events"),
         TerminationReason::Stopped => (CYAN, "?", "Manually stopped"),
         TerminationReason::Interrupted => (YELLOW, "?", "Interrupted by signal"),
         TerminationReason::RestartRequested => (CYAN, "↻", "Restarting by human request"),
+        TerminationReason::WorkspaceGone => (RED, "?", "Workspace directory removed"),
+        TerminationReason::Cancelled => (CYAN, "⏹", "Cancelled gracefully"),
     };
 
     let separator = "-".repeat(58);
@@ -230,11 +201,7 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
         let topic_color = get_topic_color(&record.topic);
         let triggered = record.triggered.as_deref().unwrap_or("-");
         let payload_one_line = record.payload.replace('\n', " ");
-        let payload_preview = if payload_one_line.len() > 40 {
-            truncate_prefix_bytes(&payload_one_line, 40)
-        } else {
-            payload_one_line
-        };
+        let payload_preview = truncate_with_ellipsis(&payload_one_line, 40);
 
         // Extract time portion (HH:MM:SS) from ISO 8601 timestamp
         let time = record
@@ -250,10 +217,7 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
                 // Take only HH:MM:SS (usually ASCII), but still ensure we slice on a valid UTF-8
                 // boundary for robustness. Otherwise, an unexpected `ts` (e.g. CJK/emoji) can make
                 // `&s[..N]` panic.
-                let mut boundary = time_str.len().min(8);
-                while boundary > 0 && !time_str.is_char_boundary(boundary) {
-                    boundary -= 1;
-                }
+                let boundary = floor_char_boundary(time_str, 8);
                 Some(&time_str[..boundary])
             })
             .unwrap_or("-");
@@ -344,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_truncate_long_string() {
-        assert_eq!(truncate("hello world", 8), "hello w...");
+        assert_eq!(truncate("hello world", 8), "hello...");
     }
 
     #[test]

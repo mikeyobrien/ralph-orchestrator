@@ -131,6 +131,19 @@ impl HatRegistry {
         self.hats.values().any(|hat| hat.is_subscribed(&topic))
     }
 
+    /// Check if a hat is allowed to publish the given topic.
+    ///
+    /// Returns `true` for unregistered hats (Ralph can publish anything).
+    /// Uses the same pattern matching as subscription routing.
+    pub fn can_publish(&self, hat_id: &HatId, topic: &str) -> bool {
+        let Some(hat) = self.hats.get(hat_id) else {
+            return true; // Unregistered hat (ralph), no restriction
+        };
+        hat.publishes
+            .iter()
+            .any(|pub_topic| pub_topic.matches_str(topic))
+    }
+
     /// Returns the first hat subscribed to the given topic.
     ///
     /// Uses prefix index for O(1) early-exit when the topic prefix doesn't match
@@ -385,5 +398,71 @@ hats:
         assert_eq!(subs[0].id.as_str(), "alpha");
         assert_eq!(subs[1].id.as_str(), "middle");
         assert_eq!(subs[2].id.as_str(), "zebra");
+    }
+
+    #[test]
+    fn test_can_publish_allows_declared_topic() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done", "build.blocked"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        assert!(registry.can_publish(&HatId::new("builder"), "build.done"));
+        assert!(registry.can_publish(&HatId::new("builder"), "build.blocked"));
+    }
+
+    #[test]
+    fn test_can_publish_rejects_undeclared_topic() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        assert!(!registry.can_publish(&HatId::new("builder"), "LOOP_COMPLETE"));
+        assert!(!registry.can_publish(&HatId::new("builder"), "plan.approved"));
+    }
+
+    #[test]
+    fn test_can_publish_allows_wildcard() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.*"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        assert!(registry.can_publish(&HatId::new("builder"), "build.done"));
+        assert!(registry.can_publish(&HatId::new("builder"), "build.blocked"));
+        assert!(!registry.can_publish(&HatId::new("builder"), "LOOP_COMPLETE"));
+    }
+
+    #[test]
+    fn test_can_publish_unknown_hat_allows_all() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+
+        // Unregistered hat (e.g. "ralph") should be able to publish anything
+        assert!(registry.can_publish(&HatId::new("ralph"), "anything"));
+        assert!(registry.can_publish(&HatId::new("ralph"), "LOOP_COMPLETE"));
     }
 }

@@ -37,6 +37,7 @@
 //! ```
 
 use crate::loop_lock::LoopLock;
+use crate::text::truncate_with_ellipsis;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -457,7 +458,7 @@ impl MergeQueue {
 
         // Sort by queued_at to maintain FIFO order
         let mut entries: Vec<_> = loop_states.into_values().collect();
-        entries.sort_by(|a, b| a.queued_at.cmp(&b.queued_at));
+        entries.sort_by_key(|a| a.queued_at);
         entries
     }
 
@@ -654,11 +655,7 @@ pub fn smart_merge_summary(workspace: &Path, loop_id: &str) -> Result<String, Me
     let max_summary_len = 72 - prefix_len - suffix_len;
 
     // Truncate if needed
-    let summary = if summary.len() > max_summary_len {
-        format!("{}...", &summary[..max_summary_len.saturating_sub(3)])
-    } else {
-        summary
-    };
+    let summary = truncate_with_ellipsis(&summary, max_summary_len);
 
     Ok(summary)
 }
