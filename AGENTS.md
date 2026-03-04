@@ -33,7 +33,7 @@ npm run test:server                          # Backend tests
 ```
 ralph-cli      → CLI entry point, commands (run, plan, task, loops, web)
 ralph-core     → Orchestration logic, event loop, hats, memories, tasks
-ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, etc.)
+ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, Roo, etc.)
 ralph-telegram → Telegram bot for human-in-the-loop communication
 ralph-tui      → Terminal UI (ratatui-based)
 ralph-e2e      → End-to-end test framework

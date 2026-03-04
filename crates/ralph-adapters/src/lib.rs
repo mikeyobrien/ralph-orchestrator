@@ -7,6 +7,7 @@
 //! - Gemini (Google)
 //! - Codex (OpenAI)
 //! - Pi (pi-coding-agent)
+//! - Roo (Roo Code)
 //! - Amp
 //! - Custom commands
 //!
