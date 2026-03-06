@@ -5,8 +5,8 @@
 default:
     @just --list
 
-# Run all checks (format, lint, test, check)
-check: fmt-check lint test
+# Run all checks (format, lint, embedded assets, test)
+check: fmt-check lint embedded-check test
     @echo "✅ All checks passed"
 
 # Format code using rustfmt
@@ -25,6 +25,18 @@ lint:
 test:
     cargo test --all
 
+# Sync embedded assets (crate-local mirrors + generated SOPs)
+embedded-sync:
+    ./scripts/sync-embedded-files.sh
+
+# Check embedded assets are in sync
+embedded-check:
+    ./scripts/sync-embedded-files.sh check
+
+# Update the pinned PDD upstream SHA from the canonical GitHub branch and resync
+embedded-update-pdd-ref branch="main":
+    ./scripts/sync-embedded-files.sh update-pdd-ref {{branch}}
+
 # Type check without building
 typecheck:
     cargo check --all
@@ -38,15 +50,11 @@ clean:
     cargo clean
 
 # Full CI-like check (what CI will run)
-ci: fmt-check lint test
+ci: fmt-check lint embedded-check test
     @echo "✅ CI checks passed"
 
 # Calibrated hooks mutation rollout threshold (see docs/06-analysis/hooks-mutation-baseline-2026-03-01.md)
 HOOKS_MUTATION_THRESHOLD := "55"
-
-# Baseline mutation command (tooling: cargo-mutants) scoped to hooks-critical paths
-mutants-baseline:
-    cargo mutants --file crates/ralph-core/src/hooks/executor.rs --file crates/ralph-core/src/hooks/engine.rs --file crates/ralph-core/src/preflight.rs --file crates/ralph-cli/src/loop_runner.rs
 
 # Enforced hooks mutation CI gate (threshold + critical-path no-MISS invariant)
 mutants-hooks-gate:
