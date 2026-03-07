@@ -52,6 +52,7 @@ pub use pi_stream::{
 };
 pub use pty_executor::{
     CtrlCAction, CtrlCState, PtyConfig, PtyExecutionResult, PtyExecutor, TerminationType,
+    dispatch_stream_event,
 };
 pub use pty_handle::{ControlCommand, PtyHandle};
 pub use stream_handler::{

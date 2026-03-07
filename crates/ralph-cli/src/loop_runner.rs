@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use ralph_adapters::{
-    AcpExecutor, CliBackend, CliExecutor, ConsoleStreamHandler, JsonRpcStreamHandler,
+    AcpExecutor, CliBackend, ConsoleStreamHandler, JsonRpcStreamHandler,
     OutputFormat as BackendOutputFormat, PrettyStreamHandler, PtyConfig, PtyExecutor,
     QuietStreamHandler, TuiStreamHandler,
 };
@@ -1643,20 +1643,15 @@ pub async fn run_loop_impl(
                 )
                 .await
             } else {
-                let executor = CliExecutor::new(effective_backend.clone());
-                let result = executor
-                    .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
-                    .await?;
-                Ok(ExecutionOutcome {
-                    output: result.output,
-                    success: result.success,
-                    termination: None,
-                    total_cost_usd: 0.0,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cache_write_tokens: 0,
-                })
+                // Non-PTY mode (Windows --no-tui): Use CliExecutor with streaming
+                // handler for human-readable output instead of raw NDJSON
+                execute_cli_streaming(
+                    &effective_backend,
+                    &prompt,
+                    verbosity,
+                    timeout,
+                )
+                .await
             }
         };
 
@@ -3962,6 +3957,196 @@ async fn execute_pty(
             Err(anyhow::Error::new(e))
         }
     }
+}
+
+/// Executes a prompt via pipe-based CLI (non-PTY) with NDJSON streaming output.
+///
+/// This is used on Windows in --no-tui mode where ConPTY output is unreliable.
+/// It spawns the backend as a regular subprocess, reads stdout line by line,
+/// and parses Claude's stream-json NDJSON format through StreamHandler for
+/// human-readable output (text, tool calls, errors).
+async fn execute_cli_streaming(
+    backend: &CliBackend,
+    prompt: &str,
+    verbosity: Verbosity,
+    timeout: Option<Duration>,
+) -> Result<ExecutionOutcome> {
+    use ralph_adapters::{ClaudeStreamParser, StreamHandler, dispatch_stream_event};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    let is_stream_json = backend.output_format == BackendOutputFormat::StreamJson;
+    let (cmd, args, stdin_input, _temp_file) = backend.build_command(prompt, false);
+
+    // Build command — wrap with cmd.exe /c on Windows for .cmd shim resolution
+    #[cfg(windows)]
+    let mut command = {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(&cmd).args(&args);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut c = Command::new(&cmd);
+        c.args(&args);
+        c
+    };
+
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    command.current_dir(&cwd);
+    command.envs(backend.env_vars.iter().map(|(k, v)| (k, v)));
+
+    if stdin_input.is_some() {
+        command.stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = command.spawn().context("Failed to spawn CLI command")?;
+
+    // Write stdin prompt if needed
+    if let Some(input) = stdin_input {
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin.write_all(input.as_bytes()).await?;
+            drop(stdin);
+        }
+    }
+
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    // Choose stream handler based on format and verbosity
+    let use_pretty = is_stream_json && std::io::stdout().is_terminal();
+
+    // Read stdout with NDJSON parsing and StreamHandler dispatch
+    let stream_result = async {
+        let mut extracted_text = String::new();
+        let mut accumulated = String::new();
+        let mut completion = None;
+
+        if let Some(stdout) = stdout_handle {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            if is_stream_json {
+                // Parse NDJSON and dispatch through StreamHandler
+                if use_pretty {
+                    let mut handler = PrettyStreamHandler::new(verbosity == Verbosity::Verbose);
+                    while let Some(line) = lines.next_line().await? {
+                        accumulated.push_str(&line);
+                        accumulated.push('\n');
+                        if let Some(event) = ClaudeStreamParser::parse_line(&line) {
+                            if let ralph_adapters::ClaudeStreamEvent::Result {
+                                duration_ms,
+                                total_cost_usd,
+                                num_turns,
+                                is_error,
+                            } = &event
+                            {
+                                completion = Some(ralph_adapters::SessionResult {
+                                    duration_ms: *duration_ms,
+                                    total_cost_usd: *total_cost_usd,
+                                    num_turns: *num_turns,
+                                    is_error: *is_error,
+                                    ..Default::default()
+                                });
+                            }
+                            dispatch_stream_event(event, &mut handler, &mut extracted_text);
+                        }
+                    }
+                } else {
+                    let mut handler = ConsoleStreamHandler::new(verbosity == Verbosity::Verbose);
+                    while let Some(line) = lines.next_line().await? {
+                        accumulated.push_str(&line);
+                        accumulated.push('\n');
+                        if let Some(event) = ClaudeStreamParser::parse_line(&line) {
+                            if let ralph_adapters::ClaudeStreamEvent::Result {
+                                duration_ms,
+                                total_cost_usd,
+                                num_turns,
+                                is_error,
+                            } = &event
+                            {
+                                completion = Some(ralph_adapters::SessionResult {
+                                    duration_ms: *duration_ms,
+                                    total_cost_usd: *total_cost_usd,
+                                    num_turns: *num_turns,
+                                    is_error: *is_error,
+                                    ..Default::default()
+                                });
+                            }
+                            dispatch_stream_event(event, &mut handler, &mut extracted_text);
+                        }
+                    }
+                };
+            } else {
+                // Non-JSON backends: stream raw text through ConsoleStreamHandler
+                let mut handler = ConsoleStreamHandler::new(verbosity == Verbosity::Verbose);
+                while let Some(line) = lines.next_line().await? {
+                    handler.on_text(&line);
+                    handler.on_text("\n");
+                    accumulated.push_str(&line);
+                    accumulated.push('\n');
+                }
+            }
+        }
+
+        // Drain stderr
+        if let Some(stderr) = stderr_handle {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Some(_line) = lines.next_line().await? {}
+        }
+
+        Ok::<_, anyhow::Error>((
+            if extracted_text.is_empty() {
+                accumulated
+            } else {
+                extracted_text
+            },
+            completion,
+        ))
+    };
+
+    let (output, completion) = match timeout {
+        Some(t) => match tokio::time::timeout(t, stream_result).await {
+            Ok(result) => result?,
+            Err(_) => {
+                let _ = child.kill().await;
+                (String::new(), None)
+            }
+        },
+        None => stream_result.await?,
+    };
+
+    let status = child.wait().await?;
+    let success = status.success();
+
+    let (total_cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) =
+        if let Some(ref c) = completion {
+            (
+                c.total_cost_usd,
+                c.input_tokens,
+                c.output_tokens,
+                c.cache_read_tokens,
+                c.cache_write_tokens,
+            )
+        } else {
+            (0.0, 0, 0, 0, 0)
+        };
+
+    Ok(ExecutionOutcome {
+        output,
+        success,
+        termination: None,
+        total_cost_usd,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+    })
 }
 
 /// Logs events parsed from output to the event history file.

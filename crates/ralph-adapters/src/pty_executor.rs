@@ -1781,7 +1781,7 @@ fn extract_cli_flag_value(args: &[String], long_flag: &str, short_flag: &str) ->
 
 /// Dispatches a Claude stream event to the appropriate handler method.
 /// Also accumulates text content into `extracted_text` for event parsing.
-fn dispatch_stream_event<H: StreamHandler>(
+pub fn dispatch_stream_event<H: StreamHandler>(
     event: ClaudeStreamEvent,
     handler: &mut H,
     extracted_text: &mut String,
