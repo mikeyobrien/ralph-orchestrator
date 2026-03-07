@@ -674,6 +674,12 @@ struct RunArgs {
     #[arg(long = "continue")]
     continue_mode: bool,
 
+    /// Explicit loop ID to use with --continue.
+    /// Reuses tasks from the specified loop instead of generating a new ID.
+    /// If omitted with --continue, reuses the existing current-loop-id marker.
+    #[arg(long, requires = "continue_mode")]
+    loop_id: Option<String>,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Execution Mode Options
     // ─────────────────────────────────────────────────────────────────────────
@@ -1177,6 +1183,7 @@ async fn main() -> Result<()> {
                 completion_promise: None,
                 dry_run: false,
                 continue_mode: false,
+                loop_id: None,
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
                 rpc: false,
@@ -1738,6 +1745,7 @@ async fn run_command(
             Some(loop_context),
             custom_args,
             auto_merge_override,
+            args.loop_id,
         )
         .await?
     };
@@ -1799,6 +1807,7 @@ struct SubprocessTuiArgs {
     max_iterations: Option<u32>,
     completion_promise: Option<String>,
     continue_mode: bool,
+    loop_id: Option<String>,
     idle_timeout: Option<u32>,
     verbose: bool,
     quiet: bool,
@@ -1826,6 +1835,7 @@ impl SubprocessTuiArgs {
             max_iterations: args.max_iterations,
             completion_promise: args.completion_promise.clone(),
             continue_mode: args.continue_mode,
+            loop_id: args.loop_id.clone(),
             idle_timeout: args.idle_timeout,
             verbose: args.verbose,
             quiet: args.quiet,
@@ -1900,9 +1910,13 @@ async fn run_subprocess_tui(
         child_args.push(promise.clone());
     }
 
-    // Forward continue mode
+    // Forward continue mode and loop ID
     if resume || args.continue_mode {
         child_args.push("--continue".to_string());
+    }
+    if let Some(ref loop_id) = args.loop_id {
+        child_args.push("--loop-id".to_string());
+        child_args.push(loop_id.clone());
     }
 
     // Forward idle timeout
@@ -2134,6 +2148,7 @@ async fn resume_command(
         None,       // Deprecated resume command doesn't have loop_context
         Vec::new(), // Resume command doesn't support custom args
         None,       // Use config.features.auto_merge (deprecated command)
+        None,       // Deprecated resume command doesn't support --loop-id
     )
     .await?;
     let exit_code = reason.exit_code();
@@ -3579,6 +3594,7 @@ core:
             completion_promise: None,
             dry_run: false,
             continue_mode: false,
+            loop_id: None,
             no_tui: true,
             autonomous: false,
             rpc: false,

@@ -56,6 +56,35 @@ struct RpcSharedState {
     total_cost_usd: Arc<std::sync::Mutex<f64>>,
 }
 
+/// Resolves the loop ID for task ownership tracking.
+///
+/// - Worktree loops: use the loop_id from the LoopContext.
+/// - Primary loops (fresh): generate a new `primary-{timestamp}` ID.
+/// - Primary loops (--continue): reuse the existing `current-loop-id` marker,
+///   or use an explicit `--loop-id` if provided.
+fn resolve_loop_id(
+    ctx: &ralph_core::LoopContext,
+    resume: bool,
+    explicit_loop_id: Option<&str>,
+) -> String {
+    ctx.loop_id().map(|s| s.to_string()).unwrap_or_else(|| {
+        if resume {
+            if let Some(explicit_id) = explicit_loop_id {
+                return explicit_id.to_string();
+            }
+            let marker = ctx.ralph_dir().join("current-loop-id");
+            if let Ok(existing) = std::fs::read_to_string(&marker) {
+                let existing = existing.trim().to_string();
+                if !existing.is_empty() {
+                    return existing;
+                }
+            }
+        }
+        // Fresh run: generate a new timestamped ID
+        format!("primary-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"))
+    })
+}
+
 /// Core loop implementation supporting both fresh start and continue modes.
 ///
 /// # Arguments
@@ -65,6 +94,8 @@ struct RpcSharedState {
 /// * `record_session` - If provided, records all events to the specified JSONL file for replay testing.
 /// * `auto_merge_override` - Explicit auto-merge setting. If `Some(false)`, disables auto-merge
 ///   (equivalent to `--no-auto-merge`). If `None`, uses `config.features.auto_merge`.
+/// * `resume_loop_id` - Explicit loop ID to use when resuming (`--loop-id`).
+///   If `None` and `resume` is true, reuses the existing `current-loop-id` marker.
 pub async fn run_loop_impl(
     config: RalphConfig,
     color_mode: ColorMode,
@@ -76,6 +107,7 @@ pub async fn run_loop_impl(
     loop_context: Option<LoopContext>,
     custom_args: Vec<String>,
     auto_merge_override: Option<bool>,
+    resume_loop_id: Option<String>,
 ) -> Result<TerminationReason> {
     // Set up process group leadership per spec
     // "The orchestrator must run as a process group leader"
@@ -129,10 +161,11 @@ pub async fn run_loop_impl(
     // Write loop ID to marker file for task ownership tracking.
     // For worktree loops, use the loop_id; for primary loops, generate one.
     // This file is read by `ralph tools task add` to tag new tasks.
-    let loop_id = ctx.loop_id().map(|s| s.to_string()).unwrap_or_else(|| {
-        // Primary loop gets a timestamped ID
-        format!("primary-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"))
-    });
+    //
+    // In --continue mode, reuse the existing loop ID so that tasks from the
+    // previous run remain visible to `ralph tools task ready`. An explicit
+    // --loop-id takes priority over the marker file.
+    let loop_id = resolve_loop_id(&ctx, resume, resume_loop_id.as_deref());
     let loop_id_marker = ctx.ralph_dir().join("current-loop-id");
     fs::write(&loop_id_marker, &loop_id).context("Failed to write current-loop-id marker")?;
     debug!(loop_id = %loop_id, marker = ?loop_id_marker, "Wrote loop ID marker file");
@@ -4795,6 +4828,7 @@ pub async fn start_loop(
         Some(loop_context), // loop context
         Vec::new(),         // no custom args
         None,               // default auto-merge
+        None,               // no explicit loop ID
     )
     .await
 }
@@ -4845,6 +4879,74 @@ mod tests {
     use std::ffi::OsStr;
     use std::sync::Arc;
     use std::sync::Mutex;
+
+    #[test]
+    fn test_resolve_loop_id_fresh_generates_new() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = ralph_core::LoopContext::primary(temp.path().to_path_buf());
+        ctx.ensure_ralph_dir().unwrap();
+
+        let id = resolve_loop_id(&ctx, false, None);
+        assert!(
+            id.starts_with("primary-"),
+            "Fresh run should generate primary-{{timestamp}}, got: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn test_resolve_loop_id_continue_reuses_marker() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = ralph_core::LoopContext::primary(temp.path().to_path_buf());
+        ctx.ensure_ralph_dir().unwrap();
+
+        // Write a marker from a "previous run"
+        std::fs::write(
+            ctx.ralph_dir().join("current-loop-id"),
+            "primary-20260303-100000",
+        )
+        .unwrap();
+
+        let id = resolve_loop_id(&ctx, true, None);
+        assert_eq!(
+            id, "primary-20260303-100000",
+            "--continue should reuse existing loop ID"
+        );
+    }
+
+    #[test]
+    fn test_resolve_loop_id_continue_explicit_overrides_marker() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = ralph_core::LoopContext::primary(temp.path().to_path_buf());
+        ctx.ensure_ralph_dir().unwrap();
+
+        std::fs::write(
+            ctx.ralph_dir().join("current-loop-id"),
+            "primary-20260303-100000",
+        )
+        .unwrap();
+
+        let id = resolve_loop_id(&ctx, true, Some("custom-loop-42"));
+        assert_eq!(
+            id, "custom-loop-42",
+            "--loop-id should override the marker file"
+        );
+    }
+
+    #[test]
+    fn test_resolve_loop_id_continue_no_marker_generates_new() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = ralph_core::LoopContext::primary(temp.path().to_path_buf());
+        ctx.ensure_ralph_dir().unwrap();
+
+        // No marker file exists
+        let id = resolve_loop_id(&ctx, true, None);
+        assert!(
+            id.starts_with("primary-"),
+            "--continue without marker should fall back to generating new ID, got: {}",
+            id
+        );
+    }
 
     #[test]
     fn test_pty_only_enabled_for_tui_rpc_or_interactive() {
