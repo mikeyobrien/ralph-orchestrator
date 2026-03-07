@@ -293,8 +293,23 @@ impl PtyExecutor {
         let (cmd, args, stdin_input, temp_file) =
             self.backend.build_command(prompt, self.config.interactive);
 
-        let mut cmd_builder = CommandBuilder::new(&cmd);
-        cmd_builder.args(&args);
+        // On Windows, portable-pty's CommandBuilder uses CreateProcessW directly,
+        // which cannot execute .cmd/.bat shims (e.g., npm-installed CLIs like `claude`).
+        // Wrapping with `cmd.exe /c` lets the Windows command processor resolve these.
+        #[cfg(windows)]
+        let mut cmd_builder = {
+            let mut builder = CommandBuilder::new("cmd.exe");
+            builder.arg("/c");
+            builder.arg(&cmd);
+            builder.args(&args);
+            builder
+        };
+        #[cfg(not(windows))]
+        let mut cmd_builder = {
+            let mut builder = CommandBuilder::new(&cmd);
+            builder.args(&args);
+            builder
+        };
 
         // Set explicit working directory from config (captured at startup to avoid
         // current_dir() failures when workspace no longer exists)
@@ -1766,7 +1781,7 @@ fn extract_cli_flag_value(args: &[String], long_flag: &str, short_flag: &str) ->
 
 /// Dispatches a Claude stream event to the appropriate handler method.
 /// Also accumulates text content into `extracted_text` for event parsing.
-fn dispatch_stream_event<H: StreamHandler>(
+pub fn dispatch_stream_event<H: StreamHandler>(
     event: ClaudeStreamEvent,
     handler: &mut H,
     extracted_text: &mut String,

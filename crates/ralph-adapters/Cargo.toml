@@ -32,10 +32,13 @@ ratatui.workspace = true
 
 # PTY support
 portable-pty.workspace = true
-nix.workspace = true
 crossterm.workspace = true
 vt100.workspace = true
 strip-ansi-escapes.workspace = true
 agent-client-protocol = "0.9.4"
 futures.workspace = true
 tokio-util.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
