@@ -386,12 +386,24 @@ impl Drop for ChildKillGuard {
         if let Ok(guard) = self.0.lock()
             && let Some(pid) = *guard
         {
-            // Kill the entire process group (negative PID) so grandchildren
+            // Kill the entire process tree so grandchildren
             // (e.g. MCP servers) are also terminated — not just the direct child.
-            let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
-            let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGTERM);
-            std::thread::sleep(Duration::from_millis(100));
-            let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL);
+            #[cfg(unix)]
+            {
+                let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+                let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGTERM);
+                std::thread::sleep(Duration::from_millis(100));
+                let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                // On Windows, use taskkill /T to kill the process tree
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
         }
     }
 }
@@ -480,8 +492,19 @@ impl AcpExecutor {
         if let Ok(guard) = child_pid.lock()
             && let Some(pid) = *guard
         {
-            let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
-            let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL);
+            #[cfg(unix)]
+            {
+                let pgid = nix::unistd::Pid::from_raw(-(pid as i32));
+                let _ = nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
         }
 
         // Wait for the blocking task to finish so it doesn't leak.
