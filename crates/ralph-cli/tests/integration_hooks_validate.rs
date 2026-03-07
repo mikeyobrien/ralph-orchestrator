@@ -16,6 +16,18 @@ fn ralph_hooks_validate(temp_path: &Path, args: &[&str]) -> Output {
         .expect("Failed to execute ralph hooks validate command")
 }
 
+fn ralph_hooks_validate_with_home(temp_path: &Path, home_path: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ralph"))
+        .args(["--color", "never"])
+        .args(args)
+        .current_dir(temp_path)
+        .env("HOME", home_path)
+        .env("USERPROFILE", home_path)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to execute ralph hooks validate command")
+}
+
 fn parse_json_report(output: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json_start = stdout.find('{').expect("no json start");
@@ -236,5 +248,56 @@ hooks:
     assert!(
         message.contains("Failed to parse merged core config"),
         "expected merged-config parse failure diagnostic, got: {message}"
+    );
+}
+
+#[test]
+fn test_hooks_validate_uses_user_scoped_hooks_when_local_config_missing() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let home_dir = TempDir::new().expect("temp home");
+    let temp_path = temp_dir.path();
+    let hook_path = temp_path.join("hook-ok.sh");
+    fs::write(&hook_path, "#!/bin/sh\nexit 0\n").expect("write hook script");
+    make_executable(&hook_path);
+
+    let user_config_dir = home_dir.path().join(".ralph");
+    fs::create_dir_all(&user_config_dir).expect("create user config dir");
+    fs::write(
+        user_config_dir.join("config.yml"),
+        r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: user-hook
+        command: ["./hook-ok.sh"]
+        on_error: warn
+"#,
+    )
+    .expect("write user config");
+
+    let output = ralph_hooks_validate_with_home(
+        temp_path,
+        home_dir.path(),
+        &["hooks", "validate", "--format", "json"],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "expected exit code 0; stderr: {stderr}\nstdout: {stdout}"
+    );
+
+    let report = parse_json_report(&output);
+    assert_report_shape(&report);
+    assert_eq!(report["pass"], true);
+    assert_eq!(report["hooks_enabled"], true);
+    assert_eq!(report["checked_hooks"], 1);
+    let source = report["source"].as_str().expect("source should be string");
+    assert!(
+        source.contains(".ralph/config.yml"),
+        "expected global config source, got: {source}"
     );
 }

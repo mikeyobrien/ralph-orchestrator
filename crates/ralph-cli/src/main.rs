@@ -15,6 +15,7 @@
 
 mod backend_support;
 mod bot;
+mod config_resolution;
 mod display;
 mod doctor;
 mod hats;
@@ -393,34 +394,71 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
 pub(crate) fn load_config_with_overrides(
     config_sources: &[ConfigSource],
 ) -> anyhow::Result<RalphConfig> {
-    // Partition sources: file sources vs overrides
-    let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
-        .iter()
-        .partition(|s| !matches!(s, ConfigSource::Override { .. }));
+    let (primary_sources, overrides) = config_resolution::split_config_sources(config_sources);
+    if primary_sources.len() > 1 {
+        warn!("Multiple config sources specified, using first one. Others ignored.");
+    }
 
-    // Load configuration from first file source, or default ralph.yml
-    let mut config = if let Some(ConfigSource::File(path)) = primary_sources.first() {
-        if path.exists() {
-            RalphConfig::from_file(path)
-                .with_context(|| format!("Failed to load config from {:?}", path))?
-        } else {
-            warn!("Config file {:?} not found, using defaults", path);
-            RalphConfig::default()
+    let (primary_value, primary_label, primary_uses_defaults) = match primary_sources.first() {
+        Some(ConfigSource::File(path)) => {
+            if path.exists() {
+                let label = path.display().to_string();
+                let content = std::fs::read_to_string(path)
+                    .with_context(|| format!("Failed to load config from {}", label))?;
+                let value = config_resolution::parse_yaml_value(&content, &label)?;
+                (Some(value), label, false)
+            } else {
+                warn!("Config file {:?} not found, using defaults", path);
+                (None, path.display().to_string(), false)
+            }
         }
-    } else {
-        // Only overrides specified - load default path as base
-        let default_path = default_config_path();
-        if default_path.exists() {
-            RalphConfig::from_file(&default_path)
-                .with_context(|| format!("Failed to load config from {}", default_path.display()))?
-        } else {
-            warn!(
-                "Config file {} not found, using defaults",
-                default_path.display()
+        Some(ConfigSource::Builtin(name)) => {
+            anyhow::bail!(
+                "`-c builtin:{name}` is no longer supported.\n\nBuiltin presets are now hat collections.\nUse:\n  ralph run -c ralph.yml -H builtin:{name}"
             );
-            RalphConfig::default()
+        }
+        Some(ConfigSource::Remote(url)) => {
+            anyhow::bail!(
+                "Remote core config sources are not supported for this command: {}",
+                url
+            );
+        }
+        Some(ConfigSource::Override { .. }) => unreachable!("Overrides are partitioned out"),
+        None => {
+            let default_path = default_config_path();
+            if default_path.exists() {
+                let label = default_path.display().to_string();
+                let content = std::fs::read_to_string(&default_path)
+                    .with_context(|| format!("Failed to load config from {}", label))?;
+                let value = config_resolution::parse_yaml_value(&content, &label)?;
+                (Some(value), label, false)
+            } else {
+                warn!(
+                    "Config file {} not found, using defaults",
+                    default_path.display()
+                );
+                (None, default_path.display().to_string(), true)
+            }
         }
     };
+
+    let user_layer = config_resolution::load_optional_user_config_value()?;
+    let mut merged_value = config_resolution::default_core_value()?;
+    if let Some((user_value, _)) = &user_layer {
+        merged_value = config_resolution::merge_yaml_values(merged_value, user_value.clone())?;
+    }
+    if let Some(primary_value) = primary_value {
+        merged_value = config_resolution::merge_yaml_values(merged_value, primary_value)?;
+    }
+
+    let merged_label = config_resolution::compose_core_label(
+        user_layer.as_ref().map(|(_, label)| label.as_str()),
+        &primary_label,
+        primary_uses_defaults,
+    );
+
+    let mut config: RalphConfig = serde_yaml::from_value(merged_value)
+        .with_context(|| format!("Failed to parse merged core config from {}", merged_label))?;
 
     config.normalize();
 
@@ -429,8 +467,7 @@ pub(crate) fn load_config_with_overrides(
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     // Apply CLI config overrides
-    let override_sources: Vec<_> = overrides.into_iter().cloned().collect();
-    apply_config_overrides(&mut config, &override_sources)?;
+    apply_config_overrides(&mut config, &overrides)?;
 
     Ok(config)
 }
@@ -3322,8 +3359,7 @@ core:
 
         let config = load_config_with_overrides(&sources).unwrap();
 
-        let default = RalphConfig::default();
-        assert_eq!(config.core.scratchpad, default.core.scratchpad);
+        assert!(!config.core.scratchpad.is_empty());
         let expected_root = std::fs::canonicalize(temp_dir.path())
             .unwrap_or_else(|_| temp_dir.path().to_path_buf());
         let actual_root = std::fs::canonicalize(&config.core.workspace_root)

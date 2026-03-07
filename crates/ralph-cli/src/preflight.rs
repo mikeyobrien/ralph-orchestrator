@@ -6,7 +6,7 @@ use ralph_core::{CheckResult, CheckStatus, PreflightReport, PreflightRunner, Ral
 use serde_yaml::{Mapping, Value};
 use tracing::{info, warn};
 
-use crate::{ConfigSource, HatsSource, presets};
+use crate::{ConfigSource, HatsSource, config_resolution, presets};
 
 #[derive(Parser, Debug)]
 pub struct PreflightArgs {
@@ -237,14 +237,23 @@ pub(crate) fn config_source_label(
         .iter()
         .find(|source| !matches!(source, ConfigSource::Override { .. }));
 
-    let core_label = match primary {
-        Some(ConfigSource::File(path)) => path.display().to_string(),
-        Some(ConfigSource::Builtin(name)) => format!("builtin:{}", name),
-        Some(ConfigSource::Remote(url)) => url.clone(),
-        Some(ConfigSource::Override { .. }) | None => {
-            crate::default_config_path().to_string_lossy().to_string()
+    let (primary_label, primary_uses_defaults) = match primary {
+        Some(ConfigSource::File(path)) => (path.display().to_string(), false),
+        Some(ConfigSource::Builtin(name)) => (format!("builtin:{}", name), false),
+        Some(ConfigSource::Remote(url)) => (url.clone(), false),
+        Some(ConfigSource::Override { .. }) => unreachable!("Overrides are filtered out"),
+        None => {
+            let default_path = crate::default_config_path();
+            let uses_defaults = !default_path.exists();
+            (default_path.display().to_string(), uses_defaults)
         }
     };
+
+    let core_label = config_resolution::compose_core_label(
+        config_resolution::user_config_label_if_exists().as_deref(),
+        &primary_label,
+        primary_uses_defaults,
+    );
 
     if let Some(source) = hats_source {
         format!("{} + hats:{}", core_label, source.label())
@@ -256,26 +265,28 @@ pub(crate) fn config_source_label(
 async fn load_core_value(
     config_sources: &[ConfigSource],
 ) -> Result<(Value, Vec<ConfigSource>, String)> {
-    let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
-        .iter()
-        .partition(|source| !matches!(source, ConfigSource::Override { .. }));
-    let overrides: Vec<ConfigSource> = overrides.into_iter().cloned().collect();
+    let (primary_sources, overrides) = config_resolution::split_config_sources(config_sources);
 
     if primary_sources.len() > 1 {
         warn!("Multiple config sources specified, using first one. Others ignored.");
     }
 
-    if let Some(source) = primary_sources.first() {
+    let user_layer = config_resolution::load_optional_user_config_value()?;
+
+    let (primary_value, primary_label, primary_uses_defaults) = if let Some(source) =
+        primary_sources.first()
+    {
         match source {
             ConfigSource::File(path) => {
                 if path.exists() {
+                    let label = path.display().to_string();
                     let content = std::fs::read_to_string(path)
-                        .with_context(|| format!("Failed to load config from {:?}", path))?;
-                    let value = parse_yaml_value(&content, &path.display().to_string())?;
-                    Ok((value, overrides, path.display().to_string()))
+                        .with_context(|| format!("Failed to load config from {}", label))?;
+                    let value = config_resolution::parse_yaml_value(&content, &label)?;
+                    (Some(value), label, false)
                 } else {
                     warn!("Config file {:?} not found, using defaults", path);
-                    Ok((default_core_value()?, overrides, path.display().to_string()))
+                    (None, path.display().to_string(), false)
                 }
             }
             ConfigSource::Builtin(name) => {
@@ -302,31 +313,43 @@ async fn load_core_value(
                     .await
                     .with_context(|| format!("Failed to read core config content from {}", url))?;
 
-                let value = parse_yaml_value(&content, url)?;
-                Ok((value, overrides, url.clone()))
+                let value = config_resolution::parse_yaml_value(&content, url)?;
+                (Some(value), url.clone(), false)
             }
             ConfigSource::Override { .. } => unreachable!("Partitioned out overrides"),
         }
     } else {
         let default_path = crate::default_config_path();
         if default_path.exists() {
-            let content = std::fs::read_to_string(&default_path).with_context(|| {
-                format!("Failed to load config from {}", default_path.display())
-            })?;
-            let value = parse_yaml_value(&content, &default_path.display().to_string())?;
-            Ok((value, overrides, default_path.display().to_string()))
+            let label = default_path.display().to_string();
+            let content = std::fs::read_to_string(&default_path)
+                .with_context(|| format!("Failed to load config from {}", label))?;
+            let value = config_resolution::parse_yaml_value(&content, &label)?;
+            (Some(value), label, false)
         } else {
             warn!(
                 "Config file {} not found, using defaults",
                 default_path.display()
             );
-            Ok((
-                default_core_value()?,
-                overrides,
-                default_path.display().to_string(),
-            ))
+            (None, default_path.display().to_string(), true)
         }
+    };
+
+    let mut merged = config_resolution::default_core_value()?;
+    if let Some((user_value, _)) = &user_layer {
+        merged = config_resolution::merge_yaml_values(merged, user_value.clone())?;
     }
+    if let Some(primary_value) = primary_value {
+        merged = config_resolution::merge_yaml_values(merged, primary_value)?;
+    }
+
+    let merged_label = config_resolution::compose_core_label(
+        user_layer.as_ref().map(|(_, label)| label.as_str()),
+        &primary_label,
+        primary_uses_defaults,
+    );
+
+    Ok((merged, overrides, merged_label))
 }
 
 async fn load_hats_value(source: &HatsSource) -> Result<Value> {
@@ -337,7 +360,7 @@ async fn load_hats_value(source: &HatsSource) -> Result<Value> {
             }
             let content = std::fs::read_to_string(path)
                 .with_context(|| format!("Failed to load hats from {:?}", path))?;
-            let value = parse_yaml_value(&content, &path.display().to_string())?;
+            let value = config_resolution::parse_yaml_value(&content, &path.display().to_string())?;
             normalize_hats_source_value(value, &path.display().to_string())
         }
         HatsSource::Remote(url) => {
@@ -359,7 +382,7 @@ async fn load_hats_value(source: &HatsSource) -> Result<Value> {
                 .await
                 .with_context(|| format!("Failed to read hats config content from {}", url))?;
 
-            let value = parse_yaml_value(&content, url)?;
+            let value = config_resolution::parse_yaml_value(&content, url)?;
             normalize_hats_source_value(value, url)
         }
         HatsSource::Builtin(name) => {
@@ -372,14 +395,11 @@ async fn load_hats_value(source: &HatsSource) -> Result<Value> {
                 )
             })?;
 
-            let preset_value = parse_yaml_value(preset.content, &format!("builtin:{}", name))?;
+            let preset_value =
+                config_resolution::parse_yaml_value(preset.content, &format!("builtin:{}", name))?;
             extract_hat_overlay_from_preset(preset_value)
         }
     }
-}
-
-fn parse_yaml_value(content: &str, label: &str) -> Result<Value> {
-    serde_yaml::from_str(content).with_context(|| format!("Failed to parse YAML from {}", label))
 }
 
 fn normalize_hats_source_value(value: Value, label: &str) -> Result<Value> {
@@ -411,20 +431,6 @@ fn normalize_hats_source_value(value: Value, label: &str) -> Result<Value> {
         label,
         disallowed.join(", ")
     )
-}
-
-fn default_core_value() -> Result<Value> {
-    let mut value = serde_yaml::to_value(RalphConfig::default())
-        .context("Failed to build default core config")?;
-
-    if let Some(mapping) = value.as_mapping_mut() {
-        let hats_key = Value::String("hats".to_string());
-        let events_key = Value::String("events".to_string());
-        mapping.remove(&hats_key);
-        mapping.remove(&events_key);
-    }
-
-    Ok(value)
 }
 
 fn mapping_get<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a Value> {
@@ -573,11 +579,22 @@ mod tests {
             ))],
             None,
         );
-        assert_eq!(file_label, "/tmp/ralph.yml");
+        let user_label = crate::config_resolution::user_config_label_if_exists();
+        let expected_file_label = crate::config_resolution::compose_core_label(
+            user_label.as_deref(),
+            "/tmp/ralph.yml",
+            false,
+        );
+        assert_eq!(file_label, expected_file_label);
 
         let builtin_label =
             config_source_label(&[ConfigSource::Builtin("starter".to_string())], None);
-        assert_eq!(builtin_label, "builtin:starter");
+        let expected_builtin_label = crate::config_resolution::compose_core_label(
+            user_label.as_deref(),
+            "builtin:starter",
+            false,
+        );
+        assert_eq!(builtin_label, expected_builtin_label);
 
         let remote_label = config_source_label(
             &[ConfigSource::Remote(
@@ -585,7 +602,12 @@ mod tests {
             )],
             None,
         );
-        assert_eq!(remote_label, "https://example.com/ralph.yml");
+        let expected_remote_label = crate::config_resolution::compose_core_label(
+            user_label.as_deref(),
+            "https://example.com/ralph.yml",
+            false,
+        );
+        assert_eq!(remote_label, expected_remote_label);
 
         let override_label = config_source_label(
             &[ConfigSource::Override {
@@ -594,13 +616,24 @@ mod tests {
             }],
             None,
         );
-        assert_eq!(override_label, "ralph.yml");
+        let default_label = crate::default_config_path().to_string_lossy().to_string();
+        let expected_override_label = crate::config_resolution::compose_core_label(
+            user_label.as_deref(),
+            &default_label,
+            !crate::default_config_path().exists(),
+        );
+        assert_eq!(override_label, expected_override_label);
 
         let with_hats_label = config_source_label(
             &[ConfigSource::File(std::path::PathBuf::from("ralph.yml"))],
             Some(&HatsSource::Builtin("feature".to_string())),
         );
-        assert_eq!(with_hats_label, "ralph.yml + hats:builtin:feature");
+        let expected_core =
+            crate::config_resolution::compose_core_label(user_label.as_deref(), "ralph.yml", false);
+        assert_eq!(
+            with_hats_label,
+            format!("{expected_core} + hats:builtin:feature")
+        );
     }
 
     #[test]
