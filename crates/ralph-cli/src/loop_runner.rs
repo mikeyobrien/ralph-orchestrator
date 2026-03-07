@@ -305,8 +305,12 @@ pub async fn run_loop_impl(
         // In autonomous (non-interactive) mode, use a very wide PTY to prevent
         // line wrapping of long NDJSON output (Pi emits 800+ char JSON lines that
         // get garbled when the PTY wraps at 80 columns).
+        // On Windows, ConPTY does not support extreme widths (>~9000), so cap at 500
+        // which is sufficient to prevent NDJSON wrapping without crashing ConPTY.
         let cols = if user_interactive {
             PtyConfig::from_env().cols
+        } else if cfg!(windows) {
+            500
         } else {
             32768
         };
