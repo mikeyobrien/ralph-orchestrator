@@ -97,7 +97,10 @@ pub async fn run_loop_impl(
         false
     };
     // Always use PTY for real-time streaming output (vs buffered CliExecutor)
-    let use_pty = true;
+    // Exception: On Windows, ConPTY silently drops output from cmd.exe /c wrapped
+    // processes (npm-installed CLIs). Fall back to pipe-based CliExecutor when TUI
+    // is not needed. TUI mode still requires PTY for terminal emulation.
+    let use_pty = if cfg!(windows) { enable_tui } else { true };
 
     // Set up interrupt channel for signal handling
     // Per spec:

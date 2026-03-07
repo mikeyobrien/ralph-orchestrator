@@ -61,8 +61,23 @@ impl CliExecutor {
         // For large prompts (>7000 chars), Claude reads from the temp file.
         let (cmd, args, stdin_input, _temp_file) = self.backend.build_command(prompt, false);
 
-        let mut command = Command::new(&cmd);
-        command.args(&args);
+        // On Windows, npm-installed CLIs (claude, gemini, etc.) are .cmd shims
+        // that tokio::process::Command cannot find directly. Wrap with cmd.exe /c
+        // to let the Windows command processor resolve these.
+        #[cfg(windows)]
+        let mut command = {
+            let mut c = Command::new("cmd.exe");
+            c.arg("/c");
+            c.arg(&cmd);
+            c.args(&args);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut c = Command::new(&cmd);
+            c.args(&args);
+            c
+        };
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 
