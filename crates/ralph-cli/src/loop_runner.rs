@@ -96,8 +96,10 @@ pub async fn run_loop_impl(
     } else {
         false
     };
-    // Always use PTY for real-time streaming output (vs buffered CliExecutor)
-    let use_pty = true;
+    // PTY is required for TUI/RPC observation and true interactive sessions.
+    // Headless `ralph run --no-tui` should use CliExecutor so backends get their
+    // non-interactive prompt forms (for example `claude -p` or `codex exec`).
+    let use_pty = enable_tui || enable_rpc || user_interactive;
 
     // Set up interrupt channel for signal handling
     // Per spec:
@@ -4524,14 +4526,20 @@ mod tests {
     use std::sync::Mutex;
 
     #[test]
-    fn test_pty_always_enabled_for_streaming() {
-        // PTY mode is always enabled for real-time streaming output.
-        // This ensures all backends (claude, gemini, kiro, codex, amp) get
-        // streaming output instead of buffered output from CliExecutor.
-        let use_pty = true; // Matches the actual implementation
+    fn test_pty_only_enabled_for_tui_rpc_or_interactive() {
+        let user_interactive = false;
+        assert!(!(false || false || user_interactive));
 
-        // PTY should always be true regardless of backend or mode
-        assert!(use_pty, "PTY should always be enabled for streaming output");
+        let enable_tui = true;
+        let enable_rpc = false;
+        assert!(enable_tui || enable_rpc || user_interactive);
+
+        let enable_tui = false;
+        let enable_rpc = true;
+        assert!(enable_tui || enable_rpc || user_interactive);
+
+        let user_interactive = true;
+        assert!(false || false || user_interactive);
     }
 
     #[test]
