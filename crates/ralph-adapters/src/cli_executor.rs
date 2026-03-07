@@ -121,12 +121,16 @@ impl CliExecutor {
         // Read stdout and stderr CONCURRENTLY to avoid pipe buffer deadlock
         let stream_result = async {
             // Create futures for reading both streams
+            // stdout: write each line in real-time for streaming visibility
             let stdout_future = async {
                 let mut lines_out = Vec::new();
                 if let Some(stdout) = stdout_handle {
                     let reader = BufReader::new(stdout);
                     let mut lines = reader.lines();
                     while let Some(line) = lines.next_line().await? {
+                        // Write each line immediately for real-time streaming
+                        writeln!(output_writer, "{line}")?;
+                        let _ = output_writer.flush();
                         lines_out.push(line);
                     }
                 }
@@ -147,11 +151,6 @@ impl CliExecutor {
 
             // Read both streams concurrently to prevent deadlock
             let (stdout_lines, stderr_lines) = tokio::try_join!(stdout_future, stderr_future)?;
-
-            // Write stdout lines first (main output)
-            for line in &stdout_lines {
-                writeln!(output_writer, "{line}")?;
-            }
 
             // Write stderr lines (prefixed) only in verbose mode
             if verbose {
