@@ -14,6 +14,7 @@ Deep dives into Ralph's internals and advanced usage patterns.
 | [Testing & Validation](testing.md) | Smoke tests, E2E tests, TUI validation |
 | [Diagnostics](diagnostics.md) | Debug with full visibility |
 | [Parallel Loops](parallel-loops.md) | Run multiple loops concurrently with worktrees |
+| [Agent Waves](agent-waves.md) | Intra-loop parallelism for scatter-gather workflows |
 
 ## When to Read This
 

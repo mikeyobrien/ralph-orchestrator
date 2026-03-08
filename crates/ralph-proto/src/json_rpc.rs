@@ -337,6 +337,48 @@ pub enum RpcEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         target: Option<String>,
     },
+
+    /// A wave of parallel workers has started.
+    WaveStarted {
+        /// Hat display name.
+        hat_name: String,
+        /// Number of parallel workers.
+        worker_count: u32,
+        /// Timeout per worker in seconds.
+        timeout_secs: u64,
+    },
+
+    /// A wave worker has completed.
+    WaveWorkerDone {
+        /// Zero-based worker index.
+        index: u32,
+        /// Total workers in this wave.
+        total: u32,
+        /// Duration in milliseconds.
+        duration_ms: u64,
+        /// Whether the worker succeeded.
+        success: bool,
+        /// Preview of the worker's payload/role.
+        payload_preview: String,
+    },
+
+    /// Streaming text delta from a wave worker.
+    WaveWorkerTextDelta {
+        /// Zero-based worker index.
+        worker_index: u32,
+        /// The text chunk.
+        delta: String,
+    },
+
+    /// All wave workers have completed.
+    WaveCompleted {
+        /// Number of successful workers.
+        succeeded: usize,
+        /// Number of failed workers.
+        failed: usize,
+        /// Total duration in milliseconds.
+        duration_ms: u64,
+    },
 }
 
 impl RpcEvent {

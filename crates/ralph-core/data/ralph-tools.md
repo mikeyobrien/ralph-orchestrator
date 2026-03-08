@@ -58,6 +58,24 @@ ralph tools skill load <name>
 
 List available skills or load a specific skill by name.
 
+## Wave Commands
+
+Dispatch multiple events as a wave for parallel hat execution:
+
+```bash
+ralph wave emit <topic> --payloads "item1" "item2" "item3"
+```
+
+Each payload becomes a separate event tagged with a shared `wave_id`. The loop runner
+detects wave events and spawns parallel backend instances (up to the hat's `concurrency` limit).
+
+**When to use:** When a hat's configuration has `concurrency > 1`, use wave dispatch
+to send N items for parallel processing instead of N sequential iterations.
+
+**Constraints:**
+- Cannot be used inside a wave worker (`RALPH_WAVE_WORKER=1` blocks it)
+- Wave workers emit results via `ralph emit`, not `ralph wave emit`
+
 ## Memory Commands
 
 ```bash

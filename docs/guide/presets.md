@@ -54,6 +54,7 @@ When `-H/--hats` is provided, it takes precedence:
 | `research` | `presets/research.yml` | `researcher`, `synthesizer` | `research.start` | `RESEARCH_COMPLETE` | Exploration and analysis without code changes |
 | `review` | `presets/review.yml` | `reviewer`, `analyzer` | `review.start` | `REVIEW_COMPLETE` | Review-only workflow |
 | `spec-driven` | `presets/spec-driven.yml` | `spec_writer`, `spec_reviewer`, `implementer`, `verifier` | `spec.start` | `LOOP_COMPLETE` (default) | Specification-driven implementation |
+| `wave-review` | `presets/wave-review.yml` | `coordinator`, `reviewer` (x3), `synthesizer` | `review.start` | `LOOP_COMPLETE` | Specialized parallel code review (wave-enabled) |
 
 Notes:
 - If a collection omits `event_loop.completion_promise`, Ralph defaults to `LOOP_COMPLETE`.
@@ -97,7 +98,14 @@ Parallel perspectives merged into one result.
 
 Example: `pr-review`
 
-### 4) Extended End-to-End Orchestration
+### 4) Scatter-Gather (Waves)
+One hat dispatches, parallel workers execute, an aggregator synthesizes.
+
+Example: `wave-review`
+
+See [Agent Waves](../advanced/agent-waves.md) for details.
+
+### 5) Extended End-to-End Orchestration
 Large multi-stage pipelines from idea through implementation.
 
 Example: `pdd-to-code-assist`

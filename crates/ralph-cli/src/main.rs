@@ -35,6 +35,7 @@ mod task_cli;
 #[cfg(test)]
 mod test_support;
 mod tools;
+mod wave;
 mod web;
 
 use anyhow::{Context, Result};
@@ -550,6 +551,9 @@ enum Commands {
 
     /// Ralph's runtime tools (agent-facing)
     Tools(tools::ToolsArgs),
+
+    /// Dispatch wave events for parallel hat execution
+    Wave(wave::WaveArgs),
 
     /// Manage parallel loops
     Loops(loops::LoopsArgs),
@@ -1101,6 +1105,7 @@ async fn main() -> Result<()> {
             code_task_command(&config_sources, hats_source.as_ref(), cli.color, args).await
         }
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
+        Some(Commands::Wave(args)) => wave::execute(args, cli.color.should_use_colors()),
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
             hats::execute(
@@ -2334,24 +2339,39 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
 
     // Build the event record
     // We use serde_json directly to ensure proper escaping
-    let record = serde_json::json!({
+    let payload_value = if args.json && !payload.is_empty() {
+        // Parse and embed as object
+        serde_json::from_str::<serde_json::Value>(&payload)?
+    } else if payload.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(payload)
+    };
+
+    let mut record = serde_json::json!({
         "topic": args.topic,
-        "payload": if args.json && !payload.is_empty() {
-            // Parse and embed as object
-            serde_json::from_str::<serde_json::Value>(&payload)?
-        } else if payload.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::Value::String(payload)
-        },
+        "payload": payload_value,
         "ts": ts
     });
 
-    // Read events path from marker file, fall back to CLI arg if marker doesn't exist
-    // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = fs::read_to_string(".ralph/current-events")
-        .map(|s| PathBuf::from(s.trim()))
-        .unwrap_or_else(|_| args.file.clone());
+    // Auto-tag with wave metadata from env vars (set by loop runner on wave workers)
+    if let (Ok(wave_id), Ok(wave_index_str)) = (
+        std::env::var("RALPH_WAVE_ID"),
+        std::env::var("RALPH_WAVE_INDEX"),
+    ) && let Ok(wave_index) = wave_index_str.parse::<u32>()
+    {
+        record["wave_id"] = serde_json::Value::String(wave_id);
+        record["wave_index"] = serde_json::Value::Number(wave_index.into());
+    }
+
+    // Resolve events file: RALPH_EVENTS_FILE env > .ralph/current-events marker > CLI arg
+    let events_file = if let Ok(path) = std::env::var("RALPH_EVENTS_FILE") {
+        PathBuf::from(path)
+    } else {
+        fs::read_to_string(".ralph/current-events")
+            .map(|s| PathBuf::from(s.trim()))
+            .unwrap_or_else(|_| args.file.clone())
+    };
 
     // Ensure parent directory exists
     if let Some(parent) = events_file.parent()
