@@ -4,7 +4,7 @@
 
 use crate::config::CoreConfig;
 use crate::hat_registry::HatRegistry;
-use ralph_proto::Topic;
+use ralph_proto::{HatId, Topic};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -39,6 +39,10 @@ pub struct HatTopology {
 pub struct EventReceiver {
     pub name: String,
     pub description: String,
+    /// Hat ID for looking up config (e.g., concurrency settings).
+    pub hat_id: HatId,
+    /// Maximum concurrent wave instances for this hat (1 = sequential).
+    pub concurrency: u32,
 }
 
 /// Information about a hat for prompt generation.
@@ -94,6 +98,56 @@ impl HatInfo {
 
         Some(guide)
     }
+
+    /// Generates a Wave Dispatch section when downstream hats support parallel execution.
+    ///
+    /// Shows a table of wave-capable topics and usage instructions for `ralph wave emit`.
+    /// Returns empty string if no downstream hats have `concurrency > 1`.
+    pub fn wave_dispatch_section(&self) -> String {
+        // Collect wave-capable downstream topics
+        let mut wave_topics: Vec<(&str, &str, u32)> = Vec::new();
+        for pub_event in &self.publishes {
+            if let Some(receivers) = self.event_receivers.get(pub_event) {
+                for recv in receivers {
+                    if recv.concurrency > 1 {
+                        wave_topics.push((pub_event.as_str(), &recv.name, recv.concurrency));
+                    }
+                }
+            }
+        }
+
+        if wave_topics.is_empty() {
+            return String::new();
+        }
+
+        let mut section = String::from("### Wave Dispatch (Parallel Execution)\n\n");
+        section.push_str(
+            "Some downstream hats support parallel execution via waves. \
+             Use `ralph wave emit` to dispatch multiple items for concurrent processing.\n\n",
+        );
+
+        section.push_str("| Topic | Activates | Max Concurrent |\n");
+        section.push_str("|-------|-----------|----------------|\n");
+        for (topic, hat_name, concurrency) in &wave_topics {
+            section.push_str(&format!(
+                "| `{}` | {} | {} |\n",
+                topic, hat_name, concurrency
+            ));
+        }
+        section.push('\n');
+
+        // Usage example with the first wave topic
+        if let Some((topic, _, _)) = wave_topics.first() {
+            section.push_str("**Usage:**\n```bash\n");
+            section.push_str(&format!(
+                "ralph wave emit {} --payloads \"item1\" \"item2\" \"item3\"\n",
+                topic
+            ));
+            section.push_str("```\n\n");
+        }
+
+        section
+    }
 }
 
 impl HatTopology {
@@ -111,9 +165,17 @@ impl HatTopology {
                             .subscribers(pub_topic)
                             .into_iter()
                             .filter(|h| h.id != hat.id) // Exclude self
-                            .map(|h| EventReceiver {
-                                name: h.name.clone(),
-                                description: h.description.clone(),
+                            .map(|h| {
+                                let concurrency = registry
+                                    .get_config(&h.id)
+                                    .map(|c| c.concurrency)
+                                    .unwrap_or(1);
+                                EventReceiver {
+                                    name: h.name.clone(),
+                                    description: h.description.clone(),
+                                    hat_id: h.id.clone(),
+                                    concurrency,
+                                }
                             })
                             .collect();
                         (pub_topic.as_str().to_string(), receivers)
@@ -688,6 +750,14 @@ You MUST continue until all tasks are `[x]` or `[~]`.
                 if let Some(guide) = hat_info.and_then(|info| info.event_publishing_guide()) {
                     section.push_str(&guide);
                     section.push('\n');
+                }
+
+                // Add Wave Dispatch section when downstream hats support concurrency > 1
+                if let Some(info) = hat_info {
+                    let wave_dispatch = info.wave_dispatch_section();
+                    if !wave_dispatch.is_empty() {
+                        section.push_str(&wave_dispatch);
+                    }
                 }
 
                 // Add Tool Restrictions section (prompt-level enforcement)

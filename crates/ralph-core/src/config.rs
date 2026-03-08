@@ -469,6 +469,21 @@ impl RalphConfig {
             }
         }
 
+        // Check wave config validity
+        for (hat_id, hat_config) in &self.hats {
+            if hat_config.concurrency == 0 {
+                return Err(ConfigError::InvalidConcurrency {
+                    hat: hat_id.clone(),
+                    value: 0,
+                });
+            }
+            if hat_config.aggregate.is_some() && hat_config.concurrency > 1 {
+                return Err(ConfigError::AggregateOnConcurrentHat {
+                    hat: hat_id.clone(),
+                });
+            }
+        }
+
         // Check for reserved triggers: task.start and task.resume are reserved for Ralph
         // Per design: Ralph coordinates first, then delegates to custom hats via events
         const RESERVED_TRIGGERS: &[&str] = &["task.start", "task.resume"];
@@ -1722,6 +1737,51 @@ pub struct HatConfig {
     /// `Edit` or `Write` are disallowed (hard enforcement via scope_violation event).
     #[serde(default)]
     pub disallowed_tools: Vec<String>,
+
+    /// Execution timeout in seconds for this hat.
+    ///
+    /// For wave workers, this controls how long each parallel worker can run.
+    /// Defaults to the adapter-level timeout (typically 300s) if not set.
+    #[serde(default)]
+    pub timeout: Option<u32>,
+
+    /// Maximum concurrent wave instances for this hat.
+    ///
+    /// When > 1, the loop runner spawns multiple backend instances in parallel
+    /// for wave events targeting this hat. Default is 1 (sequential execution).
+    #[serde(default = "default_concurrency")]
+    pub concurrency: u32,
+
+    /// Aggregation configuration for this hat.
+    ///
+    /// When set, this hat acts as an aggregator — it buffers wave results and
+    /// activates only when all correlated results have arrived (or timeout).
+    /// Cannot be set on a hat with `concurrency > 1`.
+    #[serde(default)]
+    pub aggregate: Option<AggregateConfig>,
+}
+
+fn default_concurrency() -> u32 {
+    1
+}
+
+/// Configuration for wave result aggregation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregateConfig {
+    /// Aggregation mode.
+    pub mode: AggregateMode,
+
+    /// Timeout in seconds for waiting on all wave results.
+    /// After this timeout, the aggregator activates with whatever results are available.
+    pub timeout: u32,
+}
+
+/// Aggregation mode for wave results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateMode {
+    /// Wait for all wave instances to complete before activating the aggregator.
+    WaitForAll,
 }
 
 impl HatConfig {
@@ -1904,6 +1964,16 @@ pub enum ConfigError {
         "Invalid config key 'project'. Use 'core' instead (e.g. 'core.specs_dir' instead of 'project.specs_dir').\nSee: docs/guide/configuration.md"
     )]
     DeprecatedProjectKey,
+
+    #[error(
+        "Hat '{hat}' has invalid concurrency: {value}. Must be >= 1.\nFix: set 'concurrency' to 1 or higher."
+    )]
+    InvalidConcurrency { hat: String, value: u32 },
+
+    #[error(
+        "Hat '{hat}' has both 'aggregate' and 'concurrency > 1'. An aggregator hat cannot also be a concurrent worker.\nFix: remove 'aggregate' or set 'concurrency' to 1."
+    )]
+    AggregateOnConcurrentHat { hat: String },
 }
 
 #[cfg(test)]
@@ -3410,5 +3480,136 @@ hats:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let hat = config.hats.get("simple").unwrap();
         assert!(hat.extra_instructions.is_empty());
+    }
+
+    // ── Wave config tests (Step 2: HatConfig extensions) ──
+
+    #[test]
+    fn test_wave_config_concurrency_and_aggregate_parse() {
+        let yaml = r#"
+hats:
+  reviewer:
+    name: "Reviewer"
+    description: "Reviews files in parallel"
+    triggers: ["review.file"]
+    publishes: ["review.done"]
+    instructions: "Review the file."
+    concurrency: 3
+  aggregator:
+    name: "Aggregator"
+    description: "Aggregates review results"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    instructions: "Aggregate results."
+    aggregate:
+      mode: wait_for_all
+      timeout: 600
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        let reviewer = config.hats.get("reviewer").unwrap();
+        assert_eq!(reviewer.concurrency, 3);
+        assert!(reviewer.aggregate.is_none());
+
+        let aggregator = config.hats.get("aggregator").unwrap();
+        assert_eq!(aggregator.concurrency, 1); // default
+        let agg = aggregator.aggregate.as_ref().unwrap();
+        assert!(matches!(agg.mode, AggregateMode::WaitForAll));
+        assert_eq!(agg.timeout, 600);
+    }
+
+    #[test]
+    fn test_wave_config_defaults_without_new_fields() {
+        // Existing YAML without concurrency/aggregate should parse with defaults
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "Builds code"
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+    instructions: "Build stuff."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("builder").unwrap();
+        assert_eq!(hat.concurrency, 1);
+        assert!(hat.aggregate.is_none());
+    }
+
+    #[test]
+    fn test_wave_config_concurrency_zero_rejected() {
+        let yaml = r#"
+hats:
+  worker:
+    name: "Worker"
+    description: "Parallel worker"
+    triggers: ["work.item"]
+    publishes: ["work.done"]
+    instructions: "Do work."
+    concurrency: 0
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::InvalidConcurrency { hat, .. } if hat == "worker"),
+            "Expected InvalidConcurrency error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_wave_config_aggregate_on_concurrent_hat_rejected() {
+        // A hat cannot be both concurrent (concurrency > 1) and an aggregator
+        let yaml = r#"
+hats:
+  hybrid:
+    name: "Hybrid"
+    description: "Invalid: both concurrent and aggregator"
+    triggers: ["work.item"]
+    publishes: ["work.done"]
+    instructions: "Invalid config."
+    concurrency: 3
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::AggregateOnConcurrentHat { hat, .. } if hat == "hybrid"),
+            "Expected AggregateOnConcurrentHat error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_wave_config_aggregate_on_non_concurrent_hat_valid() {
+        // Aggregate on a hat with concurrency=1 (default) is valid
+        let yaml = r#"
+hats:
+  aggregator:
+    name: "Aggregator"
+    description: "Collects results"
+    triggers: ["work.done"]
+    publishes: ["work.complete"]
+    instructions: "Aggregate."
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+
+        assert!(
+            result.is_ok(),
+            "Aggregate on non-concurrent hat should be valid: {:?}",
+            result.unwrap_err()
+        );
     }
 }

@@ -1,0 +1,136 @@
+# Wave Review: Parallel Specialized Code Review
+# Pattern: Dispatch specialized review perspectives as a wave, synthesize findings
+#
+# 3 Hats:
+# - Coordinator: Reads the prompt and dispatches specialized reviewers as a wave
+# - Reviewer: Specialized reviewer running in parallel (concurrency: 3)
+# - Synthesizer: Aggregates findings from all reviewers into final report
+#
+# Usage:
+#   ralph run --hats presets/wave-review.yml --prompt "Review the authentication module"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "review.complete"
+  starting_event: "review.start"
+  max_iterations: 20
+  max_runtime_seconds: 3600
+
+cli:
+  backend: "claude"
+
+core:
+  guardrails:
+    - "Each reviewer stays in their specialty — do not review outside your domain"
+    - "Be specific: cite line numbers and concrete improvements"
+    - "Distinguish critical issues from suggestions"
+
+hats:
+  coordinator:
+    name: "📋 Coordinator"
+    description: "Reads the review scope and dispatches specialized reviewers as a wave."
+    triggers: ["review.start"]
+    publishes: ["review.perspective"]
+    instructions: |
+      ## COORDINATOR MODE — Dispatch Specialized Reviewers
+
+      Analyze the prompt to determine what to review, then dispatch specialized
+      review perspectives as a wave. Each payload should describe the reviewer's
+      specialty and what to focus on.
+
+      ### Process
+      1. Read the prompt to understand review scope
+      2. Identify what files and areas are involved
+      3. Dispatch specialized reviewers as a wave:
+
+      ```bash
+      ralph wave emit review.perspective --payloads \
+        "ROLE: Rust Reviewer. Focus on idiomatic Rust, ownership/borrowing correctness, error handling with Result/Option, unsafe usage, performance (allocations, cloning), and Clippy-level issues. Review all .rs files in scope." \
+        "ROLE: Frontend Reviewer. Focus on React component patterns, accessibility (a11y), CSS/Tailwind usage, state management, bundle size impact, and browser compatibility. Review all frontend code in scope." \
+        "ROLE: Documentation Reviewer. Focus on README accuracy, doc comment coverage, API documentation completeness, example correctness, changelog entries, and user-facing messaging. Review all docs and comments in scope."
+      ```
+
+      ### Constraints
+      - Always dispatch at least 2 specialized reviewers
+      - Each payload must clearly state the reviewer's ROLE and FOCUS area
+      - Tailor the specialties to the code being reviewed
+      - You may substitute or add specialties (e.g., Security, Database, API Design) based on what's relevant
+      - IMPORTANT: You MUST use `ralph wave emit` to dispatch reviewers. Do NOT use the Agent tool or any other parallelism mechanism. The wave system handles parallel execution.
+
+  reviewer:
+    name: "🔍 Reviewer"
+    description: "A specialized reviewer examining code from one expert perspective."
+    triggers: ["review.perspective"]
+    publishes: ["review.done"]
+    concurrency: 3
+    timeout: 600
+    instructions: |
+      ## REVIEWER MODE — Specialized Review
+
+      You are a specialized code reviewer. Your payload describes your ROLE and
+      FOCUS area. Review the codebase strictly from that perspective.
+
+      ### Process
+      1. Read your assigned role and focus area from the event payload
+      2. Identify files relevant to your specialty
+      3. Review thoroughly from your expert perspective
+      4. Publish structured findings
+
+      ### Output Format
+      Publish your findings:
+      ```bash
+      ralph emit review.done "## [Your Role]\n\n### Critical\n- ...\n\n### Warnings\n- ...\n\n### Suggestions\n- ..."
+      ```
+
+      ### Constraints
+      - Stay in your lane: only review from your assigned perspective
+      - Be specific: cite file paths and line numbers
+      - Distinguish critical issues from nice-to-haves
+      - If your specialty has no relevant code in scope, say so briefly
+
+  synthesizer:
+    name: "📊 Synthesizer"
+    description: "Aggregates findings from all specialized reviewers into a unified report."
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    disallowed_tools: ["Read", "Glob", "Grep", "Edit"]
+    default_publishes: "review.complete"
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+    instructions: |
+      ## SYNTHESIZER MODE — Aggregate Review Findings
+
+      You are a pure aggregator. Your ONLY input is the review.done events in
+      PENDING EVENTS above. Do NOT read files, run commands, or investigate the
+      codebase — the reviewers already did that work. Your job is to organize
+      and present their findings.
+
+      ### Process
+      1. Read all review.done event payloads from PENDING EVENTS above
+      2. Categorize findings by severity (Critical / Warning / Suggestion)
+      3. Note where multiple reviewers flagged the same area
+      4. Identify cross-cutting themes
+      5. Write the report to `.ralph/agent/review-report.md`
+      6. Publish review.complete
+
+      ### Report Format
+      ```markdown
+      # Code Review Report
+
+      ## Summary
+      - Reviewers: [list specialties]
+      - Critical issues: N
+      - Warnings: N
+      - Suggestions: N
+
+      ## Critical Issues
+      Issues that must be fixed before merge.
+
+      ## Cross-Cutting Themes
+      Patterns noticed by multiple reviewers.
+
+      ## Per-Reviewer Details
+      ### [Reviewer Role]
+      ...
+      ```

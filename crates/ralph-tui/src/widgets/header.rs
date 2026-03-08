@@ -35,7 +35,18 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
     let mut left_spans = vec![];
 
     // Priority 1: Iteration counter or status indicator - ALWAYS shown
-    if state.subprocess_error.is_some() {
+    if state.wave_view_active {
+        // Wave view: show [worker N/M] instead of [iter N/M]
+        let total = state
+            .wave_info_for_wave_view()
+            .map(|w| w.total)
+            .unwrap_or(0);
+        let worker_display = format!("[worker {}/{}]", state.wave_view_index + 1, total);
+        left_spans.push(Span::styled(
+            worker_display,
+            Style::default().fg(Color::Magenta),
+        ));
+    } else if state.subprocess_error.is_some() {
         left_spans.push(Span::styled(
             "[ERROR]".to_string(),
             Style::default().fg(Color::Red),
@@ -58,14 +69,20 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
         left_spans.push(Span::raw(iter_display));
     }
 
-    // Priority 4: Elapsed time (iteration) - hidden at WIDTH_COMPRESS and below
-    if let Some(elapsed) = state.get_iteration_elapsed()
-        && width > WIDTH_COMPRESS
-    {
-        let total_secs = elapsed.as_secs();
-        let mins = total_secs / 60;
-        let secs = total_secs % 60;
-        left_spans.push(Span::raw(format!(" {mins:02}:{secs:02}")));
+    // Priority 4: Elapsed time (iteration or wave) - hidden at WIDTH_COMPRESS and below
+    if width > WIDTH_COMPRESS {
+        let elapsed = if let Some(ref wave) = state.wave_active {
+            // Live wave timer replaces the iteration timer
+            Some(wave.started_at.elapsed())
+        } else {
+            state.get_iteration_elapsed()
+        };
+        if let Some(elapsed) = elapsed {
+            let total_secs = elapsed.as_secs();
+            let mins = total_secs / 60;
+            let secs = total_secs % 60;
+            left_spans.push(Span::raw(format!(" {mins:02}:{secs:02}")));
+        }
     }
 
     // Priority 3: Hat display - compressed at WIDTH_COMPRESS and below
@@ -90,7 +107,16 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
     };
     if width > WIDTH_COMPRESS {
         // Full hat display: "🔨 Builder"
-        left_spans.push(Span::raw(hat_with_backend));
+        // When a wave is active, show the wave hat name instead and append [wave N/M]
+        if let Some(ref wave) = state.wave_active {
+            left_spans.push(Span::raw(format!("{} ", wave.hat_name)));
+            left_spans.push(Span::styled(
+                format!("[wave {}/{}]", wave.completed, wave.total),
+                Style::default().fg(Color::Magenta),
+            ));
+        } else {
+            left_spans.push(Span::raw(hat_with_backend));
+        }
     } else {
         // Compressed: emoji only (first character cluster)
         let emoji = hat_display.chars().next().unwrap_or('?');
@@ -105,9 +131,15 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
     }
 
     // Priority 2: Mode indicator - ALWAYS shown (compressed at WIDTH_COMPRESS and below)
-    // Shows [LIVE] when following latest iteration, [REVIEW] when viewing history
+    // Shows [WAVE] in wave view, [LIVE] when following latest, [REVIEW] when viewing history
     left_spans.push(Span::raw(" | "));
-    let mode = if state.following_latest {
+    let mode = if state.wave_view_active {
+        if width > WIDTH_COMPRESS {
+            Span::styled("[WAVE]", Style::default().fg(Color::Magenta))
+        } else {
+            Span::styled("W", Style::default().fg(Color::Magenta))
+        }
+    } else if state.following_latest {
         if width > WIDTH_COMPRESS {
             Span::styled("[LIVE]", Style::default().fg(Color::Green))
         } else {

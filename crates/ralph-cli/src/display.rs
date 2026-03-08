@@ -255,6 +255,121 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
     }
 }
 
+/// Prints the wave header separator when a wave is detected.
+///
+/// Format:
+/// ```text
+/// ── WAVE: 🔍 Reviewer | 3 workers | timeout 600s ─────────────────────────────
+/// ```
+pub fn print_wave_header(hat_name: &str, worker_count: usize, timeout_secs: u64, use_colors: bool) {
+    use colors::*;
+
+    let emoji = hat_emoji(hat_name);
+    let content = format!(
+        " WAVE: {} {} | {} workers | timeout {}s ",
+        emoji, hat_name, worker_count, timeout_secs
+    );
+
+    let box_width = 79;
+    let content_len = content.len();
+    let pad = if content_len + 2 < box_width {
+        box_width - content_len - 2
+    } else {
+        0
+    };
+
+    if use_colors {
+        eprintln!("\n{BOLD}{MAGENTA}──{content}{}{RESET}", "─".repeat(pad));
+    } else {
+        eprintln!("\n──{content}{}", "─".repeat(pad));
+    }
+}
+
+/// Prints a per-worker completion line as each wave worker finishes.
+///
+/// Format:
+/// ```text
+///   ✓ Worker 1/3 done (45s) — ROLE: Rust Reviewer. Focus on ...
+///   ✗ Worker 3/3 failed (600s) — ROLE: Documentation Reviewer. Focus on ...
+/// ```
+pub fn print_wave_worker_done(
+    index: u32,
+    total: u32,
+    duration: Duration,
+    success: bool,
+    payload_preview: &str,
+    use_colors: bool,
+) {
+    use colors::*;
+
+    let elapsed = format_elapsed(duration);
+    let status_word = if success { "done" } else { "failed" };
+    let preview = truncate(payload_preview, 60);
+
+    if use_colors {
+        let (icon, color) = if success {
+            ("✓", GREEN)
+        } else {
+            ("✗", RED)
+        };
+        eprintln!(
+            "  {color}{BOLD}{icon}{RESET} Worker {}/{} {} ({}) — {}",
+            index + 1,
+            total,
+            status_word,
+            elapsed,
+            preview
+        );
+    } else {
+        let icon = if success { "✓" } else { "✗" };
+        eprintln!(
+            "  {} Worker {}/{} {} ({}) — {}",
+            icon,
+            index + 1,
+            total,
+            status_word,
+            elapsed,
+            preview
+        );
+    }
+}
+
+/// Prints the wave summary separator after all workers finish.
+///
+/// Format:
+/// ```text
+/// ── Wave complete: 2 succeeded, 1 failed (52s) ────────────────────────────────
+/// ```
+pub fn print_wave_summary(
+    succeeded: usize,
+    failed: usize,
+    total_duration: Duration,
+    use_colors: bool,
+) {
+    use colors::*;
+
+    let elapsed = format_elapsed(total_duration);
+    let content = format!(
+        " Wave complete: {} succeeded, {} failed ({}) ",
+        succeeded, failed, elapsed
+    );
+
+    let box_width = 79;
+    let content_len = content.len();
+    let pad = if content_len + 2 < box_width {
+        box_width - content_len - 2
+    } else {
+        0
+    };
+
+    if use_colors {
+        let summary_color = if failed > 0 { YELLOW } else { GREEN };
+        eprintln!("{BOLD}{summary_color}──{content}{}{RESET}", "─".repeat(pad));
+    } else {
+        eprintln!("──{content}{}", "─".repeat(pad));
+    }
+}
+
 /// Builds a map of event topics to hat display information for the TUI.
 ///
 /// This allows the TUI to dynamically resolve which hat should be displayed
@@ -337,6 +452,9 @@ mod tests {
             triggered: None,
             payload,
             blocked_count: None,
+            wave_id: None,
+            wave_index: None,
+            wave_total: None,
         };
 
         print_events_table(&[record], false);
@@ -354,6 +472,9 @@ mod tests {
             triggered: None,
             payload: "ok".to_string(),
             blocked_count: None,
+            wave_id: None,
+            wave_index: None,
+            wave_total: None,
         };
 
         print_events_table(&[record], false);

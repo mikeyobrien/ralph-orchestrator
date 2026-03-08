@@ -124,6 +124,54 @@ pub enum UpdateStatus {
     Available { latest: String },
 }
 
+// ============================================================================
+// WaveInfo - Active wave tracking for TUI header display
+// ============================================================================
+
+/// Tracks active wave execution for header display and per-worker output.
+///
+/// Manual `Debug` impl because `worker_buffers` contains `Arc<Mutex<>>` fields.
+pub struct WaveInfo {
+    pub hat_name: String,
+    pub total: u32,
+    pub completed: u32,
+    pub started_at: Instant,
+    /// Per-worker output buffers (indexed by worker_index).
+    pub worker_buffers: Vec<IterationBuffer>,
+}
+
+impl std::fmt::Debug for WaveInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WaveInfo")
+            .field("hat_name", &self.hat_name)
+            .field("total", &self.total)
+            .field("completed", &self.completed)
+            .field("started_at", &self.started_at)
+            .field("worker_buffers_len", &self.worker_buffers.len())
+            .finish()
+    }
+}
+
+impl WaveInfo {
+    /// Creates a new WaveInfo with N empty worker buffers.
+    pub fn new(hat_name: String, total: u32) -> Self {
+        let worker_buffers = (0..total)
+            .map(|i| {
+                let mut buf = IterationBuffer::new(i + 1);
+                buf.hat_display = Some(format!("Worker {}/{}", i + 1, total));
+                buf
+            })
+            .collect();
+        Self {
+            hat_name,
+            total,
+            completed: 0,
+            started_at: Instant::now(),
+            worker_buffers,
+        }
+    }
+}
+
 /// Observable state derived from loop events.
 pub struct TuiState {
     /// Which hat will process next event (ID + display name).
@@ -199,6 +247,20 @@ pub struct TuiState {
     pub active_task: Option<TaskSummary>,
 
     // ========================================================================
+    // Wave State
+    // ========================================================================
+    /// Active wave info for header display (only set while a wave is running).
+    pub wave_active: Option<WaveInfo>,
+    /// Index into `iterations` that the active wave belongs to.
+    /// Used by `wave_info_for_view()` to only return `wave_active` when viewing
+    /// the specific iteration that owns the running wave.
+    pub wave_active_iteration_idx: Option<usize>,
+    /// Whether the wave worker drill-down view is active.
+    pub wave_view_active: bool,
+    /// Index of the worker currently being viewed in wave view (0-indexed).
+    pub wave_view_index: usize,
+
+    // ========================================================================
     // Guidance State
     // ========================================================================
     /// Active guidance input mode (None when not entering guidance).
@@ -267,6 +329,11 @@ impl TuiState {
             // Task tracking state
             task_counts: TaskCounts::default(),
             active_task: None,
+            // Wave state
+            wave_active: None,
+            wave_active_iteration_idx: None,
+            wave_view_active: false,
+            wave_view_index: 0,
             // Guidance state
             guidance_mode: None,
             guidance_input: String::new(),
@@ -284,49 +351,9 @@ impl TuiState {
     /// Creates state with a custom hat map for dynamic topic-to-hat resolution.
     /// Timer starts immediately at creation.
     pub fn with_hat_map(hat_map: HashMap<String, (HatId, String)>) -> Self {
-        Self {
-            pending_hat: None,
-            pending_backend: None,
-            iteration: 0,
-            prev_iteration: 0,
-            loop_started: Some(Instant::now()),
-            iteration_started: None,
-            last_event: None,
-            last_event_at: None,
-            show_help: false,
-            in_scroll_mode: false,
-            search_query: String::new(),
-            search_forward: true,
-            max_iterations: None,
-            idle_timeout_remaining: None,
-            update_status: UpdateStatus::Unknown,
-            hat_map,
-            // Iteration management
-            iterations: Vec::new(),
-            current_view: 0,
-            following_latest: true,
-            new_iteration_alert: None,
-            // Search state
-            search_state: SearchState::new(),
-            // Completion state
-            loop_completed: false,
-            final_iteration_elapsed: None,
-            final_loop_elapsed: None,
-            // Task tracking state
-            task_counts: TaskCounts::default(),
-            active_task: None,
-            // Guidance state
-            guidance_mode: None,
-            guidance_input: String::new(),
-            guidance_next_queue: Arc::new(Mutex::new(Vec::new())),
-            events_path: None,
-            guidance_flash: None,
-            // Subprocess error state
-            subprocess_error: None,
-            // RPC text accumulation state
-            rpc_text_buffer: String::new(),
-            rpc_text_line_count: 0,
-        }
+        let mut state = Self::new();
+        state.hat_map = hat_map;
+        state
     }
 
     /// Updates state based on event topic.
@@ -528,6 +555,15 @@ impl TuiState {
         // Reset text accumulation buffer for the new iteration
         self.rpc_text_buffer.clear();
         self.rpc_text_line_count = 0;
+
+        // Exit wave view on new iteration — the user can re-enter with 'w'.
+        // Wave data is preserved per-iteration on the IterationBuffer, so users
+        // can navigate to any iteration and press 'w' to review its wave workers.
+        self.wave_view_active = false;
+
+        // Resume the total loop timer — it gets frozen on build.done/build.blocked
+        // but should keep ticking when the next iteration starts.
+        self.final_loop_elapsed = None;
 
         let hat_display = hat_display.or_else(|| {
             self.pending_hat
@@ -876,6 +912,98 @@ impl TuiState {
     pub fn set_update_status(&mut self, status: UpdateStatus) {
         self.update_status = status;
     }
+
+    // ========================================================================
+    // Wave View Methods
+    // ========================================================================
+
+    /// Returns the WaveInfo to use for wave view.
+    ///
+    /// If viewing the iteration that owns the active wave, returns the live
+    /// `wave_active` (for real-time streaming). Otherwise returns the stored
+    /// wave data from the currently viewed iteration buffer.
+    fn wave_info_for_view(&self) -> Option<&WaveInfo> {
+        // Active wave takes priority when viewing its owning iteration
+        if let Some(wave_iter) = self.wave_active_iteration_idx
+            && self.current_view == wave_iter
+            && self.wave_active.is_some()
+        {
+            return self.wave_active.as_ref();
+        }
+        // Fall back to the per-iteration stored wave data
+        self.iterations
+            .get(self.current_view)
+            .and_then(|buf| buf.wave_info.as_ref())
+    }
+
+    /// Returns the WaveInfo to use for wave view (mutable).
+    fn wave_info_for_view_mut(&mut self) -> Option<&mut WaveInfo> {
+        if let Some(wave_iter) = self.wave_active_iteration_idx
+            && self.current_view == wave_iter
+            && self.wave_active.is_some()
+        {
+            return self.wave_active.as_mut();
+        }
+        let idx = self.current_view;
+        self.iterations
+            .get_mut(idx)
+            .and_then(|buf| buf.wave_info.as_mut())
+    }
+
+    /// Returns the WaveInfo for the current wave view (public, for header rendering).
+    pub fn wave_info_for_wave_view(&self) -> Option<&WaveInfo> {
+        self.wave_info_for_view()
+    }
+
+    /// Enters wave worker drill-down view. No-op if no wave data exists.
+    pub fn enter_wave_view(&mut self) {
+        if self.wave_info_for_view().is_some() {
+            self.wave_view_active = true;
+            self.wave_view_index = 0;
+        }
+    }
+
+    /// Exits wave worker drill-down view.
+    pub fn exit_wave_view(&mut self) {
+        self.wave_view_active = false;
+    }
+
+    /// Cycles to the next worker in wave view.
+    pub fn wave_view_next(&mut self) {
+        if let Some(wave) = self.wave_info_for_view() {
+            let total = wave.worker_buffers.len();
+            if total > 0 {
+                self.wave_view_index = (self.wave_view_index + 1) % total;
+            }
+        }
+    }
+
+    /// Cycles to the previous worker in wave view.
+    pub fn wave_view_prev(&mut self) {
+        if let Some(wave) = self.wave_info_for_view() {
+            let total = wave.worker_buffers.len();
+            if total > 0 {
+                if self.wave_view_index == 0 {
+                    self.wave_view_index = total - 1;
+                } else {
+                    self.wave_view_index -= 1;
+                }
+            }
+        }
+    }
+
+    /// Returns the current wave worker buffer (immutable) for rendering.
+    pub fn current_wave_worker_buffer(&self) -> Option<&IterationBuffer> {
+        self.wave_info_for_view()
+            .and_then(|w| w.worker_buffers.get(self.wave_view_index))
+    }
+
+    /// Returns the current wave worker buffer (mutable) for scrolling.
+    pub fn current_wave_worker_buffer_mut(&mut self) -> Option<&mut IterationBuffer> {
+        let idx = self.wave_view_index;
+        self.wave_info_for_view_mut()
+            .and_then(|w| w.worker_buffers.get_mut(idx))
+    }
 }
 
 impl Default for TuiState {
@@ -916,6 +1044,8 @@ pub struct IterationBuffer {
     pub started_at: Option<Instant>,
     /// Frozen elapsed duration for this iteration (set when completed).
     pub elapsed: Option<Duration>,
+    /// Wave data associated with this iteration (stored on wave completion).
+    pub wave_info: Option<WaveInfo>,
 }
 
 impl IterationBuffer {
@@ -930,6 +1060,7 @@ impl IterationBuffer {
             backend: None,
             started_at: None,
             elapsed: None,
+            wave_info: None,
         }
     }
 
@@ -2423,6 +2554,158 @@ mod tests {
             let queue = state.guidance_next_queue.lock().unwrap();
             assert_eq!(queue.len(), 1);
             assert_eq!(queue[0], "remember this");
+        }
+    }
+
+    // ========================================================================
+    // Wave View Per-Iteration Tests
+    // ========================================================================
+
+    mod wave_view {
+        use super::*;
+
+        /// Simulates wave lifecycle: start a wave on the given state,
+        /// then complete it, storing the data on the correct iteration.
+        fn simulate_wave(state: &mut TuiState, worker_count: u32) {
+            let iter_idx = state.iterations.len().saturating_sub(1);
+            state.wave_active = Some(WaveInfo::new("TestHat".to_string(), worker_count));
+            state.wave_active_iteration_idx = Some(iter_idx);
+            // Add some content to worker buffers
+            if let Some(ref wave) = state.wave_active {
+                for (i, buf) in wave.worker_buffers.iter().enumerate() {
+                    let handle = buf.lines_handle();
+                    if let Ok(mut lines) = handle.lock() {
+                        lines.push(Line::from(format!("Worker {} output", i + 1)));
+                    }
+                }
+            }
+            // Complete the wave — move to iteration buffer
+            let wave_iter_idx = state.wave_active_iteration_idx.take();
+            if let Some(wave) = state.wave_active.take() {
+                let target = wave_iter_idx.unwrap_or(0);
+                if let Some(buf) = state.iterations.get_mut(target) {
+                    buf.wave_info = Some(wave);
+                }
+            }
+        }
+
+        #[test]
+        fn wave_view_shows_correct_wave_for_historical_iteration() {
+            let mut state = TuiState::new();
+
+            // Iteration 1: wave with 5 workers
+            state.start_new_iteration();
+            simulate_wave(&mut state, 5);
+
+            // Iteration 2: wave with 3 workers
+            state.start_new_iteration();
+            simulate_wave(&mut state, 3);
+
+            // Navigate to iteration 1
+            state.navigate_prev();
+            assert_eq!(state.current_view, 0);
+
+            // Press 'w' — should show iteration 1's wave (5 workers)
+            state.enter_wave_view();
+            assert!(state.wave_view_active);
+
+            let wave = state.wave_info_for_wave_view().unwrap();
+            assert_eq!(
+                wave.total, 5,
+                "Should show 5 workers from iteration 1, not 3"
+            );
+            assert_eq!(wave.worker_buffers.len(), 5);
+        }
+
+        #[test]
+        fn wave_view_shows_active_wave_on_current_iteration() {
+            let mut state = TuiState::new();
+
+            // Iteration 1: completed wave with 5 workers
+            state.start_new_iteration();
+            simulate_wave(&mut state, 5);
+
+            // Iteration 2: active wave with 3 workers (not completed)
+            state.start_new_iteration();
+            state.wave_active = Some(WaveInfo::new("ActiveHat".to_string(), 3));
+            state.wave_active_iteration_idx = Some(1);
+
+            // Viewing iteration 2 (latest) — should see active wave
+            assert_eq!(state.current_view, 1);
+            state.enter_wave_view();
+            assert!(state.wave_view_active);
+
+            let wave = state.wave_info_for_wave_view().unwrap();
+            assert_eq!(wave.total, 3, "Should show active wave's 3 workers");
+        }
+
+        #[test]
+        fn wave_view_ignores_active_wave_when_viewing_historical() {
+            let mut state = TuiState::new();
+
+            // Iteration 1: completed wave with 5 workers
+            state.start_new_iteration();
+            simulate_wave(&mut state, 5);
+
+            // Iteration 2: active wave with 3 workers (not completed)
+            state.start_new_iteration();
+            state.wave_active = Some(WaveInfo::new("ActiveHat".to_string(), 3));
+            state.wave_active_iteration_idx = Some(1);
+
+            // Navigate back to iteration 1
+            state.navigate_prev();
+            assert_eq!(state.current_view, 0);
+
+            // Press 'w' — should show iteration 1's completed wave, NOT the active wave
+            state.enter_wave_view();
+            assert!(state.wave_view_active);
+
+            let wave = state.wave_info_for_wave_view().unwrap();
+            assert_eq!(
+                wave.total, 5,
+                "Must show historical iteration's 5 workers, not active wave's 3"
+            );
+        }
+
+        #[test]
+        fn wave_view_no_op_on_iteration_without_wave() {
+            let mut state = TuiState::new();
+
+            // Iteration 1: has a wave
+            state.start_new_iteration();
+            simulate_wave(&mut state, 3);
+
+            // Iteration 2: no wave
+            state.start_new_iteration();
+
+            // Viewing iteration 2 — pressing 'w' should be a no-op
+            state.enter_wave_view();
+            assert!(!state.wave_view_active);
+        }
+
+        #[test]
+        fn wave_worker_navigation_uses_correct_wave() {
+            let mut state = TuiState::new();
+
+            // Iteration 1: wave with 5 workers
+            state.start_new_iteration();
+            simulate_wave(&mut state, 5);
+
+            // Iteration 2: wave with 2 workers
+            state.start_new_iteration();
+            simulate_wave(&mut state, 2);
+
+            // Navigate to iteration 1 and enter wave view
+            state.navigate_prev();
+            state.enter_wave_view();
+
+            // Cycle through workers — should wrap at 5, not 2
+            for i in 0..5 {
+                assert_eq!(state.wave_view_index, i);
+                state.wave_view_next();
+            }
+            // After 5 nexts, should wrap back to 0
+            assert_eq!(state.wave_view_index, 0);
         }
     }
 }

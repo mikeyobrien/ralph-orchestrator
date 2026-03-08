@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 
 use ralph_proto::json_rpc::RpcEvent;
 
-use crate::state::{TaskCounts, TuiState};
+use crate::state::{TaskCounts, TuiState, WaveInfo};
 use crate::state_mutations::{
     append_error_line, apply_loop_completed, apply_task_active, apply_task_close,
 };
@@ -406,6 +406,139 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>, acc: &mut Tex
         RpcEvent::OrchestrationEvent { topic, .. } => {
             // Generic orchestration events - just update liveness
             s.last_event = Some(topic.clone());
+            s.last_event_at = Some(Instant::now());
+        }
+
+        RpcEvent::WaveStarted {
+            hat_name,
+            worker_count,
+            timeout_secs,
+        } => {
+            s.wave_active = Some(WaveInfo::new(hat_name.clone(), *worker_count));
+            s.wave_active_iteration_idx = Some(s.iterations.len().saturating_sub(1));
+            let line = Line::from(vec![
+                Span::styled("── WAVE: ", Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    format!(
+                        "{} | {} workers | timeout {}s",
+                        hat_name, worker_count, timeout_secs
+                    ),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::styled(
+                    " ──────────────────────",
+                    Style::default().fg(Color::Magenta),
+                ),
+            ]);
+            if let Some(handle) = s.latest_iteration_lines_handle() {
+                acc.push_non_text(line, &handle);
+            }
+            s.last_event = Some("wave_started".to_string());
+            s.last_event_at = Some(Instant::now());
+        }
+
+        RpcEvent::WaveWorkerDone {
+            index,
+            total,
+            duration_ms,
+            success,
+            payload_preview,
+        } => {
+            if let Some(ref mut wave) = s.wave_active {
+                wave.completed += 1;
+            }
+            let secs = *duration_ms / 1000;
+            let (icon, color) = if *success {
+                ("\u{2713}", Color::Green)
+            } else {
+                ("\u{2717}", Color::Red)
+            };
+            let status_word = if *success { "done" } else { "failed" };
+            let preview = truncate(payload_preview, 60);
+            let line = Line::from(vec![
+                Span::styled(format!("  {} ", icon), Style::default().fg(color)),
+                Span::raw(format!(
+                    "Worker {}/{} {} ({}s) — {}",
+                    index + 1,
+                    total,
+                    status_word,
+                    secs,
+                    preview
+                )),
+            ]);
+            if let Some(handle) = s.latest_iteration_lines_handle() {
+                acc.push_non_text(line, &handle);
+            }
+            s.last_event = Some("wave_worker_done".to_string());
+            s.last_event_at = Some(Instant::now());
+        }
+
+        RpcEvent::WaveWorkerTextDelta {
+            worker_index,
+            delta,
+        } => {
+            tracing::debug!(
+                worker = worker_index,
+                delta_len = delta.len(),
+                wave_active = s.wave_active.is_some(),
+                "RPC: received WaveWorkerTextDelta"
+            );
+            if let Some(ref wave) = s.wave_active
+                && let Some(buffer) = wave.worker_buffers.get(*worker_index as usize)
+            {
+                let new_lines = text_to_lines(delta);
+                let handle = buffer.lines_handle();
+                if let Ok(mut lines) = handle.lock() {
+                    tracing::debug!(
+                        worker = worker_index,
+                        new_lines = new_lines.len(),
+                        total_lines = lines.len() + new_lines.len(),
+                        "RPC: appending lines to wave worker buffer"
+                    );
+                    // Append rendered text lines from the delta
+                    lines.extend(new_lines);
+                }
+            } else {
+                tracing::warn!(
+                    worker = worker_index,
+                    wave_active = s.wave_active.is_some(),
+                    "RPC: WaveWorkerTextDelta dropped — no wave_active or buffer"
+                );
+            }
+            s.last_event = Some("wave_worker_text_delta".to_string());
+            s.last_event_at = Some(Instant::now());
+        }
+
+        RpcEvent::WaveCompleted {
+            succeeded,
+            failed,
+            duration_ms,
+        } => {
+            // Store wave data on the iteration buffer that owns this wave
+            let wave_iter_idx = s.wave_active_iteration_idx.take();
+            if let Some(wave) = s.wave_active.take() {
+                let target_idx = wave_iter_idx.unwrap_or(s.iterations.len().saturating_sub(1));
+                if let Some(buf) = s.iterations.get_mut(target_idx) {
+                    buf.wave_info = Some(wave);
+                }
+            }
+            let secs = *duration_ms / 1000;
+            let color = if *failed > 0 {
+                Color::Yellow
+            } else {
+                Color::Green
+            };
+            let line = Line::from(Span::styled(
+                format!(
+                    "── Wave complete: {} succeeded, {} failed ({}s) ──────────────────────",
+                    succeeded, failed, secs
+                ),
+                Style::default().fg(color),
+            ));
+            if let Some(handle) = s.latest_iteration_lines_handle() {
+                acc.push_non_text(line, &handle);
+            }
+            s.last_event = Some("wave_completed".to_string());
             s.last_event_at = Some(Instant::now());
         }
     }
