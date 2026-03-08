@@ -100,6 +100,17 @@ hats:
       Review the implementation for quality.
 ```
 
+### Hat Imported from File
+
+```yaml
+hats:
+  builder:
+    import: ./shared-hats/builder.yml   # Reuse a shared definition
+    max_activations: 3                  # Override specific fields
+```
+
+See [Creating Custom Hats](../advanced/custom-hats.md) for the full import syntax and shared hat file format.
+
 ### Hat with Max Activations
 
 ```yaml

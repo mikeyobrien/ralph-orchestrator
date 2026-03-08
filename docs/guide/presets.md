@@ -146,6 +146,47 @@ Run it:
 ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
 ```
 
+## Importing Shared Hats
+
+Instead of duplicating hat definitions across presets, you can define a hat once in a standalone file and import it:
+
+```yaml
+hats:
+  builder:
+    import: ./shared-hats/builder.yml
+    max_activations: 3          # override any field from the imported file
+    publishes: ["build.done"]   # replaces the imported list entirely
+```
+
+The imported file contains a single hat definition:
+
+```yaml
+# shared-hats/builder.yml
+name: "Builder"
+description: "TDD builder — one task, one commit"
+triggers: ["build.start"]
+publishes: ["build.done", "build.blocked"]
+default_publishes: "build.done"
+max_activations: 5
+instructions: |
+  ## BUILDER MODE
+  Implement the task using TDD.
+```
+
+### How it works
+
+- **Path resolution**: Paths are relative to the importing file's directory. Absolute paths work too.
+- **Override semantics**: Any field alongside `import:` fully **replaces** the corresponding imported field. No deep merging — if you override `publishes`, the entire list is replaced.
+- **No transitive imports**: Imported files cannot themselves contain `import:` directives.
+- **No events in imported files**: Event metadata belongs in the consuming preset's `events:` section, not in shared hat files.
+- **Embedded presets**: Builtin presets (`-H builtin:<name>`) resolve `import:` paths from a compiled-in shared hat library (`shared-hats/*.yml`).
+
+### Split config
+
+When using `-c ralph.yml -H hats.yml`, each file resolves its own imports independently relative to its own directory.
+
+See [Creating Custom Hats](../advanced/custom-hats.md) for the full imported hat file format and more examples.
+
 ## Source of Truth and Sync
 
 - Canonical preset files: `presets/*.yml`
