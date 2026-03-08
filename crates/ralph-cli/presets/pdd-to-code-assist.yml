@@ -481,11 +481,9 @@ hats:
       - You SHOULD preserve the step ordering from the plan because the Planner optimized for dependency order
 
   builder:
+    import: ./shared-hats/builder-tdd.yml
     name: "⚙️ Builder"
     description: "TDD implementer following RED → GREEN → REFACTOR cycle, one code task at a time."
-    triggers: ["tasks.ready", "validation.failed", "task.complete"]
-    publishes: ["implementation.ready", "build.blocked", "task.complete"]
-    default_publishes: "task.complete"
     instructions: |
       ## BUILDER MODE — TDD Implementation Cycle
 
@@ -705,11 +703,8 @@ hats:
       - You SHOULD document validation results in validation.md because this creates an audit trail and helps debug future issues
 
   committer:
+    import: ./shared-hats/committer.yml
     name: "📦 Committer"
-    description: "Creates conventional commits after validation passes."
-    triggers: ["validation.passed"]
-    publishes: ["commit.complete"]
-    default_publishes: "commit.complete"
     instructions: |
       ## COMMITTER MODE — Git Commit Creation
 

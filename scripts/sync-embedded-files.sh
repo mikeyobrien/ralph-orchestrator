@@ -52,6 +52,11 @@ MIRRORED_FILES=(
     "presets/research.yml:crates/ralph-cli/presets/research.yml"
     "presets/review.yml:crates/ralph-cli/presets/review.yml"
     "presets/spec-driven.yml:crates/ralph-cli/presets/spec-driven.yml"
+
+    # Shared hats (referenced by presets via import:)
+    "presets/shared-hats/builder.yml:crates/ralph-cli/presets/shared-hats/builder.yml"
+    "presets/shared-hats/builder-tdd.yml:crates/ralph-cli/presets/shared-hats/builder-tdd.yml"
+    "presets/shared-hats/committer.yml:crates/ralph-cli/presets/shared-hats/committer.yml"
 )
 
 # Colors for output

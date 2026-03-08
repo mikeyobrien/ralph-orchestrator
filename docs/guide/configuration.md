@@ -141,6 +141,10 @@ hats:
     backend: "claude"                   # Backend override
     instructions: |
       Hat-specific instructions...
+
+  imported_hat:
+    import: ./shared-hats/builder.yml   # Import from file
+    max_activations: 3                  # Override imported fields
 ```
 
 ## Section Details
@@ -290,12 +294,16 @@ Specialized personas for hat-based mode.
 |--------|------|----------|-------------|
 | `name` | string | Yes | Display name |
 | `description` | string | No | Purpose description |
-| `triggers` | list | Yes | Event subscription patterns |
-| `publishes` | list | Yes | Allowed event types |
+| `triggers` | list | Recommended | Event subscription patterns (defaults to empty) |
+| `publishes` | list | Recommended | Allowed event types (defaults to empty) |
 | `default_publishes` | string | No | Default event if none explicit |
 | `max_activations` | integer | No | Limit activations |
 | `backend` | string | No | Backend override |
-| `instructions` | string | Yes | Hat-specific prompt |
+| `backend_args` | list | No | Extra CLI arguments for this hat's backend |
+| `instructions` | string | Recommended | Hat-specific prompt (defaults to empty) |
+| `extra_instructions` | list | No | Additional instruction fragments appended |
+| `disallowed_tools` | list | No | Tools this hat cannot use |
+| `import` | string | No | Path to imported hat file (see [Custom Hats](../advanced/custom-hats.md)) |
 
 ## Example Configurations
 
