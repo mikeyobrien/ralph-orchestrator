@@ -290,7 +290,7 @@ impl HatlessRalph {
             .any(|h| !h.instructions.trim().is_empty());
 
         if !has_custom_workflow {
-            prompt.push_str(&self.workflow_section(!active_hats.is_empty()));
+            prompt.push_str(&self.workflow_section());
         }
 
         if let Some(topology) = &self.hat_topology {
@@ -334,15 +334,9 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
     ///
     /// Used to enable fast path delegation that skips the PLAN step
     /// when immediate delegation to specialized hats is appropriate.
-    fn is_fresh_start(&self, has_active_hats: bool) -> bool {
+    fn is_fresh_start(&self) -> bool {
         // Fast path only applies when starting_event is configured
         if self.starting_event.is_none() {
-            return false;
-        }
-
-        // Active hats mean we are already inside the workflow. Re-seeding the
-        // starting event would duplicate kickoff events and misroute hat display.
-        if has_active_hats {
             return false;
         }
 
@@ -486,11 +480,11 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
         prompt
     }
 
-    fn workflow_section(&self, has_active_hats: bool) -> String {
+    fn workflow_section(&self) -> String {
         // Different workflow for solo mode vs multi-hat mode
         if self.hat_topology.is_some() {
             // Check for fast path: starting_event set AND no scratchpad
-            if self.is_fresh_start(has_active_hats) {
+            if self.is_fresh_start() {
                 // Fast path: immediate delegation without planning
                 return format!(
                     r"## WORKFLOW
@@ -1228,44 +1222,6 @@ hats:
         );
     }
 
-    #[test]
-    fn test_fast_path_disabled_when_workflow_already_active() {
-        // Even without scratchpad, active hats mean workflow already started,
-        // so Ralph must not re-emit the starting event fast-path instruction.
-        let yaml = r#"
-hats:
-  researcher:
-    name: "Researcher"
-    triggers: ["build.start"]
-    publishes: ["research.complete"]
-  writer:
-    name: "Writer"
-    triggers: ["research.complete"]
-    publishes: ["tests.written"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-        let ralph = HatlessRalph::new(
-            "LOOP_COMPLETE",
-            config.core.clone(),
-            &registry,
-            Some("build.start".to_string()),
-        );
-
-        let researcher = registry
-            .get(&ralph_proto::HatId::new("researcher"))
-            .unwrap();
-        let prompt = ralph.build_prompt("[research.complete] done", &[researcher]);
-
-        assert!(
-            !prompt.contains("FAST PATH"),
-            "Prompt should not indicate fast path after workflow has active hats"
-        );
-        assert!(
-            prompt.contains("### 1. PLAN"),
-            "Prompt should use normal multi-hat workflow once active hats exist"
-        );
-    }
     #[test]
     fn test_fast_path_with_starting_event() {
         // When starting_event is configured AND scratchpad doesn't exist,
