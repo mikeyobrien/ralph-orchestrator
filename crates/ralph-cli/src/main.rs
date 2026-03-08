@@ -2866,9 +2866,7 @@ mod tests {
 
         match cli.command {
             Some(Commands::Mcp(crate::mcp::McpArgs {
-                command: crate::mcp::McpCommands::Serve(crate::mcp::ServeArgs {
-                    workspace_root,
-                }),
+                command: crate::mcp::McpCommands::Serve(crate::mcp::ServeArgs { workspace_root }),
             })) => {
                 assert_eq!(
                     workspace_root,

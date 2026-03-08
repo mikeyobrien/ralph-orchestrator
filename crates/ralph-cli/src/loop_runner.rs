@@ -4527,19 +4527,14 @@ mod tests {
 
     #[test]
     fn test_pty_only_enabled_for_tui_rpc_or_interactive() {
-        let user_interactive = false;
-        assert!(!(false || false || user_interactive));
+        let should_use_pty = |enable_tui: bool, enable_rpc: bool, user_interactive: bool| -> bool {
+            enable_tui || enable_rpc || user_interactive
+        };
 
-        let enable_tui = true;
-        let enable_rpc = false;
-        assert!(enable_tui || enable_rpc || user_interactive);
-
-        let enable_tui = false;
-        let enable_rpc = true;
-        assert!(enable_tui || enable_rpc || user_interactive);
-
-        let user_interactive = true;
-        assert!(false || false || user_interactive);
+        assert!(!should_use_pty(false, false, false));
+        assert!(should_use_pty(true, false, false));
+        assert!(should_use_pty(false, true, false));
+        assert!(should_use_pty(false, false, true));
     }
 
     #[test]
