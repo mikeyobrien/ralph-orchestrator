@@ -173,6 +173,23 @@ impl DiagnosticsCollector {
             let _ = logger.log(&entry);
         }
     }
+
+    /// Logs the full prompt for an iteration to `prompt-log.md`.
+    ///
+    /// Does nothing if diagnostics are disabled.
+    pub fn log_prompt(&self, iteration: u32, hat: &str, prompt: &str) {
+        if let Some(session_dir) = &self.session_dir {
+            use std::io::Write;
+            let path = session_dir.join("prompt-log.md");
+            if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(
+                    file,
+                    "# Iteration {} — {}\n\n{}\n\n---\n",
+                    iteration, hat, prompt
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

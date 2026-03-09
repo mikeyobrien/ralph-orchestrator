@@ -421,6 +421,11 @@ impl EventLoop {
         self.diagnostics.log_hook_run(entry);
     }
 
+    /// Logs the full prompt for an iteration to the diagnostics session.
+    pub fn log_prompt(&self, iteration: u32, hat: &str, prompt: &str) {
+        self.diagnostics.log_prompt(iteration, hat, prompt);
+    }
+
     /// Gets the backend configuration for a hat.
     ///
     /// If the hat has a backend configured, returns that.
