@@ -75,10 +75,11 @@ mod tests {
     #[test]
     fn resolve_workspace_root_resolves_relative_paths_from_current_dir() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
+        let canonical = temp_dir.path().canonicalize()?;
         let _guard = CwdGuard::set(temp_dir.path());
 
         let resolved = resolve_workspace_root(Some(PathBuf::from("nested/workspace")))?;
-        assert_eq!(resolved, Some(temp_dir.path().join("nested/workspace")));
+        assert_eq!(resolved, Some(canonical.join("nested/workspace")));
         Ok(())
     }
 }

@@ -4065,3 +4065,62 @@ fn test_human_response_still_works() {
         "human.response event should be published when response received"
     );
 }
+
+/// Regression: start event written to JSONL by EventLogger must not be
+/// re-read by `process_events_from_jsonl`, which would cause double-delivery.
+/// The fix is to call `sync_event_reader_to_file_end()` after writing the
+/// start event so the reader skips past it.
+#[test]
+fn test_sync_event_reader_prevents_start_event_double_delivery() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut config = RalphConfig::default();
+    config.event_loop.starting_event = Some("work.start".to_string());
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // 1. Initialize publishes start event to the bus (in-memory).
+    event_loop.initialize("Run the test");
+
+    // 2. Simulate EventLogger writing the same start event to the JSONL file.
+    write_event_to_jsonl(&events_path, "work.start", "Run the test");
+
+    // 3. Advance the reader past the logged entry.
+    event_loop.sync_event_reader_to_file_end();
+
+    // 4. Simulate an agent emitting a new event via `ralph emit`.
+    write_event_to_jsonl(&events_path, "seed.ready", "initialized");
+
+    // 5. process_events_from_jsonl should pick up ONLY seed.ready,
+    //    not the already-published work.start.
+    let processed = event_loop.process_events_from_jsonl().unwrap();
+    assert!(
+        processed.had_events,
+        "seed.ready should have been processed"
+    );
+
+    // Drain the bus and verify work.start appears exactly once (from initialize),
+    // not twice (which would happen without the sync).
+    let ralph_id = ralph_proto::HatId::new("ralph");
+    let pending = event_loop.bus.take_pending(&ralph_id);
+    let work_start_count = pending
+        .iter()
+        .filter(|e| e.topic.as_str() == "work.start")
+        .count();
+    assert_eq!(
+        work_start_count, 1,
+        "work.start must appear exactly once (from initialize), got {work_start_count}"
+    );
+    let seed_ready_count = pending
+        .iter()
+        .filter(|e| e.topic.as_str() == "seed.ready")
+        .count();
+    assert_eq!(
+        seed_ready_count, 1,
+        "seed.ready must appear exactly once (from JSONL), got {seed_ready_count}"
+    );
+}

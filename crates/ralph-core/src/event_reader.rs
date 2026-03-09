@@ -198,9 +198,22 @@ impl EventReader {
         }
     }
 
+    /// Returns the path to the events file.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
     /// Returns the current file position.
     pub fn position(&self) -> u64 {
         self.position
+    }
+
+    /// Sets the file position to a specific byte offset.
+    ///
+    /// Use this to skip past entries written by the EventLogger so they
+    /// are not re-read by `process_events_from_jsonl`.
+    pub fn set_position(&mut self, position: u64) {
+        self.position = position;
     }
 
     /// Resets the position to the start of the file.
