@@ -469,7 +469,7 @@ impl PreflightCheck for PathsExistCheck {
     async fn run(&self, config: &RalphConfig) -> CheckResult {
         let mut created = Vec::new();
 
-        let scratchpad_path = config.core.resolve_path(&config.core.scratchpad);
+        let scratchpad_path = config.core.resolve_path(&config.core.scratchpad.path);
         if let Some(parent) = scratchpad_path.parent()
             && let Err(err) = ensure_directory(parent, &mut created)
         {
@@ -1286,7 +1286,7 @@ mod tests {
 
         let mut config = RalphConfig::default();
         config.core.workspace_root = root.clone();
-        config.core.scratchpad = "nested/scratchpad.md".to_string();
+        config.core.scratchpad.path = "nested/scratchpad.md".to_string();
         config.core.specs_dir = "nested/specs".to_string();
 
         let check = PathsExistCheck;

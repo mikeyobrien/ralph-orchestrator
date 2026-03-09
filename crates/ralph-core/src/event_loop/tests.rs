@@ -316,7 +316,7 @@ fn test_completion_promise_detection() {
 
     // Configure event loop to use temp directory scratchpad
     let mut config = RalphConfig::default();
-    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
     let mut event_loop = EventLoop::new(config);
     event_loop.initialize("Test");
 
@@ -353,7 +353,7 @@ fn test_completion_promise_with_open_tasks_still_terminates() {
 
     // Configure event loop to use temp directory scratchpad
     let mut config = RalphConfig::default();
-    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
     let mut event_loop = EventLoop::new(config);
     event_loop.initialize("Test");
 
@@ -960,7 +960,7 @@ hats:
     publishes: ["build.done"]
 "#;
     let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
     let mut event_loop = EventLoop::new(config);
     event_loop.initialize("Test task");
 
@@ -1045,6 +1045,7 @@ fn test_default_publishes_injects_when_no_events() {
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
         },
     );
@@ -1099,6 +1100,7 @@ fn test_default_publishes_not_injected_when_events_written() {
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
         },
     );
@@ -1295,6 +1297,7 @@ fn test_default_publishes_skipped_when_non_orphan_event_written() {
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
         },
     );
@@ -1362,6 +1365,7 @@ fn test_default_publishes_not_injected_when_not_configured() {
             backend: None,
             default_publishes: None, // No default configured
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
         },
     );
@@ -2899,7 +2903,7 @@ fn test_persistent_mode_suppresses_loop_complete() {
     fs::write(&scratchpad_path, "## Tasks\n- [x] All done\n").unwrap();
 
     let mut config = RalphConfig::default();
-    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
     config.event_loop.persistent = true;
     let mut event_loop = EventLoop::new(config);
     event_loop.initialize("Test");
@@ -2940,7 +2944,7 @@ fn test_non_persistent_mode_terminates_on_loop_complete() {
     fs::write(&scratchpad_path, "## Tasks\n- [x] All done\n").unwrap();
 
     let mut config = RalphConfig::default();
-    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
     // persistent defaults to false, but be explicit
     config.event_loop.persistent = false;
     let mut event_loop = EventLoop::new(config);
@@ -3406,7 +3410,7 @@ fn test_paths_fallback_to_config_when_no_context() {
     let temp_dir = tempfile::tempdir().unwrap();
     let scratchpad_path = temp_dir.path().join("scratchpad.md");
     let mut config = RalphConfig::default();
-    config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+    config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
 
     let event_loop = EventLoop::new(config);
 
@@ -3820,6 +3824,7 @@ fn test_default_publishes_satisfies_required_events_for_completion() {
             backend_args: None,
             default_publishes: Some("plan.draft".to_string()),
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
         },
     );
@@ -3874,6 +3879,7 @@ fn test_default_publishes_completion_promise_triggers_termination() {
             backend_args: None,
             default_publishes: Some("LOOP_COMPLETE".to_string()),
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
         },
     );

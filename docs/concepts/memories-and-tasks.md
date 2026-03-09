@@ -163,6 +163,8 @@ tasks:
 
 In this mode, `.agent/scratchpad.md` is used for all state.
 
+In hat-based configurations, scratchpad is configurable per-hat. Each hat can set a custom scratchpad path, disable scratchpad entirely, or inherit the global `core.scratchpad` setting. See [Per-Hat Scratchpads](../guide/configuration.md#with-per-hat-scratchpads) for details.
+
 ## File Formats
 
 ### memories.md

@@ -8,7 +8,7 @@ mod tests;
 
 pub use loop_state::LoopState;
 
-use crate::config::{HatBackend, InjectMode, RalphConfig};
+use crate::config::{HatBackend, InjectMode, RalphConfig, ScratchpadConfig};
 use crate::event_parser::{EventParser, MutationEvidence, MutationStatus};
 use crate::event_reader::EventReader;
 use crate::hat_registry::HatRegistry;
@@ -187,10 +187,19 @@ impl EventLoop {
 
     /// Creates a new event loop with explicit loop context and diagnostics.
     pub fn with_context_and_diagnostics(
-        config: RalphConfig,
+        mut config: RalphConfig,
         context: LoopContext,
         diagnostics: crate::diagnostics::DiagnosticsCollector,
     ) -> Self {
+        // Solo mode safety guard: force scratchpad enabled when no hats defined
+        if config.hats.is_empty() && !config.core.scratchpad.enabled {
+            warn!(
+                "core.scratchpad.enabled is false but no hats are defined. \
+                 Scratchpad is the only continuity mechanism in solo mode — forcing enabled."
+            );
+            config.core.scratchpad.enabled = true;
+        }
+
         let registry = HatRegistry::from_config(&config);
         let instruction_builder =
             InstructionBuilder::with_events(config.core.clone(), config.events.clone());
@@ -281,9 +290,18 @@ impl EventLoop {
 
     /// Creates a new event loop with explicit diagnostics collector (for testing).
     pub fn with_diagnostics(
-        config: RalphConfig,
+        mut config: RalphConfig,
         diagnostics: crate::diagnostics::DiagnosticsCollector,
     ) -> Self {
+        // Solo mode safety guard: force scratchpad enabled when no hats defined
+        if config.hats.is_empty() && !config.core.scratchpad.enabled {
+            warn!(
+                "core.scratchpad.enabled is false but no hats are defined. \
+                 Scratchpad is the only continuity mechanism in solo mode — forcing enabled."
+            );
+            config.core.scratchpad.enabled = true;
+        }
+
         let registry = HatRegistry::from_config(&config);
         let instruction_builder =
             InstructionBuilder::with_events(config.core.clone(), config.events.clone());
@@ -393,12 +411,36 @@ impl EventLoop {
             .unwrap_or_else(|| PathBuf::from(".ralph/agent/tasks.jsonl"))
     }
 
-    /// Returns the scratchpad path based on loop context or config.
+    /// Returns the scratchpad path based on loop context and active scratchpad config.
+    ///
+    /// When a per-hat scratchpad override is active (path differs from global default),
+    /// the custom path is resolved relative to the loop context workspace for worktree
+    /// isolation. When using the default/global path, loop context's standard resolution
+    /// applies.
     fn scratchpad_path(&self) -> PathBuf {
+        let active_path = &self.ralph.active_scratchpad().path;
+        let global_path = &self.config.core.scratchpad.path;
+
+        match self.loop_context.as_ref() {
+            Some(ctx) => {
+                if active_path == global_path {
+                    ctx.scratchpad_path()
+                } else {
+                    // Per-hat custom path: resolve relative to workspace
+                    ctx.workspace().join(active_path)
+                }
+            }
+            None => PathBuf::from(active_path),
+        }
+    }
+
+    /// Returns the global scratchpad path (ignoring per-hat overrides).
+    /// Used for guidance persistence which is cross-hat state.
+    fn global_scratchpad_path(&self) -> PathBuf {
         self.loop_context
             .as_ref()
             .map(|ctx| ctx.scratchpad_path())
-            .unwrap_or_else(|| PathBuf::from(&self.config.core.scratchpad))
+            .unwrap_or_else(|| PathBuf::from(&self.config.core.scratchpad.path))
     }
 
     /// Returns the current loop state.
@@ -807,6 +849,11 @@ impl EventLoop {
                     .collect::<Vec<_>>()
                     .join("\n");
 
+                // Solo mode: set scratchpad and iteration before guidance persistence
+                self.ralph
+                    .set_active_scratchpad(self.config.core.scratchpad.clone());
+                self.ralph.set_iteration(self.state.iteration);
+
                 // Persist and inject human guidance into prompt if present
                 self.update_robot_guidance(guidance_events);
                 self.apply_robot_guidance();
@@ -862,15 +909,32 @@ impl EventLoop {
                     .into_iter()
                     .partition(|e| e.topic.as_str() == "human.guidance");
 
-                // Persist and inject human guidance before building prompt (must happen before
-                // immutable borrows from determine_active_hats)
-                self.update_robot_guidance(guidance_events);
-                self.apply_robot_guidance();
-
                 // Determine which hats are active based on regular events
                 let active_hat_ids = self.determine_active_hat_ids(&regular_events);
                 self.record_hat_activations(&active_hat_ids);
                 self.state.last_active_hat_ids = active_hat_ids.clone();
+
+                // Resolve scratchpad config for the active hat (or global default).
+                // Must happen BEFORE guidance persistence so guidance is written
+                // to the correct hat's scratchpad file.
+                let resolved_scratchpad = if let Some(hat_id) = active_hat_ids.first() {
+                    let hat_scratchpad = self
+                        .registry
+                        .get_config(hat_id)
+                        .and_then(|c| c.scratchpad.as_ref());
+                    ScratchpadConfig::resolve(hat_scratchpad, &self.config.core.scratchpad)
+                } else {
+                    // Ralph coordinating — use global
+                    self.config.core.scratchpad.clone()
+                };
+                self.ralph.set_active_scratchpad(resolved_scratchpad);
+                self.ralph.set_iteration(self.state.iteration);
+
+                // Persist and inject human guidance after scratchpad resolution
+                // (must also happen before immutable borrows from determine_active_hats)
+                self.update_robot_guidance(guidance_events);
+                self.apply_robot_guidance();
+
                 let active_hats = self.determine_active_hats(&regular_events);
 
                 // Format events for context
@@ -953,10 +1017,23 @@ impl EventLoop {
     ///
     /// Each guidance message is written as a timestamped markdown entry so it
     /// appears alongside the agent's own thinking and survives process restarts.
+    ///
+    /// When scratchpad is disabled for the current hat, persists to the global
+    /// scratchpad path (guidance is cross-hat state). If global is also disabled,
+    /// skips persistence.
     fn persist_guidance_to_scratchpad(&self, guidance_events: &[Event]) {
         use std::io::Write;
 
-        let scratchpad_path = self.scratchpad_path();
+        // When hat scratchpad is disabled, fall back to global scratchpad
+        let scratchpad_path = if self.ralph.active_scratchpad().enabled {
+            self.scratchpad_path()
+        } else {
+            if !self.config.core.scratchpad.enabled {
+                debug!("Both hat and global scratchpad disabled, skipping guidance persistence");
+                return;
+            }
+            self.global_scratchpad_path()
+        };
         let resolved_path = if scratchpad_path.is_relative() {
             self.config.core.workspace_root.join(&scratchpad_path)
         } else {
@@ -1172,6 +1249,11 @@ impl EventLoop {
     /// Auto-injecting saves one tool call per iteration.
     /// When the file exceeds the budget, the TAIL is kept (most recent entries).
     fn prepend_scratchpad(&self, prompt: String) -> String {
+        // Skip injection when scratchpad is disabled for the current hat
+        if !self.ralph.active_scratchpad().enabled {
+            return prompt;
+        }
+
         let scratchpad_path = self.scratchpad_path();
 
         let resolved_path = if scratchpad_path.is_relative() {
@@ -1239,7 +1321,8 @@ impl EventLoop {
 
         let mut final_prompt = format!(
             "<scratchpad path=\"{}\">\n{}\n</scratchpad>\n\n",
-            self.config.core.scratchpad, content
+            self.ralph.active_scratchpad().path,
+            content
         );
         final_prompt.push_str(&prompt);
         final_prompt
@@ -1672,10 +1755,15 @@ impl EventLoop {
     /// Verifies all tasks in scratchpad are complete or cancelled.
     ///
     /// Returns:
-    /// - `Ok(true)` if all tasks are `[x]` or `[~]`
+    /// - `Ok(true)` if all tasks are `[x]` or `[~]`, or if scratchpad is disabled
     /// - `Ok(false)` if any tasks are `[ ]` (pending)
     /// - `Err(...)` if scratchpad doesn't exist or can't be read
     fn verify_scratchpad_complete(&self) -> Result<bool, std::io::Error> {
+        // Nothing to verify when scratchpad is disabled
+        if !self.ralph.active_scratchpad().enabled {
+            return Ok(true);
+        }
+
         let scratchpad_path = self.scratchpad_path();
 
         if !scratchpad_path.exists() {
