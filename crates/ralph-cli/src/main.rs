@@ -916,6 +916,14 @@ fn completions_command(args: CompletionsArgs) -> Result<()> {
     Ok(())
 }
 
+/// Returns true if the given command is eligible for diagnostics session creation.
+/// Only `run` and `resume` commands (and the default no-subcommand case) should
+/// create diagnostics session directories. Other subcommands like `emit` or `tools`
+/// would otherwise create empty session dirs.
+fn is_diagnostics_eligible_command(command: Option<&Commands>) -> bool {
+    matches!(command, Some(Commands::Run(_) | Commands::Resume(_)) | None)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install panic hook to restore terminal state on crash
@@ -944,9 +952,10 @@ async fn main() -> Result<()> {
     let filter = if cli.verbose { "debug" } else { "info" };
 
     // Check if diagnostics are enabled
-    let diagnostics_enabled = std::env::var("RALPH_DIAGNOSTICS")
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    let diagnostics_enabled = is_diagnostics_eligible_command(cli.command.as_ref())
+        && std::env::var("RALPH_DIAGNOSTICS")
+            .map(|v| v == "1")
+            .unwrap_or(false);
 
     if tui_enabled {
         // TUI mode: logs would corrupt the display, so write to a rotating log file
@@ -3524,5 +3533,41 @@ hats:
         )
         .await
         .expect("combined config should be accepted");
+    }
+
+    #[test]
+    fn test_diagnostics_eligible_for_run_command() {
+        let command = Some(Commands::Run(default_run_args()));
+        assert!(is_diagnostics_eligible_command(command.as_ref()));
+    }
+
+    #[test]
+    fn test_diagnostics_eligible_for_no_subcommand() {
+        assert!(is_diagnostics_eligible_command(None));
+    }
+
+    #[test]
+    fn test_diagnostics_not_eligible_for_emit_command() {
+        let command = Some(Commands::Emit(EmitArgs {
+            topic: "test.event".to_string(),
+            payload: String::new(),
+            json: false,
+            ts: None,
+            file: PathBuf::from(".ralph/events.jsonl"),
+        }));
+        assert!(!is_diagnostics_eligible_command(command.as_ref()));
+    }
+
+    #[test]
+    fn test_diagnostics_not_eligible_for_events_command() {
+        let command = Some(Commands::Events(EventsArgs {
+            last: None,
+            topic: None,
+            iteration: None,
+            format: OutputFormat::Table,
+            file: None,
+            clear: false,
+        }));
+        assert!(!is_diagnostics_eligible_command(command.as_ref()));
     }
 }
