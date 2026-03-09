@@ -131,7 +131,9 @@ pub async fn run_loop_impl(
 
         // Clear scratchpad for fresh objective start
         // Stale content from previous runs can confuse the agent about current task state
-        let scratchpad_path = ctx.scratchpad_path();
+        // Use the config's scratchpad path resolved against the workspace, not the
+        // hardcoded LoopContext default, so custom paths are properly cleared
+        let scratchpad_path = ctx.workspace().join(&config.core.scratchpad);
         if scratchpad_path.exists() {
             fs::remove_file(&scratchpad_path)
                 .with_context(|| format!("Failed to clear scratchpad: {:?}", scratchpad_path))?;
