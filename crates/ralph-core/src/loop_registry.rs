@@ -269,6 +269,20 @@ pub enum RegistryError {
 /// Registry for tracking active Ralph loops.
 ///
 /// Provides thread-safe registration and discovery of running loops.
+/// Update payload for [`LoopRegistry::update`]. Only `Some` fields are applied.
+///
+/// Fields wrapped in `Option<Option<T>>` can be explicitly cleared by passing
+/// `Some(None)`.
+#[derive(Debug, Clone, Default)]
+pub struct LoopEntryUpdate {
+    pub active_hat: Option<Option<String>>,
+    pub iteration: Option<u32>,
+    pub total_cost_usd: Option<f64>,
+    pub hat_collection: Option<Vec<HatSummary>>,
+    pub max_iterations: Option<Option<u32>>,
+    pub termination_reason: Option<Option<String>>,
+}
+
 pub struct LoopRegistry {
     /// Path to the registry file.
     registry_path: PathBuf,
@@ -305,6 +319,38 @@ impl LoopRegistry {
             let original_len = data.loops.len();
             data.loops.retain(|e| e.id != id);
             found = data.loops.len() != original_len;
+        })?;
+        if !found {
+            return Err(RegistryError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Updates an existing loop entry, applying only the fields that are `Some`.
+    pub fn update(&self, id: &str, update: LoopEntryUpdate) -> Result<(), RegistryError> {
+        let mut found = false;
+        self.with_lock(|data| {
+            if let Some(entry) = data.loops.iter_mut().find(|e| e.id == id) {
+                found = true;
+                if let Some(v) = update.active_hat {
+                    entry.active_hat = v;
+                }
+                if let Some(v) = update.iteration {
+                    entry.iteration = v;
+                }
+                if let Some(v) = update.total_cost_usd {
+                    entry.total_cost_usd = v;
+                }
+                if let Some(v) = update.hat_collection {
+                    entry.hat_collection = v;
+                }
+                if let Some(v) = update.max_iterations {
+                    entry.max_iterations = v;
+                }
+                if let Some(v) = update.termination_reason {
+                    entry.termination_reason = v;
+                }
+            }
         })?;
         if !found {
             return Err(RegistryError::NotFound(id.to_string()));
