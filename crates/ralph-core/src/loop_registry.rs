@@ -39,6 +39,24 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
+/// Summary of a hat in the collection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HatSummary {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
+
 /// Metadata for a registered loop.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LoopEntry {
@@ -60,6 +78,30 @@ pub struct LoopEntry {
 
     /// The workspace root where the loop is running.
     pub workspace: String,
+
+    /// Hats available in this loop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hat_collection: Vec<HatSummary>,
+
+    /// Currently active hat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_hat: Option<String>,
+
+    /// Current iteration number.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub iteration: u32,
+
+    /// Cumulative cost in USD.
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub total_cost_usd: f64,
+
+    /// Maximum iterations allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
+
+    /// Reason the loop terminated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination_reason: Option<String>,
 }
 
 impl LoopEntry {
@@ -74,6 +116,12 @@ impl LoopEntry {
             workspace: std::env::current_dir()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default(),
+            hat_collection: Vec::new(),
+            active_hat: None,
+            iteration: 0,
+            total_cost_usd: 0.0,
+            max_iterations: None,
+            termination_reason: None,
         }
     }
 
@@ -90,6 +138,12 @@ impl LoopEntry {
             prompt: prompt.into(),
             worktree_path: worktree_path.map(Into::into),
             workspace: workspace.into(),
+            hat_collection: Vec::new(),
+            active_hat: None,
+            iteration: 0,
+            total_cost_usd: 0.0,
+            max_iterations: None,
+            termination_reason: None,
         }
     }
 
@@ -110,6 +164,12 @@ impl LoopEntry {
             prompt: prompt.into(),
             worktree_path: worktree_path.map(Into::into),
             workspace: workspace.into(),
+            hat_collection: Vec::new(),
+            active_hat: None,
+            iteration: 0,
+            total_cost_usd: 0.0,
+            max_iterations: None,
+            termination_reason: None,
         }
     }
 
