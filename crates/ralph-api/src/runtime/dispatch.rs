@@ -64,7 +64,7 @@ impl RpcRuntime {
         match request.method.as_str() {
             "task.list" => {
                 let params: TaskListParams = self.parse_params(request)?;
-                let tasks = self.task_domain_mut()?.list(params);
+                let tasks = self.task_domain_mut()?.list(params)?;
                 Ok(json!({ "tasks": tasks }))
             }
             "task.get" => {
@@ -73,7 +73,7 @@ impl RpcRuntime {
                 Ok(json!({ "task": task }))
             }
             "task.ready" => {
-                let tasks = self.task_domain_mut()?.ready();
+                let tasks = self.task_domain_mut()?.ready()?;
                 Ok(json!({ "tasks": tasks }))
             }
             "task.create" => {
@@ -116,7 +116,7 @@ impl RpcRuntime {
                 Ok(json!(result))
             }
             "task.run_all" => {
-                let result = self.task_domain_mut()?.run_all();
+                let result = self.task_domain_mut()?.run_all()?;
                 Ok(json!(result))
             }
             "task.retry" => {
@@ -131,7 +131,7 @@ impl RpcRuntime {
             }
             "task.status" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
-                let status = self.task_domain_mut()?.status(&params.id);
+                let status = self.task_domain_mut()?.status(&params.id)?;
                 Ok(json!(status))
             }
             _ => Err(ApiError::service_unavailable(format!(

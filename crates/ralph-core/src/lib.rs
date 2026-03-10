@@ -116,7 +116,7 @@ pub use session_recorder::{Record, SessionRecorder};
 pub use skill::{SkillEntry, SkillFrontmatter, SkillSource, parse_frontmatter};
 pub use skill_registry::SkillRegistry;
 pub use summary_writer::SummaryWriter;
-pub use task::{Task, TaskStatus};
+pub use task::{StatusTransition, Task, TaskStatus};
 pub use task_definition::{
     TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
 };
