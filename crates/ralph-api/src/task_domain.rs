@@ -727,6 +727,7 @@ fn status_to_string(status: TaskStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::loop_registry::LoopEntry;
     use tempfile::TempDir;
 
     fn setup() -> (TempDir, TaskDomain) {
@@ -930,5 +931,70 @@ mod tests {
         let default = domain.list(TaskListParams::default()).unwrap();
         assert_eq!(default.len(), 1);
         assert!(default[0].archived_at.is_none());
+    }
+
+    #[test]
+    fn loop_context_populated_for_valid_loop_id() {
+        let (dir, mut domain) = setup();
+        domain.create(create_params("t-1", "With loop")).unwrap();
+
+        // Set loop_id on the task via core store
+        let store_path = domain.store_path();
+        let mut store = TaskStore::load(&store_path).unwrap();
+        store
+            .with_exclusive_lock(|s| {
+                s.get_mut("t-1").unwrap().loop_id = Some("loop-test-1".to_string());
+            })
+            .unwrap();
+
+        // Register a loop entry
+        let registry = LoopRegistry::new(dir.path());
+        let mut entry = LoopEntry::with_id(
+            "loop-test-1",
+            "test prompt",
+            None::<String>,
+            dir.path().display().to_string(),
+        );
+        entry.iteration = 3;
+        entry.total_cost_usd = 1.25;
+        entry.active_hat = Some("Builder".to_string());
+        entry.max_iterations = Some(10);
+        registry.register(entry).unwrap();
+
+        let resp = domain.get("t-1").unwrap();
+        let ctx = resp.loop_context.expect("loop_context should be Some");
+        assert_eq!(ctx.iteration, 3);
+        assert!((ctx.total_cost_usd - 1.25).abs() < f64::EPSILON);
+        assert_eq!(ctx.active_hat.as_deref(), Some("Builder"));
+        assert_eq!(ctx.max_iterations, Some(10));
+        assert!(ctx.termination_reason.is_none());
+        assert!(!ctx.started.is_empty());
+    }
+
+    #[test]
+    fn loop_context_none_for_no_loop_id() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "No loop")).unwrap();
+
+        let resp = domain.get("t-1").unwrap();
+        assert!(resp.loop_context.is_none());
+    }
+
+    #[test]
+    fn loop_context_none_for_nonexistent_loop_id() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "Bad loop")).unwrap();
+
+        // Set loop_id to a non-existent loop
+        let store_path = domain.store_path();
+        let mut store = TaskStore::load(&store_path).unwrap();
+        store
+            .with_exclusive_lock(|s| {
+                s.get_mut("t-1").unwrap().loop_id = Some("loop-does-not-exist".to_string());
+            })
+            .unwrap();
+
+        let resp = domain.get("t-1").unwrap();
+        assert!(resp.loop_context.is_none());
     }
 }
