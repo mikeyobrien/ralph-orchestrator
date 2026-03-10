@@ -217,42 +217,82 @@ impl TaskStore {
             .find(|t| t.key.as_deref() == Some(key))
     }
 
-    /// Closes a task by ID and returns a reference to it.
-    pub fn close(&mut self, id: &str) -> Option<&Task> {
+    /// Transitions a task to a new status, recording the transition.
+    ///
+    /// Records a `StatusTransition` with the old and new status, timestamp, and
+    /// optional hat. Also manages lifecycle timestamps: sets `started` on first
+    /// `InProgress`, sets `closed` on `Closed`/`Failed`, clears `closed` on `Open`.
+    pub fn transition(
+        &mut self,
+        id: &str,
+        new_status: TaskStatus,
+        hat: Option<&str>,
+    ) -> Option<&Task> {
         if let Some(task) = self.get_mut(id) {
-            task.status = TaskStatus::Closed;
-            task.closed = Some(chrono::Utc::now().to_rfc3339());
+            let from = task.status;
+            let now = chrono::Utc::now().to_rfc3339();
+
+            task.transitions.push(crate::task::StatusTransition {
+                from,
+                to: new_status,
+                timestamp: now.clone(),
+                hat: hat.map(String::from),
+            });
+
+            task.status = new_status;
+            if let Some(h) = hat {
+                task.last_hat = Some(h.to_string());
+            }
+
+            match new_status {
+                TaskStatus::InProgress => {
+                    if task.started.is_none() {
+                        task.started = Some(now);
+                    }
+                    task.closed = None;
+                }
+                TaskStatus::Closed | TaskStatus::Failed => {
+                    task.closed = Some(now);
+                }
+                TaskStatus::Open => {
+                    task.closed = None;
+                }
+                _ => {}
+            }
+
             return self.get(id);
         }
         None
+    }
+
+    /// Closes a task by ID and returns a reference to it.
+    pub fn close(&mut self, id: &str) -> Option<&Task> {
+        self.transition(id, TaskStatus::Closed, None)
     }
 
     /// Starts a task by ID and returns a reference to it.
     pub fn start(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.start();
-            return self.get(id);
-        }
-        None
+        self.transition(id, TaskStatus::InProgress, None)
     }
 
     /// Fails a task by ID and returns a reference to it.
     pub fn fail(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.status = TaskStatus::Failed;
-            task.closed = Some(chrono::Utc::now().to_rfc3339());
-            return self.get(id);
-        }
-        None
+        self.transition(id, TaskStatus::Failed, None)
     }
 
     /// Reopens a task by ID and returns a reference to it.
     pub fn reopen(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.reopen();
-            return self.get(id);
-        }
-        None
+        self.transition(id, TaskStatus::Open, None)
+    }
+
+    /// Moves a task to review status.
+    pub fn review(&mut self, id: &str) -> Option<&Task> {
+        self.transition(id, TaskStatus::InReview, None)
+    }
+
+    /// Moves a task to blocked status.
+    pub fn block(&mut self, id: &str) -> Option<&Task> {
+        self.transition(id, TaskStatus::Blocked, None)
     }
 
     /// Ensures a task exists for a stable key, returning the existing or created task.
@@ -629,5 +669,140 @@ mod tests {
         let loaded = TaskStore::load(&path).unwrap();
         assert_eq!(loaded.all().len(), 1);
         assert_eq!(loaded.all()[0].title, "Valid task");
+    }
+
+    #[test]
+    fn test_start_records_transition() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+
+        let started = store.start(&id).unwrap();
+        assert_eq!(started.transitions.len(), 1);
+        assert_eq!(started.transitions[0].from, TaskStatus::Open);
+        assert_eq!(started.transitions[0].to, TaskStatus::InProgress);
+        assert!(started.transitions[0].hat.is_none());
+    }
+
+    #[test]
+    fn test_close_records_transition() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+        store.start(&id);
+
+        let closed = store.close(&id).unwrap();
+        assert_eq!(closed.transitions.len(), 2);
+        assert_eq!(closed.transitions[1].from, TaskStatus::InProgress);
+        assert_eq!(closed.transitions[1].to, TaskStatus::Closed);
+    }
+
+    #[test]
+    fn test_review_records_transition() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+        store.start(&id);
+
+        let reviewed = store.review(&id).unwrap();
+        assert_eq!(reviewed.status, TaskStatus::InReview);
+        assert_eq!(reviewed.transitions.len(), 2);
+        assert_eq!(reviewed.transitions[1].to, TaskStatus::InReview);
+    }
+
+    #[test]
+    fn test_block_records_transition() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+
+        let blocked = store.block(&id).unwrap();
+        assert_eq!(blocked.status, TaskStatus::Blocked);
+        assert_eq!(blocked.transitions.len(), 1);
+        assert_eq!(blocked.transitions[0].to, TaskStatus::Blocked);
+    }
+
+    #[test]
+    fn test_reopen_records_transition_and_clears_closed() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+        store.start(&id);
+        store.close(&id);
+
+        let reopened = store.reopen(&id).unwrap();
+        assert_eq!(reopened.status, TaskStatus::Open);
+        assert!(reopened.closed.is_none());
+        assert_eq!(reopened.transitions.len(), 3);
+        assert_eq!(reopened.transitions[2].to, TaskStatus::Open);
+    }
+
+    #[test]
+    fn test_multiple_transitions_accumulate() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+
+        store.start(&id);
+        store.review(&id);
+        store.block(&id);
+        store.reopen(&id);
+        store.start(&id);
+        let t = store.close(&id).unwrap();
+        assert_eq!(t.transitions.len(), 6);
+    }
+
+    #[test]
+    fn test_transition_records_hat() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+
+        let t = store
+            .transition(&id, TaskStatus::InProgress, Some("builder"))
+            .unwrap();
+        assert_eq!(t.transitions[0].hat.as_deref(), Some("builder"));
+        assert_eq!(t.last_hat.as_deref(), Some("builder"));
+    }
+
+    #[test]
+    fn test_save_reload_preserves_transitions() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+        store.transition(&id, TaskStatus::InProgress, Some("planner"));
+        store.save().unwrap();
+
+        let loaded = TaskStore::load(&path).unwrap();
+        let t = loaded.get(&id).unwrap();
+        assert_eq!(t.transitions.len(), 1);
+        assert_eq!(t.transitions[0].from, TaskStatus::Open);
+        assert_eq!(t.transitions[0].to, TaskStatus::InProgress);
+        assert_eq!(t.transitions[0].hat.as_deref(), Some("planner"));
+        assert_eq!(t.last_hat.as_deref(), Some("planner"));
     }
 }
