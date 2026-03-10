@@ -298,4 +298,71 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Open);
         assert!(task.closed.is_none());
     }
+
+    #[test]
+    fn test_serde_roundtrip_blocked_and_in_review() {
+        for (status, expected_str) in [
+            (TaskStatus::Blocked, "\"blocked\""),
+            (TaskStatus::InReview, "\"in_review\""),
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, expected_str);
+            let deserialized: TaskStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, status);
+        }
+    }
+
+    #[test]
+    fn test_is_terminal_new_statuses() {
+        assert!(!TaskStatus::Blocked.is_terminal());
+        assert!(!TaskStatus::InReview.is_terminal());
+    }
+
+    #[test]
+    fn test_backward_compat_deserialize_task_missing_new_fields() {
+        let json = serde_json::json!({
+            "id": "task-123-abcd",
+            "title": "Legacy task",
+            "status": "open",
+            "priority": 2,
+            "blocked_by": [],
+            "created": "2026-01-01T00:00:00Z"
+        });
+        let task: Task = serde_json::from_value(json).unwrap();
+        assert!(task.last_hat.is_none());
+        assert!(task.transitions.is_empty());
+        assert!(task.tags.is_empty());
+    }
+
+    #[test]
+    fn test_status_transition_serde_roundtrip() {
+        let transition = StatusTransition {
+            from: TaskStatus::Open,
+            to: TaskStatus::InProgress,
+            timestamp: "2026-03-10T12:00:00Z".to_string(),
+            hat: Some("builder".to_string()),
+        };
+        let json = serde_json::to_string(&transition).unwrap();
+        let deserialized: StatusTransition = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.from, TaskStatus::Open);
+        assert_eq!(deserialized.to, TaskStatus::InProgress);
+        assert_eq!(deserialized.timestamp, "2026-03-10T12:00:00Z");
+        assert_eq!(deserialized.hat.as_deref(), Some("builder"));
+    }
+
+    #[test]
+    fn test_is_ready_returns_false_for_blocked() {
+        let mut task = Task::new("Test".to_string(), 1);
+        task.status = TaskStatus::Blocked;
+        assert!(!task.is_ready(&[]));
+    }
+
+    #[test]
+    fn test_builder_with_tags_and_with_last_hat() {
+        let task = Task::new("Test".to_string(), 1)
+            .with_tags(vec!["api".to_string(), "auth".to_string()])
+            .with_last_hat(Some("planner".to_string()));
+        assert_eq!(task.tags, vec!["api", "auth"]);
+        assert_eq!(task.last_hat.as_deref(), Some("planner"));
+    }
 }
