@@ -64,20 +64,31 @@ impl HistoryEvent {
 }
 
 /// Types of events that can be recorded in loop history.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryEventType {
     /// Loop started with given prompt.
     LoopStarted { prompt: String },
 
     /// Iteration started.
-    IterationStarted { iteration: u32 },
+    IterationStarted {
+        iteration: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hat: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hat_display: Option<String>,
+    },
 
     /// An event was published during the iteration.
     EventPublished { topic: String, payload: String },
 
     /// Iteration completed.
-    IterationCompleted { iteration: u32, success: bool },
+    IterationCompleted {
+        iteration: u32,
+        success: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
+    },
 
     /// Loop completed successfully.
     LoopCompleted { reason: String },
@@ -243,10 +254,17 @@ impl LoopHistory {
                     summary.prompt = Some(prompt.clone());
                     summary.started_at = Some(event.timestamp);
                 }
-                HistoryEventType::IterationCompleted { iteration, success } => {
+                HistoryEventType::IterationCompleted {
+                    iteration,
+                    success,
+                    cost_usd,
+                } => {
                     summary.iterations_completed = *iteration;
                     if !success {
                         summary.iterations_failed += 1;
+                    }
+                    if let Some(cost) = cost_usd {
+                        summary.total_cost_usd += cost;
                     }
                 }
                 HistoryEventType::EventPublished { .. } => {
@@ -284,9 +302,16 @@ impl LoopHistory {
     }
 
     /// Record iteration started event.
-    pub fn record_iteration_started(&self, iteration: u32) -> Result<(), HistoryError> {
+    pub fn record_iteration_started(
+        &self,
+        iteration: u32,
+        hat: Option<&str>,
+        hat_display: Option<&str>,
+    ) -> Result<(), HistoryError> {
         self.append(HistoryEvent::new(HistoryEventType::IterationStarted {
             iteration,
+            hat: hat.map(String::from),
+            hat_display: hat_display.map(String::from),
         }))
     }
 
@@ -303,10 +328,12 @@ impl LoopHistory {
         &self,
         iteration: u32,
         success: bool,
+        cost_usd: Option<f64>,
     ) -> Result<(), HistoryError> {
         self.append(HistoryEvent::new(HistoryEventType::IterationCompleted {
             iteration,
             success,
+            cost_usd,
         }))
     }
 
@@ -384,6 +411,9 @@ pub struct HistorySummary {
     /// Number of events published.
     pub events_published: u32,
 
+    /// Total cost in USD across all iterations.
+    pub total_cost_usd: f64,
+
     /// Whether the loop completed successfully.
     pub completed: bool,
 
@@ -422,8 +452,8 @@ mod tests {
         let (_dir, history) = temp_history();
 
         history.record_started("test prompt").unwrap();
-        history.record_iteration_started(1).unwrap();
-        history.record_iteration_completed(1, true).unwrap();
+        history.record_iteration_started(1, None, None).unwrap();
+        history.record_iteration_completed(1, true, None).unwrap();
         history.record_completed("completion_promise").unwrap();
 
         let events = history.read_all().unwrap();
@@ -435,13 +465,14 @@ mod tests {
         ));
         assert!(matches!(
             events[1].event_type,
-            HistoryEventType::IterationStarted { iteration: 1 }
+            HistoryEventType::IterationStarted { iteration: 1, .. }
         ));
         assert!(matches!(
             events[2].event_type,
             HistoryEventType::IterationCompleted {
                 iteration: 1,
-                success: true
+                success: true,
+                ..
             }
         ));
         assert!(matches!(
@@ -457,16 +488,16 @@ mod tests {
         assert_eq!(history.last_iteration().unwrap(), None);
 
         history.record_started("test").unwrap();
-        history.record_iteration_started(1).unwrap();
-        history.record_iteration_completed(1, true).unwrap();
+        history.record_iteration_started(1, None, None).unwrap();
+        history.record_iteration_completed(1, true, None).unwrap();
         assert_eq!(history.last_iteration().unwrap(), Some(1));
 
-        history.record_iteration_started(2).unwrap();
-        history.record_iteration_completed(2, true).unwrap();
+        history.record_iteration_started(2, None, None).unwrap();
+        history.record_iteration_completed(2, true, None).unwrap();
         assert_eq!(history.last_iteration().unwrap(), Some(2));
 
-        history.record_iteration_started(3).unwrap();
-        history.record_iteration_completed(3, false).unwrap();
+        history.record_iteration_started(3, None, None).unwrap();
+        history.record_iteration_completed(3, false, None).unwrap();
         assert_eq!(history.last_iteration().unwrap(), Some(3));
     }
 
@@ -510,16 +541,16 @@ mod tests {
         let (_dir, history) = temp_history();
 
         history.record_started("test prompt").unwrap();
-        history.record_iteration_started(1).unwrap();
+        history.record_iteration_started(1, None, None).unwrap();
         history
             .record_event_published("build.task", "task 1")
             .unwrap();
-        history.record_iteration_completed(1, true).unwrap();
-        history.record_iteration_started(2).unwrap();
+        history.record_iteration_completed(1, true, None).unwrap();
+        history.record_iteration_started(2, None, None).unwrap();
         history
             .record_event_published("build.done", "done")
             .unwrap();
-        history.record_iteration_completed(2, true).unwrap();
+        history.record_iteration_completed(2, true, None).unwrap();
         history.record_completed("completion_promise").unwrap();
 
         let summary = history.summary().unwrap();
