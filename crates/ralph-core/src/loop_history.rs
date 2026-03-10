@@ -617,4 +617,76 @@ mod tests {
             HistoryEventType::LoopStarted { prompt } if prompt == "test"
         ));
     }
+
+    #[test]
+    fn test_serde_roundtrip_with_hat_and_cost() {
+        let started = HistoryEvent::new(HistoryEventType::IterationStarted {
+            iteration: 1,
+            hat: Some("code-assist".to_string()),
+            hat_display: Some("Code Assist".to_string()),
+        });
+        let completed = HistoryEvent::new(HistoryEventType::IterationCompleted {
+            iteration: 1,
+            success: true,
+            cost_usd: Some(0.05),
+        });
+
+        let started_json = serde_json::to_string(&started).unwrap();
+        let completed_json = serde_json::to_string(&completed).unwrap();
+
+        let started_rt: HistoryEvent = serde_json::from_str(&started_json).unwrap();
+        let completed_rt: HistoryEvent = serde_json::from_str(&completed_json).unwrap();
+
+        assert_eq!(started.event_type, started_rt.event_type);
+        assert_eq!(completed.event_type, completed_rt.event_type);
+    }
+
+    #[test]
+    fn test_backward_compat_missing_hat_and_cost() {
+        let started_json =
+            r#"{"ts":"2026-01-01T00:00:00Z","type":{"kind":"iteration_started","iteration":1}}"#;
+        let completed_json = r#"{"ts":"2026-01-01T00:00:00Z","type":{"kind":"iteration_completed","iteration":1,"success":true}}"#;
+
+        let started: HistoryEvent = serde_json::from_str(started_json).unwrap();
+        let completed: HistoryEvent = serde_json::from_str(completed_json).unwrap();
+
+        assert!(matches!(
+            started.event_type,
+            HistoryEventType::IterationStarted { iteration: 1, ref hat, ref hat_display }
+            if hat.is_none() && hat_display.is_none()
+        ));
+        assert!(matches!(
+            completed.event_type,
+            HistoryEventType::IterationCompleted {
+                iteration: 1,
+                success: true,
+                cost_usd: None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_summary_accumulates_total_cost_usd() {
+        let (_dir, history) = temp_history();
+
+        history.record_started("cost test").unwrap();
+        history
+            .record_iteration_started(1, Some("hat-a"), None)
+            .unwrap();
+        history
+            .record_iteration_completed(1, true, Some(0.10))
+            .unwrap();
+        history.record_iteration_started(2, None, None).unwrap();
+        history
+            .record_iteration_completed(2, true, Some(0.25))
+            .unwrap();
+        history.record_iteration_started(3, None, None).unwrap();
+        history.record_iteration_completed(3, false, None).unwrap();
+        history.record_completed("done").unwrap();
+
+        let summary = history.summary().unwrap();
+        assert!((summary.total_cost_usd - 0.35).abs() < f64::EPSILON);
+        assert_eq!(summary.iterations_completed, 3);
+        assert_eq!(summary.iterations_failed, 1);
+    }
 }
