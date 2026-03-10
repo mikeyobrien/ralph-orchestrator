@@ -242,6 +242,8 @@ fn status_matches_filter(status: TaskStatus, filter: &str) -> bool {
         TaskStatus::InProgress => normalized == "inprogress",
         TaskStatus::Closed => normalized == "closed",
         TaskStatus::Failed => normalized == "failed",
+        TaskStatus::Blocked => normalized == "blocked",
+        TaskStatus::InReview => normalized == "inreview",
     }
 }
 
@@ -289,8 +291,10 @@ fn filter_tasks_for_list(store: &TaskStore, args: &ListArgs) -> Vec<Task> {
         let status_rank = |s: TaskStatus| match s {
             TaskStatus::InProgress => 0,
             TaskStatus::Open => 1,
-            TaskStatus::Closed => 2,
-            TaskStatus::Failed => 3,
+            TaskStatus::Blocked => 2,
+            TaskStatus::InReview => 3,
+            TaskStatus::Closed => 4,
+            TaskStatus::Failed => 5,
         };
 
         let rank_a = status_rank(a.status);
@@ -481,6 +485,8 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                         TaskStatus::InProgress => ("in_progress", colors::BLUE),
                         TaskStatus::Closed => ("closed", colors::DIM),
                         TaskStatus::Failed => ("failed", colors::RED),
+                        TaskStatus::Blocked => ("blocked", colors::YELLOW),
+                        TaskStatus::InReview => ("in_review", colors::BLUE),
                     };
 
                     let priority_color = match task.priority {
@@ -712,6 +718,8 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                 TaskStatus::InProgress => "in_progress",
                 TaskStatus::Closed => "closed",
                 TaskStatus::Failed => "failed",
+                TaskStatus::Blocked => "blocked",
+                TaskStatus::InReview => "in_review",
             };
 
             if use_colors {
@@ -720,6 +728,8 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                     TaskStatus::InProgress => colors::BLUE,
                     TaskStatus::Closed => colors::DIM,
                     TaskStatus::Failed => colors::RED,
+                    TaskStatus::Blocked => colors::YELLOW,
+                    TaskStatus::InReview => colors::BLUE,
                 };
                 let priority_color = match task.priority {
                     1 => colors::RED,

@@ -17,6 +17,10 @@ pub enum TaskStatus {
     Closed,
     /// Failed/abandoned
     Failed,
+    /// Waiting on external dependency or human input
+    Blocked,
+    /// Submitted for review
+    InReview,
 }
 
 impl TaskStatus {
@@ -26,6 +30,16 @@ impl TaskStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(self, TaskStatus::Closed | TaskStatus::Failed)
     }
+}
+
+/// A recorded status transition for audit/kanban tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusTransition {
+    pub from: TaskStatus,
+    pub to: TaskStatus,
+    pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hat: Option<String>,
 }
 
 /// A task in the task tracking system.
@@ -70,6 +84,18 @@ pub struct Task {
     /// Completion timestamp (ISO 8601), if closed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub closed: Option<String>,
+
+    /// Last hat that touched this task
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_hat: Option<String>,
+
+    /// Status transition history for kanban tracking
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<StatusTransition>,
+
+    /// Freeform tags for filtering and grouping
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl Task {
@@ -87,12 +113,27 @@ impl Task {
             created: chrono::Utc::now().to_rfc3339(),
             started: None,
             closed: None,
+            last_hat: None,
+            transitions: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
     /// Sets the loop ID for this task.
     pub fn with_loop_id(mut self, loop_id: Option<String>) -> Self {
         self.loop_id = loop_id;
+        self
+    }
+
+    /// Sets freeform tags for filtering and grouping.
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// Sets the last hat that touched this task.
+    pub fn with_last_hat(mut self, hat: Option<String>) -> Self {
+        self.last_hat = hat;
         self
     }
 
