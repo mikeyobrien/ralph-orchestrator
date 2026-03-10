@@ -129,3 +129,209 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ralph_core::EventRecord;
+    use std::io::Write;
+
+    fn write_records(dir: &Path, records: &[EventRecord]) {
+        let events_dir = dir.join(".ralph");
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let mut f = File::create(events_dir.join("events.jsonl")).unwrap();
+        for r in records {
+            writeln!(f, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    fn record(topic: &str, hat: &str, payload: &str, ts: &str, iteration: u32) -> EventRecord {
+        EventRecord {
+            ts: ts.into(),
+            iteration,
+            hat: hat.into(),
+            topic: topic.into(),
+            triggered: None,
+            payload: payload.into(),
+            blocked_count: None,
+        }
+    }
+
+    #[test]
+    fn list_returns_events_from_jsonl() {
+        let tmp = tempfile::tempdir().unwrap();
+        let records = vec![
+            record("build.done", "Builder", "ok", "2026-01-01T00:00:00Z", 1),
+            record(
+                "review.done",
+                "Reviewer",
+                "approved",
+                "2026-01-02T00:00:00Z",
+                2,
+            ),
+            record(
+                "test.pass",
+                "Tester",
+                "all green",
+                "2026-01-03T00:00:00Z",
+                3,
+            ),
+        ];
+        write_records(tmp.path(), &records);
+
+        let domain = EventDomain::new(tmp.path());
+        let result = domain.list(EventListParams::default()).unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(result["total"], 3);
+        assert_eq!(events[0]["topic"], "build.done");
+        assert_eq!(events[0]["sourceHat"], "Builder");
+        assert_eq!(events[0]["iteration"], 1);
+        assert_eq!(events[1]["payload"], "approved");
+        assert_eq!(events[2]["timestamp"], "2026-01-03T00:00:00Z");
+    }
+
+    #[test]
+    fn list_filters_by_topic_exact() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_records(
+            tmp.path(),
+            &[
+                record("build.done", "B", "", "2026-01-01T00:00:00Z", 1),
+                record("review.done", "R", "", "2026-01-02T00:00:00Z", 2),
+                record("build.failed", "B", "", "2026-01-03T00:00:00Z", 3),
+            ],
+        );
+        let domain = EventDomain::new(tmp.path());
+        let result = domain
+            .list(EventListParams {
+                topic: Some("build.done".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["topic"], "build.done");
+    }
+
+    #[test]
+    fn list_filters_by_topic_wildcard() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_records(
+            tmp.path(),
+            &[
+                record("build.done", "B", "", "2026-01-01T00:00:00Z", 1),
+                record("review.done", "R", "", "2026-01-02T00:00:00Z", 2),
+                record("build.failed", "B", "", "2026-01-03T00:00:00Z", 3),
+            ],
+        );
+        let domain = EventDomain::new(tmp.path());
+        let result = domain
+            .list(EventListParams {
+                topic: Some("build.*".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn list_filters_by_task_id_in_payload() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_records(
+            tmp.path(),
+            &[
+                record("a", "B", "working on task-123", "2026-01-01T00:00:00Z", 1),
+                record("b", "B", "unrelated work", "2026-01-02T00:00:00Z", 2),
+            ],
+        );
+        let domain = EventDomain::new(tmp.path());
+        let result = domain
+            .list(EventListParams {
+                task_id: Some("task-123".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["topic"], "a");
+    }
+
+    #[test]
+    fn list_respects_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let records: Vec<_> = (0..5)
+            .map(|i| record("t", "B", "", &format!("2026-01-0{}T00:00:00Z", i + 1), i))
+            .collect();
+        write_records(tmp.path(), &records);
+
+        let domain = EventDomain::new(tmp.path());
+        let result = domain
+            .list(EventListParams {
+                limit: Some(2),
+                ..Default::default()
+            })
+            .unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(result["total"], 5);
+    }
+
+    #[test]
+    fn list_filters_by_after_timestamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_records(
+            tmp.path(),
+            &[
+                record("a", "B", "", "2026-01-01T00:00:00Z", 1),
+                record("b", "B", "", "2026-01-02T00:00:00Z", 2),
+                record("c", "B", "", "2026-01-03T00:00:00Z", 3),
+            ],
+        );
+        let domain = EventDomain::new(tmp.path());
+        let result = domain
+            .list(EventListParams {
+                after: Some("2026-01-01T00:00:00Z".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["topic"], "b");
+        assert_eq!(events[1]["topic"], "c");
+    }
+
+    #[test]
+    fn list_empty_file_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let events_dir = tmp.path().join(".ralph");
+        std::fs::create_dir_all(&events_dir).unwrap();
+        File::create(events_dir.join("events.jsonl")).unwrap();
+
+        let domain = EventDomain::new(tmp.path());
+        let result = domain.list(EventListParams::default()).unwrap();
+        assert_eq!(result["events"].as_array().unwrap().len(), 0);
+        assert_eq!(result["total"], 0);
+    }
+
+    #[test]
+    fn list_skips_malformed_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let events_dir = tmp.path().join(".ralph");
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let mut f = File::create(events_dir.join("events.jsonl")).unwrap();
+        let r1 = record("first", "B", "", "2026-01-01T00:00:00Z", 1);
+        writeln!(f, "{}", serde_json::to_string(&r1).unwrap()).unwrap();
+        writeln!(f, "not json at all").unwrap();
+        let r2 = record("third", "B", "", "2026-01-03T00:00:00Z", 3);
+        writeln!(f, "{}", serde_json::to_string(&r2).unwrap()).unwrap();
+
+        let domain = EventDomain::new(tmp.path());
+        let result = domain.list(EventListParams::default()).unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["topic"], "first");
+        assert_eq!(events[1]["topic"], "third");
+    }
+}
