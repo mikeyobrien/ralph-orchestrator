@@ -856,4 +856,112 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(registry.get(&id).unwrap().is_none());
     }
+
+    #[test]
+    fn test_loop_entry_serde_roundtrip_with_new_fields() {
+        let mut entry = LoopEntry::new("roundtrip test", None::<String>);
+        entry.hat_collection = vec![HatSummary {
+            id: "builder".into(),
+            name: "Builder".into(),
+            description: "Builds things".into(),
+        }];
+        entry.active_hat = Some("builder".into());
+        entry.iteration = 7;
+        entry.total_cost_usd = 1.23;
+        entry.max_iterations = Some(20);
+        entry.termination_reason = Some("completed".into());
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: LoopEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, deserialized);
+    }
+
+    #[test]
+    fn test_loop_entry_backward_compat_missing_new_fields() {
+        let json = serde_json::json!({
+            "id": "loop-123-abcd",
+            "pid": 1234,
+            "started": "2026-01-01T00:00:00Z",
+            "prompt": "old entry",
+            "workspace": "/tmp"
+        });
+        let entry: LoopEntry = serde_json::from_value(json).unwrap();
+        assert!(entry.hat_collection.is_empty());
+        assert!(entry.active_hat.is_none());
+        assert_eq!(entry.iteration, 0);
+        assert!(entry.total_cost_usd.abs() < f64::EPSILON);
+        assert!(entry.max_iterations.is_none());
+        assert!(entry.termination_reason.is_none());
+    }
+
+    #[test]
+    fn test_update_modifies_only_specified_fields() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = LoopRegistry::new(temp_dir.path());
+
+        let entry = LoopEntry::new("update test", None::<String>);
+        let id = entry.id.clone();
+        registry.register(entry).unwrap();
+
+        registry
+            .update(
+                &id,
+                LoopEntryUpdate {
+                    iteration: Some(5),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        let updated = registry.get(&id).unwrap().unwrap();
+        assert_eq!(updated.iteration, 5);
+        assert!(updated.active_hat.is_none());
+        assert!(updated.total_cost_usd.abs() < f64::EPSILON);
+        assert!(updated.hat_collection.is_empty());
+    }
+
+    #[test]
+    fn test_update_returns_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = LoopRegistry::new(temp_dir.path());
+
+        // Create file by registering then deregistering
+        let entry = LoopEntry::new("dummy", None::<String>);
+        let id = entry.id.clone();
+        registry.register(entry).unwrap();
+        registry.deregister(&id).unwrap();
+
+        let result = registry.update("nonexistent", LoopEntryUpdate::default());
+        assert!(matches!(result, Err(RegistryError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_hat_collection_persists_across_reload() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = LoopRegistry::new(temp_dir.path());
+
+        let entry = LoopEntry::new("persist test", None::<String>);
+        let id = entry.id.clone();
+        registry.register(entry).unwrap();
+
+        let hats = vec![HatSummary {
+            id: "planner".into(),
+            name: "Planner".into(),
+            description: "Plans work".into(),
+        }];
+        registry
+            .update(
+                &id,
+                LoopEntryUpdate {
+                    hat_collection: Some(hats.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        // Reload from same path
+        let registry2 = LoopRegistry::new(temp_dir.path());
+        let reloaded = registry2.get(&id).unwrap().unwrap();
+        assert_eq!(reloaded.hat_collection, hats);
+    }
 }

@@ -91,7 +91,7 @@ pub use loop_context::LoopContext;
 pub use loop_history::{HistoryError, HistoryEvent, HistoryEventType, HistorySummary, LoopHistory};
 pub use loop_lock::{LockError, LockGuard, LockMetadata, LoopLock};
 pub use loop_name::{LoopNameGenerator, LoopNamingConfig};
-pub use loop_registry::{LoopEntry, LoopRegistry, RegistryError};
+pub use loop_registry::{HatSummary, LoopEntry, LoopEntryUpdate, LoopRegistry, RegistryError};
 pub use memory::{Memory, MemoryType};
 pub use memory_store::{
     DEFAULT_MEMORIES_PATH, MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget,
