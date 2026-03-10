@@ -14,6 +14,7 @@ use crate::collection_domain::CollectionDomain;
 use crate::config::ApiConfig;
 use crate::config_domain::ConfigDomain;
 use crate::errors::{ApiError, RpcErrorCode};
+use crate::event_domain::EventDomain;
 use crate::idempotency::{
     IdempotencyCheck, IdempotencyStore, InMemoryIdempotencyStore, StoredResponse,
 };
@@ -46,6 +47,7 @@ pub struct RpcRuntime {
     streams: StreamDomain,
     config_domain: ConfigDomain,
     preset_domain: PresetDomain,
+    event_domain: EventDomain,
 }
 
 impl RpcRuntime {
@@ -76,6 +78,7 @@ impl RpcRuntime {
         let streams = StreamDomain::new();
         let config_domain = ConfigDomain::new(&config.workspace_root);
         let preset_domain = PresetDomain::new(&config.workspace_root);
+        let event_domain = EventDomain::new(&config.workspace_root);
 
         Self {
             config,
@@ -88,6 +91,7 @@ impl RpcRuntime {
             streams,
             config_domain,
             preset_domain,
+            event_domain,
         }
     }
 
@@ -226,6 +230,10 @@ impl RpcRuntime {
 
     pub(crate) fn preset_domain(&self) -> &PresetDomain {
         &self.preset_domain
+    }
+
+    pub(crate) fn event_domain(&self) -> &EventDomain {
+        &self.event_domain
     }
 
     pub(crate) fn parse_params<T>(&self, request: &RpcRequestEnvelope) -> Result<T, ApiError>

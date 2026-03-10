@@ -56,6 +56,7 @@ pub const KNOWN_METHODS: &[&str] = &[
     "collection.delete",
     "collection.import",
     "collection.export",
+    "event.list",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",

@@ -61,6 +61,7 @@
         "collection.delete",
         "collection.import",
         "collection.export",
+        "event.list",
         "stream.subscribe",
         "stream.unsubscribe",
         "stream.ack"
@@ -637,6 +638,41 @@
         "name"
       ]
     },
+    "eventListParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topic": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "after": { "type": "string" },
+        "taskId": { "type": "string" }
+      }
+    },
+    "eventListResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/eventResponse" }
+        },
+        "total": { "type": "integer" }
+      },
+      "required": ["events", "total"]
+    },
+    "eventResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topic": { "type": "string" },
+        "payload": { "type": "string" },
+        "sourceHat": { "type": "string" },
+        "iteration": { "type": "integer" },
+        "timestamp": { "type": "string" },
+        "triggered": { "type": "string" }
+      },
+      "required": ["topic", "payload", "sourceHat", "iteration", "timestamp"]
+    },
     "streamSubscribeParams": {
       "type": "object",
       "additionalProperties": false,
@@ -749,6 +785,8 @@
         { "properties": { "method": { "const": "collection.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.import" }, "params": { "$ref": "#/$defs/collectionImportParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.export" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "event.list" }, "params": { "$ref": "#/$defs/eventListParams" } }, "required": ["method", "params"] },
 
         { "properties": { "method": { "const": "stream.subscribe" }, "params": { "$ref": "#/$defs/streamSubscribeParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "params": { "$ref": "#/$defs/streamUnsubscribeParams" } }, "required": ["method", "params"] },
@@ -1061,6 +1099,8 @@
         { "properties": { "method": { "const": "collection.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.import" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.export" }, "result": { "$ref": "#/$defs/collectionExportResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "event.list" }, "result": { "$ref": "#/$defs/eventListResult" } }, "required": ["method", "result"] },
 
         { "properties": { "method": { "const": "stream.subscribe" }, "result": { "$ref": "#/$defs/streamSubscribeResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },

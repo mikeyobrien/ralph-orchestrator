@@ -7,6 +7,7 @@ use crate::collection_domain::{
 };
 use crate::config_domain::ConfigUpdateParams;
 use crate::errors::ApiError;
+use crate::event_domain::EventListParams;
 use crate::loop_domain::{
     LoopListParams, LoopRetryParams, LoopStopMergeParams, LoopTriggerMergeTaskParams,
 };
@@ -36,6 +37,7 @@ impl RpcRuntime {
             method if method.starts_with("config.") => self.dispatch_config(request),
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
+            method if method.starts_with("event.") => self.dispatch_event(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
             "_internal.publish" => self.dispatch_internal_publish(request),
             _ => {
@@ -309,6 +311,19 @@ impl RpcRuntime {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let yaml = self.collection_domain_mut()?.export(&params.id)?;
                 Ok(json!({ "yaml": yaml }))
+            }
+            _ => Err(ApiError::service_unavailable(format!(
+                "method '{}' is recognized but not implemented",
+                request.method
+            ))),
+        }
+    }
+
+    fn dispatch_event(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        match request.method.as_str() {
+            "event.list" => {
+                let params: EventListParams = self.parse_params(request)?;
+                self.event_domain().list(params)
             }
             _ => Err(ApiError::service_unavailable(format!(
                 "method '{}' is recognized but not implemented",
