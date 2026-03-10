@@ -558,3 +558,168 @@ impl LoopDomain {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ralph_core::loop_registry::{HatSummary, LoopEntry, LoopRegistry};
+    use ralph_core::task::Task;
+    use ralph_core::task_store::TaskStore;
+
+    fn setup() -> (tempfile::TempDir, LoopDomain) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ralph/agent")).unwrap();
+        let domain = LoopDomain::new(dir.path(), 1000, "ralph");
+        (dir, domain)
+    }
+
+    #[test]
+    fn list_enriches_registry_entry_with_hat_collection_and_task_counts() {
+        let (dir, domain) = setup();
+
+        // Register a loop with hat_collection and enrichment fields
+        let mut entry = LoopEntry::with_id(
+            "loop-test-1",
+            "test prompt",
+            None::<&str>,
+            dir.path().display().to_string(),
+        );
+        entry.hat_collection = vec![
+            HatSummary {
+                id: "builder".into(),
+                name: "Builder".into(),
+                description: "Builds things".into(),
+            },
+            HatSummary {
+                id: "reviewer".into(),
+                name: "Reviewer".into(),
+                description: "Reviews things".into(),
+            },
+        ];
+        entry.active_hat = Some("Builder".into());
+        entry.iteration = 5;
+        entry.total_cost_usd = 2.50;
+        entry.max_iterations = Some(10);
+
+        let registry = LoopRegistry::new(dir.path());
+        registry.register(entry).unwrap();
+
+        // Create tasks for this loop (1 open, 1 closed)
+        let tasks_path = dir.path().join(".ralph/agent/tasks.jsonl");
+        let mut store = TaskStore::load(&tasks_path).unwrap();
+        let t1 = Task::new("Open task".into(), 2).with_loop_id(Some("loop-test-1".into()));
+        let t2 = Task::new("Closed task".into(), 3).with_loop_id(Some("loop-test-1".into()));
+        store.add(t1);
+        let t2_id = store.add(t2).id.clone();
+        store.close(&t2_id);
+        store.save().unwrap();
+
+        let loops = domain
+            .list(LoopListParams {
+                include_terminal: None,
+            })
+            .unwrap();
+        let rec = loops.iter().find(|l| l.id == "loop-test-1").unwrap();
+
+        assert_eq!(rec.hat_collection.len(), 2);
+        assert_eq!(rec.hat_collection[0].id, "builder");
+        assert_eq!(rec.hat_collection[0].name, "Builder");
+        assert_eq!(rec.hat_collection[1].id, "reviewer");
+        assert_eq!(rec.active_hat.as_deref(), Some("Builder"));
+        assert_eq!(rec.iteration, 5);
+        assert!((rec.total_cost_usd - 2.50).abs() < f64::EPSILON);
+        assert_eq!(rec.max_iterations, Some(10));
+
+        let counts = rec.task_counts.as_ref().unwrap();
+        assert_eq!(counts.open, 1);
+        assert_eq!(counts.closed, 1);
+        assert_eq!(counts.total, 2);
+    }
+
+    #[test]
+    fn list_returns_none_task_counts_for_loop_with_no_tasks() {
+        let (dir, domain) = setup();
+
+        let entry = LoopEntry::with_id(
+            "loop-no-tasks",
+            "prompt",
+            None::<&str>,
+            dir.path().display().to_string(),
+        );
+        let registry = LoopRegistry::new(dir.path());
+        registry.register(entry).unwrap();
+
+        let loops = domain
+            .list(LoopListParams {
+                include_terminal: None,
+            })
+            .unwrap();
+        let rec = loops.iter().find(|l| l.id == "loop-no-tasks").unwrap();
+
+        assert!(rec.task_counts.is_none());
+    }
+
+    #[test]
+    fn loop_record_serialization_includes_enrichment_fields() {
+        // Populated record — enrichment fields present
+        let rec = LoopRecord {
+            id: "loop-1".into(),
+            status: "running".into(),
+            location: "(in-place)".into(),
+            prompt: None,
+            merge_commit: None,
+            hat_collection: vec![HatSummaryResponse {
+                id: "b".into(),
+                name: "Builder".into(),
+                description: "d".into(),
+            }],
+            active_hat: Some("Builder".into()),
+            iteration: 3,
+            total_cost_usd: 1.5,
+            max_iterations: Some(10),
+            termination_reason: None,
+            task_counts: Some(TaskCountsResponse {
+                open: 1,
+                blocked: 0,
+                in_progress: 0,
+                in_review: 0,
+                closed: 2,
+                failed: 0,
+                total: 3,
+            }),
+        };
+        let json = serde_json::to_value(&rec).unwrap();
+        assert!(json.get("hatCollection").is_some());
+        assert_eq!(json["activeHat"], "Builder");
+        assert_eq!(json["iteration"], 3);
+        assert_eq!(json["totalCostUsd"], 1.5);
+        assert_eq!(json["maxIterations"], 10);
+        assert!(json.get("taskCounts").is_some());
+        assert_eq!(json["taskCounts"]["open"], 1);
+        assert_eq!(json["taskCounts"]["closed"], 2);
+        assert_eq!(json["taskCounts"]["total"], 3);
+
+        // Default record — enrichment fields skipped
+        let empty = LoopRecord {
+            id: "loop-2".into(),
+            status: "crashed".into(),
+            location: "-".into(),
+            prompt: None,
+            merge_commit: None,
+            hat_collection: Vec::new(),
+            active_hat: None,
+            iteration: 0,
+            total_cost_usd: 0.0,
+            max_iterations: None,
+            termination_reason: None,
+            task_counts: None,
+        };
+        let json2 = serde_json::to_value(&empty).unwrap();
+        assert!(json2.get("hatCollection").is_none());
+        assert!(json2.get("activeHat").is_none());
+        assert!(json2.get("iteration").is_none());
+        assert!(json2.get("totalCostUsd").is_none());
+        assert!(json2.get("maxIterations").is_none());
+        assert!(json2.get("taskCounts").is_none());
+    }
+}
