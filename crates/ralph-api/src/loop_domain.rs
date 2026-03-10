@@ -10,6 +10,8 @@ use ralph_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use ralph_core::{TaskStatus, TaskStore};
+
 use crate::errors::ApiError;
 use crate::loop_side_effects::{resolve_discard_target, resolve_loop_root, spawn_retry_merge_flow};
 use crate::loop_support::{
@@ -41,6 +43,26 @@ pub struct LoopTriggerMergeTaskParams {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HatSummaryResponse {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCountsResponse {
+    pub open: usize,
+    pub blocked: usize,
+    pub in_progress: usize,
+    pub in_review: usize,
+    pub closed: usize,
+    pub failed: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoopRecord {
     pub id: String,
     pub status: String,
@@ -49,6 +71,30 @@ pub struct LoopRecord {
     pub prompt: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hat_collection: Vec<HatSummaryResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_hat: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub iteration: u32,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub total_cost_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_counts: Option<TaskCountsResponse>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +147,9 @@ impl LoopDomain {
         let registry = LoopRegistry::new(&self.workspace_root);
         let merge_queue = MergeQueue::new(&self.workspace_root);
 
+        let task_store =
+            TaskStore::load(&self.workspace_root.join(".ralph/agent/tasks.jsonl")).ok();
+
         let mut loops = Vec::new();
         let mut listed_ids = HashSet::new();
 
@@ -113,6 +162,13 @@ impl LoopDomain {
                 location: "(in-place)".to_string(),
                 prompt: Some(metadata.prompt),
                 merge_commit: None,
+                hat_collection: Vec::new(),
+                active_hat: None,
+                iteration: 0,
+                total_cost_usd: 0.0,
+                max_iterations: None,
+                termination_reason: None,
+                task_counts: None,
             });
             listed_ids.insert("(primary)".to_string());
         }
@@ -135,6 +191,38 @@ impl LoopDomain {
                 .clone()
                 .unwrap_or_else(|| "(in-place)".to_string());
 
+            let task_counts = task_store.as_ref().and_then(|ts| {
+                let counts = ts.counts_by_status_for_loop(&entry.id);
+                if counts.is_empty() {
+                    return None;
+                }
+                let open = counts.get(&TaskStatus::Open).copied().unwrap_or(0);
+                let blocked = counts.get(&TaskStatus::Blocked).copied().unwrap_or(0);
+                let in_progress = counts.get(&TaskStatus::InProgress).copied().unwrap_or(0);
+                let in_review = counts.get(&TaskStatus::InReview).copied().unwrap_or(0);
+                let closed = counts.get(&TaskStatus::Closed).copied().unwrap_or(0);
+                let failed = counts.get(&TaskStatus::Failed).copied().unwrap_or(0);
+                Some(TaskCountsResponse {
+                    open,
+                    blocked,
+                    in_progress,
+                    in_review,
+                    closed,
+                    failed,
+                    total: open + blocked + in_progress + in_review + closed + failed,
+                })
+            });
+
+            let hat_collection = entry
+                .hat_collection
+                .iter()
+                .map(|h| HatSummaryResponse {
+                    id: h.id.clone(),
+                    name: h.name.clone(),
+                    description: h.description.clone(),
+                })
+                .collect();
+
             listed_ids.insert(entry.id.clone());
             loops.push(LoopRecord {
                 id: entry.id,
@@ -142,6 +230,13 @@ impl LoopDomain {
                 location,
                 prompt: Some(entry.prompt),
                 merge_commit: None,
+                hat_collection,
+                active_hat: entry.active_hat,
+                iteration: entry.iteration,
+                total_cost_usd: entry.total_cost_usd,
+                max_iterations: entry.max_iterations,
+                termination_reason: entry.termination_reason,
+                task_counts,
             });
         }
 
@@ -170,6 +265,13 @@ impl LoopDomain {
                     .unwrap_or_else(|| "-".to_string()),
                 prompt: Some(entry.prompt),
                 merge_commit: entry.merge_commit,
+                hat_collection: Vec::new(),
+                active_hat: None,
+                iteration: 0,
+                total_cost_usd: 0.0,
+                max_iterations: None,
+                termination_reason: None,
+                task_counts: None,
             });
         }
 
