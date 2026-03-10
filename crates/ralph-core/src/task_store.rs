@@ -295,6 +295,71 @@ impl TaskStore {
         self.transition(id, TaskStatus::Blocked, None)
     }
 
+    /// Returns tasks matching the given status.
+    pub fn filter_by_status(&self, status: TaskStatus) -> Vec<&Task> {
+        self.tasks.iter().filter(|t| t.status == status).collect()
+    }
+
+    /// Returns tasks matching the given loop ID.
+    pub fn filter_by_loop_id(&self, loop_id: &str) -> Vec<&Task> {
+        self.tasks
+            .iter()
+            .filter(|t| t.loop_id.as_deref() == Some(loop_id))
+            .collect()
+    }
+
+    /// Returns tasks whose `last_hat` matches the given hat.
+    pub fn filter_by_hat(&self, hat: &str) -> Vec<&Task> {
+        self.tasks
+            .iter()
+            .filter(|t| t.last_hat.as_deref() == Some(hat))
+            .collect()
+    }
+
+    /// Returns tasks matching all provided criteria (AND intersection).
+    pub fn filter(
+        &self,
+        status: Option<TaskStatus>,
+        loop_id: Option<&str>,
+        hat: Option<&str>,
+        priority: Option<u8>,
+        tag: Option<&str>,
+    ) -> Vec<&Task> {
+        self.tasks
+            .iter()
+            .filter(|t| {
+                status.is_none_or(|s| t.status == s)
+                    && loop_id.is_none_or(|l| t.loop_id.as_deref() == Some(l))
+                    && hat.is_none_or(|h| t.last_hat.as_deref() == Some(h))
+                    && priority.is_none_or(|p| t.priority == p)
+                    && tag.is_none_or(|tg| t.tags.iter().any(|x| x == tg))
+            })
+            .collect()
+    }
+
+    /// Returns a count of tasks grouped by status.
+    pub fn counts_by_status(&self) -> std::collections::HashMap<TaskStatus, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for task in &self.tasks {
+            *counts.entry(task.status).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// Returns a count of tasks grouped by status, scoped to a specific loop.
+    pub fn counts_by_status_for_loop(
+        &self,
+        loop_id: &str,
+    ) -> std::collections::HashMap<TaskStatus, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for task in &self.tasks {
+            if task.loop_id.as_deref() == Some(loop_id) {
+                *counts.entry(task.status).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
     /// Ensures a task exists for a stable key, returning the existing or created task.
     ///
     /// If a task with the same key already exists, its non-lifecycle metadata is refreshed and
@@ -804,5 +869,134 @@ mod tests {
         assert_eq!(t.transitions[0].to, TaskStatus::InProgress);
         assert_eq!(t.transitions[0].hat.as_deref(), Some("planner"));
         assert_eq!(t.last_hat.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn test_filter_by_status() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        store.add(Task::new("A".into(), 1));
+        let b = Task::new("B".into(), 2);
+        let b_id = b.id.clone();
+        store.add(b);
+        store.start(&b_id);
+
+        assert_eq!(store.filter_by_status(TaskStatus::Open).len(), 1);
+        assert_eq!(store.filter_by_status(TaskStatus::InProgress).len(), 1);
+        assert_eq!(store.filter_by_status(TaskStatus::Closed).len(), 0);
+    }
+
+    #[test]
+    fn test_filter_by_loop_id() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let mut a = Task::new("A".into(), 1);
+        a.loop_id = Some("loop-1".into());
+        let mut b = Task::new("B".into(), 1);
+        b.loop_id = Some("loop-2".into());
+        store.add(a);
+        store.add(b);
+
+        assert_eq!(store.filter_by_loop_id("loop-1").len(), 1);
+        assert_eq!(store.filter_by_loop_id("loop-1")[0].title, "A");
+        assert_eq!(store.filter_by_loop_id("loop-3").len(), 0);
+    }
+
+    #[test]
+    fn test_filter_by_hat() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let a = Task::new("A".into(), 1);
+        let a_id = a.id.clone();
+        store.add(a);
+        store.transition(&a_id, TaskStatus::InProgress, Some("builder"));
+
+        assert_eq!(store.filter_by_hat("builder").len(), 1);
+        assert_eq!(store.filter_by_hat("planner").len(), 0);
+    }
+
+    #[test]
+    fn test_combined_filter_intersects() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+
+        let mut a = Task::new("A".into(), 1).with_tags(vec!["api".into()]);
+        a.loop_id = Some("loop-1".into());
+        let a_id = a.id.clone();
+        store.add(a);
+        store.transition(&a_id, TaskStatus::InProgress, Some("builder"));
+
+        let mut b = Task::new("B".into(), 2).with_tags(vec!["api".into()]);
+        b.loop_id = Some("loop-1".into());
+        store.add(b);
+
+        // status + tag
+        let r = store.filter(Some(TaskStatus::InProgress), None, None, None, Some("api"));
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].title, "A");
+
+        // loop + priority
+        let r = store.filter(None, Some("loop-1"), None, Some(2), None);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].title, "B");
+
+        // no criteria returns all
+        assert_eq!(store.filter(None, None, None, None, None).len(), 2);
+    }
+
+    #[test]
+    fn test_counts_by_status() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let a = Task::new("A".into(), 1);
+        let b = Task::new("B".into(), 1);
+        let a_id = a.id.clone();
+        store.add(a);
+        store.add(b);
+        store.start(&a_id);
+
+        let counts = store.counts_by_status();
+        assert_eq!(counts.get(&TaskStatus::InProgress), Some(&1));
+        assert_eq!(counts.get(&TaskStatus::Open), Some(&1));
+        assert_eq!(counts.get(&TaskStatus::Closed), None);
+    }
+
+    #[test]
+    fn test_counts_by_status_for_loop() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let mut a = Task::new("A".into(), 1);
+        a.loop_id = Some("loop-1".into());
+        let mut b = Task::new("B".into(), 1);
+        b.loop_id = Some("loop-2".into());
+        store.add(a);
+        store.add(b);
+
+        let counts = store.counts_by_status_for_loop("loop-1");
+        assert_eq!(counts.get(&TaskStatus::Open), Some(&1));
+        assert_eq!(counts.len(), 1);
+
+        let empty = store.counts_by_status_for_loop("loop-99");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_empty_store_filters_and_counts() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let store = TaskStore::load(&path).unwrap();
+
+        assert!(store.filter_by_status(TaskStatus::Open).is_empty());
+        assert!(store.filter_by_loop_id("x").is_empty());
+        assert!(store.filter_by_hat("x").is_empty());
+        assert!(store.filter(None, None, None, None, None).is_empty());
+        assert!(store.counts_by_status().is_empty());
+        assert!(store.counts_by_status_for_loop("x").is_empty());
     }
 }
