@@ -14,7 +14,7 @@ use crate::loop_support::now_ts;
 // Request / filter types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskListParams {
     pub status: Option<String>,
@@ -690,5 +690,214 @@ fn status_to_string(status: TaskStatus) -> String {
         TaskStatus::Failed => "failed".to_string(),
         TaskStatus::Blocked => "blocked".to_string(),
         TaskStatus::InReview => "in_review".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup() -> (TempDir, TaskDomain) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".ralph/agent")).unwrap();
+        let domain = TaskDomain::new(dir.path());
+        (dir, domain)
+    }
+
+    fn create_params(id: &str, title: &str) -> TaskCreateParams {
+        TaskCreateParams {
+            id: id.to_string(),
+            title: title.to_string(),
+            status: None,
+            priority: None,
+            blocked_by: None,
+            auto_execute: Some(false),
+            merge_loop_prompt: None,
+        }
+    }
+
+    #[test]
+    fn list_empty_store() {
+        let (_dir, domain) = setup();
+        let result = domain.list(TaskListParams::default()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn create_round_trip_to_jsonl() {
+        let (dir, mut domain) = setup();
+        let resp = domain.create(create_params("t-1", "First task")).unwrap();
+        assert_eq!(resp.id, "t-1");
+        assert_eq!(resp.title, "First task");
+        assert_eq!(resp.status, "open");
+
+        // Verify persisted to JSONL by loading a fresh store
+        let store = TaskStore::load(&dir.path().join(".ralph/agent/tasks.jsonl")).unwrap();
+        assert_eq!(store.get("t-1").unwrap().title, "First task");
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "Open task")).unwrap();
+        let mut p2 = create_params("t-2", "Closed task");
+        p2.status = Some("closed".to_string());
+        p2.auto_execute = Some(false);
+        domain.create(p2).unwrap();
+
+        let open = domain
+            .list(TaskListParams {
+                status: Some("open".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, "t-1");
+
+        let closed = domain
+            .list(TaskListParams {
+                status: Some("closed".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].id, "t-2");
+    }
+
+    #[test]
+    fn list_filters_by_loop_id() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "Task A")).unwrap();
+        domain.create(create_params("t-2", "Task B")).unwrap();
+
+        // Set loop_id on t-1 via core store directly
+        let store_path = domain.store_path();
+        let mut store = TaskStore::load(&store_path).unwrap();
+        store
+            .with_exclusive_lock(|s| {
+                s.get_mut("t-1").unwrap().loop_id = Some("loop-abc".to_string());
+            })
+            .unwrap();
+
+        let filtered = domain
+            .list(TaskListParams {
+                loop_id: Some("loop-abc".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "t-1");
+    }
+
+    #[test]
+    fn list_filters_by_tag() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "Tagged")).unwrap();
+        domain.create(create_params("t-2", "Untagged")).unwrap();
+
+        let store_path = domain.store_path();
+        let mut store = TaskStore::load(&store_path).unwrap();
+        store
+            .with_exclusive_lock(|s| {
+                s.get_mut("t-1").unwrap().tags = vec!["frontend".to_string()];
+            })
+            .unwrap();
+
+        let filtered = domain
+            .list(TaskListParams {
+                tag: Some("frontend".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "t-1");
+    }
+
+    #[test]
+    fn close_records_transition() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "To close")).unwrap();
+
+        // Start then close to get two transitions
+        domain
+            .update(TaskUpdateInput {
+                id: "t-1".to_string(),
+                status: Some("in_progress".to_string()),
+                title: None,
+                priority: None,
+                blocked_by: None,
+            })
+            .unwrap();
+
+        let resp = domain.close("t-1").unwrap();
+        assert_eq!(resp.status, "closed");
+        assert!(resp.completed_at.is_some());
+        assert_eq!(resp.transitions.len(), 2);
+        assert_eq!(resp.transitions[0].from, "open");
+        assert_eq!(resp.transitions[0].to, "in_progress");
+        assert_eq!(resp.transitions[1].from, "in_progress");
+        assert_eq!(resp.transitions[1].to, "closed");
+    }
+
+    #[test]
+    fn delete_removes_task() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "To delete")).unwrap();
+        domain.close("t-1").unwrap();
+        domain.delete("t-1").unwrap();
+
+        let all = domain.list(TaskListParams::default()).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn delete_rejects_non_terminal() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "Open task")).unwrap();
+        let err = domain.delete("t-1").unwrap_err();
+        assert_eq!(err.code.as_str(), "PRECONDITION_FAILED");
+    }
+
+    #[test]
+    fn clear_removes_all() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "A")).unwrap();
+        domain.create(create_params("t-2", "B")).unwrap();
+        domain.clear().unwrap();
+
+        let all = domain.list(TaskListParams::default()).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn archive_excludes_from_default_list() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "To archive")).unwrap();
+        domain.archive("t-1").unwrap();
+
+        let default = domain.list(TaskListParams::default()).unwrap();
+        assert!(default.is_empty());
+
+        let with_archived = domain
+            .list(TaskListParams {
+                include_archived: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(with_archived.len(), 1);
+        assert!(with_archived[0].archived_at.is_some());
+    }
+
+    #[test]
+    fn unarchive_restores_to_default_list() {
+        let (_dir, mut domain) = setup();
+        domain.create(create_params("t-1", "Archived")).unwrap();
+        domain.archive("t-1").unwrap();
+        domain.unarchive("t-1").unwrap();
+
+        let default = domain.list(TaskListParams::default()).unwrap();
+        assert_eq!(default.len(), 1);
+        assert!(default[0].archived_at.is_none());
     }
 }
