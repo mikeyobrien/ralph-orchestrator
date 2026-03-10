@@ -334,15 +334,14 @@ impl TaskDomain {
             ));
         }
 
-        let status = parse_task_status(requested_status).unwrap_or(TaskStatus::Open);
+        let target_status = parse_task_status(requested_status).ok_or_else(|| {
+            ApiError::invalid_params(format!("invalid task status: '{requested_status}'"))
+        })?;
+
         let mut task = Task::new(params.title, params.priority.unwrap_or(2));
         task.id = params.id.clone();
-        task.status = status;
         if let Some(ref blocker) = params.blocked_by {
             task.blocked_by = vec![blocker.clone()];
-        }
-        if status.is_terminal() {
-            task.closed = Some(chrono::Utc::now().to_rfc3339());
         }
 
         // Store API-only metadata in sidecar
@@ -350,23 +349,27 @@ impl TaskDomain {
             self.meta_mut(&params.id).merge_loop_prompt = params.merge_loop_prompt;
         }
 
-        let mut store = self.load_store()?;
-        let existing = store.get(&params.id);
-        if existing.is_some() {
-            return Err(
-                ApiError::conflict(format!("Task with id '{}' already exists", params.id))
-                    .with_details(serde_json::json!({ "taskId": params.id })),
-            );
-        }
-
         let should_auto_execute =
-            auto_execute && task.blocked_by.is_empty() && task.status == TaskStatus::Open;
+            auto_execute && task.blocked_by.is_empty() && target_status == TaskStatus::Open;
 
+        let mut store = self.load_store()?;
         store
-            .with_exclusive_lock(|s| {
+            .with_exclusive_lock(|s| -> Result<(), ApiError> {
+                if s.get(&params.id).is_some() {
+                    return Err(ApiError::conflict(format!(
+                        "Task with id '{}' already exists",
+                        params.id
+                    ))
+                    .with_details(serde_json::json!({ "taskId": params.id })));
+                }
                 s.add(task);
+                // Use transition() for non-Open initial status to record the change
+                if target_status != TaskStatus::Open {
+                    s.transition(&params.id, target_status, None);
+                }
+                Ok(())
             })
-            .map_err(|e| ApiError::internal(format!("failed to save task: {e}")))?;
+            .map_err(|e| ApiError::internal(format!("failed to save task: {e}")))??;
 
         if should_auto_execute {
             let result = self.run(&params.id)?;
@@ -380,25 +383,34 @@ impl TaskDomain {
     }
 
     pub fn update(&mut self, input: TaskUpdateInput) -> Result<TaskResponse, ApiError> {
+        let new_status = input
+            .status
+            .as_deref()
+            .map(|s| {
+                parse_task_status(s)
+                    .ok_or_else(|| ApiError::invalid_params(format!("invalid task status: '{s}'")))
+            })
+            .transpose()?;
+
         let mut store = self.load_store()?;
         store
             .with_exclusive_lock(|s| -> Result<(), ApiError> {
+                // Verify task exists before any mutations
+                if s.get(&input.id).is_none() {
+                    return Err(task_not_found_error(&input.id));
+                }
+
+                // Use transition() for status changes to record transitions properly
+                if let Some(status) = new_status {
+                    s.transition(&input.id, status, None);
+                }
+
                 let task = s
                     .get_mut(&input.id)
                     .ok_or_else(|| task_not_found_error(&input.id))?;
 
                 if let Some(ref title) = input.title {
-                    task.title = title.clone();
-                }
-                if let Some(ref status_str) = input.status {
-                    if let Some(new_status) = parse_task_status(status_str) {
-                        task.status = new_status;
-                        if new_status.is_terminal() {
-                            task.closed = Some(chrono::Utc::now().to_rfc3339());
-                        } else {
-                            task.closed = None;
-                        }
-                    }
+                    task.title.clone_from(title);
                 }
                 if let Some(priority) = input.priority {
                     task.priority = priority.clamp(1, 5);
@@ -417,7 +429,6 @@ impl TaskDomain {
                     meta.error_message = None;
                 }
             }
-            // Clear queue ID and execution status on any non-queued status
             if !matches!(status_str.as_str(), "pending" | "running") {
                 if let Some(meta) = self.api_meta.get_mut(&input.id) {
                     meta.queued_task_id = None;
@@ -450,7 +461,6 @@ impl TaskDomain {
     }
 
     pub fn archive(&mut self, id: &str) -> Result<TaskResponse, ApiError> {
-        // Verify task exists
         let _ = self.get(id)?;
         self.meta_mut(id).archived_at = Some(now_ts());
         self.persist_meta()?;
@@ -475,38 +485,26 @@ impl TaskDomain {
             )));
         }
 
-        // Load, filter out the task, and rewrite the file directly
-        let store = self.load_store()?;
-        let remaining: Vec<&Task> = store.all().iter().filter(|t| t.id != id).collect();
-        let store_path = self.store_path();
-        let content: String = remaining
-            .iter()
-            .filter_map(|t| serde_json::to_string(t).ok())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let output = if content.is_empty() {
-            String::new()
-        } else {
-            content + "\n"
-        };
-        std::fs::write(&store_path, output)
-            .map_err(|e| ApiError::internal(format!("failed to write task store: {e}")))?;
+        let mut store = self.load_store()?;
+        let id_owned = id.to_string();
+        store
+            .with_exclusive_lock(|s| {
+                s.remove(&id_owned);
+            })
+            .map_err(|e| ApiError::internal(format!("failed to delete task: {e}")))?;
 
         self.api_meta.remove(id);
         self.persist_meta()
     }
 
     pub fn clear(&mut self) -> Result<(), ApiError> {
-        let store = self.load_store()?;
+        let mut store = self.load_store()?;
         store
-            .save()
+            .with_exclusive_lock(|s| {
+                s.clear();
+            })
             .map_err(|e| ApiError::internal(format!("failed to clear tasks: {e}")))?;
-        // Actually need to clear — write empty file
-        let path = self.store_path();
-        if path.exists() {
-            std::fs::write(&path, "")
-                .map_err(|e| ApiError::internal(format!("failed to clear task store: {e}")))?;
-        }
+
         self.api_meta.clear();
         self.persist_meta()
     }

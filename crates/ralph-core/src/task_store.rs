@@ -422,6 +422,18 @@ impl TaskStore {
     pub fn has_pending_tasks(&self) -> bool {
         self.tasks.iter().any(|t| !t.status.is_terminal())
     }
+
+    /// Removes a task by ID. Returns true if the task was found and removed.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let len = self.tasks.len();
+        self.tasks.retain(|t| t.id != id);
+        self.tasks.len() < len
+    }
+
+    /// Removes all tasks from the store.
+    pub fn clear(&mut self) {
+        self.tasks.clear();
+    }
 }
 
 #[cfg(test)]
