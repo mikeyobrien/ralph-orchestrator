@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
+use ralph_core::loop_registry::LoopRegistry;
 use ralph_core::task::{Task, TaskStatus};
 use ralph_core::task_store::TaskStore;
 use serde::{Deserialize, Serialize};
@@ -93,7 +94,7 @@ pub struct TaskResponse {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<StatusTransitionResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub loop_context: Option<serde_json::Value>,
+    pub loop_context: Option<LoopContextResponse>,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -120,6 +121,20 @@ pub struct StatusTransitionResponse {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hat: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopContextResponse {
+    pub iteration: u32,
+    pub total_cost_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_hat: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub termination_reason: Option<String>,
+    pub started: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,6 +219,22 @@ impl TaskDomain {
             .and_then(|m| m.execution_status.clone())
             .unwrap_or_else(|| status_to_string(task.status));
 
+        // Enrich with loop context if task has a loop_id
+        let loop_context = task.loop_id.as_ref().and_then(|lid| {
+            LoopRegistry::new(&self.workspace_root)
+                .get(lid)
+                .ok()
+                .flatten()
+                .map(|entry| LoopContextResponse {
+                    iteration: entry.iteration,
+                    total_cost_usd: entry.total_cost_usd,
+                    active_hat: entry.active_hat,
+                    max_iterations: entry.max_iterations,
+                    termination_reason: entry.termination_reason,
+                    started: entry.started.to_rfc3339(),
+                })
+        });
+
         TaskResponse {
             id: task.id.clone(),
             title: task.title.clone(),
@@ -216,7 +247,7 @@ impl TaskDomain {
             last_hat: task.last_hat.clone(),
             tags: task.tags.clone(),
             transitions,
-            loop_context: None, // Step 7
+            loop_context,
             created_at: task.created.clone(),
             updated_at: Some(task.closed.clone().unwrap_or_else(|| task.created.clone())),
             started_at: task.started.clone(),
