@@ -13,6 +13,8 @@
 //! - Hook config validation via `ralph hooks validate`
 //! - Work item tracking via `ralph task`
 
+#[allow(dead_code)] // Wired in sub-task 11.2
+mod api_bridge;
 mod backend_support;
 mod bot;
 mod config_resolution;
