@@ -1801,11 +1801,17 @@ impl EventLoop {
         let workflow_key = Self::extract_phase_workflow_key(payload)?;
         let lock = self.state.phase_locks.get(&workflow_key)?;
 
-        if lock.design_locked && matches!(topic, "answer.proposed" | "requirements.complete" | "design.drafted") {
+        if lock.design_locked
+            && matches!(
+                topic,
+                "answer.proposed" | "requirements.complete" | "design.drafted"
+            )
+        {
             return Some("design_locked");
         }
 
-        if lock.requirements_locked && matches!(topic, "answer.proposed" | "requirements.complete") {
+        if lock.requirements_locked && matches!(topic, "answer.proposed" | "requirements.complete")
+        {
             return Some("requirements_locked");
         }
 
@@ -1865,7 +1871,14 @@ impl EventLoop {
 
     fn is_actionable_design_rejection(payload: &str) -> bool {
         if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(payload) {
-            for field in ["delta", "feedback", "reason", "questions", "issues", "critique"] {
+            for field in [
+                "delta",
+                "feedback",
+                "reason",
+                "questions",
+                "issues",
+                "critique",
+            ] {
                 if let Some(value) = map.get(field)
                     && Self::json_value_has_actionable_delta(value)
                 {
@@ -1975,11 +1988,10 @@ impl EventLoop {
         }
 
         let trimmed = payload.trim();
-        if trimmed.is_empty() {
-            None
-        } else if Self::extract_task_key(payload).is_some()
-            || Self::extract_task_field(payload, &["task_id"]).is_some()
-        {
+        let has_only_task_identity = Self::extract_task_key(payload).is_some()
+            || Self::extract_task_field(payload, &["task_id"]).is_some();
+
+        if trimmed.is_empty() || has_only_task_identity {
             None
         } else {
             Some(trimmed.to_string())

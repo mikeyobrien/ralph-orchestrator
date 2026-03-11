@@ -481,15 +481,18 @@ fn bootstrap_prompt_artifacts_for_worktree(
 
     let target_prompt_path = target_workspace_root.join(relative_prompt_path);
 
-    let implementation_root = Path::new(".agents").join("scratchpad").join("implementation");
+    let implementation_root = Path::new(".agents")
+        .join("scratchpad")
+        .join("implementation");
     let source_copy_root = relative_prompt_path
         .strip_prefix(&implementation_root)
         .ok()
         .and_then(|suffix| {
-            suffix
-                .components()
-                .next()
-                .map(|component| source_workspace_root.join(&implementation_root).join(component))
+            suffix.components().next().map(|component| {
+                source_workspace_root
+                    .join(&implementation_root)
+                    .join(component)
+            })
         })
         .unwrap_or(source_prompt_path.clone());
 
@@ -3558,15 +3561,18 @@ core:
             .join(".agents/scratchpad/implementation/preset-loop-hygiene");
 
         std::fs::create_dir_all(&implementation_dir).unwrap();
-        std::fs::write(implementation_dir.join("next-slice.md"), "restore bootstrap").unwrap();
+        std::fs::write(
+            implementation_dir.join("next-slice.md"),
+            "restore bootstrap",
+        )
+        .unwrap();
         std::fs::write(implementation_dir.join("context.md"), "context").unwrap();
         std::fs::write(implementation_dir.join("plan.md"), "plan").unwrap();
         std::fs::write(implementation_dir.join("progress.md"), "progress").unwrap();
 
         let mut config = RalphConfig::default();
-        config.event_loop.prompt = Some(
-            ".agents/scratchpad/implementation/preset-loop-hygiene/next-slice.md".to_string(),
-        );
+        config.event_loop.prompt =
+            Some(".agents/scratchpad/implementation/preset-loop-hygiene/next-slice.md".to_string());
 
         bootstrap_prompt_artifacts_for_worktree(source_root.path(), target_root.path(), &config)
             .expect("copy implementation packet");

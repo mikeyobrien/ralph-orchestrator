@@ -59,10 +59,7 @@ struct RpcSharedState {
 fn reset_scratchpad_for_fresh_run(scratchpad_path: &Path) -> Result<()> {
     if let Some(parent) = scratchpad_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "Failed to create scratchpad parent directory: {:?}",
-                parent
-            )
+            format!("Failed to create scratchpad parent directory: {:?}", parent)
         })?;
     }
 
