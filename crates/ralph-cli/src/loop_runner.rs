@@ -56,6 +56,29 @@ struct RpcSharedState {
     total_cost_usd: Arc<std::sync::Mutex<f64>>,
 }
 
+fn reset_scratchpad_for_fresh_run(scratchpad_path: &Path) -> Result<()> {
+    if let Some(parent) = scratchpad_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create scratchpad parent directory: {:?}",
+                parent
+            )
+        })?;
+    }
+
+    fs::write(scratchpad_path, "").with_context(|| {
+        format!(
+            "Failed to reset scratchpad for fresh objective: {:?}",
+            scratchpad_path
+        )
+    })?;
+    debug!(
+        "Reset scratchpad for fresh objective: {:?}",
+        scratchpad_path
+    );
+    Ok(())
+}
+
 /// Core loop implementation supporting both fresh start and continue modes.
 ///
 /// # Arguments
@@ -152,17 +175,9 @@ pub async fn run_loop_impl(
 
         debug!("Created events file for this run: {}", relative_events_path);
 
-        // Clear scratchpad for fresh objective start
-        // Stale content from previous runs can confuse the agent about current task state
-        let scratchpad_path = ctx.scratchpad_path();
-        if scratchpad_path.exists() {
-            fs::remove_file(&scratchpad_path)
-                .with_context(|| format!("Failed to clear scratchpad: {:?}", scratchpad_path))?;
-            debug!(
-                "Cleared scratchpad for fresh objective: {:?}",
-                scratchpad_path
-            );
-        }
+        // Reset scratchpad for fresh objective start while preserving the planner artifact.
+        // Stale content from previous runs can confuse the agent about current task state.
+        reset_scratchpad_for_fresh_run(&ctx.scratchpad_path())?;
     }
 
     // Initialize event loop with context for proper path resolution
@@ -8904,5 +8919,29 @@ hats:
             r#"[Tool] Bash: ralph emit "hypothesis.test" "payload""#
         ));
         assert!(!output_mentions_ralph_emit("[Tool] Bash: cargo test"));
+    }
+
+    #[test]
+    fn test_reset_scratchpad_for_fresh_run_clears_existing_content() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+        std::fs::create_dir_all(scratchpad_path.parent().expect("parent")).expect("create parent");
+        std::fs::write(&scratchpad_path, "stale content").expect("seed scratchpad");
+
+        reset_scratchpad_for_fresh_run(&scratchpad_path).expect("reset scratchpad");
+
+        assert!(scratchpad_path.exists());
+        assert_eq!(std::fs::read_to_string(&scratchpad_path).unwrap(), "");
+    }
+
+    #[test]
+    fn test_reset_scratchpad_for_fresh_run_creates_missing_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+
+        reset_scratchpad_for_fresh_run(&scratchpad_path).expect("create scratchpad");
+
+        assert!(scratchpad_path.exists());
+        assert_eq!(std::fs::read_to_string(&scratchpad_path).unwrap(), "");
     }
 }

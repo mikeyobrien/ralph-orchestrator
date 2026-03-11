@@ -327,6 +327,8 @@ mod tests {
             last_emitted_signature: None,
             consecutive_same_signature: 0,
             cancellation_requested: false,
+            handoff_signatures: std::collections::HashMap::new(),
+            phase_locks: std::collections::HashMap::new(),
         }
     }
 

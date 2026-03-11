@@ -19,7 +19,7 @@ use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, trun
 use crate::skill_registry::SkillRegistry;
 use crate::text::floor_char_boundary;
 use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -1729,6 +1729,310 @@ impl EventLoop {
             .to_string()
     }
 
+    fn validate_handoff_event(&mut self, topic: &str, payload: &str) -> Option<Event> {
+        match topic {
+            "question.asked" => {
+                let Some(question) = Self::extract_question_text(payload) else {
+                    return Some(Self::handoff_diagnostic_event(
+                        "handoff.invalid",
+                        topic,
+                        payload,
+                        "empty_question",
+                    ));
+                };
+
+                if self.is_duplicate_handoff(topic, payload, Some(&question)) {
+                    return Some(Self::handoff_diagnostic_event(
+                        "handoff.ignored",
+                        topic,
+                        payload,
+                        "duplicate_question",
+                    ));
+                }
+
+                Some(Event::new(topic, payload))
+            }
+            "answer.proposed" | "requirements.complete" | "design.drafted" => {
+                if let Some(reason) = self.phase_lock_reason(topic, payload) {
+                    return Some(Self::handoff_diagnostic_event(
+                        "handoff.ignored",
+                        topic,
+                        payload,
+                        reason,
+                    ));
+                }
+
+                if self.is_duplicate_handoff(topic, payload, None) {
+                    return Some(Self::handoff_diagnostic_event(
+                        "handoff.ignored",
+                        topic,
+                        payload,
+                        "duplicate_handoff",
+                    ));
+                }
+
+                self.record_phase_progress(topic, payload);
+                Some(Event::new(topic, payload))
+            }
+            "design.approved" => {
+                self.record_phase_progress(topic, payload);
+                Some(Event::new(topic, payload))
+            }
+            "design.rejected" => {
+                if Self::is_actionable_design_rejection(payload) {
+                    self.reopen_phase_progress(payload);
+                    Some(Event::new(topic, payload))
+                } else if self.is_phase_locked(payload) {
+                    Some(Self::handoff_diagnostic_event(
+                        "handoff.ignored",
+                        topic,
+                        payload,
+                        "missing_actionable_delta",
+                    ))
+                } else {
+                    Some(Event::new(topic, payload))
+                }
+            }
+            _ => Some(Event::new(topic, payload)),
+        }
+    }
+
+    fn phase_lock_reason(&self, topic: &str, payload: &str) -> Option<&'static str> {
+        let workflow_key = Self::extract_phase_workflow_key(payload)?;
+        let lock = self.state.phase_locks.get(&workflow_key)?;
+
+        if lock.design_locked && matches!(topic, "answer.proposed" | "requirements.complete" | "design.drafted") {
+            return Some("design_locked");
+        }
+
+        if lock.requirements_locked && matches!(topic, "answer.proposed" | "requirements.complete") {
+            return Some("requirements_locked");
+        }
+
+        None
+    }
+
+    fn record_phase_progress(&mut self, topic: &str, payload: &str) {
+        let Some(workflow_key) = Self::extract_phase_workflow_key(payload) else {
+            return;
+        };
+
+        let lock = self.state.phase_locks.entry(workflow_key).or_default();
+        match topic {
+            "requirements.complete" => {
+                lock.requirements_locked = true;
+            }
+            "design.approved" => {
+                lock.requirements_locked = true;
+                lock.design_locked = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn reopen_phase_progress(&mut self, payload: &str) {
+        let Some(workflow_key) = Self::extract_phase_workflow_key(payload) else {
+            return;
+        };
+
+        if let Some(lock) = self.state.phase_locks.get_mut(&workflow_key) {
+            lock.requirements_locked = false;
+            lock.design_locked = false;
+        }
+    }
+
+    fn is_phase_locked(&self, payload: &str) -> bool {
+        let Some(workflow_key) = Self::extract_phase_workflow_key(payload) else {
+            return false;
+        };
+
+        self.state
+            .phase_locks
+            .get(&workflow_key)
+            .is_some_and(|lock| lock.requirements_locked || lock.design_locked)
+    }
+
+    fn extract_phase_workflow_key(payload: &str) -> Option<String> {
+        let task_key = Self::extract_task_key(payload)?;
+        if let Some((prefix, _)) = task_key.rsplit_once(':')
+            && !prefix.is_empty()
+        {
+            return Some(prefix.to_string());
+        }
+
+        Some(task_key)
+    }
+
+    fn is_actionable_design_rejection(payload: &str) -> bool {
+        if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(payload) {
+            for field in ["delta", "feedback", "reason", "questions", "issues", "critique"] {
+                if let Some(value) = map.get(field)
+                    && Self::json_value_has_actionable_delta(value)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        let trimmed = payload.trim();
+        !trimmed.is_empty()
+    }
+
+    fn json_value_has_actionable_delta(value: &Value) -> bool {
+        match value {
+            Value::String(text) => !text.trim().is_empty(),
+            Value::Array(values) => values.iter().any(Self::json_value_has_actionable_delta),
+            Value::Object(map) => !map.is_empty(),
+            Value::Null => false,
+            _ => true,
+        }
+    }
+
+    fn is_duplicate_handoff(
+        &mut self,
+        topic: &str,
+        payload: &str,
+        semantic_text: Option<&str>,
+    ) -> bool {
+        let task_key = Self::extract_task_key(payload).unwrap_or_else(|| "unknown".to_string());
+        let artifact_hash = Self::extract_artifact_hash(payload);
+        let state_version = Self::extract_state_version(payload);
+        let lane_key = format!("{topic}:{task_key}");
+        let signature = Self::fingerprint_handoff_payload(
+            payload,
+            semantic_text,
+            artifact_hash.as_deref(),
+            state_version.as_deref(),
+        );
+
+        match self.state.handoff_signatures.insert(lane_key, signature) {
+            Some(previous) => previous == signature,
+            None => false,
+        }
+    }
+
+    fn handoff_diagnostic_event(kind: &str, topic: &str, payload: &str, reason: &str) -> Event {
+        let task_key = Self::extract_task_key(payload);
+        let task_id = Self::extract_task_field(payload, &["task_id"]);
+        Event::new(
+            kind,
+            json!({
+                "topic": topic,
+                "reason": reason,
+                "task_id": task_id,
+                "task_key": task_key,
+                "payload": payload,
+            })
+            .to_string(),
+        )
+    }
+
+    fn fingerprint_handoff_payload(
+        payload: &str,
+        semantic_text: Option<&str>,
+        artifact_hash: Option<&str>,
+        state_version: Option<&str>,
+    ) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        semantic_text.unwrap_or(payload).trim().hash(&mut hasher);
+        artifact_hash.unwrap_or("").trim().hash(&mut hasher);
+        state_version.unwrap_or("").trim().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn extract_question_text(payload: &str) -> Option<String> {
+        if let Ok(value) = serde_json::from_str::<Value>(payload) {
+            match value {
+                Value::Object(map) => {
+                    if let Some(question) = map
+                        .get("question")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        return Some(question.to_string());
+                    }
+                }
+                Value::String(text) => {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        return Some(text.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let keyed = Self::extract_task_field(payload, &["question", "prompt"]);
+        if let Some(text) = keyed {
+            let text = text.trim();
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+
+        let trimmed = payload.trim();
+        if trimmed.is_empty() {
+            None
+        } else if Self::extract_task_key(payload).is_some()
+            || Self::extract_task_field(payload, &["task_id"]).is_some()
+        {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn extract_task_key(payload: &str) -> Option<String> {
+        Self::extract_task_field(payload, &["task_key"])
+    }
+
+    fn extract_artifact_hash(payload: &str) -> Option<String> {
+        Self::extract_task_field(payload, &["artifact_hash", "hash"])
+    }
+
+    fn extract_state_version(payload: &str) -> Option<String> {
+        Self::extract_task_field(payload, &["state_version", "version"])
+    }
+
+    fn extract_task_field(payload: &str, field_names: &[&str]) -> Option<String> {
+        if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(payload) {
+            for field_name in field_names {
+                if let Some(value) = map.get(*field_name) {
+                    let normalized = match value {
+                        Value::String(text) => text.trim().to_string(),
+                        Value::Number(number) => number.to_string(),
+                        Value::Bool(boolean) => boolean.to_string(),
+                        _ => continue,
+                    };
+                    if !normalized.is_empty() {
+                        return Some(normalized);
+                    }
+                }
+            }
+        }
+
+        for line in payload.lines() {
+            let trimmed = line.trim();
+            for field_name in field_names {
+                for separator in ["=", ":"] {
+                    let prefix = format!("{field_name}{separator}");
+                    if let Some(value) = trimmed.strip_prefix(&prefix) {
+                        let normalized = value.trim().trim_matches('"').trim_matches('\'');
+                        if !normalized.is_empty() {
+                            return Some(normalized.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Adds cost to the cumulative total.
     pub fn add_cost(&mut self, cost: f64) {
         self.state.cumulative_cost += cost;
@@ -2042,7 +2346,7 @@ impl EventLoop {
 
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();
-        let completion_topic = self.config.event_loop.completion_promise.as_str();
+        let completion_topic = self.config.event_loop.completion_promise.clone();
         let cancellation_topic = self.config.event_loop.cancellation_promise.clone();
         let total_events = events.len();
         for (index, event) in events.into_iter().enumerate() {
@@ -2259,9 +2563,10 @@ impl EventLoop {
                     warn!("verify.failed missing quality report");
                 }
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
-            } else {
-                // Non-backpressure events pass through unchanged
-                validated_events.push(Event::new(event.topic.as_str(), &payload));
+            } else if let Some(validated) =
+                self.validate_handoff_event(event.topic.as_str(), &payload)
+            {
+                validated_events.push(validated);
             }
         }
 

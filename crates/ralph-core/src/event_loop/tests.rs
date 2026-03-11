@@ -596,6 +596,44 @@ fn write_event_to_jsonl(path: &std::path::Path, topic: &str, payload: &str) {
     writeln!(file, "{}", event_json).unwrap();
 }
 
+fn pdd_handoff_test_config() -> RalphConfig {
+    serde_yaml::from_str(
+        r#"
+hats:
+  inquisitor:
+    name: "Inquisitor"
+    triggers: ["answer.proposed"]
+    publishes: ["question.asked", "requirements.complete"]
+  architect:
+    name: "Architect"
+    triggers: ["question.asked", "requirements.complete"]
+    publishes: ["answer.proposed", "design.drafted"]
+"#,
+    )
+    .unwrap()
+}
+
+fn pdd_phase_lock_test_config() -> RalphConfig {
+    serde_yaml::from_str(
+        r#"
+hats:
+  inquisitor:
+    name: "Inquisitor"
+    triggers: ["design.start", "answer.proposed", "design.rejected"]
+    publishes: ["question.asked", "requirements.complete"]
+  architect:
+    name: "Architect"
+    triggers: ["question.asked", "requirements.complete"]
+    publishes: ["answer.proposed", "design.drafted"]
+  design_critic:
+    name: "Design Critic"
+    triggers: ["design.drafted"]
+    publishes: ["design.approved", "design.rejected"]
+"#,
+    )
+    .unwrap()
+}
+
 #[test]
 fn test_loop_thrashing_detection() {
     use tempfile::tempdir;
@@ -629,6 +667,418 @@ fn test_loop_thrashing_detection() {
             .abandoned_tasks
             .contains(&"Fix bug".to_string()),
         "Task should be abandoned after 3 blocks"
+    );
+}
+
+#[test]
+fn test_empty_question_handoff_is_quarantined() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_handoff_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "question.asked",
+        &serde_json::json!({
+            "task_id": "task-1",
+            "task_key": "pdd:spec:requirements",
+            "question": "   "
+        })
+        .to_string(),
+    );
+
+    let processed = event_loop.process_events_from_jsonl().unwrap();
+    assert!(
+        processed.had_events,
+        "invalid handoff should surface as a containment event"
+    );
+    assert!(
+        processed.has_orphans,
+        "containment event should route through Ralph"
+    );
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("architect"))
+            .is_none_or(|events| events.is_empty()),
+        "empty question.asked should not reach the architect"
+    );
+
+    let ralph_events = event_loop
+        .bus
+        .peek_pending(&HatId::new("ralph"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(ralph_events.len(), 1);
+    assert_eq!(ralph_events[0].topic.as_str(), "handoff.invalid");
+    assert!(
+        ralph_events[0]
+            .payload
+            .contains("\"reason\":\"empty_question\"")
+    );
+}
+
+#[test]
+fn test_question_handoff_uses_prompt_fallback_for_json_payloads() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_handoff_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "question.asked",
+        &serde_json::json!({
+            "task_id": "task-1b",
+            "task_key": "pdd:spec:requirements",
+            "prompt": "What requirement is still unclear?"
+        })
+        .to_string(),
+    );
+
+    let processed = event_loop.process_events_from_jsonl().unwrap();
+    assert!(processed.had_events);
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("ralph"))
+            .is_none_or(|events| events.is_empty()),
+        "valid question.asked payload should not be quarantined"
+    );
+
+    let architect_events = event_loop.bus.take_pending(&HatId::new("architect"));
+    assert_eq!(architect_events.len(), 1);
+    assert_eq!(architect_events[0].topic.as_str(), "question.asked");
+    assert!(
+        architect_events[0]
+            .payload
+            .contains("\"prompt\":\"What requirement is still unclear?\"")
+    );
+}
+
+#[test]
+fn test_duplicate_answer_proposed_handoff_is_suppressed() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_handoff_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    let payload = serde_json::json!({
+        "task_id": "task-2",
+        "task_key": "pdd:spec:requirements-answering",
+        "artifact_hash": "abc123",
+        "state_version": 1,
+        "answer": "Use the existing queue implementation."
+    })
+    .to_string();
+
+    write_event_to_jsonl(&events_path, "answer.proposed", &payload);
+    let first = event_loop.process_events_from_jsonl().unwrap();
+    assert!(first.had_events);
+    let first_inquisitor_events = event_loop.bus.take_pending(&HatId::new("inquisitor"));
+    assert_eq!(first_inquisitor_events.len(), 1);
+    assert_eq!(first_inquisitor_events[0].topic.as_str(), "answer.proposed");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(&events_path, "answer.proposed", &payload);
+    let second = event_loop.process_events_from_jsonl().unwrap();
+    assert!(
+        second.had_events,
+        "duplicate should surface as ignored rather than re-route"
+    );
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("inquisitor"))
+            .is_none_or(|events| events.is_empty()),
+        "duplicate answer.proposed should not retrigger the inquisitor"
+    );
+
+    let ralph_events = event_loop.bus.take_pending(&HatId::new("ralph"));
+    assert_eq!(ralph_events.len(), 1);
+    assert_eq!(ralph_events[0].topic.as_str(), "handoff.ignored");
+    assert!(
+        ralph_events[0]
+            .payload
+            .contains("\"reason\":\"duplicate_handoff\"")
+    );
+}
+
+#[test]
+fn test_duplicate_requirements_complete_handoff_is_suppressed() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_handoff_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    let payload = serde_json::json!({
+        "task_id": "task-3",
+        "task_key": "pdd:spec:requirements",
+        "artifact_hash": "req-lock-1",
+        "state_version": 2,
+        "summary": "Requirements are complete."
+    })
+    .to_string();
+
+    write_event_to_jsonl(&events_path, "requirements.complete", &payload);
+    let first = event_loop.process_events_from_jsonl().unwrap();
+    assert!(first.had_events);
+    let first_architect_events = event_loop.bus.take_pending(&HatId::new("architect"));
+    assert_eq!(first_architect_events.len(), 1);
+    assert_eq!(
+        first_architect_events[0].topic.as_str(),
+        "requirements.complete"
+    );
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(&events_path, "requirements.complete", &payload);
+    let second = event_loop.process_events_from_jsonl().unwrap();
+    assert!(second.had_events);
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("architect"))
+            .is_none_or(|events| events.is_empty()),
+        "duplicate requirements.complete should not retrigger design drafting"
+    );
+
+    let ralph_events = event_loop.bus.take_pending(&HatId::new("ralph"));
+    assert_eq!(ralph_events.len(), 1);
+    assert_eq!(ralph_events[0].topic.as_str(), "handoff.ignored");
+}
+
+#[test]
+fn test_completed_requirements_ignore_stale_answer_handoffs() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_phase_lock_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "requirements.complete",
+        &serde_json::json!({
+            "task_id": "task-req",
+            "task_key": "pdd:spec:requirements",
+            "artifact_hash": "req-lock-1",
+            "state_version": 2,
+            "summary": "Requirements are complete."
+        })
+        .to_string(),
+    );
+    let first = event_loop.process_events_from_jsonl().unwrap();
+    assert!(first.had_events);
+    let _ = event_loop.bus.take_pending(&HatId::new("architect"));
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "answer.proposed",
+        &serde_json::json!({
+            "task_id": "task-answer",
+            "task_key": "pdd:spec:requirements-answering",
+            "artifact_hash": "answer-lock-2",
+            "state_version": 3,
+            "answer": "Use the existing queue implementation."
+        })
+        .to_string(),
+    );
+
+    let second = event_loop.process_events_from_jsonl().unwrap();
+    assert!(second.had_events);
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("inquisitor"))
+            .is_none_or(|events| events.is_empty()),
+        "stale answer.proposed should not reopen requirements"
+    );
+
+    let ralph_events = event_loop.bus.take_pending(&HatId::new("ralph"));
+    assert_eq!(ralph_events.len(), 1);
+    assert_eq!(ralph_events[0].topic.as_str(), "handoff.ignored");
+    assert!(
+        ralph_events[0]
+            .payload
+            .contains("\"reason\":\"requirements_locked\"")
+    );
+}
+
+#[test]
+fn test_completed_design_ignores_stale_requirements_and_design_handoffs() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_phase_lock_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "design.approved",
+        &serde_json::json!({
+            "task_id": "task-design-review",
+            "task_key": "pdd:spec:design-review",
+            "summary": "Design approved."
+        })
+        .to_string(),
+    );
+    let first = event_loop.process_events_from_jsonl().unwrap();
+    assert!(first.had_events);
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "requirements.complete",
+        &serde_json::json!({
+            "task_id": "task-req",
+            "task_key": "pdd:spec:requirements",
+            "artifact_hash": "req-lock-3",
+            "state_version": 5,
+            "summary": "Requirements are complete."
+        })
+        .to_string(),
+    );
+    write_event_to_jsonl(
+        &events_path,
+        "design.drafted",
+        &serde_json::json!({
+            "task_id": "task-design-draft",
+            "task_key": "pdd:spec:design-draft",
+            "artifact_hash": "design-lock-3",
+            "state_version": 6,
+            "summary": "Re-emitted design draft."
+        })
+        .to_string(),
+    );
+
+    let second = event_loop.process_events_from_jsonl().unwrap();
+    assert!(second.had_events);
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("architect"))
+            .is_none_or(|events| events.is_empty()),
+        "stale requirements.complete should not reopen design drafting"
+    );
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("design_critic"))
+            .is_none_or(|events| events.is_empty()),
+        "stale design.drafted should not reopen design review"
+    );
+
+    let ralph_events = event_loop.bus.take_pending(&HatId::new("ralph"));
+    assert_eq!(ralph_events.len(), 2);
+    assert_eq!(ralph_events[0].topic.as_str(), "handoff.ignored");
+    assert_eq!(ralph_events[1].topic.as_str(), "handoff.ignored");
+    assert!(
+        ralph_events[0]
+            .payload
+            .contains("\"reason\":\"design_locked\"")
+    );
+    assert!(
+        ralph_events[1]
+            .payload
+            .contains("\"reason\":\"design_locked\"")
+    );
+}
+
+#[test]
+fn test_actionable_design_rejection_reopens_phase_locks() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_phase_lock_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "design.approved",
+        &serde_json::json!({
+            "task_id": "task-design-review",
+            "task_key": "pdd:spec:design-review",
+            "summary": "Design approved."
+        })
+        .to_string(),
+    );
+    let approved = event_loop.process_events_from_jsonl().unwrap();
+    assert!(approved.had_events);
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "design.rejected",
+        &serde_json::json!({
+            "task_id": "task-design-review",
+            "task_key": "pdd:spec:design-review",
+            "feedback": "Add a concrete failure-handling path for queue timeouts."
+        })
+        .to_string(),
+    );
+    let rejected = event_loop.process_events_from_jsonl().unwrap();
+    assert!(rejected.had_events);
+    let inquisitor_events = event_loop.bus.take_pending(&HatId::new("inquisitor"));
+    assert_eq!(inquisitor_events.len(), 1);
+    assert_eq!(inquisitor_events[0].topic.as_str(), "design.rejected");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "answer.proposed",
+        &serde_json::json!({
+            "task_id": "task-answer",
+            "task_key": "pdd:spec:requirements-answering",
+            "artifact_hash": "answer-lock-4",
+            "state_version": 7,
+            "answer": "We should retry once and surface timeout telemetry."
+        })
+        .to_string(),
+    );
+    let replay = event_loop.process_events_from_jsonl().unwrap();
+    assert!(replay.had_events);
+
+    let reopened_events = event_loop.bus.take_pending(&HatId::new("inquisitor"));
+    assert_eq!(reopened_events.len(), 1);
+    assert_eq!(reopened_events[0].topic.as_str(), "answer.proposed");
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("ralph"))
+            .is_none_or(|events| events.is_empty()),
+        "actionable design.rejected should unlock the workflow instead of being quarantined"
     );
 }
 
