@@ -443,6 +443,26 @@ pub async fn run_loop_impl(
         None
     };
 
+    // ApiBridge: fire-and-forget publisher to ralph-api _internal.publish endpoint.
+    // Operates independently of RPC mode — bridges events when API server is reachable.
+    let api_bridge = {
+        let port = crate::api_bridge::ApiBridge::resolve_port();
+        crate::api_bridge::ApiBridge::try_connect(port).await
+    };
+    if let Some(ref bridge) = api_bridge {
+        bridge.publish(
+            "loop.started",
+            "loop",
+            &loop_id,
+            serde_json::json!({
+                "loopId": loop_id,
+                "prompt": prompt_content,
+                "maxIterations": config.event_loop.max_iterations,
+                "backend": config.cli.backend,
+            }),
+        );
+    }
+
     let (mut tui_handle, tui_state, guidance_next_queue) = if enable_tui {
         // Build hat map for dynamic topic-to-hat resolution
         // This allows TUI to display custom hats (e.g., "Security Reviewer")
@@ -487,6 +507,26 @@ pub async fn run_loop_impl(
                 target: event.target.as_ref().map(|h| h.as_str().to_string()),
             };
             let _ = tx_clone.try_send(rpc_event);
+        });
+    }
+
+    // ApiBridge EventBus observer: forward orchestration events to API stream
+    if let Some(ref bridge) = api_bridge {
+        let bridge_clone = bridge.clone();
+        let loop_id_clone = loop_id.clone();
+        event_loop.add_observer(move |event: &Event| {
+            bridge_clone.publish(
+                "event.published",
+                "event",
+                event.topic.as_str(),
+                serde_json::json!({
+                    "topic": event.topic.as_str(),
+                    "payload": event.payload,
+                    "source": event.source.as_ref().map(|h| h.as_str()),
+                    "target": event.target.as_ref().map(|h| h.as_str()),
+                    "loopId": loop_id_clone,
+                }),
+            );
         });
     }
 
@@ -846,6 +886,21 @@ pub async fn run_loop_impl(
                 terminated_at,
             };
             let _ = tx.try_send(terminate_event);
+        }
+
+        // Publish loop.completed via ApiBridge
+        if let Some(ref bridge) = api_bridge {
+            bridge.publish(
+                "loop.completed",
+                "loop",
+                &loop_id,
+                serde_json::json!({
+                    "loopId": loop_id,
+                    "reason": format!("{reason:?}"),
+                    "totalIterations": state.iteration,
+                    "durationMs": state.elapsed().as_millis() as u64,
+                }),
+            );
         }
     };
 
