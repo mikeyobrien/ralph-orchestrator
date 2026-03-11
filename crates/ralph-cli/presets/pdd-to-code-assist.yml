@@ -95,6 +95,7 @@ hats:
       Ask questions that address the specific concerns raised.
 
       Every `question.asked` and `requirements.complete` payload MUST include the active `task_id` and `task_key`.
+      For custom workflows, prefer an explicit `workflow_key` (or `phase_key`) in the payload. When absent, Ralph falls back to deriving the workflow lane from `task_key`.
 
       ### Constraints
       - You MUST NOT ask multiple questions at once because this overwhelms users and leads to incomplete responses
@@ -130,7 +131,7 @@ hats:
       3. Research if needed (explore codebase, check patterns)
       4. Provide a clear, specific answer
       5. Append the answer to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
-      6. Publish `answer.proposed` with the active `task_id` and `task_key`
+      6. Publish `answer.proposed` with the active `task_id`, `task_key`, and preferably an explicit `workflow_key` (or `phase_key`) for custom workflows
 
       ### When Triggered by requirements.complete
       Synthesize all Q&A into a detailed design document.

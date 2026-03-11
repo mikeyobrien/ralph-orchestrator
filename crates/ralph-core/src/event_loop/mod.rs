@@ -1859,6 +1859,13 @@ impl EventLoop {
     }
 
     fn extract_phase_workflow_key(payload: &str) -> Option<String> {
+        if let Some(explicit_key) =
+            Self::extract_task_field(payload, &["workflow_key", "phase_key"])
+            && !explicit_key.is_empty()
+        {
+            return Some(explicit_key);
+        }
+
         let task_key = Self::extract_task_key(payload)?;
         if let Some((prefix, _)) = task_key.rsplit_once(':')
             && !prefix.is_empty()
