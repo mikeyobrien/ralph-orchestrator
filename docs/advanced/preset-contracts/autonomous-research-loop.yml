@@ -1,0 +1,34 @@
+name: autonomous-research-loop
+
+description: "Shared contract for research presets: bounded evidence gathering, synthesis, and explicit follow-up vs complete behavior."
+
+events:
+  research.start:
+    description: Research begins.
+  research.finding:
+    description: A bounded set of findings is ready for synthesis.
+  research.followup:
+    description: Another research wave is needed.
+
+event_loop:
+  starting_event: research.start
+  completion_promise: RESEARCH_COMPLETE
+
+hats:
+  researcher:
+    name: Researcher
+    description: Gathers bounded evidence for the current wave.
+    triggers: [research.start, research.followup]
+    publishes: [research.finding]
+    default_publishes: research.finding
+    instructions: |
+      Gather evidence for one wave only. Stop when there is enough evidence to synthesize.
+
+  synthesizer:
+    name: Synthesizer
+    description: Decides follow-up versus completion.
+    triggers: [research.finding]
+    publishes: [research.followup, RESEARCH_COMPLETE]
+    instructions: |
+      Emit RESEARCH_COMPLETE only when the question is fully answered and no real follow-up remains.
+      Emit research.followup only with one concrete unresolved gap.

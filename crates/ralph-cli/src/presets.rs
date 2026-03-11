@@ -125,6 +125,36 @@ mod tests {
         );
     }
 
+    fn assert_hats_exist(config: &RalphConfig, preset_name: &str, hats: &[&str]) {
+        for hat in hats {
+            assert!(
+                config.hats.contains_key(*hat),
+                "Preset '{}' should define hat '{}'",
+                preset_name,
+                hat
+            );
+        }
+    }
+
+    fn assert_only_hat_publishes_completion(
+        config: &RalphConfig,
+        preset_name: &str,
+        completion_topic: &str,
+        owner_hat: &str,
+    ) {
+        for (hat_id, hat) in &config.hats {
+            let publishes_completion = hat.publishes.iter().any(|topic| topic == completion_topic)
+                || hat.default_publishes.as_deref() == Some(completion_topic);
+            if publishes_completion {
+                assert_eq!(
+                    hat_id, owner_hat,
+                    "Preset '{}' should have completion topic '{}' owned by '{}', not '{}'",
+                    preset_name, completion_topic, owner_hat, hat_id
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
@@ -222,6 +252,46 @@ mod tests {
         for preset in PRESETS.iter().filter(|preset| preset.public) {
             assert_public_preset_has_required_events(preset);
         }
+    }
+
+    #[test]
+    fn test_code_assist_matches_autonomous_task_loop_contract() {
+        let preset = get_preset("code-assist").expect("code-assist should exist");
+        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        assert_hats_exist(&config, preset.name, &["planner", "builder", "critic", "finalizer"]);
+        assert_eq!(config.event_loop.starting_event.as_deref(), Some("build.start"));
+        assert_eq!(config.event_loop.completion_promise, "LOOP_COMPLETE");
+        assert_only_hat_publishes_completion(&config, preset.name, "LOOP_COMPLETE", "finalizer");
+    }
+
+    #[test]
+    fn test_review_matches_autonomous_review_loop_contract() {
+        let preset = get_preset("review").expect("review should exist");
+        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        assert_hats_exist(&config, preset.name, &["reviewer", "analyzer", "closer"]);
+        assert_eq!(config.event_loop.starting_event.as_deref(), Some("review.start"));
+        assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
+        assert_only_hat_publishes_completion(&config, preset.name, "REVIEW_COMPLETE", "closer");
+    }
+
+    #[test]
+    fn test_debug_matches_autonomous_debug_loop_contract() {
+        let preset = get_preset("debug").expect("debug should exist");
+        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        assert_hats_exist(&config, preset.name, &["investigator", "tester", "fixer", "verifier"]);
+        assert_eq!(config.event_loop.starting_event.as_deref(), Some("debug.start"));
+        assert_eq!(config.event_loop.completion_promise, "DEBUG_COMPLETE");
+        assert_only_hat_publishes_completion(&config, preset.name, "DEBUG_COMPLETE", "investigator");
+    }
+
+    #[test]
+    fn test_research_matches_autonomous_research_loop_contract() {
+        let preset = get_preset("research").expect("research should exist");
+        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        assert_hats_exist(&config, preset.name, &["researcher", "synthesizer"]);
+        assert_eq!(config.event_loop.starting_event.as_deref(), Some("research.start"));
+        assert_eq!(config.event_loop.completion_promise, "RESEARCH_COMPLETE");
+        assert_only_hat_publishes_completion(&config, preset.name, "RESEARCH_COMPLETE", "synthesizer");
     }
 
     #[test]

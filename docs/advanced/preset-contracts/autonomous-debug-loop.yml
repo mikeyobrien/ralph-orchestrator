@@ -1,0 +1,65 @@
+name: autonomous-debug-loop
+
+description: "Shared contract for autonomous debug presets: investigate, test, fix, verify, then terminate cleanly."
+
+events:
+  debug.start:
+    description: Debug work begins.
+  hypothesis.test:
+    description: A falsifiable hypothesis is ready for testing.
+  hypothesis.confirmed:
+    description: The hypothesis was confirmed.
+  hypothesis.rejected:
+    description: The hypothesis was rejected.
+  fix.propose:
+    description: A concrete fix direction is ready.
+  fix.applied:
+    description: The fix has been implemented.
+  fix.verified:
+    description: The original bug is fixed and validated.
+  fix.blocked:
+    description: The fix path is blocked.
+
+event_loop:
+  starting_event: debug.start
+  completion_promise: DEBUG_COMPLETE
+
+hats:
+  investigator:
+    name: Investigator
+    description: Produces one falsifiable hypothesis at a time and decides when a confirmed hypothesis should move into fixing.
+    triggers: [debug.start, hypothesis.rejected, hypothesis.confirmed, fix.verified]
+    publishes: [hypothesis.test, fix.propose, DEBUG_COMPLETE]
+    instructions: |
+      If the bug is unresolved, emit exactly one falsifiable hypothesis.
+      On hypothesis.confirmed, emit fix.propose with the minimal fix direction.
+      If the bug is already fixed and verified, emit DEBUG_COMPLETE and stop.
+      Never emit repeated completion after completion criteria are already satisfied.
+
+  tester:
+    name: Tester
+    description: Tests one hypothesis directly.
+    triggers: [hypothesis.test]
+    publishes: [hypothesis.confirmed, hypothesis.rejected]
+    instructions: |
+      Test the hypothesis with one direct and one adversarial check.
+
+  fixer:
+    name: Fixer
+    description: Applies the minimal fix for a confirmed hypothesis.
+    triggers: [fix.propose, fix.blocked]
+    publishes: [fix.applied, fix.blocked]
+    default_publishes: fix.blocked
+    instructions: |
+      Apply the smallest fix that addresses the confirmed cause.
+      Emit fix.blocked only for a real blocker.
+
+  verifier:
+    name: Verifier
+    description: Confirms the bug is fixed and no obvious regression remains.
+    triggers: [fix.applied]
+    publishes: [fix.verified, fix.blocked]
+    default_publishes: fix.blocked
+    instructions: |
+      Re-run the original repro and a neighboring adversarial case.
+      Emit fix.verified only when the original bug is demonstrably gone.

@@ -1,0 +1,61 @@
+name: autonomous-task-loop
+
+description: Shared contract for autonomous implementation presets. Encodes self-resolution of ambiguity, explicit review, and sane completion/blocked semantics without assuming a human input step.
+
+events:
+  work.start:
+    description: Initial work request received.
+  task.ready:
+    description: One concrete task is ready for implementation.
+  review.ready:
+    description: Implementation increment is ready for review.
+  review.passed:
+    description: Review accepted the current increment.
+  review.rejected:
+    description: Review found actionable issues in the current increment.
+  work.blocked:
+    description: Builder cannot proceed without escalation or a narrower plan.
+
+event_loop:
+  starting_event: work.start
+  completion_promise: LOOP_COMPLETE
+
+hats:
+  planner:
+    name: Planner
+    description: Scopes work and resolves ambiguity explicitly enough for autonomous execution.
+    triggers: [work.start, review.rejected, work.blocked]
+    publishes: [task.ready, LOOP_COMPLETE]
+    instructions: |
+      Produce exactly one next concrete task or complete if no work remains.
+      If ambiguity exists, resolve it by making and recording a bounded assumption; do not pretend a human answered.
+      Never reopen already-complete work unless the rejection introduces real delta.
+
+  builder:
+    name: Builder
+    description: Implements one concrete task.
+    triggers: [task.ready]
+    publishes: [review.ready, work.blocked]
+    default_publishes: review.ready
+    instructions: |
+      Implement exactly one task. If blocked, emit work.blocked with the real blocker.
+      Do not emit completion yourself.
+
+  critic:
+    name: Critic
+    description: Adversarial review of the current increment.
+    triggers: [review.ready]
+    publishes: [review.passed, review.rejected]
+    default_publishes: review.rejected
+    instructions: |
+      Emit review.passed only when the increment genuinely satisfies the task.
+      Emit review.rejected only with actionable delta.
+
+  closer:
+    name: Closer
+    description: Decides whether reviewed work should continue or complete.
+    triggers: [review.passed]
+    publishes: [task.ready, LOOP_COMPLETE]
+    instructions: |
+      If more concrete work remains, publish task.ready for the next bounded task.
+      If no concrete work remains, emit LOOP_COMPLETE and stop.

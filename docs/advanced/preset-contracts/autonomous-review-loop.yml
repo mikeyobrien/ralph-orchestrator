@@ -1,0 +1,45 @@
+name: autonomous-review-loop
+
+description: Shared contract for review-style presets. Supports iterative review waves and explicit finish semantics.
+
+events:
+  review.start:
+    description: Review begins.
+  review.section:
+    description: A scoped review section is ready for deeper analysis.
+  analysis.complete:
+    description: Deeper analysis for the current section is complete.
+  review.followup:
+    description: Another review wave is required.
+
+event_loop:
+  starting_event: review.start
+  completion_promise: REVIEW_COMPLETE
+
+hats:
+  reviewer:
+    name: Reviewer
+    description: Produces the next scoped review wave.
+    triggers: [review.start, review.followup]
+    publishes: [review.section]
+    default_publishes: review.section
+    instructions: |
+      Produce the next review section. Do not emit completion directly.
+
+  analyzer:
+    name: Analyzer
+    description: Deepens the highest-risk findings from the current review section.
+    triggers: [review.section]
+    publishes: [analysis.complete]
+    default_publishes: analysis.complete
+    instructions: |
+      Analyze the highest-risk findings and return concrete evidence.
+
+  closer:
+    name: Closer
+    description: Decides whether another wave is needed or the review is complete.
+    triggers: [analysis.complete]
+    publishes: [review.followup, REVIEW_COMPLETE]
+    instructions: |
+      Emit REVIEW_COMPLETE when the review is substantively done.
+      Emit review.followup only when there is a concrete unresolved section.
