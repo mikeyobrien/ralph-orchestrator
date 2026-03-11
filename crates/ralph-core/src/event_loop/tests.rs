@@ -1083,6 +1083,67 @@ fn test_actionable_design_rejection_reopens_phase_locks() {
 }
 
 #[test]
+fn test_explicit_workflow_key_locks_custom_workflows() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(pdd_phase_lock_test_config());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "design.approved",
+        &serde_json::json!({
+            "task_id": "task-custom-review",
+            "task_key": "custom:totally-different-key-shape",
+            "workflow_key": "custom-workflow-alpha",
+            "summary": "Custom workflow design approved."
+        })
+        .to_string(),
+    );
+    let approved = event_loop.process_events_from_jsonl().unwrap();
+    assert!(approved.had_events);
+    let _ = event_loop.bus.take_pending(&HatId::new("ralph"));
+
+    write_event_to_jsonl(
+        &events_path,
+        "design.drafted",
+        &serde_json::json!({
+            "task_id": "task-custom-draft",
+            "task_key": "custom:another-shape",
+            "workflow_key": "custom-workflow-alpha",
+            "artifact_hash": "custom-design-1",
+            "state_version": 9,
+            "summary": "Stale design draft for the same custom workflow."
+        })
+        .to_string(),
+    );
+
+    let replay = event_loop.process_events_from_jsonl().unwrap();
+    assert!(replay.had_events);
+    assert!(
+        event_loop
+            .bus
+            .peek_pending(&HatId::new("design_critic"))
+            .is_none_or(|events| events.is_empty()),
+        "explicit workflow_key should suppress stale design handoffs for custom workflows"
+    );
+
+    let ralph_events = event_loop.bus.take_pending(&HatId::new("ralph"));
+    assert_eq!(ralph_events.len(), 1);
+    assert_eq!(ralph_events[0].topic.as_str(), "handoff.ignored");
+    assert!(
+        ralph_events[0]
+            .payload
+            .contains("\"reason\":\"design_locked\"")
+    );
+}
+
+#[test]
 fn test_thrashing_counter_increments_on_blocked_events() {
     // Events now come from JSONL file via `ralph emit`, not from text output.
     // Per-hat tracking is removed since events don't carry hat context.
