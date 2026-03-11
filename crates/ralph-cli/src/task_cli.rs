@@ -7,7 +7,10 @@
 //! - `ready`: Show unblocked tasks
 //! - `start`: Mark a task as in progress
 //! - `close`: Mark a task as complete
+//! - `fail`: Mark a task as failed
 //! - `reopen`: Reopen a closed/failed task
+//! - `review`: Mark a task as in review
+//! - `block`: Mark a task as blocked
 //! - `show`: Show a single task by ID
 
 use crate::{display::colors, resolve_path_from_workspace, resolve_workspace_root};
@@ -65,6 +68,12 @@ pub enum TaskCommands {
 
     /// Reopen a closed or failed task
     Reopen(ReopenArgs),
+
+    /// Mark a task as in review
+    Review(ReviewArgs),
+
+    /// Mark a task as blocked
+    Block(BlockArgs),
 
     /// Show a single task by ID
     Show(ShowArgs),
@@ -161,6 +170,10 @@ pub struct ReadyArgs {
 pub struct StartArgs {
     /// Task ID to mark as in progress
     pub id: String,
+
+    /// Hat performing the transition (default: auto-detect from .ralph/current-hat)
+    #[arg(long)]
+    pub hat: Option<String>,
 }
 
 /// Arguments for the `task close` command.
@@ -168,6 +181,10 @@ pub struct StartArgs {
 pub struct CloseArgs {
     /// Task ID to close
     pub id: String,
+
+    /// Hat performing the transition (default: auto-detect from .ralph/current-hat)
+    #[arg(long)]
+    pub hat: Option<String>,
 }
 
 /// Arguments for the `task fail` command.
@@ -175,6 +192,10 @@ pub struct CloseArgs {
 pub struct FailArgs {
     /// Task ID to mark as failed
     pub id: String,
+
+    /// Hat performing the transition (default: auto-detect from .ralph/current-hat)
+    #[arg(long)]
+    pub hat: Option<String>,
 }
 
 /// Arguments for the `task reopen` command.
@@ -182,6 +203,32 @@ pub struct FailArgs {
 pub struct ReopenArgs {
     /// Task ID to reopen
     pub id: String,
+
+    /// Hat performing the transition (default: auto-detect from .ralph/current-hat)
+    #[arg(long)]
+    pub hat: Option<String>,
+}
+
+/// Arguments for the `task review` command.
+#[derive(Parser, Debug)]
+pub struct ReviewArgs {
+    /// Task ID to mark as in review
+    pub id: String,
+
+    /// Hat performing the transition (default: auto-detect from .ralph/current-hat)
+    #[arg(long)]
+    pub hat: Option<String>,
+}
+
+/// Arguments for the `task block` command.
+#[derive(Parser, Debug)]
+pub struct BlockArgs {
+    /// Task ID to mark as blocked
+    pub id: String,
+
+    /// Hat performing the transition (default: auto-detect from .ralph/current-hat)
+    #[arg(long)]
+    pub hat: Option<String>,
 }
 
 /// Arguments for the `task show` command.
@@ -206,6 +253,18 @@ fn read_current_loop_id(root: Option<&PathBuf>) -> Option<String> {
     let loop_id = std::fs::read_to_string(loop_id_marker).ok()?;
     let loop_id = loop_id.trim().to_string();
     (!loop_id.is_empty()).then_some(loop_id)
+}
+
+fn read_current_hat(root: Option<&PathBuf>) -> Option<String> {
+    let hat_marker = resolve_workspace_root(root).join(".ralph/current-hat");
+    let hat = std::fs::read_to_string(hat_marker).ok()?;
+    let hat = hat.trim().to_string();
+    (!hat.is_empty()).then_some(hat)
+}
+
+/// Resolve hat: explicit flag > marker file > None
+fn resolve_hat(flag: Option<String>, root: Option<&PathBuf>) -> Option<String> {
+    flag.or_else(|| read_current_hat(root))
 }
 
 fn add_common_task_fields(
@@ -353,6 +412,8 @@ pub fn execute(args: TaskArgs, use_colors: bool) -> Result<()> {
         TaskCommands::Close(close_args) => execute_close(close_args, root.as_ref(), use_colors),
         TaskCommands::Fail(fail_args) => execute_fail(fail_args, root.as_ref(), use_colors),
         TaskCommands::Reopen(reopen_args) => execute_reopen(reopen_args, root.as_ref(), use_colors),
+        TaskCommands::Review(review_args) => execute_review(review_args, root.as_ref(), use_colors),
+        TaskCommands::Block(block_args) => execute_block(block_args, root.as_ref(), use_colors),
         TaskCommands::Show(show_args) => execute_show(show_args, root.as_ref(), use_colors),
     }
 }
@@ -627,8 +688,12 @@ fn execute_start(args: StartArgs, root: Option<&PathBuf>, use_colors: bool) -> R
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
     let task_id = args.id;
+    let hat = resolve_hat(args.hat, root);
     let started = store
-        .with_exclusive_lock(|s| s.start(&task_id).cloned())
+        .with_exclusive_lock(|s| {
+            s.transition(&task_id, TaskStatus::InProgress, hat.as_deref())
+                .cloned()
+        })
         .context("Failed to save tasks")?
         .context(format!("Task {} not found", task_id))?;
 
@@ -652,8 +717,9 @@ fn execute_close(args: CloseArgs, root: Option<&PathBuf>, use_colors: bool) -> R
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
     let task_id = args.id;
+    let hat = resolve_hat(args.hat, root);
     let title = store
-        .close(&task_id)
+        .transition(&task_id, TaskStatus::Closed, hat.as_deref())
         .context(format!("Task {} not found", task_id))?
         .title
         .clone();
@@ -680,8 +746,9 @@ fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
     let task_id = args.id;
+    let hat = resolve_hat(args.hat, root);
     let title = store
-        .fail(&task_id)
+        .transition(&task_id, TaskStatus::Failed, hat.as_deref())
         .context(format!("Task {} not found", task_id))?
         .title
         .clone();
@@ -698,6 +765,64 @@ fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
         );
     } else {
         println!("Failed task: {} - {}", task_id, title);
+    }
+
+    Ok(())
+}
+
+fn execute_review(args: ReviewArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
+    let path = get_tasks_path(root);
+    let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+
+    let task_id = args.id;
+    let hat = resolve_hat(args.hat, root);
+    let title = store
+        .transition(&task_id, TaskStatus::InReview, hat.as_deref())
+        .context(format!("Task {} not found", task_id))?
+        .title
+        .clone();
+
+    store.save().context("Failed to save tasks")?;
+
+    if use_colors {
+        println!(
+            "{}In review: {} - {}{}",
+            colors::BLUE,
+            task_id,
+            title,
+            colors::RESET
+        );
+    } else {
+        println!("In review: {} - {}", task_id, title);
+    }
+
+    Ok(())
+}
+
+fn execute_block(args: BlockArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
+    let path = get_tasks_path(root);
+    let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+
+    let task_id = args.id;
+    let hat = resolve_hat(args.hat, root);
+    let title = store
+        .transition(&task_id, TaskStatus::Blocked, hat.as_deref())
+        .context(format!("Task {} not found", task_id))?
+        .title
+        .clone();
+
+    store.save().context("Failed to save tasks")?;
+
+    if use_colors {
+        println!(
+            "{}Blocked task: {} - {}{}",
+            colors::YELLOW,
+            task_id,
+            title,
+            colors::RESET
+        );
+    } else {
+        println!("Blocked task: {} - {}", task_id, title);
     }
 
     Ok(())
@@ -806,8 +931,12 @@ fn execute_reopen(args: ReopenArgs, root: Option<&PathBuf>, use_colors: bool) ->
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
     let task_id = args.id;
+    let hat = resolve_hat(args.hat, root);
     let reopened = store
-        .with_exclusive_lock(|s| s.reopen(&task_id).cloned())
+        .with_exclusive_lock(|s| {
+            s.transition(&task_id, TaskStatus::Open, hat.as_deref())
+                .cloned()
+        })
         .context("Failed to save tasks")?
         .context(format!("Task {} not found", task_id))?;
 
