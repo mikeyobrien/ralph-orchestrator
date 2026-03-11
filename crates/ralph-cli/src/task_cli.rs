@@ -1044,4 +1044,71 @@ mod tests {
 
         assert_eq!(get_tasks_path(None), root.join(".ralph/agent/tasks.jsonl"));
     }
+
+    #[test]
+    fn test_execute_review_transitions_to_in_review() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path().to_path_buf();
+        let task = Task::new("Review me".to_string(), 2);
+        let task_id = task.id.clone();
+        write_tasks(temp_dir.path(), vec![task]);
+
+        execute_review(
+            ReviewArgs {
+                id: task_id.clone(),
+                hat: None,
+            },
+            Some(&root),
+            false,
+        )
+        .expect("execute_review");
+
+        let store = TaskStore::load(&get_tasks_path(Some(&root))).expect("reload");
+        assert_eq!(store.get(&task_id).unwrap().status, TaskStatus::InReview);
+    }
+
+    #[test]
+    fn test_execute_block_transitions_to_blocked() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path().to_path_buf();
+        let task = Task::new("Block me".to_string(), 2);
+        let task_id = task.id.clone();
+        write_tasks(temp_dir.path(), vec![task]);
+
+        execute_block(
+            BlockArgs {
+                id: task_id.clone(),
+                hat: None,
+            },
+            Some(&root),
+            false,
+        )
+        .expect("execute_block");
+
+        let store = TaskStore::load(&get_tasks_path(Some(&root))).expect("reload");
+        assert_eq!(store.get(&task_id).unwrap().status, TaskStatus::Blocked);
+    }
+
+    #[test]
+    fn test_read_current_hat_reads_marker_file() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path().to_path_buf();
+        let marker_dir = root.join(".ralph");
+        std::fs::create_dir_all(&marker_dir).expect("marker dir");
+        std::fs::write(marker_dir.join("current-hat"), "builder").expect("write marker");
+
+        assert_eq!(read_current_hat(Some(&root)), Some("builder".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_hat_prefers_explicit_flag_over_marker() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path().to_path_buf();
+        let marker_dir = root.join(".ralph");
+        std::fs::create_dir_all(&marker_dir).expect("marker dir");
+        std::fs::write(marker_dir.join("current-hat"), "builder").expect("write marker");
+
+        let result = resolve_hat(Some("reviewer".to_string()), Some(&root));
+        assert_eq!(result, Some("reviewer".to_string()));
+    }
 }
