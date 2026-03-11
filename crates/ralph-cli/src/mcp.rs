@@ -59,6 +59,10 @@ mod tests {
     use anyhow::Result;
     use std::path::PathBuf;
 
+    fn normalize_test_path(path: &std::path::Path) -> String {
+        path.to_string_lossy().replace("/private/var/", "/var/")
+    }
+
     #[test]
     fn resolve_workspace_root_returns_none_when_unset() -> Result<()> {
         assert_eq!(resolve_workspace_root(None)?, None);
@@ -78,7 +82,11 @@ mod tests {
         let _guard = CwdGuard::set(temp_dir.path());
 
         let resolved = resolve_workspace_root(Some(PathBuf::from("nested/workspace")))?;
-        assert_eq!(resolved, Some(temp_dir.path().join("nested/workspace")));
+        let expected = temp_dir.path().join("nested/workspace");
+        assert_eq!(
+            resolved.as_deref().map(normalize_test_path),
+            Some(normalize_test_path(&expected))
+        );
         Ok(())
     }
 }
