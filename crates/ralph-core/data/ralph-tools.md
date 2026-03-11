@@ -23,12 +23,14 @@ This skill covers **runtime tasks**. For code tasks, see `/code-task-generator`.
 ```bash
 ralph tools task add "Title" -p 2 -d "description" --blocked-by id1,id2
 ralph tools task ensure "Title" --key spec:task-01 -p 2 -d "description" --blocked-by id1,id2
-ralph tools task list [--status open|in_progress|closed] [--format table|json|quiet]
+ralph tools task list [--status open|in_progress|closed|blocked|in_review] [--format table|json|quiet]
 ralph tools task ready                    # Show unblocked tasks
-ralph tools task start <task-id>
-ralph tools task close <task-id>
-ralph tools task reopen <task-id>
-ralph tools task fail <task-id>
+ralph tools task start <task-id> [--hat hat-name]
+ralph tools task close <task-id> [--hat hat-name]
+ralph tools task reopen <task-id> [--hat hat-name]
+ralph tools task fail <task-id> [--hat hat-name]
+ralph tools task review <task-id> [--hat hat-name]
+ralph tools task block <task-id> [--hat hat-name]
 ralph tools task show <task-id>
 ```
 
@@ -38,6 +40,8 @@ ralph tools task show <task-id>
 
 **Priority:** 1-5 (1 = highest, default 3)
 
+**Hat flag:** `--hat` on transition commands (start/close/fail/reopen/review/block) records which hat performed the transition. Auto-detected from `.ralph/current-hat` when omitted during a loop run.
+
 ### Task Rules
 - One task = one testable unit of work (completable in 1-2 iterations)
 - Break large features into smaller tasks BEFORE starting implementation
@@ -45,6 +49,8 @@ ralph tools task show <task-id>
 - Use `task ensure --key ...` when a task has a stable identity and may be recreated across fresh-context iterations
 - Use `task start` when you begin active work on a task
 - ONLY close tasks after verification (tests pass, build succeeds)
+- Use `task review` when submitting a task for review before final close
+- Use `task block` when a task is blocked by an external dependency or issue
 - Use `task reopen` when more work remains after a failed review/finalization pass
 - Use `task fail` when the task is blocked and cannot be completed in the current iteration
 

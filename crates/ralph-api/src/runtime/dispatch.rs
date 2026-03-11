@@ -24,6 +24,9 @@ impl RpcRuntime {
         request: &RpcRequestEnvelope,
         principal: &str,
     ) -> Result<Value, ApiError> {
+        // Capture before-state for task mutations that change status
+        let before_state = self.capture_task_before_state(request);
+
         let result = match request.method.as_str() {
             "system.health" => Ok(self.health_payload()),
             "system.version" => Ok(json!({
@@ -55,11 +58,36 @@ impl RpcRuntime {
         if let Ok(payload) = &result
             && !request.method.starts_with("stream.")
         {
-            self.stream_domain()
-                .publish_rpc_side_effect(&request.method, &request.params, payload);
+            self.stream_domain().publish_rpc_side_effect(
+                &request.method,
+                &request.params,
+                payload,
+                before_state.as_ref(),
+            );
         }
 
         result
+    }
+
+    /// For task mutation methods, read the task's current state before the mutation
+    /// so side effects can report accurate `from` status.
+    fn capture_task_before_state(&self, request: &RpcRequestEnvelope) -> Option<Value> {
+        let needs_before = matches!(
+            request.method.as_str(),
+            "task.update"
+                | "task.close"
+                | "task.cancel"
+                | "task.retry"
+                | "task.run"
+                | "task.delete"
+        );
+        if !needs_before {
+            return None;
+        }
+        let task_id = request.params.get("id").and_then(Value::as_str)?;
+        let domain = self.task_domain_mut().ok()?;
+        let task = domain.get(task_id).ok()?;
+        Some(json!({ "task": task }))
     }
 
     fn dispatch_task(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {

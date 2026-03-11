@@ -382,8 +382,14 @@ impl StreamDomain {
         let _ = self.live_tx.send(event);
     }
 
-    pub fn publish_rpc_side_effect(&self, method: &str, params: &Value, result: &Value) {
-        rpc_side_effects::publish_rpc_side_effect(self, method, params, result);
+    pub fn publish_rpc_side_effect(
+        &self,
+        method: &str,
+        params: &Value,
+        result: &Value,
+        before_state: Option<&Value>,
+    ) {
+        rpc_side_effects::publish_rpc_side_effect(self, method, params, result, before_state);
     }
 
     fn latest_cursor_or_now(&self) -> Result<String, ApiError> {

@@ -1,0 +1,413 @@
+# Reviewer Preset — Regression-Aware Code Review
+#
+# Verifies changes against the existing codebase by actually running tests,
+# checking coverage of changed lines, and performing structured review.
+# Unlike static-only review presets, this one catches regressions.
+#
+# Usage:
+#   ralph run -H ralph.reviewer.yml -p "Review PR #207"
+#   ralph run -H ralph.reviewer.yml -p "Review PR https://github.com/mikeyobrien/ralph-orchestrator/pull/207"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 30
+  max_runtime_seconds: 3600
+  starting_event: "review.start"
+
+cli:
+  backend: "claude"
+
+core:
+  specs_dir: "./specs/"
+  guardrails:
+    - "DO NOT modify any source code — this is a read-only review."
+    - "Every claim must have evidence: test output, file:line reference, or command output."
+    - "Run tests before forming opinions — don't guess at regressions."
+    - "NEVER run gh pr checkout, git checkout, git switch, or any command that changes the main workspace's HEAD. Use git worktree for isolation."
+
+hats:
+  scoper:
+    name: "🔎 Change Scoper"
+    description: "Checks out PR branch in a worktree and identifies what changed."
+    triggers: ["review.start"]
+    publishes: ["scope.ready"]
+    instructions: |
+      ## CHANGE SCOPER
+
+      Check out the PR in an isolated worktree, then identify the blast radius.
+
+      ### Step 1: Set Up Worktree for the PR
+
+      Extract the PR number from the prompt (e.g. "Review PR #207" or a GitHub URL).
+
+      ```bash
+      # Get the PR branch name (does NOT modify working tree)
+      PR_BRANCH=$(gh pr view <PR_NUMBER> --json headRefName -q .headRefName)
+
+      # Fetch the branch and create an isolated worktree
+      git fetch origin "$PR_BRANCH"
+      git worktree add .worktrees/review-<PR_NUMBER> "origin/$PR_BRANCH"
+      ```
+
+      **CRITICAL: Do NOT run `gh pr checkout` or any command that modifies the main
+      workspace's HEAD.** All work happens inside the worktree. Use absolute paths
+      or `cd` into the worktree before running commands.
+
+      ```bash
+      cd .worktrees/review-<PR_NUMBER>
+      ```
+
+      Record the worktree path in `.ralph/review-scope.md` so later hats can `cd` into it.
+
+      ### Step 2: Scope the Changes
+      ```bash
+      git -P diff origin/main --stat
+      git -P diff origin/main --name-only
+      ```
+
+      For each changed file, identify:
+      - What functions/structs were modified (`git -P diff origin/main -- <file>`)
+      - What other files import or call the changed code
+      - What tests exist for the changed code
+
+      ### Step 3: Write scope summary to `.ralph/review-scope.md`:
+      ```markdown
+      # Review Scope
+
+      **PR:** #<number>
+      **Branch:** <branch name>
+      **Worktree:** .worktrees/review-<PR_NUMBER>
+
+      ## Changed Files
+      - path/to/file.rs — what changed (brief)
+
+      ## TUI Changes
+      If any files in `crates/ralph-tui/` or streaming/rendering code changed,
+      flag them for live TUI verification in the verifier step.
+      - [TUI] crates/ralph-tui/src/rpc_source.rs — streaming handler changed
+
+      ## Blast Radius
+      - path/to/caller.rs — calls changed function X
+
+      ## Existing Test Coverage
+      - tests/test_foo.rs — covers function X ✅
+      - NO tests for function Y ⚠️
+
+      ## Regression Risk Areas
+      - [HIGH] function Y has no tests and callers changed
+      - [MED] function X has tests but edge case Z not covered
+      - [LOW] documentation-only change
+      ```
+
+      ### Emit
+      ```bash
+      ralph emit "scope.ready" "files_changed: N, high_risk: N, med_risk: N, tui_changes: yes|no"
+      ```
+
+  verifier:
+    name: "🧪 Regression Verifier"
+    description: "Runs test suite and live TUI verification in the review worktree."
+    triggers: ["scope.ready"]
+    publishes: ["verification.done"]
+    instructions: |
+      ## REGRESSION VERIFIER
+
+      Run tests and collect evidence of pass/fail state.
+      All commands run inside the review worktree (path in `.ralph/review-scope.md`).
+
+      ### Process
+      1. Read `.ralph/review-scope.md` for context and worktree path.
+         ```bash
+         cd <worktree-path>
+         ```
+
+      2. Build and run the full test suite:
+         ```bash
+         cargo test --workspace 2>&1 | tee /tmp/ralph-review-tests.log
+         echo "EXIT_CODE=$?" >> /tmp/ralph-review-tests.log
+         ```
+
+      3. If tests fail, isolate which tests:
+         ```bash
+         grep -E "^test .* FAILED" /tmp/ralph-review-tests.log
+         grep -E "^failures:" -A 20 /tmp/ralph-review-tests.log
+         ```
+
+      4. Check if failures are in changed code or pre-existing:
+         ```bash
+         git -P diff origin/main --name-only > /tmp/changed-files.txt
+         ```
+
+      5. Run clippy for static analysis:
+         ```bash
+         cargo clippy --workspace -- -D warnings 2>&1 | tee /tmp/ralph-review-clippy.log
+         ```
+
+      6. **TUI Live Verification** (if `.ralph/review-scope.md` flags TUI changes):
+
+         First, check that a tmux session is available:
+         ```bash
+         tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}'
+         ```
+
+         **If no tmux session is available and TUI changes are flagged, you MUST emit
+         `review.blocked` instead of `verification.done`.** TUI verification is mandatory
+         when TUI code changed — there is no "skip" option.
+
+         If tmux IS available, verify TUI rendering using this exact sequence:
+
+         **Step A: Prep the worktree** (run these from INSIDE the worktree)
+         ```bash
+         # Build release binary
+         cargo build --release
+
+         # Copy ralph.pi.yml from the main workspace (worktree copy may be stale)
+         # Main workspace root = parent of .worktrees/ directory
+         cp ../../ralph.pi.yml ralph.pi.yml
+
+         # Validate the config works with this branch's binary
+         rm -f .ralph/loop.lock
+         ./target/release/ralph run -c ralph.pi.yml -p test --max-iterations 0 --no-tui 2>&1 | head -5
+         # Must NOT show "validation failed". If it does, STOP and emit review.blocked.
+         ```
+
+         **Step B: Create tmux pane with fish shell**
+
+         Pi requires fish (for mise/node). Without fish, `pi` resolves to the
+         system npm which crashes with EACCES. This is the #1 cause of
+         `provider=unknown` failures.
+
+         ```bash
+         # Get current pane reference
+         tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}'
+
+         # Create split pane
+         tmux split-window -h -t SESSION:WINDOW -c <worktree-absolute-path>
+
+         # CRITICAL: Switch to fish BEFORE any other command
+         tmux send-keys -t PANE "exec /nix/store/km9w9r1p4nl92y5fp4vfwsjymjig4axl-fish-3.7.1/bin/fish" Enter
+         sleep 3
+
+         # VERIFY fish is running and pi is reachable
+         tmux send-keys -t PANE "which pi" Enter
+         sleep 2
+         tmux capture-pane -t PANE -p -S -5
+         # Must show a path like ~/.local/share/mise/installs/node/.../bin/pi
+         # If it shows "command not found" or an npm error, STOP — fish isn't active.
+         ```
+
+         **Step C: Launch TUI and capture**
+         ```bash
+         tmux send-keys -t PANE "rm -f .ralph/loop.lock && ./target/release/ralph run -c ralph.pi.yml -p 'List 5 features of Rust' --max-iterations 2" Enter
+
+         # Pi/Kiro takes 30-45s to start streaming
+         sleep 45
+         tmux capture-pane -t PANE -p -S -60
+
+         # Clean up
+         tmux kill-pane -t PANE
+         ```
+
+         Verify:
+         - Text flows as paragraphs (not one-word-per-line)
+         - Tool calls display with name and summary
+         - No garbled output, broken pipe errors, or TUI corruption
+         - Header shows correct backend name and iteration count
+
+      7. Write results to `.ralph/review-verification.md`:
+         ```markdown
+         # Verification Results
+
+         ## Test Suite
+         - Status: PASS | FAIL
+         - Total: N tests, N passed, N failed
+         - Failures introduced by this change: [list or "none"]
+         - Pre-existing failures: [list or "none"]
+
+         ## Clippy
+         - New warnings: [list or "none"]
+
+         ## TUI Verification
+         - Status: PASS | FAIL | NOT_APPLICABLE (no TUI changes)
+         - Text rendering: flowing paragraphs ✅ | garbled ❌
+         - Tool display: correct ✅ | missing details ❌
+         - Evidence: <paste captured pane output>
+
+         ## Evidence
+         <paste relevant output snippets>
+         ```
+
+         **Note:** TUI Status can ONLY be `NOT_APPLICABLE` when no TUI-related files were
+         changed. If TUI changes are flagged in the scope, TUI verification MUST produce
+         `PASS` or `FAIL`. There is no "skipped" state for flagged TUI changes.
+
+      ### Emit — Choose ONE:
+
+      **If TUI changes are flagged but cannot be verified (no tmux):**
+      ```bash
+      ralph emit "review.blocked" "reason: tui_verification_unavailable, tests: pass|fail, detail: TUI changes flagged but no tmux session available for live verification"
+      ```
+
+      **Otherwise (no TUI changes, or TUI verified):**
+      ```bash
+      ralph emit "verification.done" "tests: pass|fail, new_failures: N, clippy_warnings: N, tui: pass|fail|not_applicable"
+      ```
+
+      ### DON'T
+      - ❌ Modify any code to fix failures
+      - ❌ Skip the test run
+      - ❌ Report results without running tests
+      - ❌ Emit `verification.done` with `tui: skipped` when TUI changes are flagged — emit `review.blocked` instead
+      - ❌ Treat "no tmux available" as an acceptable reason to skip TUI verification
+
+  reviewer:
+    name: "📝 Code Reviewer"
+    description: "Reviews the diff for correctness, safety, and quality."
+    triggers: ["verification.done"]
+    publishes: ["review.done"]
+    default_publishes: "review.done"
+    instructions: |
+      ## CODE REVIEWER
+
+      Review the actual diff with verification context.
+
+      ### Read First
+      1. `.ralph/review-scope.md` — what changed and blast radius
+      2. `.ralph/review-verification.md` — test results and evidence
+
+      ### Review the Diff
+      ```bash
+      git -P diff origin/main
+      ```
+
+      ### Check Each Area
+      For every changed file:
+
+      **Correctness**
+      - Does the logic match the intent?
+      - Are edge cases handled?
+      - Any off-by-one, null/None, or overflow risks?
+
+      **Regression Safety**
+      - Do existing tests still pass? (from verification)
+      - Are new code paths tested?
+      - Could this break callers identified in the scope?
+
+      **Error Handling**
+      - Are errors propagated, not swallowed?
+      - Do error messages help debugging?
+
+      **API Compatibility**
+      - Any public API changes?
+      - Are they backward-compatible?
+      - Config format changes documented?
+
+      ### Write Review
+      Append findings to `.ralph/review-findings.md`:
+      ```markdown
+      # Code Review Findings
+
+      ## Verdict: APPROVE | REQUEST_CHANGES
+
+      ## Regressions
+      - [REGRESSION] description — evidence from test run
+      - [POTENTIAL] description — not caught by tests, here's why
+
+      ## Critical Issues (Must Fix)
+      - file:line — description
+
+      ## Suggestions
+      - file:line — description
+
+      ## Positive Notes
+      - What's done well
+      ```
+
+      ### Emit
+      ```bash
+      ralph emit "review.done" "verdict: APPROVE|REQUEST_CHANGES, critical: N, regressions: N"
+      ```
+
+      ### DON'T
+      - ❌ Modify any code
+      - ❌ Ignore test failures from verification
+      - ❌ Approve if there are new test failures
+
+  synthesizer:
+    name: "📋 Final Report"
+    description: "Compiles findings, cleans up worktree, and produces final report."
+    triggers: ["review.done", "review.blocked"]
+    publishes: ["LOOP_COMPLETE"]
+    default_publishes: "LOOP_COMPLETE"
+    instructions: |
+      ## FINAL REPORT
+
+      Compile everything into a single actionable review.
+
+      ### Read
+      1. `.ralph/review-scope.md`
+      2. `.ralph/review-verification.md`
+      3. `.ralph/review-findings.md`
+
+      ### Write Final Report
+      Create `.ralph/REVIEW-REPORT.md`:
+      ```markdown
+      # Review Report
+
+      **Date:** <today>
+      **PR:** #<number>
+      **Branch:** <branch name>
+      **Verdict:** APPROVE | REQUEST_CHANGES | REJECT
+
+      ## Summary
+      One paragraph: what changed, is it safe, what needs attention.
+
+      ## Regression Status
+      - Test suite: ✅ PASS | ❌ FAIL (N new failures)
+      - Clippy: ✅ clean | ⚠️ N new warnings
+      - TUI rendering: ✅ PASS | ❌ FAIL | ⏭️ SKIPPED
+      - Pre-existing issues: N (not introduced by this change)
+
+      ## Findings by Severity
+
+      ### 🔴 Critical (Blocks Merge)
+      - [ ] file:line — description
+
+      ### 🟡 Suggestions (Should Address)
+      - [ ] file:line — description
+
+      ### 🟢 Nitpicks (Optional)
+      - file:line — description
+
+      ## Uncovered Risk
+      Changed code without test coverage:
+      - file:function — risk assessment
+
+      ## What's Good
+      - Positive observations
+      ```
+
+      ### Clean Up Worktree
+      ```bash
+      WORKTREE_PATH=$(grep "Worktree:" .ralph/review-scope.md | awk '{print $2}')
+      if [ -n "$WORKTREE_PATH" ] && [ -d "$WORKTREE_PATH" ]; then
+        git worktree remove "$WORKTREE_PATH" --force
+      fi
+      git worktree prune
+      ```
+
+      ### Verdict Logic
+      - Triggered by `review.blocked` → REQUEST_CHANGES (include the blocked reason prominently)
+      - Any new test failure → REQUEST_CHANGES
+      - Any critical issue → REQUEST_CHANGES
+      - TUI verification failed → REQUEST_CHANGES
+      - TUI verification skipped/missing when TUI changes were flagged → REQUEST_CHANGES
+      - Uncovered high-risk changes → REQUEST_CHANGES
+      - Only suggestions/nitpicks → APPROVE with comments
+      - Clean → APPROVE
+
+      Print the report to stdout, then emit the completion event:
+      ```bash
+      ralph emit "LOOP_COMPLETE" "verdict: APPROVE|REQUEST_CHANGES|REJECT"
+      ```

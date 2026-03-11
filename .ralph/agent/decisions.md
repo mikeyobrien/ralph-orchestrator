@@ -92,3 +92,12 @@ Use this template for new entries:
 - Reasoning: Full `cargo test` is required verification gate; adapting tests to current CLI behavior is lower risk than reviving deprecated flags.
 - Reversibility: High
 - Timestamp: 2026-02-21T00:23:00Z
+
+## DEC-012 (2026-03-10T21:45Z)
+- Decision: How to handle API-only metadata (archived_at, queued_task_id, merge_loop_prompt, error_message) when migrating TaskDomain from tasks-v1.json to core TaskStore (tasks.jsonl)
+- Chosen Option: A — ApiTaskMeta sidecar map persisted to .ralph/api/task-meta.json
+- Confidence: 75
+- Alternatives Considered: (B) Add all fields to core Task struct — rejected because it couples core model to API execution concerns
+- Reasoning: Core Task should remain clean for CLI/orchestration use. Queue/execution is API-layer only. Sidecar keeps separation clean and is consistent with the design doc's guidance that queue/execution features stay as API-layer concerns.
+- Reversibility: High — can migrate sidecar fields into core Task later if needed
+- Timestamp: 2026-03-10T21:45:00Z
