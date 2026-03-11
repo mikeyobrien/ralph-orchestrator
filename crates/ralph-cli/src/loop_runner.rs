@@ -1545,6 +1545,13 @@ pub async fn run_loop_impl(
             }
             last_hat = Some(hat_id.clone());
         }
+
+        // Write current-hat marker for `ralph tools task` auto-detection
+        let hat_marker = ctx.ralph_dir().join("current-hat");
+        if let Err(e) = fs::write(&hat_marker, hat_id.as_str()) {
+            warn!(error = %e, "Failed to write current-hat marker");
+        }
+
         debug!(
             "Iteration {}/{} - {} active",
             iteration, config.event_loop.max_iterations, hat_id
