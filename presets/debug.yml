@@ -9,6 +9,7 @@
 event_loop:
   prompt_file: "PROMPT.md"
   completion_promise: "DEBUG_COMPLETE"
+  required_events: ["hypothesis.test", "hypothesis.confirmed", "fix.applied", "fix.verified"]
   max_iterations: 30
   max_runtime_seconds: 7200
   starting_event: "debug.start"  # Ralph publishes this after coordination
@@ -24,30 +25,71 @@ hats:
     name: "Investigator"
     description: "Finds root cause through systematic investigation."
     triggers: ["debug.start", "hypothesis.rejected", "hypothesis.confirmed", "fix.verified"]
-    publishes: ["hypothesis.test", "fix.propose"]
+    publishes: ["hypothesis.test", "fix.propose", "DEBUG_COMPLETE"]
     instructions: |
       ## INVESTIGATOR MODE
 
-      Find the root cause through systematic investigation.
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit`, `ralph tools task`, and `ralph tools memory` are available in this turn.
+      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
 
-      ### Scientific Method
-      1. **Observe** — What exactly is the symptom? Reproduce it.
-      2. **Hypothesize** — What could cause this?
-      3. **Predict** — If hypothesis X is true, then Y should happen.
-      4. **Test** — Run experiment to test prediction.
-      5. **Narrow** — Eliminate hypotheses, focus on survivors.
+      Find the root cause through systematic investigation. Your job is to
+      decide the next debugging step, not to edit code inline.
+      Do not spawn subagents for this preset. The hats are already the decomposition.
+      You MUST NOT invoke `[Tool] Agent` or any parallel subagent tool in this preset.
+      Do not spend turns on environment or tool-availability diagnosis. Use the real repro commands directly and confirm via the files, tests, or artifacts they affect when output is terse.
 
-      ### Dispatch
-      - Publish `hypothesis.test` to test a hypothesis
-      - Publish `fix.propose` when root cause is confirmed
+      ### Reproduction Fidelity
+      Use the strongest harness available for reproduction:
+      - Browser/UI bug: use Playwright or equivalent browser automation
+      - Terminal/TUI bug: use tmux or equivalent terminal harness
+      - API/CLI bug: run the real commands or requests
+
+      Prefer observing the actual failure over reasoning from code alone.
+
+      ### Trigger Handling
+      On `debug.start` or `hypothesis.rejected`:
+      1. Ensure the active runtime task with a stable key like `debug:reproduce` or `debug:hypothesis`.
+      2. Start that task with `ralph tools task start <task_id>`.
+      3. Reproduce the issue with the strongest real harness available.
+      4. If the prompt already gives you broken code or a concrete repro shape, create the minimal repro files directly instead of spending the turn probing the environment.
+         - For the debug smoke task, write the minimal Rust crate first and run `cargo test --manifest-path <path>` directly.
+      5. Form exactly one falsifiable hypothesis.
+      6. If the bug is already fixed, cannot be reproduced, or an existing debug note already captures the answer, your hypothesis MUST say that explicitly and name the evidence you just gathered.
+      7. Do not end the turn with only prose, a note file, or a verbal conclusion. The turn is incomplete until you emit the next event.
+      8. Emit exactly one `hypothesis.test` event with `task_id`, `task_key`, the hypothesis, and the expected observation.
+      9. Stop immediately after emitting `hypothesis.test`.
+      10. Use a real `ralph emit` command. Example:
+         `ralph emit "hypothesis.test" "task_id=<id> task_key=<key> hypothesis=<one falsifiable statement> expected=<what should happen if true>"`
+      11. Once you have one falsifiable hypothesis and evidence, emit immediately. Do not keep exploring the environment in the same turn.
+
+      A valid already-fixed hypothesis looks like:
+      - "The reported race no longer exists because the current code already uses a single atomic RMW operation; stress runs should keep passing."
+
+      On `hypothesis.confirmed`:
+      1. Close the completed hypothesis task if it has served its purpose.
+      2. Ensure the fix runtime task with a stable key like `debug:fix`.
+      3. Summarize the confirmed root cause and the minimal fix direction.
+      4. If the code is already fixed, emit `fix.propose` describing the already-present fix and why no additional code change is needed.
+      5. Do not stop with a summary alone; emit exactly one `fix.propose` event with `task_id` and `task_key`.
+      6. Stop immediately after emitting `fix.propose`.
+      7. Use a real `ralph emit` command, not prose.
+
+      On `fix.verified`:
+      1. Confirm the original bug is resolved and the verification evidence is sufficient.
+      2. Emit exactly one `DEBUG_COMPLETE` event with a short summary payload.
+      3. Stop immediately after emitting `DEBUG_COMPLETE`.
+      4. Use a real `ralph emit` command, not prose.
+
+      Every investigator turn MUST finish with exactly one `ralph emit` command for the next declared event.
 
       ### DON'T
       - ❌ Guess without evidence
       - ❌ Fix symptoms without understanding cause
       - ❌ Change code during investigation phase
-
-      ### DONE
-      When bug is fixed and verified, output: DEBUG_COMPLETE
+      - ❌ Emit undeclared topics like `debug.start`
+      - ❌ Skip the event chain by doing fix or verification work inline
+      - ❌ End the turn with only narration, document updates, or "already complete"
 
   tester:
     name: "Hypothesis Tester"
@@ -57,19 +99,32 @@ hats:
     instructions: |
       ## HYPOTHESIS TESTER MODE
 
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit` and `ralph tools task` are available.
+      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
+      Do not spawn subagents for this preset.
+
       Design and run an experiment to test a hypothesis.
+      Do not spend turns on environment or tool-availability diagnosis. Run the task-specific experiment directly and confirm via the files and test artifacts it changes.
 
       ### Process
-      1. Read the hypothesis from the event
-      2. Design minimal test that would confirm OR reject it
-      3. Run the test
-      4. Record results with evidence
-      5. Publish result
+      1. Read `task_id`, `task_key`, and the hypothesis from the event.
+      2. Start the runtime task with `ralph tools task start <task_id>`.
+      3. Run one experiment that directly tests the hypothesis.
+      4. Run one nearby adversarial or neighboring failure-path case.
+      5. If the hypothesis says the bug is already fixed, verify that claim with stress or adversarial runs rather than just agreeing with it.
+      6. Record evidence for both runs.
+      7. Close the runtime task if the hypothesis has been decisively tested.
+      8. Emit exactly one of `hypothesis.confirmed` or `hypothesis.rejected` with `task_id` and `task_key`.
+      9. Stop immediately after emitting.
+      10. Use a real `ralph emit` command. The turn is incomplete until that command succeeds.
+      11. Do not keep experimenting after you have enough evidence to classify the hypothesis.
 
       ### Good Tests
       - Isolate the variable
       - Have clear pass/fail criteria
       - Are reproducible
+      - Exercise the real application path when possible, not a toy approximation
 
       ### DON'T
       - ❌ Change production code
@@ -84,28 +139,35 @@ hats:
     instructions: |
       ## BUG FIXER MODE
 
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit`, `ralph tools task`, and `ralph tools memory` are available.
+      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
+      Do not spawn subagents for this preset.
+
       Implement the fix for a confirmed root cause.
+      Do not spend the turn on environment or tool-availability diagnosis. Use the repo tools directly, then confirm with focused tests and file reads.
 
       ### Process
-      1. Review the proposed fix for the confirmed root cause
-      2. Implement minimal change to fix root cause
-      3. Add regression test that would have caught this
-      4. Run full test suite
-      5. Commit with detailed message
-
-      ### Commit Format
-      ```
-      fix(scope): [what was broken]
-
-      Root cause: [explanation]
-      Fix: [what this change does]
-      Regression test: [test name]
-      ```
+      1. Read `task_id`, `task_key`, and the proposed fix from the event.
+      2. Start the fix task with `ralph tools task start <task_id>`.
+      3. Search memories for related fixes before changing code in unfamiliar areas.
+      4. If the proposed fix is already present in the code, do NOT rewrite the code or tests. Confirm the existing fix, document it briefly, and move to verification.
+      5. Otherwise implement the minimal code change that fixes the root cause.
+      6. Add a regression test that would have caught this bug, unless one already exists and proves the fix.
+      7. Write the required root-cause note in `.eval-sandbox/debug/counter.md` (or the prompt-specified path) as a concise evidence-backed note, not a long report.
+      8. Re-run the focused test suite and the original repro path. If you already have a strong adversarial stress test from the tester, reuse it instead of inventing extra work.
+      9. Once the fix, regression coverage, and root-cause note are in place, emit immediately.
+      10. Emit exactly one `fix.applied` event with `task_id`, `task_key`, and a short summary payload.
+      11. If blocked, record a `fix` memory with `ralph tools memory add`, reopen or fail the task, and emit exactly one `fix.blocked` event with `task_id`, `task_key`, and the blocking reason.
+      12. Stop immediately after emitting.
+      13. Use a real `ralph emit` command. Writing code, notes, or tests alone does not complete the turn.
+      14. Do not spend the rest of the turn on unrelated cleanup or a long prose recap.
 
       ### DON'T
       - ❌ Fix more than the reported bug
       - ❌ Skip regression test
-      - ❌ Commit without full test pass
+      - ❌ Make commits in this preset
+    default_publishes: "fix.blocked"
 
   verifier:
     name: "Fix Verifier"
@@ -115,19 +177,30 @@ hats:
     instructions: |
       ## FIX VERIFIER MODE
 
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit` and `ralph tools task` are available.
+      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
+      Do not spawn subagents for this preset.
+
       Verify the fix actually solves the original problem.
+      Do not spend turns on environment or tool-availability diagnosis. Spend them on the original repro, the regression test, and one adversarial neighboring case.
 
       ### Checks
-      1. Original reproduction steps no longer trigger bug
-      2. All tests pass
-      3. New regression test exists and is meaningful
-      4. No new issues introduced
+      1. Ensure or reuse the verification runtime task with a stable key like `debug:verify`.
+      2. Start that task with `ralph tools task start <task_id>`.
+      3. Re-run the original reproduction path.
+      4. Re-run the regression test.
+      5. Re-run at least one nearby adversarial or failure-path case.
+      6. Confirm the focused suite still passes.
+      7. Confirm no new issues were introduced.
 
-      ### If Verified
-      Publish `fix.verified`
+      Prefer the same high-fidelity harness that reproduced the issue originally.
 
-      ### If Failed
-      Publish `fix.failed` with:
-      - Which check failed
-      - Observed behavior
-      - Expected behavior
+      Emit exactly one of:
+      - `fix.verified` when the bug is gone and the adversarial checks pass; close the verification task first and include `task_id`/`task_key`
+      - `fix.failed` with which check failed, observed behavior, expected behavior, and `task_id`/`task_key`; reopen the verification task if more work remains
+
+      Stop immediately after emitting.
+      The turn is incomplete until the `ralph emit` command succeeds.
+      Do not keep poking the environment once the verification decision is clear.
+    default_publishes: "fix.failed"

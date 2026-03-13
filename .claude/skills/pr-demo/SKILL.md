@@ -1,6 +1,8 @@
 ---
 name: pr-demo
 description: Use when creating animated demos (GIFs) for pull requests or documentation. Covers terminal recording with asciinema and conversion to GIF/SVG for GitHub embedding.
+metadata:
+  internal: true
 ---
 
 # PR Demo Creation

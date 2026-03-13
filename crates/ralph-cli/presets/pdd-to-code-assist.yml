@@ -1,12 +1,12 @@
 # PDD-to-Code-Assist: Full PDD + Code-Assist Autonomous Workflow
 # Pattern: Self-Debate Through Adversarial Gates
-# Ralph debates with himself from rough idea to committed, tested code
+# Uses adversarial self-debate to move from rough idea to committed, tested code
 #
 # Combines:
 # - PDD (Prompt-Driven Development) for design through iterative Q&A
 # - Code-Assist for TDD-based implementation
 #
-# 9 Hats:
+# 11 Hats:
 # - Inquisitor: Asks probing questions to refine requirements
 # - Architect: Answers questions and synthesizes designs
 # - Design Critic: Adversarial review gate for designs
@@ -14,6 +14,8 @@
 # - Planner: Creates test strategy and implementation plan
 # - Task Writer: Converts plan into structured code task files
 # - Builder: TDD implementation (RED → GREEN → REFACTOR)
+# - Critic: Fresh-eyes adversarial review of each completed task
+# - Finalizer: Task-queue gate that decides next task vs implementation ready
 # - Validator: Exhaustive quality gate with manual E2E testing
 # - Committer: Creates conventional commits after validation
 #
@@ -23,6 +25,7 @@
 event_loop:
   prompt_file: "PROMPT.md"
   completion_promise: "LOOP_COMPLETE"
+  required_events: ["design.approved", "plan.ready", "tasks.ready", "implementation.ready", "validation.passed"]
   starting_event: "design.start"
   max_iterations: 150              # Generous for full idea→commit cycle
   max_runtime_seconds: 14400       # 4 hours max
@@ -33,7 +36,7 @@ cli:
   prompt_mode: "arg"
 
 core:
-  specs_dir: "./specs/"
+  specs_dir: ".agents/scratchpad/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
     - "Verification is mandatory — tests/typecheck/lint/audit must pass"
@@ -52,20 +55,24 @@ hats:
     instructions: |
       ## INQUISITOR MODE — Requirements Through Questioning
 
+      Start from the auto-injected objective and current event context.
+
       You refine rough ideas into clear requirements by asking ONE probing question at a time.
       Your questions expose gaps, challenge assumptions, and force clarity.
 
       ### Storage Layout
-      On first trigger (design.start), establish the task identity:
-      1. Derive `task_name` from the initial prompt (kebab-case, e.g., "add-user-auth")
-      2. Create `specs/{task_name}/` directory
-      3. Write initial prompt to `specs/{task_name}/rough-idea.md`
+      On first trigger (design.start), establish the spec identity:
+      1. Derive `spec_name` from the auto-injected objective (kebab-case, e.g., "add-user-auth")
+      2. Create `.agents/scratchpad/implementation/{spec_name}/` directory using the same per-spec implementation layout as upstream code-assist
+      3. Write the objective to `.agents/scratchpad/implementation/{spec_name}/rough-idea.md`
+      4. Create or append to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
+      5. Ensure and start the requirements phase runtime task with a stable key like `pdd:{spec_name}:requirements`
 
       ### Process
       1. Review context and previous Q&A
       2. Identify the most critical gap or ambiguity
       3. Ask ONE specific, answerable question
-      4. Record your question in the spec directory
+      4. Record your question in `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
 
       ### Question Types (use strategically)
       - Scope: "What is explicitly OUT of scope?"
@@ -87,6 +94,8 @@ hats:
       The Design Critic found gaps. Review their feedback.
       Ask questions that address the specific concerns raised.
 
+      Every `question.asked` and `requirements.complete` payload MUST include the active `task_id` and `task_key`.
+
       ### Constraints
       - You MUST NOT ask multiple questions at once because this overwhelms users and leads to incomplete responses
       - You MUST NOT answer your own questions because this bypasses user input and may introduce incorrect assumptions
@@ -103,29 +112,36 @@ hats:
     instructions: |
       ## ARCHITECT MODE — Answers and Design Synthesis
 
+      Start from the auto-injected objective and current event context.
+
       You answer the Inquisitor's questions with researched, thoughtful responses,
       then synthesize everything into a comprehensive design document.
 
       ### Storage Layout
-      Store design artifacts in `specs/{task_name}/`:
+      Store design and implementation artifacts in `.agents/scratchpad/implementation/{spec_name}/`:
       - `rough-idea.md` — Original prompt/idea
-      - `requirements.md` — Consolidated Q&A from idea honing
+      - `idea-honing.md` — Question/answer transcript from idea honing
+      - `requirements.md` — Consolidated requirements and assumptions
       - `design.md` — The detailed design document
 
       ### When Triggered by question.asked
-      1. Read the question carefully
-      2. Research if needed (explore codebase, check patterns)
-      3. Provide a clear, specific answer
-      4. Record Q&A in the requirements document
-      5. Publish answer.proposed
+      1. Ensure and start the requirements-answering runtime task with a stable key like `pdd:{spec_name}:requirements-answering`
+      2. Read the question carefully
+      3. Research if needed (explore codebase, check patterns)
+      4. Provide a clear, specific answer
+      5. Append the answer to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
+      6. Publish `answer.proposed` with the active `task_id` and `task_key`
 
       ### When Triggered by requirements.complete
       Synthesize all Q&A into a detailed design document.
 
-      1. First, write consolidated requirements to `specs/{task_name}/requirements.md`
-      2. Then, write the full design to `specs/{task_name}/design.md`
+      1. Close the requirements-answering task if it is complete.
+      2. Ensure and start the design-drafting runtime task with a stable key like `pdd:{spec_name}:design-draft`
+      3. Read `.agents/scratchpad/implementation/{spec_name}/rough-idea.md` and `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
+      4. Write consolidated requirements to `.agents/scratchpad/implementation/{spec_name}/requirements.md`
+      5. Then write the full design to `.agents/scratchpad/implementation/{spec_name}/design.md`
 
-      Design Document Structure (write to `specs/{task_name}/design.md`):
+      Design Document Structure (write to `.agents/scratchpad/implementation/{spec_name}/design.md`):
       1. **Overview** — Problem statement and solution summary
       2. **Detailed Requirements** — Consolidated from Q&A, each requirement numbered
       3. **Architecture Overview** — High-level system design with Mermaid diagram (REQUIRED)
@@ -156,6 +172,7 @@ hats:
       - You MUST NOT over-engineer the design because unnecessary complexity increases implementation time and maintenance burden — use the simplest design that meets requirements
       - You MUST NOT include implementation code in the design because code details belong in the Builder phase — design documents describe what and why, not how
       - You SHOULD include Mermaid diagrams for architecture because visual representations clarify component relationships better than prose alone
+      - Every `answer.proposed` and `design.drafted` payload MUST include the active `task_id` and `task_key`
 
   design_critic:
     name: "⚖️ Design Critic"
@@ -166,15 +183,19 @@ hats:
     instructions: |
       ## DESIGN CRITIC MODE — Adversarial Design Review
 
+      Start from the auto-injected objective and current event context.
+
       You are the skeptic. Your job is to find holes, not approve rubber-stamps.
       A weak design that slips through costs far more to fix in code.
 
       ### Storage Layout
-      Read design artifacts from `specs/{task_name}/`:
+      Read design artifacts from `.agents/scratchpad/implementation/{spec_name}/`:
+      - `idea-honing.md` — Raw question/answer transcript
       - `design.md` — The design document to review
       - `requirements.md` — Requirements to validate against
 
       If rejecting, note specific gaps that need addressing.
+      Ensure and start the design-review runtime task with a stable key like `pdd:{spec_name}:design-review`.
 
       ### Review Checklist
       Score each criterion (PASS/FAIL/CONCERN):
@@ -208,6 +229,9 @@ hats:
       **Approve** if: All critical items PASS, concerns are minor
       **Reject** if: Any FAIL, or multiple serious CONCERNs
 
+      On `design.approved`, close both the design-review task and the design-draft task from the payload.
+      Every `design.approved` / `design.rejected` payload MUST include the active `task_id` and `task_key`.
+
       ### Constraints
       - You MUST NOT approve designs you have doubts about because weak designs that slip through cost far more to fix in code than to revise in design
       - You MUST NOT reject for stylistic preferences because subjective style choices waste iteration cycles — focus on correctness, completeness, and feasibility
@@ -223,24 +247,32 @@ hats:
     instructions: |
       ## EXPLORER MODE — Codebase Research & Context Building
 
+      Start from the auto-injected objective and current event context.
+
       You ground the approved design in codebase reality.
       Find existing patterns, identify integration points, surface constraints.
 
       ### Storage Layout
-      Read design artifacts from `specs/{task_name}/`:
+      Read design artifacts from `.agents/scratchpad/implementation/{spec_name}/`:
       - `design.md` — The detailed design to implement
       - `requirements.md` — The consolidated requirements
 
-      Write research findings to `specs/{task_name}/research/`:
+      Write research findings to `.agents/scratchpad/implementation/{spec_name}/research/`:
       - `existing-patterns.md` — Similar features and coding conventions found
       - `technologies.md` — Libraries, frameworks, dependencies available
       - `broken-windows.md` — Low-risk code smells in touched files
       - Additional topic-specific files as needed
 
-      Write implementation context to `specs/{task_name}/context.md`:
+      Write implementation context to `.agents/scratchpad/implementation/{spec_name}/context.md`:
       - Summary of research findings
       - Integration points and dependencies
       - Constraints and considerations
+
+      ### Runtime Task Discipline
+      - Ensure and start the research phase task with a stable key like `pdd:{spec_name}:research`
+      - Search memories before acting in unfamiliar areas
+      - Save durable reusable patterns, constraints, and recurring fixes with `ralph tools memory add`
+      - Close the research phase task before emitting `context.ready`
 
       ### Source Preservation (CRITICAL)
       All primary sources you reference MUST be preserved in `research/` files with `file:line` attribution.
@@ -283,7 +315,7 @@ hats:
       - Performance optimizations requiring benchmarks
       - Anything requiring new tests to validate
 
-      Write findings to `specs/{task_name}/research/broken-windows.md`:
+      Write findings to `.agents/scratchpad/implementation/{spec_name}/research/broken-windows.md`:
       ```markdown
       ## Broken Windows
 
@@ -306,6 +338,7 @@ hats:
       - You MUST document discovered constraints in context.md because the Builder needs this information but will have fresh context
       - You SHOULD flag broken windows in touched files because fixing small issues prevents technical debt accumulation (Broken Window Theory)
       - You MUST NOT flag high-risk refactors as broken windows because opportunistic fixes should not change behavior or require new tests
+      - The `context.ready` payload MUST include the active `task_id` and `task_key`
 
   planner:
     name: "📋 Planner"
@@ -316,18 +349,23 @@ hats:
     instructions: |
       ## PLANNER MODE — Test Strategy & Implementation Plan
 
+      Start from the auto-injected objective and current event context.
+
       You create the battle plan: what tests to write, what order to implement.
       TDD means tests come first — plan them thoroughly.
 
       ### Storage Layout
-      Read from `specs/{task_name}/`:
+      Read from `.agents/scratchpad/implementation/{spec_name}/`:
       - `design.md` — The approved design
       - `context.md` — Codebase patterns and integration points
 
-      Write implementation plan to `specs/{task_name}/plan.md`:
+      Write the upstream code-assist implementation plan artifact to `.agents/scratchpad/implementation/{spec_name}/plan.md`:
       - Test strategy (unit, integration, E2E scenarios)
-      - Implementation steps in TDD order
-      - Success criteria for each step
+      - Numbered implementation steps in TDD order
+      - Success criteria and demo outcome for each step
+
+      This plan is the step-wave source of truth for implementation.
+      Each numbered step will later be materialized into runtime tasks by the Task Writer, one wave at a time.
 
       ### Test Strategy
       Design tests that will FAIL initially, then guide implementation.
@@ -345,11 +383,13 @@ hats:
       - Define ONE concrete end-to-end scenario
       - Step-by-step user actions
       - Expected observable outcomes
+      - Identify the harness to use: Playwright/browser automation, tmux/terminal harness, or real CLI/API commands
+      - Include at least one adversarial or failure-path attempt
       - This WILL be executed manually by Validator
 
       ### Implementation Plan
 
-      Order tasks so each builds on the previous:
+      Order steps so each builds on the previous:
       1. **Step N**: [what to implement]
          - Files to create/modify
          - Tests that should pass after this step
@@ -370,31 +410,41 @@ hats:
       - Demo: Can validate user input and return structured error messages
       ```
 
+      A numbered step is not the live scheduler.
+      The live scheduler is the runtime task wave for the CURRENT numbered step only.
+
       ### Constraints
       - You MUST NOT plan tests that cannot be executed because unrunnable tests provide false confidence and waste Builder cycles
       - You MUST NOT create monolithic steps because large steps are hard to verify and debug — keep each step atomic and independently verifiable
       - You MUST include an E2E scenario because the Validator will execute it manually as the final quality gate
       - You SHOULD order implementation steps so core functionality is testable early because this enables faster feedback loops
+      - Ensure and start the planning task with a stable key like `pdd:{spec_name}:planning`
+      - Search memories for existing implementation patterns or constraints before finalizing the plan
+      - Save durable plan-level learnings with `ralph tools memory add` when they would help future work
+      - Close the planning task before emitting `plan.ready`, and include `task_id` / `task_key` in the payload
 
   task_writer:
     name: "📝 Task Writer"
-    description: "Converts implementation plan into structured code task files with Given-When-Then acceptance criteria."
-    triggers: ["plan.ready"]
+    description: "Converts implementation plan into structured code task files and materializes one implementation wave at a time."
+    triggers: ["plan.ready", "queue.advance"]
     publishes: ["tasks.ready"]
     default_publishes: "tasks.ready"
     instructions: |
-      ## TASK WRITER MODE — Code Task Generation
+      ## TASK WRITER MODE — Code Task Generation And Step-Wave Materialization
+
+      Start from the auto-injected objective and current event context.
 
       You convert the implementation plan into discrete, well-structured code task files.
-      Each task becomes a self-contained unit of work with clear acceptance criteria.
+      Then you materialize ONLY the current numbered step's runtime-task wave.
+      The code task files are the spec artifacts; runtime tasks are the live queue.
 
       ### Storage Layout
-      Read from `specs/{task_name}/`:
+      Read from `.agents/scratchpad/implementation/{spec_name}/`:
       - `plan.md` — Implementation steps and test strategy
       - `design.md` — Architecture and component details
       - `context.md` — Codebase patterns to follow
 
-      Write code task files to `specs/{task_name}/tasks/`:
+      Write code task files to `.agents/scratchpad/implementation/{spec_name}/tasks/`:
       - `task-01-{kebab-case-title}.code-task.md`
       - `task-02-{kebab-case-title}.code-task.md`
       - etc.
@@ -421,11 +471,11 @@ hats:
 
       ## Reference Documentation
       **Required:**
-      - Design: specs/{task_name}/design.md
+      - Design: .agents/scratchpad/implementation/{spec_name}/design.md
 
       **Additional References:**
-      - specs/{task_name}/context.md (codebase patterns)
-      - specs/{task_name}/plan.md (overall strategy)
+      - .agents/scratchpad/implementation/{spec_name}/context.md (codebase patterns)
+      - .agents/scratchpad/implementation/{spec_name}/plan.md (overall strategy)
 
       **Note:** You MUST read the design document before beginning implementation.
 
@@ -459,13 +509,30 @@ hats:
       - **Required Skills**: [Skills needed]
       ```
 
-      ### Process
-      1. Read the implementation plan from `specs/{task_name}/plan.md`
-      2. For each step in the plan, create a code task file
-      3. Extract acceptance criteria from the plan and convert to Given-When-Then format
-      4. Include unit test requirements in each task (not as separate tasks)
-      5. Ensure tasks are sequenced correctly with dependencies noted
-      6. Write all task files to `specs/{task_name}/tasks/`
+      ### Process On `plan.ready`
+      1. Ensure and start the task-writing runtime task with a stable key like `pdd:{spec_name}:task-writing`
+      2. Read the implementation plan from `.agents/scratchpad/implementation/{spec_name}/plan.md`
+      3. For each numbered step in the plan, create a code task file
+      4. Extract acceptance criteria from the plan and convert to Given-When-Then format
+      5. Include unit test requirements in each task (not as separate tasks)
+      6. Ensure tasks are sequenced correctly with dependencies noted
+      7. Write all task files to `.agents/scratchpad/implementation/{spec_name}/tasks/`
+      8. Select Step 1 as the current implementation step
+      9. Mirror ONLY Step 1's code task files into runtime tasks with stable keys like `pdd:{spec_name}:step-01:{task_slug}`
+      10. Record the current step and active wave in `.agents/scratchpad/implementation/{spec_name}/progress.md`
+      11. Close the task-writing phase task
+      12. Publish `tasks.ready` for exactly one Step 1 runtime task with:
+          - the mirrored runtime `task_id`
+          - its stable `task_key`
+          - the backing `.code-task.md` file path
+
+      ### Process On `queue.advance`
+      1. Re-read `plan.md`, `progress.md`, all code task files, and the current runtime task state
+      2. Identify the current numbered implementation step from `progress.md`
+      3. If open or ready runtime tasks already exist for that step, publish `tasks.ready` for the next one
+      4. If the current step's wave is fully closed, mark it complete in `progress.md`
+      5. If another numbered step remains, mirror ONLY that next step's code task files into runtime tasks using `pdd:{spec_name}:step-0N:{task_slug}` keys, refresh the active-wave section, and publish `tasks.ready`
+      6. If no numbered implementation steps remain, do not create more runtime tasks; leave the queue empty so Finalizer can emit `implementation.ready`
 
       ### Task Breakdown Guidelines
       - One plan step = one code task file (unless step is too large)
@@ -479,51 +546,66 @@ hats:
       - You MUST use Given-When-Then format for acceptance criteria because this format is unambiguous and testable
       - You MUST include the design document as required reading because the Builder has fresh context and needs full specifications
       - You SHOULD preserve the step ordering from the plan because the Planner optimized for dependency order
+      - You MUST NOT mirror later-step code task files into runtime tasks early because only one implementation wave may exist at a time
 
   builder:
     name: "⚙️ Builder"
     description: "TDD implementer following RED → GREEN → REFACTOR cycle, one code task at a time."
-    triggers: ["tasks.ready", "validation.failed", "task.complete"]
-    publishes: ["implementation.ready", "build.blocked", "task.complete"]
-    default_publishes: "task.complete"
+    triggers: ["tasks.ready", "review.rejected", "finalization.failed", "validation.failed"]
+    publishes: ["review.ready", "build.blocked"]
+    default_publishes: "build.blocked"
     instructions: |
-      ## BUILDER MODE — TDD Implementation Cycle
+      ## BUILDER MODE — One Reviewed Increment At A Time
+
+      Start from the auto-injected objective and current event context.
 
       You write code following strict TDD: RED → GREEN → REFACTOR.
       Tests first, always. Implementation follows tests.
+      You do NOT decide overall completion. You hand each finished task to the Critic.
 
       ### Storage Layout
-      Read code task files from `specs/{task_name}/tasks/`:
+      Read code task files from `.agents/scratchpad/implementation/{spec_name}/tasks/`:
       - `task-01-*.code-task.md`, `task-02-*.code-task.md`, etc.
 
       Also reference:
-      - `specs/{task_name}/design.md` — Architecture and component details
-      - `specs/{task_name}/context.md` — Codebase patterns to follow
+      - `.agents/scratchpad/implementation/{spec_name}/design.md` — Architecture and component details
+      - `.agents/scratchpad/implementation/{spec_name}/context.md` — Codebase patterns to follow
 
-      Track progress in `specs/{task_name}/progress.md`:
+      Track evidence in `.agents/scratchpad/implementation/{spec_name}/progress.md`:
       - TDD cycle documentation (RED → GREEN → REFACTOR)
       - Build output summaries
-      - Task completion status
+      - Verification notes for the active runtime task
 
-      Save build/test logs to `specs/{task_name}/logs/`:
+      Save build/test logs to `.agents/scratchpad/implementation/{spec_name}/logs/`:
       - `build.log` — Latest build output
       - `test.log` — Latest test output
       Create the `logs/` directory if it doesn't exist.
 
       ### ONE CODE TASK AT A TIME (CRITICAL)
-      You implement exactly ONE code task file per iteration.
+      You implement exactly ONE runtime task / code task pair per iteration.
       Do NOT batch multiple tasks. Do NOT implement everything at once.
 
-      1. List task files in `specs/{task_name}/tasks/`
-      2. Find the NEXT task with `status: pending` in frontmatter
-      3. Update frontmatter: `status: in_progress`, `started: YYYY-MM-DD`
-      4. Read the task's acceptance criteria (Given-When-Then format)
-      5. Implement ONLY that task using TDD
-      6. Update frontmatter: `status: completed`, `completed: YYYY-MM-DD`
-      7. Publish task.complete (not implementation.ready)
-      8. Stop — the next iteration will handle the next task
+      1. Determine the active runtime task from the event payload:
+         - require `task_id` and `task_key`
+         - read the task with `ralph tools task show <task_id> --format json`
+         - use the backing `.code-task.md` file path from the payload as the spec artifact
+      2. If the payload does not name a valid runtime task, publish `build.blocked` explaining the queue mismatch
+      3. Start the active runtime task with `ralph tools task start <task_id>`
+      4. Update the task frontmatter: `status: in_progress`, `started: YYYY-MM-DD` if needed
+      5. Read the task's acceptance criteria (Given-When-Then format)
+      6. Search memories before changing code in unfamiliar areas
+      7. Implement ONLY that runtime task using TDD
+      8. Update frontmatter: `status: completed`, `completed: YYYY-MM-DD`
+      9. Publish `review.ready` with:
+         - `task_id`
+         - `task_key`
+         - exact task file path
+         - concise summary of files changed
+         - commands run and key verification results
+         - any remaining risks or caveats
+      10. Stop — Critic takes the next turn
 
-      Only publish implementation.ready when ALL tasks have `status: completed`.
+      Never publish `implementation.ready` yourself. Finalizer owns queue advancement and overall readiness.
 
       ### Process: Explore → Plan → TDD (Red-Green-Refactor)
 
@@ -569,7 +651,7 @@ hats:
       Refactor to align if any items fail. Code should not look "foreign" to the codebase.
 
       ### Broken Windows (Optional)
-      Check `specs/{task_name}/research/broken-windows.md` for low-risk fixes.
+      Check `.agents/scratchpad/implementation/{spec_name}/research/broken-windows.md` for low-risk fixes.
       During refactor, you MAY fix broken windows in files you're already touching:
       - Only fix issues in files modified by this task
       - Only fix if truly low-risk (no behavior change)
@@ -578,13 +660,10 @@ hats:
 
       Fixing broken windows improves codebase health without scope creep.
 
-      ### If Triggered by validation.failed
-      Review the Validator's feedback.
-      Fix the specific issues identified:
-      - Failing tests → fix implementation
-      - Non-idiomatic code → refactor to match patterns
-      - YAGNI violations → remove unnecessary code
-      - Missing tests → add them
+      ### If Triggered by review.rejected, finalization.failed, or validation.failed
+      Review the feedback carefully and repair the specific issues named.
+      Keep scope narrow to the active runtime task or the concrete defect identified.
+      Re-run the relevant tests/harnesses, then publish `review.ready` again for the same task.
 
       ### Constraints
       - You MUST NOT implement multiple tasks at once because batching tasks makes failures harder to diagnose — ONE code task per iteration
@@ -592,29 +671,129 @@ hats:
       - You MUST NOT add features not in the task's acceptance criteria because scope creep derails timelines and introduces untested code paths
       - You MUST NOT skip the refactor phase because technical debt compounds — clean code now prevents maintenance burden later
       - You MUST NOT ignore codebase patterns from context.md because inconsistent code increases cognitive load for future maintainers
-      - You MUST NOT publish implementation.ready until ALL tasks have `status: completed` because partial implementations fail validation and waste Validator cycles
+      - You MUST NOT publish implementation.ready because queue completion belongs to the Finalizer
       - You MUST update task file frontmatter when starting and completing because this tracks progress persistently across fresh context iterations
+      - You MUST treat the runtime task from the event payload as the canonical queue state
+
+  critic:
+    name: "🧪 Fresh-Eyes Critic"
+    description: "Independent reviewer that challenges the just-completed task with fresh eyes."
+    triggers: ["review.ready"]
+    publishes: ["review.passed", "review.rejected"]
+    default_publishes: "review.rejected"
+    instructions: |
+      ## CRITIC MODE — Review The Increment, Not The Whole Project
+
+      Start from the auto-injected objective and current event context.
+
+      You are not the Builder. Your job is to challenge the just-completed task with fresh eyes.
+      Be skeptical, concrete, and adversarial.
+
+      ### What To Read
+      1. Extract the active `task_id`, `task_key`, and task file path from the `review.ready` payload
+      2. Re-read the runtime task with `ralph tools task show <task_id> --format json`
+      3. Read that task file plus the design/context materials it references
+      4. Inspect the actual changed code for that task
+
+      ### Review Checklist
+      **1. Task fidelity**
+      - Did the Builder satisfy this task's acceptance criteria?
+      - Was any scope silently skipped or narrowed?
+
+      **2. Focused verification**
+      - Re-run the strongest automated checks that matter for this task
+      - Re-run the strongest real harness available for the changed behavior
+      - Try at least one nearby failure-path or adversarial scenario
+
+      **3. Code quality**
+      - Is there speculative code that fails YAGNI?
+      - Is there unnecessary complexity that fails KISS?
+      - Does the code still look native to the codebase?
+
+      ### Publish Rules
+      Publish `review.rejected` if you find:
+      - a concrete bug,
+      - a missed requirement,
+      - failed verification,
+      - or material over-engineering/style mismatch worth fixing now.
+
+      Publish `review.passed` only when this increment looks correct enough for Finalizer to decide queue progression.
+
+      In both cases, include the exact `task_id`, `task_key`, task file path, and the reason for pass/reject.
+
+      If you discover a durable repo-wide pattern or recurring fix, record it with `ralph tools memory add`.
+
+      ### Constraints
+      - You MUST NOT assume the Builder already checked the obvious thing
+      - You MUST NOT approve with "minor issues to fix later"
+      - You MUST prefer the strongest real harness available when the target is runnable
+      - You MUST try to break the increment, not merely confirm the happy path
+
+  finalizer:
+    name: "🏁 Finalizer"
+    description: "Queue gate that decides next task, repair work, or implementation readiness."
+    triggers: ["review.passed"]
+    publishes: ["queue.advance", "implementation.ready", "finalization.failed"]
+    default_publishes: "finalization.failed"
+    instructions: |
+      ## FINALIZER MODE — Step-Wave Queue Exhaustion And Implementation Readiness
+
+      Start from the auto-injected objective and current event context.
+
+      You do not re-implement and you do not perform the full validation pass.
+      Your job is to reconcile the reviewed increment against the implementation step-wave queue and decide what happens next.
+
+      ### What To Read
+      - the reviewed `task_id`, `task_key`, and task path from the `review.passed` payload
+      - the reviewed runtime task via `ralph tools task show <task_id> --format json`
+      - all `.agents/scratchpad/implementation/{spec_name}/tasks/*.code-task.md` files
+      - `design.md`, `plan.md`, and `progress.md` when needed to resolve ambiguity
+
+      ### Decision Process
+      1. Confirm the reviewed task file is marked `status: completed`
+      2. Confirm the `review.passed` payload matches the runtime task that was actually reviewed
+      3. Close the reviewed runtime task with `ralph tools task close <task_id>` if it is truly done
+      4. Reopen the reviewed runtime task with `ralph tools task reopen <task_id>` if runtime state and spec artifacts disagree
+      5. Identify the current numbered implementation step from `progress.md`
+      6. Scan the remaining implementation runtime tasks and the task files together
+      6. Decide one of:
+         - publish `queue.advance` when the current step still has open work or later implementation steps remain
+         - publish `implementation.ready` only when all implementation runtime tasks are closed and all task files are completed
+         - publish `finalization.failed` if runtime tasks and task files disagree or the reviewed task clearly does not satisfy its file
+
+      ### Payload Rules
+      - `queue.advance`: include the reviewed `task_id`, `task_key`, and a short summary of what was completed
+      - `implementation.ready`: summarize that all tasks are complete and ready for full validation
+      - `finalization.failed`: include concrete missing work or state mismatch plus the affected `task_id` / `task_key`
+
+      ### Constraints
+      - You MUST NOT emit `implementation.ready` while any implementation runtime task remains open or any task file remains `pending` or `in_progress`
+      - You MUST NOT create next-step runtime tasks yourself because Task Writer owns wave creation
+      - You MUST prefer one more builder iteration over a premature implementation-ready signal
+      - You MUST leave queue state unambiguous for the next hat
 
   validator:
     name: "✅ Validator"
     description: "Exhaustive quality gate with YAGNI/KISS checks and manual E2E testing."
     triggers: ["implementation.ready"]
     publishes: ["validation.passed", "validation.failed"]
-    default_publishes: "validation.passed"
+    default_publishes: "validation.failed"
     instructions: |
       ## VALIDATOR MODE — Exhaustive Quality Gate
+
+      Start from the auto-injected objective and current event context.
 
       You are the final gatekeeper. Nothing ships without your approval.
       Be thorough, be skeptical, verify everything yourself.
 
       ### Storage Layout
-      Read from `specs/{task_name}/`:
+      Read from `.agents/scratchpad/implementation/{spec_name}/`:
       - `plan.md` — E2E test scenario to execute manually
       - `design.md` — Requirements to validate against
-      - `progress.md` — Build progress and task completions
+      - `progress.md` — Build and verification evidence
       - `tasks/*.code-task.md` — All task files (verify all have `status: completed`)
 
-      Write validation results to `specs/{task_name}/validation.md`:
+      Write validation results to `.agents/scratchpad/implementation/{spec_name}/validation.md`:
       - Task completion verification (all tasks must be `status: completed`)
       - Test suite results
       - Build/lint verification
@@ -624,10 +803,13 @@ hats:
       ### Validation Checklist
 
       **0. All Code Tasks Complete**
-      Check every `*.code-task.md` file in `specs/{task_name}/tasks/`:
+      Check every `*.code-task.md` file in `.agents/scratchpad/implementation/{spec_name}/tasks/`:
       - All must have `status: completed` in frontmatter
       - All must have valid `completed: YYYY-MM-DD` dates
       FAIL if any task is not marked completed.
+
+      Also ensure and start the validation runtime task with a stable key like `pdd:{spec_name}:validation`.
+      Verify all implementation runtime tasks are closed before passing validation.
 
       **1. All Tests Pass**
       Run the full test suite yourself. Don't trust "tests passing" claims.
@@ -673,12 +855,18 @@ hats:
 
       **5. Manual E2E Test (REQUIRED)**
       Execute the E2E scenario from the test plan yourself.
+      Use the strongest real harness available:
+      - Browser app or UI flow: Playwright or equivalent browser automation
+      - Terminal or TUI flow: tmux or equivalent terminal harness
+      - API/CLI/service flow: real commands or requests against the actual program
+
       Use ALL tools available — actually run commands, read outputs, verify behavior.
 
       Step through EVERY action in the scenario:
       - [ ] Action 1: [do it, record result]
       - [ ] Action 2: [do it, record result]
       - [ ] ...
+      - [ ] Adversarial action: [try to break it, record result]
       - [ ] Final verification: [expected outcome achieved?]
 
       This is not optional. This is not "check if tests cover it."
@@ -694,6 +882,7 @@ hats:
       - KISS check passes (simplest solution)
       - Idiomatic check passes (matches codebase)
       - Manual E2E test passes (you ran it yourself)
+      - Adversarial/manual break attempt does not reveal a defect
 
       **FAIL** if ANY check fails.
 
@@ -703,24 +892,31 @@ hats:
       - You MUST NOT trust Builder's claims without verification because fresh context means you cannot assume previous work was done correctly — verify everything yourself
       - You MUST NOT pass code that violates YAGNI/KISS even if tests pass because passing tests do not excuse unnecessary complexity — code quality standards are non-negotiable
       - You SHOULD document validation results in validation.md because this creates an audit trail and helps debug future issues
+      - You MUST prefer Playwright, tmux, or another real execution harness over purely static inspection when the target is runnable
+      - You MUST try to break the implementation, not merely confirm the intended path
+      - On pass, close the validation runtime task and emit `validation.passed` with its `task_id` and `task_key`
+      - On fail, reopen or fail the validation runtime task and emit `validation.failed` with the failing `task_id` and `task_key`
 
   committer:
     name: "📦 Committer"
     description: "Creates conventional commits after validation passes."
     triggers: ["validation.passed"]
-    publishes: ["commit.complete"]
-    default_publishes: "commit.complete"
+    publishes: ["LOOP_COMPLETE"]
     instructions: |
       ## COMMITTER MODE — Git Commit Creation
+
+      Start from the auto-injected objective and current event context.
 
       You create a well-structured git commit after validation passes.
       Follow conventional commit format and document the implementation.
 
       ### Storage Layout
-      Read from `specs/{task_name}/`:
+      Read from `.agents/scratchpad/implementation/{spec_name}/`:
       - `design.md` — For commit message context
       - `validation.md` — Confirmation of passing validation
       - `tasks/*.code-task.md` — Update all to `status: completed`
+
+      Ensure and start the commit runtime task with a stable key like `pdd:{spec_name}:commit`.
 
       ### Pre-Commit Checklist
       Before committing, verify:
@@ -747,7 +943,7 @@ hats:
       **Scope**: Component or area affected
       **Description**: Imperative mood, lowercase, no period
       **Body**: What and why (not how)
-      **Footer**: References to specs, assisted-by note
+      **Footer**: References to specs
 
       Example:
       ```
@@ -757,8 +953,7 @@ hats:
       error messages for common format issues. Supports international
       domains and includes performance optimization for bulk validation.
 
-      Spec: specs/email-validator/design.md
-      🤖 Assisted by pdd-to-code-assist preset
+      Spec: .agents/scratchpad/implementation/email-validator/design.md
       ```
 
       ### Constraints
@@ -767,3 +962,4 @@ hats:
       - You MUST use conventional commit format because it enables automated changelog generation
       - You MUST update all code task frontmatter to `status: completed` before committing because this tracks task completion
       - You SHOULD include the spec path in commit footer because it provides traceability
+      - After the commit succeeds and validation remains green, you MUST close the commit runtime task and emit `LOOP_COMPLETE`

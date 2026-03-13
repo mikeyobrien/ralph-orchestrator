@@ -190,6 +190,7 @@ impl<W: Write> SessionRecorder<W> {
             // Ignore write errors - recording should not interrupt execution
             if let Ok(json) = serde_json::to_string(record) {
                 let _ = writeln!(writer, "{}", json);
+                let _ = writer.flush();
             }
         }
     }
@@ -325,5 +326,41 @@ mod tests {
 
         assert_eq!(parsed.event, "bus.publish");
         assert!(parsed.ts > 0);
+    }
+
+    #[test]
+    fn test_record_bus_event_flushes_buffered_writer_immediately() {
+        use std::io::{BufWriter, Write};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("shared writer lock")
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let shared = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufWriter::new(SharedWriter(Arc::clone(&shared)));
+        let recorder = SessionRecorder::new(writer);
+
+        recorder.record_bus_event(&Event::new("task.start", "Begin work"));
+
+        let output = shared.lock().expect("shared bytes lock").clone();
+        let output_str = String::from_utf8(output).expect("utf8 output");
+        assert!(
+            output_str.contains("task.start"),
+            "session records should be flushed before normal drop/teardown"
+        );
     }
 }

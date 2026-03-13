@@ -27,6 +27,7 @@ use nix::sys::signal::{Signal, kill};
 #[cfg(unix)]
 use nix::unistd::Pid;
 use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
+use std::env;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -302,6 +303,7 @@ impl PtyExecutor {
 
         // Set up environment for PTY
         cmd_builder.env("TERM", "xterm-256color");
+        inject_ralph_runtime_env(&mut cmd_builder, &self.config.workspace_root);
 
         // Apply backend-specific environment variables (e.g., Agent Teams env var)
         for (key, value) in &self.backend.env_vars {
@@ -1676,6 +1678,31 @@ impl PtyExecutor {
                 _ = tokio::time::sleep(Duration::from_millis(50)) => {}
             }
         }
+    }
+}
+
+fn inject_ralph_runtime_env(cmd_builder: &mut CommandBuilder, workspace_root: &std::path::Path) {
+    let Ok(current_exe) = env::current_exe() else {
+        return;
+    };
+    let Some(bin_dir) = current_exe.parent() else {
+        return;
+    };
+
+    let mut path_entries = vec![bin_dir.to_path_buf()];
+    if let Some(existing_path) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing_path));
+    }
+
+    if let Ok(joined_path) = env::join_paths(path_entries) {
+        cmd_builder.env("PATH", joined_path);
+    }
+    cmd_builder.env("RALPH_BIN", current_exe);
+    cmd_builder.env("RALPH_WORKSPACE_ROOT", workspace_root);
+    if std::path::Path::new("/var/tmp").is_dir() {
+        cmd_builder.env("TMPDIR", "/var/tmp");
+        cmd_builder.env("TMP", "/var/tmp");
+        cmd_builder.env("TEMP", "/var/tmp");
     }
 }
 

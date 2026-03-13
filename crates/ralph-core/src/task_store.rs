@@ -200,9 +200,21 @@ impl TaskStore {
         self.tasks.iter().find(|t| t.id == id)
     }
 
+    /// Gets a task by stable key (immutable reference).
+    pub fn get_by_key(&self, key: &str) -> Option<&Task> {
+        self.tasks.iter().find(|t| t.key.as_deref() == Some(key))
+    }
+
     /// Gets a task by ID (mutable reference).
     pub fn get_mut(&mut self, id: &str) -> Option<&mut Task> {
         self.tasks.iter_mut().find(|t| t.id == id)
+    }
+
+    /// Gets a task by stable key (mutable reference).
+    pub fn get_by_key_mut(&mut self, key: &str) -> Option<&mut Task> {
+        self.tasks
+            .iter_mut()
+            .find(|t| t.key.as_deref() == Some(key))
     }
 
     /// Closes a task by ID and returns a reference to it.
@@ -210,6 +222,15 @@ impl TaskStore {
         if let Some(task) = self.get_mut(id) {
             task.status = TaskStatus::Closed;
             task.closed = Some(chrono::Utc::now().to_rfc3339());
+            return self.get(id);
+        }
+        None
+    }
+
+    /// Starts a task by ID and returns a reference to it.
+    pub fn start(&mut self, id: &str) -> Option<&Task> {
+        if let Some(task) = self.get_mut(id) {
+            task.start();
             return self.get(id);
         }
         None
@@ -223,6 +244,42 @@ impl TaskStore {
             return self.get(id);
         }
         None
+    }
+
+    /// Reopens a task by ID and returns a reference to it.
+    pub fn reopen(&mut self, id: &str) -> Option<&Task> {
+        if let Some(task) = self.get_mut(id) {
+            task.reopen();
+            return self.get(id);
+        }
+        None
+    }
+
+    /// Ensures a task exists for a stable key, returning the existing or created task.
+    ///
+    /// If a task with the same key already exists, its non-lifecycle metadata is refreshed and
+    /// the existing task is returned.
+    pub fn ensure(&mut self, task: Task) -> &Task {
+        if let Some(key) = task.key.as_deref()
+            && let Some(existing_idx) = self
+                .tasks
+                .iter()
+                .position(|existing| existing.key.as_deref() == Some(key))
+        {
+            let existing = &mut self.tasks[existing_idx];
+            existing.title = task.title;
+            existing.priority = task.priority;
+            if task.description.is_some() {
+                existing.description = task.description;
+            }
+            if !task.blocked_by.is_empty() {
+                existing.blocked_by = task.blocked_by;
+            }
+            return &self.tasks[existing_idx];
+        }
+
+        self.tasks.push(task);
+        self.tasks.last().unwrap()
     }
 
     /// Returns all tasks as a slice.
@@ -304,6 +361,18 @@ mod tests {
     }
 
     #[test]
+    fn test_get_task_by_key() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1).with_key(Some("phase:design".to_string()));
+        store.add(task);
+
+        assert!(store.get_by_key("phase:design").is_some());
+        assert_eq!(store.get_by_key("phase:design").unwrap().title, "Test");
+    }
+
+    #[test]
     fn test_close_task() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("tasks.jsonl");
@@ -315,6 +384,35 @@ mod tests {
         let closed = store.close(&id).unwrap();
         assert_eq!(closed.status, TaskStatus::Closed);
         assert!(closed.closed.is_some());
+    }
+
+    #[test]
+    fn test_start_task() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+
+        let started = store.start(&id).unwrap();
+        assert_eq!(started.status, TaskStatus::InProgress);
+        assert!(started.started.is_some());
+    }
+
+    #[test]
+    fn test_reopen_task() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+        let task = Task::new("Test".to_string(), 1);
+        let id = task.id.clone();
+        store.add(task);
+        store.close(&id);
+
+        let reopened = store.reopen(&id).unwrap();
+        assert_eq!(reopened.status, TaskStatus::Open);
+        assert!(reopened.closed.is_none());
     }
 
     #[test]
@@ -350,6 +448,27 @@ mod tests {
         let ready = store.ready();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].title, "Ready");
+    }
+
+    #[test]
+    fn test_ensure_deduplicates_by_key() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tasks.jsonl");
+        let mut store = TaskStore::load(&path).unwrap();
+
+        let first = Task::new("First".to_string(), 1).with_key(Some("impl:task-01".to_string()));
+        let second = Task::new("Second".to_string(), 3).with_key(Some("impl:task-01".to_string()));
+
+        let id = store.ensure(first).id.clone();
+        let deduped_id = store.ensure(second).id.clone();
+        let deduped = store
+            .get_by_key("impl:task-01")
+            .expect("deduped task should exist");
+
+        assert_eq!(store.all().len(), 1);
+        assert_eq!(deduped_id, id);
+        assert_eq!(deduped.title, "Second");
+        assert_eq!(deduped.priority, 3);
     }
 
     #[test]

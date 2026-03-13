@@ -3,6 +3,8 @@ name: find-code-tasks
 description: Lists all code tasks in the repository with their status, dates, and metadata. Useful for getting an overview of pending work or finding specific tasks.
 type: anthropic-skill
 version: "1.0"
+metadata:
+  internal: true
 ---
 
 # Find Code Tasks

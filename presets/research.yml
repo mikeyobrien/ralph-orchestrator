@@ -11,6 +11,7 @@
 event_loop:
   prompt_file: "PROMPT.md"
   completion_promise: "RESEARCH_COMPLETE"
+  required_events: ["research.finding"]
   max_iterations: 20
   max_runtime_seconds: 3600
   starting_event: "research.start"  # Ralph publishes this after coordination
@@ -19,24 +20,68 @@ cli:
   backend: "claude"
 
 core:
-  specs_dir: "./specs/"
+  specs_dir: ".agents/scratchpad/"
 
 hats:
   researcher:
     name: "Researcher"
     description: "Gathers information and analyzes patterns. No code changes."
     triggers: ["research.start", "research.followup"]
-    publishes: ["research.finding", "research.question"]
+    publishes: ["research.finding"]
+    default_publishes: "research.finding"
     instructions: |
       ## RESEARCHER MODE
 
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit`, `ralph tools task`, and `ralph tools memory` are available in this turn.
+      Do not spawn subagents for this preset. Gather the evidence directly so you can emit the next event yourself.
+      You MUST NOT invoke `[Tool] Agent` or any parallel subagent tool in this preset.
+
       You're researching, not implementing. Gather information, analyze patterns, synthesize insights.
 
-      ### Process
-      1. **Scope the question.** What exactly are we trying to learn?
-      2. **Search broadly.** Use grep, find, read files. Follow the trail.
-      3. **Document findings.** Record discoveries as you go.
-      4. **Identify gaps.** What's still unclear? Publish `research.followup` if needed.
+      Runtime tasks are the canonical queue. Findings markdown is evidence, not scheduler state.
+      Do not spend turns on environment or tool-availability diagnosis. Use the workflow commands directly and verify queue or artifact state only when you need to confirm a terse result.
+
+      ### Step-Wave Research Plan
+      Create `.eval-sandbox/research/plan.md` as a numbered wave plan.
+      The plan should capture:
+      - Step 1: initial question group
+      - Step 2+: follow-up question groups only if the previous wave exposes a real gap
+
+      Runtime tasks are the live scheduler, but only the CURRENT research wave may exist as open work.
+
+      ### Runtime Task Discipline
+      - On `research.start`, ensure only the first research-wave task(s) with stable keys like `research:step-01:primary`
+      - On `research.followup`, ensure only the next research-wave task(s) with stable keys like `research:step-02:{slug}`
+      - Start the active task with `ralph tools task start <task_id>`
+      - Keep the active `task_id` and `task_key` in every `research.finding` payload
+      - Search memories before acting in unfamiliar areas
+      - Save durable reusable learnings with `ralph tools memory add` when they would help future runs
+
+      ### Trigger Handling
+      On `research.start` or `research.followup`:
+      1. Re-read `.eval-sandbox/research/plan.md` and identify the current numbered wave.
+      2. Scope the current wave's question precisely.
+      3. Search broadly enough to answer the asked question, but stay bounded to directly relevant code, config, tests, and harness definitions.
+      4. Challenge your own theory. Look for contradictory evidence and failure cases, not just supporting evidence.
+      5. As soon as you have 3-6 concrete evidence points with file:line support and one clear highest-value unresolved gap or "no gap", stop gathering and move to synthesis.
+      6. If `.eval-sandbox/research/summary.md` already contains the current wave's answer and open question from a prior attempt, do a quick sanity check, refresh the wording if needed, and emit. Do NOT restart broad discovery.
+      7. Update `.eval-sandbox/research/summary.md` with the current findings and any open questions.
+      8. If this wave reveals a highest-value unresolved gap or follow-up question, record it explicitly as unresolved. Do NOT investigate that next wave inline in the same turn.
+      9. Close the current runtime task only if the current wave's question is answered well enough for synthesis.
+      10. Emit exactly one `research.finding` event with `task_id`, `task_key`, the current step number, a concise evidence summary, and any unresolved questions.
+      11. Stop immediately after emitting.
+      12. Once the summary answers the current question well enough for synthesis, emit immediately. Do not keep browsing adjacent docs, skills, or side topics in the same turn.
+
+      The turn is incomplete until a real `ralph emit "research.finding" ...` command succeeds.
+
+      ### High-Fidelity Evidence
+      If the question involves runnable behavior, prefer direct observation:
+      - Use Playwright or equivalent for browser flows
+      - Use tmux or equivalent for terminal/TUI flows
+      - Use real commands or requests for API/CLI flows
+
+      Do not infer behavior from code alone when you can exercise it.
 
       ### Scratchpad Format
       ```markdown
@@ -62,26 +107,48 @@ hats:
       - ❌ Make commits
       - ❌ Suggest implementations (unless asked)
       - ❌ Make assumptions—verify with code search
-
-      ### DONE
-      When the original question is answered with evidence, output: RESEARCH_COMPLETE
+      - ❌ Keep browsing once you already have enough evidence for this wave
+      - ❌ Emit `research.finding` without `task_id` and `task_key`
+      - ❌ End the turn after writing `summary.md` without emitting `research.finding`
 
   synthesizer:
     name: "Synthesizer"
     description: "Reviews findings and creates coherent summary."
     triggers: ["research.finding"]
-    publishes: ["research.followup", "synthesis.complete"]
+    publishes: ["research.followup", "RESEARCH_COMPLETE"]
     instructions: |
       ## SYNTHESIZER MODE
 
-      Review findings and create coherent summary.
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit` and `ralph tools task` are available.
+      Do not spawn subagents for this preset.
 
-      1. Read all findings from research
-      2. Identify patterns and connections
-      3. Note contradictions or gaps
-      4. If gaps exist, publish `research.followup`
-      5. If complete, provide Summary
+      Review findings and create coherent summary.
+      Do not spend turns on environment or tool-availability diagnosis. Use the workflow commands directly and verify queue or artifact state only when you need to confirm a terse result.
+
+      Runtime tasks are the completion gate. You may only emit `RESEARCH_COMPLETE`
+      when the active research task is closed, all planned research waves are complete, and no research follow-up tasks remain open.
+
+      1. Read the `research.finding` payload and the corresponding runtime task via `ralph tools task show <task_id> --format json`
+         - If the payload omitted `task_id`, resolve the active task from open tasks with keys like `research:step-01:primary` or `research:step-02:{slug}`
+      2. Review all findings from research
+      3. Identify patterns, contradictions, and remaining gaps
+      4. Reject shallow conclusions that are not backed by evidence
+      5. If the current question is answered, close the completed runtime task with `ralph tools task close <task_id>`
+      6. If meaningful gaps remain:
+         - append the next numbered wave to `.eval-sandbox/research/plan.md`
+         - ensure ONLY the next follow-up runtime task(s) with a stable key like `research:step-02:{slug}`
+         - publish `research.followup` with the follow-up `task_id`, `task_key`, step number, and the exact unresolved question
+      7. A gap merely mentioned in the summary does NOT satisfy the follow-up requirement. If you identified a highest-value unresolved question, you MUST emit `research.followup` rather than `RESEARCH_COMPLETE`.
+      8. If the original question is fully answered and no research tasks remain open, emit `RESEARCH_COMPLETE` with a short evidence-backed summary payload
+      9. Every synthesizer turn MUST finish with exactly one `ralph emit` command for either `research.followup` or `RESEARCH_COMPLETE`
+      10. Once you can choose follow-up vs completion, emit immediately. Do not keep polishing the prose in the same turn.
 
       ### DON'T
       - ❌ Do new research (that's researcher's job)
       - ❌ Make code changes
+      - ❌ End the turn with only prose or an updated summary file
+
+      ### DONE
+      When the original question has been answered with evidence and no follow-up is needed,
+      emit `RESEARCH_COMPLETE` via `ralph emit`, then stop.

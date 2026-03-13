@@ -10,6 +10,7 @@ use crate::cli_backend::{OutputFormat, PromptMode};
 use nix::sys::signal::{Signal, kill};
 #[cfg(unix)]
 use nix::unistd::Pid;
+use std::env;
 use std::io::Write;
 use std::process::Stdio;
 use std::time::Duration;
@@ -70,6 +71,7 @@ impl CliExecutor {
         // Use fallback to "." if current_dir fails (e.g., E2E test workspaces)
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         command.current_dir(&cwd);
+        inject_ralph_runtime_env(&mut command, &cwd);
 
         // Apply backend-specific environment variables (e.g., Agent Teams env var)
         command.envs(self.backend.env_vars.iter().map(|(k, v)| (k, v)));
@@ -230,6 +232,31 @@ impl CliExecutor {
         // verbose=false since output is being discarded anyway
         let sink = std::io::sink();
         self.execute(prompt, sink, timeout, false).await
+    }
+}
+
+fn inject_ralph_runtime_env(command: &mut Command, workspace_root: &std::path::Path) {
+    let Ok(current_exe) = env::current_exe() else {
+        return;
+    };
+    let Some(bin_dir) = current_exe.parent() else {
+        return;
+    };
+
+    let mut path_entries = vec![bin_dir.to_path_buf()];
+    if let Some(existing_path) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing_path));
+    }
+
+    if let Ok(joined_path) = env::join_paths(path_entries) {
+        command.env("PATH", joined_path);
+    }
+    command.env("RALPH_BIN", &current_exe);
+    command.env("RALPH_WORKSPACE_ROOT", workspace_root);
+    if std::path::Path::new("/var/tmp").is_dir() {
+        command.env("TMPDIR", "/var/tmp");
+        command.env("TMP", "/var/tmp");
+        command.env("TEMP", "/var/tmp");
     }
 }
 

@@ -4,9 +4,18 @@
 //! state of the orchestration loop including iteration count, failures,
 //! timing, and hat activation tracking.
 
-use ralph_proto::HatId;
+use ralph_proto::{Event, HatId};
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, Instant};
+
+/// Fingerprint of the last emitted event for stale loop detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventSignature {
+    pub topic: String,
+    pub source: Option<HatId>,
+    pub payload_fingerprint: u64,
+}
 
 /// Current state of the event loop.
 #[derive(Debug)]
@@ -53,11 +62,11 @@ pub struct LoopState {
     /// Topics seen during the loop's lifetime (for event chain validation).
     pub seen_topics: HashSet<String>,
 
-    /// The last topic emitted (for stale loop detection).
-    pub last_emitted_topic: Option<String>,
+    /// The last event signature emitted (for stale loop detection).
+    pub last_emitted_signature: Option<EventSignature>,
 
-    /// Consecutive times the same topic was emitted (for stale loop detection).
-    pub consecutive_same_topic: u32,
+    /// Consecutive times the same event signature was emitted (for stale loop detection).
+    pub consecutive_same_signature: u32,
 
     /// Set to true when a loop.cancel event is detected.
     pub cancellation_requested: bool,
@@ -83,8 +92,8 @@ impl Default for LoopState {
             last_checkin_at: None,
             last_active_hat_ids: Vec::new(),
             seen_topics: HashSet::new(),
-            last_emitted_topic: None,
-            consecutive_same_topic: 0,
+            last_emitted_signature: None,
+            consecutive_same_signature: 0,
             cancellation_requested: false,
         }
     }
@@ -101,17 +110,18 @@ impl LoopState {
         self.started_at.elapsed()
     }
 
-    /// Record that a topic has been seen during this loop run.
+    /// Record that an event has been seen during this loop run.
     ///
-    /// Also tracks consecutive same-topic emissions for stale loop detection.
-    pub fn record_topic(&mut self, topic: &str) {
-        self.seen_topics.insert(topic.to_string());
+    /// Also tracks consecutive same-signature emissions for stale loop detection.
+    pub fn record_event(&mut self, event: &Event) {
+        self.seen_topics.insert(event.topic.to_string());
 
-        if self.last_emitted_topic.as_deref() == Some(topic) {
-            self.consecutive_same_topic += 1;
+        let signature = EventSignature::from_event(event);
+        if self.last_emitted_signature.as_ref() == Some(&signature) {
+            self.consecutive_same_signature += 1;
         } else {
-            self.consecutive_same_topic = 1;
-            self.last_emitted_topic = Some(topic.to_string());
+            self.consecutive_same_signature = 1;
+            self.last_emitted_signature = Some(signature);
         }
     }
 
@@ -122,4 +132,20 @@ impl LoopState {
             .filter(|topic| !self.seen_topics.contains(topic.as_str()))
             .collect()
     }
+}
+
+impl EventSignature {
+    pub fn from_event(event: &Event) -> Self {
+        Self {
+            topic: event.topic.to_string(),
+            source: event.source.clone(),
+            payload_fingerprint: fingerprint_payload(&event.payload),
+        }
+    }
+}
+
+fn fingerprint_payload(payload: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    payload.hash(&mut hasher);
+    hasher.finish()
 }

@@ -1,15 +1,19 @@
 # Spec-Driven Development Example
 
-!!! note "Documentation In Progress"
-    This page is under development. Check back soon for a complete spec-driven workflow example.
+!!! note "Example Only"
+    Spec-driven development is now documented as an example pattern, not shipped as a built-in preset.
 
 ## Overview
 
-This example demonstrates using Ralph with specification-first development, where requirements are formalized before implementation begins.
+This example demonstrates a specification-first workflow, where requirements are formalized before implementation begins.
+
+If you want a supported builtin today, start with `builtin:code-assist` for implementation work or `builtin:pdd-to-code-assist` for the longer idea-to-code flow.
+
+If you specifically want an example-only automated design workflow, see [Automated PDD Design](pdd-design.md) and its example preset at `docs/examples/presets/auto-pdd.yml`.
 
 ## Workflow
 
-1. Create specification in `specs/` directory
+1. Create specification/design artifacts in `.agents/scratchpad/implementation/{spec_name}/`
 2. Review and approve spec
 3. Generate implementation tasks
 4. Execute with Ralph orchestration

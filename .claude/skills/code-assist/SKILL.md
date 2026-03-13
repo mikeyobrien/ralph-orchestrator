@@ -3,6 +3,8 @@ name: code-assist
 description: Guides implementation of code tasks using test-driven development in an Explore, Plan, Code, Commit workflow. Acts as a Technical Implementation Partner and TDD Coach — following existing patterns, avoiding over-engineering, and producing idiomatic, modern code.
 type: anthropic-skill
 version: "1.1"
+metadata:
+  internal: true
 ---
 
 # Code Assist

@@ -335,7 +335,7 @@ fn test_completion_promise_detection() {
 }
 
 #[test]
-fn test_completion_promise_with_open_tasks_still_terminates() {
+fn test_completion_promise_with_open_tasks_in_scratchpad_still_terminates() {
     use std::fs;
     use tempfile::TempDir;
 
@@ -360,20 +360,20 @@ fn test_completion_promise_with_open_tasks_still_terminates() {
     let events_path = temp_dir.path().join("events.jsonl");
     event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
 
-    // LOOP_COMPLETE event with pending tasks - should STILL terminate (trust the agent)
-    // Previously this would reject completion, but now we trust the agent's decision
+    // Scratchpad mode still trusts the agent's completion signal even with open checklist items.
     write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
     let _ = event_loop.process_events_from_jsonl();
     let reason = event_loop.check_completion_event();
     assert_eq!(
         reason,
         Some(TerminationReason::CompletionPromise),
-        "Should terminate even with open tasks - trust the agent's decision"
+        "Scratchpad mode should still trust the agent's decision"
     );
 }
 
 #[test]
-fn test_completion_promise_with_pending_tasks_in_task_store() {
+fn test_completion_promise_with_pending_tasks_in_task_store_is_rejected() {
+    use crate::loop_context::LoopContext;
     use crate::task::{Task, TaskStatus};
     use crate::task_store::TaskStore;
     use tempfile::TempDir;
@@ -396,21 +396,24 @@ fn test_completion_promise_with_pending_tasks_in_task_store() {
     config.memories.enabled = true;
     config.core.workspace_root = temp_dir.path().to_path_buf();
 
-    let mut event_loop = EventLoop::new(config);
+    let loop_context = LoopContext::primary(temp_dir.path().to_path_buf());
+    let mut event_loop = EventLoop::with_context(config, loop_context);
     event_loop.initialize("Test");
 
     let events_path = temp_dir.path().join("events.jsonl");
     event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
 
-    // LOOP_COMPLETE event with open tasks in task store - should STILL terminate
-    // The agent knows when the objective is done; not all tasks need to be closed
+    // Runtime tasks are the canonical queue in memories/tasks mode, so completion should be rejected.
     write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
     let _ = event_loop.process_events_from_jsonl();
     let reason = event_loop.check_completion_event();
     assert_eq!(
-        reason,
-        Some(TerminationReason::CompletionPromise),
-        "Should terminate even with open tasks in task store - trust the agent"
+        reason, None,
+        "Should reject completion while runtime tasks remain pending"
+    );
+    assert!(
+        event_loop.has_pending_events(),
+        "Rejecting completion should inject task.resume so the loop continues"
     );
 }
 
@@ -1657,7 +1660,8 @@ hats:
 
 #[test]
 fn test_always_hatless_collects_all_pending_events() {
-    // Verify Ralph's prompt includes events from ALL hats when in multi-hat mode
+    // Verify Ralph's prompt includes downstream events from all hats when in multi-hat mode.
+    // Kickoff events like task.start should drop out once a more specific downstream event exists.
     let yaml = r#"
 hats:
   planner:
@@ -1681,10 +1685,11 @@ hats:
     // Ralph should collect ALL pending events
     let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
 
-    // Both events should be in Ralph's context
+    // The downstream event should be in Ralph's context, and the kickoff event
+    // should not dominate once downstream work is pending.
     assert!(
-        prompt.contains("task.start"),
-        "Should include task.start event"
+        !prompt.contains("task.start"),
+        "task.start should be filtered once a downstream event is pending"
     );
     assert!(
         prompt.contains("build.task"),
@@ -1826,61 +1831,123 @@ hats:
 }
 
 #[test]
-fn test_get_active_hat_id_prefers_progressed_hat_over_stale_start_event() {
-    // Repro for issue #225:
-    // after the initial build.start has already been consumed, a stray build.start
-    // can remain pending alongside the correct downstream event. The next visible
-    // hat should be the progressed hat (unit_test_writer), not the stale starter.
+fn test_get_active_hat_id_matches_prompt_active_hat_selection() {
     let yaml = r#"
-event_loop:
-  starting_event: "build.start"
 hats:
-  unit_test_researcher:
-    name: "🔬 Unit Test Researcher"
-    triggers: ["build.start"]
-    publishes: ["unit_test_research.complete"]
-  unit_test_writer:
-    name: "🧪 Unit Test Writer"
-    triggers: ["unit_test_research.complete"]
-    publishes: ["unit_tests.written"]
+  investigator:
+    name: "Investigator"
+    triggers: ["debug.start", "hypothesis.confirmed"]
+  tester:
+    name: "Tester"
+    triggers: ["hypothesis.test"]
 "#;
     let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
     let mut event_loop = EventLoop::new(config);
 
-    event_loop.initialize("Spec: specs/example/spec.md");
-
-    // Iteration 1 starts on the researcher via the initial build.start.
-    assert_eq!(
-        event_loop.get_active_hat_id().as_str(),
-        "unit_test_researcher",
-        "Initial build.start should activate the researcher"
-    );
-
-    // Ralph then consumes that initial build.start during prompt construction.
-    let _prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
-    assert!(
-        event_loop
-            .bus
-            .peek_pending(&HatId::new("unit_test_researcher"))
-            .is_none_or(|events| events.is_empty()),
-        "Initial build.start should be consumed before the next iteration"
-    );
-
-    // Reproduce the issue comment's state: a stray build.start is present alongside
-    // the correct downstream completion event for the next hat.
     event_loop
         .bus
-        .publish(Event::new("build.start", "Spec: specs/example/spec.md"));
-    event_loop.bus.publish(Event::new(
-        "unit_test_research.complete",
-        "Research document written",
-    ));
+        .publish(Event::new("debug.start", "Investigate a bug"));
+    event_loop
+        .bus
+        .publish(Event::new("hypothesis.test", "Test the hypothesis"));
+
+    let preview_active_hat = event_loop.get_active_hat_id();
+
+    event_loop
+        .build_prompt(&HatId::new("ralph"))
+        .expect("prompt should build");
+
+    let built_active_hat = event_loop
+        .state
+        .last_active_hat_ids
+        .first()
+        .expect("build_prompt should set active hats")
+        .clone();
+
+    assert_eq!(
+        preview_active_hat.as_str(),
+        "tester",
+        "downstream hypothesis.test should outrank kickoff debug.start in preview selection"
+    );
+    assert_eq!(
+        built_active_hat.as_str(),
+        "tester",
+        "build_prompt should select tester when debug.start and hypothesis.test are both pending"
+    );
+    assert_eq!(
+        preview_active_hat, built_active_hat,
+        "display hat preview should match prompt-selected active hat"
+    );
+}
+
+#[test]
+fn test_get_active_hat_id_prefers_semantic_event_over_targeted_task_resume() {
+    let yaml = r#"
+hats:
+  investigator:
+    name: "Investigator"
+    triggers: ["task.resume", "debug.start", "hypothesis.confirmed"]
+  tester:
+    name: "Tester"
+    triggers: ["hypothesis.test"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    event_loop
+        .bus
+        .publish(Event::new("task.resume", "Recovery").with_target("investigator"));
+    event_loop
+        .bus
+        .publish(Event::new("hypothesis.test", "Test the hypothesis"));
+
+    let preview_active_hat = event_loop.get_active_hat_id();
+    assert_eq!(
+        preview_active_hat.as_str(),
+        "tester",
+        "semantic downstream work should outrank fallback task.resume for display selection"
+    );
+
+    event_loop
+        .build_prompt(&HatId::new("ralph"))
+        .expect("prompt should build");
+
+    let built_active_hat = event_loop
+        .state
+        .last_active_hat_ids
+        .first()
+        .expect("build_prompt should set active hats")
+        .clone();
+    assert_eq!(
+        built_active_hat.as_str(),
+        "tester",
+        "prompt-selected active hat should ignore fallback task.resume when real work is pending"
+    );
+}
+
+#[test]
+fn test_get_active_hat_id_honors_direct_target_before_topic_lookup() {
+    let yaml = r#"
+hats:
+  alpha_hat:
+    name: "Alpha"
+    triggers: ["task.resume"]
+  zebra_hat:
+    name: "Zebra"
+    triggers: ["task.resume"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    event_loop
+        .bus
+        .publish(Event::new("task.resume", "Recovery").with_target("zebra_hat"));
 
     let active_hat_id = event_loop.get_active_hat_id();
     assert_eq!(
         active_hat_id.as_str(),
-        "unit_test_writer",
-        "Display should advance to unit_test_writer once unit_test_research.complete is pending, even if a stale build.start is also present"
+        "zebra_hat",
+        "direct event targets should override generic topic subscriber ordering"
     );
 }
 
@@ -3360,6 +3427,16 @@ hats:
         pending[0].target.as_ref().map(|id| id.as_str()),
         Some("planner")
     );
+    assert!(
+        pending[0]
+            .payload
+            .contains("Previous iteration by hat `planner` did not publish an event"),
+        "Fallback payload should name the stalled hat"
+    );
+    assert!(
+        pending[0].payload.contains("Allowed topics: `task.plan`"),
+        "Fallback payload should list allowed publish topics"
+    );
 
     let ralph_id = HatId::new("ralph");
     let ralph_pending = event_loop.bus.peek_pending(&ralph_id);
@@ -3381,6 +3458,7 @@ fn test_inject_fallback_event_defaults_to_ralph() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].topic.as_str(), "task.resume");
     assert!(pending[0].target.is_none());
+    assert!(pending[0].payload.contains("Review the scratchpad"));
 }
 
 #[test]
@@ -4012,6 +4090,37 @@ impl ralph_proto::RobotService for MockRobotService {
     fn stop(self: Box<Self>) {}
 }
 
+struct RestartRequestRobotService;
+
+impl ralph_proto::RobotService for RestartRequestRobotService {
+    fn send_question(&self, _payload: &str) -> anyhow::Result<i32> {
+        Ok(1)
+    }
+
+    fn wait_for_response(&self, _events_path: &Path) -> anyhow::Result<Option<String>> {
+        Ok(Some("Please restart yourself now".to_string()))
+    }
+
+    fn send_checkin(
+        &self,
+        _: u32,
+        _: Duration,
+        _: Option<&ralph_proto::CheckinContext>,
+    ) -> anyhow::Result<i32> {
+        Ok(0)
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        5
+    }
+
+    fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    fn stop(self: Box<Self>) {}
+}
+
 #[test]
 fn test_human_timeout_injects_timeout_event() {
     use tempfile::TempDir;
@@ -4063,5 +4172,50 @@ fn test_human_response_still_works() {
     assert!(
         event_loop.has_pending_events(),
         "human.response event should be published when response received"
+    );
+}
+
+#[test]
+fn test_user_prompt_restart_request_creates_restart_signal_file() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    write_event_to_jsonl(&events_path, "user.prompt", "Please restart yourself");
+    let _ = event_loop.process_events_from_jsonl();
+
+    assert!(
+        temp_dir.path().join(".ralph/restart-requested").exists(),
+        "user.prompt restart request should create restart signal file"
+    );
+}
+
+#[test]
+fn test_human_response_restart_request_creates_restart_signal_file() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.set_robot_service(Box::new(RestartRequestRobotService));
+
+    write_event_to_jsonl(&events_path, "human.interact", "Need approval");
+    let _ = event_loop.process_events_from_jsonl();
+
+    assert!(
+        temp_dir.path().join(".ralph/restart-requested").exists(),
+        "human.response restart request should create restart signal file"
     );
 }

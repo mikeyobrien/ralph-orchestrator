@@ -26,14 +26,8 @@ MIRRORED_FILES=(
     ".claude/skills/code-task-generator/SKILL.md:crates/ralph-cli/sops/code-task-generator.md"
 
     # Presets (canonical -> mirror for cargo install)
-    "presets/bugfix.yml:crates/ralph-cli/presets/bugfix.yml"
     "presets/code-assist.yml:crates/ralph-cli/presets/code-assist.yml"
     "presets/debug.yml:crates/ralph-cli/presets/debug.yml"
-    "presets/deploy.yml:crates/ralph-cli/presets/deploy.yml"
-    "presets/docs.yml:crates/ralph-cli/presets/docs.yml"
-    "presets/feature.yml:crates/ralph-cli/presets/feature.yml"
-    "presets/fresh-eyes.yml:crates/ralph-cli/presets/fresh-eyes.yml"
-    "presets/gap-analysis.yml:crates/ralph-cli/presets/gap-analysis.yml"
     "presets/hatless-baseline.yml:crates/ralph-cli/presets/hatless-baseline.yml"
     "presets/minimal/amp.yml:crates/ralph-cli/presets/minimal/amp.yml"
     "presets/minimal/builder.yml:crates/ralph-cli/presets/minimal/builder.yml"
@@ -47,11 +41,8 @@ MIRRORED_FILES=(
     "presets/minimal/smoke.yml:crates/ralph-cli/presets/minimal/smoke.yml"
     "presets/minimal/test.yml:crates/ralph-cli/presets/minimal/test.yml"
     "presets/pdd-to-code-assist.yml:crates/ralph-cli/presets/pdd-to-code-assist.yml"
-    "presets/pr-review.yml:crates/ralph-cli/presets/pr-review.yml"
-    "presets/refactor.yml:crates/ralph-cli/presets/refactor.yml"
     "presets/research.yml:crates/ralph-cli/presets/research.yml"
     "presets/review.yml:crates/ralph-cli/presets/review.yml"
-    "presets/spec-driven.yml:crates/ralph-cli/presets/spec-driven.yml"
 )
 
 # Colors for output

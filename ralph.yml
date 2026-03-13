@@ -226,9 +226,6 @@ skills:
   enabled: true
   dirs:
     - .claude/skills
-  overrides:
-    ralph-operations:
-      auto_inject: true
 
 RObot:
   enabled: false

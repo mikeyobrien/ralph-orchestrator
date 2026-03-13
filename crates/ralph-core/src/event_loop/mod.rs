@@ -491,12 +491,18 @@ impl EventLoop {
             return Some(TerminationReason::ValidationFailure);
         }
 
-        // Check for stale loop: same topic emitted 3+ times in a row
-        if self.state.consecutive_same_topic >= 3 {
+        // Check for stale loop: same event signature emitted 3+ times in a row
+        if self.state.consecutive_same_signature >= 3 {
+            let topic = self
+                .state
+                .last_emitted_signature
+                .as_ref()
+                .map(|signature| signature.topic.as_str())
+                .unwrap_or("?");
             warn!(
-                topic = self.state.last_emitted_topic.as_deref().unwrap_or("?"),
-                count = self.state.consecutive_same_topic,
-                "Stale loop detected: same topic emitted consecutively"
+                topic,
+                count = self.state.consecutive_same_signature,
+                "Stale loop detected: same event signature emitted consecutively"
             );
             return Some(TerminationReason::LoopStale);
         }
@@ -602,15 +608,23 @@ impl EventLoop {
             return None;
         }
 
-        // Log warning if tasks remain open (informational only)
+        // Runtime tasks are the canonical queue when memories/tasks mode is enabled.
         if self.config.memories.enabled {
             if let Ok(false) = self.verify_tasks_complete() {
                 let open_tasks = self.get_open_task_list();
                 warn!(
                     open_tasks = ?open_tasks,
-                    "Completion event with {} open task(s) - trusting agent decision",
+                    "Rejecting completion event with {} open task(s)",
                     open_tasks.len()
                 );
+                self.bus.publish(Event::new(
+                    "task.resume",
+                    format!(
+                        "Completion rejected: runtime tasks remain open: {:?}. Close, fail, or reopen outstanding tasks before emitting the completion promise.",
+                        open_tasks
+                    ),
+                ));
+                return None;
             }
         } else if let Ok(false) = self.verify_scratchpad_complete() {
             warn!("Completion event with pending scratchpad tasks - trusting agent decision");
@@ -752,25 +766,42 @@ impl EventLoop {
     ///
     /// Returns true if a fallback event was injected, false if recovery is not possible.
     pub fn inject_fallback_event(&mut self) -> bool {
-        let fallback_event = Event::new(
-            "task.resume",
-            "RECOVERY: Previous iteration did not publish an event. \
-             Review the scratchpad and either dispatch the next task or complete the loop.",
-        );
-
         // If a custom hat was last executing, target the fallback back to it
         // This preserves hat context instead of always falling back to Ralph
         let fallback_event = match &self.state.last_hat {
             Some(hat_id) if hat_id.as_str() != "ralph" => {
+                let publishes = self.get_hat_publishes(hat_id);
+                let payload = if publishes.is_empty() {
+                    format!(
+                        "RECOVERY: Previous iteration by hat `{}` did not publish an event. \
+                         Emit exactly one valid next event via `ralph emit`, or stop only after \
+                         publishing the configured completion event.",
+                        hat_id.as_str()
+                    )
+                } else {
+                    format!(
+                        "RECOVERY: Previous iteration by hat `{}` did not publish an event. \
+                         This failed because no event was emitted. Emit exactly ONE valid next \
+                         event via `ralph emit`. Allowed topics: `{}`. Do not only write prose \
+                         or update files. Stop immediately after emitting.",
+                        hat_id.as_str(),
+                        publishes.join("`, `")
+                    )
+                };
+
                 debug!(
                     hat = %hat_id.as_str(),
                     "Injecting fallback event to recover - targeting last hat with task.resume"
                 );
-                fallback_event.with_target(hat_id.clone())
+                Event::new("task.resume", payload).with_target(hat_id.clone())
             }
             _ => {
                 debug!("Injecting fallback event to recover - triggering Ralph with task.resume");
-                fallback_event
+                Event::new(
+                    "task.resume",
+                    "RECOVERY: Previous iteration did not publish an event. \
+                     Review the scratchpad and either dispatch the next task or complete the loop.",
+                )
             }
         };
 
@@ -872,14 +903,17 @@ impl EventLoop {
                 self.update_robot_guidance(guidance_events);
                 self.apply_robot_guidance();
 
-                // Determine which hats are active based on regular events
+                // Ignore kickoff/recovery noise when a real downstream event is pending.
+                let effective_regular_events = self.effective_regular_events(&regular_events);
+
+                // Determine which hats are active based on the effective event set
                 let active_hat_ids = self.determine_active_hat_ids(&regular_events);
                 self.record_hat_activations(&active_hat_ids);
                 self.state.last_active_hat_ids = active_hat_ids.clone();
                 let active_hats = self.determine_active_hats(&regular_events);
 
                 // Format events for context
-                let events_context = regular_events
+                let events_context = effective_regular_events
                     .iter()
                     .map(|e| Self::format_event(e))
                     .collect::<Vec<_>>()
@@ -1307,8 +1341,15 @@ impl EventLoop {
                     _ => "[?]",
                 };
                 section.push_str(&format!(
-                    "- {} [P{}] {} ({})\n",
-                    status_icon, task.priority, task.title, task.id
+                    "- {} [P{}] {} ({}){}\n",
+                    status_icon,
+                    task.priority,
+                    task.title,
+                    task.id,
+                    task.key
+                        .as_deref()
+                        .map(|key| format!(" — key: {key}"))
+                        .unwrap_or_default()
                 ));
             }
             // Show blocked tasks separately so agent knows they exist
@@ -1321,10 +1362,14 @@ impl EventLoop {
                 section.push_str("\nBlocked:\n");
                 for task in blocked {
                     section.push_str(&format!(
-                        "- [blocked] [P{}] {} ({}) — blocked by: {}\n",
+                        "- [blocked] [P{}] {} ({}){} — blocked by: {}\n",
                         task.priority,
                         task.title,
                         task.id,
+                        task.key
+                            .as_deref()
+                            .map(|key| format!(" — key: {key}"))
+                            .unwrap_or_default(),
                         task.blocked_by.join(", ")
                     ));
                 }
@@ -1363,15 +1408,52 @@ impl EventLoop {
 
     fn determine_active_hat_ids(&self, events: &[Event]) -> Vec<HatId> {
         let mut active_hat_ids = Vec::new();
-        for event in events {
-            if let Some(hat) = self.registry.get_for_topic(event.topic.as_str()) {
-                // Avoid duplicates
-                if !active_hat_ids.iter().any(|id| id == &hat.id) {
-                    active_hat_ids.push(hat.id.clone());
-                }
+        for event in self.effective_regular_events(events) {
+            if let Some(active_hat_id) = self.resolve_active_hat_id_for_event(event)
+                && !active_hat_ids.iter().any(|id| id == &active_hat_id)
+            {
+                active_hat_ids.push(active_hat_id);
             }
         }
         active_hat_ids
+    }
+
+    fn effective_regular_events<'a>(&self, events: &'a [Event]) -> Vec<&'a Event> {
+        let has_downstream_event = events
+            .iter()
+            .any(|event| !Self::is_kickoff_or_recovery_event(event.topic.as_str()));
+        events
+            .iter()
+            .filter(|event| {
+                !has_downstream_event || !Self::is_kickoff_or_recovery_event(event.topic.as_str())
+            })
+            .collect()
+    }
+
+    fn resolve_active_hat_id_for_event(&self, event: &Event) -> Option<HatId> {
+        if let Some(target) = &event.target
+            && self.registry.get(target).is_some()
+        {
+            return Some(target.clone());
+        }
+
+        self.registry
+            .get_for_topic(event.topic.as_str())
+            .map(|hat| hat.id.clone())
+    }
+
+    fn is_kickoff_or_recovery_event(topic: &str) -> bool {
+        topic == "task.start" || topic == "task.resume" || topic.strip_suffix(".start").is_some()
+    }
+
+    fn peek_pending_regular_events(&self) -> Vec<Event> {
+        let mut events = Vec::new();
+        for hat_id in self.bus.hat_ids() {
+            if let Some(pending) = self.bus.peek_pending(hat_id) {
+                events.extend(pending.iter().cloned());
+            }
+        }
+        events
     }
 
     /// Formats an event for prompt context.
@@ -1454,32 +1536,15 @@ impl EventLoop {
     /// Returns the first active hat, or "ralph" if no specific hat is active.
     /// BTreeMap iteration is already sorted by key.
     pub fn get_active_hat_id(&self) -> HatId {
-        let mut entrypoint_hat = None;
-
-        // Peek at pending events (don't consume them)
-        for hat_id in self.bus.hat_ids() {
-            let Some(events) = self.bus.peek_pending(hat_id) else {
-                continue;
-            };
-            let Some(event) = events.first() else {
-                continue;
-            };
-            if let Some(active_hat) = self.registry.get_for_topic(event.topic.as_str()) {
-                if self.is_entrypoint_topic(event.topic.as_str()) {
-                    entrypoint_hat.get_or_insert_with(|| active_hat.id.clone());
-                    continue;
-                }
-                return active_hat.id.clone();
-            }
+        let pending_events = self.peek_pending_regular_events();
+        if let Some(active_hat_id) = self
+            .determine_active_hat_ids(&pending_events)
+            .into_iter()
+            .next()
+        {
+            return active_hat_id;
         }
-
-        entrypoint_hat.unwrap_or_else(|| HatId::new("ralph"))
-    }
-
-    fn is_entrypoint_topic(&self, topic: &str) -> bool {
-        topic == "task.start"
-            || topic == "task.resume"
-            || self.config.event_loop.starting_event.as_deref() == Some(topic)
+        HatId::new("ralph")
     }
 
     /// Injects a default event for a hat when the agent wrote no events.
@@ -1503,7 +1568,7 @@ impl EventLoop {
                 "No events written by hat, injecting default_publishes event"
             );
 
-            self.state.record_topic(default_topic.as_str());
+            self.state.record_event(&default_event);
 
             // If the default topic is the completion promise, set the flag directly.
             // The normal path (process_events_from_jsonl) sets this when reading from
@@ -1854,6 +1919,47 @@ impl EventLoop {
         }
 
         Value::Object(context)
+    }
+
+    fn is_restart_request_payload(payload: &str) -> bool {
+        let payload = payload.to_ascii_lowercase();
+        payload.contains("restart yourself") || payload.contains("restart ralph")
+    }
+
+    fn is_restart_request_event(event: &Event) -> bool {
+        matches!(event.topic.as_str(), "human.response" | "user.prompt")
+            && Self::is_restart_request_payload(&event.payload)
+    }
+
+    fn mark_restart_requested(&self, source: &str) {
+        let restart_path =
+            std::path::Path::new(&self.config.core.workspace_root).join(".ralph/restart-requested");
+
+        if let Some(parent) = restart_path.parent()
+            && let Err(err) = std::fs::create_dir_all(parent)
+        {
+            warn!(
+                error = %err,
+                path = %parent.display(),
+                "Failed to create restart-requested parent directory"
+            );
+            return;
+        }
+
+        if let Err(err) = std::fs::write(&restart_path, source) {
+            warn!(
+                error = %err,
+                path = %restart_path.display(),
+                "Failed to write restart-requested signal"
+            );
+            return;
+        }
+
+        info!(
+            source,
+            path = %restart_path.display(),
+            "Restart requested from human text"
+        );
     }
 
     /// Processes events from JSONL and routes orphaned events to Ralph.
@@ -2375,6 +2481,14 @@ impl EventLoop {
             human_interact_context = Some(Value::Object(context));
         }
 
+        let restart_requested = validated_events.iter().any(Self::is_restart_request_event)
+            || response_event
+                .as_ref()
+                .is_some_and(Self::is_restart_request_event);
+        if restart_requested {
+            self.mark_restart_requested("human_text");
+        }
+
         // Track whether any events will be published (before the loop consumes them).
         let had_events = !validated_events.is_empty();
         let had_plan_events = validated_events
@@ -2387,7 +2501,7 @@ impl EventLoop {
         // Ralph handles them as the universal fallback.
         for event in validated_events {
             // Record topic for event chain validation
-            self.state.record_topic(event.topic.as_str());
+            self.state.record_event(&event);
 
             self.diagnostics.log_orchestration(
                 self.state.iteration,
@@ -2410,7 +2524,7 @@ impl EventLoop {
 
         // Publish human.response event if one was received during blocking
         if let Some(response) = response_event {
-            self.state.record_topic(response.topic.as_str());
+            self.state.record_event(&response);
             info!(
                 topic = %response.topic,
                 "Publishing human.response event from robot service"

@@ -2,17 +2,20 @@
 //!
 //! Provides subcommands for managing tasks:
 //! - `add`: Create a new task
+//! - `ensure`: Create or reuse a keyed task
 //! - `list`: List all tasks
 //! - `ready`: Show unblocked tasks
+//! - `start`: Mark a task as in progress
 //! - `close`: Mark a task as complete
+//! - `reopen`: Reopen a closed/failed task
 //! - `show`: Show a single task by ID
 
-use crate::display::colors;
+use crate::{display::colors, resolve_path_from_workspace, resolve_workspace_root};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use ralph_core::{Task, TaskStatus, TaskStore};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Output format for task commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -42,17 +45,26 @@ pub enum TaskCommands {
     /// Create a new task
     Add(AddArgs),
 
+    /// Create or reuse a task by stable key
+    Ensure(EnsureArgs),
+
     /// List all tasks
     List(ListArgs),
 
     /// Show unblocked tasks
     Ready(ReadyArgs),
 
+    /// Mark a task as in progress
+    Start(StartArgs),
+
     /// Mark a task as complete
     Close(CloseArgs),
 
     /// Mark a task as failed
     Fail(FailArgs),
+
+    /// Reopen a closed or failed task
+    Reopen(ReopenArgs),
 
     /// Show a single task by ID
     Show(ShowArgs),
@@ -63,6 +75,33 @@ pub enum TaskCommands {
 pub struct AddArgs {
     /// Task title
     pub title: String,
+
+    /// Priority (1-5, default 3)
+    #[arg(short = 'p', long, default_value = "3")]
+    pub priority: u8,
+
+    /// Task description
+    #[arg(short = 'd', long)]
+    pub description: Option<String>,
+
+    /// Task IDs that must complete first (comma-separated)
+    #[arg(long)]
+    pub blocked_by: Option<String>,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+    pub format: OutputFormat,
+}
+
+/// Arguments for the `task ensure` command.
+#[derive(Parser, Debug)]
+pub struct EnsureArgs {
+    /// Task title
+    pub title: String,
+
+    /// Stable key used to deduplicate orchestrator-managed tasks
+    #[arg(long)]
+    pub key: String,
 
     /// Priority (1-5, default 3)
     #[arg(short = 'p', long, default_value = "3")]
@@ -117,6 +156,13 @@ pub struct ReadyArgs {
     pub format: OutputFormat,
 }
 
+/// Arguments for the `task start` command.
+#[derive(Parser, Debug)]
+pub struct StartArgs {
+    /// Task ID to mark as in progress
+    pub id: String,
+}
+
 /// Arguments for the `task close` command.
 #[derive(Parser, Debug)]
 pub struct CloseArgs {
@@ -128,6 +174,13 @@ pub struct CloseArgs {
 #[derive(Parser, Debug)]
 pub struct FailArgs {
     /// Task ID to mark as failed
+    pub id: String,
+}
+
+/// Arguments for the `task reopen` command.
+#[derive(Parser, Debug)]
+pub struct ReopenArgs {
+    /// Task ID to reopen
     pub id: String,
 }
 
@@ -144,8 +197,42 @@ pub struct ShowArgs {
 
 /// Gets the tasks file path.
 fn get_tasks_path(root: Option<&PathBuf>) -> PathBuf {
-    let base = root.map(|p| p.as_path()).unwrap_or(Path::new("."));
-    base.join(".ralph").join("agent").join("tasks.jsonl")
+    resolve_path_from_workspace(".ralph/agent/tasks.jsonl", root)
+}
+
+fn read_current_loop_id(root: Option<&PathBuf>) -> Option<String> {
+    let loop_id_marker = resolve_workspace_root(root).join(".ralph/current-loop-id");
+
+    let loop_id = std::fs::read_to_string(loop_id_marker).ok()?;
+    let loop_id = loop_id.trim().to_string();
+    (!loop_id.is_empty()).then_some(loop_id)
+}
+
+fn add_common_task_fields(
+    mut task: Task,
+    root: Option<&PathBuf>,
+    description: Option<String>,
+    blocked_by: Option<String>,
+) -> Task {
+    if let Some(loop_id) = read_current_loop_id(root) {
+        task = task.with_loop_id(Some(loop_id));
+    }
+
+    if let Some(desc) = description {
+        task = task.with_description(Some(desc));
+    }
+
+    if let Some(blockers) = blocked_by {
+        for blocker_id in blockers
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            task = task.with_blocker(blocker_id.to_string());
+        }
+    }
+
+    task
 }
 
 fn status_matches_filter(status: TaskStatus, filter: &str) -> bool {
@@ -235,10 +322,7 @@ fn filter_tasks_for_ready(
     let mut ready: Vec<Task> = store.ready().into_iter().cloned().collect();
 
     if !args.all {
-        let loop_id_marker = get_tasks_path(root)
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("current-loop-id"));
+        let loop_id_marker = Some(resolve_workspace_root(root).join(".ralph/current-loop-id"));
         if let Some(marker_path) = loop_id_marker
             && let Ok(current_loop_id) = std::fs::read_to_string(&marker_path)
         {
@@ -258,10 +342,13 @@ pub fn execute(args: TaskArgs, use_colors: bool) -> Result<()> {
 
     match args.command {
         TaskCommands::Add(add_args) => execute_add(add_args, root.as_ref(), use_colors),
+        TaskCommands::Ensure(ensure_args) => execute_ensure(ensure_args, root.as_ref(), use_colors),
         TaskCommands::List(list_args) => execute_list(list_args, root.as_ref(), use_colors),
         TaskCommands::Ready(ready_args) => execute_ready(ready_args, root.as_ref(), use_colors),
+        TaskCommands::Start(start_args) => execute_start(start_args, root.as_ref(), use_colors),
         TaskCommands::Close(close_args) => execute_close(close_args, root.as_ref(), use_colors),
         TaskCommands::Fail(fail_args) => execute_fail(fail_args, root.as_ref(), use_colors),
+        TaskCommands::Reopen(reopen_args) => execute_reopen(reopen_args, root.as_ref(), use_colors),
         TaskCommands::Show(show_args) => execute_show(show_args, root.as_ref(), use_colors),
     }
 }
@@ -270,31 +357,12 @@ fn execute_add(args: AddArgs, root: Option<&PathBuf>, use_colors: bool) -> Resul
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
 
-    let mut task = Task::new(args.title, args.priority);
-
-    // Auto-tag with loop ID from marker file if available
-    let loop_id_marker = get_tasks_path(root)
-        .parent()
-        .and_then(|p| p.parent()) // .ralph/agent -> .ralph
-        .map(|p| p.join("current-loop-id"));
-    if let Some(marker_path) = loop_id_marker
-        && let Ok(loop_id) = std::fs::read_to_string(&marker_path)
-    {
-        let loop_id = loop_id.trim().to_string();
-        if !loop_id.is_empty() {
-            task = task.with_loop_id(Some(loop_id));
-        }
-    }
-
-    if let Some(desc) = args.description {
-        task = task.with_description(Some(desc));
-    }
-
-    if let Some(blockers) = args.blocked_by {
-        for blocker_id in blockers.split(',').map(|s| s.trim()) {
-            task = task.with_blocker(blocker_id.to_string());
-        }
-    }
+    let task = add_common_task_fields(
+        Task::new(args.title, args.priority),
+        root,
+        args.description,
+        args.blocked_by,
+    );
 
     let task_id = task.id.clone();
     store.add(task.clone());
@@ -309,6 +377,9 @@ fn execute_add(args: AddArgs, root: Option<&PathBuf>, use_colors: bool) -> Resul
             }
             println!("  Title: {}", task.title);
             println!("  Priority: {}", task.priority);
+            if let Some(key) = &task.key {
+                println!("  Key: {}", key);
+            }
             if !task.blocked_by.is_empty() {
                 println!("  Blocked by: {}", task.blocked_by.join(", "));
             }
@@ -318,6 +389,55 @@ fn execute_add(args: AddArgs, root: Option<&PathBuf>, use_colors: bool) -> Resul
         }
         OutputFormat::Quiet => {
             println!("{}", task_id);
+        }
+    }
+
+    Ok(())
+}
+
+fn execute_ensure(args: EnsureArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
+    let path = get_tasks_path(root);
+    let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+
+    let task = add_common_task_fields(
+        Task::new(args.title, args.priority).with_key(Some(args.key.clone())),
+        root,
+        args.description,
+        args.blocked_by,
+    );
+    let key = task.key.clone().expect("ensure key should be set");
+    let existed = store.get_by_key(&key).is_some();
+
+    let ensured = store
+        .with_exclusive_lock(|s| s.ensure(task).clone())
+        .context("Failed to ensure task")?;
+
+    match args.format {
+        OutputFormat::Table => {
+            let verb = if existed { "Reused" } else { "Ensured" };
+            if use_colors {
+                println!(
+                    "{}{} task {}{}",
+                    colors::GREEN,
+                    verb,
+                    ensured.id,
+                    colors::RESET
+                );
+            } else {
+                println!("{} task {}", verb, ensured.id);
+            }
+            println!("  Title: {}", ensured.title);
+            println!("  Key: {}", key);
+            println!("  Priority: {}", ensured.priority);
+            if !ensured.blocked_by.is_empty() {
+                println!("  Blocked by: {}", ensured.blocked_by.join(", "));
+            }
+        }
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string(&ensured)?);
+        }
+        OutputFormat::Quiet => {
+            println!("{}", ensured.id);
         }
     }
 
@@ -337,21 +457,22 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
             } else {
                 if use_colors {
                     println!(
-                        "{}{:<20} {:<15} {:<8} {:<60}{}",
+                        "{}{:<20} {:<15} {:<8} {:<60} {:<24}{}",
                         colors::DIM,
                         "ID",
                         "Status",
                         "Priority",
                         "Title",
+                        "Key",
                         colors::RESET
                     );
-                    println!("{}{}{}", colors::DIM, "-".repeat(106), colors::RESET);
+                    println!("{}{}{}", colors::DIM, "-".repeat(131), colors::RESET);
                 } else {
                     println!(
-                        "{:<20} {:<15} {:<8} {:<60}",
-                        "ID", "Status", "Priority", "Title"
+                        "{:<20} {:<15} {:<8} {:<60} {:<24}",
+                        "ID", "Status", "Priority", "Title", "Key"
                     );
-                    println!("{}", "-".repeat(106));
+                    println!("{}", "-".repeat(131));
                 }
 
                 for task in &tasks {
@@ -376,7 +497,7 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 
                     if use_colors {
                         println!(
-                            "{}{:<20}{} {}{:<15}{} {}{:<8}{} {:<60}",
+                            "{}{:<20}{} {}{:<15}{} {}{:<8}{} {:<60} {:<24}",
                             colors::DIM,
                             task.id,
                             colors::RESET,
@@ -386,12 +507,17 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                             priority_color,
                             task.priority,
                             colors::RESET,
-                            title_truncated
+                            title_truncated,
+                            task.key.as_deref().unwrap_or("-")
                         );
                     } else {
                         println!(
-                            "{:<20} {:<15} {:<8} {:<60}",
-                            task.id, status_str, task.priority, title_truncated
+                            "{:<20} {:<15} {:<8} {:<60} {:<24}",
+                            task.id,
+                            status_str,
+                            task.priority,
+                            title_truncated,
+                            task.key.as_deref().unwrap_or("-")
                         );
                     }
                 }
@@ -423,17 +549,21 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
             } else {
                 if use_colors {
                     println!(
-                        "{}{:<20} {:<8} {:<60}{}",
+                        "{}{:<20} {:<8} {:<60} {:<24}{}",
                         colors::DIM,
                         "ID",
                         "Priority",
                         "Title",
+                        "Key",
                         colors::RESET
                     );
-                    println!("{}{}{}", colors::DIM, "-".repeat(90), colors::RESET);
+                    println!("{}{}{}", colors::DIM, "-".repeat(115), colors::RESET);
                 } else {
-                    println!("{:<20} {:<8} {:<60}", "ID", "Priority", "Title");
-                    println!("{}", "-".repeat(90));
+                    println!(
+                        "{:<20} {:<8} {:<60} {:<24}",
+                        "ID", "Priority", "Title", "Key"
+                    );
+                    println!("{}", "-".repeat(115));
                 }
 
                 for task in &ready {
@@ -451,19 +581,23 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
 
                     if use_colors {
                         println!(
-                            "{}{:<20}{} {}{:<8}{} {:<60}",
+                            "{}{:<20}{} {}{:<8}{} {:<60} {:<24}",
                             colors::DIM,
                             task.id,
                             colors::RESET,
                             priority_color,
                             task.priority,
                             colors::RESET,
-                            title_truncated
+                            title_truncated,
+                            task.key.as_deref().unwrap_or("-")
                         );
                     } else {
                         println!(
-                            "{:<20} {:<8} {:<60}",
-                            task.id, task.priority, title_truncated
+                            "{:<20} {:<8} {:<60} {:<24}",
+                            task.id,
+                            task.priority,
+                            title_truncated,
+                            task.key.as_deref().unwrap_or("-")
                         );
                     }
                 }
@@ -477,6 +611,31 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
                 println!("{}", task.id);
             }
         }
+    }
+
+    Ok(())
+}
+
+fn execute_start(args: StartArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
+    let path = get_tasks_path(root);
+    let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+
+    let task_id = args.id;
+    let started = store
+        .with_exclusive_lock(|s| s.start(&task_id).cloned())
+        .context("Failed to save tasks")?
+        .context(format!("Task {} not found", task_id))?;
+
+    if use_colors {
+        println!(
+            "{}Started task: {} - {}{}",
+            colors::BLUE,
+            task_id,
+            started.title,
+            colors::RESET
+        );
+    } else {
+        println!("Started task: {} - {}", task_id, started.title);
     }
 
     Ok(())
@@ -585,10 +744,16 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                     task.priority,
                     colors::RESET
                 );
+                if let Some(key) = &task.key {
+                    println!("Key:         {}", key);
+                }
                 if !task.blocked_by.is_empty() {
                     println!("Blocked by:  {}", task.blocked_by.join(", "));
                 }
                 println!("Created:     {}", task.created);
+                if let Some(started) = &task.started {
+                    println!("Started:     {}", started);
+                }
                 if let Some(closed) = &task.closed {
                     println!("Closed:      {}", closed);
                 }
@@ -600,10 +765,16 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                 }
                 println!("Status:      {}", status_str);
                 println!("Priority:    {}", task.priority);
+                if let Some(key) = &task.key {
+                    println!("Key:         {}", key);
+                }
                 if !task.blocked_by.is_empty() {
                     println!("Blocked by:  {}", task.blocked_by.join(", "));
                 }
                 println!("Created:     {}", task.created);
+                if let Some(started) = &task.started {
+                    println!("Started:     {}", started);
+                }
                 if let Some(closed) = &task.closed {
                     println!("Closed:      {}", closed);
                 }
@@ -620,9 +791,36 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
     Ok(())
 }
 
+fn execute_reopen(args: ReopenArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
+    let path = get_tasks_path(root);
+    let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+
+    let task_id = args.id;
+    let reopened = store
+        .with_exclusive_lock(|s| s.reopen(&task_id).cloned())
+        .context("Failed to save tasks")?
+        .context(format!("Task {} not found", task_id))?;
+
+    if use_colors {
+        println!(
+            "{}Reopened task: {} - {}{}",
+            colors::YELLOW,
+            task_id,
+            reopened.title,
+            colors::RESET
+        );
+    } else {
+        println!("Reopened task: {} - {}", task_id, reopened.title);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
+    use std::path::Path;
     use tempfile::TempDir;
 
     fn write_tasks(root: &Path, tasks: Vec<Task>) -> TaskStore {
@@ -683,5 +881,28 @@ mod tests {
         let ready = filter_tasks_for_ready(&store, &args, Some(&root));
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].loop_id.as_deref(), Some("loop-a"));
+    }
+
+    #[test]
+    fn test_read_current_loop_id_ignores_empty_marker() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path().to_path_buf();
+        let marker_dir = root.join(".ralph");
+        std::fs::create_dir_all(&marker_dir).expect("marker dir");
+        std::fs::write(marker_dir.join("current-loop-id"), "  ").expect("write marker");
+
+        assert_eq!(read_current_loop_id(Some(&root)), None);
+    }
+
+    #[test]
+    fn test_get_tasks_path_discovers_workspace_root_from_nested_dir() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let root = temp_dir.path();
+        std::fs::create_dir_all(root.join(".ralph/agent")).expect("agent dir");
+        let nested = root.join("deep/work/tree");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set(&nested);
+
+        assert_eq!(get_tasks_path(None), root.join(".ralph/agent/tasks.jsonl"));
     }
 }

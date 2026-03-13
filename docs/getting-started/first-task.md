@@ -82,10 +82,10 @@ For more complex tasks, use hats to separate concerns.
 ralph init --backend claude
 ```
 
-Then run with a specialized hat collection (example: spec-driven):
+Then run with a specialized hat collection (recommended: code-assist):
 
 ```bash
-ralph run -c ralph.yml -H builtin:spec-driven
+ralph run -c ralph.yml -H builtin:code-assist
 ```
 
 This uses specialized hats:

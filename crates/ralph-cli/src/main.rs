@@ -183,6 +183,49 @@ pub(crate) fn default_config_path() -> PathBuf {
     PathBuf::from("ralph.yml")
 }
 
+pub(crate) fn resolve_workspace_root(root: Option<&PathBuf>) -> PathBuf {
+    if let Some(root) = root {
+        return root.clone();
+    }
+
+    if let Ok(value) = std::env::var("RALPH_WORKSPACE_ROOT")
+        && !value.trim().is_empty()
+    {
+        return PathBuf::from(value);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    discover_workspace_root(&cwd).unwrap_or(cwd)
+}
+
+pub(crate) fn resolve_path_from_workspace(
+    path: impl AsRef<Path>,
+    root: Option<&PathBuf>,
+) -> PathBuf {
+    resolve_workspace_root(root).join(path)
+}
+
+fn discover_workspace_root(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find_map(|dir| {
+        let has_ralph = dir.join(".ralph").is_dir();
+        let has_git = dir.join(".git").exists();
+        if has_ralph || has_git {
+            Some(dir.to_path_buf())
+        } else {
+            None
+        }
+    })
+}
+
+fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
+    let path = PathBuf::from(marker_value.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        workspace_root.join(path)
+    }
+}
+
 /// Verbosity level for streaming output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Verbosity {
@@ -310,7 +353,7 @@ impl ConfigSource {
 pub enum HatsSource {
     /// Local file path
     File(PathBuf),
-    /// Builtin hat collection name (e.g., "builtin:feature")
+    /// Builtin hat collection name (e.g., "builtin:code-assist")
     Builtin(String),
     /// Remote URL (e.g., "http://example.com/hats.yml")
     Remote(String),
@@ -491,7 +534,7 @@ struct Cli {
 
     /// Hat collection source: file path, builtin:name, or URL.
     ///
-    /// Example: `-H builtin:feature` or `-H .ralph/hats/feature.yml`
+    /// Example: `-H builtin:code-assist` or `-H .ralph/hats/my-workflow.yml`
     #[arg(short = 'H', long, global = true)]
     hats: Option<String>,
 
@@ -1699,24 +1742,31 @@ async fn run_command(
         .await?
     };
 
-    // Handle restart: exec-replace current process with same CLI args
+    // Handle restart: run required single-command restart sequence.
     if matches!(reason, TerminationReason::RestartRequested) {
-        let restart_path = std::path::Path::new(&workspace_root).join(".ralph/restart-requested");
-        let _ = std::fs::remove_file(&restart_path);
-        info!("Restart requested — exec-replacing process");
+        clear_restart_request_signal(&workspace_root);
 
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
-            let args: Vec<String> = std::env::args().collect();
-            let err = std::process::Command::new(&args[0]).args(&args[1..]).exec();
-            // exec() only returns on error
-            anyhow::bail!("Failed to exec-replace process: {}", err);
+            let restart_cmd = required_restart_command(std::process::id());
+            info!(
+                "Restart requested — launching single-command restart: {}",
+                restart_cmd
+            );
+
+            std::process::Command::new("sh")
+                .arg("-lc")
+                .arg(&restart_cmd)
+                .spawn()
+                .with_context(|| format!("Failed to spawn restart command: {}", restart_cmd))?;
+
+            // Shell command takes over restarting this loop after kill.
+            return Ok(());
         }
 
         #[cfg(not(unix))]
         {
-            anyhow::bail!("Restart via exec-replace is only supported on Unix");
+            anyhow::bail!("Restart via single-command shell restart is only supported on Unix");
         }
     }
 
@@ -1728,6 +1778,15 @@ async fn run_command(
     }
 
     Ok(())
+}
+
+fn required_restart_command(pid: u32) -> String {
+    format!("kill {pid} && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml")
+}
+
+fn clear_restart_request_signal(workspace_root: &std::path::Path) {
+    let restart_path = workspace_root.join(".ralph/restart-requested");
+    let _ = std::fs::remove_file(&restart_path);
 }
 
 /// Arguments needed for subprocess TUI mode.
@@ -2114,14 +2173,14 @@ fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
                         backend
                     );
                     println!(
-                        "\n{}Next steps:{}\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:feature",
+                        "\n{}Next steps:{}\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:code-assist",
                         colors::DIM,
                         colors::RESET
                     );
                 } else {
                     println!("Created ralph.yml with {} backend", backend);
                     println!(
-                        "\nNext steps:\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:feature"
+                        "\nNext steps:\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:code-assist"
                     );
                 }
                 return Ok(());
@@ -2138,21 +2197,23 @@ fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
     println!("  ralph init --backend <backend>   Generate core config (ralph.yml)");
     println!("  ralph init --list-presets        Show builtin hat collections\n");
     println!("Backends: {}", backend_support::VALID_BACKENDS_LABEL);
-    println!("\nThen run with hats, e.g.: ralph run -c ralph.yml -H builtin:feature");
+    println!("\nThen run with hats, e.g.: ralph run -c ralph.yml -H builtin:code-assist");
 
     Ok(())
 }
 
 fn events_command(color_mode: ColorMode, args: EventsArgs) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
+    let workspace_root = resolve_workspace_root(None);
+    let current_events_marker = workspace_root.join(".ralph/current-events");
 
     // Read events path from marker file, fall back to default if marker doesn't exist
     // This ensures `ralph events` reads from the same events file as the active run
     let history = match args.file {
         Some(path) => EventHistory::new(path),
-        None => fs::read_to_string(".ralph/current-events")
-            .map(|s| EventHistory::new(s.trim()))
-            .unwrap_or_else(|_| EventHistory::default_path()),
+        None => fs::read_to_string(&current_events_marker)
+            .map(|s| EventHistory::new(resolve_marker_target(&workspace_root, &s)))
+            .unwrap_or_else(|_| EventHistory::new(workspace_root.join(".ralph/events.jsonl"))),
     };
 
     // Handle clear command
@@ -2319,6 +2380,8 @@ fn clean_command(
 /// (created by `ralph run`), or falls back to `.ralph/events.jsonl` if no marker exists.
 fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
+    let workspace_root = resolve_workspace_root(None);
+    let current_events_marker = workspace_root.join(".ralph/current-events");
 
     // Generate timestamp if not provided
     let ts = args.ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
@@ -2349,8 +2412,8 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
 
     // Read events path from marker file, fall back to CLI arg if marker doesn't exist
     // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = fs::read_to_string(".ralph/current-events")
-        .map(|s| PathBuf::from(s.trim()))
+    let events_file = fs::read_to_string(&current_events_marker)
+        .map(|s| resolve_marker_target(&workspace_root, &s))
         .unwrap_or_else(|_| args.file.clone());
 
     // Ensure parent directory exists
@@ -2409,7 +2472,7 @@ const TUTORIAL_STEPS: &[TutorialStep] = &[
             "Core config and hat collections are split.",
             "List built-in hat collections: ralph init --list-presets",
             "Create core config: ralph init --backend <name>",
-            "Run with hats: ralph run -c ralph.yml -H builtin:feature",
+            "Run with hats: ralph run -c ralph.yml -H builtin:code-assist",
         ],
     },
     TutorialStep {
@@ -2513,13 +2576,13 @@ fn prompt_to_continue(use_colors: bool) -> Result<()> {
 fn print_tutorial_outro(use_colors: bool) {
     if use_colors {
         println!(
-            "{}Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:feature.{}",
+            "{}Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:code-assist.{}",
             colors::GREEN,
             colors::RESET
         );
     } else {
         println!(
-            "Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:feature."
+            "Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:code-assist."
         );
     }
 }
@@ -2667,6 +2730,31 @@ mod tests {
     use crate::test_support::CwdGuard;
     use ralph_core::{HookMutationConfig, HookOnError, HookPhaseEvent, HookSpec};
     use std::path::PathBuf;
+    use tempfile::TempDir;
+    #[test]
+    fn test_required_restart_command_matches_contract() {
+        let command = required_restart_command(4242);
+        assert_eq!(
+            command,
+            "kill 4242 && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml"
+        );
+    }
+
+    #[test]
+    fn test_clear_restart_request_signal_removes_sentinel_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let restart_dir = temp_dir.path().join(".ralph");
+        std::fs::create_dir_all(&restart_dir).expect("create .ralph dir");
+        let restart_path = restart_dir.join("restart-requested");
+        std::fs::write(&restart_path, "requested").expect("write sentinel");
+
+        clear_restart_request_signal(temp_dir.path());
+
+        assert!(
+            !restart_path.exists(),
+            "restart sentinel should be removed before restart command dispatch"
+        );
+    }
 
     #[test]
     fn test_verbosity_cli_quiet() {
@@ -2709,18 +2797,18 @@ mod tests {
 
     #[test]
     fn test_config_source_parse_builtin() {
-        let source = ConfigSource::parse("builtin:feature");
+        let source = ConfigSource::parse("builtin:code-assist");
         match source {
-            ConfigSource::Builtin(name) => assert_eq!(name, "feature"),
+            ConfigSource::Builtin(name) => assert_eq!(name, "code-assist"),
             _ => panic!("Expected Builtin variant"),
         }
     }
 
     #[test]
     fn test_hats_source_parse_builtin() {
-        let source = HatsSource::parse("builtin:feature");
+        let source = HatsSource::parse("builtin:code-assist");
         match source {
-            HatsSource::Builtin(name) => assert_eq!(name, "feature"),
+            HatsSource::Builtin(name) => assert_eq!(name, "code-assist"),
             _ => panic!("Expected Builtin variant"),
         }
     }
@@ -2738,9 +2826,9 @@ mod tests {
 
     #[test]
     fn test_cli_parses_global_hats_flag() {
-        let cli = Cli::try_parse_from(["ralph", "run", "-H", "builtin:feature"])
+        let cli = Cli::try_parse_from(["ralph", "run", "-H", "builtin:code-assist"])
             .expect("CLI parse failed");
-        assert_eq!(cli.hats.as_deref(), Some("builtin:feature"));
+        assert_eq!(cli.hats.as_deref(), Some("builtin:code-assist"));
     }
 
     #[test]
@@ -2801,8 +2889,8 @@ mod tests {
         assert_eq!(source.to_cli_string(), "ralph.yml");
 
         // Builtin (legacy)
-        let source = ConfigSource::Builtin("feature".to_string());
-        assert_eq!(source.to_cli_string(), "builtin:feature");
+        let source = ConfigSource::Builtin("code-assist".to_string());
+        assert_eq!(source.to_cli_string(), "builtin:code-assist");
 
         // Remote URL
         let source = ConfigSource::Remote("https://example.com/ralph.yml".to_string());
@@ -2875,6 +2963,49 @@ mod tests {
             }
             other => panic!("unexpected CLI parse result: {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_discovers_ancestor_ralph_dir() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("ralph dir");
+        let nested = temp_dir.path().join("a/b/c");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set(&nested);
+
+        assert_eq!(resolve_workspace_root(None), temp_dir.path().to_path_buf());
+    }
+
+    #[test]
+    fn test_emit_command_resolves_marker_relative_to_workspace_root_from_nested_dir() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let workspace = temp_dir.path();
+        std::fs::create_dir_all(workspace.join(".ralph")).expect("ralph dir");
+        std::fs::write(
+            workspace.join(".ralph/current-events"),
+            ".ralph/events-20260309-test.jsonl\n",
+        )
+        .expect("write marker");
+        let nested = workspace.join("nested/project");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set(&nested);
+
+        emit_command(
+            ColorMode::Never,
+            EmitArgs {
+                topic: "debug.step".to_string(),
+                payload: "task_id=demo".to_string(),
+                json: false,
+                ts: Some("2026-03-09T00:00:00Z".to_string()),
+                file: PathBuf::from(".ralph/events.jsonl"),
+            },
+        )
+        .expect("emit command");
+
+        let events = std::fs::read_to_string(workspace.join(".ralph/events-20260309-test.jsonl"))
+            .expect("read events");
+        assert!(events.contains("\"topic\":\"debug.step\""));
+        assert!(events.contains("task_id=demo"));
     }
 
     #[test]

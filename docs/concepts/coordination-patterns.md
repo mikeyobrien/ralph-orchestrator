@@ -277,39 +277,37 @@ A bootstrapping hat detects input type and routes to the appropriate workflow.
 ```yaml
 hats:
   planner:
-    triggers: ["build.start"]
+    triggers: ["build.start", "task.complete"]
     publishes: ["tasks.ready"]
-    # Detects: PDD directory vs. code task file vs. description
+    # Breaks the request into the next builder-ready work item
 
   builder:
-    triggers: ["tasks.ready", "validation.failed", "task.complete"]
-    publishes: ["implementation.ready", "task.complete"]
+    triggers: ["tasks.ready", "review.rejected", "finalization.failed"]
+    publishes: ["review.ready", "build.blocked"]
 
-  validator:
-    triggers: ["implementation.ready"]
-    publishes: ["validation.passed", "validation.failed"]
+  critic:
+    triggers: ["review.ready"]
+    publishes: ["review.passed", "review.rejected"]
 
-  committer:
-    triggers: ["validation.passed"]
-    publishes: ["commit.complete"]
+  finalizer:
+    triggers: ["review.passed"]
+    publishes: ["task.complete", "finalization.failed", "LOOP_COMPLETE"]
 ```
 
 ```
-build.start → 📋 Planner ─── (detects input type) ───→ tasks.ready
+build.start → 📋 Planner ─── (picks next work item) ───→ tasks.ready
                                                             │
     ┌───────────────────────────────────────────────────────┘
     │
     ↓
-⚙️ Builder ←─────────────── validation.failed ←─────┐
-    │                                               │
-    ├── task.complete ──→ (loop for PDD mode) ──────┤
-    │                                               │
-    └── implementation.ready ──→ ✅ Validator ──────┤
-                                      │             │
-                                      └─→ validation.passed
-                                              │
-                                              ↓
-                                        📦 Committer → commit.complete
+⚙️ Builder ←───────────── review.rejected / finalization.failed ─────┐
+    │                                                                │
+    └── review.ready ──→ 🧪 Critic ──→ review.passed ──→ 🏁 Finalizer ┤
+                                                          │           │
+                                                          ├─→ task.complete
+                                                          │      │
+                                                          │      └──→ 📋 Planner picks next work item
+                                                          └─→ LOOP_COMPLETE
 ```
 
 **When to use:** Workflows that need to handle multiple input formats or adapt their behavior based on context.

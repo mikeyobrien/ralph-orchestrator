@@ -55,7 +55,7 @@ The `-H` flag specifies where to load hat collections from.
 | Format | Description |
 |--------|-------------|
 | `hats/feature.yml` | Local hats file |
-| `builtin:feature` | Built-in hat collection |
+| `builtin:code-assist` | Built-in hat collection |
 | `https://example.com/hats.yml` | Remote hats file |
 
 **Examples:**
@@ -65,7 +65,7 @@ The `-H` flag specifies where to load hat collections from.
 ralph run -c ralph.yml
 
 # Core + built-in hat collection
-ralph run -c ralph.yml -H builtin:feature
+ralph run -c ralph.yml -H builtin:code-assist
 
 # Core + file hat collection
 ralph run -c ralph.yml -H hats/review.yml

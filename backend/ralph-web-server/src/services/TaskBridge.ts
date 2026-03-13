@@ -410,7 +410,7 @@ export class TaskBridge {
    * Uses the task's title as the execution prompt.
    *
    * @param dbTask - Database task to enqueue
-   * @param preset - Optional preset ID to use for execution (e.g., "builtin:feature" or collection ID)
+   * @param preset - Optional preset ID to use for execution (e.g., "builtin:code-assist" or collection ID)
    * @returns Result with success status and queued task ID
    */
   enqueueTask(dbTask: Task, preset?: string): EnqueueResult {

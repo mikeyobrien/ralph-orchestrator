@@ -41,6 +41,10 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
+    /// Stable key for idempotent orchestrator-managed tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+
     /// Current state
     pub status: TaskStatus,
 
@@ -59,6 +63,10 @@ pub struct Task {
     /// Creation timestamp (ISO 8601)
     pub created: String,
 
+    /// Start timestamp (ISO 8601), if the task entered in_progress.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started: Option<String>,
+
     /// Completion timestamp (ISO 8601), if closed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub closed: Option<String>,
@@ -71,11 +79,13 @@ impl Task {
             id: Self::generate_id(),
             title,
             description: None,
+            key: None,
             status: TaskStatus::Open,
             priority: priority.clamp(1, 5),
             blocked_by: Vec::new(),
             loop_id: None,
             created: chrono::Utc::now().to_rfc3339(),
+            started: None,
             closed: None,
         }
     }
@@ -116,10 +126,31 @@ impl Task {
         self
     }
 
+    /// Sets the stable orchestration key for the task.
+    pub fn with_key(mut self, key: Option<String>) -> Self {
+        self.key = key;
+        self
+    }
+
     /// Adds a blocker task ID.
     pub fn with_blocker(mut self, task_id: String) -> Self {
         self.blocked_by.push(task_id);
         self
+    }
+
+    /// Marks the task as in progress and records a start timestamp if absent.
+    pub fn start(&mut self) {
+        self.status = TaskStatus::InProgress;
+        if self.started.is_none() {
+            self.started = Some(chrono::Utc::now().to_rfc3339());
+        }
+        self.closed = None;
+    }
+
+    /// Reopens a terminal task for further work.
+    pub fn reopen(&mut self) {
+        self.status = TaskStatus::Open;
+        self.closed = None;
     }
 }
 
@@ -134,6 +165,8 @@ mod tests {
         assert_eq!(task.priority, 2);
         assert_eq!(task.status, TaskStatus::Open);
         assert!(task.blocked_by.is_empty());
+        assert!(task.key.is_none());
+        assert!(task.started.is_none());
     }
 
     #[test]
@@ -198,5 +231,30 @@ mod tests {
         assert!(!TaskStatus::InProgress.is_terminal());
         assert!(TaskStatus::Closed.is_terminal());
         assert!(TaskStatus::Failed.is_terminal());
+    }
+
+    #[test]
+    fn test_with_key_sets_stable_key() {
+        let task = Task::new("Test".to_string(), 1).with_key(Some("spec:build".to_string()));
+        assert_eq!(task.key.as_deref(), Some("spec:build"));
+    }
+
+    #[test]
+    fn test_start_marks_task_in_progress() {
+        let mut task = Task::new("Test".to_string(), 1);
+        task.start();
+        assert_eq!(task.status, TaskStatus::InProgress);
+        assert!(task.started.is_some());
+        assert!(task.closed.is_none());
+    }
+
+    #[test]
+    fn test_reopen_resets_terminal_state() {
+        let mut task = Task::new("Test".to_string(), 1);
+        task.status = TaskStatus::Closed;
+        task.closed = Some(chrono::Utc::now().to_rfc3339());
+        task.reopen();
+        assert_eq!(task.status, TaskStatus::Open);
+        assert!(task.closed.is_none());
     }
 }

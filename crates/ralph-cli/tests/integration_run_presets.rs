@@ -20,7 +20,7 @@ fn test_run_dry_run_with_builtin_preset() {
             "--color",
             "never",
             "--hats",
-            "builtin:feature",
+            "builtin:code-assist",
             "run",
             "--dry-run",
             "--skip-preflight",

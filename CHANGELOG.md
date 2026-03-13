@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-03-10
+
+### Added
+
+- `ralph mcp serve` for exposing Ralph as a workspace-scoped MCP server over stdio.
+- User-scoped default config discovery and support for per-user Ralph defaults.
+- TUI update availability notices in the header.
+- Human guidance can now trigger a clean restart request flow.
+
+### Changed
+
+- Consolidated the core preset set around the maintained workflows and refreshed preset docs, examples, and evaluation tooling.
+- Refined PDD and code-task guidance to reduce Ralph-specific noise and improve handoff quality.
+
+### Fixed
+
+- Hardened multi-hat preset event contracts, late-event recovery, active hat display, and downstream debug/review handoffs.
+- Preserved runtime limits from core config when using hats.
+- Fixed headless loop runner backend selection.
+- Made restart resumption use the required single-command shell flow and added contract coverage for it.
+
 ## [2.7.0] - 2026-03-06
 
 ### Added
@@ -137,7 +158,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Modularized codebase and fixed TUI mode
 
-[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.0...v2.5.1

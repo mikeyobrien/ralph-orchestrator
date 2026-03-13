@@ -6,14 +6,14 @@
 # Use idea-to-commit.yml for full idea→design→implement→commit flow.
 #
 # 4 Hats:
-# - Bootstrapper: Detects input type and bootstraps the implementation context
+# - Planner: Detects input type and bootstraps the implementation context
 # - Builder: TDD implementation (RED → GREEN → REFACTOR)
-# - Validator: Exhaustive quality gate with manual E2E testing
-# - Committer: Creates conventional commits after validation
+# - Critic: Fresh-eyes adversarial review of each increment
+# - Finalizer: Final gate that decides whether to continue, repair, or finish
 #
 # Usage:
 #   # From PDD output directory:
-#   ralph run --config presets/code-assist.yml --prompt ".ralph/specs/my-feature"
+#   ralph run --config presets/code-assist.yml --prompt ".agents/scratchpad/implementation/my-feature"
 #
 #   # From a single code task:
 #   ralph run --config presets/code-assist.yml --prompt ".ralph/tasks/my-task.code-task.md"
@@ -24,6 +24,7 @@
 event_loop:
   prompt_file: "PROMPT.md"
   completion_promise: "LOOP_COMPLETE"
+  required_events: ["review.passed"]
   starting_event: "build.start"    # Ralph publishes this after coordination
   max_iterations: 100              # Generous for multi-task implementation
   max_runtime_seconds: 14400       # 4 hours max
@@ -34,7 +35,7 @@ cli:
   prompt_mode: "arg"
 
 core:
-  specs_dir: ".ralph/specs/"
+  specs_dir: ".agents/scratchpad/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
     - "Verification is mandatory — tests/typecheck/lint/audit must pass"
@@ -45,132 +46,261 @@ core:
 hats:
   planner:
     name: "📋 Planner"
-    description: "Detects input type and bootstraps implementation context from PDD output, code tasks, or descriptions."
-    triggers: ["build.start"]
+    description: "Bootstraps implementation context, ensures runtime tasks, and advances the execution queue."
+    triggers: ["build.start", "queue.advance"]
     publishes: ["tasks.ready"]
     default_publishes: "tasks.ready"
     instructions: |
-      ## PLANNER MODE — Bootstrap Implementation Context
+      ## PLANNER MODE — Step-Wave Strategy And Runtime Queue Ownership
 
-      You detect the input type and set up the implementation context.
-      The prompt tells you what to implement — it could be a PDD directory, a code task file, or a description.
+      You own decomposition and queue progression.
+      Do not implement. Do not review.
+      Turn the request into numbered high-level steps, then materialize only the CURRENT step's runtime-task wave.
+      The Builder only sees one task at a time, but you decide when a whole step's wave is exhausted and when the next step should exist.
 
-      ### Input Detection
+      ### Shared Documentation Directory
+      Use the upstream code-assist documentation layout:
+      `.agents/scratchpad/implementation/{task_name}/`
 
-      Analyze the prompt to determine input type:
+      Determine the working directory like this:
+      - Existing implementation directory in the prompt: use that directory directly
+      - Single `.code-task.md` file: derive `task_name` and use `.agents/scratchpad/implementation/{task_name}/`
+      - Rough description: derive `task_name` and use `.agents/scratchpad/implementation/{task_name}/`
 
-      **Type 1: PDD Output Directory**
-      - Prompt looks like a path: `specs/my-feature` or `specs/my-feature/`
-      - Directory contains `tasks/` subdirectory with `.code-task.md` files
-      - May also have `design.md`, `plan.md`, `context.md`
+      The working directory MUST contain or create:
+      - `context.md` — implementation context, repo patterns, dependencies, acceptance criteria
+      - `plan.md` — explicit numbered high-level steps
+      - `progress.md` — current step, active-wave notes, verification log, and completed steps
+      - `logs/` — build/test output summaries when needed
 
-      **Type 2: Single Code Task File**
-      - Prompt is a path ending in `.code-task.md`
-      - Example: `tasks/add-verbose-flag.code-task.md`
+      ### Step-Wave Queue Contract
+      Runtime tasks are the canonical execution queue.
+      `plan.md` owns the numbered steps. Runtime tasks own only the CURRENT step's subtask wave.
+      Only one step's wave may exist as open/ready work at a time.
 
-      **Type 3: Rough Description**
-      - Prompt is plain text describing what to implement
-      - Example: "Add a --verbose flag to the CLI that enables debug logging"
+      Use `ralph tools task ensure` with a stable key and task description for every atomic subtask in the current wave.
+      Stable key shape:
+      - `code-assist:{task_name}:step-01:{slug}`
+      - `code-assist:{task_name}:step-02:{slug}`
 
-      ### Process by Input Type
+      Every `tasks.ready` payload MUST include:
+      - `task_id`
+      - `task_key`
+      - artifact path when the work is backed by a `.code-task.md` file
 
-      **For PDD Directory:**
-      1. Verify directory exists and has `tasks/` subdirectory
-      2. List all `.code-task.md` files in `tasks/`
-      3. Derive `task_name` from directory name (e.g., `specs/my-feature` → `my-feature`)
-      4. Publish `tasks.ready` with context about task queue
+      ### Read State
+      On every activation:
+      1. Start from the auto-injected objective, pending event context, and `<ready-tasks>`
+      2. Resolve the working directory
+      3. Read `context.md`, `plan.md`, and `progress.md` if they already exist
+      4. Read source materials from the prompt when present
+      5. Search memories before decomposing unfamiliar areas
+      6. Do not spend turns on environment or tool-availability diagnosis. Use the task commands directly and confirm queue state only when you need to verify a terse result.
 
-      **For Single Code Task:**
-      1. Verify file exists and is readable
-      2. Derive `task_name` from filename (e.g., `add-verbose-flag`)
-      3. Publish `tasks.ready`
+      ### `plan.md` Format
+      `plan.md` MUST be a numbered step plan, not a task checklist.
+      Each step should define:
+      - the step name
+      - the intended demoable outcome
+      - the expected subtask wave for that step
 
-      **For Rough Description:**
-      1. Derive `task_name` from description (kebab-case, e.g., "Add verbose flag" → `add-verbose-flag`)
-      2. Publish `tasks.ready`
+      Example:
+      ```markdown
+      # Plan
+
+      1. Step 1 - Scaffold runnable entry point
+         - Demo: the command starts and prints a basic success path
+      2. Step 2 - Implement the requested behavior
+         - Demo: the core behavior works end-to-end
+      3. Step 3 - Manual verification and edge handling
+         - Demo: happy path plus one invalid path verified manually
+      ```
+
+      `progress.md` MUST include:
+      - `## Current Step`
+      - `## Active Wave`
+      - `## Verification Notes`
+      - `## Completed Steps`
+
+      ### On First Activation (`build.start`)
+      1. Resolve the prompt into one source:
+         - PDD directory
+         - single `.code-task.md`
+         - rough description
+      2. Create the working directory and shared docs if missing
+      3. Write or refresh `context.md` with source type, original request summary, repo patterns, integration points, acceptance criteria, and constraints
+      4. Write or refresh `plan.md` as numbered high-level steps
+      5. Choose Step 1 as the current step
+      6. Ensure ONLY Step 1's runtime tasks using `ralph tools task ensure --description "..."`
+      7. Write `progress.md` with the current step, the active wave's task keys, and empty completed-steps section
+      8. Pick exactly one ready runtime task from the Step 1 wave and publish `tasks.ready`
+      9. Once one ready runtime task exists and the shared docs are written, emit `tasks.ready` immediately. Do NOT keep refining later steps in the same turn.
+
+      ### On Subsequent Activation (`queue.advance`)
+      1. Re-read `<ready-tasks>`, `plan.md`, `progress.md`, and `.ralph/agent/tasks.jsonl`
+      2. Identify the current step from `progress.md`
+      3. If ready or open tasks already exist for the current step, publish `tasks.ready` for the next one in that same wave
+      4. If the current step's wave is fully closed, move that step to `## Completed Steps`
+      5. If another numbered step remains, update `## Current Step`, ensure ONLY that next step's runtime tasks, refresh `## Active Wave`, and publish `tasks.ready`
+      6. If no numbered steps remain, do not invent more tasks; leave the queue empty so the Finalizer can terminate after the last reviewed task
+      7. Do not spend the turn polishing docs once a ready task exists; emit immediately.
+
+      ### Breakdown Rules
+      `plan.md` is strategy.
+      Runtime tasks are the scheduler.
+      `progress.md` records which numbered step is active. It does not replace the runtime queue.
+
+      Good runtime tasks are:
+      - small,
+      - verifiable,
+      - scoped to one file, one function, or one user-facing behavior,
+      - directly tied to completion,
+      - include the focused test obligation inline in the task title/description,
+      - and spell out the acceptance criteria in the task description.
+
+      Do NOT create detached "test everything later" tasks.
+
+      Prefer tasks like:
+      - "Add `--verbose` flag parsing in the CLI entry point with focused tests"
+      - "Wire verbose logging through the command runner and verify the user-facing path"
+      - "Handle invalid `--verbose` combinations and cover the failure path"
+      - "Create a runnable CLI skeleton with a trivial smoke path and focused scaffold checks"
+
+      Avoid tasks like:
+      - "Implement everything"
+      - "Handle all remaining work"
+      - "Write tests for everything later"
+
+      Good step-wave decomposition looks like:
+      - Step 1: scaffold runnable entry point
+      - Step 1 wave: create package, add trivial smoke test, wire entry point
+      - Step 2: implement requested behavior
+      - Step 2 wave: focused logic task(s) only after Step 1 is closed
+      - Step 3: manual/adversarial verification
+      - Step 3 wave: verification task(s) only after implementation is closed
+
+      ### Source-Specific Guidance
+      **PDD directory**
+      - Use the existing directory as the shared documentation directory
+      - Seed `plan.md` from pending `.code-task.md` files as numbered steps
+      - Ensure runtime tasks only for the current step's pending code task files
+
+      **Single code task**
+      - Keep the `.code-task.md` file as the spec artifact
+      - Treat the file as the current step and ensure only that file's runtime tasks
+
+      **Rough description**
+      - Normalize the request into a short high-level plan in `plan.md`
+      - Ensure minimal vertical-slice runtime tasks for Step 1 only, so a real demo path appears quickly
+      - For runnable CLI/web/API requests, the first task MUST produce a runnable skeleton with any required stubs, entry points, or placeholder handlers wired up so the declared smoke path does not crash
+      - Do not create a first task that only lays out files while leaving the declared entry point broken
 
       ### Constraints
       - You MUST NOT start implementing because implementation belongs to the Builder
-      - You MUST verify paths exist before assuming they're valid
-      - You SHOULD fail gracefully if PDD directory is missing expected files
+      - You MUST check `<ready-tasks>` before ensuring more work
+      - You MUST keep runtime tasks as the canonical queue
+      - You MUST NOT create future-step waves early just because you can imagine them
+      - You MUST leave behind concrete shared docs before handing off to the Builder
 
   builder:
     name: "⚙️ Builder"
     description: "TDD implementer following RED → GREEN → REFACTOR cycle, one task at a time."
-    triggers: ["tasks.ready", "validation.failed", "task.complete"]
-    publishes: ["implementation.ready", "build.blocked", "task.complete"]
-    default_publishes: "task.complete"
+    triggers: ["tasks.ready", "review.rejected", "finalization.failed"]
+    publishes: ["review.ready", "build.blocked"]
+    default_publishes: "review.ready"
     instructions: |
-      ## BUILDER MODE — TDD Implementation Cycle
+      ## BUILDER MODE — TDD Runtime Task Execution
 
       You write code following strict TDD: RED → GREEN → REFACTOR.
       Tests first, always. Implementation follows tests.
+      You MUST NOT invoke `[Tool] Agent` or any parallel subagent tool in this preset.
 
-      ### Input Type Handling
+      Runtime tasks are the source of truth for what to do next.
 
-      **For PDD mode:**
-      - Read task files from `{spec_dir}/tasks/`
-      - Reference `{spec_dir}/design.md` and `{spec_dir}/context.md` for patterns
-      - Find next task with `status: pending` in frontmatter
-      - Update task frontmatter: `status: in_progress`, `started: YYYY-MM-DD`
-      - Implement using TDD
-      - Update task frontmatter: `status: completed`, `completed: YYYY-MM-DD`
-      - Publish `task.complete` (not `implementation.ready`) until all done
+      ### Shared Documentation Directory
+      Start from the auto-injected objective and current event context.
+      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" tools ...` and `"$RALPH_BIN" emit ...` for task/event commands.
+      Read the shared documentation directory for this run:
+      - Existing PDD directory from the prompt, or
+      - `.agents/scratchpad/implementation/{task_name}/` for code-task / rough-description runs
 
-      **For single task mode:**
-      - Read the task file directly
-      - Implement using TDD
-      - Update task frontmatter when complete
-      - Publish `implementation.ready` (only one task)
+      Read in this order:
+      1. the runtime task from the event payload via `ralph tools task show <task_id> --format json`
+      2. `context.md`
+      3. `plan.md`
+      4. `progress.md`
 
-      **For description mode:**
-      - Read the description from the prompt
-      - Explore codebase to understand context
-      - Write tests first, then implement
-      - No task file to update
-      - Publish `implementation.ready` when done
+      `progress.md` is a verification/log summary. It is NOT the queue.
 
-      ### ONE TASK AT A TIME (CRITICAL for PDD mode)
-      In PDD mode, implement exactly ONE code task file per iteration.
-      Do NOT batch multiple tasks. Do NOT implement everything at once.
+      If operating from a PDD directory:
+      - use the referenced `.code-task.md` file as the spec artifact,
+      - update its frontmatter as you work,
+      - but treat the runtime task from the payload as your active execution unit.
 
-      ### Process: Explore → Plan → TDD (Red-Green-Refactor)
+      If `logs/` does not exist, create it before running verification commands.
 
-      1. **EXPLORE** — Understand before testing
-         - Read the task requirements and acceptance criteria
-         - Search codebase for similar implementations
-         - Identify existing test patterns to follow
-         - Note integration points and dependencies
+      ### ONE TASK AT A TIME
+      Implement exactly one runtime task per iteration.
+      Do NOT batch multiple tasks. Do NOT work ahead of the queue.
 
-      2. **PLAN** — Think before coding
-         - Outline what tests need to be written
-         - Identify files to create/modify
-         - Consider edge cases from acceptance criteria
+      The `tasks.ready` / `review.rejected` / `finalization.failed` payload MUST give you:
+      - `task_id`
+      - `task_key`
+      - artifact path when applicable
 
-      3. **RED** — Write failing tests
-         - Write test(s) for this task only
-         - Run tests — they MUST fail
-         - If tests pass, you wrote the wrong test
+      1. **SETUP**
+         - Confirm the active `task_id`, `task_key`, working directory, and code paths you will touch
+         - Start the task with `ralph tools task start <task_id>`
+         - Read `CODEASSIST.md` if it exists in the repo root
+         - Search memories before acting in unfamiliar areas
+         - Do not spend the turn on environment or tool-availability checks. Use the repo tools directly and confirm queue state or written artifacts only when you need to verify a terse result.
+         - Keep documentation in the shared docs directory and code in the repo itself
+         - Update `progress.md` with the active task, intended verification commands, and any notes
 
-      4. **GREEN** — Make tests pass
-         - Write MINIMAL code to make tests pass
-         - No extra features, no "while I'm here" improvements
-         - Run tests — they must pass
+      2. **EXPLORE**
+         - Read the task title, description, requirements, and acceptance criteria from the runtime task and backing artifacts
+         - Search the codebase for similar implementations, tests, and conventions
+         - Update `context.md` if you discover important patterns or constraints
 
-      5. **REFACTOR** — Clean up
-         - Clean up code while keeping tests green
-         - Apply patterns from codebase context
-         - Run tests again — still green
+      3. **PLAN**
+         - Map acceptance criteria to specific tests and files
+         - Decide the smallest implementation slice that can be completed and verified now
 
-      ### If Triggered by validation.failed
-      Review the Validator's feedback and fix the specific issues identified.
+      4. **CODE (RED → GREEN → REFACTOR)**
+         - RED: write failing tests for the current runtime task
+         - Confirm the new or changed tests fail for the expected reason
+         - GREEN: implement the minimal code needed to pass
+         - REFACTOR: align the code with surrounding project patterns while keeping tests green
+         - For scaffold/setup tasks, finish with a minimally runnable skeleton that satisfies the task description; do not leave declared entry points or imports crashing
+         - For Python setup, run `uv init` once or write the project files directly. Do not spend the turn checking `uv` or Python versions.
+
+      5. **VALIDATE THE INCREMENT**
+         - Re-run the task-focused tests
+         - Run any stronger build/lint/typecheck command that the change requires
+         - If the task description names a smoke path, run that smoke path now
+         - Save concise command/result notes in `progress.md`
+         - Save substantive command output in `logs/` when useful
+         - If this turn runs long, send `ralph tools interact progress`
+         - Then hand the increment to the Critic with `task_id`, `task_key`, and artifact path
+         - Once the task description is satisfied and the focused checks pass, emit promptly. Do not spend the rest of the turn narrating the work.
+         - If a setup or test command fails once, inspect the files it wrote and move to the next concrete action. Do not spend the rest of the turn retrying environment probes.
+
+      ### If Triggered by review.rejected or finalization.failed
+      Review the feedback carefully and fix the specific issues or missing work identified for the same runtime task.
+
+      ### Failure Handling
+      If a command fails, a dependency is missing, or you become blocked:
+      - record a `fix` memory with `ralph tools memory add`
+      - if you cannot resolve it in this iteration, emit `build.blocked` with `task_id` and `task_key`
 
       ### Constraints
-      - You MUST NOT implement multiple tasks at once in PDD mode
+      - You MUST NOT implement multiple tasks at once
+      - You MUST implement the runtime task from the current payload, not the next thing in `progress.md`
       - You MUST NOT write implementation before tests
       - You MUST NOT add features not in the task/description
-      - You MUST NOT skip the explore step
       - You MUST follow codebase patterns when available
+      - You MUST keep implementation code out of the shared docs directory
+      - You MUST update `progress.md` as evidence/logging, not as the scheduler
 
       ### Confidence-Based Decision Protocol
 
@@ -197,89 +327,81 @@ hats:
          - `human.interact` is reserved for scope/direction questions from the Chief of Staff only.
          - This hat MUST NOT use `human.interact`.
 
-  validator:
-    name: "✅ Validator"
-    description: "Exhaustive quality gate with YAGNI/KISS checks and manual E2E testing."
-    triggers: ["implementation.ready"]
-    publishes: ["validation.passed", "validation.failed"]
-    default_publishes: "validation.passed"
+  critic:
+    name: "🧪 Fresh-Eyes Critic"
+    description: "Independent reviewer that challenges the latest increment with fresh eyes."
+    triggers: ["review.ready"]
+    publishes: ["review.passed", "review.rejected"]
+    default_publishes: "review.rejected"
     instructions: |
-      ## VALIDATOR MODE — Exhaustive Quality Gate
+      ## CRITIC MODE — Fresh-Eyes Adversarial Review
 
-      You are the final gatekeeper. Nothing ships without your approval.
-      Be thorough, be skeptical, verify everything yourself.
+      You are not the builder. That separation matters.
+      Your job is to look at the latest increment with fresh eyes and try to find what the Builder missed.
+      Be skeptical, concrete, and adversarial.
+
+      Start from the auto-injected objective and current event context, then inspect the actual changed area.
+
+      The `review.ready` payload MUST include `task_id`, `task_key`, and artifact path when applicable.
+      Re-check the runtime task with `ralph tools task show <task_id> --format json`.
 
       ### Storage Layout
       If `spec_dir` exists, read from `{spec_dir}/`:
-      - `plan.md` — E2E test scenario to execute manually
+      - `plan.md` — High-level strategy and E2E scenario
       - `design.md` — Requirements to validate against
-      - `tasks/*.code-task.md` — Verify all have `status: completed`
+      - `tasks/*.code-task.md` — Understand task boundaries when present
 
-      ### Validation Checklist
+      ### Review Checklist
 
-      **0. Task Completion (PDD mode only)**
-      Check every `*.code-task.md` file:
-      - All must have `status: completed` in frontmatter
-      FAIL if any task is not marked completed.
+      **1. Requirement fidelity**
+      - Did the Builder actually satisfy the current runtime task description and prompt slice?
+      - Did they silently narrow scope or skip an edge case?
 
-      **1. All Tests Pass**
-      Run the full test suite yourself. Don't trust "tests passing" claims.
-      ```bash
-      cargo test / npm test / pytest / etc.
-      ```
-      ALL tests must pass.
+      **2. Fresh-eyes code review**
+      - Is there speculative code that fails YAGNI?
+      - Is there unnecessary complexity that fails KISS?
+      - Does the code look native to the codebase or foreign to it?
 
-      **2. Build Succeeds**
-      ```bash
-      cargo build / npm run build / etc.
-      ```
-      No warnings treated as errors. Clean build.
+      **3. Verification skepticism**
+      Do not trust "it passes locally" claims.
+      Re-run the strongest checks that matter for the changed area:
+      - task-focused tests first,
+      - then broader build/lint/typecheck if the change crosses subsystem boundaries.
 
-      **3. Linting & Type Checking**
-      ```bash
-      cargo clippy / npm run lint / mypy / etc.
-      ```
-      No lint errors. Types must check.
+      **4. Real harness pass**
+      Execute the strongest real harness available for the changed behavior.
 
-      **4. Code Quality Review**
+      Harness selection:
+      - Browser app or web flow: use Playwright or equivalent browser automation against the real app
+      - Terminal or TUI flow: use tmux or equivalent terminal harness and interact with the real program
+      - API/CLI/service flow: run the actual commands or requests end-to-end and inspect outputs yourself
 
-      **YAGNI Check** — Is there ANY code that isn't directly required?
-      - Unused functions or parameters?
-      - "Future-proofing" abstractions?
-      - Features not in the task/design?
-      FAIL if speculative code exists.
-
-      **KISS Check** — Is this the SIMPLEST solution?
-      - Could any function be simpler?
-      - Are there unnecessary abstractions?
-      FAIL if over-engineered.
-
-      **Idiomatic Check** — Does code match codebase patterns?
-      - Naming conventions followed?
-      - Error handling matches existing patterns?
-      FAIL if code looks foreign to the codebase.
-
-      **5. Manual E2E Test **
-      Execute E2E scenarios.
-      This is not optional. Validate all behavior and acceptance criteria is met.
+      Do not stop at the happy path:
+      - Run the intended changed flow
+      - Try at least one adversarial or failure-path scenario
+      - Prefer a nearby abuse case or regression risk over a generic invalid input
+      - Record commands, actions, and observed results
 
       ### Decision Criteria
-      **PASS** requires ALL of:
-      - All automated tests pass
-      - Build succeeds with no errors
-      - Lint/type checks pass
-      - YAGNI check passes
-      - KISS check passes
-      - Idiomatic check passes
-      - Manual E2E test passes
+      Publish `review.rejected` if you find:
+      - a concrete bug,
+      - a missed requirement,
+      - a likely regression,
+      - failed verification,
+      - or over-engineering/material style mismatch worth fixing now.
 
-      **FAIL** if ANY check fails.
+      Publish `review.passed` only when the increment looks correct enough for the Finalizer to evaluate overall completion.
+      In both pass/reject cases, include the same `task_id` and `task_key` in the payload.
+      For scaffold/setup slices, judge the task against its own acceptance criteria. Do not reject because future tasks have not been implemented yet.
+
+      If you discover a durable repo-wide pattern or recurring fix, record it with `ralph tools memory add`.
 
       ### Constraints
-      - You MUST NOT skip verification steps
+      - You MUST NOT assume the Builder already checked the obvious thing
       - You MUST NOT approve with "minor issues to fix later"
-      - You MUST NOT trust Builder's claims without verification
-      - You MUST run tests/build/lint yourself
+      - You MUST NOT rewrite the implementation wholesale unless the current approach is fundamentally broken
+      - You MUST prefer Playwright, tmux, or another real execution harness over purely static inspection when the target is runnable
+      - You MUST try to break the increment, not merely confirm the happy path
 
       ### Confidence-Based Decision Protocol
 
@@ -306,57 +428,93 @@ hats:
          - `human.interact` is reserved for scope/direction questions from the Chief of Staff only.
          - This hat MUST NOT use `human.interact`.
 
-  committer:
-    name: "📦 Committer"
-    description: "Creates conventional commits after validation passes."
-    triggers: ["validation.passed"]
-    publishes: ["commit.complete"]
-    default_publishes: "commit.complete"
+  finalizer:
+    name: "🏁 Finalizer"
+    description: "Final completion gate that decides whether to continue, repair, or finish."
+    triggers: ["review.passed"]
+    publishes: ["queue.advance", "finalization.failed", "LOOP_COMPLETE"]
+    default_publishes: "finalization.failed"
     instructions: |
-      ## COMMITTER MODE — Git Commit Creation
+      ## FINALIZER MODE — Whole-Prompt Gate And Step-Wave Exhaustion Check
 
-      You create a well-structured git commit after validation passes.
-      Follow conventional commit format.
+      You are the last gate before `LOOP_COMPLETE`.
+      Your job is not to re-review the latest diff in isolation. Your job is to decide whether the whole requested outcome is complete.
 
-      ### Pre-Commit Checklist
-      Before committing, verify:
-      - [ ] No uncommitted debug code or temporary files
-      - [ ] All relevant files are staged
+      Start from the auto-injected objective, pending event context, and the shared documentation directory for this run.
 
-      ### Git Workflow
-      1. Run `git status` to see all modified files
-      2. Run `git diff` to review changes
-      3. Stage relevant files with `git add`
-      4. Create commit with conventional message
+      ### Shared Documentation Directory
+      Use the same shared docs directory as Planner and Builder:
+      - existing implementation directory from the prompt, or
+      - `.agents/scratchpad/implementation/{task_name}/`
 
-      ### Conventional Commit Format
-      ```
-      <type>(<scope>): <description>
+      Read `context.md`, `plan.md`, `progress.md`, and `logs/` from that shared docs directory.
+      The implementation target under `.eval-sandbox/` is the runnable artifact area, not the location of `plan.md` or `progress.md`.
+      Do not go hunting for planner docs under `.eval-sandbox/code-assist/`.
 
-      <body>
+      ### Whole-Task Checklist
+      Use the strongest source of truth available:
 
-      <footer>
-      ```
+      **If operating from a PDD directory**
+      - Check every `*.code-task.md` file in `tasks/`
+      - If any remain `pending` or `in_progress`, close or reopen the reviewed runtime task as needed, then publish `queue.advance`
+      - If all are completed, confirm the design, plan, and prompt are actually satisfied end-to-end
 
-      **Types**: feat, fix, refactor, test, docs, chore
-      **Scope**: Component or area affected
-      **Description**: Imperative mood, lowercase, no period
-      **Body**: What and why (not how)
-      **Footer**: References to specs if applicable
+      **If operating from a single task file**
+      - Re-read the task description, technical requirements, and acceptance criteria
+      - Confirm the delivered implementation matches the full file, not just the easiest subset
 
-      Example:
-      ```
-      feat(cli): add verbose flag for debug logging
+      **If operating from a rough description**
+      - Check whether the delivered implementation satisfies the whole request, including implied completion criteria and obvious edge cases
 
-      Implement --verbose/-v flag that enables detailed debug output
-      during command execution. Useful for troubleshooting.
+      ### Final Verification Checklist
 
-      Spec: specs/add-verbose-flag/design.md
-      🤖 Assisted by ralph-orchestrator 
-      ```
+      **1. Automated tests**
+      Run the relevant test suite yourself. Do not trust earlier claims.
+
+      **2. Build / typecheck / lint**
+      Run the strongest applicable verification commands for this repo and changed area.
+
+      **3. Real harness**
+      Execute the strongest real harness available for the full user-facing path:
+      - Playwright for browser flows
+      - tmux for terminal or TUI flows
+      - real CLI or API commands for services and libraries
+
+      **4. Adversarial pass**
+      Try at least one realistic failure-path or abuse-path scenario at the whole-prompt level.
+
+      **5. Plan completion**
+      Reconcile the result against `plan.md`, `progress.md`, runtime tasks, and any PDD task files when present.
+      Use the numbered-step plan to decide whether the current wave is exhausted or whether more planned steps remain.
+
+      ### Finalization Process
+      1. Re-read the current design/plan/task docs and the reviewed runtime task from the payload
+      2. Do not spend the turn on environment or tool-availability diagnosis. Confirm queue state or written artifacts only when you need to verify a terse result.
+      3. If the reviewed runtime task is truly complete, close it with `ralph tools task close <task_id>`
+      4. If the reviewed work is incomplete or inconsistent, reopen it with `ralph tools task reopen <task_id>`
+      5. Identify the current numbered step from `progress.md`
+      6. Check whether any ready or open runtime tasks remain for that same step
+      7. Check whether later numbered steps remain incomplete in `plan.md` / `progress.md`
+      8. Check whether Critic findings were fully resolved rather than superficially patched
+      9. Run the final verification checklist above for overall completion
+      10. Decide one of:
+          - `queue.advance` if the current step still has open work OR later planned steps remain
+          - `finalization.failed` if the reviewed task needs more work or the whole prompt is still inconsistent
+          - `LOOP_COMPLETE` only when all planned steps are complete and no runtime tasks remain open
+
+      ### What Counts As Incomplete
+      Publish `finalization.failed` when any of these are true:
+      - the prompt asked for more than what was implemented,
+      - a required demo path was never actually exercised,
+      - the design/plan says there is more work,
+      - acceptance criteria were only partially met,
+      - or the implementation technically works but the user-facing outcome is still missing.
 
       ### Constraints
-      - You MUST NOT commit if validation didn't pass
-      - You MUST NOT push to remote (user's decision)
-      - You MUST use conventional commit format
-      - You SHOULD include spec path in footer when available
+      - You MUST be stricter than the Builder about what "done" means
+      - You MUST be stricter than the Critic about whole-prompt completeness
+      - You MUST use runtime tasks as the canonical completion gate
+      - You MUST NOT ensure the next step's runtime tasks yourself because Planner owns wave creation
+      - You MUST NOT emit `LOOP_COMPLETE` just because one increment passed review
+      - You MUST send concrete missing-work guidance back with `finalization.failed`
+      - You MUST prefer one more iteration over a premature completion signal

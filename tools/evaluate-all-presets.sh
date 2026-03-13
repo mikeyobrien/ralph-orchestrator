@@ -32,14 +32,15 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 BACKEND=${1:-claude}
-SUITE_ID=$(date +%Y%m%d_%H%M%S)
+MODE=${2:-${RALPH_PRESET_TASK_VARIANT:-full}}
+SUITE_ID="$(date +%Y%m%d_%H%M%S)_${MODE}"
 RESULTS_DIR=".eval/results/${SUITE_ID}"
 mkdir -p "$RESULTS_DIR"
 
-# All presets to evaluate (hatless-baseline runs first as control)
-PRESETS="hatless-baseline tdd-red-green adversarial-review socratic-learning spec-driven mob-programming scientific-method code-archaeology performance-optimization api-design documentation-first incident-response migration-safety"
+# Core presets to evaluate (hatless-baseline runs first as control)
+PRESETS="hatless-baseline code-assist debug research review pdd-to-code-assist"
 
-TOTAL=13
+TOTAL=6
 PASSED=0
 FAILED=0
 PARTIAL=0
@@ -51,12 +52,13 @@ RESULTS_FILE="$RESULTS_DIR/.results.tmp"
 echo -e "${CYAN}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║                                                               ║"
-echo "║     🎩  Hat Collection Preset Evaluation Suite  🎩           ║"
+echo "║        🎩  Core Hat Collection Evaluation Suite  🎩         ║"
 echo "║                                                               ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 echo ""
 echo -e "  Backend:     ${GREEN}${BACKEND}${NC}"
+echo -e "  Mode:        ${GREEN}${MODE}${NC}"
 echo -e "  Suite ID:    ${SUITE_ID}"
 echo -e "  Presets:     ${TOTAL}"
 echo -e "  Results:     ${RESULTS_DIR}/"
@@ -77,7 +79,7 @@ for preset in $PRESETS; do
 
     # Run evaluation
     set +e
-    ./tools/evaluate-preset.sh "$preset" "$BACKEND"
+    ./tools/evaluate-preset.sh "$preset" "$BACKEND" "$MODE"
     EXIT_CODE=$?
     set -e
 
@@ -86,16 +88,32 @@ for preset in $PRESETS; do
         cp ".eval/logs/${preset}/latest/metrics.json" "$RESULTS_DIR/${preset}.json"
     fi
 
+    PROMISE_REACHED="false"
+    SESSION_RECORDING_EMPTY="false"
+    if [[ -f "$RESULTS_DIR/${preset}.json" ]]; then
+        PROMISE_REACHED=$(sed -n 's/.*"completion_promise_reached": \(true\|false\).*/\1/p' "$RESULTS_DIR/${preset}.json" | head -n1)
+        if [[ -z "$PROMISE_REACHED" ]]; then
+            PROMISE_REACHED="false"
+        fi
+        SESSION_RECORDING_EMPTY=$(sed -n 's/.*"session_recording_empty": \(true\|false\).*/\1/p' "$RESULTS_DIR/${preset}.json" | head -n1)
+        if [[ -z "$SESSION_RECORDING_EMPTY" ]]; then
+            SESSION_RECORDING_EMPTY="false"
+        fi
+    fi
+
     # Track result
-    if [[ $EXIT_CODE -eq 0 ]]; then
+    if [[ $EXIT_CODE -eq 0 && "$SESSION_RECORDING_EMPTY" != "true" ]]; then
         echo "${preset}|✅ PASS" >> "$RESULTS_FILE"
         PASSED=$((PASSED + 1))
+    elif [[ $EXIT_CODE -eq 0 ]]; then
+        echo "${preset}|⚠️ PARTIAL" >> "$RESULTS_FILE"
+        PARTIAL=$((PARTIAL + 1))
     elif [[ $EXIT_CODE -eq 124 ]]; then
         echo "${preset}|⏱️ TIMEOUT" >> "$RESULTS_FILE"
         FAILED=$((FAILED + 1))
     else
-        # Check if it was partial success
-        if grep -q 'LOOP_COMPLETE' ".eval/logs/${preset}/latest/output.log" 2>/dev/null; then
+        # Check if the preset emitted its completion promise but failed to exit cleanly
+        if [[ "$PROMISE_REACHED" == "true" ]]; then
             echo "${preset}|⚠️ PARTIAL" >> "$RESULTS_FILE"
             PARTIAL=$((PARTIAL + 1))
         else
@@ -144,6 +162,7 @@ cat > "$SUMMARY_FILE" << EOF
 
 **Date**: $(date -Iseconds 2>/dev/null || date)
 **Backend**: ${BACKEND}
+**Mode**: ${MODE}
 **Suite ID**: ${SUITE_ID}
 
 ## Results

@@ -417,7 +417,7 @@ fn test_builtin_hats_source_overrides_combined_config_hats() {
             "--config",
             config_path.to_str().unwrap(),
             "--hats",
-            "builtin:feature",
+            "builtin:code-assist",
             "hats",
             "list",
             "--format",
@@ -447,19 +447,19 @@ fn test_builtin_hats_source_overrides_combined_config_hats() {
         .filter_map(|h| h["name"].as_str())
         .collect();
 
-    // builtin:feature defines "Builder" and "Reviewer"
+    // builtin:code-assist defines planner and builder hats with display names
     assert!(
-        names.contains(&"Builder"),
-        "expected 'Builder' from builtin:feature; got: {names:?}"
+        names.iter().any(|name| name.contains("Planner")),
+        "expected planner hat from builtin:code-assist; got: {names:?}"
     );
     assert!(
-        names.contains(&"Reviewer"),
-        "expected 'Reviewer' from builtin:feature; got: {names:?}"
+        names.iter().any(|name| name.contains("Builder")),
+        "expected builder hat from builtin:code-assist; got: {names:?}"
     );
 
     // The combined config's "myplanner" hat must have been replaced
     assert!(
         !names.contains(&"myplanner"),
-        "expected 'myplanner' to be absent (replaced by builtin:feature); got: {names:?}"
+        "expected 'myplanner' to be absent (replaced by builtin:code-assist); got: {names:?}"
     );
 }
