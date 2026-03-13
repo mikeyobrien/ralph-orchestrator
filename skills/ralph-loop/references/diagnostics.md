@@ -17,6 +17,7 @@ Key files:
 - `performance.jsonl` for timing and token metrics
 - `errors.jsonl` for parse and validation failures
 - `trace.jsonl` for lower-level tracing
+- `prompt-log.md` for the full prompt sent to the agent each iteration
 
 Useful commands:
 
@@ -26,6 +27,9 @@ jq 'select(.event.type == "hat_selected")' "$SESSION/orchestration.jsonl"
 jq 'select(.type == "tool_call")' "$SESSION/agent-output.jsonl"
 jq '.' "$SESSION/errors.jsonl"
 jq '{iteration, duration_ms}' "$SESSION/performance.jsonl"
+
+# View the full prompt for a specific iteration
+grep -A 1000 "^# Iteration 3" "$SESSION/prompt-log.md" | sed '/^---$/q'
 ```
 
 ## Suspend and Resume Artifacts
