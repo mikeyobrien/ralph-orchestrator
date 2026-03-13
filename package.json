@@ -1,6 +1,6 @@
 {
   "name": "ralph-orchestrator",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "private": true,
   "description": "AI agent orchestrator with web dashboard",
   "workspaces": [

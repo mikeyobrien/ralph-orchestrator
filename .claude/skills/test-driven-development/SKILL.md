@@ -3,6 +3,8 @@ name: test-driven-development
 description: Unified TDD skill with three input modes — from spec, from task, or from description. Enforces test-first development using repository patterns, with proptest guidance and backpressure integration.
 type: anthropic-skill
 version: "1.0"
+metadata:
+  internal: true
 ---
 
 # Test-Driven Development

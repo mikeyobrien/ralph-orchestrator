@@ -3,6 +3,8 @@ name: code-task-generator
 description: Generates structured .code-task.md files from descriptions or PDD implementation plans. Auto-detects input type, creates properly formatted tasks with Given-When-Then acceptance criteria.
 type: anthropic-skill
 version: "1.1"
+metadata:
+  internal: true
 ---
 
 # Code Task Generator
@@ -80,7 +82,7 @@ Ask: "Would you like me to set up Ralph to implement these tasks autonomously?"
 
 If yes, create a concise PROMPT.md with objective, spec directory reference, execution order, and acceptance criteria. Suggest the appropriate command:
 - Full pipeline: `ralph run --config presets/pdd-to-code-assist.yml`
-- Simpler flow: `ralph run --config presets/spec-driven.yml`
+- Simpler flow: `ralph run -c ralph.yml -H builtin:code-assist`
 
 ## Code Task Format Specification
 

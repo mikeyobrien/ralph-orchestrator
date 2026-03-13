@@ -53,7 +53,7 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 
 -   :material-cog: **31 Presets**
 
-    Pre-configured workflows for TDD, spec-driven development, debugging, and more
+    A small set of supported built-in workflows plus a larger catalog of documented examples
 
 </div>
 

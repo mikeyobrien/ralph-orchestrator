@@ -1,135 +1,160 @@
 # Preset Test Tasks
-# Maps each preset to a canonical test task for benchmarking
+# Maps the supported core presets to canonical evaluation tasks.
 
 test_tasks:
   hatless-baseline: |
     Build a mini CLI calculator in Rust with the following requirements:
     1. Create the module at `.eval-sandbox/baseline/calculator.rs`
-    2. Implement: add, subtract, multiply, divide operations
-    3. Handle division by zero gracefully (return Result type)
-    4. Write comprehensive tests for all operations including edge cases
+    2. Implement add, subtract, multiply, and divide operations
+    3. Handle division by zero gracefully with a Result type
+    4. Write tests for happy path and error cases
     5. Verify all tests pass before completing
 
-    Work iteratively: plan, implement core ops, add error handling, write tests, verify.
+  code-assist: |
+    Implement a small multi-step CLI feature and verify it adversarially.
+    Requirements:
+    1. Build a tiny runnable CLI app under `.eval-sandbox/code-assist/`
+    2. Step 1 must create a runnable scaffold with a basic happy-path command
+    3. Step 2 must implement the real requested behavior
+    4. Step 3 must add one second-wave refinement such as a `--json` mode or explicit failure-path handling
+    5. Add automated tests first for each implementation slice, then implement the change
+    6. Run full relevant tests/build/lint
+    7. Exercise the feature manually using the strongest available harness
+       (Playwright for browser flows, tmux for terminal/TUI flows, or real CLI/API commands)
+    8. Try at least one invalid or adversarial input before completing
 
-  tdd-red-green: |
-    Using TDD, implement an `is_palindrome(s: &str) -> bool` function.
-    Create the test file at `.eval-sandbox/tdd/palindrome_test.rs`.
-    Follow the red-green-refactor cycle strictly.
+  debug: |
+    Debug a real intermittent Rust race in `.eval-sandbox/debug-counter/`.
 
-  adversarial-review: |
-    Review this user input handler for security vulnerabilities:
-    ```rust
-    fn handle_input(user_input: &str) -> String {
-        let cmd = format!("echo {}", user_input);
-        std::process::Command::new("sh").arg("-c").arg(&cmd).output()
-    }
-    ```
-    Document findings in `.eval-sandbox/security/review.md`.
+    1. Create a tiny Rust crate there if it does not already exist.
+    2. Reproduce and debug this intentionally broken implementation:
+       ```rust
+       use std::sync::atomic::{AtomicUsize, Ordering};
 
-  socratic-learning: |
-    Help me understand how the HatRegistry works in this codebase.
-    Specifically: How does it route events to the correct hat?
-    Document your understanding in `.eval-sandbox/learning/hat-registry.md`.
+       pub fn racy_increment(counter: &AtomicUsize) {
+           let current = counter.load(Ordering::Relaxed);
+           std::thread::yield_now();
+           counter.store(current + 1, Ordering::Relaxed);
+       }
+       ```
+    3. Add a stress test that makes the lost-update bug observable.
+    4. Document the investigation in `.eval-sandbox/debug/counter.md`.
+    5. Fix only the root cause, add a regression test, and verify with repeated stress runs plus one nearby adversarial case.
 
-  spec-driven: |
-    Specify and implement a `truncate(s: &str, max_len: usize) -> String` function.
-    Requirements: handles unicode, adds "..." if truncated, never exceeds max_len.
-    Work in `.eval-sandbox/spec-driven/`.
+  research: |
+    Research how Ralph validates and exercises real application behavior in multiple waves.
+    Specifically answer:
+    1. What browser, terminal, or E2E harnesses already exist in this repo?
+    2. Where are they used today?
+    3. What gaps remain for agentic verification?
+    4. After the first pass, do at least one follow-up wave on the highest-value verification gap you found.
+    Requirements:
+    - Cite file:line evidence
+    - Prefer direct inspection of runnable harnesses over assumptions
+    - Save findings to `.eval-sandbox/research/harness-audit.md`
 
-  mob-programming: |
-    As a mob, implement a generic Stack<T> with push, pop, peek, and is_empty.
-    Work in `.eval-sandbox/mob/stack.rs`.
+  review: |
+    Review a change as if you expect it to fail in production, using multiple waves.
+    Scope:
+    1. Inspect a small runnable code path under `.eval-sandbox/review/`
+    2. Look for correctness, edge-case, and security issues
+    3. Identify the single riskiest area on the first pass, then do a second deep-analysis wave on that area
+    4. If the code is runnable, exercise it with the strongest available harness
+    5. Try at least one failure-path or adversarial input
+    6. Write findings to `.eval-sandbox/review/findings.md`
 
-  scientific-method: |
-    Debug why this test might fail intermittently:
-    ```rust
-    #[test]
-    fn test_counter() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let handles: Vec<_> = (0..10).map(|_| {
-            let c = counter.clone();
-            thread::spawn(move || c.fetch_add(1, Ordering::Relaxed))
-        }).collect();
-        for h in handles { h.join().unwrap(); }
-        assert_eq!(counter.load(Ordering::Relaxed), 10);
-    }
-    ```
-    Document your investigation in `.eval-sandbox/debug/counter.md`.
+  pdd-to-code-assist: |
+    Start from a rough idea and push it through design, planning, step-waved tasks, implementation, and validation.
+    Idea:
+    "Build a small import status viewer with one happy-path screen, one failure state, and a second-step refinement such as filtering or alternate output."
+    Requirements:
+    1. Produce design artifacts under `.eval-sandbox/pdd/`
+    2. Include a concrete manual E2E plan with named harness choice
+    3. Implement via tasks rather than a single jump to code
+    4. The implementation must require at least two numbered waves of tasks
+    5. Validate using the real app or strongest available harness
+    6. Try at least one adversarial path before declaring success
 
-  code-archaeology: |
-    Investigate the history and evolution of `crates/ralph-core/src/config.rs`.
-    Document: Why is it so large? What were the major changes? What gotchas exist?
-    Save findings to `.eval-sandbox/archaeology/config-history.md`.
+smoke_test_tasks:
+  hatless-baseline: |
+    Build a tiny CLI calculator in `.eval-sandbox/baseline/`.
+    Requirements:
+    1. Support add and divide operations
+    2. Handle divide-by-zero cleanly
+    3. Add tests
+    4. Run the calculator manually once with a valid input and once with divide-by-zero
 
-  performance-optimization: |
-    Profile the hat matching logic in HatRegistry::get_for_topic().
-    Suggest and implement ONE optimization.
-    Document baseline and improvement in `.eval-sandbox/perf/optimization.md`.
+  code-assist: |
+    Implement a tiny runnable CLI feature in `.eval-sandbox/code-assist/` using multiple waves.
+    Requirements:
+    1. Step 1: create a runnable scaffold and a trivial smoke path
+    2. Step 2: implement the requested behavior with automated tests first
+    3. Step 3: add one refinement such as `--json` output or a clear failure-path message
+    4. Run the relevant tests after each step
+    5. Exercise the result manually with one happy-path input and one invalid input
 
-  api-design: |
-    Design a Cache<K, V> trait with get, set, delete, and clear methods.
-    Include TTL support. Work in `.eval-sandbox/api/cache.rs`.
-    Focus on ergonomics from the consumer's perspective.
+  debug: |
+    Debug a real intermittent Rust race in `.eval-sandbox/debug-counter/`.
 
-  documentation-first: |
-    Write documentation for a RateLimiter struct BEFORE implementing it.
-    Include: usage examples, configuration options, error handling.
-    Work in `.eval-sandbox/docs/rate_limiter.md` then implement.
+    1. Create a tiny Rust crate there if it does not already exist.
+    2. Reproduce the intentionally broken load/yield/store implementation with a real stress test.
+    3. Document the root cause in `.eval-sandbox/debug/counter.md`.
+    4. Fix only the root cause and add a regression test.
+    5. Re-run repeated stress checks plus one nearby adversarial case.
 
-  incident-response: |
-    Simulate responding to: "CI tests are failing on main branch since last deploy."
-    Use the incident response workflow to diagnose and propose a fix.
-    Document in `.eval-sandbox/incident/response.md`.
+  research: |
+    Research how Ralph injects verification guidance and where real harness testing already exists.
+    Requirements:
+    1. Cite file:line evidence
+    2. Identify the main browser, terminal, or CLI harness options
+    3. Do at least one follow-up research wave on the highest-value verification gap
+    4. Save the answer to `.eval-sandbox/research/summary.md`
 
-  migration-safety: |
-    Plan a migration from Ralph v1 flat config format to v2 nested format.
-    Use the expand-contract pattern. Document the plan in `.eval-sandbox/migration/plan.md`.
+  review: |
+    Review Ralph's runtime verification guidance critically using at least two waves.
+    Scope:
+    1. Inspect `crates/ralph-core/src/instructions.rs`
+    2. Inspect `crates/ralph-core/src/hatless_ralph.rs`
+    3. Inspect at least one second high-risk area you identify from the first pass
+    4. Identify any correctness or completeness gaps
+    5. Save findings to `.eval-sandbox/review/findings.md`
 
-# Complexity ratings for time budgeting
-# NOTE: Ratings based on actual iteration counts and per-iteration times observed
-# Multi-hat presets with exploration tend to run longer (~75-90s/iteration)
+  pdd-to-code-assist: |
+    Start from a small rough idea and carry it through design, step-waved tasks, implementation, and validation.
+    Idea:
+    "Build a tiny CLI status checker in `.eval-sandbox/pdd/` with one success case, one failure case, and one second-wave refinement such as JSON output."
+    Requirements:
+    1. Produce the PDD artifacts
+    2. Implement through task files
+    3. Use at least two numbered implementation waves
+    4. Validate with real commands
+    5. Try at least one adversarial input before completion
+
 complexity:
   hatless-baseline: medium
-  tdd-red-green: simple
-  adversarial-review: medium
-  socratic-learning: medium     # Up to 9 iterations with exploration - was incorrectly simple
-  spec-driven: medium
-  mob-programming: medium       # Multi-role preset runs longer - was incorrectly simple
-  scientific-method: medium
-  code-archaeology: complex     # Git history exploration runs slow - was incorrectly medium
-  performance-optimization: complex
-  api-design: medium
-  documentation-first: medium
-  incident-response: medium
-  migration-safety: complex
+  code-assist: complex
+  debug: complex
+  research: medium
+  review: medium
+  pdd-to-code-assist: complex
 
-# Expected iteration ranges
 expected_iterations:
   hatless-baseline: [3, 5]
-  tdd-red-green: [3, 6]
-  adversarial-review: [3, 5]
-  socratic-learning: [3, 9]
-  spec-driven: [4, 8]
-  mob-programming: [3, 6]
-  scientific-method: [4, 8]
-  code-archaeology: [4, 5]
-  performance-optimization: [4, 8]
-  api-design: [4, 6]
-  documentation-first: [4, 6]
-  incident-response: [4, 5]
-  migration-safety: [4, 5]
+  code-assist: [4, 8]
+  debug: [4, 8]
+  research: [3, 6]
+  review: [3, 6]
+  pdd-to-code-assist: [8, 16]
 
-# Timeout per preset (seconds)
-# Based on observed per-iteration times:
-#   - Simple presets: ~45-60s/iteration
-#   - Multi-hat presets: ~75-90s/iteration (context loading, exploration)
-#   - Complex presets: ~90-120s/iteration (git history, profiling)
-# Adding 50% buffer for API latency variance
-#   simple (3-6 iters): 6 × 75s = 450s → use 450s
-#   medium (4-9 iters): 9 × 90s = 810s → use 900s
-#   complex (4-8 iters): 8 × 120s = 960s → use 1200s
 timeouts:
   simple: 450
   medium: 900
   complex: 1200
+
+smoke_timeouts:
+  hatless-baseline: 180
+  code-assist: 720
+  debug: 600
+  research: 300
+  review: 360
+  pdd-to-code-assist: 900

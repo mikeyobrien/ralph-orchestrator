@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ralph Hats"
+  short_description: "Create, inspect, validate, and improve Ralph hats"
+  default_prompt: "Use $ralph-hats to create or improve a Ralph hat collection for this workflow."
+
+policy:
+  allow_implicit_invocation: true

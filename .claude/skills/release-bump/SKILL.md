@@ -1,6 +1,8 @@
 ---
 name: release-bump
 description: Use when bumping ralph-orchestrator version for a new release, after fixes are committed and ready to publish
+metadata:
+  internal: true
 ---
 
 # Release Bump

@@ -631,13 +631,13 @@ mod tests {
 
         let with_hats_label = config_source_label(
             &[ConfigSource::File(std::path::PathBuf::from("ralph.yml"))],
-            Some(&HatsSource::Builtin("feature".to_string())),
+            Some(&HatsSource::Builtin("code-assist".to_string())),
         );
         let expected_core =
             crate::config_resolution::compose_core_label(user_label.as_deref(), "ralph.yml", false);
         assert_eq!(
             with_hats_label,
-            format!("{expected_core} + hats:builtin:feature")
+            format!("{expected_core} + hats:builtin:code-assist")
         );
     }
 

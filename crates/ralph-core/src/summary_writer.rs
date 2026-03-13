@@ -324,8 +324,8 @@ mod tests {
             last_checkin_at: None,
             last_active_hat_ids: Vec::new(),
             seen_topics: std::collections::HashSet::new(),
-            last_emitted_topic: None,
-            consecutive_same_topic: 0,
+            last_emitted_signature: None,
+            consecutive_same_signature: 0,
             cancellation_requested: false,
         }
     }

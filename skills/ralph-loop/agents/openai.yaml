@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ralph Loop"
+  short_description: "Run, inspect, resume, merge, and debug Ralph loops"
+  default_prompt: "Use $ralph-loop to inspect or operate this Ralph loop safely."
+
+policy:
+  allow_implicit_invocation: true

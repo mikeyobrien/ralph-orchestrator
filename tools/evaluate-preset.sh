@@ -6,6 +6,9 @@
 # Example:
 #   ./tools/evaluate-preset.sh tdd-red-green claude
 #   ./tools/evaluate-preset.sh spec-driven kiro
+#
+# Optional:
+#   RALPH_EVAL_BINARY=/abs/path/to/ralph ./tools/evaluate-preset.sh code-assist claude smoke
 
 set -euo pipefail
 
@@ -39,7 +42,160 @@ trap cleanup SIGINT SIGTERM
 
 PRESET=${1:-}
 BACKEND=${2:-claude}
+MODE=${3:-${RALPH_PRESET_TASK_VARIANT:-full}}
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TASK_FILE="tools/preset-test-tasks.yml"
+
+load_yaml_block() {
+    local section=$1
+    local key=$2
+    awk -v section="$section" -v key="$key" '
+        $0 == section ":" { in_section = 1; next }
+        in_section && $0 ~ "^[^ ]" { in_section = 0 }
+        in_section && $0 == "  " key ": |" { in_block = 1; next }
+        in_block {
+            if ($0 ~ "^  [^ ]") { exit }
+            if ($0 ~ /^    /) {
+                sub(/^    /, "", $0)
+                print
+                next
+            }
+            if ($0 == "") {
+                print ""
+                next
+            }
+            exit
+        }
+    ' "$TASK_FILE"
+}
+
+load_yaml_scalar() {
+    local section=$1
+    local key=$2
+    awk -v section="$section" -v key="$key" '
+        function trim(s) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+            gsub(/^"/, "", s)
+            gsub(/"$/, "", s)
+            return s
+        }
+        $0 == section ":" { in_section = 1; next }
+        in_section && $0 ~ "^[^ ]" { in_section = 0 }
+        in_section && match($0, /^  ([^:]+):[[:space:]]*(.*)$/, m) {
+            if (m[1] == key) {
+                print trim(m[2])
+                exit
+            }
+        }
+    ' "$TASK_FILE"
+}
+
+count_iterations_from_output() {
+    local output_log=$1
+    if [[ ! -f "$output_log" ]]; then
+        echo "0"
+        return
+    fi
+
+    local iterations
+    iterations=$(grep -Ec '^ ITERATION [0-9]+ [|│]' "$output_log" 2>/dev/null || true)
+    if [[ -z "$iterations" ]]; then
+        iterations="0"
+    fi
+    echo "$iterations"
+}
+
+extract_hats_from_output() {
+    local output_log=$1
+    if [[ ! -f "$output_log" ]]; then
+        echo "unknown"
+        return
+    fi
+
+    local hats
+    hats=$(grep -E '^ ITERATION [0-9]+ [|│]' "$output_log" 2>/dev/null | \
+        sed -E 's/^.*[|│][[:space:]]*[^[:alnum:]_-]*[[:space:]]*([[:alnum:]_-]+)[[:space:]]*[|│].*$/\1/' | \
+        sort -u | tr '\n' ',' | sed 's/,$//' || true)
+    if [[ -z "$hats" ]]; then
+        hats="unknown"
+    fi
+    echo "$hats"
+}
+
+session_recording_empty() {
+    local session_file=$1
+    if [[ ! -s "$session_file" ]]; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+termination_source() {
+    local session_file=$1
+    local raw_exit_code=$2
+
+    if [[ -s "$session_file" ]] && grep -q '"topic":"loop.terminate"' "$session_file" 2>/dev/null; then
+        echo "session_jsonl"
+    elif [[ "$raw_exit_code" -eq 0 ]]; then
+        echo "process_exit"
+    else
+        echo "none"
+    fi
+}
+
+resolve_ralph_command() {
+    if [[ -n "${RALPH_EVAL_BINARY:-}" ]]; then
+        if [[ "$RALPH_EVAL_BINARY" == */* ]]; then
+            if [[ ! -x "$RALPH_EVAL_BINARY" ]]; then
+                echo -e "${RED}Error: RALPH_EVAL_BINARY is not executable: ${RALPH_EVAL_BINARY}${NC}" >&2
+                exit 1
+            fi
+            export PATH="$(dirname "$RALPH_EVAL_BINARY"):$PATH"
+            RALPH_CMD=("$RALPH_EVAL_BINARY")
+        else
+            if ! command -v "$RALPH_EVAL_BINARY" >/dev/null 2>&1; then
+                echo -e "${RED}Error: RALPH_EVAL_BINARY not found on PATH: ${RALPH_EVAL_BINARY}${NC}" >&2
+                exit 1
+            fi
+            RALPH_CMD=("$RALPH_EVAL_BINARY")
+        fi
+    else
+        RALPH_CMD=(cargo run --release --bin ralph --)
+    fi
+}
+
+run_ralph() {
+    "${RALPH_CMD[@]}" "$@"
+}
+
+run_ralph_with_timeout() {
+    local timeout_seconds=$1
+    shift
+    timeout --foreground "$timeout_seconds" "${RALPH_CMD[@]}" "$@"
+}
+
+completion_promise_reached() {
+    local session_file=$1
+    local output_log=$2
+    local completion_promise=$3
+
+    if [[ -z "$completion_promise" ]]; then
+        echo "false"
+    elif { [[ -s "$session_file" ]] && grep -Fq "\"topic\":\"${completion_promise}\"" "$session_file" 2>/dev/null; } || \
+         grep -Fq "Event emitted: ${completion_promise}" "$output_log" 2>/dev/null || \
+         grep -Fq "All done! ${completion_promise} detected." "$output_log" 2>/dev/null; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+if [[ "${EVALUATE_PRESET_LIB_ONLY:-0}" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+resolve_ralph_command
 
 if [[ -z "$PRESET" ]]; then
     echo -e "${RED}Error: Preset name required${NC}"
@@ -73,6 +229,7 @@ echo -e "${BLUE}  Preset Evaluation: ${YELLOW}${PRESET}${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  Backend:   ${GREEN}${BACKEND}${NC}"
+echo -e "  Mode:      ${GREEN}${MODE}${NC}"
 echo -e "  Timestamp: ${TIMESTAMP}"
 echo -e "  Log dir:   ${LOG_DIR}"
 echo -e "  Sandbox:   ${SANDBOX_DIR}"
@@ -80,19 +237,45 @@ echo ""
 
 # Load test task from YAML (requires yq)
 if command -v yq &> /dev/null; then
-    TEST_TASK=$(yq -r ".test_tasks[\"${PRESET}\"]" tools/preset-test-tasks.yml)
-    COMPLEXITY=$(yq -r ".complexity[\"${PRESET}\"]" tools/preset-test-tasks.yml)
-    TIMEOUT=$(yq -r ".timeouts[\"${COMPLEXITY}\"]" tools/preset-test-tasks.yml)
+    if [[ "$MODE" == "smoke" ]]; then
+        TEST_TASK=$(yq -r ".smoke_test_tasks[\"${PRESET}\"] // \"\"" "$TASK_FILE")
+        TIMEOUT=$(yq -r ".smoke_timeouts[\"${PRESET}\"] // 300" "$TASK_FILE")
+    else
+        TEST_TASK=$(yq -r ".test_tasks[\"${PRESET}\"] // \"\"" "$TASK_FILE")
+        COMPLEXITY=$(yq -r ".complexity[\"${PRESET}\"]" "$TASK_FILE")
+        TIMEOUT=$(yq -r ".timeouts[\"${COMPLEXITY}\"]" "$TASK_FILE")
+    fi
 else
-    echo -e "${YELLOW}Warning: yq not found, using default test task${NC}"
-    TEST_TASK="Test the ${PRESET} workflow with a simple task."
+    echo -e "${YELLOW}Warning: yq not found, using shell YAML fallback${NC}"
+    if [[ "$MODE" == "smoke" ]]; then
+        TEST_TASK=$(load_yaml_block "smoke_test_tasks" "$PRESET")
+        TIMEOUT=$(load_yaml_scalar "smoke_timeouts" "$PRESET")
+    else
+        TEST_TASK=$(load_yaml_block "test_tasks" "$PRESET")
+        COMPLEXITY=$(load_yaml_scalar "complexity" "$PRESET")
+        TIMEOUT=$(load_yaml_scalar "timeouts" "$COMPLEXITY")
+    fi
+fi
+
+if [[ -z "$TEST_TASK" ]]; then
+    TEST_TASK="Smoke-test the ${PRESET} workflow with a simple task."
+fi
+
+if [[ -z "${TIMEOUT:-}" ]]; then
     TIMEOUT=300
+fi
+
+if command -v yq &> /dev/null; then
+    COMPLETION_PROMISE=$(yq -r '.event_loop.completion_promise // ""' "$PRESET_FILE")
+else
+    COMPLETION_PROMISE=$(sed -n 's/^[[:space:]]*completion_promise:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$PRESET_FILE" | head -n1)
 fi
 
 echo -e "${BLUE}Test Task:${NC}"
 echo "$TEST_TASK" | sed 's/^/  /'
 echo ""
 echo -e "${BLUE}Timeout:${NC} ${TIMEOUT}s"
+echo -e "${BLUE}Completion Promise:${NC} ${COMPLETION_PROMISE:-unknown}"
 echo ""
 
 # Record environment
@@ -100,11 +283,13 @@ cat > "$LOG_DIR/environment.json" << EOF
 {
   "preset": "$PRESET",
   "backend": "$BACKEND",
+  "mode": "$MODE",
   "timestamp": "$TIMESTAMP",
-  "ralph_version": "$(cargo run --bin ralph -- --version 2>/dev/null || echo 'unknown')",
+  "ralph_version": "$(run_ralph --version 2>/dev/null || echo 'unknown')",
   "backend_version": "$(${BACKEND}-cli --version 2>/dev/null || ${BACKEND} --version 2>/dev/null || echo 'unknown')",
   "os": "$(uname -s)",
-  "hostname": "$(hostname)"
+  "hostname": "$(hostname 2>/dev/null || uname -n 2>/dev/null || echo unknown)",
+  "completion_promise": "${COMPLETION_PROMISE}"
 }
 EOF
 
@@ -188,107 +373,106 @@ fi
 # Run ralph with the merged config
 set +e  # Don't exit on error - we want to capture failures
 # Use --foreground to allow Ctrl+C to propagate to child processes
-timeout --foreground "$TIMEOUT" \
-    cargo run --release --bin ralph -- run \
-        -c "$TEMP_CONFIG" \
-        -p "$TEST_TASK" \
-        --record-session "$LOG_DIR/session.jsonl" \
-        2>&1 | tee "$LOG_DIR/output.log"
+run_ralph_with_timeout "$TIMEOUT" run \
+    -c "$TEMP_CONFIG" \
+    -p "$TEST_TASK" \
+    --record-session "$LOG_DIR/session.jsonl" \
+    2>&1 | tee "$LOG_DIR/output.log"
 
-EXIT_CODE=$?
+RAW_EXIT_CODE=$?
 set -e
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
 # Record exit status
-echo "$EXIT_CODE" > "$LOG_DIR/exit_code"
+echo "$RAW_EXIT_CODE" > "$LOG_DIR/raw_exit_code"
 echo "$DURATION" > "$LOG_DIR/duration_seconds"
 
-echo ""
-echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
-
-# Summary
-if [[ $EXIT_CODE -eq 0 ]]; then
-    echo -e "${GREEN}✅ Evaluation completed successfully${NC}"
-elif [[ $EXIT_CODE -eq 124 ]]; then
-    echo -e "${RED}❌ Evaluation timed out after ${TIMEOUT}s${NC}"
+SESSION_FILE="$LOG_DIR/session.jsonl"
+OUTPUT_LOG="$LOG_DIR/output.log"
+ITERATIONS=$(count_iterations_from_output "$OUTPUT_LOG")
+HATS=$(extract_hats_from_output "$OUTPUT_LOG")
+if [[ -f "$OUTPUT_LOG" ]]; then
+    ITERATION_SOURCE="output.log"
 else
-    echo -e "${YELLOW}⚠️  Evaluation completed with exit code: ${EXIT_CODE}${NC}"
+    ITERATION_SOURCE="none"
 fi
 
-echo ""
-echo -e "  Duration:   ${DURATION}s"
-echo -e "  Exit code:  ${EXIT_CODE}"
-echo -e "  Logs:       ${LOG_DIR}/"
-echo ""
+SESSION_RECORDING_EMPTY="true"
+if [[ -f "$SESSION_FILE" ]]; then
+    SESSION_RECORDING_EMPTY=$(session_recording_empty "$SESSION_FILE")
+fi
 
-# Generate metrics if session exists
-if [[ -f "$LOG_DIR/session.jsonl" ]]; then
-    echo -e "${BLUE}Extracting metrics...${NC}"
-
-    # Count iterations from output.log (ITERATION markers are more reliable than session.jsonl)
-    if [[ -f "$LOG_DIR/output.log" ]]; then
-        ITERATIONS=$(grep -c '^ ITERATION [0-9]\+ │' "$LOG_DIR/output.log" 2>/dev/null || true)
-        if [[ -z "$ITERATIONS" ]]; then
-            ITERATIONS="0"
-        fi
-    else
-        ITERATIONS="0"
-    fi
-
-    # Extract unique hats from output.log iteration markers
-    # Pattern: " ITERATION N │ 🎭 hat_name │ ..."
-    # We extract the part between the emoji and the next │
-    if [[ -f "$LOG_DIR/output.log" ]]; then
-        HATS=$(grep '^ ITERATION [0-9]\+ │' "$LOG_DIR/output.log" 2>/dev/null | \
-               sed -E 's/.* │ [^[:alnum:]]+ ([a-z_]+) │.*/\1/' | \
-               sort -u | tr '\n' ',' | sed 's/,$//' || true)
-        # Handle empty result
-        if [[ -z "$HATS" ]]; then
-            HATS="unknown"
-        fi
-    else
-        HATS="unknown"
-    fi
-
-    # Count events published via bus.publish
-    EVENTS=$(grep -c '"event":"bus.publish"' "$LOG_DIR/session.jsonl" 2>/dev/null || true)
+EVENTS="0"
+if [[ -s "$SESSION_FILE" ]]; then
+    EVENTS=$(grep -c '"event":"bus.publish"' "$SESSION_FILE" 2>/dev/null || true)
     if [[ -z "$EVENTS" ]]; then
         EVENTS="0"
     fi
+fi
 
-    # Check completion by looking for loop.terminate event
-    if grep -q '"topic":"loop.terminate"' "$LOG_DIR/session.jsonl" 2>/dev/null; then
-        COMPLETED="true"
-    else
-        COMPLETED="false"
-    fi
+TERMINATION_SOURCE=$(termination_source "$SESSION_FILE" "$RAW_EXIT_CODE")
+COMPLETION_PROMISE_REACHED=$(completion_promise_reached "$SESSION_FILE" "$OUTPUT_LOG" "$COMPLETION_PROMISE")
 
-    # Escape any quotes in HATS for JSON validity
-    HATS_ESCAPED=$(echo "$HATS" | sed 's/"/\\"/g')
+if [[ "$TERMINATION_SOURCE" != "none" ]]; then
+    COMPLETED="true"
+else
+    COMPLETED="false"
+fi
 
-    cat > "$LOG_DIR/metrics.json" << EOF
+# Escape any quotes in HATS for JSON validity
+HATS_ESCAPED=$(echo "$HATS" | sed 's/"/\\"/g')
+
+echo -e "${BLUE}Extracting metrics...${NC}"
+echo ""
+echo -e "${BLUE}Metrics:${NC}"
+echo -e "  Iterations: ${ITERATIONS}"
+echo -e "  Hats:       ${HATS}"
+echo -e "  Events:     ${EVENTS}"
+echo -e "  Promise:    ${COMPLETION_PROMISE:-unknown} (reached: ${COMPLETION_PROMISE_REACHED})"
+echo -e "  Completed:  ${COMPLETED}"
+echo -e "  Session:    empty=${SESSION_RECORDING_EMPTY}, termination_source=${TERMINATION_SOURCE}"
+
+echo "$RAW_EXIT_CODE" > "$LOG_DIR/exit_code"
+
+cat > "$LOG_DIR/metrics.json" << EOF
 {
   "preset": "$PRESET",
   "backend": "$BACKEND",
+  "mode": "$MODE",
   "duration_seconds": $DURATION,
-  "exit_code": $EXIT_CODE,
+  "raw_exit_code": $RAW_EXIT_CODE,
   "iterations": $ITERATIONS,
   "events_published": $EVENTS,
   "hats_activated": "$HATS_ESCAPED",
+  "iteration_source": "$ITERATION_SOURCE",
+  "session_recording_empty": $SESSION_RECORDING_EMPTY,
+  "termination_source": "$TERMINATION_SOURCE",
+  "completion_promise": "$COMPLETION_PROMISE",
+  "completion_promise_reached": $COMPLETION_PROMISE_REACHED,
   "completed": $COMPLETED,
   "timestamp": "$TIMESTAMP"
 }
 EOF
 
-    echo ""
-    echo -e "${BLUE}Metrics:${NC}"
-    echo -e "  Iterations: ${ITERATIONS}"
-    echo -e "  Hats:       ${HATS}"
-    echo -e "  Events:     ${EVENTS}"
-    echo -e "  Completed:  ${COMPLETED}"
+echo ""
+echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+
+# Summary
+if [[ $RAW_EXIT_CODE -eq 0 ]]; then
+    echo -e "${GREEN}✅ Evaluation completed successfully${NC}"
+elif [[ $RAW_EXIT_CODE -eq 124 ]]; then
+    echo -e "${RED}❌ Evaluation timed out after ${TIMEOUT}s${NC}"
+else
+    echo -e "${YELLOW}⚠️  Evaluation completed with exit code: ${RAW_EXIT_CODE}${NC}"
 fi
+
+echo ""
+echo -e "  Duration:   ${DURATION}s"
+echo -e "  Exit code:  ${RAW_EXIT_CODE}"
+echo -e "  Logs:       ${LOG_DIR}/"
+echo ""
 
 # Restore original agent state if backup exists
 if [[ -d "$AGENT_BACKUP_DIR" ]]; then
@@ -301,4 +485,4 @@ fi
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 
-exit $EXIT_CODE
+exit $RAW_EXIT_CODE

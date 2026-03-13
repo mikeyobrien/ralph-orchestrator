@@ -66,6 +66,8 @@ impl HatInfo {
         let mut guide = String::from(
             "### Event Publishing Guide\n\n\
              You MUST publish exactly ONE event when your work is complete.\n\
+             You MUST use `ralph emit \"<topic>\" \"<brief summary>\"` to publish it.\n\
+             Plain-language summaries do NOT publish events.\n\
              Publishing hands off to the next hat and starts a fresh iteration with clear context.\n\n\
              When you publish:\n",
         );
@@ -402,7 +404,7 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
 
 **Do NOT use for:**
 - Tracking what tasks exist or their status (use `ralph tools task`)
-- Checklists or todo lists (use `ralph tools task add`)
+- Checklists or todo lists (use `ralph tools task ensure` when a stable key exists, otherwise `ralph tools task add`)
 
 ",
             scratchpad = self.core.scratchpad,
@@ -419,6 +421,7 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
 - Work items, their status, priorities, and dependencies\n\
 - Source of truth for progress across iterations\n\
 - Auto-injected in `<ready-tasks>` tags at the top of your context\n\
+- Use `ensure` for stable/idempotent work items, `start` when you begin, `close` when verified, and `reopen`/`fail` when work must continue later\n\
 \n\
 **Scratchpad** (`{scratchpad}`) — Your thinking:\n\
 - Current understanding and reasoning\n\
@@ -429,12 +432,19 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
 - Codebase patterns and conventions\n\
 - Architectural decisions and rationale\n\
 - Recurring problem solutions\n\
+- Search before acting in unfamiliar areas; add durable learnings when they will help future runs\n\
 \n\
 **Context Files** (`.ralph/agent/*.md`) — Research artifacts:\n\
 - Analysis and temporary notes\n\
 - Read when relevant\n\
 \n\
-**Rule:** Work items go in tasks. Thinking goes in scratchpad. Learnings go in memories.\n\
+**Rule:** Work items go in tasks. Thinking goes in scratchpad. Learnings go in memories. Decisions with confidence <= 80 go in `.ralph/agent/decisions.md`.\n\
+\n\
+**Tool reliability rule:** Assume the workflow commands are available when the loop is already running and use the task-specific command you actually need.\n\
+The loop sets `$RALPH_BIN` to the current Ralph executable. Prefer `$RALPH_BIN emit ...` and `$RALPH_BIN tools ...` when you need a direct command form.\n\
+Do not spend turns on shell or tool-availability diagnosis unless the task is explicitly about the runtime environment.\n\
+Do NOT infer failure from empty or terse stdout alone. Verify the intended side effect in the task/event state or in the files and artifacts the command should have changed.\n\
+Keep temporary artifacts where later steps can still inspect them, such as a repo-local `logs/` directory or `/var/tmp` when needed.\n\
 \n",
             scratchpad = self.core.scratchpad,
         ));
@@ -487,12 +497,14 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
             if self.is_fresh_start() {
                 // Fast path: immediate delegation without planning
                 return format!(
-                    r"## WORKFLOW
+                    r#"## WORKFLOW
 
 **FAST PATH**: You MUST publish `{}` immediately to start the hat workflow.
+You MUST use `ralph emit "{}" "<brief handoff>"` and stop immediately.
 You MUST NOT plan or analyze — delegate now.
 
-",
+"#,
+                    self.starting_event.as_ref().unwrap(),
                     self.starting_event.as_ref().unwrap()
                 );
             }
@@ -505,10 +517,14 @@ You MUST NOT plan or analyze — delegate now.
 
 ### 1. PLAN
 You MUST update `{scratchpad}` with your understanding and plan.
-You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).
+You MUST check `<ready-tasks>` first.
+You MUST represent work items with runtime tasks using `ralph tools task ensure` when you can derive a stable key, otherwise `ralph tools task add`.
+You SHOULD search memories with `ralph tools memory search` before acting in unfamiliar areas.
+If confidence is 80 or below on a consequential decision, you MUST document it in `.ralph/agent/decisions.md`.
 
 ### 2. DELEGATE
-You MUST publish exactly ONE event to hand off to specialized hats.
+You MUST emit exactly ONE next event via `ralph emit` to hand off to specialized hats.
+Plain-language summaries do NOT hand off work.
 You MUST NOT do implementation work — delegation is your only job.
 
 ",
@@ -523,7 +539,8 @@ You MUST NOT do implementation work — delegation is your only job.
 You MUST update `{scratchpad}` with prioritized tasks to complete the objective end-to-end.
 
 ### 2. DELEGATE
-You MUST publish exactly ONE event to hand off to specialized hats.
+You MUST emit exactly ONE next event via `ralph emit` to hand off to specialized hats.
+Plain-language summaries do NOT hand off work.
 You MUST NOT do implementation work — delegation is your only job.
 
 ",
@@ -542,17 +559,25 @@ You MUST study, explore, and research what needs to be done.
 
 ### 2. PLAN
 You MUST update `{scratchpad}` with your understanding and plan.
-You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).
+You MUST check `<ready-tasks>` first.
+You MUST represent work items with runtime tasks using `ralph tools task ensure` when you can derive a stable key, otherwise `ralph tools task add`.
+You SHOULD search memories with `ralph tools memory search` before acting in unfamiliar areas.
+If confidence is 80 or below on a consequential decision, you MUST document it in `.ralph/agent/decisions.md`.
 
 ### 3. IMPLEMENT
 You MUST pick exactly ONE task from `<ready-tasks>` to implement.
+You MUST mark it in progress with `ralph tools task start <id>` before implementation.
 
 ### 4. VERIFY & COMMIT
 You MUST run tests and verify the implementation works.
+If the target is runnable or user-facing, you MUST exercise it with the strongest available harness (Playwright, tmux, real CLI/API) before committing.
+You SHOULD try at least one realistic failure-path or adversarial input during verification.
+If this turn is likely to take more than a few minutes, you SHOULD send `ralph tools interact progress`.
 You MUST commit after verification passes - one commit per task.
 You SHOULD run `git diff --cached` to review staged changes before committing.
 You MUST close the task with `ralph tools task close <id>` AFTER commit.
 You SHOULD save learnings to memories with `ralph tools memory add`.
+If a command fails, a dependency is missing, or work becomes blocked and you cannot resolve it in this iteration, you MUST record a `fix` memory and `ralph tools task fail <id>` or `ralph tools task reopen <id>` before stopping.
 You MUST update scratchpad with what you learned (tasks track what remains).
 
 ### 5. EXIT
@@ -578,6 +603,8 @@ You MUST pick exactly ONE task to implement.
 You MUST NOT use more than 1 subagent for build/tests.
 
 ### 4. COMMIT
+If the target is runnable or user-facing, you MUST exercise it with the strongest available harness (Playwright, tmux, real CLI/API) before committing.
+You SHOULD try at least one realistic failure-path or adversarial input during verification.
 You MUST commit after completing each atomic unit of work.
 You MUST capture the why, not just the what.
 You SHOULD run `git diff` before committing to review changes.
@@ -849,27 +876,39 @@ You MUST NOT use echo/cat to write events because shell escaping breaks JSON.
     }
 
     fn done_section(&self, objective: Option<&str>) -> String {
-        let mut section = format!(
-            r"## DONE
+        let mut section = if self.hat_topology.is_some() {
+            format!(
+                r"## DONE
 
-You MUST emit a completion event `{}` when the objective is complete and all tasks are done.
-You MUST use `ralph emit` (stdout text does NOT end the loop).
+You MUST emit the completion event `{}` via `ralph emit` when the objective is complete and all tasks are done.
+Stdout text does NOT end the loop in coordinated mode.
 ",
-            self.completion_promise
-        );
+                self.completion_promise
+            )
+        } else {
+            format!(
+                r"## DONE
+
+You MUST output the literal completion promise `{}` as the final non-empty line when the objective is complete and all tasks are done.
+You MUST NOT substitute a prose summary for `{}`.
+You MUST NOT print any text after `{}`.
+",
+                self.completion_promise, self.completion_promise, self.completion_promise
+            )
+        };
 
         // Add task verification when memories/tasks mode is enabled
         if self.memories_enabled {
             section.push_str(
                 r"
 **Before declaring completion:**
-1. Run `ralph tools task ready` to check for open tasks
-2. If any tasks are open, complete them first
-3. Only emit the completion event when YOUR tasks are all closed
+1. Run `ralph tools task list` to check for any remaining non-terminal tasks
+2. If any tasks are still open or in progress, close, fail, or reopen them first
+3. Only declare completion when YOUR tasks for this objective are all terminal
 
 Tasks from other parallel loops are filtered out automatically. You only need to verify tasks YOU created for THIS objective are complete.
 
-You MUST NOT emit the completion event while tasks remain open.
+You MUST NOT declare completion while tasks remain open.
 ",
             );
         }
@@ -1254,6 +1293,10 @@ hats:
         assert!(
             prompt.contains("You MUST publish `tdd.start` immediately"),
             "Prompt should instruct immediate event publishing with MUST"
+        );
+        assert!(
+            prompt.contains("ralph emit \"tdd.start\""),
+            "Fast path should require explicit event emission"
         );
         assert!(
             !prompt.contains("### 1. PLAN"),
@@ -1673,7 +1716,7 @@ hats:
         );
         // And tasks CLI
         assert!(
-            prompt.contains("ralph tools task add"),
+            prompt.contains("ralph tools task ensure"),
             "Multi-hat workflow should reference tasks CLI when memories enabled"
         );
     }
@@ -1729,11 +1772,11 @@ hats:
         // The tasks CLI instructions are now injected via the skills pipeline,
         // but the DONE section still requires task verification before completion
         assert!(
-            prompt.contains("ralph tools task ready"),
-            "Should reference task ready command in DONE section"
+            prompt.contains("ralph tools task list"),
+            "Should reference task list command in DONE section"
         );
         assert!(
-            prompt.contains("MUST NOT emit the completion event while tasks remain open"),
+            prompt.contains("MUST NOT declare completion while tasks remain open"),
             "Should require tasks closed before completion"
         );
     }
@@ -1756,6 +1799,10 @@ hats:
         assert!(
             prompt.contains("run tests and verify"),
             "Should require verification"
+        );
+        assert!(
+            prompt.contains("ralph tools task start"),
+            "Should reference task start command"
         );
         assert!(
             prompt.contains("ralph tools task close"),
@@ -1933,6 +1980,10 @@ hats:
             "DONE should mention completion event"
         );
         assert!(
+            prompt.contains("final non-empty line"),
+            "Solo DONE section should require literal terminal output"
+        );
+        assert!(
             !prompt.contains("Remember your objective"),
             "Should NOT have objective reinforcement without objective"
         );
@@ -2025,6 +2076,10 @@ hats:
             prompt.contains("LOOP_COMPLETE"),
             "Completion promise should appear when coordinating"
         );
+        assert!(
+            prompt.contains("via `ralph emit`"),
+            "Coordinating DONE section should require explicit event emission"
+        );
     }
 
     #[test]
@@ -2085,6 +2140,10 @@ hats:
         assert!(
             prompt.contains("When you publish:"),
             "Guide should explain what happens when publishing"
+        );
+        assert!(
+            prompt.contains("You MUST use `ralph emit"),
+            "Guide should require explicit event emission"
         );
         // build.done has a receiver (Confessor)
         assert!(

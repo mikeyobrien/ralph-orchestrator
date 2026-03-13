@@ -148,3 +148,75 @@ fn test_task_show_json() {
     assert_eq!(task.id, task_id);
     assert_eq!(task.title, "Show me");
 }
+
+#[test]
+fn test_task_ensure_deduplicates_by_key_and_updates_metadata() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+
+    let first_id = ralph_task_ok(
+        temp_path,
+        &[
+            "ensure",
+            "Initial title",
+            "--key",
+            "impl:task-01",
+            "-p",
+            "2",
+            "--format",
+            "quiet",
+        ],
+    )
+    .trim()
+    .to_string();
+
+    let second_id = ralph_task_ok(
+        temp_path,
+        &[
+            "ensure",
+            "Updated title",
+            "--key",
+            "impl:task-01",
+            "-p",
+            "1",
+            "--format",
+            "quiet",
+        ],
+    )
+    .trim()
+    .to_string();
+
+    assert_eq!(first_id, second_id);
+
+    let tasks = list_tasks(temp_path, &["--all"]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id, first_id);
+    assert_eq!(tasks[0].title, "Updated title");
+    assert_eq!(tasks[0].priority, 1);
+    assert_eq!(tasks[0].key.as_deref(), Some("impl:task-01"));
+}
+
+#[test]
+fn test_task_start_and_reopen_update_lifecycle_fields() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+
+    let task_id = ralph_task_ok(temp_path, &["add", "Lifecycle task", "--format", "quiet"])
+        .trim()
+        .to_string();
+
+    ralph_task_ok(temp_path, &["start", &task_id]);
+    let stdout = ralph_task_ok(temp_path, &["show", &task_id, "--format", "json"]);
+    let task: Task = serde_json::from_str(&stdout).expect("parse started task");
+    assert_eq!(task.status, TaskStatus::InProgress);
+    assert!(task.started.is_some());
+
+    ralph_task_ok(temp_path, &["close", &task_id]);
+    ralph_task_ok(temp_path, &["reopen", &task_id]);
+
+    let stdout = ralph_task_ok(temp_path, &["show", &task_id, "--format", "json"]);
+    let task: Task = serde_json::from_str(&stdout).expect("parse reopened task");
+    assert_eq!(task.status, TaskStatus::Open);
+    assert!(task.started.is_some());
+    assert!(task.closed.is_none());
+}

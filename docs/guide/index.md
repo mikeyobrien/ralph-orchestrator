@@ -20,13 +20,13 @@ Practical guides for using Ralph Orchestrator effectively.
 
 - Initialize core config: `ralph init --backend claude`
 - List built-in hat collections: `ralph init --list-presets`
-- Run with hats: `ralph run -c ralph.yml -H builtin:feature`
+- Run with hats: `ralph run -c ralph.yml -H builtin:code-assist`
 
 ### Running Ralph
 
 - Basic run (core only): `ralph run -c ralph.yml`
 - With hats: `ralph run -c ralph.yml -H builtin:debug`
-- With inline prompt: `ralph run -c ralph.yml -H builtin:feature -p "Implement feature X"`
+- With inline prompt: `ralph run -c ralph.yml -H builtin:code-assist -p "Implement feature X"`
 - Headless mode: `ralph run --no-tui`
 - Resume session: `ralph run --continue`
 
@@ -41,10 +41,10 @@ Practical guides for using Ralph Orchestrator effectively.
 | Your Situation | Recommended Approach |
 |----------------|---------------------|
 | Simple task | Core only (no hats) |
-| Spec-driven work | `-H builtin:spec-driven` |
+| Implementation work | `-H builtin:code-assist` |
 | Bug investigation | `-H builtin:debug` |
 | Code review | `-H builtin:review` |
-| Documentation | `-H builtin:docs` |
+| Exploration and architecture mapping | `-H builtin:research` |
 
 ## Common Tasks
 
@@ -52,7 +52,7 @@ Practical guides for using Ralph Orchestrator effectively.
 
 ```bash
 ralph init --backend claude
-ralph run -c ralph.yml -H builtin:feature -p "Add OAuth login"
+ralph run -c ralph.yml -H builtin:code-assist -p "Add OAuth login"
 ```
 
 ### Debug an Issue

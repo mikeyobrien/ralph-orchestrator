@@ -8,7 +8,8 @@ Practical examples showing Ralph in action.
 |---------|-------------|
 | [Simple Task](simple-task.md) | Basic traditional mode usage |
 | [TDD Workflow](tdd-workflow.md) | Test-driven development with hats |
-| [Spec-Driven Development](spec-driven.md) | Specification-first approach |
+| [Automated PDD Design](pdd-design.md) | Example-only design workflow with simulated requirements interview |
+| [Spec-Driven Development](spec-driven.md) | Example-only workflow pattern, not a shipped builtin |
 | [Multi-Hat Workflow](multi-hat.md) | Complex coordination between hats |
 | [Debugging](debugging.md) | Using Ralph to investigate bugs |
 
@@ -45,7 +46,7 @@ Must handle:
 - Port numbers
 EOF
 
-ralph run -c ralph.yml -H builtin:spec-driven
+ralph run -c ralph.yml -H builtin:code-assist
 ```
 
 ### Inline Prompts
@@ -85,8 +86,8 @@ Use React components.
 Follow existing UI patterns.
 EOF
 
-# Run Ralph with feature hats
-ralph run -c ralph.yml -H builtin:feature
+# Run Ralph with the default implementation hats
+ralph run -c ralph.yml -H builtin:code-assist
 ```
 
 ### Bug Investigation
@@ -109,6 +110,7 @@ Detailed walkthroughs are available:
 
 - [Simple Task](simple-task.md) — Step-by-step traditional mode
 - [TDD Workflow](tdd-workflow.md) — Red-green-refactor with hats
-- [Spec-Driven](spec-driven.md) — Specification to implementation
+- [Automated PDD Design](pdd-design.md) — Simulated interview that ends with a reviewed design package
+- [Spec-Driven](spec-driven.md) — Example specification-first pattern
 - [Multi-Hat](multi-hat.md) — Complex hat coordination
 - [Debugging](debugging.md) — Bug investigation workflow
