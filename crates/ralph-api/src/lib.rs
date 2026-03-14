@@ -15,6 +15,7 @@ pub mod runtime;
 pub mod stream_domain;
 pub mod task_domain;
 pub mod transport;
+pub mod worker_domain;
 
 pub use config::{ApiConfig, AuthMode};
 pub use mcp::serve_stdio;
