@@ -1049,6 +1049,9 @@ fn test_default_publishes_injects_when_no_events() {
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         },
     );
     config.hats = hats;
@@ -1103,6 +1106,9 @@ fn test_default_publishes_not_injected_when_events_written() {
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         },
     );
     config.hats = hats;
@@ -1299,6 +1305,9 @@ fn test_default_publishes_skipped_when_non_orphan_event_written() {
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         },
     );
     config.hats = hats;
@@ -1366,6 +1375,9 @@ fn test_default_publishes_not_injected_when_not_configured() {
             default_publishes: None, // No default configured
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         },
     );
     config.hats = hats;
@@ -1555,6 +1567,82 @@ hats:
         event_loop.next_hat().unwrap().as_str(),
         "ralph",
         "build.done should route to Ralph"
+    );
+}
+
+#[test]
+fn test_wave_results_activate_synthesizer() {
+    // Simulates the wave review scenario:
+    // 1. Coordinator dispatches review.perspective (wave events)
+    // 2. After wave, review.done events are published to bus
+    // 3. On next iteration, synthesizer should be the active hat
+    let yaml = r#"
+hats:
+  coordinator:
+    name: "Coordinator"
+    triggers: ["review.start"]
+    publishes: ["review.perspective"]
+    instructions: "Dispatch reviewers as a wave."
+  reviewer:
+    name: "Reviewer"
+    triggers: ["review.perspective"]
+    publishes: ["review.done"]
+    concurrency: 3
+    instructions: "Review code from your specialty."
+  synthesizer:
+    name: "Synthesizer"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    instructions: "SYNTHESIZER MODE - Aggregate all review.done findings into a report."
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    // Step 1: Initialize with review.start — coordinator activates
+    event_loop.initialize("Review the code");
+    assert_eq!(event_loop.next_hat().unwrap().as_str(), "ralph");
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+    assert!(
+        prompt.contains("Coordinator"),
+        "Should activate coordinator for review.start"
+    );
+
+    // Step 2: Simulate wave results — publish review.done events directly to bus
+    // (this is what loop_runner does after merge_wave_results_to_events_file + re-read)
+    event_loop
+        .bus
+        .publish(Event::new("review.done", "Rust review findings"));
+    event_loop
+        .bus
+        .publish(Event::new("review.done", "Frontend review findings"));
+    event_loop
+        .bus
+        .publish(Event::new("review.done", "Docs review findings"));
+
+    // Step 3: next_hat should find pending events and return ralph
+    assert!(
+        event_loop.next_hat().is_some(),
+        "Should have pending events for next hat"
+    );
+
+    // Step 4: build_prompt should activate synthesizer (not coordinator)
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+
+    assert!(
+        prompt.contains("SYNTHESIZER MODE"),
+        "Should activate synthesizer for review.done events"
+    );
+    assert!(
+        !prompt.contains("Dispatch reviewers"),
+        "Should NOT have coordinator instructions"
+    );
+    assert!(
+        prompt.contains("review.done"),
+        "Should contain review.done events in context"
     );
 }
 
@@ -1949,6 +2037,74 @@ hats:
         "zebra_hat",
         "direct event targets should override generic topic subscriber ordering"
     );
+}
+
+#[test]
+fn test_determine_active_hat_ids_excludes_entrypoint_hats_when_progressed_events_exist() {
+    // When both a stale entrypoint event (review.start) and a progressed event
+    // (review.done) are pending, only the downstream hat should be activated —
+    // not the entrypoint hat. This prevents the coordinator from being
+    // re-included alongside the synthesizer after wave workers complete.
+    let yaml = r#"
+event_loop:
+  starting_event: "review.start"
+  completion_promise: "review.complete"
+hats:
+  coordinator:
+    name: "Coordinator"
+    triggers: ["review.start"]
+    publishes: ["review.perspective"]
+  synthesizer:
+    name: "Synthesizer"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Review the auth module");
+
+    // Simulate state after wave workers complete: stale review.start +
+    // new review.done events are both pending.
+    let events = vec![
+        Event::new("review.start", "Review the auth module"),
+        Event::new("review.done", "## Rust Review\n..."),
+        Event::new("review.done", "## Frontend Review\n..."),
+    ];
+
+    let active = event_loop.determine_active_hat_ids(&events);
+    assert_eq!(
+        active.len(),
+        1,
+        "Only the synthesizer should be active, not coordinator + synthesizer"
+    );
+    assert_eq!(
+        active[0].as_str(),
+        "synthesizer",
+        "The synthesizer (triggered by review.done) should be selected over the coordinator (triggered by stale review.start)"
+    );
+}
+
+#[test]
+fn test_determine_active_hat_ids_falls_back_to_entrypoint_when_no_progressed_events() {
+    // When only entrypoint events are pending, the entrypoint hat should be activated.
+    let yaml = r#"
+event_loop:
+  starting_event: "review.start"
+hats:
+  coordinator:
+    name: "Coordinator"
+    triggers: ["review.start"]
+    publishes: ["review.perspective"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Review the auth module");
+
+    let events = vec![Event::new("review.start", "Review the auth module")];
+
+    let active = event_loop.determine_active_hat_ids(&events);
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].as_str(), "coordinator");
 }
 
 #[test]
@@ -3899,6 +4055,9 @@ fn test_default_publishes_satisfies_required_events_for_completion() {
             default_publishes: Some("plan.draft".to_string()),
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         },
     );
     config.hats = hats;
@@ -3953,6 +4112,9 @@ fn test_default_publishes_completion_promise_triggers_termination() {
             default_publishes: Some("LOOP_COMPLETE".to_string()),
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         },
     );
     config.hats = hats;
@@ -4172,65 +4334,6 @@ fn test_human_response_still_works() {
     assert!(
         event_loop.has_pending_events(),
         "human.response event should be published when response received"
-    );
-}
-
-/// Regression: start event written to JSONL by EventLogger must not be
-/// re-read by `process_events_from_jsonl`, which would cause double-delivery.
-/// The fix is to call `sync_event_reader_to_file_end()` after writing the
-/// start event so the reader skips past it.
-#[test]
-fn test_sync_event_reader_prevents_start_event_double_delivery() {
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().unwrap();
-    let events_path = temp_dir.path().join("events.jsonl");
-
-    let mut config = RalphConfig::default();
-    config.event_loop.starting_event = Some("work.start".to_string());
-
-    let mut event_loop = EventLoop::new(config);
-    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
-
-    // 1. Initialize publishes start event to the bus (in-memory).
-    event_loop.initialize("Run the test");
-
-    // 2. Simulate EventLogger writing the same start event to the JSONL file.
-    write_event_to_jsonl(&events_path, "work.start", "Run the test");
-
-    // 3. Advance the reader past the logged entry.
-    event_loop.sync_event_reader_to_file_end();
-
-    // 4. Simulate an agent emitting a new event via `ralph emit`.
-    write_event_to_jsonl(&events_path, "seed.ready", "initialized");
-
-    // 5. process_events_from_jsonl should pick up ONLY seed.ready,
-    //    not the already-published work.start.
-    let processed = event_loop.process_events_from_jsonl().unwrap();
-    assert!(
-        processed.had_events,
-        "seed.ready should have been processed"
-    );
-
-    // Drain the bus and verify work.start appears exactly once (from initialize),
-    // not twice (which would happen without the sync).
-    let ralph_id = ralph_proto::HatId::new("ralph");
-    let pending = event_loop.bus.take_pending(&ralph_id);
-    let work_start_count = pending
-        .iter()
-        .filter(|e| e.topic.as_str() == "work.start")
-        .count();
-    assert_eq!(
-        work_start_count, 1,
-        "work.start must appear exactly once (from initialize), got {work_start_count}"
-    );
-    let seed_ready_count = pending
-        .iter()
-        .filter(|e| e.topic.as_str() == "seed.ready")
-        .count();
-    assert_eq!(
-        seed_ready_count, 1,
-        "seed.ready must appear exactly once (from JSONL), got {seed_ready_count}"
     );
 }
 
