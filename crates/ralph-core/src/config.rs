@@ -363,24 +363,13 @@ impl RalphConfig {
     }
 
     /// Validates the configuration and returns warnings.
-    ///
-    /// This method checks for:
-    /// - Deferred features that are enabled (archive_prompts, enable_metrics)
-    /// - Dropped fields that are present (max_tokens, retry_delay, tool_permissions)
-    /// - Ambiguous trigger routing across custom hats
-    /// - Mutual exclusivity of prompt and prompt_file
-    ///
-    /// Returns a list of warnings that should be displayed to the user.
     pub fn validate(&self) -> Result<Vec<ConfigWarning>, ConfigError> {
         let mut warnings = Vec::new();
 
-        // Skip all warnings if suppressed
         if self.suppress_warnings {
             return Ok(warnings);
         }
 
-        // Check for mutual exclusivity of prompt and prompt_file in config
-        // Only error if both are explicitly set (not defaults)
         if self.event_loop.prompt.is_some()
             && !self.event_loop.prompt_file.is_empty()
             && self.event_loop.prompt_file != default_prompt_file()
@@ -394,12 +383,10 @@ impl RalphConfig {
             return Err(ConfigError::InvalidCompletionPromise);
         }
 
-        // Check custom backend has a command
         if self.cli.backend == "custom" && self.cli.command.as_ref().is_none_or(String::is_empty) {
             return Err(ConfigError::CustomBackendRequiresCommand);
         }
 
-        // Check for deferred features
         if self.archive_prompts {
             warnings.push(ConfigWarning::DeferredFeature {
                 field: "archive_prompts".to_string(),
@@ -414,7 +401,6 @@ impl RalphConfig {
             });
         }
 
-        // Check for dropped fields
         if self.max_tokens.is_some() {
             warnings.push(ConfigWarning::DroppedField {
                 field: "max_tokens".to_string(),
@@ -438,7 +424,6 @@ impl RalphConfig {
             });
         }
 
-        // Check adapter tool_permissions (dropped field)
         if self.adapters.claude.tool_permissions.is_some()
             || self.adapters.gemini.tool_permissions.is_some()
             || self.adapters.codex.tool_permissions.is_some()
@@ -450,13 +435,9 @@ impl RalphConfig {
             });
         }
 
-        // Validate RObot config
         self.robot.validate()?;
-
-        // Validate hooks config semantics (v1 guardrails)
         self.validate_hooks()?;
 
-        // Check for required description field on all hats
         for (hat_id, hat_config) in &self.hats {
             if hat_config
                 .description
@@ -469,8 +450,20 @@ impl RalphConfig {
             }
         }
 
-        // Check for reserved triggers: task.start and task.resume are reserved for Ralph
-        // Per design: Ralph coordinates first, then delegates to custom hats via events
+        for (hat_id, hat_config) in &self.hats {
+            if hat_config.concurrency == 0 {
+                return Err(ConfigError::InvalidConcurrency {
+                    hat: hat_id.clone(),
+                    value: 0,
+                });
+            }
+            if hat_config.aggregate.is_some() && hat_config.concurrency > 1 {
+                return Err(ConfigError::AggregateOnConcurrentHat {
+                    hat: hat_id.clone(),
+                });
+            }
+        }
+
         const RESERVED_TRIGGERS: &[&str] = &["task.start", "task.resume"];
         for (hat_id, hat_config) in &self.hats {
             for trigger in &hat_config.triggers {
@@ -483,8 +476,6 @@ impl RalphConfig {
             }
         }
 
-        // Check for ambiguous routing: each trigger topic must map to exactly one hat
-        // Per spec: "Every trigger maps to exactly one hat | No ambiguous routing"
         if !self.hats.is_empty() {
             let mut trigger_to_hat: HashMap<&str, &str> = HashMap::new();
             for (hat_id, hat_config) in &self.hats {
@@ -532,15 +523,10 @@ impl RalphConfig {
                     });
                 }
 
-                if hook
-                    .command
-                    .first()
-                    .is_none_or(|command| command.trim().is_empty())
-                {
+                if hook.command.first().is_none_or(|command| command.trim().is_empty()) {
                     return Err(ConfigError::HookValidation {
                         field: format!("{hook_field_base}.command"),
-                        message: "is required and must include an executable at command[0]"
-                            .to_string(),
+                        message: "is required and must include an executable at command[0]".to_string(),
                     });
                 }
 
@@ -594,22 +580,18 @@ impl RalphConfig {
                 "global" | "globals" | "global_defaults" | "global_hooks" | "scope" => {
                     return Err(ConfigError::UnsupportedHookField {
                         field,
-                        reason: "Global hooks are out of scope for v1; use per-project hooks only"
-                            .to_string(),
+                        reason: "Global hooks are out of scope for v1; use per-project hooks only".to_string(),
                     });
                 }
                 "parallel" | "parallelism" | "max_parallel" | "concurrency" | "run_in_parallel" => {
                     return Err(ConfigError::UnsupportedHookField {
                         field,
-                        reason:
-                            "Parallel hook execution is out of scope for v1; hooks must run sequentially"
-                                .to_string(),
+                        reason: "Parallel hook execution is out of scope for v1; hooks must run sequentially".to_string(),
                     });
                 }
                 _ => {}
             }
         }
-
         Ok(())
     }
 
@@ -642,13 +624,11 @@ impl RalphConfig {
             let field = format!("{mutate_field_base}.{key}");
             let reason = match key.as_str() {
                 "prompt" | "prompt_mutation" | "events" | "event" | "config" | "full_context" => {
-                    "v1 allows metadata-only mutation; prompt/event/config mutation is unsupported"
-                        .to_string()
+                    "v1 allows metadata-only mutation; prompt/event/config mutation is unsupported".to_string()
                 }
                 "xml" => "v1 mutation payloads are JSON-only".to_string(),
                 _ => "unsupported mutate field in v1 (supported keys: enabled, format)".to_string(),
             };
-
             return Err(ConfigError::UnsupportedHookField { field, reason });
         }
 
@@ -661,7 +641,6 @@ impl RalphConfig {
     }
 
     /// Returns the agent priority list for auto-detection.
-    /// If empty, returns the default priority order.
     pub fn get_agent_priority(&self) -> Vec<&str> {
         if self.agent_priority.is_empty() {
             vec!["claude", "kiro", "gemini", "codex", "amp"]
@@ -671,7 +650,7 @@ impl RalphConfig {
     }
 
     /// Gets the adapter settings for a specific backend.
-    #[allow(clippy::match_same_arms)] // Explicit match arms for each backend improves readability
+    #[allow(clippy::match_same_arms)]
     pub fn adapter_settings(&self, backend: &str) -> &AdapterSettings {
         match backend {
             "claude" => &self.adapters.claude,
@@ -679,7 +658,7 @@ impl RalphConfig {
             "kiro" => &self.adapters.kiro,
             "codex" => &self.adapters.codex,
             "amp" => &self.adapters.amp,
-            _ => &self.adapters.claude, // Default fallback
+            _ => &self.adapters.claude,
         }
     }
 }
@@ -687,16 +666,13 @@ impl RalphConfig {
 /// Configuration warnings emitted during validation.
 #[derive(Debug, Clone)]
 pub enum ConfigWarning {
-    /// Feature is enabled but not yet available in v2.
     DeferredFeature { field: String, message: String },
-    /// Field is present but ignored in v2.
     DroppedField { field: String, reason: String },
-    /// Field has an invalid value.
     InvalidValue { field: String, message: String },
 }
 
 impl std::fmt::Display for ConfigWarning {
-    #[allow(clippy::match_same_arms)] // Different arms have different messages despite similar structure
+    #[allow(clippy::match_same_arms)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigWarning::DeferredFeature { field, message }
@@ -713,104 +689,39 @@ impl std::fmt::Display for ConfigWarning {
 /// Event loop configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventLoopConfig {
-    /// Inline prompt text (mutually exclusive with prompt_file).
     pub prompt: Option<String>,
-
-    /// Path to the prompt file.
     #[serde(default = "default_prompt_file")]
     pub prompt_file: String,
-
-    /// Event topic that signals loop completion (must be emitted via `ralph emit`).
     #[serde(default = "default_completion_promise")]
     pub completion_promise: String,
-
-    /// Maximum number of iterations before timeout.
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
-
-    /// Maximum runtime in seconds.
     #[serde(default = "default_max_runtime")]
     pub max_runtime_seconds: u64,
-
-    /// Maximum cost in USD before stopping.
     pub max_cost_usd: Option<f64>,
-
-    /// Stop after this many consecutive failures.
     #[serde(default = "default_max_failures")]
     pub max_consecutive_failures: u32,
-
-    /// Delay in seconds before starting the next iteration.
-    /// Skipped when the next iteration is triggered by a human event.
     #[serde(default)]
     pub cooldown_delay_seconds: u64,
-
-    /// Starting hat for multi-hat mode (deprecated, use starting_event instead).
     pub starting_hat: Option<String>,
-
-    /// Event to publish after Ralph completes initial coordination.
-    ///
-    /// When custom hats are defined, Ralph handles `task.start` to do gap analysis
-    /// and planning, then publishes this event to delegate to the first hat.
-    ///
-    /// Example: `starting_event: "tdd.start"` for TDD workflow.
-    ///
-    /// If not specified and hats are defined, Ralph will determine the appropriate
-    /// event from the hat topology.
     pub starting_event: Option<String>,
-
-    /// Warn when mutation testing score drops below this percentage (0-100).
-    ///
-    /// Warning-only: build.done is still accepted even if below threshold.
     #[serde(default)]
     pub mutation_score_warn_threshold: Option<f64>,
-
-    /// When true, LOOP_COMPLETE does not terminate the loop.
-    ///
-    /// Instead of exiting, the loop injects a `task.resume` event and continues
-    /// idling until new work arrives (human guidance, Telegram commands, etc.).
-    /// The loop will only terminate on hard limits (max_iterations, max_runtime,
-    /// max_cost), consecutive failures, or explicit interrupt/stop.
     #[serde(default)]
     pub persistent: bool,
-
-    /// Event topics that must have been seen before LOOP_COMPLETE is accepted.
-    /// If any required event has not been seen during the loop's lifetime,
-    /// completion is rejected and a task.resume event is injected.
     #[serde(default)]
     pub required_events: Vec<String>,
-
-    /// Event topic that triggers graceful early termination WITHOUT chain validation.
-    /// Use this for human rejection, timeout escalation, or other abort paths.
-    /// Defaults to "" (disabled). Set to "loop.cancel" to enable.
     #[serde(default)]
     pub cancellation_promise: String,
-
-    /// When true, events emitted by a hat are validated against its declared
-    /// `publishes` list. Out-of-scope events are dropped and replaced with
-    /// `{hat_id}.scope_violation` diagnostic events. Defaults to false (permissive).
     #[serde(default)]
     pub enforce_hat_scope: bool,
 }
 
-fn default_prompt_file() -> String {
-    "PROMPT.md".to_string()
-}
-
-fn default_completion_promise() -> String {
-    "LOOP_COMPLETE".to_string()
-}
-
-fn default_max_iterations() -> u32 {
-    100
-}
-
-fn default_max_runtime() -> u64 {
-    14400 // 4 hours
-}
-
-fn default_max_failures() -> u32 {
-    5
-}
+fn default_prompt_file() -> String { "PROMPT.md".to_string() }
+fn default_completion_promise() -> String { "LOOP_COMPLETE".to_string() }
+fn default_max_iterations() -> u32 { 100 }
+fn default_max_runtime() -> u64 { 14400 }
+fn default_max_failures() -> u32 { 5 }
 
 impl Default for EventLoopConfig {
     fn default() -> Self {
@@ -835,42 +746,20 @@ impl Default for EventLoopConfig {
 }
 
 /// Core paths and settings shared across all hats.
-///
-/// Per spec: "Core behaviors (always injected, can customize paths)"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreConfig {
-    /// Path to the scratchpad file (shared state between hats).
     #[serde(default = "default_scratchpad")]
     pub scratchpad: String,
-
-    /// Path to the specs directory (source of truth for requirements).
     #[serde(default = "default_specs_dir")]
     pub specs_dir: String,
-
-    /// Guardrails injected into every prompt (core behaviors).
-    ///
-    /// Per spec: These are always present regardless of hat.
     #[serde(default = "default_guardrails")]
     pub guardrails: Vec<String>,
-
-    /// Root directory for workspace-relative paths (.ralph/, specs, etc.).
-    ///
-    /// All relative paths (scratchpad, specs_dir, memories) are resolved relative
-    /// to this directory. Defaults to the current working directory.
-    ///
-    /// This is especially important for E2E tests that run in isolated workspaces.
     #[serde(skip)]
     pub workspace_root: std::path::PathBuf,
 }
 
-fn default_scratchpad() -> String {
-    ".ralph/agent/scratchpad.md".to_string()
-}
-
-fn default_specs_dir() -> String {
-    ".ralph/specs/".to_string()
-}
-
+fn default_scratchpad() -> String { ".ralph/agent/scratchpad.md".to_string() }
+fn default_specs_dir() -> String { ".ralph/specs/".to_string() }
 fn default_guardrails() -> Vec<String> {
     vec![
         "Fresh context each iteration - scratchpad is memory".to_string(),
@@ -898,18 +787,11 @@ impl Default for CoreConfig {
 }
 
 impl CoreConfig {
-    /// Sets the workspace root for resolving relative paths.
-    ///
-    /// This is used by E2E tests to point to their isolated test workspace.
     pub fn with_workspace_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
         self.workspace_root = root.into();
         self
     }
 
-    /// Resolves a relative path against the workspace root.
-    ///
-    /// If the path is already absolute, it is returned as-is.
-    /// Otherwise, it is joined with the workspace root.
     pub fn resolve_path(&self, relative: &str) -> std::path::PathBuf {
         let path = std::path::Path::new(relative);
         if path.is_absolute() {
@@ -923,55 +805,25 @@ impl CoreConfig {
 /// CLI backend configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliConfig {
-    /// Backend to use: "claude", "kiro", "gemini", "codex", "amp", "pi", or "custom".
     #[serde(default = "default_backend")]
     pub backend: String,
-
-    /// Command override. Required for "custom" backend.
-    /// For named backends, overrides the default binary path.
     pub command: Option<String>,
-
-    /// How to pass prompts: "arg" or "stdin".
     #[serde(default = "default_prompt_mode")]
     pub prompt_mode: String,
-
-    /// Execution mode when --interactive not specified.
-    /// Values: "autonomous" (default), "interactive"
     #[serde(default = "default_mode")]
     pub default_mode: String,
-
-    /// Idle timeout in seconds for interactive mode.
-    /// Process is terminated after this many seconds of inactivity (no output AND no user input).
-    /// Set to 0 to disable idle timeout.
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_secs: u32,
-
-    /// Custom arguments to pass to the CLI command (for backend: "custom").
-    /// These are inserted before the prompt argument.
     #[serde(default)]
     pub args: Vec<String>,
-
-    /// Custom prompt flag for arg mode (for backend: "custom").
-    /// If None, defaults to "-p" for arg mode.
     #[serde(default)]
     pub prompt_flag: Option<String>,
 }
 
-fn default_backend() -> String {
-    "claude".to_string()
-}
-
-fn default_prompt_mode() -> String {
-    "arg".to_string()
-}
-
-fn default_mode() -> String {
-    "autonomous".to_string()
-}
-
-fn default_idle_timeout() -> u32 {
-    30 // 30 seconds per spec
-}
+fn default_backend() -> String { "claude".to_string() }
+fn default_prompt_mode() -> String { "arg".to_string() }
+fn default_mode() -> String { "autonomous".to_string() }
+fn default_idle_timeout() -> u32 { 30 }
 
 impl Default for CliConfig {
     fn default() -> Self {
@@ -990,23 +842,16 @@ impl Default for CliConfig {
 /// TUI configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TuiConfig {
-    /// Prefix key combination (e.g., "ctrl-a", "ctrl-b").
     #[serde(default = "default_prefix_key")]
     pub prefix_key: String,
 }
 
-/// Memory injection mode.
-///
-/// Controls how memories are injected into agent context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InjectMode {
-    /// Ralph automatically injects memories at the start of each iteration.
     #[default]
     Auto,
-    /// Agent must explicitly run `ralph memory search` to access memories.
     Manual,
-    /// Memories feature is disabled.
     None,
 }
 
@@ -1020,40 +865,14 @@ impl std::fmt::Display for InjectMode {
     }
 }
 
-/// Memories configuration.
-///
-/// Controls the persistent learning system that allows Ralph to accumulate
-/// wisdom across sessions. Memories are stored in `.ralph/agent/memories.md`.
-///
-/// When enabled, the memories skill is automatically injected to teach
-/// agents how to create and search memories (skill injection is implicit).
-///
-/// Example configuration:
-/// ```yaml
-/// memories:
-///   enabled: true
-///   inject: auto
-///   budget: 2000
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoriesConfig {
-    /// Whether the memories feature is enabled.
-    ///
-    /// When true, memories are injected and the skill is taught to the agent.
     #[serde(default)]
     pub enabled: bool,
-
-    /// How memories are injected into agent context.
     #[serde(default)]
     pub inject: InjectMode,
-
-    /// Maximum tokens to inject (0 = unlimited).
-    ///
-    /// When set, memories are truncated to fit within this budget.
     #[serde(default)]
     pub budget: usize,
-
-    /// Filter configuration for memory injection.
     #[serde(default)]
     pub filter: MemoriesFilter,
 }
@@ -1061,7 +880,7 @@ pub struct MemoriesConfig {
 impl Default for MemoriesConfig {
     fn default() -> Self {
         Self {
-            enabled: true, // Memories enabled by default
+            enabled: true,
             inject: InjectMode::Auto,
             budget: 0,
             filter: MemoriesFilter::default(),
@@ -1069,114 +888,50 @@ impl Default for MemoriesConfig {
     }
 }
 
-/// Filter configuration for memory injection.
-///
-/// Controls which memories are included when priming context.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoriesFilter {
-    /// Filter by memory types (empty = all types).
     #[serde(default)]
     pub types: Vec<String>,
-
-    /// Filter by tags (empty = all tags).
     #[serde(default)]
     pub tags: Vec<String>,
-
-    /// Only include memories from the last N days (0 = no time limit).
     #[serde(default)]
     pub recent: u32,
 }
 
-/// Tasks configuration.
-///
-/// Controls the runtime task tracking system that allows Ralph to manage
-/// work items across iterations. Tasks are stored in `.ralph/agent/tasks.jsonl`.
-///
-/// When enabled, tasks replace scratchpad for loop completion verification.
-///
-/// Example configuration:
-/// ```yaml
-/// tasks:
-///   enabled: true
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TasksConfig {
-    /// Whether the tasks feature is enabled.
-    ///
-    /// When true, tasks are used for loop completion verification.
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
 impl Default for TasksConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true, // Tasks enabled by default
-        }
-    }
+    fn default() -> Self { Self { enabled: true } }
 }
 
-/// Hooks configuration.
-///
-/// Controls per-project orchestrator lifecycle hooks. Hooks are disabled by
-/// default and are inert until explicitly enabled.
-///
-/// Example configuration:
-/// ```yaml
-/// hooks:
-///   enabled: true
-///   defaults:
-///     timeout_seconds: 30
-///     max_output_bytes: 8192
-///     suspend_mode: wait_for_resume
-///   events:
-///     pre.loop.start:
-///       - name: env-guard
-///         command: ["./scripts/hooks/env-guard.sh"]
-///         on_error: block
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HooksConfig {
-    /// Whether lifecycle hooks are enabled.
     #[serde(default)]
     pub enabled: bool,
-
-    /// Default guardrails applied to hook specs when per-hook values are absent.
     #[serde(default)]
     pub defaults: HookDefaults,
-
-    /// Hook lists by lifecycle phase-event key.
     #[serde(default)]
     pub events: HashMap<HookPhaseEvent, Vec<HookSpec>>,
-
-    /// Unknown keys captured for v1 guardrails.
     #[serde(default, flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
 
-/// Hook defaults applied when a hook spec omits optional limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookDefaults {
-    /// Maximum execution time per hook in seconds.
     #[serde(default = "default_hook_timeout_seconds")]
     pub timeout_seconds: u64,
-
-    /// Maximum stdout/stderr bytes stored per stream.
     #[serde(default = "default_hook_max_output_bytes")]
     pub max_output_bytes: u64,
-
-    /// Suspend strategy used when `on_error: suspend` and no per-hook mode is set.
     #[serde(default)]
     pub suspend_mode: HookSuspendMode,
 }
 
-fn default_hook_timeout_seconds() -> u64 {
-    30
-}
-
-fn default_hook_max_output_bytes() -> u64 {
-    8192
-}
+fn default_hook_timeout_seconds() -> u64 { 30 }
+fn default_hook_max_output_bytes() -> u64 { 8192 }
 
 impl Default for HookDefaults {
     fn default() -> Self {
@@ -1188,37 +943,23 @@ impl Default for HookDefaults {
     }
 }
 
-/// Supported lifecycle phase-event keys for v1 hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HookPhaseEvent {
-    #[serde(rename = "pre.loop.start")]
-    PreLoopStart,
-    #[serde(rename = "post.loop.start")]
-    PostLoopStart,
-    #[serde(rename = "pre.iteration.start")]
-    PreIterationStart,
-    #[serde(rename = "post.iteration.start")]
-    PostIterationStart,
-    #[serde(rename = "pre.plan.created")]
-    PrePlanCreated,
-    #[serde(rename = "post.plan.created")]
-    PostPlanCreated,
-    #[serde(rename = "pre.human.interact")]
-    PreHumanInteract,
-    #[serde(rename = "post.human.interact")]
-    PostHumanInteract,
-    #[serde(rename = "pre.loop.complete")]
-    PreLoopComplete,
-    #[serde(rename = "post.loop.complete")]
-    PostLoopComplete,
-    #[serde(rename = "pre.loop.error")]
-    PreLoopError,
-    #[serde(rename = "post.loop.error")]
-    PostLoopError,
+    #[serde(rename = "pre.loop.start")] PreLoopStart,
+    #[serde(rename = "post.loop.start")] PostLoopStart,
+    #[serde(rename = "pre.iteration.start")] PreIterationStart,
+    #[serde(rename = "post.iteration.start")] PostIterationStart,
+    #[serde(rename = "pre.plan.created")] PrePlanCreated,
+    #[serde(rename = "post.plan.created")] PostPlanCreated,
+    #[serde(rename = "pre.human.interact")] PreHumanInteract,
+    #[serde(rename = "post.human.interact")] PostHumanInteract,
+    #[serde(rename = "pre.loop.complete")] PreLoopComplete,
+    #[serde(rename = "post.loop.complete")] PostLoopComplete,
+    #[serde(rename = "pre.loop.error")] PreLoopError,
+    #[serde(rename = "post.loop.error")] PostLoopError,
 }
 
 impl HookPhaseEvent {
-    /// Canonical string value used in YAML keys and telemetry.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PreLoopStart => "pre.loop.start",
@@ -1236,7 +977,6 @@ impl HookPhaseEvent {
         }
     }
 
-    /// Parses a phase-event string to the canonical enum.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "pre.loop.start" => Some(Self::PreLoopStart),
@@ -1263,26 +1003,11 @@ impl std::fmt::Display for HookPhaseEvent {
 }
 
 fn validate_hooks_phase_event_keys(value: &serde_yaml::Value) -> Result<(), ConfigError> {
-    let Some(root) = value.as_mapping() else {
-        return Ok(());
-    };
-
-    let Some(hooks) = root.get(serde_yaml::Value::String("hooks".to_string())) else {
-        return Ok(());
-    };
-
-    let Some(hooks_map) = hooks.as_mapping() else {
-        return Ok(());
-    };
-
-    let Some(events) = hooks_map.get(serde_yaml::Value::String("events".to_string())) else {
-        return Ok(());
-    };
-
-    let Some(events_map) = events.as_mapping() else {
-        return Ok(());
-    };
-
+    let Some(root) = value.as_mapping() else { return Ok(()); };
+    let Some(hooks) = root.get(serde_yaml::Value::String("hooks".to_string())) else { return Ok(()); };
+    let Some(hooks_map) = hooks.as_mapping() else { return Ok(()); };
+    let Some(events) = hooks_map.get(serde_yaml::Value::String("events".to_string())) else { return Ok(()); };
+    let Some(events_map) = events.as_mapping() else { return Ok(()); };
     for key in events_map.keys() {
         if let Some(phase_event) = key.as_str()
             && HookPhaseEvent::parse(phase_event).is_none()
@@ -1292,129 +1017,62 @@ fn validate_hooks_phase_event_keys(value: &serde_yaml::Value) -> Result<(), Conf
             });
         }
     }
-
     Ok(())
 }
 
-/// Per-hook failure disposition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum HookOnError {
-    /// Continue orchestration and record warning telemetry.
-    Warn,
-    /// Stop the current lifecycle action as a failure.
-    Block,
-    /// Suspend orchestration and await policy-specific recovery.
-    Suspend,
-}
+pub enum HookOnError { Warn, Block, Suspend }
 
-/// Suspend mode used for `on_error: suspend`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookSuspendMode {
-    /// Pause the loop until an explicit operator resume signal is received.
     #[default]
     WaitForResume,
-    /// Retry automatically with bounded backoff.
     RetryBackoff,
-    /// Wait for resume, then retry once.
     WaitThenRetry,
 }
 
-/// Mutation settings for a hook.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HookMutationConfig {
-    /// Opt-in flag for parsing stdout as mutation JSON.
     #[serde(default)]
     pub enabled: bool,
-
-    /// Optional explicit payload format guardrail. Only `json` is valid in v1.
     #[serde(default)]
     pub format: Option<String>,
-
-    /// Unknown keys captured for v1 mutation guardrails.
     #[serde(default, flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
 
-/// Hook specification for a single lifecycle event mapping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookSpec {
-    /// Stable hook identifier used in telemetry and diagnostics.
     #[serde(default)]
     pub name: String,
-
-    /// Command argv form (`command[0]` executable + args).
     #[serde(default)]
     pub command: Vec<String>,
-
-    /// Optional working directory override.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
-
-    /// Optional environment variable overrides.
     #[serde(default)]
     pub env: HashMap<String, String>,
-
-    /// Per-hook timeout override in seconds.
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
-
-    /// Per-hook output cap override in bytes (applies per stream).
     #[serde(default)]
     pub max_output_bytes: Option<u64>,
-
-    /// Failure behavior (`warn`, `block`, `suspend`). Required in v1.
     #[serde(default)]
     pub on_error: Option<HookOnError>,
-
-    /// Optional suspend strategy override for `on_error: suspend`.
     #[serde(default)]
     pub suspend_mode: Option<HookSuspendMode>,
-
-    /// Mutation policy (opt-in, JSON-only contract enforced by validation/runtime).
     #[serde(default)]
     pub mutate: HookMutationConfig,
-
-    /// Unknown keys captured for v1 guardrails.
     #[serde(default, flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
 }
 
-/// Skills configuration.
-///
-/// Controls the skill discovery and injection system that makes tool
-/// knowledge and domain expertise available to agents during loops.
-///
-/// Skills use a two-tier injection model: a compact skill index is always
-/// present in every prompt, and the agent loads full skill content on demand
-/// via `ralph tools skill load <name>`.
-///
-/// Example configuration:
-/// ```yaml
-/// skills:
-///   enabled: true
-///   dirs:
-///     - ".claude/skills"
-///   overrides:
-///     pdd:
-///       enabled: false
-///     memories:
-///       auto_inject: true
-///       hats: ["ralph"]
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsConfig {
-    /// Whether the skills system is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
-
-    /// Directories to scan for skill files.
-    /// Relative paths resolved against workspace root.
     #[serde(default)]
     pub dirs: Vec<PathBuf>,
-
-    /// Per-skill overrides keyed by skill name.
     #[serde(default)]
     pub overrides: HashMap<String, SkillOverride>,
 }
@@ -1422,97 +1080,45 @@ pub struct SkillsConfig {
 impl Default for SkillsConfig {
     fn default() -> Self {
         Self {
-            enabled: true, // Skills enabled by default
+            enabled: true,
             dirs: vec![],
             overrides: HashMap::new(),
         }
     }
 }
 
-/// Per-skill configuration override.
-///
-/// Allows enabling/disabling individual skills and overriding their
-/// frontmatter fields (hats, backends, tags, auto_inject).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillOverride {
-    /// Disable a discovered skill.
     #[serde(default)]
     pub enabled: Option<bool>,
-
-    /// Restrict skill to specific hats.
     #[serde(default)]
     pub hats: Vec<String>,
-
-    /// Restrict skill to specific backends.
     #[serde(default)]
     pub backends: Vec<String>,
-
-    /// Tags for categorization.
     #[serde(default)]
     pub tags: Vec<String>,
-
-    /// Inject full content into prompt (not just index entry).
     #[serde(default)]
     pub auto_inject: Option<bool>,
 }
 
-/// Preflight check configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PreflightConfig {
-    /// Whether to run preflight checks before `ralph run`.
     #[serde(default)]
     pub enabled: bool,
-
-    /// Whether to treat warnings as failures.
     #[serde(default)]
     pub strict: bool,
-
-    /// Specific checks to skip (by name). Empty = run all checks.
     #[serde(default)]
     pub skip: Vec<String>,
 }
 
-/// Feature flags for optional Ralph capabilities.
-///
-/// Example configuration:
-/// ```yaml
-/// features:
-///   parallel: true  # Enable parallel loops via git worktrees
-///   auto_merge: false  # Auto-merge worktree branches on completion
-///   preflight:
-///     enabled: false      # Opt-in: run preflight checks before `ralph run`
-///     strict: false       # Treat warnings as failures
-///     skip: ["telegram"]  # Skip specific checks by name
-///   loop_naming:
-///     format: human-readable  # or "timestamp" for legacy format
-///     max_length: 50
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeaturesConfig {
-    /// Whether parallel loops are enabled.
-    ///
-    /// When true (default), if another loop holds the lock, Ralph spawns
-    /// a parallel loop in a git worktree. When false, Ralph errors instead.
     #[serde(default = "default_true")]
     pub parallel: bool,
-
-    /// Whether to automatically merge worktree branches on completion.
-    ///
-    /// When false (default), completed worktree loops queue for manual merge.
-    /// When true, Ralph automatically merges the worktree branch into the
-    /// main branch after a parallel loop completes.
     #[serde(default)]
     pub auto_merge: bool,
-
-    /// Loop naming configuration for worktree branches.
-    ///
-    /// Controls how loop IDs are generated for parallel loops.
-    /// Default uses human-readable format: `fix-header-swift-peacock`
-    /// Legacy timestamp format: `ralph-YYYYMMDD-HHMMSS-XXXX`
     #[serde(default)]
     pub loop_naming: crate::loop_name::LoopNamingConfig,
-
-    /// Preflight check configuration.
     #[serde(default)]
     pub preflight: PreflightConfig,
 }
@@ -1520,34 +1126,25 @@ pub struct FeaturesConfig {
 impl Default for FeaturesConfig {
     fn default() -> Self {
         Self {
-            parallel: true,    // Parallel loops enabled by default
-            auto_merge: false, // Auto-merge disabled by default for safety
+            parallel: true,
+            auto_merge: false,
             loop_naming: crate::loop_name::LoopNamingConfig::default(),
             preflight: PreflightConfig::default(),
         }
     }
 }
 
-fn default_prefix_key() -> String {
-    "ctrl-a".to_string()
-}
+fn default_prefix_key() -> String { "ctrl-a".to_string() }
 
 impl Default for TuiConfig {
-    fn default() -> Self {
-        Self {
-            prefix_key: default_prefix_key(),
-        }
-    }
+    fn default() -> Self { Self { prefix_key: default_prefix_key() } }
 }
 
 impl TuiConfig {
-    /// Parses the prefix_key string into KeyCode and KeyModifiers.
-    /// Returns an error if the format is invalid.
     pub fn parse_prefix(
         &self,
     ) -> Result<(crossterm::event::KeyCode, crossterm::event::KeyModifiers), String> {
         use crossterm::event::{KeyCode, KeyModifiers};
-
         let parts: Vec<&str> = self.prefix_key.split('-').collect();
         if parts.len() != 2 {
             return Err(format!(
@@ -1555,69 +1152,32 @@ impl TuiConfig {
                 self.prefix_key
             ));
         }
-
         let modifier = match parts[0].to_lowercase().as_str() {
             "ctrl" => KeyModifiers::CONTROL,
-            _ => {
-                return Err(format!(
-                    "Invalid modifier: '{}'. Only 'ctrl' is supported (e.g., 'ctrl-a')",
-                    parts[0]
-                ));
-            }
+            _ => return Err(format!("Invalid modifier: '{}'. Only 'ctrl' is supported (e.g., 'ctrl-a')", parts[0])),
         };
-
         let key_str = parts[1];
         if key_str.len() != 1 {
-            return Err(format!(
-                "Invalid key: '{}'. Expected a single character (e.g., 'a', 'b')",
-                key_str
-            ));
+            return Err(format!("Invalid key: '{}'. Expected a single character (e.g., 'a', 'b')", key_str));
         }
-
         let key_char = key_str.chars().next().unwrap();
-        let key_code = KeyCode::Char(key_char);
-
-        Ok((key_code, modifier))
+        Ok((KeyCode::Char(key_char), modifier))
     }
 }
 
-/// Metadata for an event topic.
-///
-/// Defines what an event means, enabling auto-derived instructions for hats.
-/// When a hat triggers on or publishes an event, this metadata is used to
-/// generate appropriate behavior instructions.
-///
-/// Example:
-/// ```yaml
-/// events:
-///   deploy.start:
-///     description: "Deployment has been requested"
-///     on_trigger: "Prepare artifacts, validate config, check dependencies"
-///     on_publish: "Signal that deployment should begin"
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventMetadata {
-    /// Brief description of what this event represents.
     #[serde(default)]
     pub description: String,
-
-    /// Instructions for a hat that triggers on (receives) this event.
-    /// Describes what the hat should do when it receives this event.
     #[serde(default)]
     pub on_trigger: String,
-
-    /// Instructions for a hat that publishes (emits) this event.
-    /// Describes when/how the hat should emit this event.
     #[serde(default)]
     pub on_publish: String,
 }
 
-/// Backend configuration for a hat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum HatBackend {
-    // Order matters for serde untagged - most specific first
-    /// Kiro agent with custom agent name and optional args.
     KiroAgent {
         #[serde(rename = "type")]
         backend_type: String,
@@ -1625,16 +1185,13 @@ pub enum HatBackend {
         #[serde(default)]
         args: Vec<String>,
     },
-    /// Named backend with args (has `type` but no `agent`).
     NamedWithArgs {
         #[serde(rename = "type")]
         backend_type: String,
         #[serde(default)]
         args: Vec<String>,
     },
-    /// Simple named backend (string form).
     Named(String),
-    /// Custom backend with command and args.
     Custom {
         command: String,
         #[serde(default)]
@@ -1643,7 +1200,6 @@ pub enum HatBackend {
 }
 
 impl HatBackend {
-    /// Converts to CLI backend string for execution.
     pub fn to_cli_backend(&self) -> String {
         match self {
             HatBackend::Named(name) => name.clone(),
@@ -1654,276 +1210,142 @@ impl HatBackend {
     }
 }
 
-/// Configuration for a single hat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HatConfig {
-    /// Human-readable name for the hat.
     pub name: String,
-
-    /// Short description of the hat's purpose (required).
-    /// Used in the HATS table to help Ralph understand when to delegate to this hat.
     pub description: Option<String>,
-
-    /// Events that trigger this hat to be worn.
-    /// Per spec: "Hats define triggers — which events cause Ralph to wear this hat."
     #[serde(default)]
     pub triggers: Vec<String>,
-
-    /// Topics this hat publishes.
     #[serde(default)]
     pub publishes: Vec<String>,
-
-    /// Instructions prepended to prompts.
     #[serde(default)]
     pub instructions: String,
-
-    /// Additional instruction fragments appended to `instructions`.
-    ///
-    /// Use with YAML anchors to share common instruction blocks across hats:
-    /// ```yaml
-    /// _confidence_protocol: &confidence_protocol |
-    ///   ### Confidence-Based Decision Protocol
-    ///   ...
-    ///
-    /// hats:
-    ///   architect:
-    ///     instructions: |
-    ///       ## ARCHITECT MODE
-    ///       ...
-    ///     extra_instructions:
-    ///       - *confidence_protocol
-    /// ```
     #[serde(default)]
     pub extra_instructions: Vec<String>,
-
-    /// Backend to use for this hat (inherits from cli.backend if not specified).
     #[serde(default)]
     pub backend: Option<HatBackend>,
-
-    /// Custom args to append to the backend CLI when this hat is active.
-    ///
-    /// Accepts both `backend_args:` and shorthand `args:`.
     #[serde(default, alias = "args")]
     pub backend_args: Option<Vec<String>>,
-
-    /// Default event to publish if hat forgets to write an event.
     #[serde(default)]
     pub default_publishes: Option<String>,
-
-    /// Maximum number of times this hat may be activated in a single loop run.
-    ///
-    /// When the limit is exceeded, the orchestrator publishes `<hat_id>.exhausted`
-    /// instead of activating the hat again.
     pub max_activations: Option<u32>,
-
-    /// Tools the hat is not allowed to use.
-    ///
-    /// Injected as a TOOL RESTRICTIONS section in the prompt (soft enforcement).
-    /// After each iteration, a file-modification audit checks compliance when
-    /// `Edit` or `Write` are disallowed (hard enforcement via scope_violation event).
     #[serde(default)]
     pub disallowed_tools: Vec<String>,
+    #[serde(default)]
+    pub timeout: Option<u32>,
+    #[serde(default = "default_concurrency")]
+    pub concurrency: u32,
+    #[serde(default)]
+    pub aggregate: Option<AggregateConfig>,
+}
+
+fn default_concurrency() -> u32 { 1 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregateConfig {
+    pub mode: AggregateMode,
+    pub timeout: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AggregateMode {
+    WaitForAll,
 }
 
 impl HatConfig {
-    /// Converts trigger strings to Topic objects.
     pub fn trigger_topics(&self) -> Vec<Topic> {
         self.triggers.iter().map(|s| Topic::new(s)).collect()
     }
-
-    /// Converts publish strings to Topic objects.
     pub fn publish_topics(&self) -> Vec<Topic> {
         self.publishes.iter().map(|s| Topic::new(s)).collect()
     }
 }
 
-/// RObot (Ralph-Orchestrator bot) configuration.
-///
-/// Enables bidirectional communication between AI agents and humans
-/// during orchestration loops. When enabled, agents can emit `human.interact`
-/// events to request clarification (blocking the loop), and humans can
-/// send proactive guidance via Telegram.
-///
-/// Example configuration:
-/// ```yaml
-/// RObot:
-///   enabled: true
-///   timeout_seconds: 300
-///   checkin_interval_seconds: 120  # Optional: send status every 2 min
-///   telegram:
-///     bot_token: "..."  # Or set RALPH_TELEGRAM_BOT_TOKEN env var
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RobotConfig {
-    /// Whether the RObot is enabled.
     #[serde(default)]
     pub enabled: bool,
-
-    /// Timeout in seconds for waiting on human responses.
-    /// Required when enabled (no default — must be explicit).
     pub timeout_seconds: Option<u64>,
-
-    /// Interval in seconds between periodic check-in messages sent via Telegram.
-    /// When set, Ralph sends a status message every N seconds so the human
-    /// knows it's still working. If `None`, no check-ins are sent.
     pub checkin_interval_seconds: Option<u64>,
-
-    /// Telegram bot configuration.
     #[serde(default)]
     pub telegram: Option<TelegramBotConfig>,
 }
 
 impl RobotConfig {
-    /// Validates the RObot config. Returns an error if enabled but misconfigured.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !self.enabled {
-            return Ok(());
-        }
-
+        if !self.enabled { return Ok(()); }
         if self.timeout_seconds.is_none() {
             return Err(ConfigError::RobotMissingField {
                 field: "RObot.timeout_seconds".to_string(),
                 hint: "timeout_seconds is required when RObot is enabled".to_string(),
             });
         }
-
-        // Bot token must be available from config, keychain, or env var
         if self.resolve_bot_token().is_none() {
             return Err(ConfigError::RobotMissingField {
                 field: "RObot.telegram.bot_token".to_string(),
-                hint: "Run `ralph bot onboard --telegram`, set RALPH_TELEGRAM_BOT_TOKEN env var, or set RObot.telegram.bot_token in config"
-                    .to_string(),
+                hint: "Run `ralph bot onboard --telegram`, set RALPH_TELEGRAM_BOT_TOKEN env var, or set RObot.telegram.bot_token in config".to_string(),
             });
         }
-
         Ok(())
     }
 
-    /// Resolves the bot token from multiple sources.
-    ///
-    /// Resolution order (highest to lowest priority):
-    /// 1. `RALPH_TELEGRAM_BOT_TOKEN` environment variable
-    /// 2. `RObot.telegram.bot_token` in config file (explicit project override)
-    /// 3. OS keychain (service: "ralph", user: "telegram-bot-token")
     pub fn resolve_bot_token(&self) -> Option<String> {
-        // 1. Env var (highest priority)
         let env_token = std::env::var("RALPH_TELEGRAM_BOT_TOKEN").ok();
-        let config_token = self
-            .telegram
-            .as_ref()
-            .and_then(|telegram| telegram.bot_token.clone());
-
-        if cfg!(test) {
-            return env_token.or(config_token);
-        }
-
-        env_token
-            // 2. Config file (explicit override)
-            .or(config_token)
-            // 3. OS keychain (best effort)
-            .or_else(|| {
-                std::panic::catch_unwind(|| {
-                    keyring::Entry::new("ralph", "telegram-bot-token")
-                        .ok()
-                        .and_then(|e| e.get_password().ok())
-                })
-                .ok()
-                .flatten()
-            })
+        let config_token = self.telegram.as_ref().and_then(|t| t.bot_token.clone());
+        if cfg!(test) { return env_token.or(config_token); }
+        env_token.or(config_token).or_else(|| {
+            std::panic::catch_unwind(|| {
+                keyring::Entry::new("ralph", "telegram-bot-token")
+                    .ok()
+                    .and_then(|e| e.get_password().ok())
+            }).ok().flatten()
+        })
     }
 
-    /// Resolves the custom Telegram API URL from multiple sources.
-    ///
-    /// Resolution order (highest to lowest priority):
-    /// 1. `RALPH_TELEGRAM_API_URL` environment variable
-    /// 2. `RObot.telegram.api_url` in config file
     pub fn resolve_api_url(&self) -> Option<String> {
         std::env::var("RALPH_TELEGRAM_API_URL").ok().or_else(|| {
-            self.telegram
-                .as_ref()
-                .and_then(|telegram| telegram.api_url.clone())
+            self.telegram.as_ref().and_then(|t| t.api_url.clone())
         })
     }
 }
 
-/// Telegram bot configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelegramBotConfig {
-    /// Bot token. Optional if `RALPH_TELEGRAM_BOT_TOKEN` env var is set.
     pub bot_token: Option<String>,
-
-    /// Custom Telegram Bot API URL. Optional; when set, all API requests
-    /// are sent to this URL instead of the default `https://api.telegram.org`.
-    /// Useful for targeting a local mock server (e.g., `telegram-test-api`)
-    /// in CI/CD. Can also be set via `RALPH_TELEGRAM_API_URL` env var.
     pub api_url: Option<String>,
 }
 
-/// Configuration errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("YAML parse error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
-
-    #[error(
-        "Ambiguous routing: trigger '{trigger}' is claimed by both '{hat1}' and '{hat2}'.\nFix: ensure only one hat claims this trigger or delegate with a new event.\nSee: docs/reference/troubleshooting.md#ambiguous-routing"
-    )]
-    AmbiguousRouting {
-        trigger: String,
-        hat1: String,
-        hat2: String,
-    },
-
-    #[error(
-        "Mutually exclusive fields: '{field1}' and '{field2}' cannot both be specified.\nFix: remove one field or split into separate configs.\nSee: docs/reference/troubleshooting.md#mutually-exclusive-fields"
-    )]
+    #[error("IO error: {0}")] Io(#[from] std::io::Error),
+    #[error("YAML parse error: {0}")] Yaml(#[from] serde_yaml::Error),
+    #[error("Ambiguous routing: trigger '{trigger}' is claimed by both '{hat1}' and '{hat2}'.\nFix: ensure only one hat claims this trigger or delegate with a new event.\nSee: docs/reference/troubleshooting.md#ambiguous-routing")]
+    AmbiguousRouting { trigger: String, hat1: String, hat2: String },
+    #[error("Mutually exclusive fields: '{field1}' and '{field2}' cannot both be specified.\nFix: remove one field or split into separate configs.\nSee: docs/reference/troubleshooting.md#mutually-exclusive-fields")]
     MutuallyExclusive { field1: String, field2: String },
-
     #[error("Invalid completion_promise: must be non-empty and non-whitespace")]
     InvalidCompletionPromise,
-
-    #[error(
-        "Custom backend requires a command.\nFix: set 'cli.command' in your config (or run `ralph init --backend custom`).\nSee: docs/reference/troubleshooting.md#custom-backend-command"
-    )]
+    #[error("Custom backend requires a command.\nFix: set 'cli.command' in your config (or run `ralph init --backend custom`).\nSee: docs/reference/troubleshooting.md#custom-backend-command")]
     CustomBackendRequiresCommand,
-
-    #[error(
-        "Reserved trigger '{trigger}' used by hat '{hat}' - task.start and task.resume are reserved for Ralph (the coordinator). Use a delegated event like 'work.start' instead.\nSee: docs/reference/troubleshooting.md#reserved-trigger"
-    )]
+    #[error("Reserved trigger '{trigger}' used by hat '{hat}' - task.start and task.resume are reserved for Ralph (the coordinator). Use a delegated event like 'work.start' instead.\nSee: docs/reference/troubleshooting.md#reserved-trigger")]
     ReservedTrigger { trigger: String, hat: String },
-
-    #[error(
-        "Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose.\nSee: docs/reference/troubleshooting.md#missing-hat-description"
-    )]
+    #[error("Hat '{hat}' is missing required 'description' field - add a short description of the hat's purpose.\nSee: docs/reference/troubleshooting.md#missing-hat-description")]
     MissingDescription { hat: String },
-
-    #[error(
-        "RObot config error: {field} - {hint}\nSee: docs/reference/troubleshooting.md#robot-config"
-    )]
+    #[error("RObot config error: {field} - {hint}\nSee: docs/reference/troubleshooting.md#robot-config")]
     RobotMissingField { field: String, hint: String },
-
-    #[error(
-        "Invalid hooks phase-event '{phase_event}'. Supported v1 phase-events: pre.loop.start, post.loop.start, pre.iteration.start, post.iteration.start, pre.plan.created, post.plan.created, pre.human.interact, post.human.interact, pre.loop.complete, post.loop.complete, pre.loop.error, post.loop.error.\nFix: use one of the supported keys under hooks.events."
-    )]
+    #[error("Invalid hooks phase-event '{phase_event}'. Supported v1 phase-events: pre.loop.start, post.loop.start, pre.iteration.start, post.iteration.start, pre.plan.created, post.plan.created, pre.human.interact, post.human.interact, pre.loop.complete, post.loop.complete, pre.loop.error, post.loop.error.\nFix: use one of the supported keys under hooks.events.")]
     InvalidHookPhaseEvent { phase_event: String },
-
-    #[error(
-        "Hook config validation error at '{field}': {message}\nSee: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md#hookspec-fields-v1"
-    )]
+    #[error("Hook config validation error at '{field}': {message}\nSee: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md#hookspec-fields-v1")]
     HookValidation { field: String, message: String },
-
-    #[error(
-        "Unsupported hooks field '{field}' for v1. {reason}\nSee: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md#out-of-scope-v1-non-goals"
-    )]
+    #[error("Unsupported hooks field '{field}' for v1. {reason}\nSee: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md#out-of-scope-v1-non-goals")]
     UnsupportedHookField { field: String, reason: String },
-
-    #[error(
-        "Invalid config key 'project'. Use 'core' instead (e.g. 'core.specs_dir' instead of 'project.specs_dir').\nSee: docs/guide/configuration.md"
-    )]
+    #[error("Invalid config key 'project'. Use 'core' instead (e.g. 'core.specs_dir' instead of 'project.specs_dir').\nSee: docs/guide/configuration.md")]
     DeprecatedProjectKey,
+    #[error("Hat '{hat}' has invalid concurrency: {value}. Must be >= 1.\nFix: set 'concurrency' to 1 or higher.")]
+    InvalidConcurrency { hat: String, value: u32 },
+    #[error("Hat '{hat}' has both 'aggregate' and 'concurrency > 1'. An aggregator hat cannot also be a concurrent worker.\nFix: remove 'aggregate' or set 'concurrency' to 1.")]
+    AggregateOnConcurrentHat { hat: String },
 }
 
 #[cfg(test)]
@@ -1933,7 +1355,6 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = RalphConfig::default();
-        // Default config has no custom hats (uses default planner+builder)
         assert!(config.hats.is_empty());
         assert_eq!(config.event_loop.max_iterations, 100);
         assert!(!config.verbose);
@@ -1959,10 +1380,8 @@ hats:
     instructions: "You are the implementation agent."
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        // Custom hats are defined
         assert_eq!(config.hats.len(), 1);
         assert_eq!(config.event_loop.prompt_file, "TASK.md");
-
         let hat = config.hats.get("implementer").unwrap();
         assert_eq!(hat.triggers.len(), 2);
     }
@@ -1979,15 +1398,11 @@ features:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(config.features.preflight.enabled);
         assert!(config.features.preflight.strict);
-        assert_eq!(
-            config.features.preflight.skip,
-            vec!["telegram".to_string(), "git".to_string()]
-        );
+        assert_eq!(config.features.preflight.skip, vec!["telegram".to_string(), "git".to_string()]);
     }
 
     #[test]
     fn test_parse_yaml_v1_format() {
-        // V1 flat format - identical to Python v1.x config
         let yaml = r#"
 agent: gemini
 prompt_file: "TASK.md"
@@ -1998,15 +1413,9 @@ max_cost: 10.0
 verbose: true
 "#;
         let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-
-        // Before normalization, v2 fields have defaults
-        assert_eq!(config.cli.backend, "claude"); // default
-        assert_eq!(config.event_loop.max_iterations, 100); // default
-
-        // Normalize v1 -> v2
+        assert_eq!(config.cli.backend, "claude");
+        assert_eq!(config.event_loop.max_iterations, 100);
         config.normalize();
-
-        // After normalization, v2 fields have v1 values
         assert_eq!(config.cli.backend, "gemini");
         assert_eq!(config.event_loop.prompt_file, "TASK.md");
         assert_eq!(config.event_loop.completion_promise, "RALPH_DONE");
@@ -2042,14 +1451,9 @@ enable_metrics: true
 ";
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let warnings = config.validate().unwrap();
-
         assert_eq!(warnings.len(), 2);
-        assert!(warnings
-            .iter()
-            .any(|w| matches!(w, ConfigWarning::DeferredFeature { field, .. } if field == "archive_prompts")));
-        assert!(warnings
-            .iter()
-            .any(|w| matches!(w, ConfigWarning::DeferredFeature { field, .. } if field == "enable_metrics")));
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::DeferredFeature { field, .. } if field == "archive_prompts")));
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::DeferredFeature { field, .. } if field == "enable_metrics")));
     }
 
     #[test]
@@ -2063,17 +1467,10 @@ adapters:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let warnings = config.validate().unwrap();
-
         assert_eq!(warnings.len(), 3);
-        assert!(warnings.iter().any(
-            |w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "max_tokens")
-        ));
-        assert!(warnings.iter().any(
-            |w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "retry_delay")
-        ));
-        assert!(warnings
-            .iter()
-            .any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "adapters.*.tool_permissions")));
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "max_tokens")));
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "retry_delay")));
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "adapters.*.tool_permissions")));
     }
 
     #[test]
@@ -2085,8 +1482,6 @@ max_tokens: 4096
 ";
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let warnings = config.validate().unwrap();
-
-        // All warnings should be suppressed
         assert!(warnings.is_empty());
     }
 
@@ -2102,11 +1497,9 @@ adapters:
     enabled: false
 ";
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-
         let claude = config.adapter_settings("claude");
         assert_eq!(claude.timeout, 600);
         assert!(claude.enabled);
-
         let gemini = config.adapter_settings("gemini");
         assert_eq!(gemini.timeout, 300);
         assert!(!gemini.enabled);
@@ -2114,14 +1507,12 @@ adapters:
 
     #[test]
     fn test_unknown_fields_ignored() {
-        // Unknown fields should be silently ignored (forward compatibility)
         let yaml = r#"
 agent: claude
 unknown_field: "some value"
 future_feature: true
 "#;
         let result: Result<RalphConfig, _> = serde_yaml::from_str(yaml);
-        // Should parse successfully, ignoring unknown fields
         assert!(result.is_ok());
     }
 
@@ -2138,10 +1529,7 @@ hats:
         let config = RalphConfig::parse_yaml(yaml).unwrap();
         let hat = config.hats.get("opencode_builder").unwrap();
         assert!(hat.backend_args.is_some());
-        assert_eq!(
-            hat.backend_args.as_ref().unwrap(),
-            &vec!["-m".to_string(), "model".to_string()]
-        );
+        assert_eq!(hat.backend_args.as_ref().unwrap(), &vec!["-m".to_string(), "model".to_string()]);
     }
 
     #[test]
@@ -2157,10 +1545,7 @@ hats:
         let config = RalphConfig::parse_yaml(yaml).unwrap();
         let hat = config.hats.get("opencode_builder").unwrap();
         assert!(hat.backend_args.is_some());
-        assert_eq!(
-            hat.backend_args.as_ref().unwrap(),
-            &vec!["-m".to_string(), "model".to_string()]
-        );
+        assert_eq!(hat.backend_args.as_ref().unwrap(), &vec!["-m".to_string(), "model".to_string()]);
     }
 
     #[test]
@@ -2171,16 +1556,11 @@ project:
 "#;
         let result = RalphConfig::parse_yaml(yaml);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ConfigError::DeprecatedProjectKey
-        ));
+        assert!(matches!(result.unwrap_err(), ConfigError::DeprecatedProjectKey));
     }
 
     #[test]
     fn test_ambiguous_routing_rejected() {
-        // Per spec: "Every trigger maps to exactly one hat | No ambiguous routing"
-        // Note: using semantic events since task.start is reserved
         let yaml = r#"
 hats:
   planner:
@@ -2194,20 +1574,13 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::AmbiguousRouting { trigger, .. } if trigger == "build.done"),
-            "Expected AmbiguousRouting error for 'build.done', got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::AmbiguousRouting { trigger, .. } if trigger == "build.done"), "Expected AmbiguousRouting error for 'build.done', got: {:?}", err);
     }
 
     #[test]
     fn test_unique_triggers_accepted() {
-        // Valid config: each trigger maps to exactly one hat
-        // Note: task.start is reserved for Ralph, so use semantic events
         let yaml = r#"
 hats:
   planner:
@@ -2221,17 +1594,11 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
-        assert!(
-            result.is_ok(),
-            "Expected valid config, got: {:?}",
-            result.unwrap_err()
-        );
+        assert!(result.is_ok(), "Expected valid config, got: {:?}", result.unwrap_err());
     }
 
     #[test]
     fn test_reserved_trigger_task_start_rejected() {
-        // Per design: task.start is reserved for Ralph (the coordinator)
         let yaml = r#"
 hats:
   my_hat:
@@ -2241,20 +1608,13 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::ReservedTrigger { trigger, hat }
-                if trigger == "task.start" && hat == "my_hat"),
-            "Expected ReservedTrigger error for 'task.start', got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::ReservedTrigger { trigger, hat } if trigger == "task.start" && hat == "my_hat"), "Expected ReservedTrigger error for 'task.start', got: {:?}", err);
     }
 
     #[test]
     fn test_reserved_trigger_task_resume_rejected() {
-        // Per design: task.resume is reserved for Ralph (the coordinator)
         let yaml = r#"
 hats:
   my_hat:
@@ -2264,20 +1624,13 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::ReservedTrigger { trigger, hat }
-                if trigger == "task.resume" && hat == "my_hat"),
-            "Expected ReservedTrigger error for 'task.resume', got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::ReservedTrigger { trigger, hat } if trigger == "task.resume" && hat == "my_hat"), "Expected ReservedTrigger error for 'task.resume', got: {:?}", err);
     }
 
     #[test]
     fn test_missing_description_rejected() {
-        // Description is required for all hats
         let yaml = r#"
 hats:
   my_hat:
@@ -2286,19 +1639,13 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::MissingDescription { hat } if hat == "my_hat"),
-            "Expected MissingDescription error, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::MissingDescription { hat } if hat == "my_hat"), "Expected MissingDescription error, got: {:?}", err);
     }
 
     #[test]
     fn test_empty_description_rejected() {
-        // Empty description should also be rejected
         let yaml = r#"
 hats:
   my_hat:
@@ -2308,14 +1655,9 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::MissingDescription { hat } if hat == "my_hat"),
-            "Expected MissingDescription error for empty description, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::MissingDescription { hat } if hat == "my_hat"), "Expected MissingDescription error for empty description, got: {:?}", err);
     }
 
     #[test]
@@ -2323,7 +1665,6 @@ hats:
         let config = RalphConfig::default();
         assert_eq!(config.core.scratchpad, ".ralph/agent/scratchpad.md");
         assert_eq!(config.core.specs_dir, ".ralph/specs/");
-        // Default guardrails per spec
         assert_eq!(config.core.guardrails.len(), 6);
         assert!(config.core.guardrails[0].contains("Fresh context"));
         assert!(config.core.guardrails[1].contains("search first"));
@@ -2343,7 +1684,6 @@ core:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.core.scratchpad, ".workspace/plan.md");
         assert_eq!(config.core.specs_dir, "./specifications/");
-        // Guardrails should use defaults when not specified
         assert_eq!(config.core.guardrails.len(), 6);
     }
 
@@ -2365,7 +1705,6 @@ core:
 
     #[test]
     fn test_prompt_and_prompt_file_mutually_exclusive() {
-        // Both prompt and prompt_file specified in config should error
         let yaml = r#"
 event_loop:
   prompt: "inline text"
@@ -2373,52 +1712,35 @@ event_loop:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::MutuallyExclusive { field1, field2 }
-                if field1 == "event_loop.prompt" && field2 == "event_loop.prompt_file"),
-            "Expected MutuallyExclusive error, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::MutuallyExclusive { field1, field2 } if field1 == "event_loop.prompt" && field2 == "event_loop.prompt_file"), "Expected MutuallyExclusive error, got: {:?}", err);
     }
 
     #[test]
     fn test_prompt_with_default_prompt_file_allowed() {
-        // Having inline prompt with default prompt_file value should be OK
         let yaml = r#"
 event_loop:
   prompt: "inline text"
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
-        assert!(
-            result.is_ok(),
-            "Should allow inline prompt with default prompt_file"
-        );
+        assert!(result.is_ok(), "Should allow inline prompt with default prompt_file");
         assert_eq!(config.event_loop.prompt, Some("inline text".to_string()));
         assert_eq!(config.event_loop.prompt_file, "PROMPT.md");
     }
 
     #[test]
     fn test_custom_backend_requires_command() {
-        // Custom backend without command should error
         let yaml = r#"
 cli:
   backend: "custom"
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::CustomBackendRequiresCommand),
-            "Expected CustomBackendRequiresCommand error, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::CustomBackendRequiresCommand), "Expected CustomBackendRequiresCommand error, got: {:?}", err);
     }
 
     #[test]
@@ -2429,19 +1751,13 @@ event_loop:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::InvalidCompletionPromise),
-            "Expected InvalidCompletionPromise error, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::InvalidCompletionPromise), "Expected InvalidCompletionPromise error, got: {:?}", err);
     }
 
     #[test]
     fn test_custom_backend_with_empty_command_errors() {
-        // Custom backend with empty command should error
         let yaml = r#"
 cli:
   backend: "custom"
@@ -2449,19 +1765,13 @@ cli:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::CustomBackendRequiresCommand),
-            "Expected CustomBackendRequiresCommand error, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::CustomBackendRequiresCommand), "Expected CustomBackendRequiresCommand error, got: {:?}", err);
     }
 
     #[test]
     fn test_custom_backend_with_command_succeeds() {
-        // Custom backend with valid command should pass validation
         let yaml = r#"
 cli:
   backend: "custom"
@@ -2469,12 +1779,7 @@ cli:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
-        assert!(
-            result.is_ok(),
-            "Should allow custom backend with command: {:?}",
-            result.unwrap_err()
-        );
+        assert!(result.is_ok(), "Should allow custom backend with command: {:?}", result.unwrap_err());
     }
 
     #[test]
@@ -2488,10 +1793,7 @@ cli:
 
     #[test]
     fn test_reserved_trigger_message_actionable() {
-        let err = ConfigError::ReservedTrigger {
-            trigger: "task.start".to_string(),
-            hat: "builder".to_string(),
-        };
+        let err = ConfigError::ReservedTrigger { trigger: "task.start".to_string(), hat: "builder".to_string() };
         let msg = err.to_string();
         assert!(msg.contains("Reserved trigger"));
         assert!(msg.contains("docs/reference/troubleshooting.md#reserved-trigger"));
@@ -2499,18 +1801,13 @@ cli:
 
     #[test]
     fn test_prompt_file_with_no_inline_allowed() {
-        // Having only prompt_file specified should be OK
         let yaml = r#"
 event_loop:
   prompt_file: "custom.md"
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let result = config.validate();
-
-        assert!(
-            result.is_ok(),
-            "Should allow prompt_file without inline prompt"
-        );
+        assert!(result.is_ok(), "Should allow prompt_file without inline prompt");
         assert_eq!(config.event_loop.prompt, None);
         assert_eq!(config.event_loop.prompt_file, "custom.md");
     }
@@ -2536,7 +1833,6 @@ tui:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let (key_code, key_modifiers) = config.tui.parse_prefix().unwrap();
-
         use crossterm::event::{KeyCode, KeyModifiers};
         assert_eq!(key_code, KeyCode::Char('b'));
         assert_eq!(key_modifiers, KeyModifiers::CONTROL);
@@ -2544,9 +1840,7 @@ tui:
 
     #[test]
     fn test_tui_config_parse_invalid_format() {
-        let tui_config = TuiConfig {
-            prefix_key: "invalid".to_string(),
-        };
+        let tui_config = TuiConfig { prefix_key: "invalid".to_string() };
         let result = tui_config.parse_prefix();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid prefix_key format"));
@@ -2554,9 +1848,7 @@ tui:
 
     #[test]
     fn test_tui_config_parse_invalid_modifier() {
-        let tui_config = TuiConfig {
-            prefix_key: "alt-a".to_string(),
-        };
+        let tui_config = TuiConfig { prefix_key: "alt-a".to_string() };
         let result = tui_config.parse_prefix();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid modifier"));
@@ -2564,9 +1856,7 @@ tui:
 
     #[test]
     fn test_tui_config_parse_invalid_key() {
-        let tui_config = TuiConfig {
-            prefix_key: "ctrl-abc".to_string(),
-        };
+        let tui_config = TuiConfig { prefix_key: "ctrl-abc".to_string() };
         let result = tui_config.parse_prefix();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid key"));
@@ -2577,10 +1867,7 @@ tui:
         let yaml = r#""claude""#;
         let backend: HatBackend = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(backend.to_cli_backend(), "claude");
-        match backend {
-            HatBackend::Named(name) => assert_eq!(name, "claude"),
-            _ => panic!("Expected Named variant"),
-        }
+        match backend { HatBackend::Named(name) => assert_eq!(name, "claude"), _ => panic!("Expected Named variant") }
     }
 
     #[test]
@@ -2592,11 +1879,7 @@ agent: "builder"
         let backend: HatBackend = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(backend.to_cli_backend(), "kiro");
         match backend {
-            HatBackend::KiroAgent {
-                backend_type,
-                agent,
-                args,
-            } => {
+            HatBackend::KiroAgent { backend_type, agent, args } => {
                 assert_eq!(backend_type, "kiro");
                 assert_eq!(agent, "builder");
                 assert!(args.is_empty());
@@ -2615,11 +1898,7 @@ args: ["--verbose", "--debug"]
         let backend: HatBackend = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(backend.to_cli_backend(), "kiro");
         match backend {
-            HatBackend::KiroAgent {
-                backend_type,
-                agent,
-                args,
-            } => {
+            HatBackend::KiroAgent { backend_type, agent, args } => {
                 assert_eq!(backend_type, "kiro");
                 assert_eq!(agent, "builder");
                 assert_eq!(args, vec!["--verbose", "--debug"]);
@@ -2647,7 +1926,6 @@ args: ["--model", "claude-sonnet-4"]
 
     #[test]
     fn test_hat_backend_named_with_args_empty() {
-        // type: claude without args should still work (NamedWithArgs with empty args)
         let yaml = r#"
 type: "gemini"
 "#;
@@ -2692,10 +1970,7 @@ default_publishes: "task.done"
         let hat: HatConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(hat.name, "Custom Builder");
         assert!(hat.backend.is_some());
-        match hat.backend.unwrap() {
-            HatBackend::Named(name) => assert_eq!(name, "gemini"),
-            _ => panic!("Expected Named backend"),
-        }
+        match hat.backend.unwrap() { HatBackend::Named(name) => assert_eq!(name, "gemini"), _ => panic!("Expected Named backend") }
         assert_eq!(hat.default_publishes, Some("task.done".to_string()));
     }
 
@@ -2719,10 +1994,8 @@ instructions: "Do work"
 event_loop:
   prompt_file: "TASK.md"
   max_iterations: 50
-
 cli:
   backend: "claude"
-
 hats:
   planner:
     name: "Planner"
@@ -2730,7 +2003,6 @@ hats:
     publishes: ["build.task"]
     instructions: "Plan the work"
     backend: "claude"
-    
   builder:
     name: "Builder"
     triggers: ["build.task"]
@@ -2739,7 +2011,6 @@ hats:
     backend:
       type: "kiro"
       agent: "builder"
-      
   reviewer:
     name: "Reviewer"
     triggers: ["build.done"]
@@ -2752,32 +2023,19 @@ hats:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.hats.len(), 3);
-
-        // Check planner (Named backend)
         let planner = config.hats.get("planner").unwrap();
         assert!(planner.backend.is_some());
-        match planner.backend.as_ref().unwrap() {
-            HatBackend::Named(name) => assert_eq!(name, "claude"),
-            _ => panic!("Expected Named backend for planner"),
-        }
-
-        // Check builder (KiroAgent backend)
+        match planner.backend.as_ref().unwrap() { HatBackend::Named(name) => assert_eq!(name, "claude"), _ => panic!("Expected Named backend for planner") }
         let builder = config.hats.get("builder").unwrap();
         assert!(builder.backend.is_some());
         match builder.backend.as_ref().unwrap() {
-            HatBackend::KiroAgent {
-                backend_type,
-                agent,
-                args,
-            } => {
+            HatBackend::KiroAgent { backend_type, agent, args } => {
                 assert_eq!(backend_type, "kiro");
                 assert_eq!(agent, "builder");
                 assert!(args.is_empty());
             }
             _ => panic!("Expected KiroAgent backend for builder"),
         }
-
-        // Check reviewer (Custom backend)
         let reviewer = config.hats.get("reviewer").unwrap();
         assert!(reviewer.backend.is_some());
         match reviewer.backend.as_ref().unwrap() {
@@ -2787,54 +2045,37 @@ hats:
             }
             _ => panic!("Expected Custom backend for reviewer"),
         }
-        assert_eq!(
-            reviewer.default_publishes,
-            Some("review.complete".to_string())
-        );
+        assert_eq!(reviewer.default_publishes, Some("review.complete".to_string()));
     }
 
     #[test]
     fn test_features_config_auto_merge_defaults_to_false() {
-        // Per spec: auto_merge should default to false for safety
-        // This prevents automatic merging of parallel loop branches
         let config = RalphConfig::default();
-        assert!(
-            !config.features.auto_merge,
-            "auto_merge should default to false"
-        );
+        assert!(!config.features.auto_merge, "auto_merge should default to false");
     }
 
     #[test]
     fn test_features_config_auto_merge_from_yaml() {
-        // Users can opt into auto_merge via config
         let yaml = r"
 features:
   auto_merge: true
 ";
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        assert!(
-            config.features.auto_merge,
-            "auto_merge should be true when configured"
-        );
+        assert!(config.features.auto_merge, "auto_merge should be true when configured");
     }
 
     #[test]
     fn test_features_config_auto_merge_false_from_yaml() {
-        // Explicit false should work too
         let yaml = r"
 features:
   auto_merge: false
 ";
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        assert!(
-            !config.features.auto_merge,
-            "auto_merge should be false when explicitly configured"
-        );
+        assert!(!config.features.auto_merge, "auto_merge should be false when explicitly configured");
     }
 
     #[test]
     fn test_features_config_preserves_parallel_when_adding_auto_merge() {
-        // Ensure adding auto_merge doesn't break existing parallel feature
         let yaml = r"
 features:
   parallel: false
@@ -2847,7 +2088,6 @@ features:
 
     #[test]
     fn test_skills_config_defaults_when_absent() {
-        // Configs without a skills: section should still parse (backwards compat)
         let yaml = r"
 agent: claude
 ";
@@ -2877,15 +2117,10 @@ skills:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(config.skills.enabled);
         assert_eq!(config.skills.dirs.len(), 2);
-        assert_eq!(
-            config.skills.dirs[0],
-            std::path::PathBuf::from(".claude/skills")
-        );
+        assert_eq!(config.skills.dirs[0], std::path::PathBuf::from(".claude/skills"));
         assert_eq!(config.skills.overrides.len(), 2);
-
         let pdd = config.skills.overrides.get("pdd").unwrap();
         assert_eq!(pdd.enabled, Some(false));
-
         let memories = config.skills.overrides.get("memories").unwrap();
         assert_eq!(memories.auto_inject, Some(true));
         assert_eq!(memories.hats, vec!["ralph"]);
@@ -2944,12 +2179,10 @@ hooks:
           format: json
 "#;
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         assert!(config.hooks.enabled);
         assert_eq!(config.hooks.defaults.timeout_seconds, 45);
         assert_eq!(config.hooks.defaults.max_output_bytes, 16384);
         assert_eq!(config.hooks.events.len(), 2);
-
         let warnings = config.validate().unwrap();
         assert!(warnings.is_empty());
     }
@@ -2965,16 +2198,10 @@ hooks:
         command: ["./scripts/hooks/bad-phase.sh"]
         on_error: warn
 "#;
-
         let result = RalphConfig::parse_yaml(yaml);
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::InvalidHookPhaseEvent { phase_event }
-            if phase_event == "pre.loop.launch"
-        ));
+        assert!(matches!(&err, ConfigError::InvalidHookPhaseEvent { phase_event } if phase_event == "pre.loop.launch"));
     }
 
     #[test]
@@ -2988,17 +2215,10 @@ hooks:
         command: ["./scripts/hooks/backpressure.sh"]
         on_error: warn
 "#;
-
         let result = RalphConfig::parse_yaml(yaml);
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::InvalidHookPhaseEvent { phase_event }
-            if phase_event == "pre.backpressure.triggered"
-        ));
-
+        assert!(matches!(&err, ConfigError::InvalidHookPhaseEvent { phase_event } if phase_event == "pre.backpressure.triggered"));
         let message = err.to_string();
         assert!(message.contains("Supported v1 phase-events"));
         assert!(message.contains("pre.plan.created"));
@@ -3016,13 +2236,10 @@ hooks:
         command: ["./scripts/hooks/bad-on-error.sh"]
         on_error: explode
 "#;
-
         let result = RalphConfig::parse_yaml(yaml);
         assert!(result.is_err());
-
         let err = result.unwrap_err();
         assert!(matches!(&err, ConfigError::Yaml(_)));
-
         let message = err.to_string();
         assert!(message.contains("unknown variant `explode`"));
         assert!(message.contains("warn"));
@@ -3041,16 +2258,10 @@ hooks:
         on_error: block
 "#;
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::HookValidation { field, .. }
-            if field == "hooks.events.pre.loop.start[0].name"
-        ));
+        assert!(matches!(&err, ConfigError::HookValidation { field, .. } if field == "hooks.events.pre.loop.start[0].name"));
     }
 
     #[test]
@@ -3064,16 +2275,10 @@ hooks:
         on_error: block
 ";
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::HookValidation { field, .. }
-            if field == "hooks.events.pre.loop.start[0].command"
-        ));
+        assert!(matches!(&err, ConfigError::HookValidation { field, .. } if field == "hooks.events.pre.loop.start[0].command"));
     }
 
     #[test]
@@ -3087,16 +2292,10 @@ hooks:
         command: ["./scripts/hooks/no-on-error.sh"]
 "#;
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::HookValidation { field, .. }
-            if field == "hooks.events.pre.loop.start[0].on_error"
-        ));
+        assert!(matches!(&err, ConfigError::HookValidation { field, .. } if field == "hooks.events.pre.loop.start[0].on_error"));
     }
 
     #[test]
@@ -3108,16 +2307,10 @@ hooks:
     timeout_seconds: 0
 ";
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::HookValidation { field, .. }
-            if field == "hooks.defaults.timeout_seconds"
-        ));
+        assert!(matches!(&err, ConfigError::HookValidation { field, .. } if field == "hooks.defaults.timeout_seconds"));
     }
 
     #[test]
@@ -3129,16 +2322,10 @@ hooks:
     max_output_bytes: 0
 ";
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::HookValidation { field, .. }
-            if field == "hooks.defaults.max_output_bytes"
-        ));
+        assert!(matches!(&err, ConfigError::HookValidation { field, .. } if field == "hooks.defaults.max_output_bytes"));
     }
 
     #[test]
@@ -3149,16 +2336,10 @@ hooks:
   parallel: true
 ";
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::UnsupportedHookField { field, .. }
-            if field == "hooks.parallel"
-        ));
+        assert!(matches!(&err, ConfigError::UnsupportedHookField { field, .. } if field == "hooks.parallel"));
     }
 
     #[test]
@@ -3174,21 +2355,11 @@ hooks:
         scope: global
 "#;
         let config = RalphConfig::parse_yaml(yaml).unwrap();
-
         let result = config.validate();
         assert!(result.is_err());
-
         let err = result.unwrap_err();
-        assert!(matches!(
-            &err,
-            ConfigError::UnsupportedHookField { field, .. }
-            if field == "hooks.events.pre.loop.start[0].scope"
-        ));
+        assert!(matches!(&err, ConfigError::UnsupportedHookField { field, .. } if field == "hooks.events.pre.loop.start[0].scope"));
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // ROBOT CONFIG TESTS
-    // ─────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_robot_config_defaults_disabled() {
@@ -3200,7 +2371,6 @@ hooks:
 
     #[test]
     fn test_robot_config_absent_parses_as_default() {
-        // Existing configs without RObot: section should still parse
         let yaml = r"
 agent: claude
 ";
@@ -3223,14 +2393,11 @@ RObot:
         assert_eq!(config.robot.timeout_seconds, Some(300));
         let telegram = config.robot.telegram.as_ref().unwrap();
         assert_eq!(telegram.bot_token, Some("123456:ABC-DEF".to_string()));
-
-        // Validation should pass
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_robot_config_disabled_skips_validation() {
-        // Disabled RObot config should pass validation even with missing fields
         let yaml = r"
 RObot:
   enabled: false
@@ -3252,69 +2419,33 @@ RObot:
         let result = config.validate();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::RobotMissingField { field, .. }
-                if field == "RObot.timeout_seconds"),
-            "Expected RobotMissingField for timeout_seconds, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::RobotMissingField { field, .. } if field == "RObot.timeout_seconds"), "Expected RobotMissingField for timeout_seconds, got: {:?}", err);
     }
 
     #[test]
     fn test_robot_config_enabled_missing_timeout_and_token_fails_on_timeout_first() {
-        // Both timeout and token are missing, but timeout is checked first
-        let robot = RobotConfig {
-            enabled: true,
-            timeout_seconds: None,
-            checkin_interval_seconds: None,
-            telegram: None,
-        };
+        let robot = RobotConfig { enabled: true, timeout_seconds: None, checkin_interval_seconds: None, telegram: None };
         let result = robot.validate();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::RobotMissingField { field, .. }
-                if field == "RObot.timeout_seconds"),
-            "Expected timeout validation failure first, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::RobotMissingField { field, .. } if field == "RObot.timeout_seconds"), "Expected timeout validation failure first, got: {:?}", err);
     }
 
     #[test]
     fn test_robot_config_resolve_bot_token_from_config() {
-        // Config has a token — resolve_bot_token returns it
-        // (env var behavior is tested separately via integration tests since
-        // forbid(unsafe_code) prevents env var manipulation in unit tests)
         let config = RobotConfig {
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
-            telegram: Some(TelegramBotConfig {
-                bot_token: Some("config-token".to_string()),
-                api_url: None,
-            }),
+            telegram: Some(TelegramBotConfig { bot_token: Some("config-token".to_string()), api_url: None }),
         };
-
-        // When RALPH_TELEGRAM_BOT_TOKEN is not set, config token is returned
-        // (Can't set/unset env vars in tests due to forbid(unsafe_code))
         let resolved = config.resolve_bot_token();
-        // The result depends on whether RALPH_TELEGRAM_BOT_TOKEN is set in the
-        // test environment. We can at least assert it's Some.
         assert!(resolved.is_some());
     }
 
     #[test]
     fn test_robot_config_resolve_bot_token_none_without_config() {
-        // No config token and no telegram section
-        let config = RobotConfig {
-            enabled: true,
-            timeout_seconds: Some(300),
-            checkin_interval_seconds: None,
-            telegram: None,
-        };
-
-        // Without env var AND without config token, resolve returns None
-        // (unless RALPH_TELEGRAM_BOT_TOKEN happens to be set in test env)
+        let config = RobotConfig { enabled: true, timeout_seconds: Some(300), checkin_interval_seconds: None, telegram: None };
         let resolved = config.resolve_bot_token();
         if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_err() {
             assert!(resolved.is_none());
@@ -3323,70 +2454,38 @@ RObot:
 
     #[test]
     fn test_robot_config_validate_with_config_token() {
-        // Validation passes when bot_token is in config
         let robot = RobotConfig {
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
-            telegram: Some(TelegramBotConfig {
-                bot_token: Some("test-token".to_string()),
-                api_url: None,
-            }),
+            telegram: Some(TelegramBotConfig { bot_token: Some("test-token".to_string()), api_url: None }),
         };
         assert!(robot.validate().is_ok());
     }
 
     #[test]
     fn test_robot_config_validate_missing_telegram_section() {
-        // No telegram section at all and no env var → fails
-        // (Skip if env var happens to be set)
-        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() {
-            return;
-        }
-
-        let robot = RobotConfig {
-            enabled: true,
-            timeout_seconds: Some(300),
-            checkin_interval_seconds: None,
-            telegram: None,
-        };
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() { return; }
+        let robot = RobotConfig { enabled: true, timeout_seconds: Some(300), checkin_interval_seconds: None, telegram: None };
         let result = robot.validate();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::RobotMissingField { field, .. }
-                if field == "RObot.telegram.bot_token"),
-            "Expected bot_token validation failure, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::RobotMissingField { field, .. } if field == "RObot.telegram.bot_token"), "Expected bot_token validation failure, got: {:?}", err);
     }
 
     #[test]
     fn test_robot_config_validate_empty_bot_token() {
-        // telegram section present but bot_token is None
-        // (Skip if env var happens to be set)
-        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() {
-            return;
-        }
-
+        if std::env::var("RALPH_TELEGRAM_BOT_TOKEN").is_ok() { return; }
         let robot = RobotConfig {
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
-            telegram: Some(TelegramBotConfig {
-                bot_token: None,
-                api_url: None,
-            }),
+            telegram: Some(TelegramBotConfig { bot_token: None, api_url: None }),
         };
         let result = robot.validate();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(&err, ConfigError::RobotMissingField { field, .. }
-                if field == "RObot.telegram.bot_token"),
-            "Expected bot_token validation failure, got: {:?}",
-            err
-        );
+        assert!(matches!(&err, ConfigError::RobotMissingField { field, .. } if field == "RObot.telegram.bot_token"), "Expected bot_token validation failure, got: {:?}", err);
     }
 
     #[test]
@@ -3396,7 +2495,6 @@ _fragments:
   shared_protocol: &shared_protocol |
     ### Shared Protocol
     Follow this protocol.
-
 hats:
   builder:
     name: "Builder"
@@ -3409,15 +2507,10 @@ hats:
 "#;
         let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let hat = config.hats.get("builder").unwrap();
-
-        // Before normalize: extra_instructions has content, instructions does not include it
         assert_eq!(hat.extra_instructions.len(), 1);
         assert!(!hat.instructions.contains("Shared Protocol"));
-
         config.normalize();
-
         let hat = config.hats.get("builder").unwrap();
-        // After normalize: extra_instructions drained, instructions includes the fragment
         assert!(hat.extra_instructions.is_empty());
         assert!(hat.instructions.contains("## BUILDER MODE"));
         assert!(hat.instructions.contains("### Shared Protocol"));
@@ -3436,5 +2529,114 @@ hats:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let hat = config.hats.get("simple").unwrap();
         assert!(hat.extra_instructions.is_empty());
+    }
+
+    #[test]
+    fn test_wave_config_concurrency_and_aggregate_parse() {
+        let yaml = r#"
+hats:
+  reviewer:
+    name: "Reviewer"
+    description: "Reviews files in parallel"
+    triggers: ["review.file"]
+    publishes: ["review.done"]
+    instructions: "Review the file."
+    concurrency: 3
+  aggregator:
+    name: "Aggregator"
+    description: "Aggregates review results"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    instructions: "Aggregate results."
+    aggregate:
+      mode: wait_for_all
+      timeout: 600
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let reviewer = config.hats.get("reviewer").unwrap();
+        assert_eq!(reviewer.concurrency, 3);
+        assert!(reviewer.aggregate.is_none());
+        let aggregator = config.hats.get("aggregator").unwrap();
+        assert_eq!(aggregator.concurrency, 1);
+        let agg = aggregator.aggregate.as_ref().unwrap();
+        assert!(matches!(agg.mode, AggregateMode::WaitForAll));
+        assert_eq!(agg.timeout, 600);
+    }
+
+    #[test]
+    fn test_wave_config_defaults_without_new_fields() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "Builds code"
+    triggers: ["build.task"]
+    publishes: ["build.done"]
+    instructions: "Build stuff."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("builder").unwrap();
+        assert_eq!(hat.concurrency, 1);
+        assert!(hat.aggregate.is_none());
+    }
+
+    #[test]
+    fn test_wave_config_concurrency_zero_rejected() {
+        let yaml = r#"
+hats:
+  worker:
+    name: "Worker"
+    description: "Parallel worker"
+    triggers: ["work.item"]
+    publishes: ["work.done"]
+    instructions: "Do work."
+    concurrency: 0
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(&err, ConfigError::InvalidConcurrency { hat, .. } if hat == "worker"), "Expected InvalidConcurrency error, got: {:?}", err);
+    }
+
+    #[test]
+    fn test_wave_config_aggregate_on_concurrent_hat_rejected() {
+        let yaml = r#"
+hats:
+  hybrid:
+    name: "Hybrid"
+    description: "Invalid: both concurrent and aggregator"
+    triggers: ["work.item"]
+    publishes: ["work.done"]
+    instructions: "Invalid config."
+    concurrency: 3
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(&err, ConfigError::AggregateOnConcurrentHat { hat, .. } if hat == "hybrid"), "Expected AggregateOnConcurrentHat error, got: {:?}", err);
+    }
+
+    #[test]
+    fn test_wave_config_aggregate_on_non_concurrent_hat_valid() {
+        let yaml = r#"
+hats:
+  aggregator:
+    name: "Aggregator"
+    description: "Collects results"
+    triggers: ["work.done"]
+    publishes: ["work.complete"]
+    instructions: "Aggregate."
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+        assert!(result.is_ok(), "Aggregate on non-concurrent hat should be valid: {:?}", result.unwrap_err());
     }
 }
