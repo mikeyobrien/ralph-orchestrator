@@ -19,6 +19,7 @@ ralph run -c ralph.yml -H builtin:code-assist -p "Add user authentication"
 | `debug` | `investigator`, `tester`, `fixer`, `verifier` | Root-cause debugging | Strong on repro and fix verification |
 | `research` | `researcher`, `synthesizer` | Read-only analysis | No code changes |
 | `review` | `reviewer`, `analyzer` | Adversarial code review | No code changes |
+| `wave-review` | `coordinator`, `reviewer` (x3), `synthesizer` | Parallel code review | Scatter-gather wave-enabled review; see [Agent Waves](../advanced/agent-waves.md) |
 | `pdd-to-code-assist` | multi-stage design + build pipeline | Idea to code | Advanced and fun, but slower and less predictable |
 
 ## Internal Presets
@@ -32,6 +33,7 @@ Ralph also keeps a few internal/testing presets available without advertising th
 
 - Use `code-assist` for most implementation tasks.
 - Use `debug`, `research`, or `review` when you need a specialized mode.
+- Use `wave-review` for parallel scatter-gather code review across multiple files.
 - Use `pdd-to-code-assist` when you specifically want an end-to-end exploratory workflow and are comfortable paying for extra iterations.
 
 ## Why The Builtin Set Is Small
@@ -66,6 +68,9 @@ ralph run -c ralph.yml -H builtin:research -p "Map the authentication architectu
 
 # Review
 ralph run -c ralph.yml -H builtin:review -p "Review the changes in src/api/"
+
+# Parallel wave review
+ralph run -c ralph.yml -H builtin:wave-review -p "Review the changes in src/"
 
 # Advanced/fun workflow
 ralph run -c ralph.yml -H builtin:pdd-to-code-assist -p "Build a rate limiter"
