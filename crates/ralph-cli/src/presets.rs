@@ -91,7 +91,9 @@ pub fn preset_names() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::RalphConfig;
+    use ralph_core::{EventLoop, RalphConfig};
+    use ralph_proto::{Event, HatId};
+    use serde_json::Value;
 
     fn assert_public_preset_has_completion_path(preset: &EmbeddedPreset) {
         let config =
@@ -257,9 +259,17 @@ mod tests {
     #[test]
     fn test_code_assist_matches_autonomous_task_loop_contract() {
         let preset = get_preset("code-assist").expect("code-assist should exist");
-        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
-        assert_hats_exist(&config, preset.name, &["planner", "builder", "critic", "finalizer"]);
-        assert_eq!(config.event_loop.starting_event.as_deref(), Some("build.start"));
+        let config =
+            RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        assert_hats_exist(
+            &config,
+            preset.name,
+            &["planner", "builder", "critic", "finalizer"],
+        );
+        assert_eq!(
+            config.event_loop.starting_event.as_deref(),
+            Some("build.start")
+        );
         assert_eq!(config.event_loop.completion_promise, "LOOP_COMPLETE");
         assert_only_hat_publishes_completion(&config, preset.name, "LOOP_COMPLETE", "finalizer");
     }
@@ -267,9 +277,13 @@ mod tests {
     #[test]
     fn test_review_matches_autonomous_review_loop_contract() {
         let preset = get_preset("review").expect("review should exist");
-        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        let config =
+            RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
         assert_hats_exist(&config, preset.name, &["reviewer", "analyzer", "closer"]);
-        assert_eq!(config.event_loop.starting_event.as_deref(), Some("review.start"));
+        assert_eq!(
+            config.event_loop.starting_event.as_deref(),
+            Some("review.start")
+        );
         assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
         assert_only_hat_publishes_completion(&config, preset.name, "REVIEW_COMPLETE", "closer");
     }
@@ -277,21 +291,43 @@ mod tests {
     #[test]
     fn test_debug_matches_autonomous_debug_loop_contract() {
         let preset = get_preset("debug").expect("debug should exist");
-        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
-        assert_hats_exist(&config, preset.name, &["investigator", "tester", "fixer", "verifier"]);
-        assert_eq!(config.event_loop.starting_event.as_deref(), Some("debug.start"));
+        let config =
+            RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        assert_hats_exist(
+            &config,
+            preset.name,
+            &["investigator", "tester", "fixer", "verifier"],
+        );
+        assert_eq!(
+            config.event_loop.starting_event.as_deref(),
+            Some("debug.start")
+        );
         assert_eq!(config.event_loop.completion_promise, "DEBUG_COMPLETE");
-        assert_only_hat_publishes_completion(&config, preset.name, "DEBUG_COMPLETE", "investigator");
+        assert_only_hat_publishes_completion(
+            &config,
+            preset.name,
+            "DEBUG_COMPLETE",
+            "investigator",
+        );
     }
 
     #[test]
     fn test_research_matches_autonomous_research_loop_contract() {
         let preset = get_preset("research").expect("research should exist");
-        let config = RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+        let config =
+            RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
         assert_hats_exist(&config, preset.name, &["researcher", "synthesizer"]);
-        assert_eq!(config.event_loop.starting_event.as_deref(), Some("research.start"));
+        assert_eq!(
+            config.event_loop.starting_event.as_deref(),
+            Some("research.start")
+        );
         assert_eq!(config.event_loop.completion_promise, "RESEARCH_COMPLETE");
-        assert_only_hat_publishes_completion(&config, preset.name, "RESEARCH_COMPLETE", "synthesizer");
+        assert_only_hat_publishes_completion(
+            &config,
+            preset.name,
+            "RESEARCH_COMPLETE",
+            "synthesizer",
+        );
     }
 
     #[test]
@@ -367,6 +403,12 @@ mod tests {
                 .instructions
                 .contains("ralph tools task show <task_id> --format json")
         );
+        assert!(critic.instructions.contains(
+            "Emit exactly one of `review.passed` or `review.rejected` yourself for every review turn."
+        ));
+        assert!(critic.instructions.contains(
+            "its empty payload loses runtime-task ownership on retry"
+        ));
         assert!(critic.instructions.contains("ralph tools memory add"));
 
         let finalizer = config
@@ -468,6 +510,64 @@ mod tests {
     }
 
     #[test]
+    fn test_pdd_to_code_assist_preserves_review_identity_on_critic_timeout_fallback() {
+        let preset = get_preset("pdd-to-code-assist").expect("pdd-to-code-assist should exist");
+        let config =
+            RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+
+        let mut event_loop = EventLoop::new(config);
+        event_loop.initialize("Test prompt");
+        let _ = event_loop.bus().take_pending(&HatId::new("ralph"));
+
+        event_loop.bus().publish(Event::new(
+            "review.ready",
+            serde_json::json!({
+                "task_id": "task-1773251265-ef7f",
+                "task_key": "preset-contract-alignment:step-03:pdd-build-review",
+                "workflow_key": "preset-contract-alignment:step-03",
+                "artifact_path": ".agents/scratchpad/implementation/cli-status-checker/implementation.md",
+                "summary": "Ready for critic review."
+            })
+            .to_string(),
+        ));
+
+        event_loop
+            .build_prompt(&HatId::new("ralph"))
+            .expect("prompt should build for critic review");
+
+        event_loop.check_default_publishes(&HatId::new("critic"));
+
+        let builder_events = event_loop.bus().take_pending(&HatId::new("builder"));
+        let fallback = builder_events
+            .iter()
+            .find(|event| event.topic.as_str() == "review.rejected")
+            .expect("critic fallback should publish review.rejected");
+
+        assert_eq!(
+            fallback.source.as_ref().map(HatId::as_str),
+            Some("critic"),
+            "fallback reject should be attributed to the critic hat"
+        );
+
+        let payload: Value = serde_json::from_str(&fallback.payload)
+            .expect("fallback review payload should be valid JSON");
+        assert_eq!(payload["task_id"], serde_json::json!("task-1773251265-ef7f"));
+        assert_eq!(
+            payload["task_key"],
+            serde_json::json!("preset-contract-alignment:step-03:pdd-build-review")
+        );
+        assert_eq!(
+            payload["workflow_key"],
+            serde_json::json!("preset-contract-alignment:step-03")
+        );
+        assert_eq!(
+            payload["fallback_reason"],
+            serde_json::json!("agent_idle_timeout")
+        );
+        assert_eq!(payload["source_topic"], serde_json::json!("review.ready"));
+    }
+
+    #[test]
     fn test_code_assist_uses_upstream_artifact_layout_and_builder_workflow() {
         let preset = get_preset("code-assist").expect("code-assist should exist");
         let config =
@@ -519,6 +619,14 @@ mod tests {
         );
         assert!(planner.instructions.contains("`task_id`"));
         assert!(planner.instructions.contains("`task_key`"));
+        assert!(planner.instructions.contains(
+            "ralph emit --json \"tasks.ready\" '{\"task_id\":\"<task_id>\",\"task_key\":\"<task_key>\",\"artifact_path\":\"<artifact_path>\"}'"
+        ));
+        assert!(
+            planner
+                .instructions
+                .contains("Never emit `tasks.ready` as a prose summary")
+        );
         assert!(planner.instructions.contains("context.md"));
         assert!(planner.instructions.contains("plan.md"));
         assert!(planner.instructions.contains("progress.md"));
@@ -570,6 +678,14 @@ mod tests {
         ));
         assert!(builder.instructions.contains("VALIDATE THE INCREMENT"));
         assert!(
+            builder.instructions.contains(
+                "ralph emit --json \"review.ready\" '{\"task_id\":\"<task_id>\",\"task_key\":\"<task_key>\",\"artifact_path\":\"<artifact_path>\"}'"
+            )
+        );
+        assert!(builder.instructions.contains(
+            "Leave the runtime task `open` while it is under review; Finalizer owns `task close` / `task reopen`"
+        ));
+        assert!(
             builder
                 .instructions
                 .contains("You MUST keep implementation code out of the shared docs directory")
@@ -584,6 +700,9 @@ mod tests {
                 .instructions
                 .contains("You MUST implement the runtime task from the current payload")
         );
+        assert!(builder.instructions.contains(
+            "You MUST NOT close or reopen the runtime task yourself; Finalizer owns completion state after review"
+        ));
         assert!(builder.instructions.contains(
             "finish with a minimally runnable skeleton that satisfies the task description"
         ));
@@ -941,6 +1060,15 @@ mod tests {
                 .instructions
                 .contains("On `debug.start` or `hypothesis.rejected`:")
         );
+        assert!(investigator.instructions.contains(
+            "During investigation you may add only the minimal failing scaffold and failing-or-observational reproduction coverage needed to make the current bug visible."
+        ));
+        assert!(investigator.instructions.contains(
+            "Do not add fixed-path implementations, alternate \"correct\" functions, or regression coverage for the intended fix in this phase."
+        ));
+        assert!(investigator.instructions.contains(
+            "Do not write `.eval-sandbox/debug/counter.md` or any root-cause note in this phase; that belongs with the fix once the hypothesis is confirmed."
+        ));
         assert!(investigator
             .instructions
             .contains("If the bug is already fixed, cannot be reproduced, or an existing debug note already captures the answer"));
@@ -994,6 +1122,14 @@ mod tests {
             investigator
                 .instructions
                 .contains("❌ Skip the event chain by doing fix or verification work inline")
+        );
+        assert!(investigator.instructions.contains(
+            "❌ Add fixed-path code, \"fixed\" helper functions, or fix-oriented regression tests before `hypothesis.confirmed`"
+        ));
+        assert!(
+            investigator
+                .instructions
+                .contains("❌ Write the root-cause/debug note before the fix phase")
         );
 
         let tester = config.hats.get("tester").expect("tester hat should exist");

@@ -87,6 +87,9 @@ hats:
       - `task_id`
       - `task_key`
       - artifact path when the work is backed by a `.code-task.md` file
+      Emit `tasks.ready` with explicit JSON, for example:
+      - `ralph emit --json "tasks.ready" '{"task_id":"<task_id>","task_key":"<task_key>","artifact_path":"<artifact_path>"}'`
+      Never emit `tasks.ready` as a prose summary because the Builder needs the exact runtime-task identity from the payload.
 
       ### Read State
       On every activation:
@@ -133,15 +136,15 @@ hats:
       5. Choose Step 1 as the current step
       6. Ensure ONLY Step 1's runtime tasks using `ralph tools task ensure --description "..."`
       7. Write `progress.md` with the current step, the active wave's task keys, and empty completed-steps section
-      8. Pick exactly one ready runtime task from the Step 1 wave and publish `tasks.ready`
+      8. Pick exactly one ready runtime task from the Step 1 wave and publish `tasks.ready` with that task's `task_id`, `task_key`, and artifact path when applicable
       9. Once one ready runtime task exists and the shared docs are written, emit `tasks.ready` immediately. Do NOT keep refining later steps in the same turn.
 
       ### On Subsequent Activation (`queue.advance`)
       1. Re-read `<ready-tasks>`, `plan.md`, `progress.md`, and `.ralph/agent/tasks.jsonl`
       2. Identify the current step from `progress.md`
-      3. If ready or open tasks already exist for the current step, publish `tasks.ready` for the next one in that same wave
+      3. If ready or open tasks already exist for the current step, publish `tasks.ready` with the next task's `task_id`, `task_key`, and artifact path when applicable
       4. If the current step's wave is fully closed, move that step to `## Completed Steps`
-      5. If another numbered step remains, update `## Current Step`, ensure ONLY that next step's runtime tasks, refresh `## Active Wave`, and publish `tasks.ready`
+      5. If another numbered step remains, update `## Current Step`, ensure ONLY that next step's runtime tasks, refresh `## Active Wave`, and publish `tasks.ready` with the selected task identity
       6. If no numbered steps remain, do not invent more tasks; leave the queue empty so the Finalizer can terminate after the last reviewed task
       7. Do not spend the turn polishing docs once a ready task exists; emit immediately.
 
@@ -281,7 +284,8 @@ hats:
          - Save concise command/result notes in `progress.md`
          - Save substantive command output in `logs/` when useful
          - If this turn runs long, send `ralph tools interact progress`
-         - Then hand the increment to the Critic with `task_id`, `task_key`, and artifact path
+         - Then hand the increment to the Critic with `task_id`, `task_key`, and artifact path using `ralph emit --json "review.ready" '{"task_id":"<task_id>","task_key":"<task_key>","artifact_path":"<artifact_path>"}'`
+         - Leave the runtime task `open` while it is under review; Finalizer owns `task close` / `task reopen`
          - Once the task description is satisfied and the focused checks pass, emit promptly. Do not spend the rest of the turn narrating the work.
          - If a setup or test command fails once, inspect the files it wrote and move to the next concrete action. Do not spend the rest of the turn retrying environment probes.
 
@@ -298,6 +302,7 @@ hats:
       - You MUST implement the runtime task from the current payload, not the next thing in `progress.md`
       - You MUST NOT write implementation before tests
       - You MUST NOT add features not in the task/description
+      - You MUST NOT close or reopen the runtime task yourself; Finalizer owns completion state after review
       - You MUST follow codebase patterns when available
       - You MUST keep implementation code out of the shared docs directory
       - You MUST update `progress.md` as evidence/logging, not as the scheduler
@@ -391,7 +396,10 @@ hats:
       - or over-engineering/material style mismatch worth fixing now.
 
       Publish `review.passed` only when the increment looks correct enough for the Finalizer to evaluate overall completion.
-      In both pass/reject cases, include the same `task_id` and `task_key` in the payload.
+      Emit exactly one of `review.passed` or `review.rejected` yourself for every review turn.
+      In both pass/reject cases, include the same `task_id`, `task_key`, and artifact path from `review.ready` in the payload plus a concise evidence summary.
+      `default_publishes: "review.rejected"` is only a crash guard. It is NOT a valid success path because its empty payload loses runtime-task ownership on retry.
+      If you reject the increment, make the rejection actionable and preserve task identity so the Builder retries the same runtime task instead of drifting to a different one.
       For scaffold/setup slices, judge the task against its own acceptance criteria. Do not reject because future tasks have not been implemented yet.
 
       If you discover a durable repo-wide pattern or recurring fix, record it with `ralph tools memory add`.
