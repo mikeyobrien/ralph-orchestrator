@@ -46,6 +46,28 @@ impl WorkerRecord {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerHeartbeatInput {
+    pub worker_id: String,
+    pub status: WorkerStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_hat: Option<String>,
+    pub last_heartbeat_at: String,
+}
+
+impl WorkerHeartbeatInput {
+    fn validate(&self) -> Result<(), ApiError> {
+        validate_required_string("workerId", &self.worker_id)?;
+        validate_optional_string("currentTaskId", self.current_task_id.as_deref())?;
+        validate_optional_string("currentHat", self.current_hat.as_deref())?;
+        validate_required_string("lastHeartbeatAt", &self.last_heartbeat_at)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct WorkerSnapshot {
@@ -103,6 +125,38 @@ impl WorkerDomain {
         })?;
 
         Ok(())
+    }
+
+    pub fn heartbeat(&mut self, input: WorkerHeartbeatInput) -> Result<WorkerRecord, ApiError> {
+        input.validate()?;
+
+        let WorkerHeartbeatInput {
+            worker_id,
+            status,
+            current_task_id,
+            current_hat,
+            last_heartbeat_at,
+        } = input;
+        let mut updated_worker = None;
+
+        self.modify_workers(|workers| {
+            let worker = workers
+                .get_mut(&worker_id)
+                .ok_or_else(|| worker_not_found_error(&worker_id))?;
+            worker.status = status;
+            worker.current_task_id = current_task_id.clone();
+            worker.current_hat = current_hat.clone();
+            worker.last_heartbeat_at = last_heartbeat_at.clone();
+            updated_worker = Some(worker.clone());
+            Ok(())
+        })?;
+
+        updated_worker.ok_or_else(|| {
+            ApiError::internal(format!(
+                "failed updating worker heartbeat for '{}'",
+                worker_id
+            ))
+        })
     }
 
     fn read_workers_with_shared_lock(&self) -> Result<BTreeMap<String, WorkerRecord>, ApiError> {

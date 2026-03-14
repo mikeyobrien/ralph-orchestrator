@@ -75,13 +75,13 @@ event_loop:
   max_runtime_seconds: 300
 "#;
 
-    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
     let mut event_loop = EventLoop::new(config);
 
-    // Change to temp directory so EventReader finds the events file
-    let _cwd = CwdGuard::set(temp_dir.path());
-
-    // Process events from JSONL
+    // Process events from JSONL without mutating the process cwd.
+    // This should resolve the temp workspace's `.ralph/events.jsonl`
+    // through `config.core.workspace_root` instead of ambient cwd state.
     let result = event_loop.process_events_from_jsonl().unwrap();
 
     // Verify: Ralph should handle the orphaned event
@@ -121,8 +121,8 @@ event_loop:
     config.core.workspace_root = temp_dir.path().to_path_buf();
     let mut event_loop = EventLoop::new(config);
 
-    let _cwd = CwdGuard::set(temp_dir.path());
-
+    // Repeated `task.complete` handling should also read from the temp
+    // workspace without relying on or leaking process-global cwd changes.
     event_loop.process_events_from_jsonl().unwrap();
     let termination = event_loop.check_termination();
 

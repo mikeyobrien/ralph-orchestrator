@@ -279,6 +279,13 @@ impl EventLoop {
         }
     }
 
+    fn resolve_events_path_without_loop_context(config: &RalphConfig) -> PathBuf {
+        let marker_path = config.core.resolve_path(".ralph/current-events");
+        std::fs::read_to_string(&marker_path)
+            .map(|s| config.core.resolve_path(s.trim()))
+            .unwrap_or_else(|_| config.core.resolve_path(".ralph/events.jsonl"))
+    }
+
     /// Creates a new event loop with explicit diagnostics collector (for testing).
     pub fn with_diagnostics(
         config: RalphConfig,
@@ -346,11 +353,9 @@ impl EventLoop {
         .with_memories_enabled(config.memories.enabled)
         .with_skill_index(skill_index);
 
-        // Read events path from marker file, fall back to default if not present
-        // The marker file is written by run_loop_impl() at run startup
-        let events_path = std::fs::read_to_string(".ralph/current-events")
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| ".ralph/events.jsonl".to_string());
+        // Read events path from the workspace-relative marker file, fall back to
+        // the workspace-relative default if not present.
+        let events_path = Self::resolve_events_path_without_loop_context(&config);
         let event_reader = EventReader::new(&events_path);
 
         Self {
