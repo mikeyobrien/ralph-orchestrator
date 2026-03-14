@@ -35,6 +35,7 @@ mod task_cli;
 #[cfg(test)]
 mod test_support;
 mod tools;
+mod wave;
 mod web;
 
 use anyhow::{Context, Result};
@@ -594,6 +595,9 @@ enum Commands {
     /// Ralph's runtime tools (agent-facing)
     Tools(tools::ToolsArgs),
 
+    /// Dispatch wave events for parallel hat execution
+    Wave(wave::WaveArgs),
+
     /// Manage parallel loops
     Loops(loops::LoopsArgs),
 
@@ -673,12 +677,6 @@ struct RunArgs {
     /// continue from where it left off.
     #[arg(long = "continue")]
     continue_mode: bool,
-
-    /// Explicit loop ID to use with --continue.
-    /// Reuses tasks from the specified loop instead of generating a new ID.
-    /// If omitted with --continue, reuses the existing current-loop-id marker.
-    #[arg(long, requires = "continue_mode")]
-    loop_id: Option<String>,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Execution Mode Options
@@ -1159,6 +1157,7 @@ async fn main() -> Result<()> {
             code_task_command(&config_sources, hats_source.as_ref(), cli.color, args).await
         }
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
+        Some(Commands::Wave(args)) => wave::execute(args, cli.color.should_use_colors()),
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
             hats::execute(
@@ -1192,7 +1191,6 @@ async fn main() -> Result<()> {
                 completion_promise: None,
                 dry_run: false,
                 continue_mode: false,
-                loop_id: None,
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
                 rpc: false,
@@ -1754,7 +1752,6 @@ async fn run_command(
             Some(loop_context),
             custom_args,
             auto_merge_override,
-            args.loop_id,
         )
         .await?
     };
@@ -1816,7 +1813,6 @@ struct SubprocessTuiArgs {
     max_iterations: Option<u32>,
     completion_promise: Option<String>,
     continue_mode: bool,
-    loop_id: Option<String>,
     idle_timeout: Option<u32>,
     verbose: bool,
     quiet: bool,
@@ -1844,7 +1840,6 @@ impl SubprocessTuiArgs {
             max_iterations: args.max_iterations,
             completion_promise: args.completion_promise.clone(),
             continue_mode: args.continue_mode,
-            loop_id: args.loop_id.clone(),
             idle_timeout: args.idle_timeout,
             verbose: args.verbose,
             quiet: args.quiet,
@@ -1919,13 +1914,9 @@ async fn run_subprocess_tui(
         child_args.push(promise.clone());
     }
 
-    // Forward continue mode and loop ID
+    // Forward continue mode
     if resume || args.continue_mode {
         child_args.push("--continue".to_string());
-    }
-    if let Some(ref loop_id) = args.loop_id {
-        child_args.push("--loop-id".to_string());
-        child_args.push(loop_id.clone());
     }
 
     // Forward idle timeout
@@ -2157,7 +2148,6 @@ async fn resume_command(
         None,       // Deprecated resume command doesn't have loop_context
         Vec::new(), // Resume command doesn't support custom args
         None,       // Use config.features.auto_merge (deprecated command)
-        None,       // Deprecated resume command doesn't support --loop-id
     )
     .await?;
     let exit_code = reason.exit_code();
@@ -2421,24 +2411,39 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
 
     // Build the event record
     // We use serde_json directly to ensure proper escaping
-    let record = serde_json::json!({
+    let payload_value = if args.json && !payload.is_empty() {
+        // Parse and embed as object
+        serde_json::from_str::<serde_json::Value>(&payload)?
+    } else if payload.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(payload)
+    };
+
+    let mut record = serde_json::json!({
         "topic": args.topic,
-        "payload": if args.json && !payload.is_empty() {
-            // Parse and embed as object
-            serde_json::from_str::<serde_json::Value>(&payload)?
-        } else if payload.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::Value::String(payload)
-        },
+        "payload": payload_value,
         "ts": ts
     });
 
-    // Read events path from marker file, fall back to CLI arg if marker doesn't exist
-    // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = fs::read_to_string(&current_events_marker)
-        .map(|s| resolve_marker_target(&workspace_root, &s))
-        .unwrap_or_else(|_| args.file.clone());
+    // Auto-tag with wave metadata from env vars (set by loop runner on wave workers)
+    if let (Ok(wave_id), Ok(wave_index_str)) = (
+        std::env::var("RALPH_WAVE_ID"),
+        std::env::var("RALPH_WAVE_INDEX"),
+    ) && let Ok(wave_index) = wave_index_str.parse::<u32>()
+    {
+        record["wave_id"] = serde_json::Value::String(wave_id);
+        record["wave_index"] = serde_json::Value::Number(wave_index.into());
+    }
+
+    // Resolve events file: RALPH_EVENTS_FILE env > workspace-relative marker > CLI arg
+    let events_file = if let Ok(path) = std::env::var("RALPH_EVENTS_FILE") {
+        PathBuf::from(path)
+    } else {
+        fs::read_to_string(&current_events_marker)
+            .map(|s| resolve_marker_target(&workspace_root, &s))
+            .unwrap_or_else(|_| args.file.clone())
+    };
 
     // Ensure parent directory exists
     if let Some(parent) = events_file.parent()
@@ -3603,7 +3608,6 @@ core:
             completion_promise: None,
             dry_run: false,
             continue_mode: false,
-            loop_id: None,
             no_tui: true,
             autonomous: false,
             rpc: false,
