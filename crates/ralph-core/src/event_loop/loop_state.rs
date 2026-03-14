@@ -101,11 +101,21 @@ impl LoopState {
         self.started_at.elapsed()
     }
 
+    fn topic_counts_toward_stale_loop(topic: &str) -> bool {
+        !matches!(topic, "task.complete")
+    }
+
     /// Record that a topic has been seen during this loop run.
     ///
     /// Also tracks consecutive same-topic emissions for stale loop detection.
     pub fn record_topic(&mut self, topic: &str) {
         self.seen_topics.insert(topic.to_string());
+
+        if !Self::topic_counts_toward_stale_loop(topic) {
+            self.consecutive_same_topic = 0;
+            self.last_emitted_topic = Some(topic.to_string());
+            return;
+        }
 
         if self.last_emitted_topic.as_deref() == Some(topic) {
             self.consecutive_same_topic += 1;
@@ -121,5 +131,36 @@ impl LoopState {
             .iter()
             .filter(|topic| !self.seen_topics.contains(topic.as_str()))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoopState;
+
+    #[test]
+    fn repeated_task_complete_does_not_accumulate_stale_loop_count() {
+        let mut state = LoopState::new();
+
+        state.record_topic("task.complete");
+        assert_eq!(state.consecutive_same_topic, 0);
+
+        state.record_topic("task.complete");
+        state.record_topic("task.complete");
+
+        assert_eq!(state.consecutive_same_topic, 0);
+        assert_eq!(state.last_emitted_topic.as_deref(), Some("task.complete"));
+    }
+
+    #[test]
+    fn repeated_non_progress_topics_still_accumulate_stale_loop_count() {
+        let mut state = LoopState::new();
+
+        state.record_topic("task.resume");
+        state.record_topic("task.resume");
+        state.record_topic("task.resume");
+
+        assert_eq!(state.consecutive_same_topic, 3);
+        assert_eq!(state.last_emitted_topic.as_deref(), Some("task.resume"));
     }
 }

@@ -56,6 +56,52 @@ event_loop:
 }
 
 #[test]
+fn test_repeated_task_complete_does_not_trigger_loop_stale() {
+    let temp_dir = TempDir::new().unwrap();
+    let ralph_dir = temp_dir.path().join(".ralph");
+    fs::create_dir_all(&ralph_dir).unwrap();
+
+    let events_file = ralph_dir.join("events.jsonl");
+    fs::write(
+        &events_file,
+        r#"{"topic":"task.complete","payload":"task 1 complete","ts":"2026-03-08T06:54:01Z"}
+{"topic":"task.complete","payload":"task 2 complete","ts":"2026-03-08T06:54:02Z"}
+{"topic":"task.complete","payload":"task 3 complete","ts":"2026-03-08T06:54:03Z"}
+"#,
+    )
+    .unwrap();
+
+    let yaml = r#"
+core:
+  scratchpad: ".ralph/agent/scratchpad.md"
+  specs_dir: "./specs"
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 10
+  max_runtime_seconds: 300
+"#;
+
+    let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    config.core.workspace_root = temp_dir.path().to_path_buf();
+    let mut event_loop = EventLoop::new(config);
+
+    let original_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(temp_dir.path()).unwrap();
+
+    event_loop.process_events_from_jsonl().unwrap();
+    let termination = event_loop.check_termination();
+
+    std::env::set_current_dir(original_dir).unwrap();
+
+    assert!(termination.is_none());
+    assert_eq!(
+        event_loop.state().last_emitted_topic.as_deref(),
+        Some("task.complete")
+    );
+    assert_eq!(event_loop.state().consecutive_same_topic, 0);
+}
+
+#[test]
 fn test_ralph_completion_only_from_ralph() {
     let yaml = r#"
 core:
