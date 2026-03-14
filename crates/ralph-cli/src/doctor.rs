@@ -615,6 +615,9 @@ mod tests {
             default_publishes: None,
             max_activations: None,
             disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
         }
     }
 

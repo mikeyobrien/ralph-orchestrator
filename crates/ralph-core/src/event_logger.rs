@@ -80,6 +80,18 @@ pub struct EventRecord {
     /// How many times this task has blocked (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_count: Option<u32>,
+
+    /// Wave correlation ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave_id: Option<String>,
+
+    /// Index of this event within the wave (0-based).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave_index: Option<u32>,
+
+    /// Total number of events in the wave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave_total: Option<u32>,
 }
 
 impl EventRecord {
@@ -113,6 +125,9 @@ impl EventRecord {
             triggered: triggered.map(|h| h.to_string()),
             payload,
             blocked_count: None,
+            wave_id: event.wave_id.clone(),
+            wave_index: event.wave_index,
+            wave_total: event.wave_total,
         }
     }
 
@@ -508,6 +523,76 @@ mod tests {
         assert_eq!(records[1].topic, "build.task");
         assert_eq!(records[1].iteration, 0); // Defaulted
         assert_eq!(records[1].hat, ""); // Defaulted
+    }
+
+    #[test]
+    fn test_event_record_propagates_wave_metadata() {
+        let event = make_event("review.file", "src/main.rs").with_wave("w-1a2b3c4d", 1, 3);
+        let record = EventRecord::new(1, "dispatcher", &event, None);
+
+        assert_eq!(record.wave_id.as_deref(), Some("w-1a2b3c4d"));
+        assert_eq!(record.wave_index, Some(1));
+        assert_eq!(record.wave_total, Some(3));
+    }
+
+    #[test]
+    fn test_event_record_no_wave_metadata() {
+        let event = make_event("build.done", "success");
+        let record = EventRecord::new(1, "builder", &event, None);
+
+        assert!(record.wave_id.is_none());
+        assert!(record.wave_index.is_none());
+        assert!(record.wave_total.is_none());
+    }
+
+    #[test]
+    fn test_event_record_wave_roundtrip_through_jsonl() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("events.jsonl");
+
+        let mut logger = EventLogger::new(&path);
+
+        // Log event with wave metadata
+        let event = make_event("review.file", "src/main.rs").with_wave("w-deadbeef", 0, 5);
+        logger.log_event(1, "dispatcher", &event, None).unwrap();
+
+        // Log event without wave metadata
+        let plain_event = make_event("build.done", "ok");
+        logger.log_event(2, "builder", &plain_event, None).unwrap();
+
+        let history = EventHistory::new(&path);
+        let records = history.read_all().unwrap();
+
+        assert_eq!(records.len(), 2);
+        // First has wave metadata
+        assert_eq!(records[0].wave_id.as_deref(), Some("w-deadbeef"));
+        assert_eq!(records[0].wave_index, Some(0));
+        assert_eq!(records[0].wave_total, Some(5));
+        // Second has no wave metadata
+        assert!(records[1].wave_id.is_none());
+        assert!(records[1].wave_index.is_none());
+        assert!(records[1].wave_total.is_none());
+    }
+
+    #[test]
+    fn test_event_record_wave_fields_not_serialized_when_none() {
+        let event = make_event("test", "payload");
+        let record = EventRecord::new(1, "hat", &event, None);
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(!json.contains("wave_id"));
+        assert!(!json.contains("wave_index"));
+        assert!(!json.contains("wave_total"));
+    }
+
+    #[test]
+    fn test_event_record_backwards_compat_no_wave_fields() {
+        // Simulate reading a JSONL line written before wave support
+        let json = r#"{"ts":"2024-01-15T10:00:00Z","iteration":1,"hat":"builder","topic":"build.done","payload":"ok"}"#;
+        let record: EventRecord = serde_json::from_str(json).unwrap();
+        assert!(record.wave_id.is_none());
+        assert!(record.wave_index.is_none());
+        assert!(record.wave_total.is_none());
+        assert_eq!(record.topic, "build.done");
     }
 
     #[test]
