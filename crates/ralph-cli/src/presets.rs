@@ -406,9 +406,11 @@ mod tests {
         assert!(critic.instructions.contains(
             "Emit exactly one of `review.passed` or `review.rejected` yourself for every review turn."
         ));
-        assert!(critic.instructions.contains(
-            "its empty payload loses runtime-task ownership on retry"
-        ));
+        assert!(
+            critic
+                .instructions
+                .contains("its empty payload loses runtime-task ownership on retry")
+        );
         assert!(critic.instructions.contains("ralph tools memory add"));
 
         let finalizer = config
@@ -551,7 +553,10 @@ mod tests {
 
         let payload: Value = serde_json::from_str(&fallback.payload)
             .expect("fallback review payload should be valid JSON");
-        assert_eq!(payload["task_id"], serde_json::json!("task-1773251265-ef7f"));
+        assert_eq!(
+            payload["task_id"],
+            serde_json::json!("task-1773251265-ef7f")
+        );
         assert_eq!(
             payload["task_key"],
             serde_json::json!("preset-contract-alignment:step-03:pdd-build-review")
