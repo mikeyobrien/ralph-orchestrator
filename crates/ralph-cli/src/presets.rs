@@ -65,6 +65,12 @@ const PRESETS: &[EmbeddedPreset] = &[
         content: include_str!("../presets/review.yml"),
         public: true,
     },
+    EmbeddedPreset {
+        name: "wave-review",
+        description: "Parallel scatter-gather code review using agent waves",
+        content: include_str!("../presets/wave-review.yml"),
+        public: true,
+    },
 ];
 
 /// Returns all embedded presets.
@@ -128,7 +134,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 5, "Expected 5 public presets");
+        assert_eq!(presets.len(), 6, "Expected 6 public presets");
     }
 
     #[test]
@@ -202,12 +208,13 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 5);
+        assert_eq!(names.len(), 6);
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"code-assist"));
         assert!(names.contains(&"research"));
         assert!(names.contains(&"review"));
         assert!(names.contains(&"pdd-to-code-assist"));
+        assert!(names.contains(&"wave-review"));
     }
 
     #[test]
