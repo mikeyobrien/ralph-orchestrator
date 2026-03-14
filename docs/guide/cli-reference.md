@@ -365,6 +365,27 @@ ralph bot [OPTIONS] <COMMAND>
 - `token set <TOKEN> [--config <path>]`
 - `daemon`
 
+### ralph wave
+
+Dispatch wave events for parallel hat execution.
+
+```bash
+ralph wave emit <TOPIC> --payloads <ITEM>...
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `<TOPIC>` | Event topic targeting a wave-capable hat |
+| `--payloads <ITEM>...` | One or more payloads, each becomes a separate event |
+
+Each payload becomes an event tagged with a shared `wave_id`. The loop runner spawns parallel backend instances bounded by the target hat's `concurrency` setting.
+
+Blocked when `RALPH_WAVE_WORKER=1` (prevents nested waves).
+
+See [Agent Waves](../advanced/agent-waves.md) for full details.
+
 ### ralph tools
 
 Runtime tools for memories, tasks, and skills.
@@ -441,6 +462,10 @@ Supported shells: `bash`, `elvish`, `fish`, `powershell`, `zsh`.
 | `RALPH_DIAGNOSTICS` | Set to `1` to enable diagnostics |
 | `RALPH_CONFIG` | Default config file path |
 | `NO_COLOR` | Disable color output |
+| `RALPH_WAVE_WORKER` | Set to `1` inside wave workers (blocks nested waves) |
+| `RALPH_WAVE_ID` | Wave correlation ID (set on wave workers) |
+| `RALPH_WAVE_INDEX` | 0-based worker index within the wave |
+| `RALPH_EVENTS_FILE` | Per-worker events file path (set on wave workers) |
 
 ## Shell Completion
 

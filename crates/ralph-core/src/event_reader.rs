@@ -40,7 +40,10 @@ impl MalformedLine {
     /// Creates a new MalformedLine, truncating content if needed.
     pub fn new(line_number: u64, content: &str, error: String) -> Self {
         let content = if content.len() > Self::MAX_CONTENT_LEN {
-            format!("{}...", &content[..Self::MAX_CONTENT_LEN])
+            // Truncate at a valid UTF-8 character boundary to avoid panics
+            // on multi-byte content.
+            let truncate_at = crate::text::floor_char_boundary(content, Self::MAX_CONTENT_LEN);
+            format!("{}...", &content[..truncate_at])
         } else {
             content.to_string()
         };
@@ -92,6 +95,40 @@ pub struct Event {
     )]
     pub payload: Option<String>,
     pub ts: String,
+
+    /// Wave correlation ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave_id: Option<String>,
+
+    /// Index of this event within the wave (0-based).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave_index: Option<u32>,
+
+    /// Total number of events in the wave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave_total: Option<u32>,
+}
+
+impl Event {
+    /// Returns true if this event has wave correlation metadata.
+    pub fn is_wave_event(&self) -> bool {
+        self.wave_id.is_some()
+    }
+}
+
+impl From<Event> for ralph_proto::Event {
+    fn from(e: Event) -> Self {
+        // ts is a JSONL serialization concern, not carried to bus events.
+        let mut pe = ralph_proto::Event::new(e.topic.as_str(), e.payload.unwrap_or_default());
+        if let Some(wave_id) = e.wave_id {
+            // wave_index is required when wave_id is present; default to 0
+            // only as a last resort (should not happen with well-formed events).
+            let index = e.wave_index.unwrap_or(0);
+            let total = e.wave_total.unwrap_or(1);
+            pe = pe.with_wave(wave_id, index, total);
+        }
+        pe
+    }
 }
 
 /// Reads new events from `.ralph/events.jsonl` since last read.
@@ -198,22 +235,9 @@ impl EventReader {
         }
     }
 
-    /// Returns the path to the events file.
-    pub fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-
     /// Returns the current file position.
     pub fn position(&self) -> u64 {
         self.position
-    }
-
-    /// Sets the file position to a specific byte offset.
-    ///
-    /// Use this to skip past entries written by the EventLogger so they
-    /// are not re-read by `process_events_from_jsonl`.
-    pub fn set_position(&mut self, position: u64) {
-        self.position = position;
     }
 
     /// Resets the position to the start of the file.
@@ -444,6 +468,135 @@ mod tests {
         assert_eq!(parsed["issues"][0]["file"], "test.rs");
         assert_eq!(parsed["issues"][0]["line"], 42);
         assert_eq!(parsed["approval"], "conditional");
+    }
+
+    #[test]
+    fn test_event_reader_parses_wave_metadata() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"topic":"review.file","payload":"src/main.rs","ts":"2024-01-01T00:00:00Z","wave_id":"w-1a2b3c4d","wave_index":0,"wave_total":3}}"#
+        )
+        .unwrap();
+        writeln!(
+            file,
+            r#"{{"topic":"review.file","payload":"src/lib.rs","ts":"2024-01-01T00:00:00Z","wave_id":"w-1a2b3c4d","wave_index":1,"wave_total":3}}"#
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        let mut reader = EventReader::new(file.path());
+        let result = reader.read_new_events().unwrap();
+
+        assert_eq!(result.events.len(), 2);
+        assert!(result.events[0].is_wave_event());
+        assert_eq!(result.events[0].wave_id.as_deref(), Some("w-1a2b3c4d"));
+        assert_eq!(result.events[0].wave_index, Some(0));
+        assert_eq!(result.events[0].wave_total, Some(3));
+        assert_eq!(result.events[1].wave_index, Some(1));
+    }
+
+    #[test]
+    fn test_event_reader_backwards_compat_no_wave_fields() {
+        // Events written before wave support should still parse
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{"topic":"build.done","payload":"ok","ts":"2024-01-01T00:00:00Z"}}"#
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        let mut reader = EventReader::new(file.path());
+        let result = reader.read_new_events().unwrap();
+
+        assert_eq!(result.events.len(), 1);
+        assert!(!result.events[0].is_wave_event());
+        assert!(result.events[0].wave_id.is_none());
+        assert!(result.events[0].wave_index.is_none());
+        assert!(result.events[0].wave_total.is_none());
+    }
+
+    #[test]
+    fn test_event_reader_mixed_wave_and_non_wave() {
+        let mut file = NamedTempFile::new().unwrap();
+        // Non-wave event
+        writeln!(
+            file,
+            r#"{{"topic":"task.start","payload":"begin","ts":"2024-01-01T00:00:00Z"}}"#
+        )
+        .unwrap();
+        // Wave event
+        writeln!(
+            file,
+            r#"{{"topic":"review.file","payload":"src/main.rs","ts":"2024-01-01T00:00:01Z","wave_id":"w-abc","wave_index":0,"wave_total":2}}"#
+        )
+        .unwrap();
+        // Another non-wave event
+        writeln!(
+            file,
+            r#"{{"topic":"build.done","ts":"2024-01-01T00:00:02Z"}}"#
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        let mut reader = EventReader::new(file.path());
+        let result = reader.read_new_events().unwrap();
+
+        assert_eq!(result.events.len(), 3);
+        assert!(!result.events[0].is_wave_event());
+        assert!(result.events[1].is_wave_event());
+        assert_eq!(result.events[1].wave_id.as_deref(), Some("w-abc"));
+        assert!(!result.events[2].is_wave_event());
+    }
+
+    #[test]
+    fn test_from_event_reader_to_proto_without_wave() {
+        let event = Event {
+            topic: "build.done".to_string(),
+            payload: Some("success".to_string()),
+            ts: "2024-01-01T00:00:00Z".to_string(),
+            wave_id: None,
+            wave_index: None,
+            wave_total: None,
+        };
+        let proto: ralph_proto::Event = event.into();
+        assert_eq!(proto.topic.as_str(), "build.done");
+        assert_eq!(proto.payload, "success");
+        assert!(!proto.is_wave_event());
+    }
+
+    #[test]
+    fn test_from_event_reader_to_proto_with_wave() {
+        let event = Event {
+            topic: "review.file".to_string(),
+            payload: Some("src/main.rs".to_string()),
+            ts: "2024-01-01T00:00:00Z".to_string(),
+            wave_id: Some("w-abc".to_string()),
+            wave_index: Some(2),
+            wave_total: Some(5),
+        };
+        let proto: ralph_proto::Event = event.into();
+        assert_eq!(proto.topic.as_str(), "review.file");
+        assert_eq!(proto.payload, "src/main.rs");
+        assert!(proto.is_wave_event());
+        assert_eq!(proto.wave_id.as_deref(), Some("w-abc"));
+        assert_eq!(proto.wave_index, Some(2));
+        assert_eq!(proto.wave_total, Some(5));
+    }
+
+    #[test]
+    fn test_from_event_reader_to_proto_none_payload() {
+        let event = Event {
+            topic: "empty.event".to_string(),
+            payload: None,
+            ts: "2024-01-01T00:00:00Z".to_string(),
+            wave_id: None,
+            wave_index: None,
+            wave_total: None,
+        };
+        let proto: ralph_proto::Event = event.into();
+        assert_eq!(proto.payload, "");
     }
 
     #[test]
