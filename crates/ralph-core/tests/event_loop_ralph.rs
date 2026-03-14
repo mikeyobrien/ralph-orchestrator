@@ -2,7 +2,47 @@
 
 use ralph_core::{EventLoop, RalphConfig};
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
+
+fn test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+}
+
+fn safe_current_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| {
+        let fallback = std::env::temp_dir();
+        std::env::set_current_dir(&fallback).expect("set fallback cwd");
+        fallback
+    })
+}
+
+struct CwdGuard {
+    _lock: MutexGuard<'static, ()>,
+    original: PathBuf,
+}
+
+impl CwdGuard {
+    fn set(path: &Path) -> Self {
+        let lock = test_lock();
+        let original = safe_current_dir();
+        std::env::set_current_dir(path).expect("set current dir");
+        Self {
+            _lock: lock,
+            original,
+        }
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.original);
+    }
+}
 
 #[test]
 fn test_orphaned_event_falls_to_ralph() {
@@ -39,14 +79,10 @@ event_loop:
     let mut event_loop = EventLoop::new(config);
 
     // Change to temp directory so EventReader finds the events file
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(temp_dir.path()).unwrap();
+    let _cwd = CwdGuard::set(temp_dir.path());
 
     // Process events from JSONL
     let result = event_loop.process_events_from_jsonl().unwrap();
-
-    // Restore original directory
-    std::env::set_current_dir(original_dir).unwrap();
 
     // Verify: Ralph should handle the orphaned event
     assert!(
@@ -85,13 +121,10 @@ event_loop:
     config.core.workspace_root = temp_dir.path().to_path_buf();
     let mut event_loop = EventLoop::new(config);
 
-    let original_dir = std::env::current_dir().unwrap();
-    std::env::set_current_dir(temp_dir.path()).unwrap();
+    let _cwd = CwdGuard::set(temp_dir.path());
 
     event_loop.process_events_from_jsonl().unwrap();
     let termination = event_loop.check_termination();
-
-    std::env::set_current_dir(original_dir).unwrap();
 
     assert!(termination.is_none());
     assert_eq!(
