@@ -323,6 +323,10 @@ pub async fn run_loop_impl(
     if let Err(e) = event_logger.log(&start_record) {
         warn!("Failed to log start event: {}", e);
     }
+    // Advance the event reader past the logged start event so it won't be
+    // re-read by process_events_from_jsonl() — the start event is already
+    // in the bus from initialize().
+    event_loop.sync_event_reader_to_file_end();
 
     // Create backend from config - TUI mode uses the same backend as non-TUI
     // The TUI is an observation layer that displays output, not a different mode

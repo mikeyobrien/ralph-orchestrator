@@ -708,6 +708,19 @@ impl EventLoop {
         }
     }
 
+    /// Advances the event reader to the current end of the events file.
+    ///
+    /// Call this after writing observability records (e.g. start event) to the
+    /// events JSONL file so they are not re-read by `process_events_from_jsonl`.
+    /// The start event is already published to the bus via `initialize()`, so
+    /// re-reading it from the file would cause double-delivery.
+    pub fn sync_event_reader_to_file_end(&mut self) {
+        let path = self.event_reader.path();
+        if let Ok(metadata) = std::fs::metadata(path) {
+            self.event_reader.set_position(metadata.len());
+        }
+    }
+
     /// Checks if any hats have pending events.
     ///
     /// Use this after `process_output` to detect if the LLM failed to publish an event.
