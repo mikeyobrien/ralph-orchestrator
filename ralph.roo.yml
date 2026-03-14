@@ -1,0 +1,27 @@
+# Ralph + Roo: PDD-to-Code-Assist Configuration
+# Uses Claude Opus 4.6 via Bedrock with adaptive thinking
+#
+# Usage:
+#   ralph run -c ralph.roo.yml -p "Build a feature to..."
+#
+# Or with the pdd-to-code-assist preset:
+#   ralph run -c presets/pdd-to-code-assist.yml -c ralph.roo.yml -p "Build a feature to..."
+
+cli:
+  backend: "roo"
+  prompt_mode: "arg"
+  pty_mode: false
+  idle_timeout_secs: 60           # Opus can be slow; 60s idle timeout
+  args:
+    - "--provider"
+    - "bedrock"
+    - "--aws-profile"
+    - "roo-bedrock"
+    - "--aws-region"
+    - "us-east-1"
+    - "--model"
+    - "anthropic.claude-opus-4-6"
+    - "--max-tokens"
+    - "100000"
+    - "--reasoning-effort"
+    - "medium"                    # Adaptive thinking: medium (default)

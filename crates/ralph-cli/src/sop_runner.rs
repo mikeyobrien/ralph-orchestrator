@@ -16,8 +16,9 @@ use thiserror::Error;
 
 /// Bundled SOP content - embedded at compile time for self-contained binary.
 ///
-/// Note: SOPs are copied into crates/ralph-cli/sops/ for crates.io packaging.
-/// The source files live in .claude/skills/ but must be duplicated here because
+/// Note: SOPs are copied or generated into crates/ralph-cli/sops/ for crates.io
+/// packaging. Some come from local source files, and PDD is generated from the
+/// canonical upstream GitHub SOP plus a small Ralph-specific addendum, because
 /// `include_str!` paths outside the crate directory aren't included when publishing.
 pub mod sops {
     /// PDD (Prompt-Driven Development) SOP for planning sessions.

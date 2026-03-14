@@ -4,12 +4,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::warn;
 
 use crate::errors::ApiError;
+use crate::loop_support::now_ts;
 
 use self::yaml::{export_collection_yaml, graph_from_yaml};
 
@@ -344,8 +345,4 @@ fn parse_graph(raw: Value) -> Result<GraphData, ApiError> {
 fn collection_not_found_error(collection_id: &str) -> ApiError {
     ApiError::collection_not_found(format!("Collection with id '{collection_id}' not found"))
         .with_details(serde_json::json!({ "collectionId": collection_id }))
-}
-
-pub(super) fn now_ts() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }

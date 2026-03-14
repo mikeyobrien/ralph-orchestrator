@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Setup git hooks for development
 # Run this once after cloning the repository
 

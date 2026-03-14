@@ -154,6 +154,10 @@ vi.mock("@/hooks", () => ({
   })),
 }));
 
+vi.mock("./LiveStatus", () => ({
+  LiveStatus: () => null,
+}));
+
 import { ThreadList } from "./ThreadList";
 
 function createTestWrapper() {

@@ -10,17 +10,21 @@
 //! - Project initialization via `ralph init`
 //! - SOP-based planning via `ralph plan`
 //! - Code task generation via `ralph code-task`
+//! - Hook config validation via `ralph hooks validate`
 //! - Work item tracking via `ralph task`
 
 mod backend_support;
 mod bot;
+mod config_resolution;
 mod display;
 mod doctor;
 mod hats;
+mod hooks;
 mod init;
 mod interact;
 mod loop_runner;
 mod loops;
+mod mcp;
 mod memory;
 mod preflight;
 mod presets;
@@ -179,6 +183,49 @@ pub(crate) fn default_config_path() -> PathBuf {
     PathBuf::from("ralph.yml")
 }
 
+pub(crate) fn resolve_workspace_root(root: Option<&PathBuf>) -> PathBuf {
+    if let Some(root) = root {
+        return root.clone();
+    }
+
+    if let Ok(value) = std::env::var("RALPH_WORKSPACE_ROOT")
+        && !value.trim().is_empty()
+    {
+        return PathBuf::from(value);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    discover_workspace_root(&cwd).unwrap_or(cwd)
+}
+
+pub(crate) fn resolve_path_from_workspace(
+    path: impl AsRef<Path>,
+    root: Option<&PathBuf>,
+) -> PathBuf {
+    resolve_workspace_root(root).join(path)
+}
+
+fn discover_workspace_root(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find_map(|dir| {
+        let has_ralph = dir.join(".ralph").is_dir();
+        let has_git = dir.join(".git").exists();
+        if has_ralph || has_git {
+            Some(dir.to_path_buf())
+        } else {
+            None
+        }
+    })
+}
+
+fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
+    let path = PathBuf::from(marker_value.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        workspace_root.join(path)
+    }
+}
+
 /// Verbosity level for streaming output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Verbosity {
@@ -306,7 +353,7 @@ impl ConfigSource {
 pub enum HatsSource {
     /// Local file path
     File(PathBuf),
-    /// Builtin hat collection name (e.g., "builtin:feature")
+    /// Builtin hat collection name (e.g., "builtin:code-assist")
     Builtin(String),
     /// Remote URL (e.g., "http://example.com/hats.yml")
     Remote(String),
@@ -391,34 +438,71 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
 pub(crate) fn load_config_with_overrides(
     config_sources: &[ConfigSource],
 ) -> anyhow::Result<RalphConfig> {
-    // Partition sources: file sources vs overrides
-    let (primary_sources, overrides): (Vec<_>, Vec<_>) = config_sources
-        .iter()
-        .partition(|s| !matches!(s, ConfigSource::Override { .. }));
+    let (primary_sources, overrides) = config_resolution::split_config_sources(config_sources);
+    if primary_sources.len() > 1 {
+        warn!("Multiple config sources specified, using first one. Others ignored.");
+    }
 
-    // Load configuration from first file source, or default ralph.yml
-    let mut config = if let Some(ConfigSource::File(path)) = primary_sources.first() {
-        if path.exists() {
-            RalphConfig::from_file(path)
-                .with_context(|| format!("Failed to load config from {:?}", path))?
-        } else {
-            warn!("Config file {:?} not found, using defaults", path);
-            RalphConfig::default()
+    let (primary_value, primary_label, primary_uses_defaults) = match primary_sources.first() {
+        Some(ConfigSource::File(path)) => {
+            if path.exists() {
+                let label = path.display().to_string();
+                let content = std::fs::read_to_string(path)
+                    .with_context(|| format!("Failed to load config from {}", label))?;
+                let value = config_resolution::parse_yaml_value(&content, &label)?;
+                (Some(value), label, false)
+            } else {
+                warn!("Config file {:?} not found, using defaults", path);
+                (None, path.display().to_string(), false)
+            }
         }
-    } else {
-        // Only overrides specified - load default path as base
-        let default_path = default_config_path();
-        if default_path.exists() {
-            RalphConfig::from_file(&default_path)
-                .with_context(|| format!("Failed to load config from {}", default_path.display()))?
-        } else {
-            warn!(
-                "Config file {} not found, using defaults",
-                default_path.display()
+        Some(ConfigSource::Builtin(name)) => {
+            anyhow::bail!(
+                "`-c builtin:{name}` is no longer supported.\n\nBuiltin presets are now hat collections.\nUse:\n  ralph run -c ralph.yml -H builtin:{name}"
             );
-            RalphConfig::default()
+        }
+        Some(ConfigSource::Remote(url)) => {
+            anyhow::bail!(
+                "Remote core config sources are not supported for this command: {}",
+                url
+            );
+        }
+        Some(ConfigSource::Override { .. }) => unreachable!("Overrides are partitioned out"),
+        None => {
+            let default_path = default_config_path();
+            if default_path.exists() {
+                let label = default_path.display().to_string();
+                let content = std::fs::read_to_string(&default_path)
+                    .with_context(|| format!("Failed to load config from {}", label))?;
+                let value = config_resolution::parse_yaml_value(&content, &label)?;
+                (Some(value), label, false)
+            } else {
+                warn!(
+                    "Config file {} not found, using defaults",
+                    default_path.display()
+                );
+                (None, default_path.display().to_string(), true)
+            }
         }
     };
+
+    let user_layer = config_resolution::load_optional_user_config_value()?;
+    let mut merged_value = config_resolution::default_core_value()?;
+    if let Some((user_value, _)) = &user_layer {
+        merged_value = config_resolution::merge_yaml_values(merged_value, user_value.clone())?;
+    }
+    if let Some(primary_value) = primary_value {
+        merged_value = config_resolution::merge_yaml_values(merged_value, primary_value)?;
+    }
+
+    let merged_label = config_resolution::compose_core_label(
+        user_layer.as_ref().map(|(_, label)| label.as_str()),
+        &primary_label,
+        primary_uses_defaults,
+    );
+
+    let mut config: RalphConfig = serde_yaml::from_value(merged_value)
+        .with_context(|| format!("Failed to parse merged core config from {}", merged_label))?;
 
     config.normalize();
 
@@ -427,8 +511,7 @@ pub(crate) fn load_config_with_overrides(
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     // Apply CLI config overrides
-    let override_sources: Vec<_> = overrides.into_iter().cloned().collect();
-    apply_config_overrides(&mut config, &override_sources)?;
+    apply_config_overrides(&mut config, &overrides)?;
 
     Ok(config)
 }
@@ -451,7 +534,7 @@ struct Cli {
 
     /// Hat collection source: file path, builtin:name, or URL.
     ///
-    /// Example: `-H builtin:feature` or `-H .ralph/hats/feature.yml`
+    /// Example: `-H builtin:code-assist` or `-H .ralph/hats/my-workflow.yml`
     #[arg(short = 'H', long, global = true)]
     hats: Option<String>,
 
@@ -471,6 +554,9 @@ enum Commands {
 
     /// Run preflight checks to validate configuration and environment
     Preflight(preflight::PreflightArgs),
+
+    /// Validate hooks configuration and command wiring
+    Hooks(hooks::HooksArgs),
 
     /// Run first-run diagnostics and environment checks
     Doctor(doctor::DoctorArgs),
@@ -519,6 +605,9 @@ enum Commands {
 
     /// Run the web dashboard
     Web(web::WebArgs),
+
+    /// Run Ralph as an MCP server over stdio
+    Mcp(mcp::McpArgs),
 
     /// Manage Telegram bot setup and testing
     Bot(bot::BotArgs),
@@ -870,6 +959,14 @@ fn completions_command(args: CompletionsArgs) -> Result<()> {
     Ok(())
 }
 
+/// Returns true if the given command is eligible for diagnostics session creation.
+/// Only `run` and `resume` commands (and the default no-subcommand case) should
+/// create diagnostics session directories. Other subcommands like `emit` or `tools`
+/// would otherwise create empty session dirs.
+fn is_diagnostics_eligible_command(command: Option<&Commands>) -> bool {
+    matches!(command, Some(Commands::Run(_) | Commands::Resume(_)) | None)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install panic hook to restore terminal state on crash
@@ -892,14 +989,16 @@ async fn main() -> Result<()> {
         Some(Commands::Resume(args)) => args.rpc,
         _ => false,
     };
+    let mcp_enabled = matches!(&cli.command, Some(Commands::Mcp(_)));
 
     // Initialize logging - suppress in TUI mode to avoid corrupting the display
     let filter = if cli.verbose { "debug" } else { "info" };
 
     // Check if diagnostics are enabled
-    let diagnostics_enabled = std::env::var("RALPH_DIAGNOSTICS")
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    let diagnostics_enabled = is_diagnostics_eligible_command(cli.command.as_ref())
+        && std::env::var("RALPH_DIAGNOSTICS")
+            .map(|v| v == "1")
+            .unwrap_or(false);
 
     if tui_enabled {
         // TUI mode: logs would corrupt the display, so write to a rotating log file
@@ -941,8 +1040,8 @@ async fn main() -> Result<()> {
             }
         }
         // If log file creation fails, silently continue without logging
-    } else if rpc_enabled {
-        // RPC mode: logs must go to stderr to keep stdout clean for JSON-lines
+    } else if rpc_enabled || mcp_enabled {
+        // RPC/MCP mode: logs must go to stderr to keep stdout clean for protocol messages
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)
@@ -1011,6 +1110,15 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Some(Commands::Hooks(args)) => {
+            hooks::execute(
+                &config_sources,
+                hats_source.as_ref(),
+                args,
+                cli.color.should_use_colors(),
+            )
+            .await
+        }
         Some(Commands::Doctor(args)) => {
             doctor::execute(
                 &config_sources,
@@ -1057,6 +1165,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Tui(args)) => tui_command(args).await,
         Some(Commands::Web(args)) => web::execute(args).await,
+        Some(Commands::Mcp(args)) => mcp::execute(args).await,
         Some(Commands::Bot(args)) => {
             bot::execute(
                 args,
@@ -1430,112 +1539,128 @@ async fn run_command(
 
     let mut pending_worktree_registration: Option<LoopEntry> = None;
 
+    // Determine TUI mode early (before lock acquisition) to avoid self-lock contention
+    // in subprocess TUI mode. The child RPC process will acquire the lock itself.
+    let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let use_subprocess_tui =
+        !args.no_tui && !args.autonomous && !args.rpc && !args.legacy_tui && is_tty;
+
     // Try to acquire the loop lock for multi-loop concurrency support
     // This implements the lock detection flow from the multi-loop spec
+    // Skip lock acquisition in subprocess TUI mode - let the child acquire it
     let workspace_root = &config.core.workspace_root;
-    let (loop_context, _lock_guard) = match LoopLock::try_acquire(workspace_root, &prompt_summary) {
-        Ok(guard) => {
-            // We're the primary loop - run in place
-            debug!("Acquired loop lock, running as primary loop");
-            let context = LoopContext::primary(workspace_root.clone());
-            (context, Some(guard))
-        }
-        Err(LockError::AlreadyLocked(existing)) => {
-            // Another loop is running
-            if args.exclusive {
-                // --exclusive: wait for the lock instead of spawning worktree
-                info!(
-                    "Loop lock held by PID {} (started {}), waiting for lock (--exclusive mode)...",
-                    existing.pid, existing.started
-                );
-                let guard = LoopLock::acquire_blocking(workspace_root, &prompt_summary)
-                    .context("Failed to acquire loop lock in exclusive mode")?;
-                debug!("Acquired loop lock after waiting");
+    let (loop_context, _lock_guard) = if use_subprocess_tui {
+        // In subprocess TUI mode, don't acquire lock here - the child RPC process will do it
+        // This avoids the self-lock contention where parent holds lock and child sees it,
+        // then incorrectly spawns a worktree thinking there's another concurrent loop
+        debug!("Skipping lock acquisition in subprocess TUI mode (child will acquire)");
+        let context = LoopContext::primary(workspace_root.clone());
+        (context, None)
+    } else {
+        match LoopLock::try_acquire(workspace_root, &prompt_summary) {
+            Ok(guard) => {
+                // We're the primary loop - run in place
+                debug!("Acquired loop lock, running as primary loop");
                 let context = LoopContext::primary(workspace_root.clone());
                 (context, Some(guard))
-            } else if !config.features.parallel {
-                // Parallel loops disabled via config - error out
-                anyhow::bail!(
-                    "Another loop is already running (PID {}, prompt: \"{}\"). \
+            }
+            Err(LockError::AlreadyLocked(existing)) => {
+                // Another loop is running
+                if args.exclusive {
+                    // --exclusive: wait for the lock instead of spawning worktree
+                    info!(
+                        "Loop lock held by PID {} (started {}), waiting for lock (--exclusive mode)...",
+                        existing.pid, existing.started
+                    );
+                    let guard = LoopLock::acquire_blocking(workspace_root, &prompt_summary)
+                        .context("Failed to acquire loop lock in exclusive mode")?;
+                    debug!("Acquired loop lock after waiting");
+                    let context = LoopContext::primary(workspace_root.clone());
+                    (context, Some(guard))
+                } else if !config.features.parallel {
+                    // Parallel loops disabled via config - error out
+                    anyhow::bail!(
+                        "Another loop is already running (PID {}, prompt: \"{}\"). \
                     Parallel loops are disabled in config (features.parallel: false). \
                     Use --exclusive to wait for the lock, or enable parallel loops.",
-                    existing.pid,
-                    existing.prompt.chars().take(50).collect::<String>()
-                );
-            } else {
-                // Auto-spawn into worktree
-                info!(
-                    "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
-                    existing.pid,
-                    existing.prompt.chars().take(50).collect::<String>()
-                );
+                        existing.pid,
+                        existing.prompt.chars().take(50).collect::<String>()
+                    );
+                } else {
+                    // Auto-spawn into worktree
+                    info!(
+                        "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
+                        existing.pid,
+                        existing.prompt.chars().take(50).collect::<String>()
+                    );
 
-                let worktree_config = WorktreeConfig::default();
+                    let worktree_config = WorktreeConfig::default();
 
-                // Generate memorable loop ID (adjective-noun only, no prompt keywords)
-                // This ID will be used consistently for: registry ID, worktree path, and branch name
-                let name_generator =
-                    ralph_core::LoopNameGenerator::from_config(&config.features.loop_naming);
-                let loop_id = name_generator.generate_memorable_unique(|name| {
-                    ralph_core::worktree_exists(workspace_root, name, &worktree_config)
-                });
+                    // Generate memorable loop ID (adjective-noun only, no prompt keywords)
+                    // This ID will be used consistently for: registry ID, worktree path, and branch name
+                    let name_generator =
+                        ralph_core::LoopNameGenerator::from_config(&config.features.loop_naming);
+                    let loop_id = name_generator.generate_memorable_unique(|name| {
+                        ralph_core::worktree_exists(workspace_root, name, &worktree_config)
+                    });
 
-                // Ensure worktree directory is in .gitignore
-                ensure_gitignore(workspace_root, ".worktrees")
-                    .context("Failed to update .gitignore for worktrees")?;
+                    // Ensure worktree directory is in .gitignore
+                    ensure_gitignore(workspace_root, ".worktrees")
+                        .context("Failed to update .gitignore for worktrees")?;
 
-                // Create the worktree
-                let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
-                    .context("Failed to create worktree for parallel loop")?;
+                    // Create the worktree
+                    let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
+                        .context("Failed to create worktree for parallel loop")?;
 
-                info!(
-                    "Created worktree at {} on branch {}",
-                    worktree.path.display(),
-                    worktree.branch
-                );
+                    info!(
+                        "Created worktree at {} on branch {}",
+                        worktree.path.display(),
+                        worktree.branch
+                    );
 
-                // Create loop context for the worktree
-                let context = LoopContext::worktree(
-                    loop_id.clone(),
-                    worktree.path.clone(),
-                    workspace_root.clone(),
-                );
+                    // Create loop context for the worktree
+                    let context = LoopContext::worktree(
+                        loop_id.clone(),
+                        worktree.path.clone(),
+                        workspace_root.clone(),
+                    );
 
-                // Set up all worktree symlinks (memories, specs, code tasks)
-                context
-                    .setup_worktree_symlinks()
-                    .context("Failed to create symlinks in worktree")?;
+                    // Set up all worktree symlinks (memories, specs, code tasks)
+                    context
+                        .setup_worktree_symlinks()
+                        .context("Failed to create symlinks in worktree")?;
 
-                // Generate context file with worktree metadata
-                context
-                    .generate_context_file(&worktree.branch, &prompt_summary)
-                    .context("Failed to generate context file in worktree")?;
+                    // Generate context file with worktree metadata
+                    context
+                        .generate_context_file(&worktree.branch, &prompt_summary)
+                        .context("Failed to generate context file in worktree")?;
 
-                // Register this loop after preflight succeeds so failed runs
-                // don't leave stale registry entries behind.
-                let entry = LoopEntry::with_id(
-                    &loop_id,
-                    &prompt_summary,
-                    Some(worktree.path.to_string_lossy().to_string()),
-                    worktree.path.to_string_lossy().to_string(),
-                );
-                pending_worktree_registration = Some(entry);
+                    // Register this loop after preflight succeeds so failed runs
+                    // don't leave stale registry entries behind.
+                    let entry = LoopEntry::with_id(
+                        &loop_id,
+                        &prompt_summary,
+                        Some(worktree.path.to_string_lossy().to_string()),
+                        worktree.path.to_string_lossy().to_string(),
+                    );
+                    pending_worktree_registration = Some(entry);
 
-                // Update config to use worktree paths
-                // The scratchpad and other paths should resolve to the worktree
-                // Note: We keep the lock guard as None since worktree loops don't hold the primary lock
+                    // Update config to use worktree paths
+                    // The scratchpad and other paths should resolve to the worktree
+                    // Note: We keep the lock guard as None since worktree loops don't hold the primary lock
 
+                    (context, None)
+                }
+            }
+            Err(LockError::UnsupportedPlatform) => {
+                // Non-Unix: just run without locking (single-loop fallback)
+                warn!("Loop locking not supported on this platform, running without lock");
+                let context = LoopContext::primary(workspace_root.clone());
                 (context, None)
             }
-        }
-        Err(LockError::UnsupportedPlatform) => {
-            // Non-Unix: just run without locking (single-loop fallback)
-            warn!("Loop locking not supported on this platform, running without lock");
-            let context = LoopContext::primary(workspace_root.clone());
-            (context, None)
-        }
-        Err(e) => {
-            return Err(anyhow::Error::new(e).context("Failed to acquire loop lock"));
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context("Failed to acquire loop lock"));
+            }
         }
     };
 
@@ -1604,9 +1729,7 @@ async fn run_command(
     // 2. Legacy TUI: In-process TUI (--legacy-tui escape hatch)
     // 3. RPC mode: Headless JSON-lines output (--rpc)
     // 4. CLI mode: No TUI (--no-tui or --autonomous)
-    let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let use_subprocess_tui = wants_tui && !use_legacy_tui && is_tty;
-
+    // Note: use_subprocess_tui is now determined earlier (before lock acquisition)
     let reason = if use_subprocess_tui {
         // Subprocess TUI mode: spawn child with --rpc and attach TUI
         run_subprocess_tui(subprocess_tui_args, resume, custom_args).await?
@@ -1628,24 +1751,31 @@ async fn run_command(
         .await?
     };
 
-    // Handle restart: exec-replace current process with same CLI args
+    // Handle restart: run required single-command restart sequence.
     if matches!(reason, TerminationReason::RestartRequested) {
-        let restart_path = std::path::Path::new(&workspace_root).join(".ralph/restart-requested");
-        let _ = std::fs::remove_file(&restart_path);
-        info!("Restart requested — exec-replacing process");
+        clear_restart_request_signal(&workspace_root);
 
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
-            let args: Vec<String> = std::env::args().collect();
-            let err = std::process::Command::new(&args[0]).args(&args[1..]).exec();
-            // exec() only returns on error
-            anyhow::bail!("Failed to exec-replace process: {}", err);
+            let restart_cmd = required_restart_command(std::process::id());
+            info!(
+                "Restart requested — launching single-command restart: {}",
+                restart_cmd
+            );
+
+            std::process::Command::new("sh")
+                .arg("-lc")
+                .arg(&restart_cmd)
+                .spawn()
+                .with_context(|| format!("Failed to spawn restart command: {}", restart_cmd))?;
+
+            // Shell command takes over restarting this loop after kill.
+            return Ok(());
         }
 
         #[cfg(not(unix))]
         {
-            anyhow::bail!("Restart via exec-replace is only supported on Unix");
+            anyhow::bail!("Restart via single-command shell restart is only supported on Unix");
         }
     }
 
@@ -1657,6 +1787,15 @@ async fn run_command(
     }
 
     Ok(())
+}
+
+fn required_restart_command(pid: u32) -> String {
+    format!("kill {pid} && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml")
+}
+
+fn clear_restart_request_signal(workspace_root: &std::path::Path) {
+    let restart_path = workspace_root.join(".ralph/restart-requested");
+    let _ = std::fs::remove_file(&restart_path);
 }
 
 /// Arguments needed for subprocess TUI mode.
@@ -2043,14 +2182,14 @@ fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
                         backend
                     );
                     println!(
-                        "\n{}Next steps:{}\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:feature",
+                        "\n{}Next steps:{}\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:code-assist",
                         colors::DIM,
                         colors::RESET
                     );
                 } else {
                     println!("Created ralph.yml with {} backend", backend);
                     println!(
-                        "\nNext steps:\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:feature"
+                        "\nNext steps:\n  1. Create PROMPT.md with your task\n  2. Run core-only: ralph run -c ralph.yml\n  3. Or with hats:  ralph run -c ralph.yml -H builtin:code-assist"
                     );
                 }
                 return Ok(());
@@ -2067,21 +2206,23 @@ fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
     println!("  ralph init --backend <backend>   Generate core config (ralph.yml)");
     println!("  ralph init --list-presets        Show builtin hat collections\n");
     println!("Backends: {}", backend_support::VALID_BACKENDS_LABEL);
-    println!("\nThen run with hats, e.g.: ralph run -c ralph.yml -H builtin:feature");
+    println!("\nThen run with hats, e.g.: ralph run -c ralph.yml -H builtin:code-assist");
 
     Ok(())
 }
 
 fn events_command(color_mode: ColorMode, args: EventsArgs) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
+    let workspace_root = resolve_workspace_root(None);
+    let current_events_marker = workspace_root.join(".ralph/current-events");
 
     // Read events path from marker file, fall back to default if marker doesn't exist
     // This ensures `ralph events` reads from the same events file as the active run
     let history = match args.file {
         Some(path) => EventHistory::new(path),
-        None => fs::read_to_string(".ralph/current-events")
-            .map(|s| EventHistory::new(s.trim()))
-            .unwrap_or_else(|_| EventHistory::default_path()),
+        None => fs::read_to_string(&current_events_marker)
+            .map(|s| EventHistory::new(resolve_marker_target(&workspace_root, &s)))
+            .unwrap_or_else(|_| EventHistory::new(workspace_root.join(".ralph/events.jsonl"))),
     };
 
     // Handle clear command
@@ -2248,6 +2389,8 @@ fn clean_command(
 /// (created by `ralph run`), or falls back to `.ralph/events.jsonl` if no marker exists.
 fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
+    let workspace_root = resolve_workspace_root(None);
+    let current_events_marker = workspace_root.join(".ralph/current-events");
 
     // Generate timestamp if not provided
     let ts = args.ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
@@ -2278,8 +2421,8 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
 
     // Read events path from marker file, fall back to CLI arg if marker doesn't exist
     // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = fs::read_to_string(".ralph/current-events")
-        .map(|s| PathBuf::from(s.trim()))
+    let events_file = fs::read_to_string(&current_events_marker)
+        .map(|s| resolve_marker_target(&workspace_root, &s))
         .unwrap_or_else(|_| args.file.clone());
 
     // Ensure parent directory exists
@@ -2338,7 +2481,7 @@ const TUTORIAL_STEPS: &[TutorialStep] = &[
             "Core config and hat collections are split.",
             "List built-in hat collections: ralph init --list-presets",
             "Create core config: ralph init --backend <name>",
-            "Run with hats: ralph run -c ralph.yml -H builtin:feature",
+            "Run with hats: ralph run -c ralph.yml -H builtin:code-assist",
         ],
     },
     TutorialStep {
@@ -2442,13 +2585,13 @@ fn prompt_to_continue(use_colors: bool) -> Result<()> {
 fn print_tutorial_outro(use_colors: bool) {
     if use_colors {
         println!(
-            "{}Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:feature.{}",
+            "{}Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:code-assist.{}",
             colors::GREEN,
             colors::RESET
         );
     } else {
         println!(
-            "Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:feature."
+            "Tutorial complete. Next: ralph init --backend <name>, then ralph run -c ralph.yml -H builtin:code-assist."
         );
     }
 }
@@ -2594,7 +2737,33 @@ fn list_directory_contents(path: &Path, use_colors: bool, indent: usize) -> Resu
 mod tests {
     use super::*;
     use crate::test_support::CwdGuard;
+    use ralph_core::{HookMutationConfig, HookOnError, HookPhaseEvent, HookSpec};
     use std::path::PathBuf;
+    use tempfile::TempDir;
+    #[test]
+    fn test_required_restart_command_matches_contract() {
+        let command = required_restart_command(4242);
+        assert_eq!(
+            command,
+            "kill 4242 && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml"
+        );
+    }
+
+    #[test]
+    fn test_clear_restart_request_signal_removes_sentinel_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let restart_dir = temp_dir.path().join(".ralph");
+        std::fs::create_dir_all(&restart_dir).expect("create .ralph dir");
+        let restart_path = restart_dir.join("restart-requested");
+        std::fs::write(&restart_path, "requested").expect("write sentinel");
+
+        clear_restart_request_signal(temp_dir.path());
+
+        assert!(
+            !restart_path.exists(),
+            "restart sentinel should be removed before restart command dispatch"
+        );
+    }
 
     #[test]
     fn test_verbosity_cli_quiet() {
@@ -2637,18 +2806,18 @@ mod tests {
 
     #[test]
     fn test_config_source_parse_builtin() {
-        let source = ConfigSource::parse("builtin:feature");
+        let source = ConfigSource::parse("builtin:code-assist");
         match source {
-            ConfigSource::Builtin(name) => assert_eq!(name, "feature"),
+            ConfigSource::Builtin(name) => assert_eq!(name, "code-assist"),
             _ => panic!("Expected Builtin variant"),
         }
     }
 
     #[test]
     fn test_hats_source_parse_builtin() {
-        let source = HatsSource::parse("builtin:feature");
+        let source = HatsSource::parse("builtin:code-assist");
         match source {
-            HatsSource::Builtin(name) => assert_eq!(name, "feature"),
+            HatsSource::Builtin(name) => assert_eq!(name, "code-assist"),
             _ => panic!("Expected Builtin variant"),
         }
     }
@@ -2666,9 +2835,9 @@ mod tests {
 
     #[test]
     fn test_cli_parses_global_hats_flag() {
-        let cli = Cli::try_parse_from(["ralph", "run", "-H", "builtin:feature"])
+        let cli = Cli::try_parse_from(["ralph", "run", "-H", "builtin:code-assist"])
             .expect("CLI parse failed");
-        assert_eq!(cli.hats.as_deref(), Some("builtin:feature"));
+        assert_eq!(cli.hats.as_deref(), Some("builtin:code-assist"));
     }
 
     #[test]
@@ -2729,8 +2898,8 @@ mod tests {
         assert_eq!(source.to_cli_string(), "ralph.yml");
 
         // Builtin (legacy)
-        let source = ConfigSource::Builtin("feature".to_string());
-        assert_eq!(source.to_cli_string(), "builtin:feature");
+        let source = ConfigSource::Builtin("code-assist".to_string());
+        assert_eq!(source.to_cli_string(), "builtin:code-assist");
 
         // Remote URL
         let source = ConfigSource::Remote("https://example.com/ralph.yml".to_string());
@@ -2773,6 +2942,79 @@ mod tests {
         let cli = Cli::try_parse_from(["ralph", "tutorial"]).expect("CLI parse failed");
 
         assert!(matches!(cli.command, Some(Commands::Tutorial(_))));
+    }
+
+    #[test]
+    fn test_mcp_serve_parses_command() {
+        let cli = Cli::try_parse_from(["ralph", "mcp", "serve"]).expect("CLI parse failed");
+        assert!(matches!(cli.command, Some(Commands::Mcp(_))));
+    }
+
+    #[test]
+    fn test_mcp_serve_parses_workspace_root_flag() {
+        let cli = Cli::try_parse_from([
+            "ralph",
+            "mcp",
+            "serve",
+            "--workspace-root",
+            "/tmp/ralph-workspace",
+        ])
+        .expect("CLI parse failed");
+
+        match cli.command {
+            Some(Commands::Mcp(crate::mcp::McpArgs {
+                command: crate::mcp::McpCommands::Serve(crate::mcp::ServeArgs { workspace_root }),
+            })) => {
+                assert_eq!(
+                    workspace_root,
+                    Some(std::path::PathBuf::from("/tmp/ralph-workspace"))
+                );
+            }
+            other => panic!("unexpected CLI parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_discovers_ancestor_ralph_dir() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("ralph dir");
+        let nested = temp_dir.path().join("a/b/c");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set(&nested);
+
+        assert_eq!(resolve_workspace_root(None), temp_dir.path().to_path_buf());
+    }
+
+    #[test]
+    fn test_emit_command_resolves_marker_relative_to_workspace_root_from_nested_dir() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let workspace = temp_dir.path();
+        std::fs::create_dir_all(workspace.join(".ralph")).expect("ralph dir");
+        std::fs::write(
+            workspace.join(".ralph/current-events"),
+            ".ralph/events-20260309-test.jsonl\n",
+        )
+        .expect("write marker");
+        let nested = workspace.join("nested/project");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set(&nested);
+
+        emit_command(
+            ColorMode::Never,
+            EmitArgs {
+                topic: "debug.step".to_string(),
+                payload: "task_id=demo".to_string(),
+                json: false,
+                ts: Some("2026-03-09T00:00:00Z".to_string()),
+                file: PathBuf::from(".ralph/events.jsonl"),
+            },
+        )
+        .expect("emit command");
+
+        let events = std::fs::read_to_string(workspace.join(".ralph/events-20260309-test.jsonl"))
+            .expect("read events");
+        assert!(events.contains("\"topic\":\"debug.step\""));
+        assert!(events.contains("task_id=demo"));
     }
 
     #[test]
@@ -2929,6 +3171,58 @@ mod tests {
         let report = report.expect("expected preflight report in dry-run mode");
         assert!(!report.passed);
         assert!(report.failures >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_auto_preflight_skip_list_can_omit_hooks_check_failures() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = temp_dir.path().to_path_buf();
+        config.features.preflight.enabled = true;
+        config.cli.backend = "custom".to_string();
+
+        let backend_cmd = temp_dir.path().join("backend-ok");
+        std::fs::write(&backend_cmd, "ok").unwrap();
+        config.cli.command = Some(backend_cmd.to_string_lossy().to_string());
+
+        config.hooks.enabled = true;
+        config.hooks.events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![HookSpec {
+                name: "broken-hook".to_string(),
+                command: vec!["./scripts/hooks/missing.sh".to_string()],
+                cwd: None,
+                env: std::collections::HashMap::new(),
+                timeout_seconds: None,
+                max_output_bytes: None,
+                on_error: Some(HookOnError::Block),
+                suspend_mode: None,
+                mutate: HookMutationConfig::default(),
+                extra: std::collections::HashMap::new(),
+            }],
+        );
+
+        let unskipped = run_auto_preflight(&config, false, false, AutoPreflightMode::DryRun)
+            .await
+            .unwrap()
+            .expect("dry-run preflight report");
+
+        assert!(!unskipped.passed);
+        let hooks_check = unskipped
+            .checks
+            .iter()
+            .find(|check| check.name == "hooks")
+            .expect("hooks check should be present without skip");
+        assert_eq!(hooks_check.status, CheckStatus::Fail);
+
+        config.features.preflight.skip = vec!["hooks".to_string()];
+        let skipped = run_auto_preflight(&config, false, false, AutoPreflightMode::DryRun)
+            .await
+            .unwrap()
+            .expect("dry-run preflight report");
+
+        assert!(skipped.passed);
+        assert!(skipped.checks.iter().all(|check| check.name != "hooks"));
     }
 
     #[tokio::test]
@@ -3241,8 +3535,7 @@ core:
 
         let config = load_config_with_overrides(&sources).unwrap();
 
-        let default = RalphConfig::default();
-        assert_eq!(config.core.scratchpad, default.core.scratchpad);
+        assert!(!config.core.scratchpad.is_empty());
         let expected_root = std::fs::canonicalize(temp_dir.path())
             .unwrap_or_else(|_| temp_dir.path().to_path_buf());
         let actual_root = std::fs::canonicalize(&config.core.workspace_root)
@@ -3371,5 +3664,41 @@ hats:
         )
         .await
         .expect("combined config should be accepted");
+    }
+
+    #[test]
+    fn test_diagnostics_eligible_for_run_command() {
+        let command = Some(Commands::Run(default_run_args()));
+        assert!(is_diagnostics_eligible_command(command.as_ref()));
+    }
+
+    #[test]
+    fn test_diagnostics_eligible_for_no_subcommand() {
+        assert!(is_diagnostics_eligible_command(None));
+    }
+
+    #[test]
+    fn test_diagnostics_not_eligible_for_emit_command() {
+        let command = Some(Commands::Emit(EmitArgs {
+            topic: "test.event".to_string(),
+            payload: String::new(),
+            json: false,
+            ts: None,
+            file: PathBuf::from(".ralph/events.jsonl"),
+        }));
+        assert!(!is_diagnostics_eligible_command(command.as_ref()));
+    }
+
+    #[test]
+    fn test_diagnostics_not_eligible_for_events_command() {
+        let command = Some(Commands::Events(EventsArgs {
+            last: None,
+            topic: None,
+            iteration: None,
+            format: OutputFormat::Table,
+            file: None,
+            clear: false,
+        }));
+        assert!(!is_diagnostics_eligible_command(command.as_ref()));
     }
 }

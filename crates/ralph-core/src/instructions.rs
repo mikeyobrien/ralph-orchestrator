@@ -155,12 +155,13 @@ impl InstructionBuilder {
             let topics: Vec<&str> = hat.publishes.iter().map(|t| t.as_str()).collect();
             let topics_list = topics.join(", ");
             let topics_backticked = format!("`{}`", topics.join("`, `"));
+            let example_topic = topics.first().copied().unwrap_or("event.name");
 
             (
                 format!("You publish to: {}", topics_list),
                 format!(
-                    "\n\nYou MUST publish one of these events: {}\nYou MUST NOT end the iteration without publishing because this will terminate the loop.",
-                    topics_backticked
+                    "\n\nYou MUST emit exactly ONE of these events via `ralph emit \"<topic>\" \"<summary>\"`: {}\nUse `ralph emit \"{}\" \"<summary>\"` as the pattern.\nPlain-language summaries do NOT count as event publication.\nYou MUST stop immediately after emitting.\nYou MUST NOT end the iteration without publishing because this will terminate the loop.",
+                    topics_backticked, example_topic
                 ),
             )
         };
@@ -171,6 +172,21 @@ impl InstructionBuilder {
 ### 0. ORIENTATION
 You MUST study the incoming event context.
 You MUST NOT assume work isn't done — verify first.
+
+### 0b. TOOL DISCIPLINE
+Runtime work state lives in `ralph tools task`, not in ad hoc markdown checklists.
+You MUST check `<ready-tasks>` before creating more tasks.
+If this iteration creates or discovers durable work, you MUST represent it with `ralph tools task ensure`, `start`, `close`, `reopen`, or `fail` as appropriate.
+If you are entering an unfamiliar area, you SHOULD search memories with `ralph tools memory search` before acting.
+You SHOULD assume the workflow commands are available when the loop is already running and use the task-specific command you actually need.
+The loop sets `$RALPH_BIN` to the current Ralph executable. Prefer `$RALPH_BIN emit ...` and `$RALPH_BIN tools ...` when you need a direct command form.
+Do not spend iterations on shell or tool-availability diagnosis unless the task is explicitly about the runtime environment.
+If a command's stdout is empty or terse, verify the intended side effect in the task/event state or in the files and artifacts the command should have changed.
+Keep temporary artifacts where later steps can still inspect them, such as a repo-local `logs/` directory or `/var/tmp` when needed.
+If a command fails, a dependency is missing, or you become blocked, you MUST record a `fix` memory with `ralph tools memory add`.
+If the issue is not resolved in the same iteration, you MUST fail or reopen the relevant runtime task before stopping.
+If your confidence is 80 or below on a consequential decision, you MUST document it in `.ralph/agent/decisions.md`.
+If this turn is likely to run longer than a few minutes, you SHOULD send a non-blocking progress update with `ralph tools interact progress`.
 
 ### 1. EXECUTE
 {role_instructions}
@@ -185,7 +201,7 @@ You MUST NOT close tasks unless ALL conditions are met:
 - Build succeeds (if applicable)
 
 ### 3. REPORT
-You MUST publish a result event with evidence.
+You MUST publish a result event with evidence using `ralph emit`.
 {publish_topics}{must_publish}
 
 ### GUARDRAILS
@@ -229,6 +245,17 @@ mod tests {
         assert!(instructions.contains("You MUST study the incoming event context"));
         assert!(instructions.contains("You MUST NOT assume work isn't done"));
 
+        assert!(instructions.contains("### 0b. TOOL DISCIPLINE"));
+        assert!(instructions.contains("You MUST check `<ready-tasks>` before creating more tasks"));
+        assert!(
+            instructions
+                .contains("`ralph tools task ensure`, `start`, `close`, `reopen`, or `fail`")
+        );
+        assert!(instructions.contains("`ralph tools memory search`"));
+        assert!(instructions.contains("`ralph tools memory add`"));
+        assert!(instructions.contains(".ralph/agent/decisions.md"));
+        assert!(instructions.contains("ralph tools interact progress"));
+
         // Numbered execute phase with RFC2119
         assert!(instructions.contains("### 1. EXECUTE"));
         assert!(instructions.contains("Review PRs for quality"));
@@ -241,7 +268,10 @@ mod tests {
 
         // Report phase with RFC2119
         assert!(instructions.contains("### 3. REPORT"));
-        assert!(instructions.contains("You MUST publish a result event"));
+        assert!(
+            instructions
+                .contains("You MUST publish a result event with evidence using `ralph emit`")
+        );
 
         // Guardrails section with high numbers
         assert!(instructions.contains("### GUARDRAILS"));
@@ -286,11 +316,15 @@ mod tests {
 
         // Must-publish rule should be injected even with explicit instructions (RFC2119)
         assert!(
-            instructions.contains("You MUST publish one of these events"),
+            instructions.contains("You MUST emit exactly ONE of these events via `ralph emit"),
             "Must-publish rule should be injected for custom hats with publishes"
         );
         assert!(instructions.contains("`review.approved`"));
         assert!(instructions.contains("`review.changes_requested`"));
+        assert!(
+            instructions.contains("Plain-language summaries do NOT count as event publication")
+        );
+        assert!(instructions.contains("You MUST stop immediately after emitting"));
         assert!(instructions.contains("You MUST NOT end the iteration without publishing"));
     }
 
@@ -304,9 +338,9 @@ mod tests {
 
         // No must-publish rule when hat has no publishes
         // Note: The prompt says "You MUST publish a result event" in the REPORT section,
-        // but the specific "You MUST publish one of these events:" list should not appear
+        // but the specific emitted-topics list should not appear
         assert!(
-            !instructions.contains("You MUST publish one of these events"),
+            !instructions.contains("You MUST emit exactly ONE of these events via `ralph emit"),
             "Specific must-publish list should NOT be injected when hat has no publishes"
         );
     }

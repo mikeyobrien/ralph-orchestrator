@@ -7,6 +7,7 @@ pub mod idempotency;
 pub mod loop_domain;
 pub mod loop_side_effects;
 pub mod loop_support;
+pub mod mcp;
 pub mod planning_domain;
 pub mod preset_domain;
 pub mod protocol;
@@ -16,5 +17,6 @@ pub mod task_domain;
 pub mod transport;
 
 pub use config::{ApiConfig, AuthMode};
+pub use mcp::serve_stdio;
 pub use runtime::RpcRuntime;
 pub use transport::{router, serve, serve_with_listener};

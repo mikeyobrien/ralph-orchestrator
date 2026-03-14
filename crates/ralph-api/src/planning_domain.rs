@@ -1,11 +1,12 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::errors::ApiError;
+use crate::loop_support::now_ts;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -587,8 +588,4 @@ fn generate_title(prompt: &str) -> String {
     let mut shortened: String = trimmed.chars().take(57).collect();
     shortened.push_str("...");
     shortened
-}
-
-fn now_ts() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }

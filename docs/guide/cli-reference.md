@@ -55,7 +55,7 @@ The `-H` flag specifies where to load hat collections from.
 | Format | Description |
 |--------|-------------|
 | `hats/feature.yml` | Local hats file |
-| `builtin:feature` | Built-in hat collection |
+| `builtin:code-assist` | Built-in hat collection |
 | `https://example.com/hats.yml` | Remote hats file |
 
 **Examples:**
@@ -65,7 +65,7 @@ The `-H` flag specifies where to load hat collections from.
 ralph run -c ralph.yml
 
 # Core + built-in hat collection
-ralph run -c ralph.yml -H builtin:feature
+ralph run -c ralph.yml -H builtin:code-assist
 
 # Core + file hat collection
 ralph run -c ralph.yml -H hats/review.yml
@@ -98,7 +98,7 @@ ralph run [OPTIONS]
 | `--idle-timeout <SECS>` | TUI idle timeout |
 | `--exclusive` | Wait for primary loop slot |
 | `--no-auto-merge` | Skip automatic merge after worktree loops complete |
-| `--skip-preflight` | Skip preflight checks |
+| `--skip-preflight` | Skip auto preflight checks (even when `features.preflight.enabled: true`) |
 | `--record-session <FILE>` | Record session JSONL |
 | `-q, --quiet` | Suppress streaming output |
 | `--continue` | Resume from existing state |
@@ -134,7 +134,49 @@ ralph preflight [OPTIONS]
 |--------|-------------|
 | `--format <human|json>` | Output format |
 | `--strict` | Treat warnings as failures |
-| `--check <NAME>` | Run one or more checks |
+| `--check <NAME>` | Run one or more checks by name |
+
+Default check names:
+
+- `config`
+- `hooks`
+- `backend`
+- `telegram`
+- `git`
+- `paths`
+- `tools`
+- `specs`
+
+Notes:
+
+- `--check` can be repeated (for example: `--check hooks --check config`).
+- `--strict` fails when there are warnings (not just failures).
+- During `ralph run`, auto-preflight uses `features.preflight.skip` to skip checks by these names.
+
+### ralph hooks
+
+Validate hooks configuration and command wiring without starting loop execution.
+
+```bash
+ralph hooks <COMMAND>
+```
+
+**Subcommands:**
+
+- `validate [--format human|json]`
+
+`ralph hooks validate` behavior:
+
+- Exit code `0`: validation passed.
+- Exit code `1`: one or more diagnostics (or config load/parse failure).
+- `--format human` (default): readable report with diagnostics.
+- `--format json`: structured report (`pass`, `source`, `hooks_enabled`, `checked_hooks`, `diagnostics`).
+
+Try it against the minimal sample hooks config:
+
+- `ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml`
+- Config: [`examples/hooks/minimal/ralph.hooks.yml`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/minimal/ralph.hooks.yml)
+- Scripts: [`examples/hooks/scripts/env-guard.sh`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/scripts/env-guard.sh), [`examples/hooks/scripts/notify.sh`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/scripts/notify.sh)
 
 ### ralph doctor
 
@@ -249,12 +291,16 @@ ralph loops [OPTIONS] [COMMAND]
 - `retry <loop-id>`
 - `discard <loop-id> [--yes]`
 - `stop [loop-id] [--force]`
+- `resume <loop-id>`
 - `prune`
 - `attach <loop-id>`
 - `diff <loop-id> [--stat]`
 - `merge <loop-id> [--force]`
 - `process`
 - `merge-button-state <loop-id>`
+
+`ralph loops resume <loop-id>` writes a resume signal for suspended loops. It is idempotent:
+re-running the command reports that resume was already requested (or that the loop is not suspended).
 
 ### ralph hats
 
@@ -288,6 +334,20 @@ ralph web [OPTIONS]
 | `--workspace <WORKSPACE>` | Workspace root |
 | `--legacy-node-api` | Run deprecated Node tRPC backend instead of Rust RPC API |
 | `--no-open` | Do not open browser |
+
+### ralph mcp
+
+Run Ralph as a Model Context Protocol server over `stdio`.
+
+```bash
+ralph mcp serve
+```
+
+Notes:
+
+- v1 is tools-only and `stdio`-only.
+- Launch it from an MCP client configuration, not an interactive terminal workflow.
+- The server exposes Ralph control-plane methods as MCP tools, including polling stream tools such as `stream_next`.
 
 ### ralph bot
 

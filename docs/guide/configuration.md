@@ -11,6 +11,18 @@ RALPH_CONFIG=/path/to/config.yml ralph run ...
 ralph run -c custom-config.yml
 ```
 
+## MCP Workspace Resolution
+
+`ralph mcp serve` resolves its workspace root in this order:
+
+1. `--workspace-root <path>`
+2. `RALPH_API_WORKSPACE_ROOT`
+3. current working directory
+
+Use one MCP server instance per workspace/repo. Ralph's current control-plane APIs are
+workspace-scoped: `config.*`, `task.*`, `loop.*`, `planning.*`, and `collection.*` all
+read or persist state under a single root.
+
 ## CLI Config Overrides
 
 You can override specific core fields from the command line without creating a separate config file. This is useful for:
@@ -92,6 +104,30 @@ memories:
 # Tasks — runtime work tracking
 tasks:
   enabled: true                         # Enable task system
+
+# Optional features
+features:
+  parallel: true                        # Allow worktree loops when primary lock is held
+  auto_merge: false                     # Auto-merge worktree loops on completion
+  preflight:
+    enabled: false                      # Run preflight automatically on `ralph run`
+    strict: false                       # Treat warnings as failures
+    skip: []                            # Skip checks by name (for example: ["hooks"])
+
+# Lifecycle hooks (v1)
+hooks:
+  enabled: false
+  defaults:
+    timeout_seconds: 30
+    max_output_bytes: 8192
+    suspend_mode: wait_for_resume
+  events:
+    pre.loop.start:
+      - name: env-guard
+        command: ["./scripts/hooks/env-guard.sh"]
+        on_error: block
+        mutate:
+          enabled: false
 
 # Hats — specialized personas
 hats:
@@ -181,6 +217,70 @@ Runtime work tracking.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable task system |
+
+### features
+
+Optional runtime capabilities.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `parallel` | boolean | `true` | Spawn worktree loops when another loop holds the primary lock |
+| `auto_merge` | boolean | `false` | Auto-merge completed worktree loops |
+| `preflight.enabled` | boolean | `false` | Run `ralph preflight` checks automatically before `ralph run` |
+| `preflight.strict` | boolean | `false` | Treat preflight warnings as failures |
+| `preflight.skip` | list | `[]` | Skip checks by name (for example `hooks`, `git`) |
+
+When `features.preflight.enabled: true`, `ralph run` uses the default preflight suite:
+`config`, `hooks`, `backend`, `telegram`, `git`, `paths`, `tools`, and `specs`.
+
+### hooks
+
+Per-project lifecycle hooks for orchestrator phase-events (v1).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable hook dispatch for lifecycle events |
+| `defaults.timeout_seconds` | integer | `30` | Default per-hook timeout in seconds |
+| `defaults.max_output_bytes` | integer | `8192` | Default stdout/stderr cap per stream |
+| `defaults.suspend_mode` | enum | `wait_for_resume` | Default suspend mode for `on_error: suspend` |
+| `events` | map | `{}` | Mapping from lifecycle phase-event key to list of hook specs |
+
+Supported v1 lifecycle phase-event keys under `hooks.events`:
+
+- `pre.loop.start`, `post.loop.start`
+- `pre.iteration.start`, `post.iteration.start`
+- `pre.plan.created`, `post.plan.created`
+- `pre.human.interact`, `post.human.interact`
+- `pre.loop.complete`, `post.loop.complete`
+- `pre.loop.error`, `post.loop.error`
+
+Hook spec (`HookSpec`) fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Stable identifier used in telemetry/diagnostics |
+| `command` | Yes | Command argv array (`command[0]` must resolve to an executable) |
+| `cwd` | No | Working directory override (absolute or workspace-relative) |
+| `env` | No | Environment variable overrides for the hook process |
+| `timeout_seconds` | No | Per-hook timeout override (must be > 0) |
+| `max_output_bytes` | No | Per-hook output cap override per stream (must be > 0) |
+| `on_error` | Yes | Failure disposition: `warn`, `block`, or `suspend` |
+| `suspend_mode` | No | Suspend strategy override (`wait_for_resume`, `retry_backoff`, `wait_then_retry`) |
+| `mutate.enabled` | No | Opt-in hook stdout mutation parsing (default `false`) |
+| `mutate.format` | No | Optional format guardrail; only `json` is allowed in v1 |
+
+Mutation scope in v1 is intentionally narrow:
+
+- Mutation parsing only happens when `mutate.enabled: true`.
+- Hook stdout must be JSON using the v1 contract: `{"metadata": { ... }}`.
+- Only metadata namespace updates are allowed (`metadata.accumulated.hook_metadata.<hook_name>`).
+- Prompt/event/config mutation is out of scope for v1.
+
+Minimal runnable example:
+
+- Config: [`examples/hooks/minimal/ralph.hooks.yml`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/minimal/ralph.hooks.yml)
+- Scripts: [`examples/hooks/scripts/env-guard.sh`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/scripts/env-guard.sh), [`examples/hooks/scripts/notify.sh`](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/examples/hooks/scripts/notify.sh)
+- Validate: `ralph hooks validate -c examples/hooks/minimal/ralph.hooks.yml`
 
 ### hats
 

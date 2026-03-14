@@ -6,14 +6,18 @@
 
 use anyhow::{Context, Result};
 use ralph_adapters::{
-    AcpExecutor, CliBackend, CliExecutor, ConsoleStreamHandler, JsonRpcStreamHandler,
-    OutputFormat as BackendOutputFormat, PrettyStreamHandler, PtyConfig, PtyExecutor,
+    AcpExecutor, ClaudeStreamEvent, ClaudeStreamParser, CliBackend, CliExecutor,
+    ConsoleStreamHandler, ContentBlock, JsonRpcStreamHandler, OutputFormat as BackendOutputFormat,
+    PiAssistantEvent, PiStreamEvent, PiStreamParser, PrettyStreamHandler, PtyConfig, PtyExecutor,
     QuietStreamHandler, TuiStreamHandler,
 };
+use ralph_core::diagnostics::{HookDisposition, HookRunTelemetryEntry};
 use ralph_core::{
-    CompletionAction, EventLogger, EventLoop, EventParser, EventRecord, LoopCompletionHandler,
-    LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record, SessionRecorder,
-    SummaryWriter, TerminationReason,
+    CompletionAction, EventLogger, EventLoop, EventParser, EventRecord, HatRegistry, HookEngine,
+    HookExecutor, HookExecutorContract, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
+    HookPayloadContextInput, HookPhaseEvent, HookRunRequest, HookRunResult, HookSuspendMode,
+    LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record,
+    SessionRecorder, SummaryWriter, SuspendStateRecord, SuspendStateStore, TerminationReason,
 };
 use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
@@ -93,8 +97,10 @@ pub async fn run_loop_impl(
     } else {
         false
     };
-    // Always use PTY for real-time streaming output (vs buffered CliExecutor)
-    let use_pty = true;
+    // PTY is required for TUI/RPC observation and true interactive sessions.
+    // Headless `ralph run --no-tui` should use CliExecutor so backends get their
+    // non-interactive prompt forms (for example `claude -p` or `codex exec`).
+    let use_pty = enable_tui || enable_rpc || user_interactive;
 
     // Set up interrupt channel for signal handling
     // Per spec:
@@ -148,7 +154,9 @@ pub async fn run_loop_impl(
 
         // Clear scratchpad for fresh objective start
         // Stale content from previous runs can confuse the agent about current task state
-        let scratchpad_path = ctx.scratchpad_path();
+        // Use the config's scratchpad path resolved against the workspace, not the
+        // hardcoded LoopContext default, so custom paths are properly cleared
+        let scratchpad_path = ctx.workspace().join(&config.core.scratchpad);
         if scratchpad_path.exists() {
             fs::remove_file(&scratchpad_path)
                 .with_context(|| format!("Failed to clear scratchpad: {:?}", scratchpad_path))?;
@@ -173,12 +181,70 @@ pub async fn run_loop_impl(
     // Capture the robot service shutdown flag so signal handlers can interrupt wait_for_response()
     let robot_shutdown = event_loop.robot_shutdown_flag();
 
-    // For resume mode, we initialize with a different event topic
-    // This tells the planner to read existing scratchpad rather than creating a new one
-    if resume {
-        event_loop.initialize_resume(&prompt_content);
-    } else {
-        event_loop.initialize(&prompt_content);
+    let hooks_dispatch_enabled = config.hooks.enabled && !config.hooks.events.is_empty();
+    let hook_engine = HookEngine::new(&config.hooks);
+    let hook_executor = HookExecutor::new();
+    let suspend_state_store = SuspendStateStore::new(ctx.workspace());
+    let mut accumulated_hook_metadata = serde_json::Map::new();
+
+    let pre_loop_start_outcomes = dispatch_phase_event_hooks(
+        &event_loop,
+        hooks_dispatch_enabled,
+        &loop_id,
+        &hook_engine,
+        &hook_executor,
+        HookPhaseEvent::PreLoopStart,
+        build_loop_start_payload_input(
+            &loop_id,
+            &ctx,
+            config.event_loop.max_iterations,
+            event_loop.state().iteration,
+            None,
+            &accumulated_hook_metadata,
+        ),
+    );
+    merge_accumulated_hook_metadata_from_outcomes(
+        &mut accumulated_hook_metadata,
+        &pre_loop_start_outcomes,
+    );
+    fail_if_blocking_loop_start_outcomes(&pre_loop_start_outcomes)?;
+    let mut pending_suspend_termination_reason =
+        wait_for_resume_if_suspended(&pre_loop_start_outcomes, &loop_id, &suspend_state_store)
+            .await?;
+
+    if pending_suspend_termination_reason.is_none() {
+        // For resume mode, we initialize with a different event topic
+        // This tells the planner to read existing scratchpad rather than creating a new one
+        if resume {
+            event_loop.initialize_resume(&prompt_content);
+        } else {
+            event_loop.initialize(&prompt_content);
+        }
+
+        let post_loop_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            hooks_dispatch_enabled,
+            &loop_id,
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input(
+                &loop_id,
+                &ctx,
+                config.event_loop.max_iterations,
+                event_loop.state().iteration,
+                Some(event_loop.get_active_hat_id().as_str().to_string()),
+                &accumulated_hook_metadata,
+            ),
+        );
+        merge_accumulated_hook_metadata_from_outcomes(
+            &mut accumulated_hook_metadata,
+            &post_loop_start_outcomes,
+        );
+        fail_if_blocking_loop_start_outcomes(&post_loop_start_outcomes)?;
+        pending_suspend_termination_reason =
+            wait_for_resume_if_suspended(&post_loop_start_outcomes, &loop_id, &suspend_state_store)
+                .await?;
     }
 
     // Set up session recording if requested
@@ -785,6 +851,60 @@ pub async fn run_loop_impl(
         }
     };
 
+    if let Some(reason) = pending_suspend_termination_reason.take() {
+        let reason = dispatch_pre_loop_termination_hooks(
+            &event_loop,
+            hooks_dispatch_enabled,
+            &loop_id,
+            &hook_engine,
+            &hook_executor,
+            &suspend_state_store,
+            &ctx,
+            config.event_loop.max_iterations,
+            &mut accumulated_hook_metadata,
+            reason,
+        )
+        .await?;
+
+        let terminate_event = event_loop.publish_terminate_event(&reason);
+        log_terminate_event(
+            &mut event_logger,
+            event_loop.state().iteration,
+            &terminate_event,
+        );
+
+        let reason = dispatch_post_loop_termination_hooks(
+            &event_loop,
+            hooks_dispatch_enabled,
+            &loop_id,
+            &hook_engine,
+            &hook_executor,
+            &suspend_state_store,
+            &ctx,
+            config.event_loop.max_iterations,
+            &mut accumulated_hook_metadata,
+            reason,
+        )
+        .await?;
+
+        handle_termination(
+            &reason,
+            event_loop.state(),
+            &config.core.scratchpad,
+            &loop_history,
+            &loop_context,
+            auto_merge,
+            &prompt_content,
+        );
+
+        // Wait for user to exit TUI (press 'q') on natural completion
+        if let Some(handle) = tui_handle.take() {
+            let _ = handle.await;
+        }
+
+        return Ok(reason);
+    }
+
     // Main orchestration loop
     loop {
         // Check for interrupt signal at start of each iteration
@@ -803,13 +923,41 @@ pub async fn run_loop_impl(
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 let _ = killpg(pgid, Signal::SIGKILL);
             }
-            let reason = TerminationReason::Interrupted;
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                TerminationReason::Interrupted,
+            )
+            .await?;
+
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(
                 &mut event_logger,
                 event_loop.state().iteration,
                 &terminate_event,
             );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             handle_termination(
                 &reason,
                 event_loop.state(),
@@ -897,6 +1045,20 @@ pub async fn run_loop_impl(
 
         // Check termination before execution
         if let Some(reason) = event_loop.check_termination() {
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             // Per spec: Publish loop.terminate event to observers
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(
@@ -904,6 +1066,21 @@ pub async fn run_loop_impl(
                 event_loop.state().iteration,
                 &terminate_event,
             );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             handle_termination(
                 &reason,
                 event_loop.state(),
@@ -920,6 +1097,92 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
+        let iteration = event_loop.state().iteration + 1;
+
+        if event_loop.has_pending_events() {
+            let pre_iteration_start_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PreIterationStart,
+                build_iteration_start_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    iteration,
+                    Some(event_loop.get_active_hat_id().as_str().to_string()),
+                    None,
+                    None,
+                    &accumulated_hook_metadata,
+                ),
+            );
+            merge_accumulated_hook_metadata_from_outcomes(
+                &mut accumulated_hook_metadata,
+                &pre_iteration_start_outcomes,
+            );
+            fail_if_blocking_iteration_start_outcomes(&pre_iteration_start_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &pre_iteration_start_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                // Wait for user to exit TUI (press 'q') on natural completion
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
+
         // Get next hat to execute, with fallback recovery if no pending events
         let hat_id = match event_loop.next_hat() {
             Some(id) => {
@@ -928,6 +1191,72 @@ pub async fn run_loop_impl(
                 id.clone()
             }
             None => {
+                match recover_late_events_before_fallback(&mut event_loop)
+                    .inspect_err(
+                        |e| warn!(error = %e, "Failed to drain late JSONL events before fallback"),
+                    )
+                    .ok()
+                {
+                    Some(LateEventRecovery::PendingWork) => {
+                        debug!(
+                            "Recovered late JSONL events before fallback; retrying hat selection"
+                        );
+                        consecutive_fallbacks = 0;
+                        continue;
+                    }
+                    Some(LateEventRecovery::Terminate(reason)) => {
+                        let reason = dispatch_pre_loop_termination_hooks(
+                            &event_loop,
+                            hooks_dispatch_enabled,
+                            &loop_id,
+                            &hook_engine,
+                            &hook_executor,
+                            &suspend_state_store,
+                            &ctx,
+                            config.event_loop.max_iterations,
+                            &mut accumulated_hook_metadata,
+                            reason,
+                        )
+                        .await?;
+
+                        let terminate_event = event_loop.publish_terminate_event(&reason);
+                        log_terminate_event(
+                            &mut event_logger,
+                            event_loop.state().iteration,
+                            &terminate_event,
+                        );
+
+                        let reason = dispatch_post_loop_termination_hooks(
+                            &event_loop,
+                            hooks_dispatch_enabled,
+                            &loop_id,
+                            &hook_engine,
+                            &hook_executor,
+                            &suspend_state_store,
+                            &ctx,
+                            config.event_loop.max_iterations,
+                            &mut accumulated_hook_metadata,
+                            reason,
+                        )
+                        .await?;
+
+                        handle_termination(
+                            &reason,
+                            event_loop.state(),
+                            &config.core.scratchpad,
+                            &loop_history,
+                            &loop_context,
+                            auto_merge,
+                            &prompt_content,
+                        );
+                        if let Some(handle) = tui_handle.take() {
+                            let _ = handle.await;
+                        }
+                        return Ok(reason);
+                    }
+                    Some(LateEventRecovery::NoLateEvents) | None => {}
+                }
+
                 // No pending events - try to recover by injecting a fallback event
                 // This triggers the built-in planner to assess the situation
                 consecutive_fallbacks += 1;
@@ -938,13 +1267,41 @@ pub async fn run_loop_impl(
                         "Fallback recovery exhausted after {} attempts, terminating",
                         MAX_FALLBACK_ATTEMPTS
                     );
-                    let reason = TerminationReason::Stopped;
+                    let reason = dispatch_pre_loop_termination_hooks(
+                        &event_loop,
+                        hooks_dispatch_enabled,
+                        &loop_id,
+                        &hook_engine,
+                        &hook_executor,
+                        &suspend_state_store,
+                        &ctx,
+                        config.event_loop.max_iterations,
+                        &mut accumulated_hook_metadata,
+                        TerminationReason::Stopped,
+                    )
+                    .await?;
+
                     let terminate_event = event_loop.publish_terminate_event(&reason);
                     log_terminate_event(
                         &mut event_logger,
                         event_loop.state().iteration,
                         &terminate_event,
                     );
+
+                    let reason = dispatch_post_loop_termination_hooks(
+                        &event_loop,
+                        hooks_dispatch_enabled,
+                        &loop_id,
+                        &hook_engine,
+                        &hook_executor,
+                        &suspend_state_store,
+                        &ctx,
+                        config.event_loop.max_iterations,
+                        &mut accumulated_hook_metadata,
+                        reason,
+                    )
+                    .await?;
+
                     handle_termination(
                         &reason,
                         event_loop.state(),
@@ -972,7 +1329,20 @@ pub async fn run_loop_impl(
 
                 // Fallback not possible (no planner hat or doesn't subscribe to task.resume)
                 warn!("No hats with pending events and fallback not available, terminating");
-                let reason = TerminationReason::Stopped;
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    TerminationReason::Stopped,
+                )
+                .await?;
+
                 // Per spec: Publish loop.terminate event to observers
                 let terminate_event = event_loop.publish_terminate_event(&reason);
                 log_terminate_event(
@@ -980,6 +1350,21 @@ pub async fn run_loop_impl(
                     event_loop.state().iteration,
                     &terminate_event,
                 );
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
                 handle_termination(
                     &reason,
                     event_loop.state(),
@@ -997,8 +1382,6 @@ pub async fn run_loop_impl(
             }
         };
 
-        let iteration = event_loop.state().iteration + 1;
-
         // Update RPC state iteration counter
         if let Some(ref shared) = rpc_dispatcher_started {
             shared
@@ -1008,20 +1391,134 @@ pub async fn run_loop_impl(
 
         // Determine which hat to display in iteration separator
         // When Ralph is coordinating (hat_id == "ralph"), show the active hat being worked on
-        let display_hat = if hat_id.as_str() == "ralph" {
+        let preview_display_hat = if hat_id.as_str() == "ralph" {
             event_loop.get_active_hat_id()
         } else {
             hat_id.clone()
         };
 
-        // Get hat display name for RPC events
+        let post_iteration_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            hooks_dispatch_enabled,
+            &loop_id,
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostIterationStart,
+            build_iteration_start_payload_input(
+                &loop_id,
+                &ctx,
+                config.event_loop.max_iterations,
+                iteration,
+                Some(preview_display_hat.as_str().to_string()),
+                Some(preview_display_hat.as_str().to_string()),
+                None,
+                &accumulated_hook_metadata,
+            ),
+        );
+        merge_accumulated_hook_metadata_from_outcomes(
+            &mut accumulated_hook_metadata,
+            &post_iteration_start_outcomes,
+        );
+        fail_if_blocking_iteration_start_outcomes(&post_iteration_start_outcomes)?;
+
+        if let Some(reason) = wait_for_resume_if_suspended(
+            &post_iteration_start_outcomes,
+            &loop_id,
+            &suspend_state_store,
+        )
+        .await?
+        {
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
+            let terminate_event = event_loop.publish_terminate_event(&reason);
+            log_terminate_event(
+                &mut event_logger,
+                event_loop.state().iteration,
+                &terminate_event,
+            );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
+            // Wait for user to exit TUI (press 'q') on natural completion
+            if let Some(handle) = tui_handle.take() {
+                let _ = handle.await;
+            }
+            return Ok(reason);
+        }
+
+        // Log hat changes with appropriate messaging
+        // Skip in TUI mode - TUI shows hat info in header, and stdout would corrupt display
+        // Skip in RPC mode - JSON events replace console output
+        if last_hat.as_ref() != Some(&hat_id) {
+            if tui_state.is_none() && !enable_rpc {
+                if hat_id.as_str() == "ralph" {
+                    info!("I'm Ralph. Let's do this.");
+                } else {
+                    info!("Putting on my {} hat.", hat_id);
+                }
+            }
+            last_hat = Some(hat_id.clone());
+        }
+        debug!(
+            "Iteration {}/{} - {} active",
+            iteration, config.event_loop.max_iterations, hat_id
+        );
+
+        // Build prompt for this hat
+        let prompt = match event_loop.build_prompt(&hat_id) {
+            Some(p) => p,
+            None => {
+                error!("Failed to build prompt for hat '{}'", hat_id);
+                continue;
+            }
+        };
+
+        let display_hat =
+            resolve_display_hat_for_execution(&event_loop, &hat_id, &preview_display_hat);
+
+        // Log full prompt to diagnostics (RALPH_DIAGNOSTICS=1)
+        event_loop.log_prompt(iteration, display_hat.as_str(), &prompt);
+
         let hat_display = event_loop
             .registry()
             .get(&display_hat)
             .map(|hat| hat.name.clone())
             .unwrap_or_else(|| display_hat.as_str().to_string());
 
-        // Update RPC shared hat state so get_state reflects the current iteration's hat
+        // Update RPC shared hat state so get_state reflects the current iteration's hat.
         if let Some(ref shared) = rpc_dispatcher_started
             && let Ok(mut guard) = shared.hat.lock()
         {
@@ -1032,7 +1529,8 @@ pub async fn run_loop_impl(
         // (cheap to create even when not in RPC mode)
         let iteration_started_at = std::time::Instant::now();
 
-        // Emit RPC iteration_start event
+        // Emit RPC iteration_start event after prompt construction so the displayed
+        // hat matches the one actually selected for execution.
         if let Some(ref tx) = rpc_event_tx {
             let started_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1063,33 +1561,6 @@ pub async fn run_loop_impl(
                 use_colors,
             );
         }
-
-        // Log hat changes with appropriate messaging
-        // Skip in TUI mode - TUI shows hat info in header, and stdout would corrupt display
-        // Skip in RPC mode - JSON events replace console output
-        if last_hat.as_ref() != Some(&hat_id) {
-            if tui_state.is_none() && !enable_rpc {
-                if hat_id.as_str() == "ralph" {
-                    info!("I'm Ralph. Let's do this.");
-                } else {
-                    info!("Putting on my {} hat.", hat_id);
-                }
-            }
-            last_hat = Some(hat_id.clone());
-        }
-        debug!(
-            "Iteration {}/{} - {} active",
-            iteration, config.event_loop.max_iterations, hat_id
-        );
-
-        // Build prompt for this hat
-        let prompt = match event_loop.build_prompt(&hat_id) {
-            Some(p) => p,
-            None => {
-                error!("Failed to build prompt for hat '{}'", hat_id);
-                continue;
-            }
-        };
 
         // In verbose mode, print the full prompt before execution
         if verbosity == Verbosity::Verbose {
@@ -1185,12 +1656,6 @@ pub async fn run_loop_impl(
         // For TUI mode, get the shared lines buffer for this iteration.
         // The buffer is owned by TuiState's IterationBuffer, so writes from
         // TuiStreamHandler appear immediately in the TUI (real-time streaming).
-        let hat_display = event_loop
-            .registry()
-            .get(&display_hat)
-            .map(|hat| hat.name.clone())
-            .unwrap_or_else(|| display_hat.as_str().to_string());
-
         let tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>> =
             if let Some(ref state) = tui_state {
                 // Start new iteration and get handle to the LATEST iteration's lines buffer.
@@ -1247,7 +1712,10 @@ pub async fn run_loop_impl(
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
                 Ok(ExecutionOutcome {
-                    output: result.output,
+                    output: normalize_cli_output_for_parsing(
+                        effective_backend.output_format,
+                        &result.output,
+                    ),
                     success: result.success,
                     termination: None,
                     total_cost_usd: 0.0,
@@ -1276,9 +1744,37 @@ pub async fn run_loop_impl(
                     let _ = killpg(pgid, Signal::SIGKILL);
                 }
 
-                let reason = TerminationReason::Interrupted;
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    TerminationReason::Interrupted,
+                )
+                .await?;
+
                 let terminate_event = event_loop.publish_terminate_event(&reason);
                 log_terminate_event(&mut event_logger, event_loop.state().iteration, &terminate_event);
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
                 handle_termination(&reason, event_loop.state(), &config.core.scratchpad, &loop_history, &loop_context, auto_merge, &prompt_content);
                 // Signal TUI to exit immediately on interrupt
                 let _ = terminated_tx.send(true);
@@ -1287,12 +1783,41 @@ pub async fn run_loop_impl(
         };
 
         if let Some(reason) = outcome.termination {
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(
                 &mut event_logger,
                 event_loop.state().iteration,
                 &terminate_event,
             );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             handle_termination(
                 &reason,
                 event_loop.state(),
@@ -1360,6 +1885,21 @@ pub async fn run_loop_impl(
                     config.event_loop.completion_promise
                 );
             }
+
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             // Per spec: Publish loop.terminate event to observers
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(
@@ -1367,6 +1907,21 @@ pub async fn run_loop_impl(
                 event_loop.state().iteration,
                 &terminate_event,
             );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             handle_termination(
                 &reason,
                 event_loop.state(),
@@ -1388,17 +1943,411 @@ pub async fn run_loop_impl(
             warn!(error = %e, "Failed to check planning session responses");
         }
 
-        // Read events from JSONL that agent may have written
-        let agent_wrote_events = event_loop
-            .process_events_from_jsonl()
-            .inspect_err(|e| warn!(error = %e, "Failed to read events from JSONL"))
-            .map(|r| r.had_events)
+        let should_dispatch_plan_created_hooks = event_loop
+            .has_pending_plan_events_in_jsonl()
+            .inspect_err(|e| {
+                warn!(
+                    error = %e,
+                    "Failed to inspect unread JSONL events for semantic plan.* topics"
+                )
+            })
             .unwrap_or(false);
 
-        // Inject default_publishes for active hats only when agent wrote no events
+        if should_dispatch_plan_created_hooks {
+            let pre_plan_created_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PrePlanCreated,
+                build_plan_created_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    event_loop.state().iteration,
+                    Some(display_hat.as_str().to_string()),
+                    Some(display_hat.as_str().to_string()),
+                    None,
+                    &accumulated_hook_metadata,
+                ),
+            );
+            merge_accumulated_hook_metadata_from_outcomes(
+                &mut accumulated_hook_metadata,
+                &pre_plan_created_outcomes,
+            );
+            fail_if_blocking_plan_created_outcomes(&pre_plan_created_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &pre_plan_created_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
+
+        let pending_human_interact_context = event_loop
+            .pending_human_interact_context_in_jsonl()
+            .inspect_err(|e| {
+                warn!(
+                    error = %e,
+                    "Failed to inspect unread JSONL events for human.interact boundary"
+                )
+            })
+            .ok()
+            .flatten();
+
+        if let Some(human_interact_context) = pending_human_interact_context {
+            let pre_human_interact_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PreHumanInteract,
+                build_human_interact_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    event_loop.state().iteration,
+                    Some(display_hat.as_str().to_string()),
+                    Some(display_hat.as_str().to_string()),
+                    None,
+                    Some(human_interact_context),
+                    &accumulated_hook_metadata,
+                ),
+            );
+            merge_accumulated_hook_metadata_from_outcomes(
+                &mut accumulated_hook_metadata,
+                &pre_human_interact_outcomes,
+            );
+            fail_if_blocking_human_interact_outcomes(&pre_human_interact_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &pre_human_interact_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
+
+        // Read events from JSONL that agent may have written
+        let processed_events = event_loop
+            .process_events_from_jsonl()
+            .inspect_err(|e| warn!(error = %e, "Failed to read events from JSONL"))
+            .ok();
+
+        if let Some(human_interact_context) = processed_events
+            .as_ref()
+            .and_then(|events| events.human_interact_context.clone())
+        {
+            let post_human_interact_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PostHumanInteract,
+                build_human_interact_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    event_loop.state().iteration,
+                    Some(display_hat.as_str().to_string()),
+                    Some(display_hat.as_str().to_string()),
+                    None,
+                    Some(human_interact_context),
+                    &accumulated_hook_metadata,
+                ),
+            );
+            merge_accumulated_hook_metadata_from_outcomes(
+                &mut accumulated_hook_metadata,
+                &post_human_interact_outcomes,
+            );
+            fail_if_blocking_human_interact_outcomes(&post_human_interact_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &post_human_interact_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
+
+        if processed_events
+            .as_ref()
+            .map(|events| events.had_plan_events)
+            .unwrap_or(false)
+        {
+            let post_plan_created_outcomes = dispatch_phase_event_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                HookPhaseEvent::PostPlanCreated,
+                build_plan_created_payload_input(
+                    &loop_id,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    event_loop.state().iteration,
+                    Some(display_hat.as_str().to_string()),
+                    Some(display_hat.as_str().to_string()),
+                    None,
+                    &accumulated_hook_metadata,
+                ),
+            );
+            merge_accumulated_hook_metadata_from_outcomes(
+                &mut accumulated_hook_metadata,
+                &post_plan_created_outcomes,
+            );
+            fail_if_blocking_plan_created_outcomes(&post_plan_created_outcomes)?;
+
+            if let Some(reason) = wait_for_resume_if_suspended(
+                &post_plan_created_outcomes,
+                &loop_id,
+                &suspend_state_store,
+            )
+            .await?
+            {
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
+
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
+
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
+            }
+        }
+
+        let mut agent_wrote_events = processed_events
+            .as_ref()
+            .map(|events| events.had_events)
+            .unwrap_or(false);
+
+        if !agent_wrote_events && output_mentions_ralph_emit(&output) {
+            match recover_expected_emit_after_output(&mut event_loop)
+                .inspect_err(|e| warn!(error = %e, "Failed to recover expected emit events"))
+                .ok()
+            {
+                Some(LateEventRecovery::PendingWork | LateEventRecovery::Terminate(_)) => {
+                    agent_wrote_events = true;
+                }
+                Some(LateEventRecovery::NoLateEvents) | None => {
+                    warn!(
+                        hat = %hat_id.as_str(),
+                        "Output indicated `ralph emit`, but no event became readable before fallback logic"
+                    );
+                }
+            }
+        }
+
+        // Inject default_publishes for active hats only when agent wrote no events.
+        // Prefer the displayed execution hat first so a non-emitting turn still
+        // falls back to the hat the user actually saw in the banner.
         if !agent_wrote_events {
-            let active_hats = event_loop.state().last_active_hat_ids.clone();
-            for active_hat_id in &active_hats {
+            let mut fallback_hats = Vec::new();
+            if display_hat.as_str() != "ralph" {
+                fallback_hats.push(display_hat.clone());
+            }
+            for active_hat_id in event_loop.state().last_active_hat_ids.clone() {
+                if !fallback_hats.contains(&active_hat_id) {
+                    fallback_hats.push(active_hat_id);
+                }
+            }
+
+            for active_hat_id in &fallback_hats {
                 event_loop.check_default_publishes(active_hat_id);
                 if event_loop.has_pending_events() {
                     break; // One default is sufficient
@@ -1437,12 +2386,102 @@ pub async fn run_loop_impl(
                 config.event_loop.completion_promise
             );
 
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             let terminate_event = event_loop.publish_terminate_event(&reason);
             log_terminate_event(
                 &mut event_logger,
                 event_loop.state().iteration,
                 &terminate_event,
             );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
+            handle_termination(
+                &reason,
+                event_loop.state(),
+                &config.core.scratchpad,
+                &loop_history,
+                &loop_context,
+                auto_merge,
+                &prompt_content,
+            );
+            if let Some(handle) = tui_handle.take() {
+                let _ = handle.await;
+            }
+            return Ok(reason);
+        }
+
+        if detect_solo_output_completion(
+            event_loop.registry(),
+            &output,
+            &config.event_loop.completion_promise,
+        ) {
+            let reason = TerminationReason::CompletionPromise;
+            info!(
+                "All done! {} detected in solo output.",
+                config.event_loop.completion_promise
+            );
+
+            let reason = dispatch_pre_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
+            let terminate_event = event_loop.publish_terminate_event(&reason);
+            log_terminate_event(
+                &mut event_logger,
+                event_loop.state().iteration,
+                &terminate_event,
+            );
+
+            let reason = dispatch_post_loop_termination_hooks(
+                &event_loop,
+                hooks_dispatch_enabled,
+                &loop_id,
+                &hook_engine,
+                &hook_executor,
+                &suspend_state_store,
+                &ctx,
+                config.event_loop.max_iterations,
+                &mut accumulated_hook_metadata,
+                reason,
+            )
+            .await?;
+
             handle_termination(
                 &reason,
                 event_loop.state(),
@@ -1484,6 +2523,1417 @@ pub async fn run_loop_impl(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LateEventRecovery {
+    NoLateEvents,
+    PendingWork,
+    Terminate(TerminationReason),
+}
+
+const LATE_EVENT_RECOVERY_MAX_POLLS: u32 = 5;
+const LATE_EVENT_RECOVERY_POLL_INTERVAL_MS: u64 = 50;
+const EMIT_RECOVERY_MAX_POLLS: u32 = 20;
+const EMIT_RECOVERY_POLL_INTERVAL_MS: u64 = 250;
+
+fn poll_for_late_events(
+    event_loop: &mut EventLoop,
+    max_polls: u32,
+    poll_interval_ms: u64,
+) -> std::io::Result<LateEventRecovery> {
+    for poll_attempt in 0..=max_polls {
+        let processed = event_loop.process_events_from_jsonl()?;
+
+        if let Some(reason) = event_loop.check_cancellation_event() {
+            return Ok(LateEventRecovery::Terminate(reason));
+        }
+
+        if let Some(reason) = event_loop.check_completion_event() {
+            return Ok(LateEventRecovery::Terminate(reason));
+        }
+
+        if event_loop.has_pending_events() {
+            return Ok(LateEventRecovery::PendingWork);
+        }
+
+        let observed_events = processed.had_events
+            || processed.has_orphans
+            || processed.human_interact_context.is_some();
+
+        if observed_events {
+            debug!(
+                had_events = processed.had_events,
+                has_orphans = processed.has_orphans,
+                had_human_interact = processed.human_interact_context.is_some(),
+                "Late JSONL drain found events but no new pending work"
+            );
+            return Ok(LateEventRecovery::NoLateEvents);
+        }
+
+        if poll_attempt == max_polls {
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(poll_interval_ms));
+    }
+
+    Ok(LateEventRecovery::NoLateEvents)
+}
+
+fn recover_late_events_before_fallback(
+    event_loop: &mut EventLoop,
+) -> std::io::Result<LateEventRecovery> {
+    poll_for_late_events(
+        event_loop,
+        LATE_EVENT_RECOVERY_MAX_POLLS,
+        LATE_EVENT_RECOVERY_POLL_INTERVAL_MS,
+    )
+}
+
+fn recover_expected_emit_after_output(
+    event_loop: &mut EventLoop,
+) -> std::io::Result<LateEventRecovery> {
+    poll_for_late_events(
+        event_loop,
+        EMIT_RECOVERY_MAX_POLLS,
+        EMIT_RECOVERY_POLL_INTERVAL_MS,
+    )
+}
+
+fn output_mentions_ralph_emit(output: &str) -> bool {
+    output.contains("ralph emit")
+}
+
+fn resolve_display_hat_for_execution(
+    event_loop: &EventLoop,
+    hat_id: &HatId,
+    preview_display_hat: &HatId,
+) -> HatId {
+    if hat_id.as_str() != "ralph" {
+        return hat_id.clone();
+    }
+
+    event_loop
+        .state()
+        .last_active_hat_ids
+        .first()
+        .cloned()
+        .unwrap_or_else(|| preview_display_hat.clone())
+}
+
+fn build_loop_start_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    accumulated_metadata: &serde_json::Map<String, serde_json::Value>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            metadata: accumulated_metadata.clone(),
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn build_iteration_start_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    selected_hat: Option<String>,
+    selected_task: Option<String>,
+    accumulated_metadata: &serde_json::Map<String, serde_json::Value>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            selected_hat,
+            selected_task,
+            metadata: accumulated_metadata.clone(),
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn build_plan_created_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    selected_hat: Option<String>,
+    selected_task: Option<String>,
+    accumulated_metadata: &serde_json::Map<String, serde_json::Value>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            selected_hat,
+            selected_task,
+            metadata: accumulated_metadata.clone(),
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn build_human_interact_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    selected_hat: Option<String>,
+    selected_task: Option<String>,
+    human_interact: Option<serde_json::Value>,
+    accumulated_metadata: &serde_json::Map<String, serde_json::Value>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            selected_hat,
+            selected_task,
+            human_interact,
+            metadata: accumulated_metadata.clone(),
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn build_loop_termination_payload_input(
+    loop_id: &str,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    iteration_current: u32,
+    active_hat: Option<String>,
+    selected_hat: Option<String>,
+    selected_task: Option<String>,
+    termination_reason: &TerminationReason,
+    accumulated_metadata: &serde_json::Map<String, serde_json::Value>,
+) -> HookPayloadBuilderInput {
+    HookPayloadBuilderInput {
+        loop_id: loop_id.to_string(),
+        is_primary: ctx.is_primary(),
+        workspace: ctx.workspace().to_path_buf(),
+        repo_root: ctx.repo_root().to_path_buf(),
+        pid: std::process::id(),
+        iteration_current,
+        iteration_max: max_iterations,
+        context: HookPayloadContextInput {
+            active_hat,
+            selected_hat,
+            selected_task,
+            termination_reason: Some(termination_reason.as_str().to_string()),
+            metadata: accumulated_metadata.clone(),
+            ..HookPayloadContextInput::default()
+        },
+    }
+}
+
+fn loop_termination_phase_events(reason: &TerminationReason) -> (HookPhaseEvent, HookPhaseEvent) {
+    if reason.is_success() {
+        (
+            HookPhaseEvent::PreLoopComplete,
+            HookPhaseEvent::PostLoopComplete,
+        )
+    } else {
+        (HookPhaseEvent::PreLoopError, HookPhaseEvent::PostLoopError)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_pre_loop_termination_hooks(
+    event_loop: &EventLoop,
+    hooks_dispatch_enabled: bool,
+    loop_id: &str,
+    hook_engine: &HookEngine,
+    hook_executor: &HookExecutor,
+    suspend_state_store: &SuspendStateStore,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    accumulated_hook_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    reason: TerminationReason,
+) -> impl std::future::Future<Output = Result<TerminationReason>> + Send {
+    let outcomes = collect_loop_termination_hook_outcomes(
+        event_loop,
+        hooks_dispatch_enabled,
+        loop_id,
+        hook_engine,
+        hook_executor,
+        ctx,
+        max_iterations,
+        accumulated_hook_metadata,
+        &reason,
+        true,
+    );
+    let loop_id = loop_id.to_string();
+    let suspend_state_store = suspend_state_store.clone();
+
+    async move {
+        resolve_loop_termination_hook_outcomes(&outcomes, &loop_id, &suspend_state_store, reason)
+            .await
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_post_loop_termination_hooks(
+    event_loop: &EventLoop,
+    hooks_dispatch_enabled: bool,
+    loop_id: &str,
+    hook_engine: &HookEngine,
+    hook_executor: &HookExecutor,
+    suspend_state_store: &SuspendStateStore,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    accumulated_hook_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    reason: TerminationReason,
+) -> impl std::future::Future<Output = Result<TerminationReason>> + Send {
+    let outcomes = collect_loop_termination_hook_outcomes(
+        event_loop,
+        hooks_dispatch_enabled,
+        loop_id,
+        hook_engine,
+        hook_executor,
+        ctx,
+        max_iterations,
+        accumulated_hook_metadata,
+        &reason,
+        false,
+    );
+    let loop_id = loop_id.to_string();
+    let suspend_state_store = suspend_state_store.clone();
+
+    async move {
+        resolve_loop_termination_hook_outcomes(&outcomes, &loop_id, &suspend_state_store, reason)
+            .await
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_loop_termination_hook_outcomes(
+    event_loop: &EventLoop,
+    hooks_dispatch_enabled: bool,
+    loop_id: &str,
+    hook_engine: &HookEngine,
+    hook_executor: &HookExecutor,
+    ctx: &LoopContext,
+    max_iterations: u32,
+    accumulated_hook_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    reason: &TerminationReason,
+    is_pre_phase: bool,
+) -> Vec<HookDispatchOutcome> {
+    let (pre_phase_event, post_phase_event) = loop_termination_phase_events(reason);
+    let phase_event = if is_pre_phase {
+        pre_phase_event
+    } else {
+        post_phase_event
+    };
+
+    let active_hat = event_loop.get_active_hat_id().as_str().to_string();
+    let outcomes = dispatch_phase_event_hooks(
+        event_loop,
+        hooks_dispatch_enabled,
+        loop_id,
+        hook_engine,
+        hook_executor,
+        phase_event,
+        build_loop_termination_payload_input(
+            loop_id,
+            ctx,
+            max_iterations,
+            event_loop.state().iteration,
+            Some(active_hat.clone()),
+            Some(active_hat),
+            None,
+            reason,
+            accumulated_hook_metadata,
+        ),
+    );
+    merge_accumulated_hook_metadata_from_outcomes(accumulated_hook_metadata, &outcomes);
+    outcomes
+}
+
+async fn resolve_loop_termination_hook_outcomes(
+    outcomes: &[HookDispatchOutcome],
+    loop_id: &str,
+    suspend_state_store: &SuspendStateStore,
+    reason: TerminationReason,
+) -> Result<TerminationReason> {
+    fail_if_blocking_loop_termination_outcomes(outcomes)?;
+
+    if let Some(termination_reason) =
+        wait_for_resume_if_suspended(outcomes, loop_id, suspend_state_store).await?
+    {
+        return Ok(termination_reason);
+    }
+
+    Ok(reason)
+}
+
+const RETRY_BACKOFF_DELAYS_MS: [u64; 3] = [100, 200, 400];
+const RETRY_BACKOFF_SIGNAL_POLL_INTERVAL_MS: u64 = 100;
+const SUSPEND_WAIT_SIGNAL_POLL_INTERVAL_MS: u64 = 250;
+const HOOK_MUTATION_PAYLOAD_METADATA_KEY: &str = "metadata";
+const HOOK_MUTATION_METADATA_NAMESPACE_KEY: &str = "hook_metadata";
+
+#[derive(Debug, Clone, PartialEq)]
+enum HookMutationParseOutcome {
+    Disabled,
+    Parsed {
+        namespaced_metadata: serde_json::Map<String, serde_json::Value>,
+    },
+    Invalid(HookMutationParseError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HookMutationParseError {
+    InvalidJson { message: String },
+    InvalidSchema { message: String },
+}
+
+fn format_hook_mutation_parse_error(error: &HookMutationParseError) -> String {
+    match error {
+        HookMutationParseError::InvalidJson { message }
+        | HookMutationParseError::InvalidSchema { message } => message.clone(),
+    }
+}
+
+fn parse_hook_mutation_stdout(
+    mutate: &HookMutationConfig,
+    hook_name: &str,
+    stdout: &str,
+) -> HookMutationParseOutcome {
+    if !mutate.enabled {
+        return HookMutationParseOutcome::Disabled;
+    }
+
+    let parsed = match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidJson {
+                message: format!("mutation stdout is not valid JSON: {error}"),
+            });
+        }
+    };
+
+    let Some(payload_object) = parsed.as_object() else {
+        return HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidSchema {
+            message: "mutation payload must be a JSON object".to_string(),
+        });
+    };
+
+    if payload_object.len() != 1 || !payload_object.contains_key(HOOK_MUTATION_PAYLOAD_METADATA_KEY)
+    {
+        let keys = payload_object.keys().cloned().collect::<Vec<_>>();
+        return HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidSchema {
+            message: format!(
+                "mutation payload supports only '{{\"{HOOK_MUTATION_PAYLOAD_METADATA_KEY}\": {{...}}}}'; found keys: {keys:?}"
+            ),
+        });
+    }
+
+    let Some(metadata) = payload_object
+        .get(HOOK_MUTATION_PAYLOAD_METADATA_KEY)
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+    else {
+        return HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidSchema {
+            message: "mutation payload key 'metadata' must contain a JSON object".to_string(),
+        });
+    };
+
+    let mut namespaced_metadata = serde_json::Map::new();
+    if let Err(error) = merge_hook_metadata_namespace(&mut namespaced_metadata, hook_name, metadata)
+    {
+        return HookMutationParseOutcome::Invalid(error);
+    }
+
+    HookMutationParseOutcome::Parsed {
+        namespaced_metadata,
+    }
+}
+
+fn merge_hook_metadata_namespace(
+    accumulated_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    hook_name: &str,
+    metadata: serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<(), HookMutationParseError> {
+    if hook_name.trim().is_empty() {
+        return Err(HookMutationParseError::InvalidSchema {
+            message: "hook metadata namespace requires non-empty hook name".to_string(),
+        });
+    }
+
+    let namespace = accumulated_metadata
+        .entry(HOOK_MUTATION_METADATA_NAMESPACE_KEY.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+
+    let Some(namespace_object) = namespace.as_object_mut() else {
+        return Err(HookMutationParseError::InvalidSchema {
+            message: format!(
+                "metadata namespace '{HOOK_MUTATION_METADATA_NAMESPACE_KEY}' must be a JSON object"
+            ),
+        });
+    };
+
+    namespace_object.insert(hook_name.to_string(), serde_json::Value::Object(metadata));
+    Ok(())
+}
+
+fn merge_namespaced_hook_metadata(
+    accumulated_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    namespaced_metadata: &serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<(), HookMutationParseError> {
+    let Some(namespace_object) = namespaced_metadata
+        .get(HOOK_MUTATION_METADATA_NAMESPACE_KEY)
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Err(HookMutationParseError::InvalidSchema {
+            message: format!(
+                "parsed mutation metadata must contain object key '{HOOK_MUTATION_METADATA_NAMESPACE_KEY}'"
+            ),
+        });
+    };
+
+    for (hook_name, metadata_value) in namespace_object {
+        let Some(metadata_object) = metadata_value.as_object().cloned() else {
+            return Err(HookMutationParseError::InvalidSchema {
+                message: format!(
+                    "parsed metadata entry for hook '{hook_name}' must be a JSON object"
+                ),
+            });
+        };
+
+        merge_hook_metadata_namespace(accumulated_metadata, hook_name, metadata_object)?;
+    }
+
+    Ok(())
+}
+
+fn merge_accumulated_hook_metadata_from_outcomes(
+    accumulated_hook_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    outcomes: &[HookDispatchOutcome],
+) {
+    for outcome in outcomes {
+        let HookMutationParseOutcome::Parsed {
+            namespaced_metadata,
+        } = &outcome.mutation_parse_outcome
+        else {
+            continue;
+        };
+
+        if let Err(error) =
+            merge_namespaced_hook_metadata(accumulated_hook_metadata, namespaced_metadata)
+        {
+            warn!(
+                phase_event = %outcome.phase_event,
+                hook_name = %outcome.hook_name,
+                error = ?error,
+                "Failed to merge parsed hook mutation metadata; ignoring mutation output"
+            );
+        }
+    }
+}
+
+fn mutation_parse_failure(
+    mutation_parse_outcome: &HookMutationParseOutcome,
+) -> Option<HookDispatchFailure> {
+    let HookMutationParseOutcome::Invalid(error) = mutation_parse_outcome else {
+        return None;
+    };
+
+    Some(HookDispatchFailure::InvalidMutationOutput {
+        message: format_hook_mutation_parse_error(error),
+    })
+}
+
+fn max_retry_attempts_for_suspend_mode(suspend_mode: HookSuspendMode) -> u32 {
+    match suspend_mode {
+        HookSuspendMode::WaitForResume => 1,
+        HookSuspendMode::RetryBackoff => RETRY_BACKOFF_DELAYS_MS.len() as u32 + 1,
+        HookSuspendMode::WaitThenRetry => 2,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SuspendWaitOutcome {
+    Resume,
+    Stop,
+    Restart,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct HookDispatchOutcome {
+    phase_event: HookPhaseEvent,
+    hook_name: String,
+    disposition: HookDisposition,
+    suspend_mode: HookSuspendMode,
+    failure: Option<HookDispatchFailure>,
+    mutation_parse_outcome: HookMutationParseOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HookDispatchFailure {
+    HookRunFailed {
+        exit_code: Option<i32>,
+        timed_out: bool,
+    },
+    HookExecutionError {
+        message: String,
+    },
+    InvalidMutationOutput {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryBackoffDelayOutcome {
+    Elapsed,
+    StopRequested,
+    RestartRequested,
+}
+
+fn dispatch_phase_event_hooks(
+    event_loop: &EventLoop,
+    hooks_enabled: bool,
+    loop_id: &str,
+    hook_engine: &HookEngine,
+    hook_executor: &HookExecutor,
+    phase_event: HookPhaseEvent,
+    payload_input: HookPayloadBuilderInput,
+) -> Vec<HookDispatchOutcome> {
+    if !hooks_enabled {
+        return Vec::new();
+    }
+
+    let resolved_hooks = hook_engine.resolve_phase_event(phase_event);
+    if resolved_hooks.is_empty() {
+        return Vec::new();
+    }
+
+    let workspace_root = payload_input.workspace.clone();
+    let payload = hook_engine.build_payload(phase_event, payload_input);
+    let stdin_payload = match serde_json::to_value(&payload) {
+        Ok(value) => value,
+        Err(error) => {
+            warn!(
+                phase_event = %phase_event,
+                error = %error,
+                "Failed to serialize lifecycle hook payload; skipping phase-event dispatch"
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut outcomes = Vec::with_capacity(resolved_hooks.len());
+
+    for hook in resolved_hooks {
+        let hook_name = hook.name.clone();
+        let phase_event_key = hook.phase_event.as_str().to_string();
+
+        let request = HookRunRequest {
+            phase_event: phase_event_key.clone(),
+            hook_name: hook_name.clone(),
+            command: hook.command.clone(),
+            workspace_root: workspace_root.clone(),
+            cwd: hook.cwd.clone(),
+            env: hook.env.clone(),
+            timeout_seconds: hook.timeout_seconds,
+            max_output_bytes: hook.max_output_bytes,
+            stdin_payload: stdin_payload.clone(),
+        };
+
+        let outcome = dispatch_hook_with_suspend_policy(
+            event_loop,
+            hook_executor,
+            loop_id,
+            &phase_event_key,
+            hook.phase_event,
+            &hook_name,
+            hook.on_error,
+            hook.suspend_mode,
+            &hook.mutate,
+            &request,
+        );
+        outcomes.push(outcome);
+    }
+
+    outcomes
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_hook_with_suspend_policy(
+    event_loop: &EventLoop,
+    hook_executor: &HookExecutor,
+    loop_id: &str,
+    phase_event_key: &str,
+    phase_event: HookPhaseEvent,
+    hook_name: &str,
+    on_error: HookOnError,
+    suspend_mode: HookSuspendMode,
+    mutate: &HookMutationConfig,
+    request: &HookRunRequest,
+) -> HookDispatchOutcome {
+    let retry_max_attempts = max_retry_attempts_for_suspend_mode(suspend_mode);
+    let outcome = execute_hook_attempt(
+        event_loop,
+        hook_executor,
+        loop_id,
+        phase_event_key,
+        phase_event,
+        hook_name,
+        on_error,
+        suspend_mode,
+        mutate,
+        1,
+        retry_max_attempts,
+        request,
+    );
+
+    if outcome.disposition != HookDisposition::Suspend {
+        return outcome;
+    }
+
+    match suspend_mode {
+        HookSuspendMode::WaitForResume => outcome,
+        HookSuspendMode::RetryBackoff => dispatch_retry_backoff_suspend_policy(
+            event_loop,
+            hook_executor,
+            loop_id,
+            phase_event_key,
+            phase_event,
+            hook_name,
+            on_error,
+            suspend_mode,
+            mutate,
+            retry_max_attempts,
+            request,
+            outcome,
+        ),
+        HookSuspendMode::WaitThenRetry => dispatch_wait_then_retry_suspend_policy(
+            event_loop,
+            hook_executor,
+            loop_id,
+            phase_event_key,
+            phase_event,
+            hook_name,
+            on_error,
+            suspend_mode,
+            mutate,
+            retry_max_attempts,
+            request,
+            outcome,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_retry_backoff_suspend_policy(
+    event_loop: &EventLoop,
+    hook_executor: &HookExecutor,
+    loop_id: &str,
+    phase_event_key: &str,
+    phase_event: HookPhaseEvent,
+    hook_name: &str,
+    on_error: HookOnError,
+    suspend_mode: HookSuspendMode,
+    mutate: &HookMutationConfig,
+    retry_max_attempts: u32,
+    request: &HookRunRequest,
+    outcome: HookDispatchOutcome,
+) -> HookDispatchOutcome {
+    run_retry_backoff_policy(
+        phase_event_key,
+        hook_name,
+        &RETRY_BACKOFF_DELAYS_MS,
+        |backoff_delay, _retry_attempt| {
+            wait_for_retry_backoff_delay_with_signal_poll(
+                request.workspace_root.as_path(),
+                backoff_delay,
+            )
+        },
+        |retry_attempt| {
+            execute_hook_attempt(
+                event_loop,
+                hook_executor,
+                loop_id,
+                phase_event_key,
+                phase_event,
+                hook_name,
+                on_error,
+                suspend_mode,
+                mutate,
+                retry_attempt,
+                retry_max_attempts,
+                request,
+            )
+        },
+        outcome,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_wait_then_retry_suspend_policy(
+    event_loop: &EventLoop,
+    hook_executor: &HookExecutor,
+    loop_id: &str,
+    phase_event_key: &str,
+    phase_event: HookPhaseEvent,
+    hook_name: &str,
+    on_error: HookOnError,
+    suspend_mode: HookSuspendMode,
+    mutate: &HookMutationConfig,
+    retry_max_attempts: u32,
+    request: &HookRunRequest,
+    outcome: HookDispatchOutcome,
+) -> HookDispatchOutcome {
+    let suspend_state_store = SuspendStateStore::new(&request.workspace_root);
+    let reason = format_suspending_hook_reason(&outcome);
+    let suspend_state = SuspendStateRecord::new(
+        loop_id,
+        phase_event,
+        hook_name,
+        reason,
+        suspend_mode,
+        chrono::Utc::now(),
+    );
+
+    if let Err(error) = suspend_state_store.write_suspend_state(&suspend_state) {
+        warn!(
+            phase_event = %phase_event_key,
+            hook_name = %hook_name,
+            error = %error,
+            "Failed to persist suspend-state for wait_then_retry; deferring to standard suspend handling"
+        );
+        return outcome;
+    }
+
+    warn!(
+        phase_event = %phase_event_key,
+        hook_name = %hook_name,
+        "Lifecycle hook requested suspend(wait_then_retry); entering wait-for-resume gate before single retry"
+    );
+
+    run_wait_then_retry_policy(
+        phase_event_key,
+        hook_name,
+        || wait_for_suspend_signal_with_poll(&suspend_state_store),
+        || {
+            suspend_state_store
+                .clear_suspend_state()
+                .context("Failed to clear wait_then_retry suspend-state after resume")?;
+            Ok(())
+        },
+        || {
+            execute_hook_attempt(
+                event_loop,
+                hook_executor,
+                loop_id,
+                phase_event_key,
+                phase_event,
+                hook_name,
+                on_error,
+                suspend_mode,
+                mutate,
+                2,
+                retry_max_attempts,
+                request,
+            )
+        },
+        outcome,
+    )
+}
+
+fn run_retry_backoff_policy<FWaitForDelay, FRunRetryAttempt>(
+    phase_event_key: &str,
+    hook_name: &str,
+    backoff_delays_ms: &[u64],
+    mut wait_for_delay: FWaitForDelay,
+    mut run_retry_attempt: FRunRetryAttempt,
+    mut outcome: HookDispatchOutcome,
+) -> HookDispatchOutcome
+where
+    FWaitForDelay: FnMut(Duration, usize) -> RetryBackoffDelayOutcome,
+    FRunRetryAttempt: FnMut(u32) -> HookDispatchOutcome,
+{
+    for (retry_attempt, backoff_delay_ms) in backoff_delays_ms.iter().copied().enumerate() {
+        match wait_for_delay(Duration::from_millis(backoff_delay_ms), retry_attempt + 1) {
+            RetryBackoffDelayOutcome::Elapsed => {}
+            RetryBackoffDelayOutcome::StopRequested => {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    retry_attempt = retry_attempt + 1,
+                    "Stop requested while waiting for retry_backoff retry; deferring to suspend termination handling"
+                );
+                break;
+            }
+            RetryBackoffDelayOutcome::RestartRequested => {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    retry_attempt = retry_attempt + 1,
+                    "Restart requested while waiting for retry_backoff retry; deferring to suspend termination handling"
+                );
+                break;
+            }
+        }
+
+        outcome = run_retry_attempt(retry_attempt as u32 + 2);
+
+        if outcome.disposition == HookDisposition::Pass {
+            info!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                retry_attempt = retry_attempt + 1,
+                "Lifecycle hook recovered under retry_backoff"
+            );
+            return outcome;
+        }
+
+        if outcome.disposition != HookDisposition::Suspend {
+            return outcome;
+        }
+    }
+
+    warn!(
+        phase_event = %phase_event_key,
+        hook_name = %hook_name,
+        retry_attempts = backoff_delays_ms.len(),
+        "Lifecycle hook retry_backoff policy exhausted; entering suspended wait_for_resume fallback"
+    );
+
+    outcome
+}
+
+fn run_wait_then_retry_policy<FWaitForSignal, FClearSuspendState, FRunRetryAttempt>(
+    phase_event_key: &str,
+    hook_name: &str,
+    mut wait_for_signal: FWaitForSignal,
+    mut clear_suspend_state: FClearSuspendState,
+    mut run_retry_attempt: FRunRetryAttempt,
+    outcome: HookDispatchOutcome,
+) -> HookDispatchOutcome
+where
+    FWaitForSignal: FnMut() -> Result<SuspendWaitOutcome>,
+    FClearSuspendState: FnMut() -> Result<()>,
+    FRunRetryAttempt: FnMut() -> HookDispatchOutcome,
+{
+    let wait_outcome = match wait_for_signal() {
+        Ok(wait_outcome) => wait_outcome,
+        Err(error) => {
+            warn!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                error = %error,
+                "wait_then_retry gate failed while polling suspend signals; deferring to standard suspend handling"
+            );
+            return outcome;
+        }
+    };
+
+    match wait_outcome {
+        SuspendWaitOutcome::Stop => {
+            info!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                "Stop requested while waiting under wait_then_retry; deferring to suspend termination handling"
+            );
+            outcome
+        }
+        SuspendWaitOutcome::Restart => {
+            info!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                "Restart requested while waiting under wait_then_retry; deferring to suspend termination handling"
+            );
+            outcome
+        }
+        SuspendWaitOutcome::Resume => {
+            if let Err(error) = clear_suspend_state() {
+                warn!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    error = %error,
+                    "Failed to clear wait_then_retry suspend-state after resume; deferring to standard suspend handling"
+                );
+                return outcome;
+            }
+
+            let retry_outcome = run_retry_attempt();
+
+            if retry_outcome.disposition == HookDisposition::Pass {
+                info!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    "Lifecycle hook recovered under wait_then_retry"
+                );
+            }
+
+            retry_outcome
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_hook_attempt(
+    event_loop: &EventLoop,
+    hook_executor: &HookExecutor,
+    loop_id: &str,
+    phase_event_key: &str,
+    phase_event: HookPhaseEvent,
+    hook_name: &str,
+    on_error: HookOnError,
+    suspend_mode: HookSuspendMode,
+    mutate: &HookMutationConfig,
+    retry_attempt: u32,
+    retry_max_attempts: u32,
+    request: &HookRunRequest,
+) -> HookDispatchOutcome {
+    match hook_executor.run(request.clone()) {
+        Ok(run_result) => {
+            let run_disposition = classify_hook_disposition(on_error, &run_result);
+            let mutation_parse_outcome =
+                parse_hook_mutation_stdout(mutate, hook_name, &run_result.stdout.content);
+            let mutation_failure = if run_disposition == HookDisposition::Pass {
+                mutation_parse_failure(&mutation_parse_outcome)
+            } else {
+                None
+            };
+
+            let disposition = if mutation_failure.is_some() {
+                disposition_from_on_error(on_error)
+            } else {
+                run_disposition
+            };
+
+            let failure = if let Some(mutation_failure) = mutation_failure {
+                Some(mutation_failure)
+            } else if run_disposition == HookDisposition::Pass {
+                None
+            } else {
+                Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: run_result.exit_code,
+                    timed_out: run_result.timed_out,
+                })
+            };
+
+            event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(
+                loop_id,
+                phase_event_key,
+                hook_name,
+                disposition,
+                suspend_mode,
+                retry_attempt,
+                retry_max_attempts,
+                &run_result,
+            ));
+
+            if disposition == HookDisposition::Pass {
+                debug!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    duration_ms = run_result.duration_ms,
+                    "Lifecycle hook executed successfully"
+                );
+            } else {
+                let failure_detail = format_hook_failure_detail(failure.as_ref());
+                warn!(
+                    phase_event = %phase_event_key,
+                    hook_name = %hook_name,
+                    disposition = ?disposition,
+                    exit_code = ?run_result.exit_code,
+                    timed_out = run_result.timed_out,
+                    failure = %failure_detail,
+                    "Lifecycle hook returned non-pass disposition; continuing"
+                );
+            }
+
+            HookDispatchOutcome {
+                phase_event,
+                hook_name: hook_name.to_string(),
+                disposition,
+                suspend_mode,
+                failure,
+                mutation_parse_outcome,
+            }
+        }
+        Err(error) => {
+            let disposition = disposition_from_on_error(on_error);
+
+            warn!(
+                phase_event = %phase_event_key,
+                hook_name = %hook_name,
+                disposition = ?disposition,
+                error = %error,
+                "Lifecycle hook execution failed; continuing"
+            );
+
+            HookDispatchOutcome {
+                phase_event,
+                hook_name: hook_name.to_string(),
+                disposition,
+                suspend_mode,
+                failure: Some(HookDispatchFailure::HookExecutionError {
+                    message: error.to_string(),
+                }),
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            }
+        }
+    }
+}
+
+fn wait_for_retry_backoff_delay_with_signal_poll(
+    workspace_root: &Path,
+    backoff_delay: Duration,
+) -> RetryBackoffDelayOutcome {
+    if backoff_delay.is_zero() {
+        return RetryBackoffDelayOutcome::Elapsed;
+    }
+
+    let poll_interval = Duration::from_millis(RETRY_BACKOFF_SIGNAL_POLL_INTERVAL_MS);
+    let sleep_started_at = std::time::Instant::now();
+
+    loop {
+        if is_stop_requested(workspace_root) {
+            return RetryBackoffDelayOutcome::StopRequested;
+        }
+
+        if is_restart_requested(workspace_root) {
+            return RetryBackoffDelayOutcome::RestartRequested;
+        }
+
+        let elapsed = sleep_started_at.elapsed();
+        if elapsed >= backoff_delay {
+            return RetryBackoffDelayOutcome::Elapsed;
+        }
+
+        let remaining = backoff_delay.saturating_sub(elapsed);
+        std::thread::sleep(std::cmp::min(remaining, poll_interval));
+    }
+}
+
+fn wait_for_suspend_signal_with_poll(
+    suspend_state_store: &SuspendStateStore,
+) -> Result<SuspendWaitOutcome> {
+    let poll_interval = Duration::from_millis(SUSPEND_WAIT_SIGNAL_POLL_INTERVAL_MS);
+
+    loop {
+        if is_stop_requested(suspend_state_store.workspace_root()) {
+            return Ok(SuspendWaitOutcome::Stop);
+        }
+
+        if is_restart_requested(suspend_state_store.workspace_root()) {
+            return Ok(SuspendWaitOutcome::Restart);
+        }
+
+        if suspend_state_store
+            .consume_resume_requested()
+            .context("Failed to consume resume signal while suspended")?
+        {
+            return Ok(SuspendWaitOutcome::Resume);
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+}
+
+fn fail_if_blocking_loop_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked loop.start boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn fail_if_blocking_iteration_start_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked iteration.start boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn fail_if_blocking_plan_created_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked plan.created boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn fail_if_blocking_human_interact_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked human.interact boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+fn fail_if_blocking_loop_termination_outcomes(outcomes: &[HookDispatchOutcome]) -> Result<()> {
+    let Some(blocking_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Block)
+    else {
+        return Ok(());
+    };
+
+    let reason = format_blocking_hook_reason(blocking_outcome);
+    error!(
+        phase_event = %blocking_outcome.phase_event,
+        hook_name = %blocking_outcome.hook_name,
+        reason = %reason,
+        "Lifecycle hook blocked loop termination boundary"
+    );
+
+    Err(anyhow::anyhow!(reason))
+}
+
+async fn wait_for_resume_if_suspended(
+    outcomes: &[HookDispatchOutcome],
+    loop_id: &str,
+    suspend_state_store: &SuspendStateStore,
+) -> Result<Option<TerminationReason>> {
+    let Some(suspending_outcome) = outcomes
+        .iter()
+        .find(|outcome| outcome.disposition == HookDisposition::Suspend)
+    else {
+        return Ok(None);
+    };
+
+    let reason = format_suspending_hook_reason(suspending_outcome);
+    let suspend_state = SuspendStateRecord::new(
+        loop_id,
+        suspending_outcome.phase_event,
+        &suspending_outcome.hook_name,
+        &reason,
+        suspending_outcome.suspend_mode,
+        chrono::Utc::now(),
+    );
+
+    suspend_state_store
+        .write_suspend_state(&suspend_state)
+        .with_context(|| {
+            format!(
+                "Failed to persist suspend-state for hook '{}' at '{}'",
+                suspending_outcome.hook_name,
+                suspending_outcome.phase_event.as_str()
+            )
+        })?;
+
+    warn!(
+        phase_event = %suspending_outcome.phase_event,
+        hook_name = %suspending_outcome.hook_name,
+        suspend_mode = ?suspending_outcome.suspend_mode,
+        reason = %reason,
+        "Lifecycle hook requested suspend; entering wait_for_resume gate"
+    );
+
+    loop {
+        if consume_stop_requested_signal(suspend_state_store.workspace_root())? {
+            clear_suspend_wait_artifacts(suspend_state_store)?;
+            info!(
+                phase_event = %suspending_outcome.phase_event,
+                hook_name = %suspending_outcome.hook_name,
+                "Stop requested while suspended; terminating loop"
+            );
+            return Ok(Some(TerminationReason::Stopped));
+        }
+
+        if is_restart_requested(suspend_state_store.workspace_root()) {
+            clear_suspend_wait_artifacts(suspend_state_store)?;
+            info!(
+                phase_event = %suspending_outcome.phase_event,
+                hook_name = %suspending_outcome.hook_name,
+                "Restart requested while suspended; terminating loop for restart"
+            );
+            return Ok(Some(TerminationReason::RestartRequested));
+        }
+
+        if suspend_state_store
+            .consume_resume_requested()
+            .context("Failed to consume resume signal while suspended")?
+        {
+            suspend_state_store
+                .clear_suspend_state()
+                .context("Failed to clear suspend-state after resume signal")?;
+
+            info!(
+                phase_event = %suspending_outcome.phase_event,
+                hook_name = %suspending_outcome.hook_name,
+                "Resume signal consumed; leaving suspended wait_for_resume state"
+            );
+            return Ok(None);
+        }
+
+        tokio::time::sleep(Duration::from_millis(SUSPEND_WAIT_SIGNAL_POLL_INTERVAL_MS)).await;
+    }
+}
+
+fn clear_suspend_wait_artifacts(suspend_state_store: &SuspendStateStore) -> Result<()> {
+    suspend_state_store
+        .clear_suspend_state()
+        .context("Failed to clear suspend-state artifact")?;
+    suspend_state_store
+        .consume_resume_requested()
+        .context("Failed to clear stale resume signal")?;
+    Ok(())
+}
+
+fn is_stop_requested(workspace_root: &Path) -> bool {
+    workspace_root.join(".ralph/stop-requested").exists()
+}
+
+fn consume_stop_requested_signal(workspace_root: &Path) -> Result<bool> {
+    let stop_path = workspace_root.join(".ralph/stop-requested");
+    match fs::remove_file(&stop_path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(anyhow::Error::new(error)).with_context(|| {
+            format!(
+                "Failed to consume stop signal while suspended: {}",
+                stop_path.display()
+            )
+        }),
+    }
+}
+
+fn is_restart_requested(workspace_root: &Path) -> bool {
+    workspace_root.join(".ralph/restart-requested").exists()
+}
+
+fn format_suspending_hook_reason(outcome: &HookDispatchOutcome) -> String {
+    format!(
+        "Lifecycle hook '{}' suspended orchestration at '{}': {}",
+        outcome.hook_name,
+        outcome.phase_event.as_str(),
+        format_hook_failure_detail(outcome.failure.as_ref())
+    )
+}
+
+fn format_blocking_hook_reason(outcome: &HookDispatchOutcome) -> String {
+    format!(
+        "Lifecycle hook '{}' blocked orchestration at '{}': {}",
+        outcome.hook_name,
+        outcome.phase_event.as_str(),
+        format_hook_failure_detail(outcome.failure.as_ref())
+    )
+}
+
+fn format_hook_failure_detail(failure: Option<&HookDispatchFailure>) -> String {
+    match failure {
+        Some(HookDispatchFailure::HookRunFailed {
+            exit_code,
+            timed_out,
+        }) => {
+            if *timed_out {
+                "hook timed out".to_string()
+            } else if let Some(code) = exit_code {
+                format!("hook exited with code {code}")
+            } else {
+                "hook exited unsuccessfully".to_string()
+            }
+        }
+        Some(HookDispatchFailure::HookExecutionError { message }) => {
+            format!("hook execution failed: {message}")
+        }
+        Some(HookDispatchFailure::InvalidMutationOutput { message }) => {
+            format!("invalid mutation output: {message}")
+        }
+        None => "hook failed without failure details".to_string(),
+    }
+}
+
+fn classify_hook_disposition(on_error: HookOnError, run_result: &HookRunResult) -> HookDisposition {
+    if !run_result.timed_out && run_result.exit_code == Some(0) {
+        HookDisposition::Pass
+    } else {
+        disposition_from_on_error(on_error)
+    }
+}
+
+fn disposition_from_on_error(on_error: HookOnError) -> HookDisposition {
+    match on_error {
+        HookOnError::Warn => HookDisposition::Warn,
+        HookOnError::Block => HookDisposition::Block,
+        HookOnError::Suspend => HookDisposition::Suspend,
+    }
+}
+
 /// Executes a prompt in PTY mode with raw terminal handling.
 /// Converts PTY termination type to loop termination reason.
 ///
@@ -1516,6 +3966,74 @@ fn convert_termination_type(
         }
         ralph_adapters::TerminationType::UserInterrupt
         | ralph_adapters::TerminationType::ForceKill => Some(TerminationReason::Interrupted),
+    }
+}
+
+fn detect_solo_output_completion(
+    registry: &HatRegistry,
+    output: &str,
+    completion_promise: &str,
+) -> bool {
+    registry.is_empty() && EventParser::contains_promise(output, completion_promise)
+}
+
+fn normalize_cli_output_for_parsing(
+    output_format: BackendOutputFormat,
+    raw_output: &str,
+) -> String {
+    match output_format {
+        BackendOutputFormat::StreamJson => extract_claude_stream_text(raw_output),
+        BackendOutputFormat::PiStreamJson => extract_pi_stream_text(raw_output),
+        _ => raw_output.to_string(),
+    }
+}
+
+fn extract_claude_stream_text(raw_output: &str) -> String {
+    let mut extracted = String::new();
+
+    for line in raw_output.lines() {
+        let Some(event) = ClaudeStreamParser::parse_line(line) else {
+            continue;
+        };
+
+        if let ClaudeStreamEvent::Assistant { message, .. } = event {
+            for block in message.content {
+                if let ContentBlock::Text { text } = block {
+                    extracted.push_str(&text);
+                    extracted.push('\n');
+                }
+            }
+        }
+    }
+
+    if extracted.is_empty() {
+        raw_output.to_string()
+    } else {
+        extracted
+    }
+}
+
+fn extract_pi_stream_text(raw_output: &str) -> String {
+    let mut extracted = String::new();
+
+    for line in raw_output.lines() {
+        let Some(event) = PiStreamParser::parse_line(line) else {
+            continue;
+        };
+
+        if let PiStreamEvent::MessageUpdate {
+            assistant_message_event,
+        } = event
+            && let PiAssistantEvent::TextDelta { delta } = assistant_message_event
+        {
+            extracted.push_str(&delta);
+        }
+    }
+
+    if extracted.is_empty() {
+        raw_output.to_string()
+    } else {
+        extracted
     }
 }
 
@@ -2334,14 +4852,15 @@ mod tests {
     use std::sync::Mutex;
 
     #[test]
-    fn test_pty_always_enabled_for_streaming() {
-        // PTY mode is always enabled for real-time streaming output.
-        // This ensures all backends (claude, gemini, kiro, codex, amp) get
-        // streaming output instead of buffered output from CliExecutor.
-        let use_pty = true; // Matches the actual implementation
+    fn test_pty_only_enabled_for_tui_rpc_or_interactive() {
+        let should_use_pty = |enable_tui: bool, enable_rpc: bool, user_interactive: bool| -> bool {
+            enable_tui || enable_rpc || user_interactive
+        };
 
-        // PTY should always be true regardless of backend or mode
-        assert!(use_pty, "PTY should always be enabled for streaming output");
+        assert!(!should_use_pty(false, false, false));
+        assert!(should_use_pty(true, false, false));
+        assert!(should_use_pty(false, true, false));
+        assert!(should_use_pty(false, false, true));
     }
 
     #[test]
@@ -2386,6 +4905,3160 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod");
         path
+    }
+
+    #[cfg(unix)]
+    fn hook_spec_with_command_and_on_error_and_suspend_mode(
+        name: &str,
+        command: Vec<String>,
+        on_error: HookOnError,
+        suspend_mode: Option<HookSuspendMode>,
+    ) -> ralph_core::HookSpec {
+        ralph_core::HookSpec {
+            name: name.to_string(),
+            command,
+            cwd: None,
+            env: std::collections::HashMap::new(),
+            timeout_seconds: None,
+            max_output_bytes: None,
+            on_error: Some(on_error),
+            suspend_mode,
+            mutate: ralph_core::HookMutationConfig::default(),
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn hook_spec_with_command_and_on_error(
+        name: &str,
+        command: Vec<String>,
+        on_error: HookOnError,
+    ) -> ralph_core::HookSpec {
+        hook_spec_with_command_and_on_error_and_suspend_mode(name, command, on_error, None)
+    }
+
+    #[cfg(unix)]
+    fn hook_spec_with_command(name: &str, command: Vec<String>) -> ralph_core::HookSpec {
+        hook_spec_with_command_and_on_error(name, command, HookOnError::Warn)
+    }
+
+    #[cfg(unix)]
+    fn recording_hook(name: &str, log_path: &Path) -> ralph_core::HookSpec {
+        hook_spec_with_command(
+            name,
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                r#"payload="$(cat)"
+phase="$(printf '%s' "$payload" | grep -o '"phase_event":"[^"]*"' | cut -d'"' -f4)"
+printf '%s|%s\n' "$1" "$phase" >> "$2""#
+                    .to_string(),
+                "hook-recorder".to_string(),
+                name.to_string(),
+                log_path.to_string_lossy().into_owned(),
+            ],
+        )
+    }
+
+    #[cfg(unix)]
+    fn payload_recording_hook(name: &str, log_path: &Path) -> ralph_core::HookSpec {
+        hook_spec_with_command(
+            name,
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                r#"payload="$(cat)"
+printf '%s\n' "$payload" >> "$1""#
+                    .to_string(),
+                "hook-payload-recorder".to_string(),
+                log_path.to_string_lossy().into_owned(),
+            ],
+        )
+    }
+
+    #[cfg(unix)]
+    fn hook_engine_with_events(
+        events: std::collections::HashMap<HookPhaseEvent, Vec<ralph_core::HookSpec>>,
+    ) -> HookEngine {
+        let hooks_config = ralph_core::HooksConfig {
+            enabled: true,
+            events,
+            ..ralph_core::HooksConfig::default()
+        };
+        HookEngine::new(&hooks_config)
+    }
+
+    #[cfg(unix)]
+    fn dispatch_test_event_loop(workspace_root: &Path) -> EventLoop {
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = workspace_root.to_path_buf();
+        EventLoop::new(config)
+    }
+
+    #[cfg(unix)]
+    fn dispatch_test_event_loop_with_context(workspace_root: &Path) -> (EventLoop, LoopContext) {
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = workspace_root.to_path_buf();
+        let context = LoopContext::primary(workspace_root.to_path_buf());
+        let event_loop = EventLoop::with_context(config, context.clone());
+        (event_loop, context)
+    }
+
+    fn dispatch_test_event_loop_from_yaml_with_context(
+        workspace_root: &Path,
+        yaml: &str,
+    ) -> (EventLoop, LoopContext) {
+        let mut config: RalphConfig = serde_yaml::from_str(yaml).expect("parse config");
+        config.core.workspace_root = workspace_root.to_path_buf();
+        let context = LoopContext::primary(workspace_root.to_path_buf());
+        let event_loop = EventLoop::with_context(config, context.clone());
+        (event_loop, context)
+    }
+
+    #[cfg(unix)]
+    fn dispatch_test_event_loop_with_diagnostics(workspace_root: &Path) -> EventLoop {
+        let mut config = RalphConfig::default();
+        config.core.workspace_root = workspace_root.to_path_buf();
+        let diagnostics =
+            ralph_core::diagnostics::DiagnosticsCollector::with_enabled(workspace_root, true)
+                .expect("create diagnostics collector");
+        EventLoop::with_diagnostics(config, diagnostics)
+    }
+
+    #[cfg(unix)]
+    fn read_hook_run_telemetry_entries(workspace_root: &Path) -> Vec<HookRunTelemetryEntry> {
+        let diagnostics_root = workspace_root.join(".ralph").join("diagnostics");
+        let mut session_dirs: Vec<_> = std::fs::read_dir(&diagnostics_root)
+            .expect("read diagnostics root")
+            .filter_map(Result::ok)
+            .collect();
+        session_dirs.sort_by_key(|entry| entry.path());
+
+        let latest_session = session_dirs
+            .last()
+            .expect("at least one diagnostics session should exist");
+        let hook_runs_path = latest_session.path().join("hook-runs.jsonl");
+        let content = std::fs::read_to_string(&hook_runs_path).expect("read hook-runs.jsonl");
+
+        content
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("parse hook run telemetry entry"))
+            .collect()
+    }
+
+    #[cfg(unix)]
+    fn read_hook_log(log_path: &Path) -> Vec<String> {
+        std::fs::read_to_string(log_path)
+            .expect("read hook log")
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[cfg(unix)]
+    fn read_hook_payload_log(log_path: &Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(log_path)
+            .expect("read hook payload log")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("parse hook payload JSON"))
+            .collect()
+    }
+
+    fn suspend_outcome_with_mode(
+        phase_event: HookPhaseEvent,
+        hook_name: &str,
+        suspend_mode: HookSuspendMode,
+    ) -> HookDispatchOutcome {
+        HookDispatchOutcome {
+            phase_event,
+            hook_name: hook_name.to_string(),
+            disposition: HookDisposition::Suspend,
+            suspend_mode,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }
+    }
+
+    fn suspend_outcome(phase_event: HookPhaseEvent, hook_name: &str) -> HookDispatchOutcome {
+        suspend_outcome_with_mode(phase_event, hook_name, HookSuspendMode::WaitForResume)
+    }
+
+    fn block_on_test_future<F>(future: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime")
+            .block_on(future)
+    }
+
+    fn empty_hook_metadata() -> serde_json::Map<String, serde_json::Value> {
+        serde_json::Map::new()
+    }
+
+    fn build_loop_start_payload_input(
+        loop_id: &str,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        iteration_current: u32,
+        active_hat: Option<String>,
+    ) -> HookPayloadBuilderInput {
+        super::build_loop_start_payload_input(
+            loop_id,
+            ctx,
+            max_iterations,
+            iteration_current,
+            active_hat,
+            &empty_hook_metadata(),
+        )
+    }
+
+    fn build_iteration_start_payload_input(
+        loop_id: &str,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        iteration_current: u32,
+        active_hat: Option<String>,
+        selected_hat: Option<String>,
+        selected_task: Option<String>,
+    ) -> HookPayloadBuilderInput {
+        super::build_iteration_start_payload_input(
+            loop_id,
+            ctx,
+            max_iterations,
+            iteration_current,
+            active_hat,
+            selected_hat,
+            selected_task,
+            &empty_hook_metadata(),
+        )
+    }
+
+    fn build_plan_created_payload_input(
+        loop_id: &str,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        iteration_current: u32,
+        active_hat: Option<String>,
+        selected_hat: Option<String>,
+        selected_task: Option<String>,
+    ) -> HookPayloadBuilderInput {
+        super::build_plan_created_payload_input(
+            loop_id,
+            ctx,
+            max_iterations,
+            iteration_current,
+            active_hat,
+            selected_hat,
+            selected_task,
+            &empty_hook_metadata(),
+        )
+    }
+
+    fn build_human_interact_payload_input(
+        loop_id: &str,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        iteration_current: u32,
+        active_hat: Option<String>,
+        selected_hat: Option<String>,
+        selected_task: Option<String>,
+        human_interact: Option<serde_json::Value>,
+    ) -> HookPayloadBuilderInput {
+        super::build_human_interact_payload_input(
+            loop_id,
+            ctx,
+            max_iterations,
+            iteration_current,
+            active_hat,
+            selected_hat,
+            selected_task,
+            human_interact,
+            &empty_hook_metadata(),
+        )
+    }
+
+    fn build_loop_termination_payload_input(
+        loop_id: &str,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        iteration_current: u32,
+        active_hat: Option<String>,
+        selected_hat: Option<String>,
+        selected_task: Option<String>,
+        termination_reason: &TerminationReason,
+    ) -> HookPayloadBuilderInput {
+        super::build_loop_termination_payload_input(
+            loop_id,
+            ctx,
+            max_iterations,
+            iteration_current,
+            active_hat,
+            selected_hat,
+            selected_task,
+            termination_reason,
+            &empty_hook_metadata(),
+        )
+    }
+
+    async fn dispatch_pre_loop_termination_hooks(
+        event_loop: &EventLoop,
+        hooks_dispatch_enabled: bool,
+        loop_id: &str,
+        hook_engine: &HookEngine,
+        hook_executor: &HookExecutor,
+        suspend_state_store: &SuspendStateStore,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        reason: TerminationReason,
+    ) -> Result<TerminationReason> {
+        let mut accumulated_hook_metadata = serde_json::Map::new();
+        super::dispatch_pre_loop_termination_hooks(
+            event_loop,
+            hooks_dispatch_enabled,
+            loop_id,
+            hook_engine,
+            hook_executor,
+            suspend_state_store,
+            ctx,
+            max_iterations,
+            &mut accumulated_hook_metadata,
+            reason,
+        )
+        .await
+    }
+
+    async fn dispatch_post_loop_termination_hooks(
+        event_loop: &EventLoop,
+        hooks_dispatch_enabled: bool,
+        loop_id: &str,
+        hook_engine: &HookEngine,
+        hook_executor: &HookExecutor,
+        suspend_state_store: &SuspendStateStore,
+        ctx: &LoopContext,
+        max_iterations: u32,
+        reason: TerminationReason,
+    ) -> Result<TerminationReason> {
+        let mut accumulated_hook_metadata = serde_json::Map::new();
+        super::dispatch_post_loop_termination_hooks(
+            event_loop,
+            hooks_dispatch_enabled,
+            loop_id,
+            hook_engine,
+            hook_executor,
+            suspend_state_store,
+            ctx,
+            max_iterations,
+            &mut accumulated_hook_metadata,
+            reason,
+        )
+        .await
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("hook-dispatch.log");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![
+                recording_hook("pre-iteration-first", &log_path),
+                recording_hook("pre-iteration-second", &log_path),
+            ],
+        );
+        events.insert(
+            HookPhaseEvent::PostLoopStart,
+            vec![recording_hook("post-loop-only", &log_path)],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("ralph".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        assert_eq!(
+            read_hook_log(&log_path),
+            vec![
+                "pre-iteration-first|pre.iteration.start".to_string(),
+                "pre-iteration-second|pre.iteration.start".to_string(),
+            ]
+        );
+
+        dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(
+            read_hook_log(&log_path),
+            vec![
+                "pre-iteration-first|pre.iteration.start".to_string(),
+                "pre-iteration-second|pre.iteration.start".to_string(),
+                "post-loop-only|post.loop.start".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let payload_log_path = temp_dir
+            .path()
+            .join("hook-metadata-disabled-payloads.jsonl");
+
+        let mut disabled_mutation_spec = hook_spec_with_command(
+            "metadata-emitter",
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf '%s' '{\"metadata\":{\"risk_score\":0.72}}'".to_string(),
+            ],
+        );
+        disabled_mutation_spec.mutate = hook_mutation_config(false);
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(HookPhaseEvent::PreLoopStart, vec![disabled_mutation_spec]);
+        events.insert(
+            HookPhaseEvent::PostLoopStart,
+            vec![payload_recording_hook(
+                "payload-recorder",
+                &payload_log_path,
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let mut accumulated_hook_metadata = serde_json::Map::new();
+        accumulated_hook_metadata.insert("upstream".to_string(), serde_json::json!("preserved"));
+
+        let pre_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            super::build_loop_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                0,
+                Some("planner".to_string()),
+                &accumulated_hook_metadata,
+            ),
+        );
+
+        assert_eq!(pre_outcomes.len(), 1);
+        assert_eq!(pre_outcomes[0].disposition, HookDisposition::Pass);
+        assert_eq!(pre_outcomes[0].failure, None);
+        assert_eq!(
+            pre_outcomes[0].mutation_parse_outcome,
+            HookMutationParseOutcome::Disabled
+        );
+
+        let metadata_before_merge = accumulated_hook_metadata.clone();
+        merge_accumulated_hook_metadata_from_outcomes(
+            &mut accumulated_hook_metadata,
+            &pre_outcomes,
+        );
+        assert_eq!(accumulated_hook_metadata, metadata_before_merge);
+
+        let post_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            super::build_loop_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                0,
+                Some("planner".to_string()),
+                &accumulated_hook_metadata,
+            ),
+        );
+        merge_accumulated_hook_metadata_from_outcomes(
+            &mut accumulated_hook_metadata,
+            &post_outcomes,
+        );
+
+        let payloads = read_hook_payload_log(&payload_log_path);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(
+            payloads[0]["metadata"]["accumulated"],
+            serde_json::json!({"upstream":"preserved"})
+        );
+
+        let payload_accumulated = payloads[0]["metadata"]["accumulated"]
+            .as_object()
+            .expect("metadata.accumulated object");
+        assert!(!payload_accumulated.contains_key("hook_metadata"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let payload_log_path = temp_dir.path().join("hook-metadata-enabled-payloads.jsonl");
+
+        let mut mutation_spec = hook_spec_with_command(
+            "metadata-emitter",
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf '%s' '{\"metadata\":{\"risk_score\":0.72,\"gates\":[\"policy_check\"]}}'"
+                    .to_string(),
+            ],
+        );
+        mutation_spec.mutate = hook_mutation_config(true);
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(HookPhaseEvent::PreLoopStart, vec![mutation_spec]);
+        events.insert(
+            HookPhaseEvent::PostLoopStart,
+            vec![payload_recording_hook(
+                "payload-recorder",
+                &payload_log_path,
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let mut accumulated_hook_metadata = serde_json::Map::new();
+        accumulated_hook_metadata.insert("upstream".to_string(), serde_json::json!("preserved"));
+
+        let pre_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            super::build_loop_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                0,
+                Some("planner".to_string()),
+                &accumulated_hook_metadata,
+            ),
+        );
+        assert!(matches!(
+            pre_outcomes[0].mutation_parse_outcome,
+            HookMutationParseOutcome::Parsed { .. }
+        ));
+
+        merge_accumulated_hook_metadata_from_outcomes(
+            &mut accumulated_hook_metadata,
+            &pre_outcomes,
+        );
+        assert_eq!(
+            serde_json::Value::Object(accumulated_hook_metadata.clone()),
+            serde_json::json!({
+                "upstream": "preserved",
+                "hook_metadata": {
+                    "metadata-emitter": {
+                        "risk_score": 0.72,
+                        "gates": ["policy_check"]
+                    }
+                }
+            })
+        );
+
+        let post_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            super::build_loop_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                0,
+                Some("planner".to_string()),
+                &accumulated_hook_metadata,
+            ),
+        );
+        merge_accumulated_hook_metadata_from_outcomes(
+            &mut accumulated_hook_metadata,
+            &post_outcomes,
+        );
+
+        let payloads = read_hook_payload_log(&payload_log_path);
+        assert_eq!(payloads.len(), 1);
+        let payload = &payloads[0];
+
+        assert_eq!(payload["phase_event"], serde_json::json!("post.loop.start"));
+        assert_eq!(
+            payload["context"]["active_hat"],
+            serde_json::json!("planner")
+        );
+        assert_eq!(
+            payload["metadata"]["accumulated"],
+            serde_json::json!({
+                "upstream": "preserved",
+                "hook_metadata": {
+                    "metadata-emitter": {
+                        "risk_score": 0.72,
+                        "gates": ["policy_check"]
+                    }
+                }
+            })
+        );
+
+        let payload_object = payload.as_object().expect("payload object");
+        assert!(!payload_object.contains_key("prompt"));
+        assert!(!payload_object.contains_key("events"));
+        assert!(!payload_object.contains_key("config"));
+
+        let context = payload["context"]
+            .as_object()
+            .expect("payload context object");
+        assert!(!context.contains_key("prompt"));
+        assert!(!context.contains_key("events"));
+        assert!(!context.contains_key("config"));
+
+        let payload_accumulated = payload["metadata"]["accumulated"]
+            .as_object()
+            .expect("metadata.accumulated object");
+        assert!(!payload_accumulated.contains_key("risk_score"));
+        assert!(!payload_accumulated.contains_key("gates"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_noop_when_disabled_or_unconfigured() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("hook-noop.log");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![recording_hook("should-not-run", &log_path)],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let empty_engine = hook_engine_with_events(std::collections::HashMap::new());
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let disabled_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            false,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("ralph".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        let empty_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &empty_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("ralph".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        let mismatched_phase_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert!(
+            disabled_outcomes.is_empty(),
+            "disabled hooks must be a no-op"
+        );
+        assert!(
+            empty_outcomes.is_empty(),
+            "empty hooks config must be a no-op"
+        );
+        assert!(
+            mismatched_phase_outcomes.is_empty(),
+            "dispatching a phase without hooks must be a no-op"
+        );
+        assert!(
+            !log_path.exists(),
+            "hook log should not be created on no-op paths"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_returns_dispositions_and_failure_context() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![
+                hook_spec_with_command(
+                    "hook-pass",
+                    vec!["sh".to_string(), "-c".to_string(), "exit 0".to_string()],
+                ),
+                hook_spec_with_command(
+                    "hook-warn",
+                    vec!["sh".to_string(), "-c".to_string(), "exit 7".to_string()],
+                ),
+                hook_spec_with_command_and_on_error(
+                    "hook-block",
+                    vec!["sh".to_string(), "-c".to_string(), "exit 23".to_string()],
+                    HookOnError::Block,
+                ),
+            ],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 3);
+
+        assert_eq!(outcomes[0].hook_name, "hook-pass");
+        assert_eq!(outcomes[0].phase_event, HookPhaseEvent::PreLoopStart);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Pass);
+        assert!(outcomes[0].failure.is_none());
+
+        assert_eq!(outcomes[1].hook_name, "hook-warn");
+        assert_eq!(outcomes[1].disposition, HookDisposition::Warn);
+        assert_eq!(
+            outcomes[1].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(7),
+                timed_out: false,
+            })
+        );
+
+        assert_eq!(outcomes[2].hook_name, "hook-block");
+        assert_eq!(outcomes[2].disposition, HookDisposition::Block);
+        assert_eq!(
+            outcomes[2].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(23),
+                timed_out: false,
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_maps_executor_failures_to_on_error_disposition() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![
+                hook_spec_with_command(
+                    "warn-exec-error",
+                    vec!["definitely-not-a-real-exec-warn".to_string()],
+                ),
+                hook_spec_with_command_and_on_error(
+                    "block-exec-error",
+                    vec!["definitely-not-a-real-exec-block".to_string()],
+                    HookOnError::Block,
+                ),
+            ],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].hook_name, "warn-exec-error");
+        assert_eq!(outcomes[0].disposition, HookDisposition::Warn);
+        match &outcomes[0].failure {
+            Some(HookDispatchFailure::HookExecutionError { message }) => {
+                assert!(
+                    message.contains("definitely-not-a-real-exec-warn"),
+                    "executor failure context should include missing command"
+                );
+            }
+            other => panic!("expected execution error failure context, got {other:?}"),
+        }
+
+        assert_eq!(outcomes[1].hook_name, "block-exec-error");
+        assert_eq!(outcomes[1].disposition, HookDisposition::Block);
+        match &outcomes[1].failure {
+            Some(HookDispatchFailure::HookExecutionError { message }) => {
+                assert!(
+                    message.contains("definitely-not-a-real-exec-block"),
+                    "executor failure context should include missing command"
+                );
+            }
+            other => panic!("expected execution error failure context, got {other:?}"),
+        }
+    }
+
+    // AC-15: JSON-only mutation format errors must flow through lifecycle on_error dispositions.
+    #[cfg(unix)]
+    #[test]
+    fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut warn_hook = hook_spec_with_command_and_on_error(
+            "warn-invalid-mutation",
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf '%s' 'oops'".to_string(),
+            ],
+            HookOnError::Warn,
+        );
+        warn_hook.mutate = hook_mutation_config(true);
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(HookPhaseEvent::PreLoopStart, vec![warn_hook]);
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Warn);
+        assert!(matches!(
+            outcomes[0].mutation_parse_outcome,
+            HookMutationParseOutcome::Invalid(_)
+        ));
+        assert!(matches!(
+            &outcomes[0].failure,
+            Some(HookDispatchFailure::InvalidMutationOutput { message })
+            if message.contains("not valid JSON")
+        ));
+        assert!(fail_if_blocking_loop_start_outcomes(&outcomes).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason()
+    {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut block_hook = hook_spec_with_command_and_on_error(
+            "block-invalid-mutation",
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf '%s' 'oops'".to_string(),
+            ],
+            HookOnError::Block,
+        );
+        block_hook.mutate = hook_mutation_config(true);
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(HookPhaseEvent::PreLoopStart, vec![block_hook]);
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Block);
+        assert!(matches!(
+            &outcomes[0].failure,
+            Some(HookDispatchFailure::InvalidMutationOutput { message })
+            if message.contains("not valid JSON")
+        ));
+
+        let block_error = fail_if_blocking_loop_start_outcomes(&outcomes)
+            .expect_err("block disposition should fail loop.start boundary");
+        let block_message = block_error.to_string();
+        assert!(block_message.contains("block-invalid-mutation"));
+        assert!(block_message.contains("pre.loop.start"));
+        assert!(block_message.contains("invalid mutation output"));
+        assert!(block_message.contains("not valid JSON"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_runtime_failure_takes_precedence_over_mutation_parse_error()
+    {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut block_hook = hook_spec_with_command_and_on_error(
+            "block-runtime-failure",
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf '%s' 'oops'; exit 23".to_string(),
+            ],
+            HookOnError::Block,
+        );
+        block_hook.mutate = hook_mutation_config(true);
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(HookPhaseEvent::PreLoopStart, vec![block_hook]);
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Block);
+        assert_eq!(
+            outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(23),
+                timed_out: false,
+            })
+        );
+        assert!(matches!(
+            outcomes[0].mutation_parse_outcome,
+            HookMutationParseOutcome::Invalid(_)
+        ));
+
+        let block_error = fail_if_blocking_loop_start_outcomes(&outcomes)
+            .expect_err("block disposition should fail loop.start boundary");
+        let block_message = block_error.to_string();
+        assert!(block_message.contains("hook exited with code 23"));
+        assert!(!block_message.contains("invalid mutation output"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut suspend_hook = hook_spec_with_command_and_on_error(
+            "suspend-invalid-mutation",
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf '%s' 'oops'".to_string(),
+            ],
+            HookOnError::Suspend,
+        );
+        suspend_hook.mutate = hook_mutation_config(true);
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(HookPhaseEvent::PreIterationStart, vec![suspend_hook]);
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                None,
+                None,
+            ),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Suspend);
+        assert!(matches!(
+            &outcomes[0].failure,
+            Some(HookDispatchFailure::InvalidMutationOutput { message })
+            if message.contains("not valid JSON")
+        ));
+        assert!(fail_if_blocking_iteration_start_outcomes(&outcomes).is_ok());
+
+        let resume_store = suspend_state_store.clone();
+        let resume_handle = std::thread::spawn(move || {
+            let wait_started_at = std::time::Instant::now();
+            while !resume_store.suspend_state_path().exists() {
+                assert!(
+                    wait_started_at.elapsed() < Duration::from_secs(2),
+                    "suspend-state should be written before resume"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            let suspend_state = resume_store
+                .read_suspend_state()
+                .expect("read suspend-state")
+                .expect("suspend-state should exist while waiting");
+            assert!(suspend_state.reason.contains("invalid mutation output"));
+            assert!(suspend_state.reason.contains("not valid JSON"));
+
+            resume_store
+                .write_resume_requested()
+                .expect("write resume signal");
+        });
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        resume_handle
+            .join()
+            .expect("resume helper thread should not panic");
+
+        assert_eq!(wait_result, None);
+        assert!(
+            suspend_state_store
+                .read_suspend_state()
+                .expect("read suspend-state after resume")
+                .is_none(),
+            "suspend-state should be cleared after resume"
+        );
+        assert!(
+            !suspend_state_store.resume_requested_path().exists(),
+            "resume-requested should be consumed after resume"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_loop_start_dispatch_warn_continues_and_block_aborts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![hook_spec_with_command_and_on_error(
+                "warn-pre-loop-start",
+                vec!["sh".to_string(), "-c".to_string(), "exit 17".to_string()],
+                HookOnError::Warn,
+            )],
+        );
+        events.insert(
+            HookPhaseEvent::PostLoopStart,
+            vec![hook_spec_with_command_and_on_error(
+                "block-post-loop-start",
+                vec!["sh".to_string(), "-c".to_string(), "exit 29".to_string()],
+                HookOnError::Block,
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let pre_loop_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 0, None),
+        );
+
+        assert_eq!(pre_loop_start_outcomes.len(), 1);
+        assert_eq!(
+            pre_loop_start_outcomes[0].disposition,
+            HookDisposition::Warn
+        );
+        assert_eq!(
+            pre_loop_start_outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(17),
+                timed_out: false,
+            })
+        );
+        assert!(
+            fail_if_blocking_loop_start_outcomes(&pre_loop_start_outcomes).is_ok(),
+            "warn disposition should continue across loop.start boundary"
+        );
+
+        let post_loop_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostLoopStart,
+            build_loop_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                0,
+                Some("planner".to_string()),
+            ),
+        );
+
+        assert_eq!(post_loop_start_outcomes.len(), 1);
+        assert_eq!(
+            post_loop_start_outcomes[0].disposition,
+            HookDisposition::Block
+        );
+        let post_loop_start_error = fail_if_blocking_loop_start_outcomes(&post_loop_start_outcomes)
+            .expect_err("block disposition should abort loop.start boundary");
+        let post_loop_start_message = post_loop_start_error.to_string();
+        assert!(post_loop_start_message.contains("block-post-loop-start"));
+        assert!(post_loop_start_message.contains("post.loop.start"));
+        assert!(post_loop_start_message.contains("hook exited with code 29"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_iteration_start_dispatch_warn_continues_and_block_aborts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![hook_spec_with_command_and_on_error(
+                "warn-pre-iteration-start",
+                vec!["sh".to_string(), "-c".to_string(), "exit 19".to_string()],
+                HookOnError::Warn,
+            )],
+        );
+        events.insert(
+            HookPhaseEvent::PostIterationStart,
+            vec![hook_spec_with_command_and_on_error(
+                "block-post-iteration-start",
+                vec!["sh".to_string(), "-c".to_string(), "exit 31".to_string()],
+                HookOnError::Block,
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let pre_iteration_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                None,
+                None,
+            ),
+        );
+
+        assert_eq!(pre_iteration_start_outcomes.len(), 1);
+        assert_eq!(
+            pre_iteration_start_outcomes[0].disposition,
+            HookDisposition::Warn
+        );
+        assert_eq!(
+            pre_iteration_start_outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(19),
+                timed_out: false,
+            })
+        );
+        assert!(
+            fail_if_blocking_iteration_start_outcomes(&pre_iteration_start_outcomes).is_ok(),
+            "warn disposition should continue across iteration.start boundary"
+        );
+
+        let post_iteration_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        assert_eq!(post_iteration_start_outcomes.len(), 1);
+        assert_eq!(
+            post_iteration_start_outcomes[0].disposition,
+            HookDisposition::Block
+        );
+        let post_iteration_start_error =
+            fail_if_blocking_iteration_start_outcomes(&post_iteration_start_outcomes)
+                .expect_err("block disposition should abort iteration.start boundary");
+        let post_iteration_start_message = post_iteration_start_error.to_string();
+        assert!(post_iteration_start_message.contains("block-post-iteration-start"));
+        assert!(post_iteration_start_message.contains("post.iteration.start"));
+        assert!(post_iteration_start_message.contains("hook exited with code 31"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_plan_created_lifecycle_hooks_dispatch_only_for_semantic_plan_batches() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let (mut event_loop, loop_ctx) = dispatch_test_event_loop_with_context(temp_dir.path());
+        let events_path = loop_ctx.events_path();
+        std::fs::create_dir_all(events_path.parent().expect("events path parent"))
+            .expect("create events directory");
+
+        let mut events_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&events_path)
+            .expect("open events file");
+        writeln!(
+            events_file,
+            r#"{{"topic":"task.start","payload":"noop","ts":"2024-01-01T00:00:00Z"}}"#
+        )
+        .expect("write non-plan event");
+        events_file.flush().expect("flush non-plan event");
+
+        let log_path = temp_dir.path().join("plan-created-hook-payloads.jsonl");
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PrePlanCreated,
+            vec![payload_recording_hook("pre-plan-created", &log_path)],
+        );
+        events.insert(
+            HookPhaseEvent::PostPlanCreated,
+            vec![payload_recording_hook("post-plan-created", &log_path)],
+        );
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+
+        assert!(
+            !event_loop
+                .has_pending_plan_events_in_jsonl()
+                .expect("peek non-plan events"),
+            "non-plan batches must not trigger pre.plan.created"
+        );
+
+        let processed_non_plan = event_loop
+            .process_events_from_jsonl()
+            .expect("process non-plan batch");
+        assert!(processed_non_plan.had_events);
+        assert!(
+            !processed_non_plan.had_plan_events,
+            "non-plan batches must not trigger post.plan.created"
+        );
+        assert!(
+            !log_path.exists(),
+            "plan.created hooks should not run for non-plan batches"
+        );
+
+        writeln!(
+            events_file,
+            r#"{{"topic":"plan.created","payload":"ready","ts":"2024-01-01T00:00:01Z"}}"#
+        )
+        .expect("write plan event");
+        events_file.flush().expect("flush plan event");
+
+        assert!(
+            event_loop
+                .has_pending_plan_events_in_jsonl()
+                .expect("peek plan events"),
+            "plan.* batches should trigger pre.plan.created"
+        );
+
+        let pre_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PrePlanCreated,
+            build_plan_created_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                event_loop.state().iteration,
+                Some("planner".to_string()),
+                Some("planner".to_string()),
+                None,
+            ),
+        );
+        assert!(fail_if_blocking_plan_created_outcomes(&pre_outcomes).is_ok());
+
+        let processed_plan = event_loop
+            .process_events_from_jsonl()
+            .expect("process plan batch");
+        assert!(processed_plan.had_events);
+        assert!(
+            processed_plan.had_plan_events,
+            "plan.* batches should trigger post.plan.created"
+        );
+
+        let post_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostPlanCreated,
+            build_plan_created_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                event_loop.state().iteration,
+                Some("planner".to_string()),
+                Some("planner".to_string()),
+                None,
+            ),
+        );
+        assert!(fail_if_blocking_plan_created_outcomes(&post_outcomes).is_ok());
+
+        let payloads = read_hook_payload_log(&log_path);
+        let observed_phases: Vec<&str> = payloads
+            .iter()
+            .map(|payload| {
+                payload["phase_event"]
+                    .as_str()
+                    .expect("phase_event should be present")
+            })
+            .collect();
+
+        assert_eq!(
+            observed_phases,
+            vec!["pre.plan.created", "post.plan.created"],
+            "plan.created hooks should dispatch exactly once around semantic plan batches"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_human_interact_lifecycle_hooks_dispatch_with_post_outcome_context() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let (mut event_loop, loop_ctx) = dispatch_test_event_loop_with_context(temp_dir.path());
+        let events_path = loop_ctx.events_path();
+        std::fs::create_dir_all(events_path.parent().expect("events path parent"))
+            .expect("create events directory");
+
+        let mut events_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&events_path)
+            .expect("open events file");
+        writeln!(
+            events_file,
+            r#"{{"topic":"human.interact","payload":"Need approval?","ts":"2024-01-01T00:00:00Z"}}"#
+        )
+        .expect("write human.interact event");
+        events_file.flush().expect("flush human.interact event");
+
+        let log_path = temp_dir.path().join("human-interact-hook-payloads.jsonl");
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreHumanInteract,
+            vec![payload_recording_hook("pre-human-interact", &log_path)],
+        );
+        events.insert(
+            HookPhaseEvent::PostHumanInteract,
+            vec![payload_recording_hook("post-human-interact", &log_path)],
+        );
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+
+        let pending_context = event_loop
+            .pending_human_interact_context_in_jsonl()
+            .expect("peek pending human.interact context")
+            .expect("pending human.interact context should exist");
+        assert_eq!(
+            pending_context["question"],
+            serde_json::json!("Need approval?")
+        );
+        assert!(
+            pending_context.get("outcome").is_none(),
+            "pre human.interact context should not include an outcome"
+        );
+
+        let pre_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreHumanInteract,
+            build_human_interact_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                event_loop.state().iteration,
+                Some("planner".to_string()),
+                Some("planner".to_string()),
+                None,
+                Some(pending_context),
+            ),
+        );
+        assert!(fail_if_blocking_human_interact_outcomes(&pre_outcomes).is_ok());
+
+        let processed = event_loop
+            .process_events_from_jsonl()
+            .expect("process human.interact batch");
+        let post_context = processed
+            .human_interact_context
+            .expect("processed context should include human.interact outcome");
+        assert_eq!(
+            post_context["question"],
+            serde_json::json!("Need approval?")
+        );
+        assert_eq!(
+            post_context["outcome"],
+            serde_json::json!("no_robot_service")
+        );
+
+        let post_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostHumanInteract,
+            build_human_interact_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                event_loop.state().iteration,
+                Some("planner".to_string()),
+                Some("planner".to_string()),
+                None,
+                Some(post_context),
+            ),
+        );
+        assert!(fail_if_blocking_human_interact_outcomes(&post_outcomes).is_ok());
+
+        let payloads = read_hook_payload_log(&log_path);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(
+            payloads[0]["phase_event"],
+            serde_json::json!("pre.human.interact")
+        );
+        assert_eq!(
+            payloads[0]["context"]["human_interact"]["question"],
+            serde_json::json!("Need approval?")
+        );
+        assert!(
+            payloads[0]["context"]["human_interact"]
+                .get("outcome")
+                .is_none(),
+            "pre.human.interact payload should not include outcome"
+        );
+
+        assert_eq!(
+            payloads[1]["phase_event"],
+            serde_json::json!("post.human.interact")
+        );
+        assert_eq!(
+            payloads[1]["context"]["human_interact"]["question"],
+            serde_json::json!("Need approval?")
+        );
+        assert_eq!(
+            payloads[1]["context"]["human_interact"]["outcome"],
+            serde_json::json!("no_robot_service")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_loop_termination_lifecycle_hooks_dispatch_complete_and_error_boundaries() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("loop-termination-hook-payloads.jsonl");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopComplete,
+            vec![payload_recording_hook("pre-loop-complete", &log_path)],
+        );
+        events.insert(
+            HookPhaseEvent::PostLoopComplete,
+            vec![payload_recording_hook("post-loop-complete", &log_path)],
+        );
+        events.insert(
+            HookPhaseEvent::PreLoopError,
+            vec![payload_recording_hook("pre-loop-error", &log_path)],
+        );
+        events.insert(
+            HookPhaseEvent::PostLoopError,
+            vec![payload_recording_hook("post-loop-error", &log_path)],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let completed_reason = block_on_test_future(dispatch_pre_loop_termination_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            &suspend_state_store,
+            &loop_ctx,
+            5,
+            TerminationReason::CompletionPromise,
+        ))
+        .expect("pre.loop.complete dispatch should succeed");
+        let completed_reason = block_on_test_future(dispatch_post_loop_termination_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            &suspend_state_store,
+            &loop_ctx,
+            5,
+            completed_reason,
+        ))
+        .expect("post.loop.complete dispatch should succeed");
+        assert_eq!(completed_reason, TerminationReason::CompletionPromise);
+
+        let error_reason = block_on_test_future(dispatch_pre_loop_termination_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            &suspend_state_store,
+            &loop_ctx,
+            5,
+            TerminationReason::MaxRuntime,
+        ))
+        .expect("pre.loop.error dispatch should succeed");
+        let error_reason = block_on_test_future(dispatch_post_loop_termination_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            &suspend_state_store,
+            &loop_ctx,
+            5,
+            error_reason,
+        ))
+        .expect("post.loop.error dispatch should succeed");
+        assert_eq!(error_reason, TerminationReason::MaxRuntime);
+
+        let payloads = read_hook_payload_log(&log_path);
+        let phases: Vec<&str> = payloads
+            .iter()
+            .map(|payload| {
+                payload["phase_event"]
+                    .as_str()
+                    .expect("phase_event should be present")
+            })
+            .collect();
+        let reasons: Vec<&str> = payloads
+            .iter()
+            .map(|payload| {
+                payload["context"]["termination_reason"]
+                    .as_str()
+                    .expect("termination_reason should be present")
+            })
+            .collect();
+
+        assert_eq!(
+            phases,
+            vec![
+                "pre.loop.complete",
+                "post.loop.complete",
+                "pre.loop.error",
+                "post.loop.error"
+            ]
+        );
+        assert_eq!(
+            reasons,
+            vec!["completed", "completed", "max_runtime", "max_runtime"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_iteration_start_suspend_waits_for_resume_and_clears_artifacts_before_continuing() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![hook_spec_with_command_and_on_error(
+                "suspend-pre-iteration-start",
+                vec!["sh".to_string(), "-c".to_string(), "exit 41".to_string()],
+                HookOnError::Suspend,
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let pre_iteration_start_outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                None,
+                None,
+            ),
+        );
+
+        assert_eq!(pre_iteration_start_outcomes.len(), 1);
+        assert_eq!(
+            pre_iteration_start_outcomes[0].disposition,
+            HookDisposition::Suspend
+        );
+        assert_eq!(
+            pre_iteration_start_outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            })
+        );
+        assert!(
+            fail_if_blocking_iteration_start_outcomes(&pre_iteration_start_outcomes).is_ok(),
+            "suspend disposition should not block iteration.start boundary"
+        );
+
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let wait_result = block_on_test_future(async {
+            let wait_outcomes = pre_iteration_start_outcomes.clone();
+            let wait_store = suspend_state_store.clone();
+            let wait_handle = tokio::spawn(async move {
+                wait_for_resume_if_suspended(&wait_outcomes, "loop-test", &wait_store).await
+            });
+
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if suspend_state_store.suspend_state_path().exists() {
+                        break;
+                    }
+
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .expect("suspend-state should be written before resume");
+
+            let suspend_state = suspend_state_store
+                .read_suspend_state()
+                .expect("read suspend-state")
+                .expect("suspend-state should exist while waiting for resume");
+
+            assert_eq!(suspend_state.loop_id, "loop-test");
+            assert_eq!(suspend_state.phase_event, HookPhaseEvent::PreIterationStart);
+            assert_eq!(suspend_state.hook_name, "suspend-pre-iteration-start");
+            assert_eq!(suspend_state.suspend_mode, HookSuspendMode::WaitForResume);
+            assert!(!suspend_state_store.resume_requested_path().exists());
+
+            suspend_state_store
+                .write_resume_requested()
+                .expect("write resume signal");
+
+            tokio::time::timeout(Duration::from_secs(2), wait_handle)
+                .await
+                .expect("wait_for_resume helper should complete after resume signal")
+                .expect("wait_for_resume task should not panic")
+        })
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, None);
+        assert!(
+            suspend_state_store
+                .read_suspend_state()
+                .expect("read suspend-state after resume")
+                .is_none(),
+            "suspend-state should be cleared after resume"
+        );
+        assert!(
+            !suspend_state_store.resume_requested_path().exists(),
+            "resume-requested should be consumed after resume"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_retry_backoff_recovers_before_exhaustion() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("retry-backoff-attempts.txt");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "retry-backoff-pre-iteration-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+if [ "$attempt" -lt 3 ]; then
+  exit 41
+fi
+exit 0"#
+                        .to_string(),
+                    "retry-backoff-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::RetryBackoff),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop_with_diagnostics(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                None,
+                None,
+            ),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Pass);
+        assert_eq!(outcomes[0].suspend_mode, HookSuspendMode::RetryBackoff);
+        assert_eq!(outcomes[0].failure, None);
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(attempts.trim(), "3", "hook should recover on third attempt");
+
+        let telemetry_entries = read_hook_run_telemetry_entries(temp_dir.path());
+        assert_eq!(telemetry_entries.len(), 3);
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.retry_attempt)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.retry_max_attempts == 4)
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.suspend_mode == HookSuspendMode::RetryBackoff)
+        );
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.disposition)
+                .collect::<Vec<_>>(),
+            vec![
+                HookDisposition::Suspend,
+                HookDisposition::Suspend,
+                HookDisposition::Pass,
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_retry_backoff_exhausts_to_suspend() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("retry-backoff-attempts.txt");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PostIterationStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "retry-backoff-post-iteration-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+exit 51"#
+                        .to_string(),
+                    "retry-backoff-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::RetryBackoff),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Suspend);
+        assert_eq!(outcomes[0].suspend_mode, HookSuspendMode::RetryBackoff);
+        assert_eq!(
+            outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(51),
+                timed_out: false,
+            })
+        );
+
+        let attempts: usize = std::fs::read_to_string(&attempts_path)
+            .expect("read attempts")
+            .trim()
+            .parse()
+            .expect("parse attempts");
+        assert_eq!(
+            attempts,
+            RETRY_BACKOFF_DELAYS_MS.len() + 1,
+            "retry_backoff should cap retries at the configured schedule"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_retry_backoff_yields_to_stop_signal() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("retry-backoff-attempts.txt");
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/stop-requested"), "")
+            .expect("write stop signal");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "retry-backoff-pre-loop-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+exit 61"#
+                        .to_string(),
+                    "retry-backoff-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::RetryBackoff),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(
+            attempts.trim(),
+            "1",
+            "stop signal should short-circuit retry_backoff retries"
+        );
+
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::Stopped));
+        assert!(!temp_dir.path().join(".ralph/stop-requested").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_wait_then_retry_recovers_after_resume() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("wait-then-retry-attempts.txt");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreIterationStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "wait-then-retry-pre-iteration-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+if [ "$attempt" -lt 2 ]; then
+  exit 71
+fi
+exit 0"#
+                        .to_string(),
+                    "wait-then-retry-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::WaitThenRetry),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop_with_diagnostics(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let resume_store = suspend_state_store.clone();
+        let resume_handle = std::thread::spawn(move || {
+            let wait_started_at = std::time::Instant::now();
+            while !resume_store.suspend_state_path().exists() {
+                assert!(
+                    wait_started_at.elapsed() < Duration::from_secs(2),
+                    "wait_then_retry should persist suspend-state before waiting"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            resume_store
+                .write_resume_requested()
+                .expect("write resume signal");
+        });
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                None,
+                None,
+            ),
+        );
+
+        resume_handle
+            .join()
+            .expect("resume helper thread should not panic");
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Pass);
+        assert_eq!(outcomes[0].suspend_mode, HookSuspendMode::WaitThenRetry);
+        assert_eq!(outcomes[0].failure, None);
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(
+            attempts.trim(),
+            "2",
+            "wait_then_retry should run exactly one retry after resume"
+        );
+        assert!(
+            suspend_state_store
+                .read_suspend_state()
+                .expect("read suspend-state after wait_then_retry")
+                .is_none(),
+            "suspend-state should be cleared after wait_then_retry resume"
+        );
+        assert!(
+            !suspend_state_store.resume_requested_path().exists(),
+            "resume signal should be consumed under wait_then_retry"
+        );
+
+        let telemetry_entries = read_hook_run_telemetry_entries(temp_dir.path());
+        assert_eq!(telemetry_entries.len(), 2);
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.retry_attempt)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.retry_max_attempts == 2)
+        );
+        assert!(
+            telemetry_entries
+                .iter()
+                .all(|entry| entry.suspend_mode == HookSuspendMode::WaitThenRetry)
+        );
+        assert_eq!(
+            telemetry_entries
+                .iter()
+                .map(|entry| entry.disposition)
+                .collect::<Vec<_>>(),
+            vec![HookDisposition::Suspend, HookDisposition::Pass]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_wait_then_retry_retry_failure_remains_suspended() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("wait-then-retry-attempts.txt");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PostIterationStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "wait-then-retry-post-iteration-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+exit 72"#
+                        .to_string(),
+                    "wait-then-retry-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::WaitThenRetry),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let resume_store = suspend_state_store.clone();
+        let resume_handle = std::thread::spawn(move || {
+            let wait_started_at = std::time::Instant::now();
+            while !resume_store.suspend_state_path().exists() {
+                assert!(
+                    wait_started_at.elapsed() < Duration::from_secs(2),
+                    "wait_then_retry should persist suspend-state before waiting"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            resume_store
+                .write_resume_requested()
+                .expect("write resume signal");
+        });
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PostIterationStart,
+            build_iteration_start_payload_input(
+                "loop-test",
+                &loop_ctx,
+                5,
+                1,
+                Some("planner".to_string()),
+                Some("builder".to_string()),
+                Some("task-123".to_string()),
+            ),
+        );
+
+        resume_handle
+            .join()
+            .expect("resume helper thread should not panic");
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].disposition, HookDisposition::Suspend);
+        assert_eq!(outcomes[0].suspend_mode, HookSuspendMode::WaitThenRetry);
+        assert_eq!(
+            outcomes[0].failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(72),
+                timed_out: false,
+            })
+        );
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(
+            attempts.trim(),
+            "2",
+            "wait_then_retry should run a single retry attempt after resume"
+        );
+        assert!(
+            suspend_state_store
+                .read_suspend_state()
+                .expect("read suspend-state after wait_then_retry")
+                .is_none(),
+            "first wait_then_retry suspend-state should be cleared after resume"
+        );
+        assert!(
+            !suspend_state_store.resume_requested_path().exists(),
+            "resume signal should be consumed after wait_then_retry"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_dispatch_phase_event_hooks_wait_then_retry_prioritizes_stop_over_resume() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let attempts_path = temp_dir.path().join("wait-then-retry-attempts.txt");
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/stop-requested"), "")
+            .expect("write stop signal");
+        std::fs::write(temp_dir.path().join(".ralph/resume-requested"), "")
+            .expect("write resume signal");
+
+        let mut events = std::collections::HashMap::new();
+        events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![hook_spec_with_command_and_on_error_and_suspend_mode(
+                "wait-then-retry-pre-loop-start",
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    r#"attempts_file="$1"
+attempt=0
+if [ -f "$attempts_file" ]; then
+  attempt="$(cat "$attempts_file")"
+fi
+attempt=$((attempt + 1))
+printf '%s' "$attempt" > "$attempts_file"
+exit 73"#
+                        .to_string(),
+                    "wait-then-retry-hook".to_string(),
+                    attempts_path.to_string_lossy().into_owned(),
+                ],
+                HookOnError::Suspend,
+                Some(HookSuspendMode::WaitThenRetry),
+            )],
+        );
+
+        let hook_engine = hook_engine_with_events(events);
+        let hook_executor = HookExecutor::new();
+        let event_loop = dispatch_test_event_loop(temp_dir.path());
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let outcomes = dispatch_phase_event_hooks(
+            &event_loop,
+            true,
+            "loop-test",
+            &hook_engine,
+            &hook_executor,
+            HookPhaseEvent::PreLoopStart,
+            build_loop_start_payload_input("loop-test", &loop_ctx, 5, 1, Some("ralph".to_string())),
+        );
+
+        let attempts = std::fs::read_to_string(&attempts_path).expect("read attempts");
+        assert_eq!(
+            attempts.trim(),
+            "1",
+            "stop signal should prevent wait_then_retry from running the retry"
+        );
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::Stopped));
+        assert!(!temp_dir.path().join(".ralph/stop-requested").exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_run_retry_backoff_policy_replays_configured_schedule_deterministically() {
+        let mut observed_delays_ms = Vec::new();
+        let mut observed_retry_attempts = Vec::new();
+
+        let outcome = run_retry_backoff_policy(
+            "pre.iteration.start",
+            "retry-hook",
+            &[3, 5, 8],
+            |delay, retry_attempt| {
+                observed_delays_ms.push(delay.as_millis() as u64);
+                assert_eq!(retry_attempt, observed_delays_ms.len());
+                RetryBackoffDelayOutcome::Elapsed
+            },
+            |retry_attempt| {
+                observed_retry_attempts.push(retry_attempt);
+                if retry_attempt == 4 {
+                    HookDispatchOutcome {
+                        phase_event: HookPhaseEvent::PreIterationStart,
+                        hook_name: "retry-hook".to_string(),
+                        disposition: HookDisposition::Pass,
+                        suspend_mode: HookSuspendMode::RetryBackoff,
+                        failure: None,
+
+                        mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+                    }
+                } else {
+                    suspend_outcome_with_mode(
+                        HookPhaseEvent::PreIterationStart,
+                        "retry-hook",
+                        HookSuspendMode::RetryBackoff,
+                    )
+                }
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PreIterationStart,
+                "retry-hook",
+                HookSuspendMode::RetryBackoff,
+            ),
+        );
+
+        assert_eq!(observed_delays_ms, vec![3, 5, 8]);
+        assert_eq!(observed_retry_attempts, vec![2, 3, 4]);
+        assert_eq!(outcome.disposition, HookDisposition::Pass);
+        assert_eq!(outcome.failure, None);
+    }
+
+    #[test]
+    fn test_run_retry_backoff_policy_exhausts_after_last_configured_delay() {
+        let mut observed_retry_attempts = Vec::new();
+
+        let outcome = run_retry_backoff_policy(
+            "post.iteration.start",
+            "retry-hook",
+            &[11, 13],
+            |_delay, _retry_attempt| RetryBackoffDelayOutcome::Elapsed,
+            |retry_attempt| {
+                observed_retry_attempts.push(retry_attempt);
+                suspend_outcome_with_mode(
+                    HookPhaseEvent::PostIterationStart,
+                    "retry-hook",
+                    HookSuspendMode::RetryBackoff,
+                )
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PostIterationStart,
+                "retry-hook",
+                HookSuspendMode::RetryBackoff,
+            ),
+        );
+
+        assert_eq!(observed_retry_attempts, vec![2, 3]);
+        assert_eq!(outcome.disposition, HookDisposition::Suspend);
+        assert_eq!(
+            outcome.failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_retry_backoff_policy_stop_signal_short_circuits_before_retry_attempt() {
+        let initial_outcome = suspend_outcome_with_mode(
+            HookPhaseEvent::PreLoopStart,
+            "retry-hook",
+            HookSuspendMode::RetryBackoff,
+        );
+        let mut retry_attempt_called = false;
+
+        let outcome = run_retry_backoff_policy(
+            "pre.loop.start",
+            "retry-hook",
+            &[21, 34],
+            |_delay, _retry_attempt| RetryBackoffDelayOutcome::StopRequested,
+            |_retry_attempt| {
+                retry_attempt_called = true;
+                initial_outcome.clone()
+            },
+            initial_outcome.clone(),
+        );
+
+        assert!(!retry_attempt_called);
+        assert_eq!(outcome, initial_outcome);
+    }
+
+    #[test]
+    fn test_run_wait_then_retry_policy_resume_retries_once_and_returns_retry_result() {
+        let mut clear_suspend_calls = 0usize;
+        let mut retry_calls = 0usize;
+
+        let outcome = run_wait_then_retry_policy(
+            "pre.iteration.start",
+            "wait-hook",
+            || Ok(SuspendWaitOutcome::Resume),
+            || {
+                clear_suspend_calls += 1;
+                Ok(())
+            },
+            || {
+                retry_calls += 1;
+                HookDispatchOutcome {
+                    phase_event: HookPhaseEvent::PreIterationStart,
+                    hook_name: "wait-hook".to_string(),
+                    disposition: HookDisposition::Pass,
+                    suspend_mode: HookSuspendMode::WaitThenRetry,
+                    failure: None,
+
+                    mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+                }
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PreIterationStart,
+                "wait-hook",
+                HookSuspendMode::WaitThenRetry,
+            ),
+        );
+
+        assert_eq!(clear_suspend_calls, 1);
+        assert_eq!(retry_calls, 1);
+        assert_eq!(outcome.disposition, HookDisposition::Pass);
+        assert_eq!(outcome.failure, None);
+    }
+
+    #[test]
+    fn test_run_wait_then_retry_policy_retry_failure_returns_suspend() {
+        let mut clear_suspend_calls = 0usize;
+        let mut retry_calls = 0usize;
+
+        let outcome = run_wait_then_retry_policy(
+            "post.iteration.start",
+            "wait-hook",
+            || Ok(SuspendWaitOutcome::Resume),
+            || {
+                clear_suspend_calls += 1;
+                Ok(())
+            },
+            || {
+                retry_calls += 1;
+                suspend_outcome_with_mode(
+                    HookPhaseEvent::PostIterationStart,
+                    "wait-hook",
+                    HookSuspendMode::WaitThenRetry,
+                )
+            },
+            suspend_outcome_with_mode(
+                HookPhaseEvent::PostIterationStart,
+                "wait-hook",
+                HookSuspendMode::WaitThenRetry,
+            ),
+        );
+
+        assert_eq!(clear_suspend_calls, 1);
+        assert_eq!(retry_calls, 1);
+        assert_eq!(outcome.disposition, HookDisposition::Suspend);
+        assert_eq!(
+            outcome.failure,
+            Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(41),
+                timed_out: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_wait_then_retry_policy_stop_skips_retry_path() {
+        let initial_outcome = suspend_outcome_with_mode(
+            HookPhaseEvent::PreLoopStart,
+            "wait-hook",
+            HookSuspendMode::WaitThenRetry,
+        );
+        let mut clear_suspend_called = false;
+        let mut retry_called = false;
+
+        let outcome = run_wait_then_retry_policy(
+            "pre.loop.start",
+            "wait-hook",
+            || Ok(SuspendWaitOutcome::Stop),
+            || {
+                clear_suspend_called = true;
+                Ok(())
+            },
+            || {
+                retry_called = true;
+                HookDispatchOutcome {
+                    phase_event: HookPhaseEvent::PreLoopStart,
+                    hook_name: "wait-hook".to_string(),
+                    disposition: HookDisposition::Pass,
+                    suspend_mode: HookSuspendMode::WaitThenRetry,
+                    failure: None,
+
+                    mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+                }
+            },
+            initial_outcome.clone(),
+        );
+
+        assert!(!clear_suspend_called);
+        assert!(!retry_called);
+        assert_eq!(outcome, initial_outcome);
+    }
+
+    #[test]
+    fn test_fail_if_blocking_loop_start_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreLoopStart,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(7),
+                    timed_out: false,
+                }),
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostLoopStart,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: None,
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+        ];
+
+        assert!(fail_if_blocking_loop_start_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_loop_start_outcomes_surfaces_failure_context() {
+        let blocked_exit_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostLoopStart,
+            hook_name: "block-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(42),
+                timed_out: false,
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_exit_error = fail_if_blocking_loop_start_outcomes(&blocked_exit_outcomes)
+            .expect_err("block disposition should fail loop.start boundary");
+        let blocked_exit_message = blocked_exit_error.to_string();
+        assert!(blocked_exit_message.contains("block-hook"));
+        assert!(blocked_exit_message.contains("post.loop.start"));
+        assert!(blocked_exit_message.contains("hook exited with code 42"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreLoopStart,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_exec_error = fail_if_blocking_loop_start_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail loop.start boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("pre.loop.start"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_fail_if_blocking_iteration_start_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreIterationStart,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(9),
+                    timed_out: false,
+                }),
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostIterationStart,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: None,
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+        ];
+
+        assert!(fail_if_blocking_iteration_start_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_iteration_start_outcomes_surfaces_failure_context() {
+        let blocked_timeout_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreIterationStart,
+            hook_name: "block-timeout-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: None,
+                timed_out: true,
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_timeout_error =
+            fail_if_blocking_iteration_start_outcomes(&blocked_timeout_outcomes)
+                .expect_err("block disposition should fail iteration.start boundary");
+        let blocked_timeout_message = blocked_timeout_error.to_string();
+        assert!(blocked_timeout_message.contains("block-timeout-hook"));
+        assert!(blocked_timeout_message.contains("pre.iteration.start"));
+        assert!(blocked_timeout_message.contains("hook timed out"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostIterationStart,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_exec_error = fail_if_blocking_iteration_start_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail iteration.start boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("post.iteration.start"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_fail_if_blocking_human_interact_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreHumanInteract,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(9),
+                    timed_out: false,
+                }),
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostHumanInteract,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: None,
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+        ];
+
+        assert!(fail_if_blocking_human_interact_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_human_interact_outcomes_surfaces_failure_context() {
+        let blocked_timeout_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostHumanInteract,
+            hook_name: "block-timeout-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: None,
+                timed_out: true,
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_timeout_error =
+            fail_if_blocking_human_interact_outcomes(&blocked_timeout_outcomes)
+                .expect_err("block disposition should fail human.interact boundary");
+        let blocked_timeout_message = blocked_timeout_error.to_string();
+        assert!(blocked_timeout_message.contains("block-timeout-hook"));
+        assert!(blocked_timeout_message.contains("post.human.interact"));
+        assert!(blocked_timeout_message.contains("hook timed out"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreHumanInteract,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_exec_error = fail_if_blocking_human_interact_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail human.interact boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("pre.human.interact"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_loop_termination_phase_events_maps_success_and_error_reasons() {
+        assert_eq!(
+            loop_termination_phase_events(&TerminationReason::CompletionPromise),
+            (
+                HookPhaseEvent::PreLoopComplete,
+                HookPhaseEvent::PostLoopComplete
+            )
+        );
+        assert_eq!(
+            loop_termination_phase_events(&TerminationReason::MaxRuntime),
+            (HookPhaseEvent::PreLoopError, HookPhaseEvent::PostLoopError)
+        );
+    }
+
+    #[test]
+    fn test_build_loop_termination_payload_input_sets_termination_reason_context() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let loop_ctx = LoopContext::primary(temp_dir.path().to_path_buf());
+
+        let payload_input = build_loop_termination_payload_input(
+            "loop-test",
+            &loop_ctx,
+            42,
+            7,
+            Some("planner".to_string()),
+            Some("builder".to_string()),
+            Some("task-123".to_string()),
+            &TerminationReason::RestartRequested,
+        );
+
+        assert_eq!(
+            payload_input.context.termination_reason.as_deref(),
+            Some("restart_requested")
+        );
+        assert_eq!(payload_input.context.active_hat.as_deref(), Some("planner"));
+        assert_eq!(
+            payload_input.context.selected_hat.as_deref(),
+            Some("builder")
+        );
+        assert_eq!(
+            payload_input.context.selected_task.as_deref(),
+            Some("task-123")
+        );
+    }
+
+    fn hook_mutation_config(enabled: bool) -> HookMutationConfig {
+        HookMutationConfig {
+            enabled,
+            format: Some("json".to_string()),
+            extra: std::collections::HashMap::new(),
+        }
+    }
+
+    fn json_object(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        value.as_object().cloned().expect("json object")
+    }
+
+    #[test]
+    fn test_parse_hook_mutation_stdout_skips_when_disabled() {
+        let outcome =
+            parse_hook_mutation_stdout(&HookMutationConfig::default(), "env-guard", "not-json");
+
+        assert_eq!(outcome, HookMutationParseOutcome::Disabled);
+    }
+
+    #[test]
+    fn test_parse_hook_mutation_stdout_accepts_metadata_only_payload_and_namespaces_by_hook() {
+        let outcome = parse_hook_mutation_stdout(
+            &hook_mutation_config(true),
+            "env-guard",
+            r#"{"metadata":{"risk_score":0.72,"gates":["policy_check"]}}"#,
+        );
+
+        let HookMutationParseOutcome::Parsed {
+            namespaced_metadata,
+        } = outcome
+        else {
+            panic!("expected parsed mutation payload");
+        };
+
+        assert_eq!(
+            serde_json::Value::Object(namespaced_metadata),
+            serde_json::json!({
+                "hook_metadata": {
+                    "env-guard": {
+                        "risk_score": 0.72,
+                        "gates": ["policy_check"]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_hook_mutation_stdout_rejects_non_json_payload_when_enabled() {
+        let outcome = parse_hook_mutation_stdout(&hook_mutation_config(true), "env-guard", "oops");
+
+        let HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidJson { message }) =
+            outcome
+        else {
+            panic!("expected invalid-json mutation parse outcome");
+        };
+
+        assert!(message.contains("valid JSON"));
+    }
+
+    #[test]
+    fn test_parse_hook_mutation_stdout_rejects_non_metadata_payload_shape() {
+        let outcome = parse_hook_mutation_stdout(
+            &hook_mutation_config(true),
+            "env-guard",
+            r#"{"metadata":{"risk_score":0.72},"prompt":"inject"}"#,
+        );
+
+        let HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidSchema { message }) =
+            outcome
+        else {
+            panic!("expected invalid-schema mutation parse outcome");
+        };
+
+        assert!(message.contains("supports only"));
+    }
+
+    #[test]
+    fn test_merge_hook_metadata_namespace_merges_multiple_hook_entries() {
+        let mut accumulated_metadata = serde_json::Map::new();
+        accumulated_metadata.insert("upstream".to_string(), serde_json::json!("preserved"));
+
+        merge_hook_metadata_namespace(
+            &mut accumulated_metadata,
+            "env-guard",
+            json_object(serde_json::json!({"risk_score": 0.72})),
+        )
+        .expect("merge env-guard metadata");
+
+        merge_hook_metadata_namespace(
+            &mut accumulated_metadata,
+            "policy-gate",
+            json_object(serde_json::json!({"status": "pass"})),
+        )
+        .expect("merge policy-gate metadata");
+
+        assert_eq!(
+            accumulated_metadata["upstream"],
+            serde_json::json!("preserved")
+        );
+        assert_eq!(
+            accumulated_metadata["hook_metadata"]["env-guard"]["risk_score"],
+            serde_json::json!(0.72)
+        );
+        assert_eq!(
+            accumulated_metadata["hook_metadata"]["policy-gate"]["status"],
+            serde_json::json!("pass")
+        );
+    }
+
+    #[test]
+    fn test_merge_hook_metadata_namespace_rejects_non_object_namespace_value() {
+        let mut accumulated_metadata = serde_json::Map::new();
+        accumulated_metadata.insert(
+            "hook_metadata".to_string(),
+            serde_json::Value::String("invalid".to_string()),
+        );
+
+        let merge_result = merge_hook_metadata_namespace(
+            &mut accumulated_metadata,
+            "env-guard",
+            json_object(serde_json::json!({"risk_score": 0.72})),
+        );
+
+        assert!(matches!(
+            merge_result,
+            Err(HookMutationParseError::InvalidSchema { message })
+            if message.contains("must be a JSON object")
+        ));
+    }
+
+    #[test]
+    fn test_fail_if_blocking_loop_termination_outcomes_allows_non_blocking_dispositions() {
+        let outcomes = vec![
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PreLoopComplete,
+                hook_name: "warn-hook".to_string(),
+                disposition: HookDisposition::Warn,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: Some(HookDispatchFailure::HookRunFailed {
+                    exit_code: Some(9),
+                    timed_out: false,
+                }),
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+            HookDispatchOutcome {
+                phase_event: HookPhaseEvent::PostLoopError,
+                hook_name: "pass-hook".to_string(),
+                disposition: HookDisposition::Pass,
+                suspend_mode: HookSuspendMode::WaitForResume,
+                failure: None,
+
+                mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+            },
+        ];
+
+        assert!(fail_if_blocking_loop_termination_outcomes(&outcomes).is_ok());
+    }
+
+    #[test]
+    fn test_fail_if_blocking_loop_termination_outcomes_surfaces_failure_context() {
+        let blocked_timeout_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PostLoopError,
+            hook_name: "block-timeout-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: None,
+                timed_out: true,
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_timeout_error =
+            fail_if_blocking_loop_termination_outcomes(&blocked_timeout_outcomes)
+                .expect_err("block disposition should fail loop termination boundary");
+        let blocked_timeout_message = blocked_timeout_error.to_string();
+        assert!(blocked_timeout_message.contains("block-timeout-hook"));
+        assert!(blocked_timeout_message.contains("post.loop.error"));
+        assert!(blocked_timeout_message.contains("hook timed out"));
+
+        let blocked_exec_outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreLoopComplete,
+            hook_name: "block-exec-hook".to_string(),
+            disposition: HookDisposition::Block,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookExecutionError {
+                message: "spawn failed".to_string(),
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let blocked_exec_error = fail_if_blocking_loop_termination_outcomes(&blocked_exec_outcomes)
+            .expect_err("block disposition should fail loop termination boundary");
+        let blocked_exec_message = blocked_exec_error.to_string();
+        assert!(blocked_exec_message.contains("block-exec-hook"));
+        assert!(blocked_exec_message.contains("pre.loop.complete"));
+        assert!(blocked_exec_message.contains("hook execution failed: spawn failed"));
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_is_noop_without_suspend_dispositions() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        let outcomes = vec![HookDispatchOutcome {
+            phase_event: HookPhaseEvent::PreLoopStart,
+            hook_name: "warn-hook".to_string(),
+            disposition: HookDisposition::Warn,
+            suspend_mode: HookSuspendMode::WaitForResume,
+            failure: Some(HookDispatchFailure::HookRunFailed {
+                exit_code: Some(7),
+                timed_out: false,
+            }),
+
+            mutation_parse_outcome: HookMutationParseOutcome::Disabled,
+        }];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, None);
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_resumes_and_clears_suspend_artifacts() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+        suspend_state_store
+            .write_resume_requested()
+            .expect("write resume signal");
+
+        let outcomes = vec![suspend_outcome(
+            HookPhaseEvent::PreLoopStart,
+            "suspend-hook",
+        )];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, None);
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_prioritizes_stop_over_resume() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/stop-requested"), "")
+            .expect("write stop signal");
+        suspend_state_store
+            .write_resume_requested()
+            .expect("write resume signal");
+
+        let outcomes = vec![suspend_outcome(
+            HookPhaseEvent::PreIterationStart,
+            "suspend-hook",
+        )];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::Stopped));
+        assert!(!temp_dir.path().join(".ralph/stop-requested").exists());
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
+    }
+
+    #[test]
+    fn test_wait_for_resume_if_suspended_prioritizes_restart_over_resume() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let suspend_state_store = SuspendStateStore::new(temp_dir.path());
+
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("create .ralph");
+        std::fs::write(temp_dir.path().join(".ralph/restart-requested"), "")
+            .expect("write restart signal");
+        suspend_state_store
+            .write_resume_requested()
+            .expect("write resume signal");
+
+        let outcomes = vec![suspend_outcome(
+            HookPhaseEvent::PostIterationStart,
+            "suspend-hook",
+        )];
+
+        let wait_result = block_on_test_future(wait_for_resume_if_suspended(
+            &outcomes,
+            "loop-test",
+            &suspend_state_store,
+        ))
+        .expect("wait helper should succeed");
+
+        assert_eq!(wait_result, Some(TerminationReason::RestartRequested));
+        assert!(temp_dir.path().join(".ralph/restart-requested").exists());
+        assert!(!suspend_state_store.suspend_state_path().exists());
+        assert!(!suspend_state_store.resume_requested_path().exists());
     }
 
     #[test]
@@ -2470,6 +8143,77 @@ mod tests {
             convert_termination_type(termination_type, false),
             Some(TerminationReason::Interrupted),
             "ForceKill should terminate in autonomous mode"
+        );
+    }
+
+    #[test]
+    fn test_detect_solo_output_completion_requires_hatless_mode() {
+        let registry = HatRegistry::new();
+        assert!(detect_solo_output_completion(
+            &registry,
+            "done\nLOOP_COMPLETE\n",
+            "LOOP_COMPLETE"
+        ));
+
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        assert!(
+            !detect_solo_output_completion(&registry, "done\nLOOP_COMPLETE\n", "LOOP_COMPLETE"),
+            "text completion should not terminate multi-hat workflows"
+        );
+    }
+
+    #[test]
+    fn test_detect_solo_output_completion_requires_final_non_empty_line() {
+        let registry = HatRegistry::new();
+        assert!(!detect_solo_output_completion(
+            &registry,
+            "LOOP_COMPLETE\nMore text after\n",
+            "LOOP_COMPLETE"
+        ));
+        assert!(!detect_solo_output_completion(
+            &registry,
+            "I think LOOP_COMPLETE but not really",
+            "LOOP_COMPLETE"
+        ));
+    }
+
+    #[test]
+    fn test_normalize_cli_output_for_parsing_extracts_claude_text_blocks() {
+        let raw = concat!(
+            "{\"type\":\"system\",\"session_id\":\"abc\",\"model\":\"claude-opus-4-6\",\"tools\":[]}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"First line\"}]}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"tool_1\",\"name\":\"Bash\",\"input\":{\"command\":\"pytest\"}}]}}\n",
+            "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool_1\",\"content\":\"ok\"}]}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"LOOP_COMPLETE\"}]}}\n",
+            "{\"type\":\"result\",\"duration_ms\":1,\"total_cost_usd\":0.0,\"num_turns\":1,\"is_error\":false}\n"
+        );
+
+        assert_eq!(
+            normalize_cli_output_for_parsing(BackendOutputFormat::StreamJson, raw),
+            "First line\nLOOP_COMPLETE\n"
+        );
+    }
+
+    #[test]
+    fn test_normalize_cli_output_for_parsing_extracts_pi_text_deltas() {
+        let raw = concat!(
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"hello \"}}\n",
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"thinking_delta\",\"contentIndex\":0,\"delta\":\"hidden\"}}\n",
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"LOOP_COMPLETE\"}}\n",
+            "{\"type\":\"turn_end\",\"message\":{\"usage\":{\"input\":1,\"output\":1,\"cache_read\":0,\"cache_write\":0,\"cost\":{\"input\":0.0,\"output\":0.0,\"total\":0.0}}}}\n"
+        );
+
+        assert_eq!(
+            normalize_cli_output_for_parsing(BackendOutputFormat::PiStreamJson, raw),
+            "hello LOOP_COMPLETE"
         );
     }
 
@@ -2893,5 +8637,277 @@ mod tests {
             .expect("check responses");
 
         assert!(published.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_recover_late_events_before_fallback_routes_pending_work() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let yaml = r#"
+hats:
+  investigator:
+    name: "Investigator"
+    triggers: ["debug.start", "hypothesis.rejected", "hypothesis.confirmed", "fix.verified"]
+    publishes: ["hypothesis.test", "fix.propose", "DEBUG_COMPLETE"]
+  tester:
+    name: "Tester"
+    triggers: ["hypothesis.test"]
+    publishes: ["hypothesis.confirmed", "hypothesis.rejected"]
+"#;
+        let (mut event_loop, loop_ctx) =
+            dispatch_test_event_loop_from_yaml_with_context(temp_dir.path(), yaml);
+        let events_path = loop_ctx.events_path();
+        std::fs::create_dir_all(events_path.parent().expect("events path parent"))
+            .expect("create events directory");
+
+        let mut events_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&events_path)
+            .expect("open events file");
+        writeln!(
+            events_file,
+            r#"{{"topic":"hypothesis.test","payload":"Race condition suspected","ts":"2026-03-08T00:00:00Z"}}"#
+        )
+        .expect("write late event");
+        events_file.flush().expect("flush late event");
+
+        let outcome =
+            recover_late_events_before_fallback(&mut event_loop).expect("recover late events");
+        assert_eq!(outcome, LateEventRecovery::PendingWork);
+        assert_eq!(
+            event_loop.next_hat().map(|hat| hat.as_str()),
+            Some("ralph"),
+            "late downstream work should route the next iteration to Ralph in multi-hat mode"
+        );
+
+        let tester_id = HatId::new("tester");
+        let tester_pending = event_loop
+            .bus()
+            .peek_pending(&tester_id)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(tester_pending.len(), 1);
+        assert_eq!(tester_pending[0].topic.as_str(), "hypothesis.test");
+    }
+
+    #[test]
+    fn test_recover_late_events_before_fallback_honors_completion() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let (mut event_loop, loop_ctx) = dispatch_test_event_loop_with_context(temp_dir.path());
+        let events_path = loop_ctx.events_path();
+        std::fs::create_dir_all(events_path.parent().expect("events path parent"))
+            .expect("create events directory");
+
+        let mut events_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&events_path)
+            .expect("open events file");
+        writeln!(
+            events_file,
+            r#"{{"topic":"LOOP_COMPLETE","payload":"done","ts":"2026-03-08T00:00:00Z"}}"#
+        )
+        .expect("write completion event");
+        events_file.flush().expect("flush completion event");
+
+        let outcome =
+            recover_late_events_before_fallback(&mut event_loop).expect("recover completion");
+        assert_eq!(
+            outcome,
+            LateEventRecovery::Terminate(TerminationReason::CompletionPromise)
+        );
+    }
+
+    #[test]
+    fn test_recover_late_events_before_fallback_polls_for_delayed_completion() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let (mut event_loop, loop_ctx) = dispatch_test_event_loop_with_context(temp_dir.path());
+        let events_path = loop_ctx.events_path();
+        std::fs::create_dir_all(events_path.parent().expect("events path parent"))
+            .expect("create events directory");
+
+        let delayed_events_path = events_path.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            let mut events_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&delayed_events_path)
+                .expect("open delayed events file");
+            writeln!(
+                events_file,
+                r#"{{"topic":"LOOP_COMPLETE","payload":"done","ts":"2026-03-08T00:00:00Z"}}"#
+            )
+            .expect("write delayed completion event");
+            events_file.flush().expect("flush delayed completion event");
+        });
+
+        let outcome =
+            recover_late_events_before_fallback(&mut event_loop).expect("recover completion");
+        writer.join().expect("join delayed event writer");
+
+        assert_eq!(
+            outcome,
+            LateEventRecovery::Terminate(TerminationReason::CompletionPromise)
+        );
+    }
+
+    #[test]
+    fn test_recover_expected_emit_after_output_polls_for_delayed_completion() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let (mut event_loop, loop_ctx) = dispatch_test_event_loop_with_context(temp_dir.path());
+        let events_path = loop_ctx.events_path();
+        std::fs::create_dir_all(events_path.parent().expect("events path parent"))
+            .expect("create events directory");
+
+        let delayed_events_path = events_path.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let mut events_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&delayed_events_path)
+                .expect("open delayed events file");
+            writeln!(
+                events_file,
+                r#"{{"topic":"LOOP_COMPLETE","payload":"done","ts":"2026-03-08T00:00:00Z"}}"#
+            )
+            .expect("write delayed completion event");
+            events_file.flush().expect("flush delayed completion event");
+        });
+
+        let outcome =
+            recover_expected_emit_after_output(&mut event_loop).expect("recover expected emit");
+        writer.join().expect("join delayed event writer");
+
+        assert_eq!(
+            outcome,
+            LateEventRecovery::Terminate(TerminationReason::CompletionPromise)
+        );
+    }
+
+    #[test]
+    fn test_resolve_display_hat_for_execution_prefers_prompt_selected_hat_for_ralph() {
+        let yaml = r#"
+hats:
+  investigator:
+    name: "Investigator"
+    triggers: ["debug.start", "hypothesis.confirmed"]
+  tester:
+    name: "Tester"
+    triggers: ["hypothesis.test"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).expect("yaml config");
+        let mut event_loop = EventLoop::new(config);
+
+        event_loop
+            .bus()
+            .publish(Event::new("hypothesis.test", "Test the hypothesis"));
+        event_loop
+            .build_prompt(&HatId::new("ralph"))
+            .expect("prompt should build");
+
+        let display_hat = resolve_display_hat_for_execution(
+            &event_loop,
+            &HatId::new("ralph"),
+            &HatId::new("investigator"),
+        );
+
+        assert_eq!(display_hat.as_str(), "tester");
+    }
+
+    #[test]
+    fn test_resolve_display_hat_for_execution_ignores_targeted_task_resume_noise() {
+        let yaml = r#"
+hats:
+  investigator:
+    name: "Investigator"
+    triggers: ["task.resume", "debug.start", "hypothesis.confirmed"]
+  tester:
+    name: "Tester"
+    triggers: ["hypothesis.test"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).expect("yaml config");
+        let mut event_loop = EventLoop::new(config);
+
+        event_loop
+            .bus()
+            .publish(Event::new("task.resume", "Recovery").with_target("investigator"));
+        event_loop
+            .bus()
+            .publish(Event::new("hypothesis.test", "Test the hypothesis"));
+        event_loop
+            .build_prompt(&HatId::new("ralph"))
+            .expect("prompt should build");
+
+        let display_hat = resolve_display_hat_for_execution(
+            &event_loop,
+            &HatId::new("ralph"),
+            &HatId::new("investigator"),
+        );
+
+        assert_eq!(display_hat.as_str(), "tester");
+    }
+
+    #[test]
+    fn test_resolve_display_hat_for_execution_prefers_downstream_event_over_start_event() {
+        let yaml = r#"
+hats:
+  investigator:
+    name: "Investigator"
+    triggers: ["debug.start", "hypothesis.confirmed"]
+  tester:
+    name: "Tester"
+    triggers: ["hypothesis.test"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).expect("yaml config");
+        let mut event_loop = EventLoop::new(config);
+
+        event_loop
+            .bus()
+            .publish(Event::new("debug.start", "Investigate the bug"));
+        event_loop
+            .bus()
+            .publish(Event::new("hypothesis.test", "Test the hypothesis"));
+        event_loop
+            .build_prompt(&HatId::new("ralph"))
+            .expect("prompt should build");
+
+        let display_hat = resolve_display_hat_for_execution(
+            &event_loop,
+            &HatId::new("ralph"),
+            &HatId::new("investigator"),
+        );
+
+        assert_eq!(display_hat.as_str(), "tester");
+    }
+
+    #[test]
+    fn test_resolve_display_hat_for_execution_keeps_explicit_non_ralph_hat() {
+        let event_loop = EventLoop::new(RalphConfig::default());
+
+        let display_hat = resolve_display_hat_for_execution(
+            &event_loop,
+            &HatId::new("fixer"),
+            &HatId::new("investigator"),
+        );
+
+        assert_eq!(display_hat.as_str(), "fixer");
+    }
+
+    #[test]
+    fn test_output_mentions_ralph_emit_detects_tool_call_output() {
+        assert!(output_mentions_ralph_emit(
+            r#"[Tool] Bash: ralph emit "hypothesis.test" "payload""#
+        ));
+        assert!(!output_mentions_ralph_emit("[Tool] Bash: cargo test"));
     }
 }

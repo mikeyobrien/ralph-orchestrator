@@ -4,9 +4,18 @@
 //! state of the orchestration loop including iteration count, failures,
 //! timing, and hat activation tracking.
 
-use ralph_proto::HatId;
+use ralph_proto::{Event, HatId};
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, Instant};
+
+/// Fingerprint of the last emitted event for stale loop detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventSignature {
+    pub topic: String,
+    pub source: Option<HatId>,
+    pub payload_fingerprint: u64,
+}
 
 /// Current state of the event loop.
 #[derive(Debug)]
@@ -53,11 +62,11 @@ pub struct LoopState {
     /// Topics seen during the loop's lifetime (for event chain validation).
     pub seen_topics: HashSet<String>,
 
-    /// The last topic emitted (for stale loop detection).
-    pub last_emitted_topic: Option<String>,
+    /// The last event signature emitted (for stale loop detection).
+    pub last_emitted_signature: Option<EventSignature>,
 
-    /// Consecutive times the same topic was emitted (for stale loop detection).
-    pub consecutive_same_topic: u32,
+    /// Consecutive times the same event signature was emitted (for stale loop detection).
+    pub consecutive_same_signature: u32,
 
     /// Set to true when a loop.cancel event is detected.
     pub cancellation_requested: bool,
@@ -83,8 +92,8 @@ impl Default for LoopState {
             last_checkin_at: None,
             last_active_hat_ids: Vec::new(),
             seen_topics: HashSet::new(),
-            last_emitted_topic: None,
-            consecutive_same_topic: 0,
+            last_emitted_signature: None,
+            consecutive_same_signature: 0,
             cancellation_requested: false,
         }
     }
@@ -101,27 +110,28 @@ impl LoopState {
         self.started_at.elapsed()
     }
 
-    fn topic_counts_toward_stale_loop(topic: &str) -> bool {
-        !matches!(topic, "task.complete")
+    fn event_counts_toward_stale_loop(event: &Event) -> bool {
+        !matches!(event.topic.as_str(), "task.complete")
     }
 
-    /// Record that a topic has been seen during this loop run.
+    /// Record that an event has been seen during this loop run.
     ///
-    /// Also tracks consecutive same-topic emissions for stale loop detection.
-    pub fn record_topic(&mut self, topic: &str) {
-        self.seen_topics.insert(topic.to_string());
+    /// Also tracks consecutive same-signature emissions for stale loop detection.
+    pub fn record_event(&mut self, event: &Event) {
+        self.seen_topics.insert(event.topic.to_string());
 
-        if !Self::topic_counts_toward_stale_loop(topic) {
-            self.consecutive_same_topic = 0;
-            self.last_emitted_topic = Some(topic.to_string());
+        if !Self::event_counts_toward_stale_loop(event) {
+            self.consecutive_same_signature = 0;
+            self.last_emitted_signature = Some(EventSignature::from_event(event));
             return;
         }
 
-        if self.last_emitted_topic.as_deref() == Some(topic) {
-            self.consecutive_same_topic += 1;
+        let signature = EventSignature::from_event(event);
+        if self.last_emitted_signature.as_ref() == Some(&signature) {
+            self.consecutive_same_signature += 1;
         } else {
-            self.consecutive_same_topic = 1;
-            self.last_emitted_topic = Some(topic.to_string());
+            self.consecutive_same_signature = 1;
+            self.last_emitted_signature = Some(signature);
         }
     }
 
@@ -134,33 +144,62 @@ impl LoopState {
     }
 }
 
+impl EventSignature {
+    pub fn from_event(event: &Event) -> Self {
+        Self {
+            topic: event.topic.to_string(),
+            source: event.source.clone(),
+            payload_fingerprint: fingerprint_payload(&event.payload),
+        }
+    }
+}
+
+fn fingerprint_payload(payload: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    payload.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::LoopState;
+    use ralph_proto::Event;
 
     #[test]
     fn repeated_task_complete_does_not_accumulate_stale_loop_count() {
         let mut state = LoopState::new();
 
-        state.record_topic("task.complete");
-        assert_eq!(state.consecutive_same_topic, 0);
+        state.record_event(&Event::new("task.complete", "task 1 complete"));
+        assert_eq!(state.consecutive_same_signature, 0);
 
-        state.record_topic("task.complete");
-        state.record_topic("task.complete");
+        state.record_event(&Event::new("task.complete", "task 2 complete"));
+        state.record_event(&Event::new("task.complete", "task 3 complete"));
 
-        assert_eq!(state.consecutive_same_topic, 0);
-        assert_eq!(state.last_emitted_topic.as_deref(), Some("task.complete"));
+        assert_eq!(state.consecutive_same_signature, 0);
+        assert_eq!(
+            state
+                .last_emitted_signature
+                .as_ref()
+                .map(|s| s.topic.as_str()),
+            Some("task.complete")
+        );
     }
 
     #[test]
     fn repeated_non_progress_topics_still_accumulate_stale_loop_count() {
         let mut state = LoopState::new();
 
-        state.record_topic("task.resume");
-        state.record_topic("task.resume");
-        state.record_topic("task.resume");
+        state.record_event(&Event::new("task.resume", "same payload"));
+        state.record_event(&Event::new("task.resume", "same payload"));
+        state.record_event(&Event::new("task.resume", "same payload"));
 
-        assert_eq!(state.consecutive_same_topic, 3);
-        assert_eq!(state.last_emitted_topic.as_deref(), Some("task.resume"));
+        assert_eq!(state.consecutive_same_signature, 3);
+        assert_eq!(
+            state
+                .last_emitted_signature
+                .as_ref()
+                .map(|s| s.topic.as_str()),
+            Some("task.resume")
+        );
     }
 }

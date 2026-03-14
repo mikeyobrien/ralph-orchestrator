@@ -122,6 +122,10 @@ pub struct RalphConfig {
     #[serde(default)]
     pub tasks: TasksConfig,
 
+    /// Lifecycle hooks configuration.
+    #[serde(default)]
+    pub hooks: HooksConfig,
+
     /// Skills configuration for the skill discovery and injection system.
     #[serde(default)]
     pub skills: SkillsConfig,
@@ -172,6 +176,8 @@ impl Default for RalphConfig {
             memories: MemoriesConfig::default(),
             // Tasks
             tasks: TasksConfig::default(),
+            // Hooks
+            hooks: HooksConfig::default(),
             // Skills
             skills: SkillsConfig::default(),
             // Features
@@ -254,6 +260,8 @@ impl RalphConfig {
         {
             return Err(ConfigError::DeprecatedProjectKey);
         }
+
+        validate_hooks_phase_event_keys(&value)?;
 
         let config: Self = serde_yaml::from_value(value)?;
         debug!(
@@ -445,6 +453,9 @@ impl RalphConfig {
         // Validate RObot config
         self.robot.validate()?;
 
+        // Validate hooks config semantics (v1 guardrails)
+        self.validate_hooks()?;
+
         // Check for required description field on all hats
         for (hat_id, hat_config) in &self.hats {
             if hat_config
@@ -491,6 +502,157 @@ impl RalphConfig {
         }
 
         Ok(warnings)
+    }
+
+    fn validate_hooks(&self) -> Result<(), ConfigError> {
+        Self::validate_non_v1_hook_fields("hooks", &self.hooks.extra)?;
+
+        if self.hooks.defaults.timeout_seconds == 0 {
+            return Err(ConfigError::HookValidation {
+                field: "hooks.defaults.timeout_seconds".to_string(),
+                message: "must be greater than 0".to_string(),
+            });
+        }
+
+        if self.hooks.defaults.max_output_bytes == 0 {
+            return Err(ConfigError::HookValidation {
+                field: "hooks.defaults.max_output_bytes".to_string(),
+                message: "must be greater than 0".to_string(),
+            });
+        }
+
+        for (phase_event, hook_specs) in &self.hooks.events {
+            for (index, hook) in hook_specs.iter().enumerate() {
+                let hook_field_base = format!("hooks.events.{phase_event}[{index}]");
+
+                if hook.name.trim().is_empty() {
+                    return Err(ConfigError::HookValidation {
+                        field: format!("{hook_field_base}.name"),
+                        message: "is required and must be non-empty".to_string(),
+                    });
+                }
+
+                if hook
+                    .command
+                    .first()
+                    .is_none_or(|command| command.trim().is_empty())
+                {
+                    return Err(ConfigError::HookValidation {
+                        field: format!("{hook_field_base}.command"),
+                        message: "is required and must include an executable at command[0]"
+                            .to_string(),
+                    });
+                }
+
+                if hook.on_error.is_none() {
+                    return Err(ConfigError::HookValidation {
+                        field: format!("{hook_field_base}.on_error"),
+                        message: "is required in v1 (warn | block | suspend)".to_string(),
+                    });
+                }
+
+                if let Some(timeout_seconds) = hook.timeout_seconds
+                    && timeout_seconds == 0
+                {
+                    return Err(ConfigError::HookValidation {
+                        field: format!("{hook_field_base}.timeout_seconds"),
+                        message: "must be greater than 0 when specified".to_string(),
+                    });
+                }
+
+                if let Some(max_output_bytes) = hook.max_output_bytes
+                    && max_output_bytes == 0
+                {
+                    return Err(ConfigError::HookValidation {
+                        field: format!("{hook_field_base}.max_output_bytes"),
+                        message: "must be greater than 0 when specified".to_string(),
+                    });
+                }
+
+                if hook.suspend_mode.is_some() && hook.on_error != Some(HookOnError::Suspend) {
+                    return Err(ConfigError::HookValidation {
+                        field: format!("{hook_field_base}.suspend_mode"),
+                        message: "requires on_error: suspend".to_string(),
+                    });
+                }
+
+                Self::validate_non_v1_hook_fields(&hook_field_base, &hook.extra)?;
+                Self::validate_mutation_contract(&hook_field_base, &hook.mutate)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_non_v1_hook_fields(
+        path_prefix: &str,
+        fields: &HashMap<String, serde_yaml::Value>,
+    ) -> Result<(), ConfigError> {
+        for key in fields.keys() {
+            let field = format!("{path_prefix}.{key}");
+            match key.as_str() {
+                "global" | "globals" | "global_defaults" | "global_hooks" | "scope" => {
+                    return Err(ConfigError::UnsupportedHookField {
+                        field,
+                        reason: "Global hooks are out of scope for v1; use per-project hooks only"
+                            .to_string(),
+                    });
+                }
+                "parallel" | "parallelism" | "max_parallel" | "concurrency" | "run_in_parallel" => {
+                    return Err(ConfigError::UnsupportedHookField {
+                        field,
+                        reason:
+                            "Parallel hook execution is out of scope for v1; hooks must run sequentially"
+                                .to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_mutation_contract(
+        hook_field_base: &str,
+        mutate: &HookMutationConfig,
+    ) -> Result<(), ConfigError> {
+        let mutate_field_base = format!("{hook_field_base}.mutate");
+
+        if !mutate.enabled {
+            if mutate.format.is_some() || !mutate.extra.is_empty() {
+                return Err(ConfigError::HookValidation {
+                    field: mutate_field_base,
+                    message: "mutation settings require mutate.enabled: true".to_string(),
+                });
+            }
+            return Ok(());
+        }
+
+        if let Some(format) = mutate.format.as_deref()
+            && !format.eq_ignore_ascii_case("json")
+        {
+            return Err(ConfigError::HookValidation {
+                field: format!("{mutate_field_base}.format"),
+                message: "only 'json' is supported for v1 mutation payloads".to_string(),
+            });
+        }
+
+        if let Some(key) = mutate.extra.keys().next() {
+            let field = format!("{mutate_field_base}.{key}");
+            let reason = match key.as_str() {
+                "prompt" | "prompt_mutation" | "events" | "event" | "config" | "full_context" => {
+                    "v1 allows metadata-only mutation; prompt/event/config mutation is unsupported"
+                        .to_string()
+                }
+                "xml" => "v1 mutation payloads are JSON-only".to_string(),
+                _ => "unsupported mutate field in v1 (supported keys: enabled, format)".to_string(),
+            };
+
+            return Err(ConfigError::UnsupportedHookField { field, reason });
+        }
+
+        Ok(())
     }
 
     /// Gets the effective backend name, resolving "auto" using the priority list.
@@ -714,6 +876,7 @@ fn default_guardrails() -> Vec<String> {
         "Fresh context each iteration - scratchpad is memory".to_string(),
         "Don't assume 'not implemented' - search first".to_string(),
         "Backpressure is law - tests/typecheck/lint/audit must pass".to_string(),
+        "When behavior is runnable or user-facing, exercise the real app with the strongest available harness (Playwright, tmux, real CLI/API) and try at least one adversarial path before reporting done".to_string(),
         "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document".to_string(),
         "Commit atomically - one logical change per commit, capture the why".to_string(),
     ]
@@ -951,6 +1114,271 @@ impl Default for TasksConfig {
             enabled: true, // Tasks enabled by default
         }
     }
+}
+
+/// Hooks configuration.
+///
+/// Controls per-project orchestrator lifecycle hooks. Hooks are disabled by
+/// default and are inert until explicitly enabled.
+///
+/// Example configuration:
+/// ```yaml
+/// hooks:
+///   enabled: true
+///   defaults:
+///     timeout_seconds: 30
+///     max_output_bytes: 8192
+///     suspend_mode: wait_for_resume
+///   events:
+///     pre.loop.start:
+///       - name: env-guard
+///         command: ["./scripts/hooks/env-guard.sh"]
+///         on_error: block
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HooksConfig {
+    /// Whether lifecycle hooks are enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Default guardrails applied to hook specs when per-hook values are absent.
+    #[serde(default)]
+    pub defaults: HookDefaults,
+
+    /// Hook lists by lifecycle phase-event key.
+    #[serde(default)]
+    pub events: HashMap<HookPhaseEvent, Vec<HookSpec>>,
+
+    /// Unknown keys captured for v1 guardrails.
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+/// Hook defaults applied when a hook spec omits optional limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookDefaults {
+    /// Maximum execution time per hook in seconds.
+    #[serde(default = "default_hook_timeout_seconds")]
+    pub timeout_seconds: u64,
+
+    /// Maximum stdout/stderr bytes stored per stream.
+    #[serde(default = "default_hook_max_output_bytes")]
+    pub max_output_bytes: u64,
+
+    /// Suspend strategy used when `on_error: suspend` and no per-hook mode is set.
+    #[serde(default)]
+    pub suspend_mode: HookSuspendMode,
+}
+
+fn default_hook_timeout_seconds() -> u64 {
+    30
+}
+
+fn default_hook_max_output_bytes() -> u64 {
+    8192
+}
+
+impl Default for HookDefaults {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: default_hook_timeout_seconds(),
+            max_output_bytes: default_hook_max_output_bytes(),
+            suspend_mode: HookSuspendMode::default(),
+        }
+    }
+}
+
+/// Supported lifecycle phase-event keys for v1 hooks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HookPhaseEvent {
+    #[serde(rename = "pre.loop.start")]
+    PreLoopStart,
+    #[serde(rename = "post.loop.start")]
+    PostLoopStart,
+    #[serde(rename = "pre.iteration.start")]
+    PreIterationStart,
+    #[serde(rename = "post.iteration.start")]
+    PostIterationStart,
+    #[serde(rename = "pre.plan.created")]
+    PrePlanCreated,
+    #[serde(rename = "post.plan.created")]
+    PostPlanCreated,
+    #[serde(rename = "pre.human.interact")]
+    PreHumanInteract,
+    #[serde(rename = "post.human.interact")]
+    PostHumanInteract,
+    #[serde(rename = "pre.loop.complete")]
+    PreLoopComplete,
+    #[serde(rename = "post.loop.complete")]
+    PostLoopComplete,
+    #[serde(rename = "pre.loop.error")]
+    PreLoopError,
+    #[serde(rename = "post.loop.error")]
+    PostLoopError,
+}
+
+impl HookPhaseEvent {
+    /// Canonical string value used in YAML keys and telemetry.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PreLoopStart => "pre.loop.start",
+            Self::PostLoopStart => "post.loop.start",
+            Self::PreIterationStart => "pre.iteration.start",
+            Self::PostIterationStart => "post.iteration.start",
+            Self::PrePlanCreated => "pre.plan.created",
+            Self::PostPlanCreated => "post.plan.created",
+            Self::PreHumanInteract => "pre.human.interact",
+            Self::PostHumanInteract => "post.human.interact",
+            Self::PreLoopComplete => "pre.loop.complete",
+            Self::PostLoopComplete => "post.loop.complete",
+            Self::PreLoopError => "pre.loop.error",
+            Self::PostLoopError => "post.loop.error",
+        }
+    }
+
+    /// Parses a phase-event string to the canonical enum.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pre.loop.start" => Some(Self::PreLoopStart),
+            "post.loop.start" => Some(Self::PostLoopStart),
+            "pre.iteration.start" => Some(Self::PreIterationStart),
+            "post.iteration.start" => Some(Self::PostIterationStart),
+            "pre.plan.created" => Some(Self::PrePlanCreated),
+            "post.plan.created" => Some(Self::PostPlanCreated),
+            "pre.human.interact" => Some(Self::PreHumanInteract),
+            "post.human.interact" => Some(Self::PostHumanInteract),
+            "pre.loop.complete" => Some(Self::PreLoopComplete),
+            "post.loop.complete" => Some(Self::PostLoopComplete),
+            "pre.loop.error" => Some(Self::PreLoopError),
+            "post.loop.error" => Some(Self::PostLoopError),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for HookPhaseEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+fn validate_hooks_phase_event_keys(value: &serde_yaml::Value) -> Result<(), ConfigError> {
+    let Some(root) = value.as_mapping() else {
+        return Ok(());
+    };
+
+    let Some(hooks) = root.get(serde_yaml::Value::String("hooks".to_string())) else {
+        return Ok(());
+    };
+
+    let Some(hooks_map) = hooks.as_mapping() else {
+        return Ok(());
+    };
+
+    let Some(events) = hooks_map.get(serde_yaml::Value::String("events".to_string())) else {
+        return Ok(());
+    };
+
+    let Some(events_map) = events.as_mapping() else {
+        return Ok(());
+    };
+
+    for key in events_map.keys() {
+        if let Some(phase_event) = key.as_str()
+            && HookPhaseEvent::parse(phase_event).is_none()
+        {
+            return Err(ConfigError::InvalidHookPhaseEvent {
+                phase_event: phase_event.to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Per-hook failure disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookOnError {
+    /// Continue orchestration and record warning telemetry.
+    Warn,
+    /// Stop the current lifecycle action as a failure.
+    Block,
+    /// Suspend orchestration and await policy-specific recovery.
+    Suspend,
+}
+
+/// Suspend mode used for `on_error: suspend`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookSuspendMode {
+    /// Pause the loop until an explicit operator resume signal is received.
+    #[default]
+    WaitForResume,
+    /// Retry automatically with bounded backoff.
+    RetryBackoff,
+    /// Wait for resume, then retry once.
+    WaitThenRetry,
+}
+
+/// Mutation settings for a hook.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HookMutationConfig {
+    /// Opt-in flag for parsing stdout as mutation JSON.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Optional explicit payload format guardrail. Only `json` is valid in v1.
+    #[serde(default)]
+    pub format: Option<String>,
+
+    /// Unknown keys captured for v1 mutation guardrails.
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+/// Hook specification for a single lifecycle event mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookSpec {
+    /// Stable hook identifier used in telemetry and diagnostics.
+    #[serde(default)]
+    pub name: String,
+
+    /// Command argv form (`command[0]` executable + args).
+    #[serde(default)]
+    pub command: Vec<String>,
+
+    /// Optional working directory override.
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+
+    /// Optional environment variable overrides.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+
+    /// Per-hook timeout override in seconds.
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+
+    /// Per-hook output cap override in bytes (applies per stream).
+    #[serde(default)]
+    pub max_output_bytes: Option<u64>,
+
+    /// Failure behavior (`warn`, `block`, `suspend`). Required in v1.
+    #[serde(default)]
+    pub on_error: Option<HookOnError>,
+
+    /// Optional suspend strategy override for `on_error: suspend`.
+    #[serde(default)]
+    pub suspend_mode: Option<HookSuspendMode>,
+
+    /// Mutation policy (opt-in, JSON-only contract enforced by validation/runtime).
+    #[serde(default)]
+    pub mutate: HookMutationConfig,
+
+    /// Unknown keys captured for v1 guardrails.
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_yaml::Value>,
 }
 
 /// Skills configuration.
@@ -1459,6 +1887,21 @@ pub enum ConfigError {
     RobotMissingField { field: String, hint: String },
 
     #[error(
+        "Invalid hooks phase-event '{phase_event}'. Supported v1 phase-events: pre.loop.start, post.loop.start, pre.iteration.start, post.iteration.start, pre.plan.created, post.plan.created, pre.human.interact, post.human.interact, pre.loop.complete, post.loop.complete, pre.loop.error, post.loop.error.\nFix: use one of the supported keys under hooks.events."
+    )]
+    InvalidHookPhaseEvent { phase_event: String },
+
+    #[error(
+        "Hook config validation error at '{field}': {message}\nSee: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md#hookspec-fields-v1"
+    )]
+    HookValidation { field: String, message: String },
+
+    #[error(
+        "Unsupported hooks field '{field}' for v1. {reason}\nSee: specs/add-hooks-to-ralph-orchestrator-lifecycle/design.md#out-of-scope-v1-non-goals"
+    )]
+    UnsupportedHookField { field: String, reason: String },
+
+    #[error(
         "Invalid config key 'project'. Use 'core' instead (e.g. 'core.specs_dir' instead of 'project.specs_dir').\nSee: docs/guide/configuration.md"
     )]
     DeprecatedProjectKey,
@@ -1862,12 +2305,13 @@ hats:
         assert_eq!(config.core.scratchpad, ".ralph/agent/scratchpad.md");
         assert_eq!(config.core.specs_dir, ".ralph/specs/");
         // Default guardrails per spec
-        assert_eq!(config.core.guardrails.len(), 5);
+        assert_eq!(config.core.guardrails.len(), 6);
         assert!(config.core.guardrails[0].contains("Fresh context"));
         assert!(config.core.guardrails[1].contains("search first"));
         assert!(config.core.guardrails[2].contains("Backpressure"));
-        assert!(config.core.guardrails[3].contains("Confidence protocol"));
-        assert!(config.core.guardrails[4].contains("Commit atomically"));
+        assert!(config.core.guardrails[3].contains("strongest available harness"));
+        assert!(config.core.guardrails[4].contains("Confidence protocol"));
+        assert!(config.core.guardrails[5].contains("Commit atomically"));
     }
 
     #[test]
@@ -1881,7 +2325,7 @@ core:
         assert_eq!(config.core.scratchpad, ".workspace/plan.md");
         assert_eq!(config.core.specs_dir, "./specifications/");
         // Guardrails should use defaults when not specified
-        assert_eq!(config.core.guardrails.len(), 5);
+        assert_eq!(config.core.guardrails.len(), 6);
     }
 
     #[test]
@@ -2456,6 +2900,271 @@ skills:
         assert_eq!(override_.hats, vec!["builder", "reviewer"]);
         assert!(override_.backends.is_empty());
         assert!(override_.tags.is_empty());
+    }
+
+    #[test]
+    fn test_hooks_config_valid_yaml_parses_and_validates() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  defaults:
+    timeout_seconds: 45
+    max_output_bytes: 16384
+    suspend_mode: wait_for_resume
+  events:
+    pre.loop.start:
+      - name: env-guard
+        command: ["./scripts/hooks/env-guard.sh", "--check"]
+        on_error: block
+    post.loop.complete:
+      - name: notify
+        command: ["./scripts/hooks/notify.sh"]
+        on_error: warn
+        mutate:
+          enabled: true
+          format: json
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        assert!(config.hooks.enabled);
+        assert_eq!(config.hooks.defaults.timeout_seconds, 45);
+        assert_eq!(config.hooks.defaults.max_output_bytes, 16384);
+        assert_eq!(config.hooks.events.len(), 2);
+
+        let warnings = config.validate().unwrap();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_hooks_parse_rejects_invalid_phase_event_key() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.launch:
+      - name: bad-phase
+        command: ["./scripts/hooks/bad-phase.sh"]
+        on_error: warn
+"#;
+
+        let result = RalphConfig::parse_yaml(yaml);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::InvalidHookPhaseEvent { phase_event }
+            if phase_event == "pre.loop.launch"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_parse_rejects_backpressure_phase_event_keys_in_v1() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.backpressure.triggered:
+      - name: unsupported-backpressure
+        command: ["./scripts/hooks/backpressure.sh"]
+        on_error: warn
+"#;
+
+        let result = RalphConfig::parse_yaml(yaml);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::InvalidHookPhaseEvent { phase_event }
+            if phase_event == "pre.backpressure.triggered"
+        ));
+
+        let message = err.to_string();
+        assert!(message.contains("Supported v1 phase-events"));
+        assert!(message.contains("pre.plan.created"));
+        assert!(message.contains("post.loop.error"));
+    }
+
+    #[test]
+    fn test_hooks_parse_rejects_invalid_on_error_enum_value() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: bad-on-error
+        command: ["./scripts/hooks/bad-on-error.sh"]
+        on_error: explode
+"#;
+
+        let result = RalphConfig::parse_yaml(yaml);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(&err, ConfigError::Yaml(_)));
+
+        let message = err.to_string();
+        assert!(message.contains("unknown variant `explode`"));
+        assert!(message.contains("warn"));
+        assert!(message.contains("block"));
+        assert!(message.contains("suspend"));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_missing_name() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - command: ["./scripts/hooks/no-name.sh"]
+        on_error: block
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.events.pre.loop.start[0].name"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_missing_command() {
+        let yaml = r"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: missing-command
+        on_error: block
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.events.pre.loop.start[0].command"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_missing_on_error() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: missing-on-error
+        command: ["./scripts/hooks/no-on-error.sh"]
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.events.pre.loop.start[0].on_error"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_zero_timeout_seconds() {
+        let yaml = r"
+hooks:
+  enabled: true
+  defaults:
+    timeout_seconds: 0
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.defaults.timeout_seconds"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_zero_max_output_bytes() {
+        let yaml = r"
+hooks:
+  enabled: true
+  defaults:
+    max_output_bytes: 0
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::HookValidation { field, .. }
+            if field == "hooks.defaults.max_output_bytes"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_parallel_non_v1_field() {
+        let yaml = r"
+hooks:
+  enabled: true
+  parallel: true
+";
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::UnsupportedHookField { field, .. }
+            if field == "hooks.parallel"
+        ));
+    }
+
+    #[test]
+    fn test_hooks_validate_rejects_global_scope_non_v1_field() {
+        let yaml = r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: global-scope
+        command: ["./scripts/hooks/global.sh"]
+        on_error: warn
+        scope: global
+"#;
+        let config = RalphConfig::parse_yaml(yaml).unwrap();
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(matches!(
+            &err,
+            ConfigError::UnsupportedHookField { field, .. }
+            if field == "hooks.events.pre.loop.start[0].scope"
+        ));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -606,6 +606,64 @@ fn test_new_run_ignores_stale_marker() -> Result<()> {
 }
 
 // =============================================================================
+// Scratchpad Cleanup Tests
+// =============================================================================
+
+#[test]
+fn test_fresh_run_clears_custom_scratchpad_path() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let temp_path = temp_dir.path();
+
+    // Config with a custom scratchpad path
+    let config = r#"
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 1
+  max_runtime_seconds: 5
+
+cli:
+  backend: "custom"
+  command: "true"
+
+core:
+  scratchpad: ".ralph/debug/global.md"
+
+features:
+  preflight:
+    enabled: false
+"#;
+    fs::write(temp_path.join("ralph.yml"), config)?;
+    fs::write(temp_path.join("PROMPT.md"), "Test task")?;
+
+    // Create a stale scratchpad at the custom path
+    let custom_scratchpad = temp_path.join(".ralph/debug/global.md");
+    fs::create_dir_all(custom_scratchpad.parent().unwrap())?;
+    fs::write(&custom_scratchpad, "# Stale scratchpad\n- [ ] Old task\n")?;
+    assert!(
+        custom_scratchpad.exists(),
+        "Pre-condition: stale scratchpad should exist"
+    );
+
+    // Run ralph fresh
+    let _output = Command::new(ralph_bin())
+        .arg("run")
+        .arg("--config")
+        .arg(temp_path.join("ralph.yml"))
+        .current_dir(temp_path)
+        .output()?;
+
+    // The custom scratchpad should have been cleared
+    assert!(
+        !custom_scratchpad.exists(),
+        "Fresh run should clear the custom scratchpad at {:?}, but it still exists",
+        custom_scratchpad
+    );
+
+    Ok(())
+}
+
+// =============================================================================
 // Directory Structure Tests
 // =============================================================================
 

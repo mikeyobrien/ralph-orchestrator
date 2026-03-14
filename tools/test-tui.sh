@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # TUI Manual Testing Script
 # Run this in a real terminal (not from Claude Code)
 

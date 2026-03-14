@@ -3,6 +3,8 @@ name: tui-validate
 description: Validates Terminal User Interface (TUI) output using freeze for screenshot capture and LLM-as-judge for semantic validation. Supports both visual (PNG/SVG) and text-based validation modes.
 type: anthropic-skill
 version: "1.0"
+metadata:
+  internal: true
 ---
 
 # TUI Validate

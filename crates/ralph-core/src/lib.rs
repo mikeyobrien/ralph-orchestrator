@@ -23,6 +23,7 @@ mod git_ops;
 mod handoff;
 mod hat_registry;
 mod hatless_ralph;
+pub mod hooks;
 mod instructions;
 mod landing;
 pub mod loop_completion;
@@ -75,6 +76,14 @@ pub use git_ops::{
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hat_registry::HatRegistry;
 pub use hatless_ralph::{HatInfo, HatTopology, HatlessRalph};
+pub use hooks::{
+    HookDefaults, HookEngine, HookExecutor, HookExecutorContract, HookExecutorError,
+    HookInvocationPayload, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
+    HookPayloadContext, HookPayloadContextInput, HookPayloadIteration, HookPayloadLoop,
+    HookPayloadMetadata, HookPhaseEvent, HookRunRequest, HookRunResult, HookSpec, HookStreamOutput,
+    HookSuspendMode, HooksConfig, ResolvedHookSpec, SUSPEND_STATE_SCHEMA_VERSION,
+    SuspendLifecycleState, SuspendStateRecord, SuspendStateStore, SuspendStateStoreError,
+};
 pub use instructions::InstructionBuilder;
 pub use landing::{LandingConfig, LandingError, LandingHandler, LandingResult};
 pub use loop_completion::{CompletionAction, CompletionError, LoopCompletionHandler};

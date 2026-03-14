@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use crate::bot::escape_html;
 use crate::loop_lock::{LockState, lock_path, lock_state};
@@ -14,13 +15,15 @@ pub fn is_command(text: &str) -> bool {
 /// or `None` if the command was not recognized (so the caller can
 /// treat it as a regular message).
 pub fn handle_command(text: &str, workspace_root: &Path) -> Option<String> {
-    let (command, _args) = parse_command(text);
+    let (command, args) = parse_command(text);
     match command {
         "/help" => Some(cmd_help()),
         "/status" => Some(cmd_status(workspace_root)),
         "/tasks" => Some(cmd_tasks(workspace_root)),
         "/memories" => Some(cmd_memories(workspace_root)),
         "/tail" => Some(cmd_tail(workspace_root)),
+        "/model" => Some(cmd_model(workspace_root, args)),
+        "/models" => Some(cmd_models(workspace_root)),
         "/restart" => Some(cmd_restart(workspace_root)),
         "/stop" => Some(cmd_stop(workspace_root)),
         _ => None,
@@ -58,11 +61,270 @@ fn cmd_help() -> String {
         "/tasks — Open tasks",
         "/memories — Recent memories",
         "/tail — Last 20 events",
+        "/model — Show current backend/model",
+        "/models — Show configured model options",
         "/restart — Restart the orchestration loop",
         "/stop — Stop the orchestration loop",
         "/help — This message",
     ]
     .join("\n")
+}
+
+#[derive(Debug, Clone)]
+struct BackendModelInfo {
+    backend: Option<String>,
+    model: Option<String>,
+    source: String,
+}
+
+/// `/model` — Show the active backend/model (or configured fallback).
+///
+/// If args are provided (`/model <name>`), we acknowledge the request but keep
+/// this command read-only for now.
+fn cmd_model(workspace_root: &Path, args: &str) -> String {
+    let requested = args.trim();
+    if !requested.is_empty() {
+        return [
+            "<b>/model is read-only right now.</b>".to_string(),
+            format!("Requested: <code>{}</code>", escape_html(requested)),
+            "Change the model via config/CLI args, then restart Ralph.".to_string(),
+            "Example: <code>ralph run -b pi -- --model gpt-5.3-codex</code>".to_string(),
+        ]
+        .join("\n");
+    }
+
+    let Some(info) = detect_backend_model_info(workspace_root) else {
+        return [
+            "<b>Model</b>".to_string(),
+            String::new(),
+            "No backend/model detected from runtime or config.".to_string(),
+            "Use <code>/models</code> for config hints.".to_string(),
+        ]
+        .join("\n");
+    };
+
+    [
+        "<b>Model</b>".to_string(),
+        String::new(),
+        format!(
+            "Backend: <code>{}</code>",
+            escape_html(info.backend.as_deref().unwrap_or("unknown"))
+        ),
+        format!(
+            "Model: <code>{}</code>",
+            escape_html(info.model.as_deref().unwrap_or("not set"))
+        ),
+        format!("Source: <code>{}</code>", escape_html(&info.source)),
+    ]
+    .join("\n")
+}
+
+/// `/models` — Show models discovered from Ralph config files.
+fn cmd_models(workspace_root: &Path) -> String {
+    let mut models = BTreeSet::new();
+    for path in candidate_config_paths(workspace_root) {
+        if let Some(info) = parse_backend_model_from_yaml_file(&path)
+            && let Some(model) = info.model
+        {
+            models.insert(model);
+        }
+    }
+
+    let mut lines = vec!["<b>Configured Models</b>".to_string(), String::new()];
+
+    if let Some(current) = detect_backend_model_info(workspace_root) {
+        lines.push(format!(
+            "Current backend: <code>{}</code>",
+            escape_html(current.backend.as_deref().unwrap_or("unknown"))
+        ));
+        lines.push(format!(
+            "Current model: <code>{}</code>",
+            escape_html(current.model.as_deref().unwrap_or("not set"))
+        ));
+        lines.push(format!(
+            "Source: <code>{}</code>",
+            escape_html(&current.source)
+        ));
+        lines.push(String::new());
+    }
+
+    if models.is_empty() {
+        lines.push("No --model/-m entries found in ralph*.yml files.".to_string());
+    } else {
+        let plural = if models.len() == 1 { "" } else { "s" };
+        lines.push(format!("Found {} model{} in config:", models.len(), plural));
+        for model in models {
+            lines.push(format!("• <code>{}</code>", escape_html(&model)));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(
+        "Tip: set a model with CLI args (e.g., <code>ralph run -b pi -- --model gpt-5.3-codex</code>)."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn detect_backend_model_info(workspace_root: &Path) -> Option<BackendModelInfo> {
+    detect_backend_model_from_active_loop(workspace_root)
+        .or_else(|| detect_backend_model_from_config_files(workspace_root))
+}
+
+fn detect_backend_model_from_active_loop(workspace_root: &Path) -> Option<BackendModelInfo> {
+    if lock_state(workspace_root).ok()? != LockState::Active {
+        return None;
+    }
+
+    let lock_contents = std::fs::read_to_string(lock_path(workspace_root)).ok()?;
+    let lock: serde_json::Value = serde_json::from_str(&lock_contents).ok()?;
+    let pid = lock
+        .get("pid")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())?;
+
+    let cmdline_path = PathBuf::from(format!("/proc/{pid}/cmdline"));
+    let bytes = std::fs::read(cmdline_path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let args: Vec<String> = bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect();
+
+    if args.is_empty() {
+        return None;
+    }
+
+    let backend = extract_cli_flag_value(&args, "--backend", "-b");
+    let model = extract_cli_flag_value(&args, "--model", "-m");
+
+    if backend.is_none() && model.is_none() {
+        return None;
+    }
+
+    Some(BackendModelInfo {
+        backend,
+        model,
+        source: format!("runtime (pid {pid})"),
+    })
+}
+
+fn detect_backend_model_from_config_files(workspace_root: &Path) -> Option<BackendModelInfo> {
+    for path in candidate_config_paths(workspace_root) {
+        if let Some(mut info) = parse_backend_model_from_yaml_file(&path) {
+            let display_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("ralph config");
+            info.source = format!("config ({display_name})");
+            return Some(info);
+        }
+    }
+    None
+}
+
+fn parse_backend_model_from_yaml_file(path: &Path) -> Option<BackendModelInfo> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let config: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+    let cli = config.get("cli")?;
+
+    let backend = cli
+        .get("backend")
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_string);
+
+    let args: Vec<String> = cli
+        .get("args")
+        .and_then(serde_yaml::Value::as_sequence)
+        .map(|seq| {
+            seq.iter()
+                .filter_map(serde_yaml::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let model = extract_cli_flag_value(&args, "--model", "-m");
+
+    if backend.is_none() && model.is_none() {
+        return None;
+    }
+
+    Some(BackendModelInfo {
+        backend,
+        model,
+        source: String::new(),
+    })
+}
+
+fn candidate_config_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for preferred in ["ralph.yml", "ralph.yaml"] {
+        let path = workspace_root.join(preferred);
+        if path.exists() {
+            paths.push(path);
+        }
+    }
+
+    let Ok(entries) = std::fs::read_dir(workspace_root) else {
+        return paths;
+    };
+
+    let mut extras: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_ralph_config_file(path))
+        .filter(|path| !paths.contains(path))
+        .collect();
+    extras.sort();
+
+    paths.extend(extras);
+    paths
+}
+
+fn is_ralph_config_file(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if !file_name.to_ascii_lowercase().starts_with("ralph") {
+        return false;
+    }
+
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml"))
+}
+
+fn extract_cli_flag_value(args: &[String], long_flag: &str, short_flag: &str) -> Option<String> {
+    for (i, arg) in args.iter().enumerate() {
+        if arg == long_flag || arg == short_flag {
+            if let Some(value) = args.get(i + 1)
+                && !value.starts_with('-')
+            {
+                return Some(value.clone());
+            }
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix(&format!("{long_flag}="))
+            && !value.is_empty()
+        {
+            return Some(value.to_string());
+        }
+
+        if let Some(value) = arg.strip_prefix(&format!("{short_flag}="))
+            && !value.is_empty()
+        {
+            return Some(value.to_string());
+        }
+    }
+
+    None
 }
 
 /// `/status` — Current iteration, hat, elapsed time, loop ID.
@@ -855,5 +1117,115 @@ mod tests {
     fn cmd_help_lists_stop() {
         let result = cmd_help();
         assert!(result.contains("/stop"));
+    }
+
+    #[test]
+    fn handle_command_recognizes_model() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+        assert!(handle_command("/model", dir.path()).is_some());
+    }
+
+    #[test]
+    fn handle_command_recognizes_models() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+        assert!(handle_command("/models", dir.path()).is_some());
+    }
+
+    #[test]
+    fn cmd_help_lists_model_commands() {
+        let result = cmd_help();
+        assert!(result.contains("/model"));
+        assert!(result.contains("/models"));
+    }
+
+    #[test]
+    fn cmd_model_reads_backend_and_model_from_config() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+
+        std::fs::write(
+            dir.path().join("ralph.yml"),
+            r"cli:
+  backend: pi
+  args:
+    - --model
+    - gpt-5.3-codex
+",
+        )
+        .unwrap();
+
+        let result = cmd_model(dir.path(), "");
+        assert!(result.contains("pi"));
+        assert!(result.contains("gpt-5.3-codex"));
+        assert!(result.contains("config (ralph.yml)"));
+    }
+
+    #[test]
+    fn cmd_model_with_args_is_read_only() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+
+        let result = cmd_model(dir.path(), "claude-sonnet-4");
+        assert!(result.contains("read-only"));
+        assert!(result.contains("claude-sonnet-4"));
+    }
+
+    #[test]
+    fn cmd_models_lists_all_models_from_ralph_configs() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+
+        std::fs::write(
+            dir.path().join("ralph.yml"),
+            r"cli:
+  backend: pi
+  args:
+    - --model
+    - gpt-5.3-codex
+",
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join("ralph.bot.yml"),
+            r"cli:
+  backend: custom
+  args:
+    - --model=claude-sonnet-4
+",
+        )
+        .unwrap();
+
+        let result = cmd_models(dir.path());
+        assert!(result.contains("gpt-5.3-codex"));
+        assert!(result.contains("claude-sonnet-4"));
+        assert!(result.contains("Found 2 models"));
+    }
+
+    #[test]
+    fn extract_cli_flag_value_supports_equals_and_split_forms() {
+        let args = vec![
+            "--model".to_string(),
+            "split-value".to_string(),
+            "--other".to_string(),
+        ];
+        assert_eq!(
+            extract_cli_flag_value(&args, "--model", "-m"),
+            Some("split-value".to_string())
+        );
+
+        let args = vec!["--model=equals-value".to_string()];
+        assert_eq!(
+            extract_cli_flag_value(&args, "--model", "-m"),
+            Some("equals-value".to_string())
+        );
+
+        let args = vec!["-m=short-equals".to_string()];
+        assert_eq!(
+            extract_cli_flag_value(&args, "--model", "-m"),
+            Some("short-equals".to_string())
+        );
     }
 }

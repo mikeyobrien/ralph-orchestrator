@@ -250,9 +250,11 @@ mod tests {
     fn test_format_preset_list() {
         let output = format_preset_list();
         assert!(output.contains("Available hat collections:"));
-        assert!(output.contains("feature"));
         assert!(output.contains("code-assist"));
         assert!(output.contains("debug"));
+        assert!(output.contains("research"));
+        assert!(output.contains("review"));
+        assert!(output.contains("pdd-to-code-assist"));
         assert!(output.contains("Usage:"));
         assert!(output.contains("-H builtin:<collection>"));
     }

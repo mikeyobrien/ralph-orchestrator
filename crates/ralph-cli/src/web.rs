@@ -80,6 +80,34 @@ fn run_command_with_retry(command: &OsStr, args: &[&str]) -> std::io::Result<std
     unreachable!("retry loop should always return before exhausting attempts")
 }
 
+async fn run_async_command_with_retry(
+    command: &OsStr,
+    args: &[&str],
+    current_dir: &Path,
+) -> std::io::Result<std::process::Output> {
+    const MAX_ATTEMPTS: usize = 5;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match AsyncCommand::new(command)
+            .args(args)
+            .current_dir(current_dir)
+            .output()
+            .await
+        {
+            Ok(output) => return Ok(output),
+            Err(err) => {
+                if is_transient_exec_error(&err) && attempt + 1 < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    unreachable!("retry loop should always return before exhausting attempts")
+}
+
 /// Check that Node.js is installed and >= 18. Returns the version string.
 fn check_node_with(node_cmd: &OsStr) -> Result<String> {
     let output = run_command_with_retry(node_cmd, &["--version"]).map_err(|_| {
@@ -156,10 +184,7 @@ async fn run_npm_install_with(root: &Path, npm_cmd: &OsStr) -> Result<()> {
     spinner.set_message(format!("Running npm {}...", install_cmd));
     spinner.enable_steady_tick(Duration::from_millis(100));
 
-    let output = AsyncCommand::new(npm_cmd)
-        .arg(install_cmd)
-        .current_dir(root)
-        .output()
+    let output = run_async_command_with_retry(npm_cmd, &[install_cmd], root)
         .await
         .context("Failed to run npm install")?;
 

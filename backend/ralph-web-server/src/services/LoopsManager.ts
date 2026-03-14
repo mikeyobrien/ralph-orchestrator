@@ -155,8 +155,10 @@ export class LoopsManager extends EventEmitter {
   async retryMerge(loopId: string, steeringInput?: string): Promise<void> {
     // Write steering input to file for merge-ralph to read
     if (steeringInput?.trim()) {
-      const steeringPath = `${process.cwd()}/.ralph/merge-steering.txt`;
       const fs = await import("fs/promises");
+      const steeringDir = `${process.cwd()}/.ralph`;
+      const steeringPath = `${steeringDir}/merge-steering.txt`;
+      await fs.mkdir(steeringDir, { recursive: true });
       await fs.writeFile(steeringPath, steeringInput.trim(), "utf-8");
     }
 

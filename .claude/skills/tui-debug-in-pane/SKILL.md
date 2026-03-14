@@ -1,6 +1,8 @@
 ---
 name: tui-debug-in-pane
 description: Use when you need to reproduce or debug TUI rendering issues (garbled output, broken streaming, layout corruption) by running ralph in a tmux split pane and capturing live output.
+metadata:
+  internal: true
 ---
 
 # tui-debug-in-pane

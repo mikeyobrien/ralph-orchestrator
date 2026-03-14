@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use axum::http::{HeaderMap, StatusCode};
-use chrono::{SecondsFormat, Utc};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -14,7 +13,7 @@ use crate::auth::{Authenticator, from_config};
 use crate::collection_domain::CollectionDomain;
 use crate::config::ApiConfig;
 use crate::config_domain::ConfigDomain;
-use crate::errors::ApiError;
+use crate::errors::{ApiError, RpcErrorCode};
 use crate::idempotency::{
     IdempotencyCheck, IdempotencyStore, InMemoryIdempotencyStore, StoredResponse,
 };
@@ -95,7 +94,7 @@ impl RpcRuntime {
     pub fn health_payload(&self) -> Value {
         json!({
             "status": "ok",
-            "timestamp": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+            "timestamp": crate::loop_support::now_ts()
         })
     }
 
@@ -112,6 +111,32 @@ impl RpcRuntime {
                 "retentionSeconds": self.config.idempotency_ttl_secs
             }
         })
+    }
+
+    pub fn invoke_method(
+        &self,
+        request_id: impl Into<String>,
+        method: &str,
+        params: Value,
+        principal: &str,
+        idempotency_key: Option<String>,
+    ) -> Result<Value, ApiError> {
+        let request_id = request_id.into();
+        let mut raw = json!({
+            "apiVersion": API_VERSION,
+            "id": request_id,
+            "method": method,
+            "params": params,
+        });
+
+        if let Some(idempotency_key) = idempotency_key {
+            raw["meta"] = json!({
+                "idempotencyKey": idempotency_key,
+            });
+        }
+
+        let request = self.parse_and_validate_request_value(raw)?;
+        self.execute_request(&request, principal)
     }
 
     pub fn handle_http_request(&self, body: &[u8], headers: &HeaderMap) -> (StatusCode, Value) {
@@ -136,80 +161,17 @@ impl RpcRuntime {
                 }
             };
 
-        let mut idempotency_context: Option<String> = None;
-        if is_mutating_method(&request.method) {
-            let key = match request
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.idempotency_key.as_deref())
-            {
-                Some(key) => key,
-                None => {
-                    let error =
-                        ApiError::invalid_params("mutating methods require meta.idempotencyKey")
-                            .with_context(request.id.clone(), Some(request.method.clone()));
-                    let status = error.status;
-                    let envelope = error_envelope(&error, &self.config.served_by);
-                    return (status, envelope);
-                }
-            };
-
-            match self
-                .idempotency
-                .check(&request.method, key, &request.params)
-            {
-                IdempotencyCheck::Replay(response) => {
-                    debug!(
-                        method = %request.method,
-                        request_id = %request.id,
-                        "idempotency replay"
-                    );
-                    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
-                    return (status, response.envelope);
-                }
-                IdempotencyCheck::Conflict => {
-                    let error = ApiError::idempotency_conflict(
-                        "idempotency key was already used with different parameters",
-                    )
-                    .with_context(request.id.clone(), Some(request.method.clone()))
-                    .with_details(json!({
-                        "method": request.method.clone(),
-                        "idempotencyKey": key
-                    }));
-                    let status = error.status;
-                    let envelope = error_envelope(&error, &self.config.served_by);
-                    return (status, envelope);
-                }
-                IdempotencyCheck::New => {
-                    idempotency_context = Some(key.to_string());
-                }
-            }
-        }
-
-        let (status, envelope) = match self.dispatch(&request, &principal) {
+        let (status, envelope) = match self.execute_request(&request, &principal) {
             Ok(result) => (
                 StatusCode::OK,
                 success_envelope(&request, result, &self.config.served_by),
             ),
             Err(error) => {
-                let error = error.with_context(request.id.clone(), Some(request.method.clone()));
                 let status = error.status;
                 let envelope = error_envelope(&error, &self.config.served_by);
                 (status, envelope)
             }
         };
-
-        if let Some(key) = idempotency_context {
-            self.idempotency.store(
-                &request.method,
-                &key,
-                &request.params,
-                &StoredResponse {
-                    status: status.as_u16(),
-                    envelope: envelope.clone(),
-                },
-            );
-        }
 
         (status, envelope)
     }
@@ -280,6 +242,10 @@ impl RpcRuntime {
 
     fn parse_and_validate_request(&self, body: &[u8]) -> Result<RpcRequestEnvelope, ApiError> {
         let raw = parse_json_value(body)?;
+        self.parse_and_validate_request_value(raw)
+    }
+
+    fn parse_and_validate_request_value(&self, raw: Value) -> Result<RpcRequestEnvelope, ApiError> {
         let (request_id, method) = request_context(&raw);
 
         if !raw.is_object() {
@@ -295,14 +261,15 @@ impl RpcRuntime {
         })?;
 
         if !is_known_method(&method) {
-            return Err(ApiError::method_not_found(method.clone())
-                .with_context(request_id.clone(), Some(method)));
+            return Err(
+                ApiError::method_not_found(method.clone()).with_context(request_id, Some(method))
+            );
         }
 
         if let Err(errors) = validate_request_schema(&raw) {
             return Err(
                 ApiError::invalid_params("request does not match rpc-v1 schema")
-                    .with_context(request_id.clone(), Some(method.clone()))
+                    .with_context(request_id, Some(method))
                     .with_details(json!({ "errors": errors })),
             );
         }
@@ -319,5 +286,120 @@ impl RpcRuntime {
         }
 
         Ok(request)
+    }
+
+    fn execute_request(
+        &self,
+        request: &RpcRequestEnvelope,
+        principal: &str,
+    ) -> Result<Value, ApiError> {
+        let mut idempotency_context: Option<String> = None;
+        if is_mutating_method(&request.method) {
+            let key = match request
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.idempotency_key.as_deref())
+            {
+                Some(key) => key,
+                None => {
+                    return Err(ApiError::invalid_params(
+                        "mutating methods require meta.idempotencyKey",
+                    )
+                    .with_context(request.id.clone(), Some(request.method.clone())));
+                }
+            };
+
+            match self
+                .idempotency
+                .check(&request.method, key, &request.params)
+            {
+                IdempotencyCheck::Replay(response) => {
+                    debug!(
+                        method = %request.method,
+                        request_id = %request.id,
+                        "idempotency replay"
+                    );
+                    return self.replay_stored_response(request, response);
+                }
+                IdempotencyCheck::Conflict => {
+                    return Err(ApiError::idempotency_conflict(
+                        "idempotency key was already used with different parameters",
+                    )
+                    .with_context(request.id.clone(), Some(request.method.clone()))
+                    .with_details(json!({
+                        "method": request.method.clone(),
+                        "idempotencyKey": key
+                    })));
+                }
+                IdempotencyCheck::New => {
+                    idempotency_context = Some(key.to_string());
+                }
+            }
+        }
+
+        let result = self
+            .dispatch(request, principal)
+            .map_err(|error| error.with_context(request.id.clone(), Some(request.method.clone())));
+
+        if let Some(key) = idempotency_context {
+            let (status, envelope) = match &result {
+                Ok(value) => (
+                    StatusCode::OK.as_u16(),
+                    success_envelope(request, value.clone(), &self.config.served_by),
+                ),
+                Err(error) => (
+                    error.status.as_u16(),
+                    error_envelope(error, &self.config.served_by),
+                ),
+            };
+            self.idempotency.store(
+                &request.method,
+                &key,
+                &request.params,
+                &StoredResponse { status, envelope },
+            );
+        }
+
+        result
+    }
+
+    fn replay_stored_response(
+        &self,
+        request: &RpcRequestEnvelope,
+        response: StoredResponse,
+    ) -> Result<Value, ApiError> {
+        if let Some(result) = response.envelope.get("result") {
+            return Ok(result.clone());
+        }
+
+        let error_body = response
+            .envelope
+            .get("error")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                ApiError::internal("stored idempotency response was missing an error payload")
+                    .with_context(request.id.clone(), Some(request.method.clone()))
+            })?;
+
+        let code = error_body
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(RpcErrorCode::from_contract)
+            .unwrap_or(RpcErrorCode::Internal);
+        let message = error_body
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("stored idempotency replay failed");
+        let retryable = error_body
+            .get("retryable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        let mut error = ApiError::new(code, message)
+            .with_context(request.id.clone(), Some(request.method.clone()));
+        error.retryable = retryable;
+        error.details = error_body.get("details").cloned();
+        error.status = StatusCode::from_u16(response.status).unwrap_or(error.status);
+        Err(error)
     }
 }

@@ -9,6 +9,7 @@
 //! - `prime`: Output memories for context injection
 //! - `init`: Initialize memories file
 
+use crate::resolve_workspace_root;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use ralph_core::{MarkdownMemoryStore, Memory, MemoryType, truncate_with_ellipsis};
@@ -214,7 +215,7 @@ pub struct InitArgs {
 
 /// Execute a memory command.
 pub fn execute(args: MemoryArgs, use_colors: bool) -> Result<()> {
-    let root = args.root.unwrap_or_else(|| PathBuf::from("."));
+    let root = resolve_workspace_root(args.root.as_ref());
     let store = MarkdownMemoryStore::with_default_path(&root);
 
     match args.command {

@@ -95,10 +95,14 @@ event_loop:
 
     assert!(termination.is_none());
     assert_eq!(
-        event_loop.state().last_emitted_topic.as_deref(),
+        event_loop
+            .state()
+            .last_emitted_signature
+            .as_ref()
+            .map(|sig| sig.topic.as_str()),
         Some("task.complete")
     );
-    assert_eq!(event_loop.state().consecutive_same_topic, 0);
+    assert_eq!(event_loop.state().consecutive_same_signature, 0);
 }
 
 #[test]

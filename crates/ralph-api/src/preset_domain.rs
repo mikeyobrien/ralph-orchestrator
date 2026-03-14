@@ -1,6 +1,6 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde::Serialize;
 use serde_yaml::Value;
 use tracing::warn;
@@ -32,10 +32,9 @@ impl PresetDomain {
     }
 
     pub fn list(&self, collections: &[CollectionSummary]) -> Vec<PresetRecord> {
-        let builtin_dir = self.workspace_root.join("presets");
         let hats_dir = self.workspace_root.join(".ralph/hats");
 
-        let mut builtin = read_presets_from_dir(&builtin_dir, "builtin", false);
+        let mut builtin = read_builtin_presets(&self.workspace_root);
         let mut directory = read_presets_from_dir(&hats_dir, "directory", true);
         let mut collection_presets: Vec<_> = collections
             .iter()
@@ -61,12 +60,50 @@ impl PresetDomain {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct BuiltinPresetIndexEntry {
+    name: String,
+    description: String,
+}
+
+fn read_builtin_presets(workspace_root: &Path) -> Vec<PresetRecord> {
+    let index_path = workspace_root.join("presets").join("index.json");
+    let content = match std::fs::read_to_string(&index_path) {
+        Ok(content) => content,
+        Err(error) => {
+            warn!(path = %index_path.display(), %error, "failed reading builtin preset index");
+            return read_presets_from_dir(&workspace_root.join("presets"), "builtin", false);
+        }
+    };
+
+    let mut entries: Vec<BuiltinPresetIndexEntry> = match serde_json::from_str(&content) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warn!(path = %index_path.display(), %error, "failed parsing builtin preset index");
+            return read_presets_from_dir(&workspace_root.join("presets"), "builtin", false);
+        }
+    };
+
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    entries
+        .into_iter()
+        .map(|entry| PresetRecord {
+            id: format!("builtin:{}", entry.name),
+            name: entry.name,
+            source: "builtin".to_string(),
+            description: Some(entry.description),
+            path: None,
+        })
+        .collect()
+}
+
 fn read_presets_from_dir(dir: &Path, source: &str, include_path: bool) -> Vec<PresetRecord> {
     if !dir.exists() {
         return Vec::new();
     }
 
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
 
@@ -97,7 +134,7 @@ fn read_presets_from_dir(dir: &Path, source: &str, include_path: bool) -> Vec<Pr
 }
 
 fn read_preset_description(path: &Path) -> Option<String> {
-    let content = fs::read_to_string(path).ok()?;
+    let content = std::fs::read_to_string(path).ok()?;
     let parsed: Value = match serde_yaml::from_str(&content) {
         Ok(parsed) => parsed,
         Err(error) => {

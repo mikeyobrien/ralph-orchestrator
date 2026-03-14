@@ -31,6 +31,7 @@ pub mod rpc_writer;
 pub mod state;
 pub mod state_mutations;
 pub mod text_renderer;
+pub mod update_check;
 pub mod widgets;
 
 use anyhow::{Context, Result};

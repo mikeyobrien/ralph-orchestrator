@@ -59,6 +59,6 @@ pub fn is_pid_alive(pid: u32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-pub fn now_ts() -> String {
+pub(crate) fn now_ts() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }

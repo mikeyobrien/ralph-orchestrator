@@ -36,6 +36,9 @@ colored.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 
+# BDD framework + Gherkin parser
+cucumber = "0.22.1"
+
 # Regex for parsing
 regex.workspace = true
 

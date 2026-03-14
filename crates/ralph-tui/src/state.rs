@@ -113,6 +113,17 @@ pub enum GuidanceResult {
     Failed,
 }
 
+/// Status of the background update check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateStatus {
+    /// No check result yet.
+    Unknown,
+    /// The running version matches the latest known release.
+    UpToDate,
+    /// A newer release is available.
+    Available { latest: String },
+}
+
 /// Observable state derived from loop events.
 pub struct TuiState {
     /// Which hat will process next event (ID + display name).
@@ -143,6 +154,8 @@ pub struct TuiState {
     pub max_iterations: Option<u32>,
     /// Idle timeout countdown.
     pub idle_timeout_remaining: Option<Duration>,
+    /// Status of the asynchronous update check.
+    pub update_status: UpdateStatus,
     /// Map of event topics to hat display information (for custom hats).
     /// Key: event topic (e.g., "review.security")
     /// Value: (HatId, display name including emoji)
@@ -238,6 +251,7 @@ impl TuiState {
             search_forward: true,
             max_iterations: None,
             idle_timeout_remaining: None,
+            update_status: UpdateStatus::Unknown,
             hat_map: HashMap::new(),
             // Iteration management
             iterations: Vec::new(),
@@ -285,6 +299,7 @@ impl TuiState {
             search_forward: true,
             max_iterations: None,
             idle_timeout_remaining: None,
+            update_status: UpdateStatus::Unknown,
             hat_map,
             // Iteration management
             iterations: Vec::new(),
@@ -357,7 +372,7 @@ impl TuiState {
                 self.pending_backend = saved_pending_backend;
                 self.guidance_next_queue = saved_guidance_next_queue;
                 self.events_path = saved_events_path;
-                if let Some((hat_id, hat_display)) = custom_hat.clone() {
+                if let Some((hat_id, hat_display)) = custom_hat {
                     self.pending_hat = Some((hat_id, hat_display));
                 } else {
                     self.pending_hat = Some((HatId::new("planner"), "📋Planner".to_string()));
@@ -855,6 +870,11 @@ impl TuiState {
                 None
             }
         })
+    }
+
+    /// Updates the cached result of the asynchronous version check.
+    pub fn set_update_status(&mut self, status: UpdateStatus) {
+        self.update_status = status;
     }
 }
 

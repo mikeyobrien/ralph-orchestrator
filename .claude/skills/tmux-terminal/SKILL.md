@@ -2,6 +2,8 @@
 name: tmux-terminal
 description: Interactive terminal control via tmux for TUI apps, prompts, and long-running CLI workflows.
 hats: [developer, qa_tester]
+metadata:
+  internal: true
 ---
 
 # tmux-terminal

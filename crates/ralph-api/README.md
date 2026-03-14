@@ -46,6 +46,15 @@ From repository root:
 cargo run -p ralph-api
 ```
 
+For the MCP server:
+
+```bash
+./target/debug/ralph mcp serve --workspace-root /path/to/repo
+```
+
+The MCP server is workspace-scoped. One server instance manages one workspace root for
+`ralph.yml`, `.ralph/api/*`, loops, planning sessions, and collections.
+
 Environment variables:
 
 - `RALPH_API_HOST` (default: `127.0.0.1`)

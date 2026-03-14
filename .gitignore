@@ -117,3 +117,5 @@ PROMPT.md
 
 # Codex local state
 .codex/
+.agents/
+.playwright-cli/

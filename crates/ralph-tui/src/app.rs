@@ -7,6 +7,7 @@
 use crate::input::{Action, map_key};
 use crate::rpc_writer::RpcWriter;
 use crate::state::TuiState;
+use crate::update_check;
 use crate::widgets::{content::ContentPane, footer, header, help};
 use anyhow::Result;
 use crossterm::{
@@ -153,6 +154,14 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
             let _ = disable_raw_mode();
             let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         }
+
+        let update_state = Arc::clone(&self.state);
+        tokio::spawn(async move {
+            let status = update_check::fetch_update_status().await;
+            if let Ok(mut state) = update_state.lock() {
+                state.set_update_status(status);
+            }
+        });
 
         // Event-driven architecture: input polling is the primary driver
         // Render is throttled to ~60fps via interval tick

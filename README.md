@@ -72,6 +72,24 @@ ralph web --frontend-port 8080         # custom frontend port
 ralph web --legacy-node-api            # opt into deprecated Node tRPC backend
 ```
 
+### MCP Server Workspace Scope
+
+`ralph mcp serve` is scoped to a single workspace root per server instance.
+
+```bash
+ralph mcp serve --workspace-root /path/to/repo
+```
+
+Precedence is:
+
+1. `--workspace-root`
+2. `RALPH_API_WORKSPACE_ROOT`
+3. current working directory
+
+For multi-repo use, run one MCP server instance per repo/workspace. Ralph's current
+control-plane APIs persist config, tasks, loops, planning sessions, and collections
+under a single workspace root, so server-per-workspace is the deterministic model.
+
 **Requirements:**
 - Rust toolchain (for `ralph-api`)
 - Node.js >= 18 + npm (for the frontend)
@@ -99,6 +117,16 @@ npm run dev:legacy-server  # deprecated Node backend (optional)
 npm run test             # all frontend/backend workspace tests
 ```
 
+## MCP Server Mode
+
+Ralph can run as an MCP server over stdio for MCP-compatible clients:
+
+```bash
+ralph mcp serve
+```
+
+Use this mode from an MCP client configuration rather than an interactive terminal workflow.
+
 ## What is Ralph?
 
 Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — autonomous task completion through continuous iteration. It supports:
@@ -107,7 +135,7 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 - **Hat System** — Specialized personas coordinating through events
 - **Backpressure** — Gates that reject incomplete work (tests, lint, typecheck)
 - **Memories & Tasks** — Persistent learning and runtime work tracking
-- **31 Presets** — TDD, spec-driven, debugging, and more
+- **5 Supported Builtins** — `code-assist`, `debug`, `research`, `review`, and `pdd-to-code-assist`, with more patterns documented as examples
 
 ## RObot (Human-in-the-Loop)
 

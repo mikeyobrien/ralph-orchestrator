@@ -10,6 +10,8 @@ use ralph_core::{RalphConfig, SkillRegistry};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+use crate::config_resolution;
+
 /// Output format for skill list command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 pub enum OutputFormat {
@@ -202,7 +204,7 @@ fn resolve_root(explicit_root: Option<PathBuf>) -> Result<PathBuf> {
 fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     let mut current = Some(start);
     while let Some(dir) = current {
-        if dir.join("ralph.yml").exists() || dir.join("ralph.yaml").exists() {
+        if config_resolution::find_workspace_config_path(dir).is_some() {
             return Some(dir.to_path_buf());
         }
         current = dir.parent();
@@ -271,20 +273,33 @@ fn resolve_configured_skills_dir(root: &Path, dir: &Path) -> PathBuf {
 
 /// Load config from workspace root, falling back to defaults.
 fn load_config(root: &Path) -> RalphConfig {
-    // Try standard config file names
-    let candidates = ["ralph.yml", "ralph.yaml"];
-    let mut config = None;
-    for candidate in &candidates {
-        let path = root.join(candidate);
-        if path.exists()
-            && let Ok(loaded) = RalphConfig::from_file(&path)
-        {
-            config = Some(loaded);
-            break;
+    let mut merged = match config_resolution::default_core_value() {
+        Ok(value) => value,
+        Err(_) => return RalphConfig::default(),
+    };
+
+    if let Ok(Some((user_value, _))) = config_resolution::load_optional_user_config_value() {
+        if let Ok(next) = config_resolution::merge_yaml_values(merged, user_value) {
+            merged = next;
+        } else {
+            return RalphConfig::default();
         }
     }
 
-    let mut config = config.unwrap_or_default();
+    if let Some(path) = config_resolution::find_workspace_config_path(root)
+        && let Ok(content) = std::fs::read_to_string(&path)
+        && let Ok(value) =
+            config_resolution::parse_yaml_value(&content, &path.display().to_string())
+    {
+        if let Ok(next) = config_resolution::merge_yaml_values(merged, value) {
+            merged = next;
+        } else {
+            return RalphConfig::default();
+        }
+    }
+
+    let mut config: RalphConfig = serde_yaml::from_value(merged).unwrap_or_default();
+
     config.normalize();
 
     if config.skills.dirs.is_empty() {

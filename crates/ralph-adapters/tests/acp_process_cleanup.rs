@@ -50,7 +50,7 @@ fn create_mock_acp_script(dir: &Path) -> String {
     let pid_file = dir.join("pids.txt");
 
     let script = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env bash
 # Spawn a child that simulates an MCP server (long-lived).
 # Redirect its stdio so it doesn't inherit the test's file descriptors
 # (which would keep cargo test's pipe open and prevent exit).

@@ -2,6 +2,8 @@
 name: playwriter
 description: Browser automation via Playwriter (remorses) using persistent Chrome sessions and the full Playwright Page API.
 hats: [developer, qa_tester]
+metadata:
+  internal: true
 ---
 
 # Playwriter

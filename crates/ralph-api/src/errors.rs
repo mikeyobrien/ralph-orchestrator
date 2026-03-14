@@ -49,6 +49,31 @@ impl RpcErrorCode {
             Self::BackpressureDropped => "BACKPRESSURE_DROPPED",
         }
     }
+
+    pub fn from_contract(value: &str) -> Option<Self> {
+        match value {
+            "INVALID_REQUEST" => Some(Self::InvalidRequest),
+            "METHOD_NOT_FOUND" => Some(Self::MethodNotFound),
+            "INVALID_PARAMS" => Some(Self::InvalidParams),
+            "UNAUTHORIZED" => Some(Self::Unauthorized),
+            "FORBIDDEN" => Some(Self::Forbidden),
+            "NOT_FOUND" => Some(Self::NotFound),
+            "CONFLICT" => Some(Self::Conflict),
+            "PRECONDITION_FAILED" => Some(Self::PreconditionFailed),
+            "RATE_LIMITED" => Some(Self::RateLimited),
+            "TIMEOUT" => Some(Self::Timeout),
+            "SERVICE_UNAVAILABLE" => Some(Self::ServiceUnavailable),
+            "INTERNAL" => Some(Self::Internal),
+            "TASK_NOT_FOUND" => Some(Self::TaskNotFound),
+            "LOOP_NOT_FOUND" => Some(Self::LoopNotFound),
+            "PLANNING_SESSION_NOT_FOUND" => Some(Self::PlanningSessionNotFound),
+            "COLLECTION_NOT_FOUND" => Some(Self::CollectionNotFound),
+            "CONFIG_INVALID" => Some(Self::ConfigInvalid),
+            "IDEMPOTENCY_CONFLICT" => Some(Self::IdempotencyConflict),
+            "BACKPRESSURE_DROPPED" => Some(Self::BackpressureDropped),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

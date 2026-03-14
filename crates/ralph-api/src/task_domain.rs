@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::ApiError;
+use crate::loop_support::now_ts;
 
 mod storage;
 
@@ -160,7 +161,7 @@ impl TaskDomain {
             )
             .with_details(serde_json::json!({
                 "taskId": params.id,
-                "status": requested_status.clone(),
+                "status": requested_status,
                 "autoExecute": auto_execute,
             })));
         }
@@ -525,8 +526,4 @@ fn task_not_found_error(task_id: &str) -> ApiError {
 
 fn is_terminal_status(status: &str) -> bool {
     matches!(status, "closed" | "failed")
-}
-
-fn now_ts() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }

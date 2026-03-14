@@ -1,9 +1,10 @@
-use crate::state::TuiState;
+use crate::state::{TuiState, UpdateStatus};
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
 // ============================================================================
 // Width Breakpoints for Priority-Based Progressive Disclosure
@@ -31,17 +32,17 @@ const WIDTH_MINIMAL: u16 = 40; // Hide idle countdown
 /// At narrower terminal widths, lower-priority components are hidden or compressed
 /// to ensure critical information (iteration, mode) remains visible.
 pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
-    let mut spans = vec![];
+    let mut left_spans = vec![];
 
     // Priority 1: Iteration counter or status indicator - ALWAYS shown
     if state.subprocess_error.is_some() {
-        spans.push(Span::styled(
+        left_spans.push(Span::styled(
             "[ERROR]".to_string(),
             Style::default().fg(Color::Red),
         ));
     } else if state.iterations.is_empty() && state.last_event.is_none() {
         // No events received yet — subprocess RPC connection not established
-        spans.push(Span::styled(
+        left_spans.push(Span::styled(
             "[connecting]".to_string(),
             Style::default().fg(Color::DarkGray),
         ));
@@ -54,7 +55,7 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
         let total_iterations = state.total_iterations() as u32;
         let total_display = state.max_iterations.unwrap_or(total_iterations);
         let iter_display = format!("[iter {}/{}]", current, total_display);
-        spans.push(Span::raw(iter_display));
+        left_spans.push(Span::raw(iter_display));
     }
 
     // Priority 4: Elapsed time (iteration) - hidden at WIDTH_COMPRESS and below
@@ -64,11 +65,11 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
         let total_secs = elapsed.as_secs();
         let mins = total_secs / 60;
         let secs = total_secs % 60;
-        spans.push(Span::raw(format!(" {mins:02}:{secs:02}")));
+        left_spans.push(Span::raw(format!(" {mins:02}:{secs:02}")));
     }
 
     // Priority 3: Hat display - compressed at WIDTH_COMPRESS and below
-    spans.push(Span::raw(" | "));
+    left_spans.push(Span::raw(" | "));
     let iteration_finished = state.current_iteration().and_then(|b| b.elapsed).is_some();
     let hat_display = if iteration_finished && state.pending_hat.is_some() {
         // Iteration done and next hat is known — show it instead of the stale frozen hat
@@ -89,23 +90,23 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
     };
     if width > WIDTH_COMPRESS {
         // Full hat display: "🔨 Builder"
-        spans.push(Span::raw(hat_with_backend));
+        left_spans.push(Span::raw(hat_with_backend));
     } else {
         // Compressed: emoji only (first character cluster)
         let emoji = hat_display.chars().next().unwrap_or('?');
-        spans.push(Span::raw(emoji.to_string()));
+        left_spans.push(Span::raw(emoji.to_string()));
     }
 
     // Priority 5: Idle countdown - hidden at WIDTH_MINIMAL and below
     if let Some(idle) = state.idle_timeout_remaining
         && width > WIDTH_MINIMAL
     {
-        spans.push(Span::raw(format!(" | idle: {}s", idle.as_secs())));
+        left_spans.push(Span::raw(format!(" | idle: {}s", idle.as_secs())));
     }
 
     // Priority 2: Mode indicator - ALWAYS shown (compressed at WIDTH_COMPRESS and below)
     // Shows [LIVE] when following latest iteration, [REVIEW] when viewing history
-    spans.push(Span::raw(" | "));
+    left_spans.push(Span::raw(" | "));
     let mode = if state.following_latest {
         if width > WIDTH_COMPRESS {
             Span::styled("[LIVE]", Style::default().fg(Color::Green))
@@ -117,28 +118,66 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
     } else {
         Span::styled("◀", Style::default().fg(Color::Yellow))
     };
-    spans.push(mode);
+    left_spans.push(mode);
 
     // Priority 3: Scroll indicator - compressed at WIDTH_COMPRESS and below
     if state.in_scroll_mode {
         if width > WIDTH_COMPRESS {
-            spans.push(Span::styled(" [SCROLL]", Style::default().fg(Color::Cyan)));
+            left_spans.push(Span::styled(" [SCROLL]", Style::default().fg(Color::Cyan)));
         } else {
-            spans.push(Span::styled(" [S]", Style::default().fg(Color::Cyan)));
+            left_spans.push(Span::styled(" [S]", Style::default().fg(Color::Cyan)));
         }
     }
 
     // Priority 6: Help hint - shown only at WIDTH_FULL (80+)
     if width >= WIDTH_FULL {
-        spans.push(Span::styled(
+        left_spans.push(Span::styled(
             " | ? help",
             Style::default().fg(Color::DarkGray),
         ));
     }
 
+    let left_width = spans_width(&left_spans);
+    let mut spans = left_spans;
+    if let Some(right_spans) = update_badge_spans(state, width, left_width) {
+        let gap = width as usize - left_width - spans_width(&right_spans);
+        spans.push(Span::raw(" ".repeat(gap)));
+        spans.extend(right_spans);
+    }
+
     let line = Line::from(spans);
     let block = Block::default().borders(Borders::BOTTOM);
     Paragraph::new(line).block(block)
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum()
+}
+
+fn update_badge_spans(
+    state: &TuiState,
+    width: u16,
+    left_width: usize,
+) -> Option<Vec<Span<'static>>> {
+    let UpdateStatus::Available { latest } = &state.update_status else {
+        return None;
+    };
+
+    let style = Style::default().fg(Color::Yellow);
+    let candidates = [
+        (width >= WIDTH_FULL, format!("[update {latest}]")),
+        (width >= WIDTH_HIDE_HELP, format!("[↑ {latest}]")),
+        (width > WIDTH_MINIMAL, "↑".to_string()),
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|(allowed, _)| *allowed)
+        .map(|(_, label)| vec![Span::styled(label, style)])
+        .find(|candidate| left_width + 1 + spans_width(candidate) <= width as usize)
 }
 
 #[cfg(test)]
@@ -769,6 +808,80 @@ mod tests {
         assert!(
             text.contains("[ERROR]"),
             "should show [ERROR] when subprocess died, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn header_shows_full_update_badge_on_wide_terminal() {
+        let mut state = TuiState::new();
+        state.start_new_iteration();
+        state.update_status = UpdateStatus::Available {
+            latest: "2.8.0".to_string(),
+        };
+
+        let text = render_to_string_with_width(&state, 80);
+        assert!(
+            text.contains("[update 2.8.0]"),
+            "should show full update badge at wide widths, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn header_compresses_update_badge_on_medium_terminal() {
+        let mut state = TuiState::new();
+        state.start_new_iteration();
+        state.update_status = UpdateStatus::Available {
+            latest: "2.8.0".to_string(),
+        };
+
+        let text = render_to_string_with_width(&state, 65);
+        assert!(
+            text.contains("[↑ 2.8.0]"),
+            "should show compact update badge at medium widths, got: {}",
+            text
+        );
+        assert!(
+            !text.contains("[update 2.8.0]"),
+            "should not show full badge at medium widths, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn header_shows_update_icon_on_narrow_terminal() {
+        let mut state = TuiState::new();
+        state.start_new_iteration();
+        state.update_status = UpdateStatus::Available {
+            latest: "2.8.0".to_string(),
+        };
+
+        let text = render_to_string_with_width(&state, 45);
+        assert!(
+            text.contains('↑'),
+            "should show icon-only update indicator on narrow widths, got: {}",
+            text
+        );
+        assert!(
+            !text.contains("2.8.0"),
+            "should hide version text on narrow widths, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn header_hides_update_badge_when_too_narrow() {
+        let mut state = TuiState::new();
+        state.start_new_iteration();
+        state.update_status = UpdateStatus::Available {
+            latest: "2.8.0".to_string(),
+        };
+
+        let text = render_to_string_with_width(&state, 18);
+        assert!(
+            !text.contains('↑') && !text.contains("update"),
+            "should hide update indicator when terminal is too narrow, got: {}",
             text
         );
     }

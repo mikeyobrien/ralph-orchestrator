@@ -4,12 +4,13 @@ mod rpc_side_effects;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 use crate::errors::ApiError;
+use crate::loop_support::now_ts;
 use crate::protocol::{API_VERSION, STREAM_NAME, STREAM_TOPICS};
 
 use self::filters::{
@@ -117,7 +118,7 @@ impl StreamDomain {
         let (live_tx, _) = broadcast::channel(LIVE_BUFFER_CAPACITY);
         Self {
             state: Arc::new(Mutex::new(StreamState {
-                sequence: 0,
+                sequence: 1,
                 subscription_counter: 0,
                 history: VecDeque::with_capacity(HISTORY_LIMIT),
                 subscriptions: HashMap::new(),
@@ -243,6 +244,32 @@ impl StreamDomain {
         subscription.matches(event)
     }
 
+    pub fn subscription_cursor_sequence(&self, subscription_id: &str) -> Result<u64, ApiError> {
+        let state = self.lock_state()?;
+        let Some(subscription) = state.subscriptions.get(subscription_id) else {
+            return Err(ApiError::not_found(format!(
+                "subscription '{}' not found",
+                subscription_id
+            ))
+            .with_details(json!({ "subscriptionId": subscription_id })));
+        };
+
+        cursor_sequence(&subscription.cursor)
+    }
+
+    pub fn subscription_cursor(&self, subscription_id: &str) -> Result<String, ApiError> {
+        let state = self.lock_state()?;
+        let Some(subscription) = state.subscriptions.get(subscription_id) else {
+            return Err(ApiError::not_found(format!(
+                "subscription '{}' not found",
+                subscription_id
+            ))
+            .with_details(json!({ "subscriptionId": subscription_id })));
+        };
+
+        Ok(subscription.cursor.clone())
+    }
+
     pub fn replay_for_subscription(&self, subscription_id: &str) -> Result<ReplayBatch, ApiError> {
         let state = self.lock_state()?;
         let Some(subscription) = state.subscriptions.get(subscription_id) else {
@@ -254,10 +281,14 @@ impl StreamDomain {
         };
 
         let cursor_sequence = cursor_sequence(&subscription.cursor)?;
+        let current_cursor = subscription.cursor.clone();
         let mut events = state
             .history
             .iter()
-            .filter(|event| event.sequence > cursor_sequence)
+            .filter(|event| {
+                event.sequence > cursor_sequence
+                    || (event.sequence == cursor_sequence && event.cursor != current_cursor)
+            })
             .filter(|event| subscription.matches(event))
             .cloned()
             .collect::<Vec<_>>();
@@ -457,8 +488,4 @@ fn next_event(
         },
         payload,
     }
-}
-
-fn now_ts() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }

@@ -9,7 +9,7 @@ use tracing::debug;
 
 /// Default priority order for backend detection.
 pub const DEFAULT_PRIORITY: &[&str] = &[
-    "claude", "kiro", "kiro-acp", "gemini", "codex", "amp", "copilot", "opencode", "pi",
+    "claude", "kiro", "kiro-acp", "gemini", "codex", "amp", "copilot", "opencode", "pi", "roo",
 ];
 
 /// Maps backend config names to their actual CLI command names.
@@ -60,6 +60,7 @@ impl std::fmt::Display for NoBackendError {
             f,
             "  • Pi CLI:       https://github.com/anthropics/pi-coding-agent"
         )?;
+        writeln!(f, "  • Roo CLI:      https://github.com/RooVetGit/Roo-Code")?;
         Ok(())
     }
 }
@@ -210,6 +211,7 @@ mod tests {
         assert_eq!(detection_command("codex"), "codex");
         assert_eq!(detection_command("amp"), "amp");
         assert_eq!(detection_command("pi"), "pi");
+        assert_eq!(detection_command("roo"), "roo");
     }
 
     #[test]
@@ -221,12 +223,35 @@ mod tests {
     }
 
     #[test]
-    fn test_default_priority_pi_is_last() {
+    fn test_default_priority_pi_is_second_to_last() {
+        let len = DEFAULT_PRIORITY.len();
+        assert_eq!(
+            DEFAULT_PRIORITY[len - 2],
+            "pi",
+            "Pi should be second-to-last in DEFAULT_PRIORITY"
+        );
+    }
+
+    #[test]
+    fn test_default_priority_includes_roo() {
+        assert!(
+            DEFAULT_PRIORITY.contains(&"roo"),
+            "DEFAULT_PRIORITY should include 'roo'"
+        );
+    }
+
+    #[test]
+    fn test_default_priority_roo_is_last() {
         assert_eq!(
             DEFAULT_PRIORITY.last(),
-            Some(&"pi"),
-            "Pi should be the last entry in DEFAULT_PRIORITY"
+            Some(&"roo"),
+            "Roo should be the last entry in DEFAULT_PRIORITY"
         );
+    }
+
+    #[test]
+    fn test_detection_command_roo() {
+        assert_eq!(detection_command("roo"), "roo");
     }
 
     #[test]

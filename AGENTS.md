@@ -33,7 +33,7 @@ npm run test:server                          # Backend tests
 ```
 ralph-cli      → CLI entry point, commands (run, plan, task, loops, web)
 ralph-core     → Orchestration logic, event loop, hats, memories, tasks
-ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, etc.)
+ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, Roo, etc.)
 ralph-telegram → Telegram bot for human-in-the-loop communication
 ralph-tui      → Terminal UI (ratatui-based)
 ralph-e2e      → End-to-end test framework
@@ -233,6 +233,7 @@ ralph clean --diagnostics
 - Run `cargo test` before declaring any task done
 - Backwards compatibility doesn't matter — it adds clutter for no reason
 - Prefer replay-based smoke tests over live API calls for CI
+- BDD/Cucumber tests MUST exercise real runtime code paths via integration tests (not placeholder/source-only assertions)
 - Run python tests using a .venv
 - You MUST not commit ephemeral files
 - When I ask you to view something that means to use playwright/chrome tools to go view it.

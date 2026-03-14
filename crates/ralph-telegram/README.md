@@ -54,6 +54,8 @@ Available commands while a loop is running:
 - `/tasks` — open tasks
 - `/memories` — recent memories
 - `/tail` — last 20 events
+- `/model` — current backend/model (runtime or config fallback)
+- `/models` — configured model options found in `ralph*.yml`
 - `/restart` — restart the loop
 - `/stop` — stop the loop at the next iteration boundary
 - `/help` — list available commands

@@ -18,7 +18,7 @@ exclude = [
 
 [workspace.package]
 edition = "2024"
-version = "2.6.0"
+version = "2.8.0"
 license = "MIT"
 repository = "https://github.com/mikeyobrien/ralph-orchestrator"
 homepage = "https://github.com/mikeyobrien/ralph-orchestrator"
@@ -83,6 +83,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 # Async stream utilities
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["compat"] }
+rmcp = { version = "1.1.0", default-features = false, features = ["server", "client", "transport-io"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -138,15 +139,15 @@ scopeguard = "1"
 strip-ansi-escapes = "0.2"
 
 # Internal crates (version required for crates.io publishing)
-ralph-proto = { version = "2.6.0", path = "crates/ralph-proto" }
-ralph-core = { version = "2.6.0", path = "crates/ralph-core", features = ["recording"] }
-ralph-adapters = { version = "2.6.0", path = "crates/ralph-adapters" }
-ralph-tui = { version = "2.6.0", path = "crates/ralph-tui" }
-ralph-cli = { version = "2.6.0", path = "crates/ralph-cli" }
-ralph-bench = { version = "2.6.0", path = "crates/ralph-bench" }
-ralph-e2e = { version = "2.6.0", path = "crates/ralph-e2e" }
-ralph-telegram = { version = "2.6.0", path = "crates/ralph-telegram" }
-ralph-api = { version = "2.6.0", path = "crates/ralph-api" }
+ralph-proto = { version = "2.8.0", path = "crates/ralph-proto" }
+ralph-core = { version = "2.8.0", path = "crates/ralph-core", features = ["recording"] }
+ralph-adapters = { version = "2.8.0", path = "crates/ralph-adapters" }
+ralph-tui = { version = "2.8.0", path = "crates/ralph-tui" }
+ralph-cli = { version = "2.8.0", path = "crates/ralph-cli" }
+ralph-bench = { version = "2.8.0", path = "crates/ralph-bench" }
+ralph-e2e = { version = "2.8.0", path = "crates/ralph-e2e" }
+ralph-telegram = { version = "2.8.0", path = "crates/ralph-telegram" }
+ralph-api = { version = "2.8.0", path = "crates/ralph-api" }
 
 # Telegram bot framework
 teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }

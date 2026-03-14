@@ -1,6 +1,8 @@
 ---
 name: review-pr
 description: Use when asked to review a PR, run a code review loop, or invoke the ralph reviewer against a pull request number or GitHub URL
+metadata:
+  internal: true
 ---
 
 # Review PR

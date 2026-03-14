@@ -1,11 +1,11 @@
 use std::sync::OnceLock;
 
-use chrono::{SecondsFormat, Utc};
 use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::errors::ApiError;
+use crate::loop_support::now_ts;
 
 pub const API_VERSION: &str = "v1";
 pub const STREAM_NAME: &str = "events.v1";
@@ -228,10 +228,6 @@ fn response_meta(served_by: &str) -> ResponseMeta {
         served_by: served_by.to_string(),
         served_at: now_ts(),
     }
-}
-
-fn now_ts() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn request_schema_validator() -> &'static JSONSchema {

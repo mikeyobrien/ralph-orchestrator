@@ -135,10 +135,7 @@ fn bot_token_set(args: SetTokenArgs, use_colors: bool) -> Result<()> {
     }
 
     let has_config = args.config.is_some();
-    let config_path = args
-        .config
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("ralph.yml"));
+    let config_path = args.config.unwrap_or_else(|| PathBuf::from("ralph.yml"));
 
     let should_write_config = has_config || !keychain_ok;
     if should_write_config {
