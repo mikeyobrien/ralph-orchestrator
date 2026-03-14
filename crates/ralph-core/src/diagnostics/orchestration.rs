@@ -15,11 +15,47 @@ pub struct OrchestrationEntry {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OrchestrationEvent {
     IterationStarted,
-    HatSelected { hat: String, reason: String },
-    EventPublished { topic: String },
-    BackpressureTriggered { reason: String },
-    LoopTerminated { reason: String },
-    TaskAbandoned { reason: String },
+    HatSelected {
+        hat: String,
+        reason: String,
+    },
+    EventPublished {
+        topic: String,
+    },
+    BackpressureTriggered {
+        reason: String,
+    },
+    LoopTerminated {
+        reason: String,
+    },
+    TaskAbandoned {
+        reason: String,
+    },
+    WaveStarted {
+        wave_id: String,
+        expected_total: u32,
+        worker_hat: String,
+        concurrency: u32,
+    },
+    WaveInstanceCompleted {
+        wave_id: String,
+        index: u32,
+        duration_ms: u64,
+        cost_usd: f64,
+    },
+    WaveInstanceFailed {
+        wave_id: String,
+        index: u32,
+        error: String,
+        duration_ms: u64,
+    },
+    WaveCompleted {
+        wave_id: String,
+        total_results: u32,
+        total_failures: u32,
+        timed_out: bool,
+        duration_ms: u64,
+    },
 }
 
 pub struct OrchestrationLogger {
@@ -81,6 +117,31 @@ mod tests {
             },
             OrchestrationEvent::TaskAbandoned {
                 reason: "max_iterations".to_string(),
+            },
+            OrchestrationEvent::WaveStarted {
+                wave_id: "w-abc12345".to_string(),
+                expected_total: 3,
+                worker_hat: "reviewer".to_string(),
+                concurrency: 4,
+            },
+            OrchestrationEvent::WaveInstanceCompleted {
+                wave_id: "w-abc12345".to_string(),
+                index: 0,
+                duration_ms: 5000,
+                cost_usd: 0.05,
+            },
+            OrchestrationEvent::WaveInstanceFailed {
+                wave_id: "w-abc12345".to_string(),
+                index: 1,
+                error: "backend timeout".to_string(),
+                duration_ms: 30000,
+            },
+            OrchestrationEvent::WaveCompleted {
+                wave_id: "w-abc12345".to_string(),
+                total_results: 2,
+                total_failures: 1,
+                timed_out: false,
+                duration_ms: 35000,
             },
         ];
 
