@@ -53,6 +53,20 @@ clean:
 ci: fmt-check lint embedded-check test
     @echo "✅ CI checks passed"
 
+# Run tests with coverage report (local only, never in CI)
+coverage:
+    cargo llvm-cov --all-features --workspace --html --output-dir coverage
+    @echo ""
+    @echo "📊 Coverage report: coverage/html/index.html"
+
+# Quick coverage summary without HTML report
+coverage-summary:
+    cargo llvm-cov --all-features --workspace --summary-only
+
+# Run coverage and open report in browser
+coverage-open: coverage
+    open coverage/html/index.html 2>/dev/null || xdg-open coverage/html/index.html 2>/dev/null || echo "Open coverage/html/index.html manually"
+
 # Calibrated hooks mutation rollout threshold (see docs/06-analysis/hooks-mutation-baseline-2026-03-01.md)
 HOOKS_MUTATION_THRESHOLD := "55"
 

@@ -20,6 +20,19 @@ jobs:
       - name: Check embedded files are in sync
         run: ./scripts/sync-embedded-files.sh check
 
+  # Format check: no compile needed, runs in seconds
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -30,18 +43,20 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: Build ralph binary
-        run: cargo build --bin ralph
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Run tests
         run: cargo test -- --skip acp_executor::tests::test_create_terminal_and_output
       - name: Run hooks BDD gate
         run: ./scripts/hooks-bdd-gate.sh
-      - name: Build ralph-e2e
-        run: cargo build --release -p ralph-e2e
       - name: Run mock E2E tests
-        run: ./target/release/ralph-e2e --mock --skip-analysis || true
+        run: |
+          cargo build -p ralph-e2e
+          ./target/debug/ralph-e2e --mock --skip-analysis || true
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -53,8 +68,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  # Clippy and Format checks moved to lint.yml (runs automatically on fork PRs
-  # via pull_request_target, no maintainer approval needed)
+  # Clippy and Format checks also run in lint.yml on fork PRs
+  # (pull_request_target, no secrets needed for fmt-only)
 
   web-tests:
     name: Web Tests

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the full CI gate locally before pushing.
+# This catches test failures before they burn CI minutes.
+#
+# Mirrors the CI test job: embedded-check + clippy + test + BDD gate.
+# Skips: web-tests (npm), package-check, E2E (heavy, best left to CI).
+#
+# Skip with: git push --no-verify
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+# Hooks inherit Git env vars (GIT_DIR/GIT_INDEX_FILE/etc.).
+# Unset them so nested `git` calls in tests run against their own repos.
+while IFS= read -r git_env_var; do
+  unset "$git_env_var"
+done < <(git rev-parse --local-env-vars)
+
+# Prefer CI-equivalent toolchain selection when possible.
+TOOLCHAIN_MODE="path"
+
+if command -v rustup >/dev/null 2>&1; then
+  TOOLCHAIN_MODE="rustup"
+fi
+
+run_cargo() {
+  if [[ "$TOOLCHAIN_MODE" == "rustup" ]]; then
+    rustup run stable cargo "$@"
+  else
+    cargo "$@"
+  fi
+}
+
+run_check() {
+  local label="$1"
+  shift
+
+  echo ""
+  echo "🔍 ${label}..."
+  if ! "$@"; then
+    echo ""
+    echo "❌ ${label} failed! Push aborted."
+    echo "   Fix the issue or skip with: git push --no-verify"
+    exit 1
+  fi
+  echo "✅ ${label} passed"
+}
+
+run_check "Embedded files sync check" ./scripts/sync-embedded-files.sh check
+run_check "Clippy (all targets/features, warnings as errors)" run_cargo clippy --all-targets --all-features -- -D warnings
+run_check "Tests (cargo test)" run_cargo test
+run_check "Hooks BDD gate" ./scripts/hooks-bdd-gate.sh
+
+echo ""
+echo "🎉 All pre-push checks passed!"

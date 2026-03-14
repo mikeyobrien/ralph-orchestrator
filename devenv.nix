@@ -10,6 +10,7 @@
     just
     cargo-watch
     cargo-nextest
+    cargo-llvm-cov
     nodejs_22
     pkg-config
     openssl
@@ -20,7 +21,7 @@
   languages.rust = {
     enable = true;
     channel = "stable";
-    components = [ "rustc" "cargo" "clippy" "rustfmt" "rust-analyzer" ];
+    components = [ "rustc" "cargo" "clippy" "rustfmt" "rust-analyzer" "llvm-tools-preview" ];
   };
 
   # https://devenv.sh/processes/
@@ -39,6 +40,7 @@
     echo "  just lint      - Run clippy"
     echo "  just test      - Run tests"
     echo "  just build     - Build release binary"
+    echo "  just coverage  - Run tests with coverage report"
     echo "  verify         - Run full test suite + smoke tests"
   '';
 

@@ -1,8 +1,8 @@
-name: Lint
+name: Lint (Fork PRs)
 
 # Runs automatically on all PRs including forks (no approval needed).
-# Safe because: no secrets, no write permissions, fmt doesn't compile code.
-# Clippy does compile — permissions are locked down to limit blast radius.
+# Only format checking here — no compile, no secrets, minimal blast radius.
+# Clippy has been moved into ci.yml to share the compilation cache with tests.
 
 on:
   pull_request_target:
@@ -29,23 +29,3 @@ jobs:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings

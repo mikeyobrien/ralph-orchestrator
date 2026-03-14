@@ -20,7 +20,7 @@ This project and everyone participating in it is governed by the [Code of Conduc
 git clone https://github.com/mikeyobrien/ralph-orchestrator.git
 cd ralph-orchestrator
 
-# Install git hooks for pre-commit checks
+# Install git hooks for pre-commit and pre-push checks
 ./scripts/setup-hooks.sh
 
 # Build the project
@@ -103,11 +103,26 @@ cargo test
 # Run smoke tests (replay-based, no API calls)
 cargo test -p ralph-core smoke_runner
 
-# Run with coverage
-cargo tarpaulin --out Html --output-dir coverage --skip-clean
+# Run with coverage (local only — uses cargo-llvm-cov)
+just coverage          # Full HTML report → coverage/html/index.html
+just coverage-summary  # Quick terminal summary
+just coverage-open     # Generate and open in browser
 ```
 
 **Important**: Always run smoke tests after making code changes. Smoke tests use recorded fixtures and are fast, free, and deterministic.
+
+### Coverage
+
+Coverage runs locally only — it is intentionally not part of CI to keep PR feedback fast and cheap. We use `cargo-llvm-cov` (included in the devenv shell) which instruments the same compilation that `cargo test` already does, so there's no separate build penalty.
+
+```bash
+# Install manually if not using devenv
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+
+# Generate coverage
+just coverage
+```
 
 ### Project Structure
 
