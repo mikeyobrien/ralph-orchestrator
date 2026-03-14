@@ -819,6 +819,11 @@ fn execute_reopen(args: ReopenArgs, root: Option<&PathBuf>, use_colors: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn normalize_test_path(path: &std::path::Path) -> String {
+        path.to_string_lossy().replace("/private/var/", "/var/")
+    }
+
     use crate::test_support::CwdGuard;
     use std::path::Path;
     use tempfile::TempDir;
@@ -903,6 +908,8 @@ mod tests {
         std::fs::create_dir_all(&nested).expect("nested dir");
         let _cwd = CwdGuard::set(&nested);
 
-        assert_eq!(get_tasks_path(None), root.join(".ralph/agent/tasks.jsonl"));
+        let actual = get_tasks_path(None);
+        let expected = root.join(".ralph/agent/tasks.jsonl");
+        assert_eq!(normalize_test_path(&actual), normalize_test_path(&expected));
     }
 }

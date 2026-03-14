@@ -17,6 +17,12 @@ pub struct EventSignature {
     pub payload_fingerprint: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PhaseLockState {
+    pub requirements_locked: bool,
+    pub design_locked: bool,
+}
+
 /// Current state of the event loop.
 #[derive(Debug)]
 pub struct LoopState {
@@ -70,6 +76,12 @@ pub struct LoopState {
 
     /// Set to true when a loop.cancel event is detected.
     pub cancellation_requested: bool,
+
+    /// Last accepted handoff signature per logical handoff lane (`topic:task_key`).
+    pub handoff_signatures: HashMap<String, u64>,
+
+    /// Monotonic workflow phase locks keyed by shared task-key prefix.
+    pub phase_locks: HashMap<String, PhaseLockState>,
 }
 
 impl Default for LoopState {
@@ -95,6 +107,8 @@ impl Default for LoopState {
             last_emitted_signature: None,
             consecutive_same_signature: 0,
             cancellation_requested: false,
+            handoff_signatures: HashMap::new(),
+            phase_locks: HashMap::new(),
         }
     }
 }

@@ -429,6 +429,118 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
     Ok(())
 }
 
+fn ensure_file_exists(path: &Path) -> anyhow::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    std::fs::write(path, "")?;
+    Ok(())
+}
+
+fn maybe_resolve_bootstrap_prompt_path(
+    workspace_root: &Path,
+    config: &RalphConfig,
+) -> Option<PathBuf> {
+    let inline_prompt = config.event_loop.prompt.as_deref()?.trim();
+    if inline_prompt.is_empty() || inline_prompt.contains('\n') {
+        return None;
+    }
+
+    let candidate = Path::new(inline_prompt);
+    let resolved = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        workspace_root.join(candidate)
+    };
+
+    resolved.is_file().then_some(resolved)
+}
+
+fn bootstrap_prompt_artifacts_for_worktree(
+    source_workspace_root: &Path,
+    target_workspace_root: &Path,
+    config: &RalphConfig,
+) -> anyhow::Result<()> {
+    let Some(source_prompt_path) =
+        maybe_resolve_bootstrap_prompt_path(source_workspace_root, config)
+    else {
+        return Ok(());
+    };
+
+    let relative_prompt_path = match source_prompt_path.strip_prefix(source_workspace_root) {
+        Ok(path) => path,
+        Err(_) => return Ok(()),
+    };
+
+    let target_prompt_path = target_workspace_root.join(relative_prompt_path);
+
+    let implementation_root = Path::new(".agents")
+        .join("scratchpad")
+        .join("implementation");
+    let source_copy_root = relative_prompt_path
+        .strip_prefix(&implementation_root)
+        .ok()
+        .and_then(|suffix| {
+            suffix.components().next().map(|component| {
+                source_workspace_root
+                    .join(&implementation_root)
+                    .join(component)
+            })
+        })
+        .unwrap_or(source_prompt_path.clone());
+
+    if source_copy_root.is_dir() {
+        copy_dir_recursive(
+            &source_copy_root,
+            &target_workspace_root.join(
+                source_copy_root
+                    .strip_prefix(source_workspace_root)
+                    .expect("copy root is under workspace"),
+            ),
+        )?;
+    } else {
+        if let Some(parent) = target_prompt_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&source_prompt_path, &target_prompt_path)?;
+    }
+
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)?;
+
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let source_path = entry.path();
+        let target_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else {
+            if let Some(parent) = target_path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(&source_path, &target_path)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Loads configuration from file sources with override support.
 ///
 /// This is the common sync path used by resume_command and clean_command.
@@ -1539,7 +1651,7 @@ async fn run_command(
     // Try to acquire the loop lock for multi-loop concurrency support
     // This implements the lock detection flow from the multi-loop spec
     // Skip lock acquisition in subprocess TUI mode - let the child acquire it
-    let workspace_root = &config.core.workspace_root;
+    let workspace_root = config.core.workspace_root.clone();
     let (loop_context, _lock_guard) = if use_subprocess_tui {
         // In subprocess TUI mode, don't acquire lock here - the child RPC process will do it
         // This avoids the self-lock contention where parent holds lock and child sees it,
@@ -1548,7 +1660,7 @@ async fn run_command(
         let context = LoopContext::primary(workspace_root.clone());
         (context, None)
     } else {
-        match LoopLock::try_acquire(workspace_root, &prompt_summary) {
+        match LoopLock::try_acquire(&workspace_root, &prompt_summary) {
             Ok(guard) => {
                 // We're the primary loop - run in place
                 debug!("Acquired loop lock, running as primary loop");
@@ -1563,7 +1675,7 @@ async fn run_command(
                         "Loop lock held by PID {} (started {}), waiting for lock (--exclusive mode)...",
                         existing.pid, existing.started
                     );
-                    let guard = LoopLock::acquire_blocking(workspace_root, &prompt_summary)
+                    let guard = LoopLock::acquire_blocking(&workspace_root, &prompt_summary)
                         .context("Failed to acquire loop lock in exclusive mode")?;
                     debug!("Acquired loop lock after waiting");
                     let context = LoopContext::primary(workspace_root.clone());
@@ -1592,15 +1704,15 @@ async fn run_command(
                     let name_generator =
                         ralph_core::LoopNameGenerator::from_config(&config.features.loop_naming);
                     let loop_id = name_generator.generate_memorable_unique(|name| {
-                        ralph_core::worktree_exists(workspace_root, name, &worktree_config)
+                        ralph_core::worktree_exists(&workspace_root, name, &worktree_config)
                     });
 
                     // Ensure worktree directory is in .gitignore
-                    ensure_gitignore(workspace_root, ".worktrees")
+                    ensure_gitignore(&workspace_root, ".worktrees")
                         .context("Failed to update .gitignore for worktrees")?;
 
                     // Create the worktree
-                    let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
+                    let worktree = create_worktree(&workspace_root, &loop_id, &worktree_config)
                         .context("Failed to create worktree for parallel loop")?;
 
                     info!(
@@ -1671,6 +1783,13 @@ async fn run_command(
     loop_context
         .ensure_directories()
         .context("Failed to create loop directories")?;
+    ensure_file_exists(&loop_context.scratchpad_path())
+        .context("Failed to bootstrap loop scratchpad")?;
+
+    if !loop_context.is_primary() {
+        bootstrap_prompt_artifacts_for_worktree(&workspace_root, loop_context.workspace(), &config)
+            .context("Failed to bootstrap worktree prompt artifacts")?;
+    }
 
     if let Err(err) = run_auto_preflight(
         &config,
@@ -2973,7 +3092,8 @@ mod tests {
         std::fs::create_dir_all(&nested).expect("nested dir");
         let _cwd = CwdGuard::set(&nested);
 
-        assert_eq!(resolve_workspace_root(None), temp_dir.path().to_path_buf());
+        let expected_root = std::fs::canonicalize(temp_dir.path()).expect("canonical root");
+        assert_eq!(resolve_workspace_root(None), expected_root);
     }
 
     #[test]
@@ -3419,6 +3539,124 @@ core:
 
         // Assert: returns "[no prompt]" for missing file
         assert_eq!(prompt_summary, "[no prompt]");
+    }
+
+    #[test]
+    fn test_ensure_file_exists_bootstraps_missing_scratchpad_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let scratchpad_path = temp_dir.path().join(".ralph/agent/scratchpad.md");
+
+        ensure_file_exists(&scratchpad_path).expect("bootstrap scratchpad");
+
+        assert!(scratchpad_path.exists());
+        assert_eq!(std::fs::read_to_string(&scratchpad_path).unwrap(), "");
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_artifacts_for_worktree_copies_implementation_packet() {
+        let source_root = tempfile::tempdir().unwrap();
+        let target_root = tempfile::tempdir().unwrap();
+        let implementation_dir = source_root
+            .path()
+            .join(".agents/scratchpad/implementation/preset-loop-hygiene");
+
+        std::fs::create_dir_all(&implementation_dir).unwrap();
+        std::fs::write(
+            implementation_dir.join("next-slice.md"),
+            "restore bootstrap",
+        )
+        .unwrap();
+        std::fs::write(implementation_dir.join("context.md"), "context").unwrap();
+        std::fs::write(implementation_dir.join("plan.md"), "plan").unwrap();
+        std::fs::write(implementation_dir.join("progress.md"), "progress").unwrap();
+
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt =
+            Some(".agents/scratchpad/implementation/preset-loop-hygiene/next-slice.md".to_string());
+
+        bootstrap_prompt_artifacts_for_worktree(source_root.path(), target_root.path(), &config)
+            .expect("copy implementation packet");
+
+        let copied_dir = target_root
+            .path()
+            .join(".agents/scratchpad/implementation/preset-loop-hygiene");
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("next-slice.md")).unwrap(),
+            "restore bootstrap"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("context.md")).unwrap(),
+            "context"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("plan.md")).unwrap(),
+            "plan"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("progress.md")).unwrap(),
+            "progress"
+        );
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_artifacts_for_worktree_copies_packet_for_numbered_slice_prompt() {
+        let source_root = tempfile::tempdir().unwrap();
+        let target_root = tempfile::tempdir().unwrap();
+        let implementation_dir = source_root
+            .path()
+            .join(".agents/scratchpad/implementation/preset-loop-hygiene");
+
+        std::fs::create_dir_all(&implementation_dir).unwrap();
+        std::fs::write(implementation_dir.join("next-slice.md"), "slice 1").unwrap();
+        std::fs::write(implementation_dir.join("next-slice-2.md"), "slice 2").unwrap();
+        std::fs::write(implementation_dir.join("context.md"), "context").unwrap();
+        std::fs::write(implementation_dir.join("plan.md"), "plan").unwrap();
+        std::fs::write(implementation_dir.join("progress.md"), "progress").unwrap();
+
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt = Some(
+            ".agents/scratchpad/implementation/preset-loop-hygiene/next-slice-2.md".to_string(),
+        );
+
+        bootstrap_prompt_artifacts_for_worktree(source_root.path(), target_root.path(), &config)
+            .expect("copy implementation packet");
+
+        let copied_dir = target_root
+            .path()
+            .join(".agents/scratchpad/implementation/preset-loop-hygiene");
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("next-slice.md")).unwrap(),
+            "slice 1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("next-slice-2.md")).unwrap(),
+            "slice 2"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("context.md")).unwrap(),
+            "context"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("plan.md")).unwrap(),
+            "plan"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copied_dir.join("progress.md")).unwrap(),
+            "progress"
+        );
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_artifacts_for_worktree_ignores_freeform_prompt_text() {
+        let source_root = tempfile::tempdir().unwrap();
+        let target_root = tempfile::tempdir().unwrap();
+        let mut config = RalphConfig::default();
+        config.event_loop.prompt = Some("Implement the missing bootstrap".to_string());
+
+        bootstrap_prompt_artifacts_for_worktree(source_root.path(), target_root.path(), &config)
+            .expect("ignore non-path prompt");
+
+        assert!(!target_root.path().join(".agents").exists());
     }
 
     #[test]
