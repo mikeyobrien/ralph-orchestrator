@@ -819,6 +819,7 @@ fn execute_reopen(args: ReopenArgs, root: Option<&PathBuf>, use_colors: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::CwdGuard;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -898,10 +899,14 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let root = temp_dir.path().to_path_buf();
         std::fs::create_dir_all(root.join(".ralph/agent")).expect("agent dir");
+        let nested = root.join("deep/work/tree");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set_ignoring_workspace_root_env(&nested);
+        let expected_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 
         assert_eq!(
-            get_tasks_path(Some(&root)),
-            root.join(".ralph/agent/tasks.jsonl")
+            get_tasks_path(None),
+            expected_root.join(".ralph/agent/tasks.jsonl")
         );
     }
 }

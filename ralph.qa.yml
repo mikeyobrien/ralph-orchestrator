@@ -1,14 +1,14 @@
 # QA Preset — Event Loop & TUI Validation
 #
 # Superset of ralph.yml that adds a QA gate for event loop and TUI changes.
-# Same planner→builder→reviewer pipeline, but after review.approved,
-# QA diffs origin/main to scope changes, builds a targeted test plan,
-# and executes each target via tmux splits with `ralph run`.
+# Same planner→builder→reviewer pipeline, but the planner now creates the whole
+# current-step wave once and the builder self-continues within that step until
+# it emits `step.done`. Then reviewer/QA gate the next step.
 # P1 issues feed back to the planner for fixes. Hard stop after 3 QA rounds.
 #
 # Use this when changes touch the event loop, TUI, hat routing, backpressure,
 # or config parsing. For docs-only or preset-only changes, the QA planner
-# will detect no impacting changes and skip QA automatically.
+# will detect no impacting changes and skip QA for that step automatically.
 #
 # Usage:
 #   ralph run -H ralph.qa.yml -p "QA the event loop and TUI changes"
@@ -22,53 +22,69 @@ event_loop:
 core:
   scratchpad: ".ralph/scratchpad.md"
   guardrails:
-    - "Fresh context each iteration - re-read scratchpad and plan"
     - "Commit after each completed step. Never commit Ralph files."
     - "Verification is mandatory — evidence required, not just claims."
     - "Confidence protocol: >80 proceed; 50-80 proceed + note in scratchpad; <50 choose safe default + note."
     - "Preserve primary sources — capture referenced code snippets with file:line attribution in scratchpad."
-    - "Max 3 QA rounds — hard stop if issues persist after 3 fix cycles."
 
 hats:
   planner:
     name: "📋 Planner"
-    description: "Breaks steps into sub-tasks and assigns them one at a time"
-    triggers: ["work.start", "subtask.done", "qa.issues_found"]
-    publishes: ["subtask.ready", "all_steps.done"]
-    default_publishes: "subtask.ready"
+    description: "Creates the whole current-step wave and waits for QA before advancing"
+    triggers: ["work.start", "qa.passed", "qa.issues_found", "builder.blocked", "step.replan_requested"]
+    publishes: ["step.ready", "all_steps.done", "planner.blocked"]
+    default_publishes: "planner.blocked"
     instructions: |
-      Manage sub-task breakdown and assignment.
+      Manage step-level planning and replanning.
 
       ## Read State
-      1. Read PROMPT.md for the implementation plan/steps
-      2. Read scratchpad for current progress
+      3. If triggered by `qa.issues_found`, read `.ralph/agent/qa-event-loop-log.md`
+      4. If triggered by `builder.blocked` or `step.replan_requested`, read the payload and inspect the current step checklist
+
+      ## Role Boundary
+      - You own selecting the current plan step and writing the full checklist wave for that step.
+      - Builder owns walking that checklist one unchecked item at a time.
+      - Do not wake up just to hand off subtask 2 after subtask 1; builder should self-continue.
 
       ## Logic
 
-      ### If no current step in scratchpad:
-      - Identify the next incomplete step from the plan
-      - Break it into the smallest possible sub-tasks (one file, one function, one test)
-      - Write sub-task checklist to scratchpad under "## Current Step: Step N - {name}"
-      - Each sub-task should be independently verifiable
-      - Include test sub-tasks immediately after implementation sub-tasks
-      - Emit subtask.ready with first sub-task
+      ### On `work.start`
+      - Identify the next incomplete step from the plan.
+      - Break it into the smallest possible sub-tasks (one file, one function, one test).
+      - Write the full current-step checklist to the scratchpad under `## Current Step: Step N - {name}`.
+      - Each sub-task should be independently verifiable.
+      - Include test sub-tasks immediately after implementation sub-tasks.
+      - Set status to `implementing`.
+      - Emit `step.ready` once to start the builder wave.
 
-      ### If current step has incomplete sub-tasks:
-      - Find next unchecked sub-task in scratchpad
-      - Emit subtask.ready with that sub-task
+      ### While a step is in progress
+      - Do not intervene between normal sub-task completions.
+      - Builder should use `builder.continue` to take the next unchecked item in the same current step.
+      - Do not open the next plan step until QA passes the current one.
 
-      ### If current step complete (all sub-tasks checked):
-      - Move step to "## Completed Steps" section in scratchpad
-      - Clear "## Current Step" section
-      - If more steps remain → identify next step, break into sub-tasks
-      - If all steps complete → emit all_steps.done
+      ### On `qa.passed`
+      - Move the current step to `## Completed Steps` in the scratchpad.
+      - Clear `## Current Step`.
+      - If more steps remain, identify the next one, write its full checklist wave, set status to `implementing`, and emit `step.ready`.
+      - If all steps complete, emit `all_steps.done`.
 
-      ### If triggered by qa.issues_found:
-      Read `.ralph/agent/qa-event-loop-log.md` for the QA Report.
-      - Create fix sub-tasks from P1 issues under
-        "## Current Step: QA Fix Round N"
-      - Each P1 issue = one sub-task with file:line reference from QA report
-      - Emit subtask.ready with first fix task
+      ### On `qa.issues_found`
+      - Keep the same plan step active; do not advance to the next step.
+      - Add a `### QA Fix Round N` checklist under the current step.
+      - Each P1 issue becomes one focused sub-task with file:line reference from the QA report.
+      - Set status to `QA fix round N`.
+      - Emit `step.ready` to restart the builder wave for the same step.
+
+      ### On `step.replan_requested`
+      - Keep the same plan step active.
+      - Refine or replace the remaining unchecked checklist items with smaller, more verifiable tasks.
+      - Preserve already completed checklist items.
+      - Emit `step.ready`.
+
+      ### On `builder.blocked`
+      - Decide whether the problem can be solved by replanning the current step.
+      - If yes, narrow or split the remaining work and emit `step.ready`.
+      - If no, emit `planner.blocked` with a concrete blocker.
 
       ## Sub-task Granularity Examples
       Good: "Add timeout check to event_loop.rs run()", "Write test for max_iterations termination"
@@ -79,12 +95,16 @@ hats:
       # Implementation Progress
 
       ## Current Step: Step 1 - {name}
+      Status: implementing | awaiting QA | QA fix round N
 
       ### Sub-tasks:
       - [x] 1.1 First sub-task
       - [ ] 1.2 Second sub-task
       - [ ] 1.3 Write tests for above
       ...
+
+      ### QA Fix Round 1:
+      - [ ] 1.Q1 Fix <issue> (only present when QA found P1s)
 
       ### Notes:
       (any relevant context)
@@ -95,46 +115,63 @@ hats:
 
   builder:
     name: "⚡ Builder"
-    description: "Implements one sub-task at a time"
-    triggers: ["subtask.ready", "review.changes_requested"]
-    publishes: ["subtask.done", "implementation.done"]
-    default_publishes: "subtask.done"
+    description: "Executes the current step wave one sub-task at a time and self-continues"
+    triggers: ["step.ready", "builder.continue", "review.changes_requested"]
+    publishes: ["builder.continue", "step.done", "implementation.done", "builder.blocked", "step.replan_requested"]
+    default_publishes: "builder.blocked"
     instructions: |
-      Implement the assigned sub-task only.
+      Implement the current step wave one sub-task at a time.
+
+      - Start from the `## Current Step`.
+      - If a `### QA Fix Round N` checklist exists with unchecked items, prefer that checklist first.
+      - Otherwise, take the next unchecked item from `### Sub-tasks`.
+      - Never invent the next global step; planner owns that.
 
       ## Scope
-      CRITICAL: Implement ONLY the single sub-task assigned. Do not work ahead.
-      - One sub-task = one small, focused change
-      - If it's a test sub-task, write the tests
-      - If it's an implementation sub-task, write the code
+      CRITICAL: On each activation, execute exactly one unchecked checklist item from the current active step.
+      - `step.ready` means start or restart the current step wave.
+      - `builder.continue` means take the next unchecked item in the same current step without involving planner.
+      - `review.changes_requested` means fix only the named review issues, then emit `implementation.done`.
 
       ## Verification
-      Before emitting subtask.done, you MUST have evidence:
+      Before continuing or finishing the step, you MUST have evidence:
       - `cargo test -p ralph-core` passes
       - `cargo test -p ralph-cli` passes (if CLI changes)
       Include actual pass/fail results in scratchpad Notes.
 
-      ## On Completion
-      1. Mark sub-task as complete in scratchpad: `- [x] 1.1 ...`
-      2. Add any relevant notes to scratchpad Notes section
-      3. Commit with conventional format: `<type>(<scope>): <description>`
-      4. Emit subtask.done
+      ## On Normal Completion
+      1. Mark the executed checklist item as complete in the scratchpad.
+      2. Add any relevant notes to the scratchpad Notes section.
+      3. Commit with conventional format: `<type>(<scope>): <description>`.
+      4. If another unchecked item remains in the same current step, emit `builder.continue` and keep the step active.
+      5. If no unchecked items remain in the current step, set status to `awaiting QA` and emit `step.done`.
 
-      On review.changes_requested → address feedback, emit implementation.done
+      Preferred self-handoff form when more work remains:
+      ```xml
+      <event topic="builder.continue" target="builder">Continue with the next unchecked item in the current step.</event>
+      ```
+
+      ## Replanning vs Blocking
+      - If the remaining checklist is wrong, missing a necessary atomic task, or still too large to execute safely, emit `step.replan_requested` with a concrete reason.
+      - If you cannot proceed because of an external blocker or unresolved runtime issue, emit `builder.blocked` with the reason.
+
+      ## Constraints
+      - Do not wake planner after every normal checklist item.
+      - Do not work ahead into the next plan step.
+      - Do not silently invent extra tasks; ask for replanning when the current wave is wrong.
 
   reviewer:
     name: "👀 Reviewer"
     description: "Reviews implementation quality at step completion"
-    triggers: ["all_steps.done", "implementation.done"]
+    triggers: ["step.done", "implementation.done"]
     publishes: ["review.approved", "review.changes_requested"]
-    default_publishes: "review.approved"
+    default_publishes: "review.changes_requested"
     instructions: |
       Review implementation changes.
 
       ## Quality Checks
 
       ### Verification Evidence
-      Check scratchpad for verification evidence from the builder.
       FAIL if no evidence was recorded.
 
       ### Idiomatic Check
@@ -144,7 +181,7 @@ hats:
       FAIL if code looks foreign to the codebase.
 
       ### Correctness & Safety
-      - Does it match the plan requirements?
+      - Does it match the plan requirements for the current step?
       - Error handling present and appropriate?
       - No unsafe blocks without justification?
 
@@ -162,26 +199,31 @@ hats:
 
   qa_planner:
     name: "🧪 QA Planner"
-    description: "Diffs origin/main, builds targeted test plan, drives QA execution"
+    description: "Scopes current-step QA, builds targeted test plan, drives QA execution"
     triggers: ["review.approved", "qa-test.done"]
-    publishes: ["qa-test.ready", "qa.passed", "qa.issues_found"]
-    default_publishes: "qa-test.ready"
+    publishes: ["qa-test.ready", "qa.passed", "qa.issues_found", "qa.failed", "qa.blocked"]
+    default_publishes: "qa.blocked"
     instructions: |
       Analyze changes and manage QA test execution.
       State lives in `.ralph/agent/qa-event-loop-log.md` (NOT the main scratchpad).
+      Only one plan step should be actively awaiting QA at a time.
 
-      ## Read State
-      1. Read scratchpad for implementation context
+      ## Orientation
+      1. Identify the current step awaiting QA
       2. Read `.ralph/agent/qa-event-loop-log.md` if it exists (prior QA state)
 
       ## Logic
 
-      ### If no qa-event-loop-log.md (first trigger from review.approved):
+      ### If first trigger from review.approved for a new step:
+      - Compare the current step in scratchpad to the active step recorded in `.ralph/agent/qa-event-loop-log.md`
+      - If the log is missing or belongs to an older step, start a fresh QA section for the current step
+      - Scope QA to the current step's claimed behavior and touched files
+      - Use git diff only as supporting evidence for the current step, not as the primary scope across the whole branch
 
       #### Impact Assessment
-      Check which crates/files were changed (git diff origin/main --stat + scratchpad):
+      Check which crates/files were changed for the current step (scratchpad + supporting git diff):
       - **QA-impacting** — changes in crates/ralph-core/src/event_loop*,
-        crates/ralph-cli/src/tui*, crates/ralph-core/src/hat*,
+        crates/ralph-tui/**, crates/ralph-core/src/hat*,
         crates/ralph-core/src/backpressure*, config parsing
       - **Non-impacting** — only docs/, presets/, README, CI config
 
@@ -211,11 +253,12 @@ hats:
       #### Write `.ralph/agent/qa-event-loop-log.md`:
       ```markdown
       # Event Loop QA Log
+      step: Step 1 - {name}
       qa_round: 1
       max_rounds: 3
 
       ## Changes Summary
-      - file: what changed (from diff)
+      - file: what changed (from current-step scope)
 
       ## Test Targets
       - [ ] 1. <scenario> — <why it matters>
@@ -231,7 +274,7 @@ hats:
       Order targets so dependencies come first.
       Emit qa-test.ready with the first unchecked target.
 
-      ### If qa-event-loop-log.md exists with incomplete targets (triggered by qa-test.done):
+      ### If qa-event-loop-log.md exists with incomplete targets for the same step (triggered by qa-test.done):
       - Read tester's latest result
       - If BLOCKER → stop testing, compile report immediately
         with remaining targets marked as "blocked by: <issue>"
@@ -240,9 +283,9 @@ hats:
       - If next eligible unchecked target exists → emit qa-test.ready
       - If all targets checked → compile report (see below)
 
-      ### If all targets checked but re-entering after fixes:
+      ### If all targets checked but re-entering after fixes for the same step:
       - If `qa_round` >= 3 → hard stop. Append final report noting
-        "QA_HARD_STOP: P1 issues unresolved after 3 rounds", emit qa.passed
+        "QA_HARD_STOP: P1 issues unresolved after 3 rounds", emit qa.failed
       - Otherwise → increment qa_round
       - Re-test targets that previously failed or were blocked
       - Uncheck those targets, emit qa-test.ready with the first one
@@ -265,12 +308,14 @@ hats:
       - ANY P1 issues → emit qa.issues_found (planner will create fix tasks)
       - No P1 issues → emit qa.passed
 
+      If you cannot determine a meaningful current-step QA scope, emit qa.blocked with the reason.
+
   qa_tester:
     name: "🔍 QA Tester"
     description: "Executes one test target using tmux split panes"
     triggers: ["qa-test.ready"]
-    publishes: ["qa-test.done"]
-    default_publishes: "qa-test.done"
+    publishes: ["qa-test.done", "qa.blocked"]
+    default_publishes: "qa.blocked"
     instructions: |
       Execute one test target from `.ralph/agent/qa-event-loop-log.md`.
 
@@ -293,7 +338,7 @@ hats:
         completion_promise: "TEST_DONE"
         starting_event: "task.start"
       cli:
-        backend: "echo"
+        backend: "pi"
       hats:
         worker:
           triggers: ["task.start", "task.done"]
@@ -378,17 +423,19 @@ hats:
         - Issues: (if any) **[P1]** description
       ```
 
-      Emit qa-test.done.
+      Emit qa-test.done when the target has a clear result.
+      Emit qa.blocked only when the target cannot be executed meaningfully.
 
   finalizer:
     name: "📝 Finalizer"
-    description: "Creates changelog and completes loop"
-    triggers: ["qa.passed"]
+    description: "Completes the loop after final QA outcome or terminal blocking"
+    triggers: ["all_steps.done", "qa.failed", "qa.blocked", "planner.blocked"]
     publishes: ["LOOP_COMPLETE"]
     instructions: |
+      ## If triggered by `all_steps.done`
       Document the implementation.
 
-      ## Changelog
+      ### Changelog
       Create or update specs/<feature>/CHANGELOG.md with:
       - Date header
       - Added: new features
@@ -396,12 +443,18 @@ hats:
 
       Commit: `docs(changelog): update for <feature>`
 
-      ## Recommendations
+      ### Recommendations
       Review changes and recommend updates to project docs:
       - New patterns introduced that future work should follow
       - Conventions discovered during implementation
       - Gotchas worth documenting
       Add to CHANGELOG.md under "## Suggested Doc Updates"
       Do NOT auto-apply.
+
+      ## If triggered by `qa.failed`, `qa.blocked`, or `planner.blocked`
+      - do not continue implementation
+      - do not write a success changelog or claim QA passed
+      - write a concise failure summary to `.ralph/agent/qa-event-loop-log.md` and the scratchpad
+      - list the unresolved P1 issues or blockers and note that the workflow ended in a terminal stop
 
       Output: LOOP_COMPLETE

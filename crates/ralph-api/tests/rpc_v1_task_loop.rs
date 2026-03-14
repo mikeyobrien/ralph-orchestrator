@@ -100,9 +100,8 @@ async fn task_crud_ready_and_guardrails_parity() -> Result<()> {
         json!({
             "id": "task-blocker-1",
             "title": "Blocker task",
-            "status": "open",
-            "priority": 1,
-            "autoExecute": false
+            "status": "ready",
+            "priority": 1
         }),
         Some("idem-task-create-blocker-1"),
     );
@@ -116,10 +115,9 @@ async fn task_crud_ready_and_guardrails_parity() -> Result<()> {
         json!({
             "id": "task-blocked-1",
             "title": "Blocked task",
-            "status": "open",
+            "status": "ready",
             "priority": 2,
-            "blockedBy": "task-blocker-1",
-            "autoExecute": false
+            "blockedBy": "task-blocker-1"
         }),
         Some("idem-task-create-blocked-1"),
     );
@@ -193,15 +191,15 @@ async fn task_crud_ready_and_guardrails_parity() -> Result<()> {
         2
     );
 
-    let delete_open = rpc_request(
-        "req-task-delete-open-1",
+    let delete_ready = rpc_request(
+        "req-task-delete-ready-1",
         "task.delete",
         json!({ "id": "task-blocked-1" }),
-        Some("idem-task-delete-open-1"),
+        Some("idem-task-delete-ready-1"),
     );
-    let (status, delete_open_payload) = post_rpc(&client, &server, &delete_open).await?;
+    let (status, delete_ready_payload) = post_rpc(&client, &server, &delete_ready).await?;
     assert_eq!(status, 412);
-    assert_eq!(delete_open_payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(delete_ready_payload["error"]["code"], "PRECONDITION_FAILED");
 
     let close_blocked = rpc_request(
         "req-task-close-2",
@@ -212,88 +210,22 @@ async fn task_crud_ready_and_guardrails_parity() -> Result<()> {
     let (status, _) = post_rpc(&client, &server, &close_blocked).await?;
     assert_eq!(status, 200);
 
-    let delete_closed = rpc_request(
-        "req-task-delete-closed-1",
+    let delete_done = rpc_request(
+        "req-task-delete-done-1",
         "task.delete",
         json!({ "id": "task-blocked-1" }),
-        Some("idem-task-delete-closed-1"),
+        Some("idem-task-delete-done-1"),
     );
-    let (status, delete_closed_payload) = post_rpc(&client, &server, &delete_closed).await?;
+    let (status, delete_done_payload) = post_rpc(&client, &server, &delete_done).await?;
     assert_eq!(status, 200);
-    assert_eq!(delete_closed_payload["result"]["success"], true);
+    assert_eq!(delete_done_payload["result"]["success"], true);
 
     server.stop().await;
     Ok(())
 }
 
 #[tokio::test]
-async fn task_run_retry_status_and_idempotency_parity() -> Result<()> {
-    let server = TestServer::start(ApiConfig::default()).await;
-    let client = Client::new();
-
-    let create = rpc_request(
-        "req-run-create-1",
-        "task.create",
-        json!({
-            "id": "task-run-1",
-            "title": "Run me",
-            "autoExecute": false
-        }),
-        Some("idem-task-run-create-1"),
-    );
-    let (status, _) = post_rpc(&client, &server, &create).await?;
-    assert_eq!(status, 200);
-
-    let run = rpc_request(
-        "req-run-1",
-        "task.run",
-        json!({ "id": "task-run-1" }),
-        Some("idem-task-run-1"),
-    );
-    let (run_status, run_payload) = post_rpc(&client, &server, &run).await?;
-    assert_eq!(run_status, 200);
-    assert_eq!(run_payload["result"]["success"], true);
-
-    let (run_replay_status, run_replay_payload) = post_rpc(&client, &server, &run).await?;
-    assert_eq!(run_replay_status, run_status);
-    assert_eq!(run_replay_payload, run_payload);
-
-    let status_request = rpc_request(
-        "req-run-status-1",
-        "task.status",
-        json!({ "id": "task-run-1" }),
-        None,
-    );
-    let (status_code, status_payload) = post_rpc(&client, &server, &status_request).await?;
-    assert_eq!(status_code, 200);
-    assert_eq!(status_payload["result"]["isQueued"], true);
-
-    let cancel = rpc_request(
-        "req-run-cancel-1",
-        "task.cancel",
-        json!({ "id": "task-run-1" }),
-        Some("idem-task-run-cancel-1"),
-    );
-    let (cancel_status, cancel_payload) = post_rpc(&client, &server, &cancel).await?;
-    assert_eq!(cancel_status, 200);
-    assert_eq!(cancel_payload["result"]["task"]["status"], "failed");
-
-    let retry = rpc_request(
-        "req-run-retry-1",
-        "task.retry",
-        json!({ "id": "task-run-1" }),
-        Some("idem-task-run-retry-1"),
-    );
-    let (retry_status, retry_payload) = post_rpc(&client, &server, &retry).await?;
-    assert_eq!(retry_status, 200);
-    assert_eq!(retry_payload["result"]["success"], true);
-
-    server.stop().await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn task_update_clears_terminal_and_queue_fields_on_non_terminal_transition() -> Result<()> {
+async fn task_update_clears_terminal_fields_on_non_terminal_transition() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
 
@@ -302,43 +234,51 @@ async fn task_update_clears_terminal_and_queue_fields_on_non_terminal_transition
         "task.create",
         json!({
             "id": "task-state-1",
-            "title": "State transition task",
-            "autoExecute": false
+            "title": "State transition task"
         }),
         Some("idem-task-state-create-1"),
     );
-    let (status, _) = post_rpc(&client, &server, &create).await?;
+    let (status, create_payload) = post_rpc(&client, &server, &create).await?;
     assert_eq!(status, 200);
+    assert_eq!(create_payload["result"]["task"]["status"], "ready");
 
-    let run = rpc_request(
-        "req-task-state-run-1",
-        "task.run",
-        json!({ "id": "task-state-1" }),
-        Some("idem-task-state-run-1"),
-    );
-    let (status, run_payload) = post_rpc(&client, &server, &run).await?;
-    assert_eq!(status, 200);
-    assert_eq!(run_payload["result"]["success"], true);
-
-    let update_open = rpc_request(
-        "req-task-state-update-open-1",
+    let update_done = rpc_request(
+        "req-task-state-update-done-1",
         "task.update",
-        json!({ "id": "task-state-1", "status": "open" }),
-        Some("idem-task-state-update-open-1"),
+        json!({ "id": "task-state-1", "status": "done" }),
+        Some("idem-task-state-update-done-1"),
     );
-    let (status, update_open_payload) = post_rpc(&client, &server, &update_open).await?;
+    let (status, update_done_payload) = post_rpc(&client, &server, &update_done).await?;
     assert_eq!(status, 200);
-    assert!(update_open_payload["result"]["task"]["queuedTaskId"].is_null());
-    assert!(update_open_payload["result"]["task"]["completedAt"].is_null());
+    assert_eq!(update_done_payload["result"]["task"]["status"], "done");
+    assert!(update_done_payload["result"]["task"]["completedAt"].is_string());
 
-    let run_again = rpc_request(
-        "req-task-state-run-2",
-        "task.run",
-        json!({ "id": "task-state-1" }),
-        Some("idem-task-state-run-2"),
+    let reopen_ready = rpc_request(
+        "req-task-state-reopen-ready-1",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "ready" }),
+        Some("idem-task-state-reopen-ready-1"),
     );
-    let (status, _) = post_rpc(&client, &server, &run_again).await?;
+    let (status, reopen_ready_payload) = post_rpc(&client, &server, &reopen_ready).await?;
     assert_eq!(status, 200);
+    assert_eq!(reopen_ready_payload["result"]["task"]["status"], "ready");
+    assert!(reopen_ready_payload["result"]["task"]["completedAt"].is_null());
+    assert!(reopen_ready_payload["result"]["task"]["errorMessage"].is_null());
+
+    let update_in_progress = rpc_request(
+        "req-task-state-update-in-progress-1",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "in_progress" }),
+        Some("idem-task-state-update-in-progress-1"),
+    );
+    let (status, update_in_progress_payload) =
+        post_rpc(&client, &server, &update_in_progress).await?;
+    assert_eq!(status, 200);
+    assert_eq!(
+        update_in_progress_payload["result"]["task"]["status"],
+        "in_progress"
+    );
+    assert!(update_in_progress_payload["result"]["task"]["completedAt"].is_null());
 
     let cancel = rpc_request(
         "req-task-state-cancel-1",
@@ -348,65 +288,28 @@ async fn task_update_clears_terminal_and_queue_fields_on_non_terminal_transition
     );
     let (status, cancel_payload) = post_rpc(&client, &server, &cancel).await?;
     assert_eq!(status, 200);
-    assert_eq!(cancel_payload["result"]["task"]["status"], "failed");
+    assert_eq!(cancel_payload["result"]["task"]["status"], "cancelled");
     assert_eq!(
         cancel_payload["result"]["task"]["errorMessage"],
         "Task cancelled by user"
     );
+    assert!(cancel_payload["result"]["task"]["completedAt"].is_string());
 
-    let reopen = rpc_request(
-        "req-task-state-reopen-1",
+    let reopen_after_cancel = rpc_request(
+        "req-task-state-reopen-after-cancel-1",
         "task.update",
-        json!({ "id": "task-state-1", "status": "open" }),
-        Some("idem-task-state-reopen-1"),
+        json!({ "id": "task-state-1", "status": "ready" }),
+        Some("idem-task-state-reopen-after-cancel-1"),
     );
-    let (status, reopen_payload) = post_rpc(&client, &server, &reopen).await?;
+    let (status, reopen_after_cancel_payload) =
+        post_rpc(&client, &server, &reopen_after_cancel).await?;
     assert_eq!(status, 200);
-    assert_eq!(reopen_payload["result"]["task"]["status"], "open");
-    assert!(reopen_payload["result"]["task"]["completedAt"].is_null());
-    assert!(reopen_payload["result"]["task"]["queuedTaskId"].is_null());
-    assert!(reopen_payload["result"]["task"]["errorMessage"].is_null());
-
-    server.stop().await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn task_create_rejects_auto_execute_for_non_open_status() -> Result<()> {
-    let server = TestServer::start(ApiConfig::default()).await;
-    let client = Client::new();
-
-    let invalid_create = rpc_request(
-        "req-task-create-invalid-status-1",
-        "task.create",
-        json!({
-            "id": "task-invalid-auto-1",
-            "title": "Invalid auto execute",
-            "status": "failed",
-            "autoExecute": true
-        }),
-        Some("idem-task-create-invalid-status-1"),
+    assert_eq!(
+        reopen_after_cancel_payload["result"]["task"]["status"],
+        "ready"
     );
-    let (status, invalid_payload) = post_rpc(&client, &server, &invalid_create).await?;
-    assert_eq!(status, 400);
-    assert_eq!(invalid_payload["error"]["code"], "INVALID_PARAMS");
-
-    let valid_create = rpc_request(
-        "req-task-create-valid-status-1",
-        "task.create",
-        json!({
-            "id": "task-valid-auto-1",
-            "title": "Explicit terminal task",
-            "status": "failed",
-            "autoExecute": false
-        }),
-        Some("idem-task-create-valid-status-1"),
-    );
-    let (status, valid_payload) = post_rpc(&client, &server, &valid_create).await?;
-    assert_eq!(status, 200);
-    assert_eq!(valid_payload["result"]["task"]["status"], "failed");
-    assert!(valid_payload["result"]["task"]["completedAt"].is_string());
-    assert!(valid_payload["result"]["task"]["queuedTaskId"].is_null());
+    assert!(reopen_after_cancel_payload["result"]["task"]["completedAt"].is_null());
+    assert!(reopen_after_cancel_payload["result"]["task"]["errorMessage"].is_null());
 
     server.stop().await;
     Ok(())
@@ -512,10 +415,17 @@ async fn loop_methods_and_trigger_merge_task_parity() -> Result<()> {
     );
     let (status, trigger_payload) = post_rpc(&client, &server, &trigger_merge_task).await?;
     assert_eq!(status, 200);
-    assert_eq!(trigger_payload["result"]["success"], true);
 
-    let task_id = trigger_payload["result"]["taskId"]
-        .as_str()
+    let trigger_result = trigger_payload["result"]
+        .as_object()
+        .expect("result should be an object");
+    assert_eq!(trigger_result.get("success"), Some(&json!(true)));
+    assert!(trigger_result.contains_key("taskId"));
+    assert!(!trigger_result.contains_key("queuedTaskId"));
+
+    let task_id = trigger_result
+        .get("taskId")
+        .and_then(|value| value.as_str())
         .expect("taskId should be present")
         .to_string();
 
@@ -527,11 +437,195 @@ async fn loop_methods_and_trigger_merge_task_parity() -> Result<()> {
     );
     let (status, get_task_payload) = post_rpc(&client, &server, &get_task).await?;
     assert_eq!(status, 200);
+    assert_eq!(get_task_payload["result"]["task"]["status"], "ready");
     assert!(
         get_task_payload["result"]["task"]["title"]
             .as_str()
             .is_some_and(|title| title.starts_with("Merge:"))
     );
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_board_state_transitions() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // --- Happy path: ready → in_progress → cancelled → ready → done ---
+
+    let create_a = rpc_request(
+        "req-board-create-a",
+        "task.create",
+        json!({
+            "id": "task-board-a",
+            "title": "Board task A",
+            "status": "ready",
+            "priority": 1
+        }),
+        Some("idem-board-create-a"),
+    );
+    let (status, create_a_payload) = post_rpc(&client, &server, &create_a).await?;
+    assert_eq!(status, 200);
+    assert_eq!(create_a_payload["result"]["task"]["status"], "ready");
+
+    let cancel_ready = rpc_request(
+        "req-board-cancel-ready",
+        "task.cancel",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-cancel-ready"),
+    );
+    let (status, cancel_ready_payload) = post_rpc(&client, &server, &cancel_ready).await?;
+    assert_eq!(status, 412);
+    assert_eq!(cancel_ready_payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(
+        cancel_ready_payload["error"]["message"],
+        "Only in_progress tasks can be cancelled"
+    );
+    assert_eq!(cancel_ready_payload["error"]["details"]["status"], "ready");
+    assert_eq!(
+        cancel_ready_payload["error"]["details"]["taskId"],
+        "task-board-a"
+    );
+
+    let retry_ready = rpc_request(
+        "req-board-retry-ready",
+        "task.retry",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-retry-ready"),
+    );
+    let (status, retry_ready_payload) = post_rpc(&client, &server, &retry_ready).await?;
+    assert_eq!(status, 412);
+    assert_eq!(retry_ready_payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(
+        retry_ready_payload["error"]["message"],
+        "Only cancelled tasks can be retried"
+    );
+    assert_eq!(retry_ready_payload["error"]["details"]["status"], "ready");
+    assert_eq!(
+        retry_ready_payload["error"]["details"]["taskId"],
+        "task-board-a"
+    );
+
+    let create_b = rpc_request(
+        "req-board-create-b",
+        "task.create",
+        json!({
+            "id": "task-board-b",
+            "title": "Board task B",
+            "status": "ready",
+            "blockedBy": "task-board-a"
+        }),
+        Some("idem-board-create-b"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create_b).await?;
+    assert_eq!(status, 200);
+
+    let ready_before_done =
+        rpc_request("req-board-ready-before-done", "task.ready", json!({}), None);
+    let (_, ready_before_done_payload) = post_rpc(&client, &server, &ready_before_done).await?;
+    let ready_before_done_ids: Vec<&str> = ready_before_done_payload["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|task| task["id"].as_str())
+        .collect();
+    assert!(
+        !ready_before_done_ids.contains(&"task-board-b"),
+        "task-board-b should stay blocked until task-board-a reaches done"
+    );
+
+    let update_in_progress = rpc_request(
+        "req-board-update-in-progress",
+        "task.update",
+        json!({ "id": "task-board-a", "status": "in_progress" }),
+        Some("idem-board-update-in-progress"),
+    );
+    let (status, update_payload) = post_rpc(&client, &server, &update_in_progress).await?;
+    assert_eq!(status, 200);
+    assert_eq!(update_payload["result"]["task"]["status"], "in_progress");
+
+    let cancel = rpc_request(
+        "req-board-cancel",
+        "task.cancel",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-cancel"),
+    );
+    let (status, cancel_payload) = post_rpc(&client, &server, &cancel).await?;
+    assert_eq!(status, 200);
+    assert_eq!(cancel_payload["result"]["task"]["status"], "cancelled");
+
+    let retry = rpc_request(
+        "req-board-retry",
+        "task.retry",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-retry"),
+    );
+    let (status, retry_payload) = post_rpc(&client, &server, &retry).await?;
+    assert_eq!(status, 200);
+    assert_eq!(retry_payload["result"]["task"]["status"], "ready");
+
+    let update_done = rpc_request(
+        "req-board-update-done",
+        "task.update",
+        json!({ "id": "task-board-a", "status": "done" }),
+        Some("idem-board-update-done"),
+    );
+    let (status, done_payload) = post_rpc(&client, &server, &update_done).await?;
+    assert_eq!(status, 200);
+    assert_eq!(done_payload["result"]["task"]["status"], "done");
+    assert!(done_payload["result"]["task"]["completedAt"].is_string());
+
+    // --- Unblocking: task B becomes ready after blocker task A reaches done ---
+
+    let ready_after_done = rpc_request("req-board-ready-after-done", "task.ready", json!({}), None);
+    let (_, ready_after_done_payload) = post_rpc(&client, &server, &ready_after_done).await?;
+    let ready_after_done_ids: Vec<&str> = ready_after_done_payload["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|task| task["id"].as_str())
+        .collect();
+    assert!(
+        ready_after_done_ids.contains(&"task-board-b"),
+        "task-board-b should be unblocked after task-board-a is done"
+    );
+
+    // --- Guardrails: delete ready task → 412, delete done task → 200 ---
+
+    let create_c = rpc_request(
+        "req-board-create-c",
+        "task.create",
+        json!({
+            "id": "task-board-c",
+            "title": "Ready-only task",
+            "status": "ready"
+        }),
+        Some("idem-board-create-c"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create_c).await?;
+    assert_eq!(status, 200);
+
+    let delete_ready = rpc_request(
+        "req-board-delete-ready",
+        "task.delete",
+        json!({ "id": "task-board-c" }),
+        Some("idem-board-delete-ready"),
+    );
+    let (status, delete_ready_payload) = post_rpc(&client, &server, &delete_ready).await?;
+    assert_eq!(status, 412);
+    assert_eq!(delete_ready_payload["error"]["code"], "PRECONDITION_FAILED");
+
+    let delete_done = rpc_request(
+        "req-board-delete-done",
+        "task.delete",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-delete-done"),
+    );
+    let (status, delete_done_payload) = post_rpc(&client, &server, &delete_done).await?;
+    assert_eq!(status, 200);
+    assert_eq!(delete_done_payload["result"]["success"], true);
 
     server.stop().await;
     Ok(())

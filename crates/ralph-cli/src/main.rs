@@ -183,15 +183,28 @@ pub(crate) fn default_config_path() -> PathBuf {
     PathBuf::from("ralph.yml")
 }
 
+fn workspace_root_from_env() -> Option<PathBuf> {
+    #[cfg(test)]
+    match crate::test_support::workspace_root_env_override() {
+        Some(crate::test_support::WorkspaceRootEnvOverride::Set(path)) => return Some(path),
+        Some(crate::test_support::WorkspaceRootEnvOverride::Unset) => return None,
+        None => {}
+    }
+
+    std::env::var("RALPH_WORKSPACE_ROOT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 pub(crate) fn resolve_workspace_root(root: Option<&PathBuf>) -> PathBuf {
     if let Some(root) = root {
         return root.clone();
     }
 
-    if let Ok(value) = std::env::var("RALPH_WORKSPACE_ROOT")
-        && !value.trim().is_empty()
-    {
-        return PathBuf::from(value);
+    if let Some(workspace_root) = workspace_root_from_env() {
+        return workspace_root;
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -3003,11 +3016,26 @@ mod tests {
         std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("ralph dir");
         let nested = temp_dir.path().join("a/b/c");
         std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set_ignoring_workspace_root_env(&nested);
+        let expected_root = temp_dir
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| temp_dir.path().to_path_buf());
 
-        assert_eq!(
-            discover_workspace_root(&nested),
-            Some(temp_dir.path().to_path_buf())
-        );
+        assert_eq!(resolve_workspace_root(None), expected_root);
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_prefers_explicit_env_override() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        std::fs::create_dir_all(temp_dir.path().join(".ralph")).expect("ralph dir");
+        let nested = temp_dir.path().join("a/b/c");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let env_root = temp_dir.path().join("from-env");
+        std::fs::create_dir_all(&env_root).expect("env root dir");
+        let _cwd = CwdGuard::set_with_workspace_root_env(&nested, env_root.clone());
+
+        assert_eq!(resolve_workspace_root(None), env_root);
     }
 
     #[test]
@@ -3020,6 +3048,9 @@ mod tests {
             ".ralph/events-20260309-test.jsonl\n",
         )
         .expect("write marker");
+        let nested = workspace.join("nested/project");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        let _cwd = CwdGuard::set_ignoring_workspace_root_env(&nested);
 
         emit_command_with_root(
             ColorMode::Never,

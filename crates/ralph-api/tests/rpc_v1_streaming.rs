@@ -213,8 +213,7 @@ async fn cold_subscribe_delivers_live_filtered_events() -> Result<()> {
         "task.create",
         json!({
             "id": task_id,
-            "title": "Streaming task",
-            "autoExecute": false
+            "title": "Streaming task"
         }),
         Some("idem-stream-task-create-1"),
     );
@@ -224,7 +223,7 @@ async fn cold_subscribe_delivers_live_filtered_events() -> Result<()> {
     let event = recv_topic_event(&mut stream, "task.status.changed").await;
     assert_eq!(event["resource"]["id"], task_id);
     assert_eq!(event["resource"]["type"], "task");
-    assert_eq!(event["payload"]["to"], "open");
+    assert_eq!(event["payload"]["to"], "ready");
     assert_eq!(event["replay"]["mode"], "live");
 
     stream.close(None).await?;
@@ -260,8 +259,7 @@ async fn resume_with_cursor_replays_ordered_without_duplicates() -> Result<()> {
         "task.create",
         json!({
             "id": task_id,
-            "title": "Resume task",
-            "autoExecute": false
+            "title": "Resume task"
         }),
         Some("idem-stream-resume-create-1"),
     );
@@ -279,7 +277,7 @@ async fn resume_with_cursor_replays_ordered_without_duplicates() -> Result<()> {
     let update = rpc_request(
         "req-stream-resume-update-1",
         "task.update",
-        json!({ "id": task_id, "status": "running" }),
+        json!({ "id": task_id, "status": "in_progress" }),
         Some("idem-stream-resume-update-1"),
     );
     let (status, _) = post_rpc(&client, &server, &update).await?;
@@ -370,8 +368,7 @@ async fn replay_overflow_emits_backpressure_error_and_bounds_batch() -> Result<(
         "task.create",
         json!({
             "id": task_id,
-            "title": "Overflow task",
-            "autoExecute": false
+            "title": "Overflow task"
         }),
         Some("idem-stream-overflow-create-1"),
     );
@@ -463,8 +460,7 @@ async fn reconnect_with_ack_cursor_replays_only_new_events() -> Result<()> {
         "task.create",
         json!({
             "id": task_id,
-            "title": "Reconnect task",
-            "autoExecute": false
+            "title": "Reconnect task"
         }),
         Some("idem-stream-reconnect-create-1"),
     );
@@ -495,7 +491,7 @@ async fn reconnect_with_ack_cursor_replays_only_new_events() -> Result<()> {
     let update = rpc_request(
         "req-stream-reconnect-update-1",
         "task.update",
-        json!({ "id": task_id, "status": "running" }),
+        json!({ "id": task_id, "status": "in_progress" }),
         Some("idem-stream-reconnect-update-1"),
     );
     let (status, _) = post_rpc(&client, &server, &update).await?;
@@ -606,7 +602,7 @@ async fn unsubscribe_removes_subscription() -> Result<()> {
     let create = rpc_request(
         "req-stream-unsubscribe-create",
         "task.create",
-        json!({ "id": "task-unsub-1", "title": "Unsub Task", "status": "open", "priority": 1, "autoExecute": false }),
+        json!({ "id": "task-unsub-1", "title": "Unsub Task", "status": "ready", "priority": 1 }),
         Some("idem-unsub-create"),
     );
     let (status, _) = post_rpc(&client, &server, &create).await?;
@@ -632,7 +628,7 @@ async fn unsubscribe_removes_subscription() -> Result<()> {
     let update = rpc_request(
         "req-stream-unsubscribe-update",
         "task.update",
-        json!({ "id": "task-unsub-1", "status": "running" }),
+        json!({ "id": "task-unsub-1", "status": "in_progress" }),
         Some("idem-unsub-update"),
     );
     let (status, _) = post_rpc(&client, &server, &update).await?;

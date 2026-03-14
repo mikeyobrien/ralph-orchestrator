@@ -72,8 +72,6 @@ pub struct MergeButtonStateResult {
 pub struct TriggerMergeTaskResult {
     pub success: bool,
     pub task_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub queued_task_id: Option<String>,
 }
 
 pub struct LoopDomain {
@@ -442,17 +440,15 @@ impl LoopDomain {
                     .take(50)
                     .collect::<String>()
             ),
-            status: Some("open".to_string()),
+            status: Some("ready".to_string()),
             priority: Some(1),
             blocked_by: None,
-            auto_execute: Some(true),
             merge_loop_prompt: Some(merge_prompt),
         })?;
 
         Ok(TriggerMergeTaskResult {
             success: true,
             task_id: task.id,
-            queued_task_id: task.queued_task_id,
         })
     }
 }

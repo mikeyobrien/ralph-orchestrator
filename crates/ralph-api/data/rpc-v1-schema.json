@@ -29,11 +29,8 @@
         "task.unarchive",
         "task.delete",
         "task.clear",
-        "task.run",
-        "task.run_all",
         "task.retry",
         "task.cancel",
-        "task.status",
         "loop.list",
         "loop.status",
         "loop.process",
@@ -76,8 +73,6 @@
         "task.unarchive",
         "task.delete",
         "task.clear",
-        "task.run",
-        "task.run_all",
         "task.retry",
         "task.cancel",
         "loop.process",
@@ -412,9 +407,6 @@
             "null"
           ]
         },
-        "autoExecute": {
-          "type": "boolean"
-        },
         "preset": {
           "type": "string"
         },
@@ -712,11 +704,8 @@
         { "properties": { "method": { "const": "task.unarchive" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "task.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "task.clear" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "task.run" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "task.run_all" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "task.retry" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "task.cancel" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "task.status" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
 
         { "properties": { "method": { "const": "loop.list" }, "params": { "$ref": "#/$defs/loopListParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "loop.status" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
@@ -856,35 +845,6 @@
       },
       "required": ["success"]
     },
-    "taskRunResult": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "success": { "type": "boolean" },
-        "queuedTaskId": { "type": "string" },
-        "task": { "$ref": "#/$defs/task" }
-      },
-      "required": ["success", "queuedTaskId"]
-    },
-    "taskRunAllResult": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enqueued": { "type": "integer", "minimum": 0 },
-        "errors": { "type": "array", "items": { "type": "string" } }
-      },
-      "required": ["enqueued", "errors"]
-    },
-    "taskStatusResult": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "isQueued": { "type": "boolean" },
-        "queuePosition": { "type": "integer", "minimum": 0 },
-        "runnerPid": { "type": ["integer", "null"] }
-      },
-      "required": ["isQueued"]
-    },
     "loopListResult": {
       "type": "object",
       "additionalProperties": false,
@@ -918,8 +878,7 @@
       "additionalProperties": false,
       "properties": {
         "success": { "type": "boolean" },
-        "taskId": { "type": "string" },
-        "queuedTaskId": { "type": "string" }
+        "taskId": { "type": "string" }
       },
       "required": ["success", "taskId"]
     },
@@ -1024,11 +983,8 @@
         { "properties": { "method": { "const": "task.unarchive" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "task.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "task.clear" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
-        { "properties": { "method": { "const": "task.run" }, "result": { "$ref": "#/$defs/taskRunResult" } }, "required": ["method", "result"] },
-        { "properties": { "method": { "const": "task.run_all" }, "result": { "$ref": "#/$defs/taskRunAllResult" } }, "required": ["method", "result"] },
-        { "properties": { "method": { "const": "task.retry" }, "result": { "$ref": "#/$defs/taskRunResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "task.retry" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "task.cancel" }, "result": { "$ref": "#/$defs/taskResult" } }, "required": ["method", "result"] },
-        { "properties": { "method": { "const": "task.status" }, "result": { "$ref": "#/$defs/taskStatusResult" } }, "required": ["method", "result"] },
 
         { "properties": { "method": { "const": "loop.list" }, "result": { "$ref": "#/$defs/loopListResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "loop.status" }, "result": { "$ref": "#/$defs/loopStatusResult" } }, "required": ["method", "result"] },

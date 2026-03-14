@@ -19,7 +19,7 @@ Rust-native bootstrap runtime for the RPC v1 control plane.
   - `system.health`
   - `system.version`
   - `system.capabilities`
-  - Full `task.*` family (`list/get/ready/create/update/close/archive/unarchive/delete/clear/run/run_all/retry/cancel/status`)
+  - Full `task.*` family (`list/get/ready/create/update/close/archive/unarchive/delete/clear/retry/cancel`)
   - Full `loop.*` family (`list/status/process/prune/retry/discard/stop/merge/merge_button_state/trigger_merge_task`)
   - Full `planning.*` family (`list/get/start/respond/resume/delete/get_artifact`)
   - Full `config.*` family (`get/update`)
@@ -34,8 +34,16 @@ Persistence notes:
 - `config.*` reads/writes `ralph.yml` with YAML validation + atomic replace semantics
 - `preset.list` reads builtins from `presets/`, local files from `.ralph/hats/`, and collection-backed presets
 
+Current task board-state semantics:
+- Canonical task statuses are `backlog`, `ready`, `in_progress`, `in_review`, `blocked`, `done`, and `cancelled`.
+- `task.create` defaults new tasks to `ready` when no status is provided.
+- `task.ready` returns unarchived `ready` tasks whose blockers are already `done` (or archived).
+- `task.close` transitions a task to `done`.
+- `task.cancel` requires `in_progress` and transitions the task to `cancelled`.
+- `task.retry` requires `cancelled` and transitions the task back to `ready`.
+- `task.delete` is limited to terminal tasks in `done` or `cancelled`.
+
 Intentional migration differences vs legacy Node backend:
-- `task.cancel` currently allows cancelling `pending` tasks (legacy allowed only `running`).
 - `planning.start` returns a full `session` object instead of just `{sessionId}`.
 
 ## Run locally

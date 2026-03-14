@@ -110,29 +110,15 @@ impl RpcRuntime {
                 self.task_domain_mut()?.clear()?;
                 Ok(json!({ "success": true }))
             }
-            "task.run" => {
-                let params: IdOnlyParams = self.parse_params(request)?;
-                let result = self.task_domain_mut()?.run(&params.id)?;
-                Ok(json!(result))
-            }
-            "task.run_all" => {
-                let result = self.task_domain_mut()?.run_all();
-                Ok(json!(result))
-            }
             "task.retry" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
-                let result = self.task_domain_mut()?.retry(&params.id)?;
-                Ok(json!(result))
+                let task = self.task_domain_mut()?.retry(&params.id)?;
+                Ok(json!({ "task": task }))
             }
             "task.cancel" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.cancel(&params.id)?;
                 Ok(json!({ "task": task }))
-            }
-            "task.status" => {
-                let params: IdOnlyParams = self.parse_params(request)?;
-                let status = self.task_domain_mut()?.status(&params.id);
-                Ok(json!(status))
             }
             _ => Err(ApiError::service_unavailable(format!(
                 "method '{}' is recognized but not implemented",

@@ -5,12 +5,11 @@ event_loop:
   starting_event: work.start
 
 cli:
-  backend: pi
+  backend: claude
 
 core:
   specs_dir: ./specs/
   guardrails:
-    - "Fresh context each iteration — re-read scratchpad and plan."
     - "Commit after each completed step. Never commit Ralph files."
     - "Verification is mandatory — `just ci` must pass (fmt, clippy, tests). See AGENTS.md."
     - "Acceptance tests must be real — no placeholder/pending/stub acceptance scenarios when emitting LOOP_COMPLETE."
@@ -55,11 +54,6 @@ hats:
       frontend/      → React + Vite dashboard
       backend/       → Legacy Node tRPC server
       ```
-
-      ## Read State
-      1. Read PROMPT.md for the implementation plan/steps
-      2. Read scratchpad for current progress
-      3. Check AGENTS.md for conventions relevant to the current step
 
       ## Logic
 
@@ -117,6 +111,7 @@ hats:
     default_publishes: "subtask.done"
     instructions: |
       Implement the assigned sub-task only.
+      Use parallel agents for independent changes.
 
       ## Scope
       CRITICAL: Implement ONLY the single sub-task assigned. Do not work ahead.

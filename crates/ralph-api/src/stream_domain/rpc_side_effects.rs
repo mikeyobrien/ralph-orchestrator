@@ -19,7 +19,7 @@ pub(super) fn publish_rpc_side_effect(
                 );
             }
         }
-        "task.update" | "task.close" | "task.cancel" | "task.retry" | "task.run" => {
+        "task.update" | "task.close" | "task.cancel" | "task.retry" => {
             if let Some((task_id, task_status)) = task_id_and_status(result) {
                 streams.publish(
                     "task.status.changed",

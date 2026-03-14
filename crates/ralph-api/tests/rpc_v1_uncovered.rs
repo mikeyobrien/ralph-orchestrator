@@ -107,7 +107,23 @@ async fn system_capabilities_returns_expected_shape() -> Result<()> {
     let (status, payload) = post_rpc(&client, &server, &request).await?;
 
     assert_eq!(status, 200);
-    assert!(payload["result"]["methods"].is_array());
+    let methods: Vec<_> = payload["result"]["methods"]
+        .as_array()
+        .expect("system.capabilities methods should be an array")
+        .iter()
+        .map(|method| {
+            method
+                .as_str()
+                .expect("system.capabilities methods should contain strings")
+        })
+        .collect();
+    assert!(methods.contains(&"task.list"));
+    assert!(methods.contains(&"task.ready"));
+    assert!(methods.contains(&"task.cancel"));
+    assert!(methods.contains(&"task.retry"));
+    assert!(!methods.contains(&"task.run"));
+    assert!(!methods.contains(&"task.run_all"));
+    assert!(!methods.contains(&"task.status"));
     assert!(payload["result"]["streamTopics"].is_array());
     assert!(payload["result"]["auth"]["mode"].is_string());
     assert!(payload["result"]["auth"]["supportedModes"].is_array());
@@ -127,9 +143,8 @@ async fn task_unarchive_restores_archived_task() -> Result<()> {
         json!({
             "id": "task-unarchive-test",
             "title": "Task to unarchive",
-            "status": "open",
-            "priority": 1,
-            "autoExecute": false
+            "status": "ready",
+            "priority": 1
         }),
         Some("idem-unarch-create"),
     );
@@ -174,7 +189,7 @@ async fn task_clear_removes_all_tasks() -> Result<()> {
     let create1 = rpc_request(
         "clr-create-1",
         "task.create",
-        json!({ "id": "task-clear-open", "title": "Open", "status": "open", "priority": 1, "autoExecute": false }),
+        json!({ "id": "task-clear-ready", "title": "Ready", "status": "ready", "priority": 1 }),
         Some("idem-clr-create-1"),
     );
     let (status, _) = post_rpc(&client, &server, &create1).await?;
@@ -183,7 +198,7 @@ async fn task_clear_removes_all_tasks() -> Result<()> {
     let create2 = rpc_request(
         "clr-create-2",
         "task.create",
-        json!({ "id": "task-clear-done", "title": "Done", "status": "done", "priority": 1, "autoExecute": false }),
+        json!({ "id": "task-clear-done", "title": "Done", "status": "done", "priority": 1 }),
         Some("idem-clr-create-2"),
     );
     let (status, _) = post_rpc(&client, &server, &create2).await?;
@@ -192,7 +207,7 @@ async fn task_clear_removes_all_tasks() -> Result<()> {
     let create3 = rpc_request(
         "clr-create-3",
         "task.create",
-        json!({ "id": "task-clear-closed", "title": "Closed", "status": "closed", "priority": 1, "autoExecute": false }),
+        json!({ "id": "task-clear-cancelled", "title": "Cancelled", "status": "cancelled", "priority": 1 }),
         Some("idem-clr-create-3"),
     );
     let (status, _) = post_rpc(&client, &server, &create3).await?;
@@ -213,45 +228,6 @@ async fn task_clear_removes_all_tasks() -> Result<()> {
     assert_eq!(status, 200);
     let listed = payload["result"]["tasks"].as_array().unwrap();
     assert!(listed.is_empty(), "task.clear should remove all tasks");
-
-    server.stop().await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn task_run_all_processes_queued_or_open_tasks() -> Result<()> {
-    let server = TestServer::start(ApiConfig::default()).await;
-    let client = Client::new();
-
-    let create = rpc_request(
-        "ra-create",
-        "task.create",
-        json!({ "id": "task-run-all-1", "title": "Run all", "status": "open", "priority": 1, "autoExecute": false }),
-        Some("idem-ra-create"),
-    );
-    let (status, _) = post_rpc(&client, &server, &create).await?;
-    assert_eq!(status, 200);
-
-    let run_all = rpc_request(
-        "ra-run-all",
-        "task.run_all",
-        json!({}),
-        Some("idem-ra-run-all"),
-    );
-    let (status, payload) = post_rpc(&client, &server, &run_all).await?;
-    assert_eq!(status, 200);
-
-    // According to TaskRunAllResult it should return enqueued and errors
-    assert!(payload["result"]["enqueued"].is_u64());
-    assert!(payload["result"]["errors"].is_array());
-
-    // Task should be running or queued now
-    let list = rpc_request("ra-list", "task.list", json!({}), None);
-    let (status, payload) = post_rpc(&client, &server, &list).await?;
-    assert_eq!(status, 200);
-    let listed = payload["result"]["tasks"].as_array().unwrap();
-    let task = listed.iter().find(|t| t["id"] == "task-run-all-1").unwrap();
-    assert!(task["status"] == "pending" || task["status"] == "running" || task["status"] == "done");
 
     server.stop().await;
     Ok(())

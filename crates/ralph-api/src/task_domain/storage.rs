@@ -10,7 +10,6 @@ use crate::errors::ApiError;
 #[serde(rename_all = "camelCase")]
 struct TaskSnapshot {
     tasks: Vec<TaskRecord>,
-    queue_counter: u64,
 }
 
 impl TaskDomain {
@@ -48,7 +47,6 @@ impl TaskDomain {
             .into_iter()
             .map(|task| (task.id.clone(), task))
             .collect();
-        self.queue_counter = snapshot.queue_counter;
     }
 
     pub(super) fn persist(&self) -> Result<(), ApiError> {
@@ -63,7 +61,6 @@ impl TaskDomain {
 
         let snapshot = TaskSnapshot {
             tasks: self.sorted_tasks(),
-            queue_counter: self.queue_counter,
         };
 
         let payload = serde_json::to_string_pretty(&snapshot)

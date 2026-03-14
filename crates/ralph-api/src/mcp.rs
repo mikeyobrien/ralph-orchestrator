@@ -572,8 +572,7 @@ fn build_tool(
             "List supported Ralph control-plane methods and stream topics.".into()
         }
         "task.list" => "List Ralph tasks, with optional filters.".into(),
-        "task.ready" => "List open tasks that are ready to run.".into(),
-        "task.run_all" => "Enqueue every open or queued Ralph task.".into(),
+        "task.ready" => "List claimable Ralph tasks in the ready column.".into(),
         "loop.status" => "Return the current primary loop and merge status.".into(),
         "loop.trigger_merge_task" => "Create a merge task for a completed loop.".into(),
         "planning.get_artifact" => "Read a generated planning artifact by filename.".into(),
@@ -820,7 +819,7 @@ mod tests {
             "task.status.changed",
             "task",
             "task-123",
-            json!({ "from": "open", "to": "running" }),
+            json!({ "from": "ready", "to": "in_progress" }),
         );
 
         let result = server

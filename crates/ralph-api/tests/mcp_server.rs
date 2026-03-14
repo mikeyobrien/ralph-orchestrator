@@ -36,10 +36,14 @@ async fn mcp_lists_expected_tools() -> Result<()> {
     let tools = client.peer().list_all_tools().await?;
     let names: Vec<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
     assert!(names.contains(&"task_list"));
+    assert!(names.contains(&"task_create"));
     assert!(names.contains(&"loop_status"));
     assert!(names.contains(&"planning_start"));
     assert!(names.contains(&"config_get"));
     assert!(names.contains(&"stream_next"));
+    assert!(!names.contains(&"task_run"));
+    assert!(!names.contains(&"task_run_all"));
+    assert!(!names.contains(&"task_status"));
 
     client.cancel().await?;
     server_handle.await??;
@@ -66,7 +70,6 @@ async fn mcp_call_tool_round_trips_structured_results() -> Result<()> {
             CallToolRequestParams::new("task_create").with_arguments(obj(json!({
                 "id": "task-mcp-1",
                 "title": "Created from MCP",
-                "autoExecute": false,
             }))),
         )
         .await?;
@@ -74,6 +77,10 @@ async fn mcp_call_tool_round_trips_structured_results() -> Result<()> {
     assert_eq!(
         created.structured_content.as_ref().unwrap()["task"]["id"],
         "task-mcp-1"
+    );
+    assert_eq!(
+        created.structured_content.as_ref().unwrap()["task"]["status"],
+        "ready"
     );
 
     let listed = client
@@ -156,18 +163,21 @@ async fn mcp_stream_tools_support_polling() -> Result<()> {
             CallToolRequestParams::new("task_create").with_arguments(obj(json!({
                 "id": "task-stream-1",
                 "title": "Stream task",
-                "autoExecute": false,
             }))),
         )
         .await?;
     assert_eq!(created.is_error, Some(false));
+    assert_eq!(
+        created.structured_content.as_ref().unwrap()["task"]["status"],
+        "ready"
+    );
 
     let updated = client
         .peer()
         .call_tool(
             CallToolRequestParams::new("task_update").with_arguments(obj(json!({
                 "id": "task-stream-1",
-                "status": "running",
+                "status": "in_progress",
             }))),
         )
         .await?;
@@ -187,6 +197,12 @@ async fn mcp_stream_tools_support_polling() -> Result<()> {
         .as_array()
         .unwrap();
     assert!(!events.is_empty());
+    let observed_statuses: Vec<_> = events
+        .iter()
+        .filter_map(|event| event["payload"]["to"].as_str())
+        .collect();
+    assert!(observed_statuses.contains(&"in_progress"));
+    assert!(!observed_statuses.contains(&"running"));
     let cursor = events[0]["cursor"]
         .as_str()
         .expect("stream event cursor")
