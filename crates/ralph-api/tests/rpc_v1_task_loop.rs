@@ -630,3 +630,203 @@ async fn task_board_state_transitions() -> Result<()> {
     server.stop().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn task_worker_lease_fields_round_trip_persist_and_validate() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    let create = rpc_request(
+        "req-task-worker-fields-create-1",
+        "task.create",
+        json!({
+            "id": "task-worker-fields-1",
+            "title": "Task with worker lease metadata",
+            "status": "ready",
+            "assigneeWorkerId": "worker-alpha",
+            "claimedAt": "2026-03-14T20:00:00Z",
+            "leaseExpiresAt": "2026-03-14T20:02:00Z"
+        }),
+        Some("idem-task-worker-fields-create-1"),
+    );
+    let (status, create_payload) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+    assert_eq!(
+        create_payload["result"]["task"]["assigneeWorkerId"],
+        "worker-alpha"
+    );
+    assert_eq!(
+        create_payload["result"]["task"]["claimedAt"],
+        "2026-03-14T20:00:00Z"
+    );
+    assert_eq!(
+        create_payload["result"]["task"]["leaseExpiresAt"],
+        "2026-03-14T20:02:00Z"
+    );
+
+    let get = rpc_request(
+        "req-task-worker-fields-get-1",
+        "task.get",
+        json!({ "id": "task-worker-fields-1" }),
+        None,
+    );
+    let (status, get_payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+    assert_eq!(
+        get_payload["result"]["task"],
+        create_payload["result"]["task"]
+    );
+
+    let update = rpc_request(
+        "req-task-worker-fields-update-1",
+        "task.update",
+        json!({
+            "id": "task-worker-fields-1",
+            "assigneeWorkerId": "worker-beta",
+            "claimedAt": "2026-03-14T20:05:00Z",
+            "leaseExpiresAt": "2026-03-14T20:07:00Z"
+        }),
+        Some("idem-task-worker-fields-update-1"),
+    );
+    let (status, update_payload) = post_rpc(&client, &server, &update).await?;
+    assert_eq!(status, 200);
+    assert_eq!(
+        update_payload["result"]["task"]["assigneeWorkerId"],
+        "worker-beta"
+    );
+    assert_eq!(
+        update_payload["result"]["task"]["claimedAt"],
+        "2026-03-14T20:05:00Z"
+    );
+    assert_eq!(
+        update_payload["result"]["task"]["leaseExpiresAt"],
+        "2026-03-14T20:07:00Z"
+    );
+
+    let reloaded_after_update = ralph_api::task_domain::TaskDomain::new(server.workspace_path())
+        .get("task-worker-fields-1")
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    assert_eq!(
+        reloaded_after_update.assignee_worker_id.as_deref(),
+        Some("worker-beta")
+    );
+    assert_eq!(
+        reloaded_after_update.claimed_at.as_deref(),
+        Some("2026-03-14T20:05:00Z")
+    );
+    assert_eq!(
+        reloaded_after_update.lease_expires_at.as_deref(),
+        Some("2026-03-14T20:07:00Z")
+    );
+
+    let snapshot_path = server.workspace_path().join(".ralph/api/tasks-v1.json");
+    let snapshot: Value = serde_json::from_str(&std::fs::read_to_string(&snapshot_path)?)?;
+    let persisted_after_update = snapshot["tasks"]
+        .as_array()
+        .and_then(|tasks| {
+            tasks.iter().find(|task| {
+                task["id"]
+                    .as_str()
+                    .is_some_and(|task_id| task_id == "task-worker-fields-1")
+            })
+        })
+        .and_then(Value::as_object)
+        .expect("task snapshot should contain task-worker-fields-1");
+    assert_eq!(
+        persisted_after_update.get("assigneeWorkerId"),
+        Some(&json!("worker-beta"))
+    );
+    assert_eq!(
+        persisted_after_update.get("claimedAt"),
+        Some(&json!("2026-03-14T20:05:00Z"))
+    );
+    assert_eq!(
+        persisted_after_update.get("leaseExpiresAt"),
+        Some(&json!("2026-03-14T20:07:00Z"))
+    );
+
+    let clear = rpc_request(
+        "req-task-worker-fields-clear-1",
+        "task.update",
+        json!({
+            "id": "task-worker-fields-1",
+            "assigneeWorkerId": null,
+            "claimedAt": null,
+            "leaseExpiresAt": null
+        }),
+        Some("idem-task-worker-fields-clear-1"),
+    );
+    let (status, clear_payload) = post_rpc(&client, &server, &clear).await?;
+    assert_eq!(status, 200);
+    assert!(clear_payload["result"]["task"]["assigneeWorkerId"].is_null());
+    assert!(clear_payload["result"]["task"]["claimedAt"].is_null());
+    assert!(clear_payload["result"]["task"]["leaseExpiresAt"].is_null());
+
+    let reloaded_after_clear = ralph_api::task_domain::TaskDomain::new(server.workspace_path())
+        .get("task-worker-fields-1")
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    assert_eq!(reloaded_after_clear.assignee_worker_id, None);
+    assert_eq!(reloaded_after_clear.claimed_at, None);
+    assert_eq!(reloaded_after_clear.lease_expires_at, None);
+
+    let cleared_snapshot: Value = serde_json::from_str(&std::fs::read_to_string(&snapshot_path)?)?;
+    let persisted_after_clear = cleared_snapshot["tasks"]
+        .as_array()
+        .and_then(|tasks| {
+            tasks.iter().find(|task| {
+                task["id"]
+                    .as_str()
+                    .is_some_and(|task_id| task_id == "task-worker-fields-1")
+            })
+        })
+        .and_then(Value::as_object)
+        .expect("task snapshot should still contain task-worker-fields-1 after clearing");
+    assert!(persisted_after_clear.get("assigneeWorkerId").is_none());
+    assert!(persisted_after_clear.get("claimedAt").is_none());
+    assert!(persisted_after_clear.get("leaseExpiresAt").is_none());
+
+    for (field, invalid_value) in [
+        ("assigneeWorkerId", json!(42)),
+        ("claimedAt", json!({ "bad": true })),
+        ("leaseExpiresAt", json!(false)),
+    ] {
+        let mut invalid_params = serde_json::Map::new();
+        invalid_params.insert("id".to_string(), json!("task-worker-fields-1"));
+        invalid_params.insert(field.to_string(), invalid_value);
+
+        let invalid_update = rpc_request(
+            &format!("req-task-worker-fields-invalid-{field}"),
+            "task.update",
+            Value::Object(invalid_params),
+            None,
+        );
+        let (status, invalid_payload) = post_rpc(&client, &server, &invalid_update).await?;
+        assert_eq!(status, 400);
+        assert_eq!(invalid_payload["error"]["code"], "INVALID_PARAMS");
+        assert_eq!(
+            invalid_payload["error"]["message"],
+            "request does not match rpc-v1 schema"
+        );
+        assert!(
+            invalid_payload["error"]["details"]["errors"]
+                .as_array()
+                .is_some_and(|errors| !errors.is_empty())
+        );
+    }
+
+    let get_after_invalid = rpc_request(
+        "req-task-worker-fields-get-after-invalid-1",
+        "task.get",
+        json!({ "id": "task-worker-fields-1" }),
+        None,
+    );
+    let (status, get_after_invalid_payload) =
+        post_rpc(&client, &server, &get_after_invalid).await?;
+    assert_eq!(status, 200);
+    assert!(get_after_invalid_payload["result"]["task"]["assigneeWorkerId"].is_null());
+    assert!(get_after_invalid_payload["result"]["task"]["claimedAt"].is_null());
+    assert!(get_after_invalid_payload["result"]["task"]["leaseExpiresAt"].is_null());
+
+    server.stop().await;
+    Ok(())
+}

@@ -24,6 +24,9 @@ pub struct TaskCreateParams {
     pub priority: Option<u8>,
     pub blocked_by: Option<String>,
     pub merge_loop_prompt: Option<String>,
+    pub assignee_worker_id: Option<String>,
+    pub claimed_at: Option<String>,
+    pub lease_expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +36,9 @@ pub struct TaskUpdateInput {
     pub status: Option<String>,
     pub priority: Option<u8>,
     pub blocked_by: Option<Option<String>>,
+    pub assignee_worker_id: Option<Option<String>>,
+    pub claimed_at: Option<Option<String>>,
+    pub lease_expires_at: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +54,12 @@ pub struct TaskRecord {
     pub archived_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_loop_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignee_worker_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,6 +144,9 @@ impl TaskDomain {
             blocked_by: params.blocked_by,
             archived_at: None,
             merge_loop_prompt: params.merge_loop_prompt,
+            assignee_worker_id: params.assignee_worker_id,
+            claimed_at: params.claimed_at,
+            lease_expires_at: params.lease_expires_at,
             created_at: now.clone(),
             updated_at: now,
             completed_at,
@@ -173,6 +188,15 @@ impl TaskDomain {
         }
         if let Some(blocked_by) = input.blocked_by {
             task.blocked_by = blocked_by;
+        }
+        if let Some(assignee_worker_id) = input.assignee_worker_id {
+            task.assignee_worker_id = assignee_worker_id;
+        }
+        if let Some(claimed_at) = input.claimed_at {
+            task.claimed_at = claimed_at;
+        }
+        if let Some(lease_expires_at) = input.lease_expires_at {
+            task.lease_expires_at = lease_expires_at;
         }
 
         task.updated_at = now;

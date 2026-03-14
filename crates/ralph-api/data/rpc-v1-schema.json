@@ -212,6 +212,24 @@
             "string",
             "null"
           ]
+        },
+        "assigneeWorkerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claimedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "leaseExpiresAt": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -407,6 +425,24 @@
             "null"
           ]
         },
+        "assigneeWorkerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claimedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "leaseExpiresAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "preset": {
           "type": "string"
         },
@@ -440,6 +476,24 @@
           "maximum": 5
         },
         "blockedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "assigneeWorkerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claimedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "leaseExpiresAt": {
           "type": [
             "string",
             "null"

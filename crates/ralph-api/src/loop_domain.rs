@@ -444,6 +444,9 @@ impl LoopDomain {
             priority: Some(1),
             blocked_by: None,
             merge_loop_prompt: Some(merge_prompt),
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
         })?;
 
         Ok(TriggerMergeTaskResult {

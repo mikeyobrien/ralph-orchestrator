@@ -42,6 +42,9 @@ Current task board-state semantics:
 - `task.cancel` requires `in_progress` and transitions the task to `cancelled`.
 - `task.retry` requires `cancelled` and transitions the task back to `ready`.
 - `task.delete` is limited to terminal tasks in `done` or `cancelled`.
+- Task records may also carry nullable worker ownership metadata: `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt`.
+- `task.create`, `task.get`, and `task.update` surface those ownership/lease fields directly, and the same serde snapshot persists them in `.ralph/api/tasks-v1.json` when present.
+- `task.update` accepts either a string or explicit `null` for those fields; malformed JSON types are rejected at the RPC boundary with `INVALID_PARAMS` instead of being silently ignored.
 
 Intentional migration differences vs legacy Node backend:
 - `planning.start` returns a full `session` object instead of just `{sessionId}`.

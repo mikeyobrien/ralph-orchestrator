@@ -358,6 +358,28 @@ impl RpcRuntime {
     }
 }
 
+fn parse_optional_nullable_string_field(
+    object: &serde_json::Map<String, Value>,
+    field_name: &'static str,
+) -> Result<Option<Option<String>>, ApiError> {
+    if !object.contains_key(field_name) {
+        return Ok(None);
+    }
+
+    let value = object
+        .get(field_name)
+        .expect("contains_key check guarantees field exists");
+    if value.is_null() {
+        return Ok(Some(None));
+    }
+
+    let value = value.as_str().ok_or_else(|| {
+        ApiError::invalid_params(format!("task.update {field_name} must be a string or null"))
+    })?;
+
+    Ok(Some(Some(value.to_string())))
+}
+
 fn parse_task_update_input(request: &RpcRequestEnvelope) -> Result<TaskUpdateInput, ApiError> {
     let object = request.params.as_object().ok_or_else(|| {
         ApiError::invalid_params("task.update params must be an object")
@@ -386,21 +408,10 @@ fn parse_task_update_input(request: &RpcRequestEnvelope) -> Result<TaskUpdateInp
         .and_then(Value::as_u64)
         .and_then(|value| u8::try_from(value).ok());
 
-    let blocked_by = if object.contains_key("blockedBy") {
-        let value = object
-            .get("blockedBy")
-            .expect("contains_key check guarantees blockedBy exists");
-        if value.is_null() {
-            Some(None)
-        } else {
-            let blocked_by = value.as_str().ok_or_else(|| {
-                ApiError::invalid_params("task.update blockedBy must be a string or null")
-            })?;
-            Some(Some(blocked_by.to_string()))
-        }
-    } else {
-        None
-    };
+    let blocked_by = parse_optional_nullable_string_field(object, "blockedBy")?;
+    let assignee_worker_id = parse_optional_nullable_string_field(object, "assigneeWorkerId")?;
+    let claimed_at = parse_optional_nullable_string_field(object, "claimedAt")?;
+    let lease_expires_at = parse_optional_nullable_string_field(object, "leaseExpiresAt")?;
 
     Ok(TaskUpdateInput {
         id,
@@ -408,5 +419,8 @@ fn parse_task_update_input(request: &RpcRequestEnvelope) -> Result<TaskUpdateInp
         status,
         priority,
         blocked_by,
+        assignee_worker_id,
+        claimed_at,
+        lease_expires_at,
     })
 }
