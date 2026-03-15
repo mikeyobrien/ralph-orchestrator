@@ -20,7 +20,9 @@
 
 use crate::claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock};
 use crate::cli_backend::{CliBackend, OutputFormat};
-use crate::copilot_stream::CopilotStreamParser;
+use crate::copilot_stream::{
+    CopilotStreamParser, CopilotStreamState, dispatch_copilot_stream_event,
+};
 use crate::pi_stream::{PiSessionState, PiStreamParser, dispatch_pi_stream_event};
 use crate::stream_handler::{SessionResult, StreamHandler};
 #[cfg(unix)]
@@ -663,6 +665,7 @@ impl PtyExecutor {
         let mut extracted_text = String::new();
         // Pi session state for accumulating cost/turns (wall-clock for duration)
         let mut pi_state = PiSessionState::new();
+        let mut copilot_state = CopilotStreamState::new();
         let mut completion: Option<SessionResult> = None;
         let start_time = Instant::now();
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
@@ -791,11 +794,14 @@ impl PtyExecutor {
                                         let line = line_buffer[..newline_pos].to_string();
                                         line_buffer = line_buffer[newline_pos + 1..].to_string();
 
-                                        handle_copilot_stream_line(
+                                        if let Some(session_result) = handle_copilot_stream_line(
                                             &line,
                                             handler,
                                             &mut extracted_text,
-                                        );
+                                            &mut copilot_state,
+                                        ) {
+                                            completion = Some(session_result);
+                                        }
                                     }
                                 } else if is_pi_stream {
                                     // PiStreamJson format: Parse NDJSON lines from pi
@@ -845,11 +851,14 @@ impl PtyExecutor {
                                 }
                                 dispatch_stream_event(event, handler, &mut extracted_text);
                             } else if is_copilot_stream && !line_buffer.is_empty() {
-                                handle_copilot_stream_line(
+                                if let Some(session_result) = handle_copilot_stream_line(
                                     &line_buffer,
                                     handler,
                                     &mut extracted_text,
-                                );
+                                    &mut copilot_state,
+                                ) {
+                                    completion = Some(session_result);
+                                }
                             } else if is_pi_stream && !line_buffer.is_empty()
                                 && let Some(event) = PiStreamParser::parse_line(&line_buffer)
                             {
@@ -932,7 +941,14 @@ impl PtyExecutor {
                                 while let Some(newline_pos) = line_buffer.find('\n') {
                                     let line = line_buffer[..newline_pos].to_string();
                                     line_buffer = line_buffer[newline_pos + 1..].to_string();
-                                    handle_copilot_stream_line(&line, handler, &mut extracted_text);
+                                    if let Some(session_result) = handle_copilot_stream_line(
+                                        &line,
+                                        handler,
+                                        &mut extracted_text,
+                                        &mut copilot_state,
+                                    ) {
+                                        completion = Some(session_result);
+                                    }
                                 }
                             } else if is_pi_stream {
                                 // PiStreamJson: parse NDJSON lines
@@ -1008,6 +1024,7 @@ impl PtyExecutor {
                                             &line,
                                             handler,
                                             &mut extracted_text,
+                                            &mut copilot_state,
                                         );
                                     }
                                 } else if is_pi_stream {
@@ -1063,7 +1080,14 @@ impl PtyExecutor {
                     }
                     dispatch_stream_event(event, handler, &mut extracted_text);
                 } else if is_copilot_stream && !line_buffer.is_empty() {
-                    handle_copilot_stream_line(&line_buffer, handler, &mut extracted_text);
+                    if let Some(session_result) = handle_copilot_stream_line(
+                        &line_buffer,
+                        handler,
+                        &mut extracted_text,
+                        &mut copilot_state,
+                    ) {
+                        completion = Some(session_result);
+                    }
                 } else if is_pi_stream
                     && !line_buffer.is_empty()
                     && let Some(event) = PiStreamParser::parse_line(&line_buffer)
@@ -1727,11 +1751,10 @@ fn handle_copilot_stream_line<H: StreamHandler>(
     line: &str,
     handler: &mut H,
     extracted_text: &mut String,
-) {
-    if let Some(text) = CopilotStreamParser::extract_text(line) {
-        handler.on_text(&text);
-        CopilotStreamParser::append_text_chunk(extracted_text, &text);
-    }
+    copilot_state: &mut CopilotStreamState,
+) -> Option<SessionResult> {
+    let event = CopilotStreamParser::parse_line(line)?;
+    dispatch_copilot_stream_event(event, handler, extracted_text, copilot_state)
 }
 
 fn inject_ralph_runtime_env(cmd_builder: &mut CommandBuilder, workspace_root: &std::path::Path) {
