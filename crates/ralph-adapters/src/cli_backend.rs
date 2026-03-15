@@ -16,6 +16,8 @@ pub enum OutputFormat {
     Text,
     /// Newline-delimited JSON stream (Claude with --output-format stream-json)
     StreamJson,
+    /// JSONL stream from Copilot prompt mode (`--output-format json`)
+    CopilotStreamJson,
     /// Newline-delimited JSON stream (Pi with --mode json)
     PiStreamJson,
     /// Agent Client Protocol over stdio (Kiro v2)
@@ -320,14 +322,18 @@ impl CliBackend {
     /// Creates the Copilot backend for autonomous mode.
     ///
     /// Uses GitHub Copilot CLI with `--allow-all-tools` for automated tool approval.
-    /// Output is plain text (no JSON streaming available).
+    /// Prompt mode emits JSONL via `--output-format json` for programmatic parsing.
     pub fn copilot() -> Self {
         Self {
             command: "copilot".to_string(),
-            args: vec!["--allow-all-tools".to_string()],
+            args: vec![
+                "--allow-all-tools".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+            ],
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-p".to_string()),
-            output_format: OutputFormat::Text,
+            output_format: OutputFormat::CopilotStreamJson,
             env_vars: vec![],
         }
     }
@@ -920,9 +926,18 @@ mod tests {
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "copilot");
-        assert_eq!(args, vec!["--allow-all-tools", "-p", "test prompt"]);
+        assert_eq!(
+            args,
+            vec![
+                "--allow-all-tools",
+                "--output-format",
+                "json",
+                "-p",
+                "test prompt"
+            ]
+        );
         assert!(stdin.is_none());
-        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.output_format, OutputFormat::CopilotStreamJson);
     }
 
     #[test]
@@ -1008,7 +1023,7 @@ mod tests {
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
 
         assert_eq!(cmd, "copilot");
-        assert_eq!(args, vec!["-p", "test prompt"]);
+        assert_eq!(args, vec!["--output-format", "json", "-p", "test prompt"]);
         assert!(stdin.is_none());
         assert!(!args.contains(&"--allow-all-tools".to_string()));
     }

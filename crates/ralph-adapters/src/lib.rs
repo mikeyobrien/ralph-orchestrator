@@ -30,6 +30,7 @@ mod auto_detect;
 mod claude_stream;
 mod cli_backend;
 mod cli_executor;
+mod copilot_stream;
 mod json_rpc_handler;
 mod pi_stream;
 mod pty_executor;
@@ -46,6 +47,7 @@ pub use claude_stream::{
 };
 pub use cli_backend::{CliBackend, CustomBackendError, OutputFormat, PromptMode};
 pub use cli_executor::{CliExecutor, ExecutionResult};
+pub use copilot_stream::{CopilotAssistantMessage, CopilotStreamEvent, CopilotStreamParser};
 pub use json_rpc_handler::{JsonRpcStreamHandler, stdout_json_rpc_handler};
 pub use pi_stream::{
     PiAssistantEvent, PiContentBlock, PiCost, PiSessionState, PiStreamEvent, PiStreamParser,

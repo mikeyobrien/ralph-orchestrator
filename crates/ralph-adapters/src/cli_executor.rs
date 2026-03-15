@@ -3,9 +3,10 @@
 //! Executes prompts via CLI tools with real-time streaming output.
 //! Supports optional execution timeout with graceful SIGTERM termination.
 
-use crate::cli_backend::CliBackend;
 #[cfg(test)]
-use crate::cli_backend::{OutputFormat, PromptMode};
+use crate::cli_backend::PromptMode;
+use crate::cli_backend::{CliBackend, OutputFormat};
+use crate::copilot_stream::CopilotStreamParser;
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
 #[cfg(unix)]
@@ -137,7 +138,16 @@ impl CliExecutor {
 
             // Write stdout lines first (main output)
             for line in &stdout_lines {
-                writeln!(output_writer, "{line}")?;
+                if self.backend.output_format == OutputFormat::CopilotStreamJson {
+                    if let Some(text) = CopilotStreamParser::extract_text(line) {
+                        write!(output_writer, "{text}")?;
+                        if !text.ends_with('\n') {
+                            writeln!(output_writer)?;
+                        }
+                    }
+                } else {
+                    writeln!(output_writer, "{line}")?;
+                }
             }
 
             // Write stderr lines (prefixed) only in verbose mode
@@ -381,5 +391,34 @@ mod tests {
         assert!(!result.timed_out, "Fast command should not time out");
         assert!(result.success);
         assert!(result.output.contains("fast"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_copilot_stream_writes_extracted_text() {
+        let backend = CliBackend {
+            command: "printf".to_string(),
+            args: vec![
+                "%s\n%s\n".to_string(),
+                r#"{"type":"assistant.turn_start","data":{"turnId":"0"}}"#.to_string(),
+                r#"{"type":"assistant.message","data":{"content":"hello from copilot"}}"#
+                    .to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::CopilotStreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let mut output = Vec::new();
+
+        let result = executor
+            .execute("ignored", &mut output, None, false)
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("\"assistant.message\""));
+        assert_eq!(String::from_utf8(output).unwrap(), "hello from copilot\n");
     }
 }

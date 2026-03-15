@@ -7,9 +7,9 @@
 use anyhow::{Context, Result};
 use ralph_adapters::{
     AcpExecutor, ClaudeStreamEvent, ClaudeStreamParser, CliBackend, CliExecutor,
-    ConsoleStreamHandler, ContentBlock, JsonRpcStreamHandler, OutputFormat as BackendOutputFormat,
-    PiAssistantEvent, PiStreamEvent, PiStreamParser, PrettyStreamHandler, PtyConfig, PtyExecutor,
-    QuietStreamHandler, TuiStreamHandler,
+    ConsoleStreamHandler, ContentBlock, CopilotStreamParser, JsonRpcStreamHandler,
+    OutputFormat as BackendOutputFormat, PiAssistantEvent, PiStreamEvent, PiStreamParser,
+    PrettyStreamHandler, PtyConfig, PtyExecutor, QuietStreamHandler, TuiStreamHandler,
 };
 use ralph_core::diagnostics::{HookDisposition, HookRunTelemetryEntry};
 use ralph_core::{
@@ -4020,6 +4020,7 @@ fn normalize_cli_output_for_parsing(
 ) -> String {
     match output_format {
         BackendOutputFormat::StreamJson => extract_claude_stream_text(raw_output),
+        BackendOutputFormat::CopilotStreamJson => CopilotStreamParser::extract_all_text(raw_output),
         BackendOutputFormat::PiStreamJson => extract_pi_stream_text(raw_output),
         _ => raw_output.to_string(),
     }
@@ -8327,6 +8328,21 @@ hats:
         assert_eq!(
             normalize_cli_output_for_parsing(BackendOutputFormat::PiStreamJson, raw),
             "hello LOOP_COMPLETE"
+        );
+    }
+
+    #[test]
+    fn test_normalize_cli_output_for_parsing_extracts_copilot_stream_text() {
+        let raw = concat!(
+            "{\"type\":\"assistant.turn_start\",\"data\":{\"turnId\":\"0\"}}\n",
+            "{\"type\":\"assistant.message\",\"data\":{\"content\":\"First line\"}}\n",
+            "{\"type\":\"assistant.message\",\"data\":{\"content\":\"LOOP_COMPLETE\"}}\n",
+            "{\"type\":\"result\",\"exitCode\":0}\n"
+        );
+
+        assert_eq!(
+            normalize_cli_output_for_parsing(BackendOutputFormat::CopilotStreamJson, raw),
+            "First line\nLOOP_COMPLETE\n"
         );
     }
 

@@ -689,4 +689,102 @@ NDJSON
             result.extracted_text
         );
     }
+
+    #[tokio::test]
+    async fn run_observe_streaming_copilot_stream_extracts_assistant_text() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::CopilotStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        let script = r#"printf '%s\n' \
+'{"type":"assistant.turn_start","data":{"turnId":"0"}}' \
+'{"type":"assistant.message","data":{"content":"Hello from Copilot"}}' \
+'{"type":"result","exitCode":0}'"#;
+
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(result.success);
+        assert_eq!(handler.texts, vec!["Hello from Copilot".to_string()]);
+        assert_eq!(result.extracted_text, "Hello from Copilot\n");
+        assert_eq!(handler.completions.len(), 1);
+        assert!(!handler.completions[0].is_error);
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_copilot_stream_reports_tool_events() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::CopilotStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        let script = r#"printf '%s\n' \
+'{"type":"assistant.turn_start","data":{"turnId":"0"}}' \
+'{"type":"assistant.message_delta","data":{"messageId":"msg-1","deltaContent":"Checking parser"}}' \
+'{"type":"assistant.message","data":{"messageId":"msg-1","content":"Checking parser","toolRequests":[{"toolCallId":"tool-1","name":"bash","arguments":{"command":"echo hi"},"type":"function"}]}}' \
+'{"type":"tool.execution_start","data":{"toolCallId":"tool-1","toolName":"bash","arguments":{"command":"echo hi"}}}' \
+'{"type":"tool.execution_complete","data":{"toolCallId":"tool-1","success":true,"result":{"content":"hi\n","detailedContent":"hi\n"}}}' \
+'{"type":"assistant.message","data":{"messageId":"msg-2","content":"Done"}}' \
+'{"type":"result","exitCode":0}'"#;
+
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(result.success);
+        assert_eq!(
+            handler.texts,
+            vec![
+                "Checking parser".to_string(),
+                "\n".to_string(),
+                "Done".to_string()
+            ]
+        );
+        assert_eq!(handler.tool_calls.len(), 1);
+        assert_eq!(handler.tool_calls[0].0, "bash");
+        assert_eq!(handler.tool_calls[0].1, "tool-1");
+        assert_eq!(handler.tool_calls[0].2["command"], "echo hi");
+        assert_eq!(
+            handler.tool_results,
+            vec![("tool-1".to_string(), "hi\n".to_string())]
+        );
+        assert!(handler.errors.is_empty());
+        assert_eq!(handler.completions.len(), 1);
+        assert!(!handler.completions[0].is_error);
+        assert_eq!(result.extracted_text, "Checking parser\nDone\n");
+    }
 }
