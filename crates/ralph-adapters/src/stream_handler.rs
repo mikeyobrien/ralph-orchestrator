@@ -1894,6 +1894,110 @@ mod tests {
 }
 
 // =========================================================================
+// Channel & Tee stream handlers (for factory log streaming)
+// =========================================================================
+
+/// A line of output captured from a stream handler.
+pub struct StreamLine {
+    pub text: String,
+    pub source: StreamLineSource,
+}
+
+/// Whether the line came from stdout-like or stderr-like output.
+pub enum StreamLineSource {
+    Stdout,
+    Stderr,
+}
+
+/// Sends stream events over a `std::sync::mpsc` channel.
+///
+/// Used by factory workers to capture agent output without blocking.
+/// Uses `std::sync::mpsc` (not tokio) because `StreamHandler` is called
+/// from sync executor code.
+pub struct ChannelStreamHandler {
+    tx: std::sync::mpsc::Sender<StreamLine>,
+}
+
+impl ChannelStreamHandler {
+    pub fn new(tx: std::sync::mpsc::Sender<StreamLine>) -> Self {
+        Self { tx }
+    }
+
+    fn send(&self, text: String, source: StreamLineSource) {
+        let _ = self.tx.send(StreamLine { text, source });
+    }
+}
+
+impl StreamHandler for ChannelStreamHandler {
+    fn on_text(&mut self, text: &str) {
+        self.send(text.to_string(), StreamLineSource::Stdout);
+    }
+
+    fn on_tool_call(&mut self, name: &str, _id: &str, input: &serde_json::Value) {
+        let summary = match format_tool_summary(name, input) {
+            Some(s) => format!("[Tool] {name}: {s}\n"),
+            None => format!("[Tool] {name}\n"),
+        };
+        self.send(summary, StreamLineSource::Stdout);
+    }
+
+    fn on_tool_result(&mut self, _id: &str, output: &str) {
+        self.send(
+            format!("[Result] {}\n", truncate(output, 200)),
+            StreamLineSource::Stdout,
+        );
+    }
+
+    fn on_error(&mut self, error: &str) {
+        self.send(format!("[Error] {error}\n"), StreamLineSource::Stderr);
+    }
+
+    fn on_complete(&mut self, _result: &SessionResult) {}
+}
+
+/// Wraps two `StreamHandler`s, forwarding all calls to both.
+///
+/// This allows factory workers to keep console output while also streaming
+/// events to a channel for HTTP publishing.
+pub struct TeeStreamHandler<A: StreamHandler, B: StreamHandler> {
+    pub primary: A,
+    pub secondary: B,
+}
+
+impl<A: StreamHandler, B: StreamHandler> TeeStreamHandler<A, B> {
+    pub fn new(primary: A, secondary: B) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+impl<A: StreamHandler, B: StreamHandler> StreamHandler for TeeStreamHandler<A, B> {
+    fn on_text(&mut self, text: &str) {
+        self.primary.on_text(text);
+        self.secondary.on_text(text);
+    }
+
+    fn on_tool_call(&mut self, name: &str, id: &str, input: &serde_json::Value) {
+        self.primary.on_tool_call(name, id, input);
+        self.secondary.on_tool_call(name, id, input);
+    }
+
+    fn on_tool_result(&mut self, id: &str, output: &str) {
+        self.primary.on_tool_result(id, output);
+        self.secondary.on_tool_result(id, output);
+    }
+
+    fn on_error(&mut self, error: &str) {
+        self.primary.on_error(error);
+        self.secondary.on_error(error);
+    }
+
+    fn on_complete(&mut self, result: &SessionResult) {
+        self.primary.on_complete(result);
+        self.secondary.on_complete(result);
+    }
+}
+
+// =========================================================================
 // ANSI Detection Tests (module-level)
 // =========================================================================
 

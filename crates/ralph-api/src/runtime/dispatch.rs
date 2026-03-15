@@ -44,6 +44,7 @@ impl RpcRuntime {
             method if method.starts_with("collection.") => self.dispatch_collection(request),
             method if method.starts_with("worker.") => self.dispatch_worker(request),
             method if method.starts_with("board.") => self.dispatch_board(request),
+            method if method.starts_with("git.") => self.dispatch_git(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
             "_internal.publish" => self.dispatch_internal_publish(request),
             _ => {
@@ -405,6 +406,60 @@ impl RpcRuntime {
         }
     }
 
+    fn dispatch_git(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        match request.method.as_str() {
+            "git.status" => self.git_status(),
+            _ => Err(ApiError::service_unavailable(format!(
+                "method '{}' is recognized but not implemented",
+                request.method
+            ))),
+        }
+    }
+
+    fn git_status(&self) -> Result<Value, ApiError> {
+        let root = &self.config.workspace_root;
+
+        let branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(root)
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                } else {
+                    None
+                }
+            });
+
+        let porcelain = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .output()
+            .map_err(|e| ApiError::internal(format!("failed to run git status: {e}")))?;
+
+        let stdout = String::from_utf8_lossy(&porcelain.stdout);
+        let files: Vec<Value> = stdout
+            .lines()
+            .filter(|l| l.len() >= 4)
+            .map(|line| {
+                json!({
+                    "status": line[..2].trim(),
+                    "path": line[3..].to_string(),
+                })
+            })
+            .collect();
+
+        let clean = files.is_empty();
+
+        Ok(json!({
+            "branch": branch,
+            "files": files,
+            "clean": clean,
+        }))
+    }
+
     /// Aggregate operator view: task counts by status, workers, stale/blocked/in-review
     /// items, recent completions, and actionable recommendations.
     fn board_summary(&self) -> Result<Value, ApiError> {
@@ -442,15 +497,30 @@ impl RpcRuntime {
 
         let now = Utc::now();
 
-        // Stale items: in_progress with expired lease
+        // Stale items: in_progress with effective lease expired (considers worker heartbeat)
+        let lease_duration = chrono::Duration::minutes(2);
         let stale_items: Vec<Value> = all_tasks
             .iter()
             .filter(|t| {
-                t.status == "in_progress"
-                    && t.lease_expires_at
-                        .as_deref()
-                        .and_then(|ts| ts.parse::<DateTime<Utc>>().ok())
-                        .map_or(false, |expires| expires < now)
+                if t.status != "in_progress" {
+                    return false;
+                }
+                let task_deadline = t
+                    .lease_expires_at
+                    .as_deref()
+                    .and_then(|ts| ts.parse::<DateTime<Utc>>().ok());
+                let worker_deadline = t
+                    .assignee_worker_id
+                    .as_deref()
+                    .and_then(|wid| workers.get(wid))
+                    .and_then(|w| w.last_heartbeat_at.parse::<DateTime<Utc>>().ok())
+                    .map(|hb| hb + lease_duration);
+                match (task_deadline, worker_deadline) {
+                    (Some(td), Some(wd)) => td.max(wd) < now,
+                    (Some(td), None) => td < now,
+                    (None, Some(wd)) => wd < now,
+                    (None, None) => false,
+                }
             })
             .cloned()
             .map(|t| enrich_task(t, &workers))
@@ -468,6 +538,22 @@ impl RpcRuntime {
         let in_review_items: Vec<Value> = all_tasks
             .iter()
             .filter(|t| t.status == "in_review")
+            .cloned()
+            .map(|t| enrich_task(t, &workers))
+            .collect();
+
+        // Ready items (unassigned)
+        let ready_items: Vec<Value> = all_tasks
+            .iter()
+            .filter(|t| t.status == "ready" && t.assignee_worker_id.is_none())
+            .cloned()
+            .map(|t| enrich_task(t, &workers))
+            .collect();
+
+        // Backlog items
+        let backlog_items: Vec<Value> = all_tasks
+            .iter()
+            .filter(|t| t.status == "backlog")
             .cloned()
             .map(|t| enrich_task(t, &workers))
             .collect();
@@ -506,6 +592,9 @@ impl RpcRuntime {
                     "status": w.status,
                     "currentHat": w.current_hat,
                     "lastHeartbeatAt": w.last_heartbeat_at,
+                    "iteration": w.iteration,
+                    "maxIterations": w.max_iterations,
+                    "registeredAt": w.registered_at,
                     "currentTask": current_task,
                 })
             })
@@ -557,6 +646,8 @@ impl RpcRuntime {
             "staleItems": stale_items,
             "blockedItems": blocked_items,
             "inReviewItems": in_review_items,
+            "readyItems": ready_items,
+            "backlogItems": backlog_items,
             "recentCompletions": recent_completions,
             "recommendations": recommendations,
         }))
@@ -601,17 +692,17 @@ impl RpcRuntime {
             let count = cycle_times.len();
             let sum: f64 = cycle_times.iter().sum();
             let avg = sum / count as f64;
-            let min = cycle_times.iter().cloned().fold(f64::INFINITY, f64::min);
+            let min = cycle_times.iter().copied().fold(f64::INFINITY, f64::min);
             let max = cycle_times
                 .iter()
-                .cloned()
+                .copied()
                 .fold(f64::NEG_INFINITY, f64::max);
 
             // p50 (median)
             let mut sorted = cycle_times.clone();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let p50 = if count % 2 == 0 {
-                (sorted[count / 2 - 1] + sorted[count / 2]) / 2.0
+            let p50 = if count.is_multiple_of(2) {
+                f64::midpoint(sorted[count / 2 - 1], sorted[count / 2])
             } else {
                 sorted[count / 2]
             };
@@ -642,7 +733,7 @@ impl RpcRuntime {
             let count = queue_ages.len();
             let sum: f64 = queue_ages.iter().sum();
             let avg = sum / count as f64;
-            let max = queue_ages.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let max = queue_ages.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             json!({
                 "avgSeconds": (avg * 100.0).round() / 100.0,
                 "maxSeconds": (max * 100.0).round() / 100.0,
@@ -656,7 +747,7 @@ impl RpcRuntime {
             .filter(|t| {
                 t.error_message
                     .as_deref()
-                    .map_or(false, |msg| msg.contains("reclaimed"))
+                    .is_some_and(|msg| msg.contains("reclaimed"))
             })
             .count();
 
@@ -672,14 +763,19 @@ impl RpcRuntime {
             .iter()
             .filter(|w| w.status == WorkerStatus::Busy)
             .count();
+        let dead_workers = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Dead)
+            .count();
         let total_workers = workers.len();
+        let alive_workers = total_workers - dead_workers;
         let completion_rate = if total > 0 {
-            ((done_count as f64 / total as f64) * 10000.0).round() / 100.0
+            done_count as f64 / total as f64
         } else {
             0.0
         };
-        let utilization = if total_workers > 0 {
-            ((active_workers as f64 / total_workers as f64) * 10000.0).round() / 100.0
+        let utilization = if alive_workers > 0 {
+            active_workers as f64 / alive_workers as f64
         } else {
             0.0
         };
@@ -696,6 +792,8 @@ impl RpcRuntime {
                 "completionRate": completion_rate,
                 "activeWorkers": active_workers,
                 "totalWorkers": total_workers,
+                "aliveWorkers": alive_workers,
+                "deadWorkers": dead_workers,
                 "utilization": utilization,
             },
             "snapshotAt": now.to_rfc3339(),
@@ -769,15 +867,34 @@ impl RpcRuntime {
 /// - `currentLoopId`  — loop the assigned worker belongs to, or `null`
 /// - `currentHat`     — hat the assigned worker is wearing, or `null`
 /// - `isClaimed`      — `true` when `assigneeWorkerId` is set
-/// - `isStale`        — `true` when `leaseExpiresAt` is in the past
+/// - `isStale`        — `true` when effective lease (considering worker heartbeat) is expired
 fn enrich_task(task: TaskRecord, workers: &BTreeMap<String, WorkerRecord>) -> Value {
     let is_claimed = task.assignee_worker_id.is_some();
+    let now = Utc::now();
+    let lease_duration = chrono::Duration::minutes(2);
 
-    let is_stale = task
-        .lease_expires_at
-        .as_deref()
-        .and_then(|ts| ts.parse::<DateTime<Utc>>().ok())
-        .map_or(false, |expires| expires < Utc::now());
+    // Use the same effective-lease logic as reclaim_expired: take the max of
+    // the task's leaseExpiresAt and the worker's lastHeartbeatAt + lease_duration.
+    let is_stale = {
+        let task_deadline = task
+            .lease_expires_at
+            .as_deref()
+            .and_then(|ts| ts.parse::<DateTime<Utc>>().ok());
+
+        let worker_deadline = task
+            .assignee_worker_id
+            .as_deref()
+            .and_then(|wid| workers.get(wid))
+            .and_then(|w| w.last_heartbeat_at.parse::<DateTime<Utc>>().ok())
+            .map(|hb| hb + lease_duration);
+
+        match (task_deadline, worker_deadline) {
+            (Some(td), Some(wd)) => td.max(wd) < now,
+            (Some(td), None) => td < now,
+            (None, Some(wd)) => wd < now,
+            (None, None) => false,
+        }
+    };
 
     let (current_loop_id, current_hat) = task
         .assignee_worker_id
@@ -837,6 +954,7 @@ fn enrich_loops(loops: Vec<LoopRecord>, workers: &BTreeMap<String, WorkerRecord>
     loops.into_iter().map(|l| enrich_loop(l, workers)).collect()
 }
 
+#[allow(clippy::option_option)] // Intentional: None=missing, Some(None)=null, Some(Some(v))=present
 fn parse_optional_nullable_string_field(
     object: &serde_json::Map<String, Value>,
     field_name: &'static str,

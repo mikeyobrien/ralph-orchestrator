@@ -166,6 +166,37 @@ RObot:
 
 See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) for setup instructions.
 
+## Factory Workers
+
+Ralph supports a software factory mode where multiple worker loops claim tasks from a shared pool. Each worker registers, heartbeats, and processes one task at a time.
+
+```bash
+# Run a loop as a factory worker
+ralph run --worker -p "your prompt"
+```
+
+```yaml
+# ralph.yml
+worker:
+  enabled: true
+  heartbeat_interval_seconds: 30
+  worker_name: "my-worker"  # optional, defaults to loop ID
+```
+
+- **Task claiming** — Workers claim the next ready task each iteration; the claimed task is injected into the prompt
+- **Heartbeat & lease** — Workers heartbeat periodically; expired leases are reclaimed by the primary loop
+- **Web dashboard** — Monitor worker status, claimed tasks, and heartbeats from the web UI
+
+Manage workers via the CLI:
+
+```bash
+ralph worker list                     # List all registered workers
+ralph worker show <worker-id>         # Show worker details
+ralph worker deregister <worker-id>   # Remove a stale worker entry
+ralph worker reclaim                  # Reclaim expired leases from dead workers
+ralph worker summary                  # Idle/busy/blocked/dead counts
+```
+
 ## Documentation
 
 Full documentation is available at **[mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)**:

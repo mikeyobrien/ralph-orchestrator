@@ -12,6 +12,7 @@ const MUTATING_METHODS = new Set<string>([
   "task.run_all",
   "task.retry",
   "task.cancel",
+  "task.promote",
   "loop.process",
   "loop.prune",
   "loop.retry",
@@ -28,6 +29,7 @@ const MUTATING_METHODS = new Set<string>([
   "collection.update",
   "collection.delete",
   "collection.import",
+  "worker.reclaim_expired",
 ]);
 
 let requestCounter = 0;

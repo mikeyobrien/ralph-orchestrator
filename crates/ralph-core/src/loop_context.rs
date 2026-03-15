@@ -116,6 +116,20 @@ impl LoopContext {
         }
     }
 
+    /// Creates context for a shared-workspace factory worker.
+    ///
+    /// Workers share the main workspace directory but do NOT hold the loop lock.
+    /// Each worker has its own loop ID and events file, but shares the working
+    /// tree, tasks, and memories with all other workers.
+    pub fn worker(loop_id: impl Into<String>, workspace: PathBuf) -> Self {
+        Self {
+            loop_id: Some(loop_id.into()),
+            repo_root: workspace.clone(),
+            workspace,
+            is_primary: false,
+        }
+    }
+
     /// Returns the loop identifier, if any.
     ///
     /// Primary loops return None; worktree loops return their unique ID.
@@ -587,6 +601,18 @@ mod tests {
         assert!(ctx.loop_id().is_none());
         assert_eq!(ctx.workspace(), Path::new("/project"));
         assert_eq!(ctx.repo_root(), Path::new("/project"));
+    }
+
+    #[test]
+    fn test_worker_context() {
+        let ctx = LoopContext::worker("worker-abc", PathBuf::from("/project"));
+
+        assert!(!ctx.is_primary());
+        assert_eq!(ctx.loop_id(), Some("worker-abc"));
+        assert_eq!(ctx.workspace(), Path::new("/project"));
+        assert_eq!(ctx.repo_root(), Path::new("/project"));
+        // Worker shares workspace — workspace == repo_root
+        assert_eq!(ctx.workspace(), ctx.repo_root());
     }
 
     #[test]

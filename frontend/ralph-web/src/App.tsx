@@ -7,7 +7,7 @@
 
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "./components/layout";
-import { TasksPage, PlanPage, BuilderPage, TaskDetailPage, SettingsPage } from "./pages";
+import { TasksPage, PlanPage, BuilderPage, TaskDetailPage, SettingsPage, FactoryPage } from "./pages";
 
 export function App() {
   return (
@@ -19,6 +19,7 @@ export function App() {
         <Route path="/builder" element={<BuilderPage />} />
         <Route path="/plan" element={<PlanPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/factory" element={<FactoryPage />} />
         {/* Redirect root to tasks */}
         <Route path="/" element={<Navigate to="/tasks" replace />} />
         {/* Catch-all redirect to tasks */}

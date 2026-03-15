@@ -7,9 +7,11 @@ use ralph_core::FileLock;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::ApiError;
+use crate::file_ownership::FileOwnershipRegistry;
 use crate::task_domain::{TaskDomain, TaskRecord};
 
 const LEASE_DURATION_MINUTES: i64 = 2;
+const DEAD_PURGE_MINUTES: i64 = 5;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +36,12 @@ pub struct WorkerRecord {
     pub current_hat: Option<String>,
     pub status: WorkerStatus,
     pub last_heartbeat_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iteration: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registered_at: Option<String>,
 }
 
 impl WorkerRecord {
@@ -60,6 +68,10 @@ pub struct WorkerHeartbeatInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_hat: Option<String>,
     pub last_heartbeat_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iteration: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
 }
 
 impl WorkerHeartbeatInput {
@@ -168,20 +180,52 @@ impl WorkerDomain {
             current_task_id,
             current_hat,
             last_heartbeat_at,
+            iteration,
+            max_iterations,
         } = input;
         let mut updated_worker = None;
+        let mut extend_task_id: Option<String> = None;
 
         self.modify_workers(|workers| {
             let worker = workers
                 .get_mut(&worker_id)
                 .ok_or_else(|| worker_not_found_error(&worker_id))?;
+            // Don't let busy heartbeats revive a Dead worker — reclaim_expired
+            // marked it dead for a reason and already reset the task.
+            // Idle heartbeats ARE allowed through so the factory loop's
+            // send_idle_heartbeat can revive a worker that finished its task.
+            if worker.status == WorkerStatus::Dead && status != WorkerStatus::Idle {
+                updated_worker = Some(worker.clone());
+                return Ok(());
+            }
             worker.status = status;
             worker.current_task_id = current_task_id.clone();
             worker.current_hat = current_hat.clone();
             worker.last_heartbeat_at = last_heartbeat_at.clone();
+            worker.iteration = iteration;
+            worker.max_iterations = max_iterations;
+            // Track busy heartbeats so we can extend the task lease below
+            if status == WorkerStatus::Busy {
+                extend_task_id = current_task_id;
+            }
             updated_worker = Some(worker.clone());
             Ok(())
         })?;
+
+        // Extend the task's leaseExpiresAt so the UI doesn't show it as stale
+        // while the worker is still alive and heartbeating.
+        if let Some(task_id) = extend_task_id {
+            let new_lease = format_timestamp(Utc::now() + lease_duration());
+            let mut task_domain = TaskDomain::new(self.workspace_root()?);
+            let _ = task_domain.with_exclusive_snapshot(|tasks| {
+                if let Some(task) = tasks.get_mut(&task_id)
+                    && task.status == "in_progress"
+                {
+                    task.lease_expires_at = Some(new_lease.clone());
+                }
+                Ok(())
+            });
+        }
 
         updated_worker.ok_or_else(|| {
             ApiError::internal(format!(
@@ -236,6 +280,12 @@ impl WorkerDomain {
             task.updated_at = claimed_at.clone();
             task.completed_at = None;
             task.error_message = None;
+
+            // Auto-extract scope_files from task title if not explicitly set
+            if task.scope_files.is_empty() {
+                task.scope_files = extract_file_paths(&task.title);
+            }
+
             let claimed_task = task.clone();
 
             let worker = workers
@@ -283,10 +333,116 @@ impl WorkerDomain {
             worker
         };
 
+        // Register file ownership for scope_files on the claimed task
+        if let Some(ref task) = claim_result
+            && !task.scope_files.is_empty()
+            && let Ok(workspace) = self.workspace_root()
+        {
+            let registry = FileOwnershipRegistry::new(workspace);
+            // Best-effort: don't fail the claim if ownership registration fails
+            let _ = registry.claim(&worker_id, &task.id, task.scope_files.clone());
+        }
+
         Ok(WorkerClaimNextResult {
             task: claim_result,
             worker,
         })
+    }
+
+    /// Completes a task claimed by a worker.
+    ///
+    /// On success: sets task status to "done" via `TaskDomain::close()`.
+    /// On failure: sets task error_message, resets status to "ready" so it can be reclaimed.
+    /// In both cases: sets worker back to `Idle`, clears `current_task_id`,
+    /// and releases file ownership for the worker.
+    pub fn complete_task(
+        &mut self,
+        worker_id: &str,
+        task_id: &str,
+        success: bool,
+        error_message: Option<String>,
+    ) -> Result<(), ApiError> {
+        validate_required_string("workerId", worker_id)?;
+        validate_required_string("taskId", task_id)?;
+
+        let lock = self.file_lock()?;
+        let _guard = lock.exclusive().map_err(|error| {
+            ApiError::internal(format!(
+                "failed locking worker registry '{}': {error}",
+                self.store_path.display()
+            ))
+        })?;
+
+        let mut workers = self.read_workers_from_disk()?;
+        let worker = workers
+            .get_mut(worker_id)
+            .ok_or_else(|| worker_not_found_error(worker_id))?;
+
+        let was_dead = worker.status == WorkerStatus::Dead;
+
+        // Revive worker to Idle regardless of current status
+        worker.status = WorkerStatus::Idle;
+        worker.current_task_id = None;
+        worker.current_hat = None;
+        worker.last_heartbeat_at = format_timestamp(Utc::now());
+        self.persist_workers_to_disk(&workers)?;
+
+        let mut task_domain = TaskDomain::new(self.workspace_root()?);
+        if success {
+            if was_dead {
+                // reclaim_expired already reset the task to "ready", but this
+                // worker actually completed the work. Force-close it by
+                // bypassing the state machine (ready → done is not valid, but
+                // the work IS done).
+                let tid = task_id.to_string();
+                let _ = task_domain.with_exclusive_snapshot(|tasks| {
+                    if let Some(task) = tasks.get_mut(&tid)
+                        && (task.status == "ready" || task.status == "in_progress")
+                    {
+                        task.status = "done".to_string();
+                        task.assignee_worker_id = None;
+                        task.claimed_at = None;
+                        task.lease_expires_at = None;
+                        task.completed_at = Some(format_timestamp(Utc::now()));
+                        task.updated_at = format_timestamp(Utc::now());
+                        task.error_message = None;
+                    }
+                    Ok(())
+                });
+            } else {
+                let _ = task_domain.close(task_id);
+            }
+        } else if !was_dead {
+            // Reset to ready so it can be reclaimed, bypassing the state machine
+            // (in_progress → ready is not a valid transition, but complete_task
+            // needs to requeue failed tasks just like reclaim_expired does).
+            // When was_dead, reclaim already reset the task — skip to avoid
+            // double-mutation.
+            let error_msg = error_message.clone();
+            let tid = task_id.to_string();
+            let _ = task_domain.with_exclusive_snapshot(|tasks| {
+                if let Some(task) = tasks.get_mut(&tid) {
+                    task.status = "ready".to_string();
+                    task.assignee_worker_id = None;
+                    task.claimed_at = None;
+                    task.lease_expires_at = None;
+                    task.completed_at = None;
+                    task.updated_at = format_timestamp(Utc::now());
+                    if let Some(ref msg) = error_msg {
+                        task.error_message = Some(msg.clone());
+                    }
+                }
+                Ok(())
+            });
+        }
+
+        // Release file ownership for this worker
+        if let Ok(workspace) = self.workspace_root() {
+            let registry = FileOwnershipRegistry::new(workspace);
+            let _ = registry.release_all_for_worker(worker_id);
+        }
+
+        Ok(())
     }
 
     pub fn reclaim_expired(
@@ -318,11 +474,20 @@ impl WorkerDomain {
             .collect::<Result<Vec<_>, _>>()?;
 
         if stale_worker_ids.is_empty() {
+            // Still purge old dead workers even when nothing new is stale
+            let purged = purge_stale_dead_workers(&mut workers, &as_of);
+            if purged > 0 {
+                self.persist_workers_to_disk(&workers)?;
+            }
             return Ok(WorkerReclaimExpiredResult {
                 tasks: Vec::new(),
                 workers: Vec::new(),
             });
         }
+
+        // Purge old dead workers before processing new reclaims
+        // (only removes workers that were already dead, not ones about to be marked dead)
+        let purged = purge_stale_dead_workers(&mut workers, &as_of);
 
         let original_workers = workers.clone();
         let mut worker_persisted = false;
@@ -333,10 +498,10 @@ impl WorkerDomain {
             let mut reclaimed_workers = Vec::new();
 
             for worker_id in &stale_worker_ids {
-                let worker_snapshot = workers
-                    .get(worker_id)
-                    .cloned()
-                    .ok_or_else(|| worker_not_found_error(worker_id))?;
+                let worker_snapshot = match workers.get(worker_id).cloned() {
+                    Some(w) => w,
+                    None => continue, // worker was purged
+                };
                 let Some(task_id) = worker_snapshot.current_task_id.as_deref() else {
                     continue;
                 };
@@ -347,24 +512,23 @@ impl WorkerDomain {
                     continue;
                 }
 
-                if let Some(task) = tasks.get_mut(task_id) {
-                    if task.status == "in_progress"
-                        && task.assignee_worker_id.as_deref() == Some(worker_id.as_str())
-                    {
-                        task.status = "ready".to_string();
-                        task.assignee_worker_id = None;
-                        task.claimed_at = None;
-                        task.lease_expires_at = None;
-                        task.updated_at = input.as_of.clone();
-                        task.completed_at = None;
-                        task.error_message = Some(reclaim_reason(
-                            &worker_snapshot,
-                            task_id,
-                            &effective_lease_expires_at,
-                            &input.as_of,
-                        ));
-                        reclaimed_tasks.push(task.clone());
-                    }
+                if let Some(task) = tasks.get_mut(task_id)
+                    && task.status == "in_progress"
+                    && task.assignee_worker_id.as_deref() == Some(worker_id.as_str())
+                {
+                    task.status = "ready".to_string();
+                    task.assignee_worker_id = None;
+                    task.claimed_at = None;
+                    task.lease_expires_at = None;
+                    task.updated_at = input.as_of.clone();
+                    task.completed_at = None;
+                    task.error_message = Some(reclaim_reason(
+                        &worker_snapshot,
+                        task_id,
+                        &effective_lease_expires_at,
+                        &input.as_of,
+                    ));
+                    reclaimed_tasks.push(task.clone());
                 }
 
                 let worker = workers
@@ -376,7 +540,7 @@ impl WorkerDomain {
                 reclaimed_workers.push(worker.clone());
             }
 
-            if !reclaimed_workers.is_empty() {
+            if !reclaimed_workers.is_empty() || purged > 0 {
                 self.persist_workers_to_disk(&workers)?;
                 worker_persisted = true;
             }
@@ -386,6 +550,17 @@ impl WorkerDomain {
                 workers: reclaimed_workers,
             })
         });
+
+        // Release file ownership for dead workers
+        if let Ok(ref result) = reclaim_result
+            && !result.workers.is_empty()
+            && let Ok(workspace) = self.workspace_root()
+        {
+            let registry = FileOwnershipRegistry::new(workspace);
+            for worker in &result.workers {
+                let _ = registry.release_all_for_worker(&worker.worker_id);
+            }
+        }
 
         match reclaim_result {
             Ok(result) => Ok(result),
@@ -639,12 +814,12 @@ fn effective_lease_expires_at(
 ) -> Result<DateTime<Utc>, ApiError> {
     let mut deadline = worker_lease_deadline(worker)?;
 
-    if let Some(task) = task {
-        if let Some(lease_expires_at) = task.lease_expires_at.as_deref() {
-            let task_deadline = parse_task_timestamp(task, "leaseExpiresAt", lease_expires_at)?;
-            if task_deadline > deadline {
-                deadline = task_deadline;
-            }
+    if let Some(task) = task
+        && let Some(lease_expires_at) = task.lease_expires_at.as_deref()
+    {
+        let task_deadline = parse_task_timestamp(task, "leaseExpiresAt", lease_expires_at)?;
+        if task_deadline > deadline {
+            deadline = task_deadline;
         }
     }
 
@@ -665,6 +840,26 @@ fn reclaim_reason(
     )
 }
 
+/// Removes dead workers whose last heartbeat is older than `LEASE_DURATION + DEAD_PURGE` minutes.
+/// Returns the number of workers purged.
+fn purge_stale_dead_workers(
+    workers: &mut BTreeMap<String, WorkerRecord>,
+    as_of: &DateTime<Utc>,
+) -> usize {
+    let purge_threshold = lease_duration() + Duration::minutes(DEAD_PURGE_MINUTES);
+    let before = workers.len();
+    workers.retain(|_, worker| {
+        if worker.status != WorkerStatus::Dead {
+            return true;
+        }
+        match parse_worker_timestamp(worker, "lastHeartbeatAt", &worker.last_heartbeat_at) {
+            Ok(last_hb) => last_hb + purge_threshold > *as_of,
+            Err(_) => true, // keep if we can't parse — don't silently drop
+        }
+    });
+    before - workers.len()
+}
+
 fn worker_not_idle_error(worker: &WorkerRecord) -> ApiError {
     ApiError::precondition_failed(format!(
         "Worker with id '{}' must be idle and unassigned before claiming the next task",
@@ -680,4 +875,337 @@ fn worker_not_idle_error(worker: &WorkerRecord) -> ApiError {
 fn worker_not_found_error(worker_id: &str) -> ApiError {
     ApiError::not_found(format!("Worker with id '{worker_id}' not found"))
         .with_details(serde_json::json!({ "workerId": worker_id }))
+}
+
+/// Extracts file paths from a task title/description string.
+///
+/// Looks for patterns like `lib/foo/bar.ex`, `src/main.rs`, `config/runtime.exs`
+/// — anything that looks like a relative file path with an extension.
+fn extract_file_paths(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    // Split on whitespace, parens, commas, and common delimiters
+    for token in text.split(|c: char| c.is_whitespace() || "(),\"'`[]{}".contains(c)) {
+        let token = token.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+        });
+        if token.contains('/')
+            && token.contains('.')
+            && !token.starts_with("http")
+            && !token.starts_with("//")
+            && !token.starts_with('.')
+            && token.len() > 3
+        {
+            // Verify it ends with a recognized source file extension
+            if let Some(last_segment) = token.rsplit('/').next()
+                && let Some(ext) = last_segment.rsplit('.').next()
+            {
+                // Only accept known source file extensions
+                let valid_extensions = [
+                    "ex", "exs", "rs", "py", "js", "ts", "tsx", "jsx", "rb", "go", "java", "kt",
+                    "swift", "c", "cpp", "h", "hpp", "cs", "php", "vue", "svelte", "html", "css",
+                    "scss", "sass", "less", "yaml", "yml", "toml", "json", "xml", "md", "txt",
+                    "sh", "bash", "zsh", "sql", "lua", "zig", "nim", "hrl", "erl", "gleam",
+                ];
+                if valid_extensions.contains(&ext)
+                    && !last_segment.starts_with('.')
+                    && token
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || "/_.-".contains(c))
+                {
+                    paths.push(token.to_string());
+                }
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[cfg(test)]
+mod extract_tests {
+    use super::extract_file_paths;
+
+    #[test]
+    fn extracts_elixir_paths() {
+        let title = "Create Worker and Task structs (lib/ralph_workers/worker.ex and lib/ralph_workers/task.ex)";
+        let paths = extract_file_paths(title);
+        assert_eq!(
+            paths,
+            vec!["lib/ralph_workers/task.ex", "lib/ralph_workers/worker.ex",]
+        );
+    }
+
+    #[test]
+    fn extracts_nested_paths() {
+        let title =
+            "Create Dashboard LiveView (lib/ralph_workers_web/live/dashboard_live.ex) at route '/'";
+        let paths = extract_file_paths(title);
+        assert_eq!(paths, vec!["lib/ralph_workers_web/live/dashboard_live.ex"]);
+    }
+
+    #[test]
+    fn ignores_urls() {
+        let title = "Fetch data from https://example.com/api/v1 and write to src/data.rs";
+        let paths = extract_file_paths(title);
+        assert_eq!(paths, vec!["src/data.rs"]);
+    }
+
+    #[test]
+    fn empty_for_no_paths() {
+        let title = "Fix the bug in the login form";
+        let paths = extract_file_paths(title);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn deduplicates() {
+        let title = "Update lib/foo/bar.ex and also lib/foo/bar.ex again";
+        let paths = extract_file_paths(title);
+        assert_eq!(paths, vec!["lib/foo/bar.ex"]);
+    }
+
+    #[test]
+    fn extracts_rust_and_typescript_paths() {
+        let title = "Fix crates/core/src/main.rs and frontend/app/src/App.tsx";
+        let paths = extract_file_paths(title);
+        assert_eq!(
+            paths,
+            vec!["crates/core/src/main.rs", "frontend/app/src/App.tsx"]
+        );
+    }
+
+    #[test]
+    fn ignores_dotfile_paths() {
+        let title = "Update config/.hidden/secret.rs";
+        let paths = extract_file_paths(title);
+        // .hidden starts with dot, but the full path doesn't start with dot
+        // the code checks !token.starts_with('.')
+        assert_eq!(paths, vec!["config/.hidden/secret.rs"]);
+    }
+
+    #[test]
+    fn ignores_paths_starting_with_dot() {
+        let title = "Fix the ./src/main.rs file";
+        let paths = extract_file_paths(title);
+        assert!(paths.is_empty(), "paths starting with . should be excluded");
+    }
+
+    #[test]
+    fn ignores_double_slash_paths() {
+        let title = "Check //network/share/file.rs";
+        let paths = extract_file_paths(title);
+        assert!(
+            paths.is_empty(),
+            "paths starting with // should be excluded"
+        );
+    }
+
+    #[test]
+    fn ignores_bare_filenames_without_slash() {
+        let title = "Fix main.rs and lib.rs";
+        let paths = extract_file_paths(title);
+        assert!(
+            paths.is_empty(),
+            "bare filenames without / should not be extracted"
+        );
+    }
+
+    #[test]
+    fn extracts_paths_in_brackets() {
+        let title = "Modify [src/lib.rs] and (tests/test.rs)";
+        let paths = extract_file_paths(title);
+        assert_eq!(paths, vec!["src/lib.rs", "tests/test.rs"]);
+    }
+
+    #[test]
+    fn ignores_unknown_extensions() {
+        let title = "Update data/config/app.xyz and data/config/app.bin";
+        let paths = extract_file_paths(title);
+        assert!(
+            paths.is_empty(),
+            "unknown extensions should not be extracted"
+        );
+    }
+
+    #[test]
+    fn extracts_config_file_paths() {
+        let title = "Update config/database.yml and config/app.toml";
+        let paths = extract_file_paths(title);
+        assert_eq!(paths, vec!["config/app.toml", "config/database.yml"]);
+    }
+}
+
+#[cfg(test)]
+mod serde_tests {
+    use super::*;
+
+    #[test]
+    fn worker_status_serializes_to_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&WorkerStatus::Idle).unwrap(),
+            r#""idle""#
+        );
+        assert_eq!(
+            serde_json::to_string(&WorkerStatus::Busy).unwrap(),
+            r#""busy""#
+        );
+        assert_eq!(
+            serde_json::to_string(&WorkerStatus::Blocked).unwrap(),
+            r#""blocked""#
+        );
+        assert_eq!(
+            serde_json::to_string(&WorkerStatus::Dead).unwrap(),
+            r#""dead""#
+        );
+    }
+
+    #[test]
+    fn worker_status_deserializes_from_snake_case() {
+        assert_eq!(
+            serde_json::from_str::<WorkerStatus>(r#""idle""#).unwrap(),
+            WorkerStatus::Idle
+        );
+        assert_eq!(
+            serde_json::from_str::<WorkerStatus>(r#""busy""#).unwrap(),
+            WorkerStatus::Busy
+        );
+        assert_eq!(
+            serde_json::from_str::<WorkerStatus>(r#""dead""#).unwrap(),
+            WorkerStatus::Dead
+        );
+    }
+
+    #[test]
+    fn worker_record_roundtrip_json() {
+        let record = WorkerRecord {
+            worker_id: "worker-1".to_string(),
+            worker_name: "alpha".to_string(),
+            loop_id: "loop-1".to_string(),
+            backend: "claude".to_string(),
+            workspace_root: "/tmp/ws".to_string(),
+            current_task_id: Some("task-1".to_string()),
+            current_hat: None,
+            status: WorkerStatus::Busy,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: Some(3),
+            max_iterations: Some(10),
+            registered_at: Some("2026-01-01T00:00:00Z".to_string()),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let deserialized: WorkerRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, record);
+    }
+
+    #[test]
+    fn worker_record_omits_none_fields() {
+        let record = WorkerRecord {
+            worker_id: "w-1".to_string(),
+            worker_name: "alpha".to_string(),
+            loop_id: "l-1".to_string(),
+            backend: "claude".to_string(),
+            workspace_root: "/tmp".to_string(),
+            current_task_id: None,
+            current_hat: None,
+            status: WorkerStatus::Idle,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: None,
+            max_iterations: None,
+            registered_at: None,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(!json.contains("currentTaskId"));
+        assert!(!json.contains("currentHat"));
+        assert!(!json.contains("iteration"));
+        assert!(!json.contains("maxIterations"));
+        assert!(!json.contains("registeredAt"));
+    }
+
+    #[test]
+    fn worker_record_uses_camel_case_keys() {
+        let record = WorkerRecord {
+            worker_id: "w-1".to_string(),
+            worker_name: "alpha".to_string(),
+            loop_id: "l-1".to_string(),
+            backend: "claude".to_string(),
+            workspace_root: "/tmp".to_string(),
+            current_task_id: Some("t-1".to_string()),
+            current_hat: Some("builder".to_string()),
+            status: WorkerStatus::Busy,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: Some(5),
+            max_iterations: Some(10),
+            registered_at: Some("2026-01-01T00:00:00Z".to_string()),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("workerId"));
+        assert!(json.contains("workerName"));
+        assert!(json.contains("loopId"));
+        assert!(json.contains("workspaceRoot"));
+        assert!(json.contains("currentTaskId"));
+        assert!(json.contains("currentHat"));
+        assert!(json.contains("lastHeartbeatAt"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_worker_id() {
+        let record = WorkerRecord {
+            worker_id: String::new(),
+            worker_name: "alpha".to_string(),
+            loop_id: "l-1".to_string(),
+            backend: "claude".to_string(),
+            workspace_root: "/tmp".to_string(),
+            current_task_id: None,
+            current_hat: None,
+            status: WorkerStatus::Idle,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: None,
+            max_iterations: None,
+            registered_at: None,
+        };
+        let err = record.validate().unwrap_err();
+        assert!(err.message.contains("workerId"));
+    }
+
+    #[test]
+    fn validate_rejects_whitespace_only_worker_id() {
+        let record = WorkerRecord {
+            worker_id: "   ".to_string(),
+            worker_name: "alpha".to_string(),
+            loop_id: "l-1".to_string(),
+            backend: "claude".to_string(),
+            workspace_root: "/tmp".to_string(),
+            current_task_id: None,
+            current_hat: None,
+            status: WorkerStatus::Idle,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: None,
+            max_iterations: None,
+            registered_at: None,
+        };
+        let err = record.validate().unwrap_err();
+        assert!(err.message.contains("workerId"));
+    }
+
+    #[test]
+    fn heartbeat_input_validates_required_fields() {
+        let input = WorkerHeartbeatInput {
+            worker_id: String::new(),
+            status: WorkerStatus::Idle,
+            current_task_id: None,
+            current_hat: None,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: None,
+            max_iterations: None,
+        };
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn reclaim_expired_input_validates_timestamp() {
+        let input = WorkerReclaimExpiredInput {
+            as_of: "not-a-timestamp".to_string(),
+        };
+        assert!(input.validate().is_err());
+    }
 }

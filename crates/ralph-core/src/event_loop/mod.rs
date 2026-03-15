@@ -26,6 +26,15 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+/// File ownership context for worker mode prompt injection.
+#[derive(Debug, Clone)]
+pub struct WorkerFileOwnership {
+    /// Files this worker owns (may modify).
+    pub own_files: Vec<String>,
+    /// Files owned by other workers: (file_path, worker_id).
+    pub other_files: Vec<(String, String)>,
+}
+
 /// Result of processing events from JSONL.
 #[derive(Debug, Clone)]
 pub struct ProcessedEvents {
@@ -148,6 +157,10 @@ pub struct EventLoop {
     /// Robot service for human-in-the-loop communication.
     /// Injected externally when `human.enabled` is true and this is the primary loop.
     robot_service: Option<Box<dyn RobotService>>,
+    /// When set, worker mode overrides task injection with only this claimed task.
+    worker_claimed_task: Option<String>,
+    /// File ownership context for worker mode prompt injection.
+    worker_file_ownership: Option<WorkerFileOwnership>,
 }
 
 impl EventLoop {
@@ -276,6 +289,8 @@ impl EventLoop {
             loop_context: Some(context),
             skill_registry,
             robot_service: None,
+            worker_claimed_task: None,
+            worker_file_ownership: None,
         }
     }
 
@@ -371,6 +386,8 @@ impl EventLoop {
             loop_context: None,
             skill_registry,
             robot_service: None,
+            worker_claimed_task: None,
+            worker_file_ownership: None,
         }
     }
 
@@ -383,6 +400,17 @@ impl EventLoop {
     /// platform.
     pub fn set_robot_service(&mut self, service: Box<dyn RobotService>) {
         self.robot_service = Some(service);
+    }
+
+    /// Sets the worker-claimed task title for injection into the prompt.
+    /// When set, `prepend_ready_tasks` shows only this single task.
+    pub fn set_worker_claimed_task(&mut self, task_title: Option<String>) {
+        self.worker_claimed_task = task_title;
+    }
+
+    /// Sets file ownership context for worker mode prompt injection.
+    pub fn set_worker_file_ownership(&mut self, ownership: Option<WorkerFileOwnership>) {
+        self.worker_file_ownership = ownership;
     }
 
     /// Returns the loop context, if one was provided.
@@ -1310,6 +1338,34 @@ impl EventLoop {
     fn prepend_ready_tasks(&self, prompt: String) -> String {
         if !self.config.tasks.enabled {
             return prompt;
+        }
+
+        // Worker mode: inject only the claimed task instead of the full ready list
+        if let Some(ref claimed_title) = self.worker_claimed_task {
+            let mut section = format!(
+                "<ready-tasks>\n## Worker Mode: Claimed Task\n\n- [~] {}\n\nYou are running as a factory worker. Focus exclusively on this task.\n",
+                claimed_title
+            );
+
+            // Add shared workspace awareness if available
+            if let Some(ref ownership) = self.worker_file_ownership {
+                section.push_str("\n## Shared Workspace\n\nYou are one of multiple agents working in this repository simultaneously.\nOther agents are working on their own tasks and may modify files around you.\nIf a file changes unexpectedly, it's likely another agent — just adapt.\n");
+                if !ownership.own_files.is_empty() {
+                    section.push_str("\n### Your assigned files:\n");
+                    for file in &ownership.own_files {
+                        section.push_str(&format!("- {}\n", file));
+                    }
+                }
+                if !ownership.other_files.is_empty() {
+                    section.push_str("\n### Files other agents are working on:\n");
+                    for (file, worker_id) in &ownership.other_files {
+                        section.push_str(&format!("- {} ({})\n", file, worker_id));
+                    }
+                }
+            }
+
+            section.push_str("</ready-tasks>\n\n");
+            return format!("{}{}", section, prompt);
         }
 
         use crate::task::TaskStatus;

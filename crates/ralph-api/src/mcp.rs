@@ -351,6 +351,10 @@ impl ToolCatalog {
 
         let mut entries = Vec::new();
         for method in KNOWN_METHODS {
+            // Skip internal methods — they're not part of the public MCP catalog
+            if method.starts_with("_internal.") {
+                continue;
+            }
             let name = rpc_method_to_tool_name(method);
             let input_ref = request_variants
                 .get(*method)

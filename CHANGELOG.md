@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Software Factory Workers** — Distributed task processing where multiple worker loops claim tasks from a shared pool.
+  - `ralph factory` command spawns N parallel workers (`-w`/`--workers`, default 2) that register, claim ready tasks, execute them in full Ralph loops, and report completion with jittered exponential backoff when idle.
+  - `ralph run --worker` flag enables single-loop worker mode (claims one task at a time, heartbeats, auto-deregisters on shutdown).
+  - Worker registry (`worker_domain`) backed by `.ralph/workers.json` with lock-backed register/list/get/deregister, heartbeat, claim-next, lease expiry, and dead worker purge (5-minute threshold).
+  - Worker CLI: `ralph worker list`, `show`, `summary`, `deregister`, `reclaim` for managing factory workers.
+  - 7 worker RPC methods: `worker.register`, `worker.deregister`, `worker.list`, `worker.get`, `worker.heartbeat`, `worker.claim_next`, `worker.reclaim_expired`.
+- **Canonical board states** — Replaced legacy statuses (`open`, `running`, `completed`) with `backlog`, `ready`, `in_progress`, `in_review`, `blocked`, `done`, `cancelled` across task domain, RPC, schema, and tests.
+- **State transition validation** — `is_valid_transition()` enforces the spec's allowed-transitions table on `task.update`, `task.close`, `task.cancel`, and `task.retry` with `PRECONDITION_FAILED` errors.
+- **Review queue** — `task.submit_for_review`, `task.request_changes`, and `task.in_review` RPC methods for in-review workflow.
+- **Task promote** — `task.promote` RPC for explicit `backlog→ready` promotion.
+- **Task and loop enrichment** — All task RPC responses include `workerName` and `leaseStatus`; `loop.list` includes `activeWorkers`, `taskCounts`, and `hasStaleWork`.
+- **Operator control room** — `board.summary` RPC returning task counts by status, enriched workers, stale/blocked/review items, recent completions, and actionable recommendations. `board.metrics` RPC returning cycle time stats, queue age, reclaim count, and utilization.
+- **Factory web dashboard** — React frontend with worker cards (status, current task, heartbeat), task board (status, assignment, age, stale detection), factory stats (utilization, completion rate, cycle time, queue health), and auto-generated recommendations.
+- **Worker assignment and lease fields** — Tasks persist `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt` through the full RPC round-trip.
+- **122+ new tests** across `rpc_v1_task_loop`, `rpc_v1_worker`, `worker_domain`, and existing suites with 0 regressions.
+
+### Changed
+
+- `task.create` defaults to `ready` status (was `open`).
+- Utilization metrics exclude dead workers; `board.metrics.summary` reports `aliveWorkers`/`deadWorkers` instead of `totalWorkers`.
+- Dead workers cannot be revived by busy heartbeats (only idle heartbeats restore them).
+- `worker_domain` read paths reload from disk under shared lock instead of serving from handle-local cache.
+
 ## [2.8.0] - 2026-03-10
 
 ### Added

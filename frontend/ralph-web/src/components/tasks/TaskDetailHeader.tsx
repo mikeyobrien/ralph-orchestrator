@@ -9,10 +9,11 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Loader2, Trash2, Circle, Check, XCircle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Loader2, Trash2, Circle, Check, XCircle, CheckCircle2, Ban, Eye } from "lucide-react";
 
-export type TaskStatus = "open" | "running" | "completed" | "closed" | "failed";
-export type TaskAction = "run" | "cancel" | "retry";
+export type TaskStatus = "open" | "running" | "completed" | "closed" | "failed"
+  | "backlog" | "ready" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
+export type TaskAction = "run" | "cancel" | "retry" | "promote";
 
 export interface TaskDetailHeaderProps {
   /** Current task status */
@@ -37,13 +38,22 @@ export interface TaskDetailHeaderProps {
 function getActionForStatus(status: TaskStatus): { action: TaskAction; label: string; variant: "default" | "destructive" } | null {
   switch (status) {
     case "running":
+    case "in_progress":
       return { action: "cancel", label: "Cancel", variant: "destructive" };
     case "failed":
+    case "blocked":
+    case "cancelled":
       return { action: "retry", label: "Retry", variant: "default" };
     case "open":
       return { action: "run", label: "Run", variant: "default" };
+    case "ready":
+      return { action: "cancel", label: "Cancel", variant: "destructive" };
+    case "backlog":
+      return { action: "run", label: "Promote", variant: "default" };
     case "completed":
     case "closed":
+    case "done":
+    case "in_review":
       return null;
     default:
       return null;
@@ -61,7 +71,7 @@ interface StatusConfig {
   badgeClass?: string;
 }
 
-const STATUS_MAP: Record<TaskStatus, StatusConfig> = {
+const STATUS_MAP: Record<string, StatusConfig> = {
   open: {
     label: "Open",
     icon: Circle,
@@ -90,6 +100,52 @@ const STATUS_MAP: Record<TaskStatus, StatusConfig> = {
     icon: Check,
     variant: "secondary",
   },
+  // Factory task statuses
+  backlog: {
+    label: "Backlog",
+    icon: Circle,
+    variant: "secondary",
+  },
+  ready: {
+    label: "Ready",
+    icon: Circle,
+    variant: "outline",
+  },
+  in_progress: {
+    label: "In Progress",
+    icon: Loader2,
+    variant: "outline",
+    iconClass: "animate-spin",
+    badgeClass: "bg-blue-500/10 border-blue-500/20 text-blue-400",
+  },
+  in_review: {
+    label: "In Review",
+    icon: Eye,
+    variant: "outline",
+    badgeClass: "bg-amber-500/10 border-amber-500/20 text-amber-400",
+  },
+  blocked: {
+    label: "Blocked",
+    icon: Ban,
+    variant: "destructive",
+  },
+  done: {
+    label: "Done",
+    icon: CheckCircle2,
+    variant: "outline",
+    badgeClass: "bg-green-500/10 border-green-500/20 text-green-400",
+  },
+  cancelled: {
+    label: "Cancelled",
+    icon: XCircle,
+    variant: "secondary",
+  },
+};
+
+const FALLBACK_STATUS: StatusConfig = {
+  label: "Unknown",
+  icon: Circle,
+  variant: "secondary",
 };
 
 export function TaskDetailHeader({
@@ -102,7 +158,7 @@ export function TaskDetailHeader({
   isDeletePending = false,
 }: TaskDetailHeaderProps) {
   const actionConfig = getActionForStatus(status);
-  const statusConfig = STATUS_MAP[status];
+  const statusConfig = STATUS_MAP[status] ?? FALLBACK_STATUS;
   const StatusIcon = statusConfig.icon;
 
   return (

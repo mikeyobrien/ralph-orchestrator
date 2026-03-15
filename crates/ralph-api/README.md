@@ -25,7 +25,7 @@ Rust-native bootstrap runtime for the RPC v1 control plane.
   - Full `config.*` family (`get/update`)
   - Full `preset.*` family (`list`)
   - Full `collection.*` family (`list/get/create/update/delete/import/export`)
-  - Full `worker.*` family (`list/get/register/deregister/heartbeat/claim_next/reclaim_expired`)
+  - Full `worker.*` family (`list/get/register/deregister/heartbeat/claim_next/reclaim_expired/complete_task`)
   - Full `board.*` family (`summary/metrics`)
 
 Persistence notes:
@@ -62,7 +62,7 @@ Loop enrichment fields:
 - `loop.list` injects computed worker fields at the dispatch layer by joining against the in-memory worker registry.
 - For each loop, the enrichment finds the worker whose `loopId` matches the loop's `id` and injects:
   - `workerId` (`string | null`): the ID of the worker assigned to this loop, or `null` if no worker is running it.
-  - `workerStatus` (`string | null`): the worker's status (`idle`, `busy`, `dead`), or `null`.
+  - `workerStatus` (`string | null`): the worker's status (`idle`, `busy`, `blocked`, `dead`), or `null`.
   - `currentTaskId` (`string | null`): the task the worker is currently executing, or `null`.
   - `currentHat` (`string | null`): the hat the worker is currently wearing, or `null`.
   - `lastHeartbeatAt` (`string | null`): ISO 8601 timestamp of the worker's last heartbeat, or `null`.
@@ -73,10 +73,11 @@ Worker lifecycle semantics:
 - Workers are registered via `worker.register` with a unique `workerId`, `workerName`, `loopId`, `backend`, `workspaceRoot`, and `lastHeartbeatAt`.
 - `worker.list` returns all registered workers. `worker.get` returns a single worker by ID (404 if unknown).
 - `worker.deregister` removes a worker from the registry (404 if unknown).
-- `worker.heartbeat` updates a worker's `status`, `currentTaskId`, `currentHat`, and `lastHeartbeatAt`. Returns the updated record (404 if unknown).
-- Worker statuses are `idle`, `busy`, and `dead`.
+- `worker.heartbeat` updates a worker's `status`, `currentTaskId`, `currentHat`, and `lastHeartbeatAt`. Returns the updated record (404 if unknown). Dead workers cannot be revived by `busy` heartbeats — only `idle` heartbeats can revive a dead worker (this allows the factory loop's idle heartbeat to revive a worker that finished its task after being marked dead).
+- Worker statuses are `idle`, `busy`, `blocked`, and `dead`.
 - `worker.claim_next` assigns the highest-priority unblocked `ready` task to an `idle` worker. The task transitions to `in_progress` with `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt` set. The worker transitions to `busy`. Returns `{ task, worker }` where `task` is `null` if no ready tasks exist.
-- `worker.reclaim_expired` accepts an `asOf` ISO 8601 timestamp and reclaims tasks from workers whose lease has expired. Reclaimed tasks return to `ready` with ownership fields cleared. Expired workers transition to `dead`. Returns `{ tasks, workers }` listing affected records.
+- `worker.reclaim_expired` accepts an `asOf` ISO 8601 timestamp and reclaims tasks from workers whose lease has expired. Reclaimed tasks return to `ready` with ownership fields cleared. Expired workers transition to `dead`. Returns `{ tasks, workers }` listing affected records. Dead workers are automatically purged from the registry after `LEASE_DURATION + DEAD_PURGE_MINUTES` (2 + 5 = 7 minutes) of inactivity.
+- `worker.complete_task` completes a task claimed by a worker. On success, the task transitions to `done`; on failure, the task resets to `ready` so it can be reclaimed. The worker returns to `idle` with `currentTaskId` cleared. If the worker was previously marked `dead` (by `reclaim_expired`), `complete_task` handles the race: on success it force-closes the task (bypassing the state machine since `reclaim_expired` already reset it to `ready`); on failure it skips the task reset since `reclaim_expired` already handled it.
 - All mutating worker methods (`register`, `deregister`, `heartbeat`, `claim_next`, `reclaim_expired`) require `meta.idempotencyKey` in the RPC envelope.
 
 Board views (read-only, no idempotency key required):
@@ -92,7 +93,7 @@ Board views (read-only, no idempotency key required):
   - `cycleTime`: stats for completed tasks (`avgSeconds`, `minSeconds`, `maxSeconds`, `p50Seconds`, `count`), or `null` if no tasks are done.
   - `queueAge`: stats for ready tasks (`avgSeconds`, `maxSeconds`, `count`), measuring time since creation. `{ count: 0 }` if no ready tasks.
   - `reclaimCount`: number of tasks whose `errorMessage` contains "reclaimed" (tracks lease-expiry reclaims).
-  - `summary`: overview stats — `totalTasks`, `doneTasks`, `cancelledTasks`, `inProgressTasks`, `completionRate` (percentage, 2 decimal places), `activeWorkers` (busy), `totalWorkers`, `utilization` (percentage, 2 decimal places).
+  - `summary`: overview stats — `totalTasks`, `doneTasks`, `cancelledTasks`, `inProgressTasks`, `completionRate` (percentage, 2 decimal places), `activeWorkers` (busy), `totalWorkers`, `aliveWorkers` (total minus dead), `deadWorkers`, `utilization` (percentage, 2 decimal places; computed as `activeWorkers / aliveWorkers`, excluding dead workers from the denominator).
   - `snapshotAt`: ISO 8601 timestamp of when the metrics were computed.
 - Both methods reload task data from disk before computing, ensuring cross-domain writes (e.g. `worker.reclaim_expired` modifying task state) are reflected.
 

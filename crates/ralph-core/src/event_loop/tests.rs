@@ -4278,3 +4278,79 @@ fn test_human_response_restart_request_creates_restart_signal_file() {
         "human.response restart request should create restart signal file"
     );
 }
+
+// ── worker mode prompt injection tests ────────────────────────────
+
+#[test]
+fn worker_mode_prompt_includes_awareness_text() {
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.set_worker_claimed_task(Some("Implement X".to_string()));
+    event_loop.set_worker_file_ownership(Some(WorkerFileOwnership {
+        own_files: vec!["src/main.rs".to_string()],
+        other_files: vec![("src/lib.rs".to_string(), "worker-beta".to_string())],
+    }));
+    event_loop.initialize("prompt");
+
+    let prompt = event_loop
+        .build_prompt(&HatId::new("ralph"))
+        .expect("build_prompt should return a prompt in worker mode");
+
+    assert!(
+        prompt.contains("Worker Mode: Claimed Task"),
+        "prompt should contain worker mode header"
+    );
+    assert!(
+        prompt.contains("Implement X"),
+        "prompt should contain the claimed task title"
+    );
+    assert!(
+        prompt.contains("Shared Workspace"),
+        "prompt should contain shared workspace section"
+    );
+    assert!(
+        prompt.contains("You are one of multiple agents"),
+        "prompt should contain multi-agent awareness text"
+    );
+    assert!(
+        prompt.contains("Your assigned files:"),
+        "prompt should contain own files header"
+    );
+    assert!(
+        prompt.contains("src/main.rs"),
+        "prompt should list the worker's own files"
+    );
+    assert!(
+        prompt.contains("Files other agents are working on:"),
+        "prompt should contain other files header"
+    );
+    assert!(
+        prompt.contains("src/lib.rs (worker-beta)"),
+        "prompt should list other workers' files with worker ids"
+    );
+    assert!(
+        !prompt.contains("DO NOT modify"),
+        "prompt should not contain restrictive language"
+    );
+}
+
+#[test]
+fn worker_mode_prompt_without_ownership_omits_shared_workspace() {
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.set_worker_claimed_task(Some("Implement Y".to_string()));
+    event_loop.initialize("prompt");
+
+    let prompt = event_loop
+        .build_prompt(&HatId::new("ralph"))
+        .expect("build_prompt should return a prompt with task only");
+
+    assert!(
+        prompt.contains("Implement Y"),
+        "prompt should contain the claimed task title"
+    );
+    assert!(
+        !prompt.contains("Shared Workspace"),
+        "prompt should not contain shared workspace when no ownership is set"
+    );
+}

@@ -9,3 +9,4 @@ export { PlanPage } from "./PlanPage";
 export { BuilderPage } from "./BuilderPage";
 export { TaskDetailPage } from "./TaskDetailPage";
 export { SettingsPage } from "./SettingsPage";
+export { FactoryPage } from "./FactoryPage";

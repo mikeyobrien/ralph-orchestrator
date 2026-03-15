@@ -66,9 +66,11 @@ pub const KNOWN_METHODS: &[&str] = &[
     "worker.reclaim_expired",
     "board.summary",
     "board.metrics",
+    "git.status",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",
+    "_internal.publish",
 ];
 
 pub const MUTATING_METHODS: &[&str] = &[
@@ -105,6 +107,7 @@ pub const MUTATING_METHODS: &[&str] = &[
     "worker.heartbeat",
     "worker.claim_next",
     "worker.reclaim_expired",
+    "_internal.publish",
 ];
 
 pub const STREAM_TOPICS: &[&str] = &[
@@ -178,7 +181,7 @@ struct ErrorEnvelope {
 }
 
 pub fn is_known_method(method: &str) -> bool {
-    KNOWN_METHODS.contains(&method)
+    KNOWN_METHODS.contains(&method) || method.starts_with("_internal.")
 }
 
 pub fn is_mutating_method(method: &str) -> bool {

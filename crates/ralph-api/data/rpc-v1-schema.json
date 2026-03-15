@@ -71,6 +71,7 @@
         "worker.reclaim_expired",
         "board.summary",
         "board.metrics",
+        "git.status",
         "stream.subscribe",
         "stream.unsubscribe",
         "stream.ack"
@@ -1848,6 +1849,20 @@
             "method",
             "params"
           ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.status"
+            },
+            "params": {
+              "$ref": "#/$defs/emptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
         }
       ]
     },
@@ -3041,6 +3056,20 @@
             "method",
             "result"
           ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.status"
+            },
+            "result": {
+              "$ref": "#/$defs/gitStatusResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
         }
       ]
     },
@@ -3267,6 +3296,25 @@
         }
       },
       "required": ["cycleTime", "queueAge", "reclaimCount", "summary", "snapshotAt"]
+    },
+    "gitStatusResult": {
+      "type": "object",
+      "properties": {
+        "branch": { "type": ["string", "null"] },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string" },
+              "path": { "type": "string" }
+            },
+            "required": ["status", "path"]
+          }
+        },
+        "clean": { "type": "boolean" }
+      },
+      "required": ["branch", "files", "clean"]
     }
   }
 }

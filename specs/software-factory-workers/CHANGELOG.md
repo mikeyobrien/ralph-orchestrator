@@ -4,7 +4,59 @@
 
 ## Summary
 
-This release lands the first real software-factory worker-model slice in `ralph-api`: task records now use canonical board states instead of the old queue-runner lifecycle, the RPC/MCP/schema surface no longer advertises queue-only task operations, and merge-task creation now produces `ready` work for later worker-assignment slices.
+This release implements the full software-factory worker model: canonical board states, worker registry with heartbeat/claim/lease/reclaim lifecycle, dead worker purge, task and loop enrichment, operator control room views, and factory CLI/dashboard.
+
+## 2026-03-16 — Documentation & Finalization
+
+### Added
+
+- REST API deprecation admonitions for legacy statuses and removed endpoints in `docs/api/rest-api.md`.
+- Two-task-system distinction and board-state cross-reference in `docs/advanced/task-system.md`.
+- `ralph worker` and `ralph factory` CLI commands in `docs/guide/cli-reference.md`.
+- `--worker` flag documented in `ralph run` options.
+- Worker CLI (`ralph worker list/show/deregister/reclaim/summary`) in `crates/ralph-cli/src/worker_cli.rs`.
+- Factory spawner (`ralph factory start`) in `crates/ralph-cli/src/factory.rs`.
+- Factory dashboard page with `FactoryStats`, `FactoryTaskBoard`, and `WorkerCard` components.
+
+### Changed
+
+- Fixed `worker.*` family method count from 7 to 8 in `crates/ralph-api/README.md` (added `complete_task`).
+- CLAUDE.md updated with worker domain code locations, `.ralph/workers.json` key file, lock ordering invariant, and factory worker usage.
+
+### Suggested AGENTS.md Updates
+
+- **Lock ordering invariant**: Worker→task lock order must be documented as a codebase convention. Any code touching both `.ralph/workers.json` and `.ralph/api/tasks-v1.json` must acquire worker lock first.
+- **Enrichment pattern**: `enrich_task()`/`enrich_loop()` in dispatch resolve cross-domain data at the response layer. Future RPC methods returning tasks or loops should use these helpers.
+- **File ownership pattern**: `crates/ralph-api/src/file_ownership.rs` provides lock-backed `read_json`/`write_json` helpers. New domain files should use this instead of raw fs operations.
+- **Worker lifecycle**: Workers register → heartbeat → claim → complete → deregister. Dead workers are auto-purged after 7 minutes. Only idle heartbeats can revive dead workers.
+- **Factory mode**: `ralph factory start -n <count>` spawns N worker loops. Workers claim tasks atomically from the shared pool.
+
+## 2026-03-15 — Worker Registry, Enrichment, Board Views
+
+### Added
+
+- **Worker registry** (`worker_domain`) — New `crates/ralph-api/src/worker_domain.rs` backed by `.ralph/workers.json` with lock-backed register/list/get/deregister semantics, explicit duplicate/missing-worker errors, and cross-handle freshness.
+- **Worker assignment and lease fields** — Tasks now persist `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt` through the full RPC round-trip with field-specific `INVALID_PARAMS` validation on malformed values.
+- **Worker heartbeat** — `worker.heartbeat` refreshes `currentTaskId`, `currentHat`, `status`, and `lastHeartbeatAt` for registered workers while keeping identity fields register-only.
+- **Claim-next behavior** — `worker.claim_next` lets idle workers atomically claim one `ready` task (priority + created_at ordering), persisting task ownership/lease metadata and worker busy state under the worker→task lock order.
+- **Lease expiry and reclaim** — `worker.reclaim_expired` scans stale workers by heartbeat deadline, returns expired `in_progress` tasks to `ready`, clears ownership fields, marks stale workers `dead`, and records deterministic reclaim evidence in `task.error_message`. Dead workers are automatically purged from the registry after `LEASE_DURATION + DEAD_PURGE_MINUTES` (2 + 5 = 7 minutes) of inactivity.
+- **Worker task completion** — `worker.complete_task` completes a claimed task (success → `done`, failure → `ready` for reclaim). Handles the race with `reclaim_expired`: on success it force-closes the task; on failure it skips the reset since reclaim already handled it.
+- **Worker RPC surface** — 8 worker RPC methods (`worker.register`, `worker.deregister`, `worker.list`, `worker.get`, `worker.heartbeat`, `worker.claim_next`, `worker.reclaim_expired`, `worker.complete_task`) wired through dispatch, protocol, and schema.
+- **Task enrichment** — All task RPC responses now include `isClaimed`, `isStale`, `currentLoopId`, and `currentHat` computed from worker registry at response time.
+- **Loop enrichment** — `loop.list` responses now include `workerId`, `workerStatus`, `currentTaskId`, `currentHat`, and `lastHeartbeatAt` computed from worker registry at response time.
+- **State transition validation** — `is_valid_transition()` enforces the spec's allowed-transitions table on `task.update`, `task.close`, `task.cancel`, and `task.retry` with `PRECONDITION_FAILED` errors including from/to context and allowed targets.
+- **Task promote** — `task.promote` RPC for explicit `backlog→ready` promotion.
+- **Create status validation** — `task.create` only accepts `backlog` or `ready` as initial status.
+- **Review queue** — `task.submit_for_review` (`in_progress→in_review`), `task.request_changes` (`in_review→in_progress`), and `task.in_review` (query) methods with ownership preservation.
+- **Operator control room** — `board.summary` RPC returning task counts by status, enriched workers, stale/blocked/review items, recent completions, and actionable recommendations.
+- **Throughput metrics** — `board.metrics` RPC returning cycle time stats (avg/min/max/p50), queue age, reclaim count, and summary statistics including `aliveWorkers`/`deadWorkers` counts with utilization computed as `activeWorkers / aliveWorkers` (excluding dead workers from denominator).
+- **122+ tests** across `rpc_v1_task_loop`, `rpc_v1_worker`, `worker_domain`, and existing suites — 0 regressions.
+
+### Changed
+
+- `worker_domain` read paths (`list`, `get`) reload from disk under shared lock instead of serving from handle-local cache.
+- Utilization metrics exclude dead workers; `board.metrics.summary` reports `aliveWorkers`/`deadWorkers` instead of `totalWorkers`.
+- Dead workers cannot be revived by `busy` heartbeats — only `idle` heartbeats can revive a dead worker (allows the factory loop's idle heartbeat to restore a worker that finished its task after being marked dead).
 
 ## 2026-03-14 — Slice 1 Finalization
 

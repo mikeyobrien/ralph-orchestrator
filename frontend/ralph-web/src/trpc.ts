@@ -177,6 +177,12 @@ function useRpcUtils() {
             : invalidateExact("collection", "collection.get", input),
       },
     },
+    factory: {
+      workers: { invalidate: () => invalidatePrefix("factory", "worker.list") },
+      summary: { invalidate: () => invalidatePrefix("factory", "board.summary") },
+      metrics: { invalidate: () => invalidatePrefix("factory", "board.metrics") },
+      gitStatus: { invalidate: () => invalidatePrefix("factory", "git.status") },
+    },
   };
 }
 
@@ -259,6 +265,11 @@ export const trpc = {
     cancel: createMutationProcedure<{ id: string }, { task: any }, { success: boolean; task: any }>({
       method: "task.cancel",
       mapResult: (result) => ({ success: true, task: result.task }),
+    }),
+
+    promote: createMutationProcedure<{ id: string }, { task: any }, any>({
+      method: "task.promote",
+      mapResult: (result) => result.task,
     }),
 
     update: createMutationProcedure<
@@ -432,6 +443,48 @@ export const trpc = {
       method: "preset.list",
       mapInput: () => ({}),
       mapResult: (result) => result.presets ?? [],
+    }),
+  },
+
+  factory: {
+    workers: createQueryProcedure<void, { workers: any[] }, any[]>({
+      scope: "factory",
+      method: "worker.list",
+      mapInput: () => ({}),
+      mapResult: (result) => result.workers ?? [],
+    }),
+
+    summary: createQueryProcedure<void, any, any>({
+      scope: "factory",
+      method: "board.summary",
+      mapInput: () => ({}),
+    }),
+
+    metrics: createQueryProcedure<void, any, any>({
+      scope: "factory",
+      method: "board.metrics",
+      mapInput: () => ({}),
+    }),
+
+    addTask: createMutationProcedure<{ id: string; title: string }, { task: any }, any>({
+      method: "task.create",
+      mapInput: (input) => ({ ...input, status: "ready" }),
+      mapResult: (result) => result.task,
+    }),
+
+    reclaimStale: createMutationProcedure<void, { tasks: any[]; workers: any[] }, { tasks: any[]; workers: any[] }>({
+      method: "worker.reclaim_expired",
+      mapInput: () => ({ asOf: new Date().toISOString() }),
+    }),
+
+    gitStatus: createQueryProcedure<void, { branch: string | null; files: { status: string; path: string }[]; clean: boolean }, {
+      branch: string | null;
+      files: { status: string; path: string }[];
+      clean: boolean;
+    }>({
+      scope: "factory",
+      method: "git.status",
+      mapInput: () => ({}),
     }),
   },
 

@@ -108,6 +108,8 @@ pub async fn run_loop_impl(
     custom_args: Vec<String>,
     auto_merge_override: Option<bool>,
     resume_loop_id: Option<String>,
+    output_tx: Option<std::sync::mpsc::Sender<ralph_adapters::StreamLine>>,
+    iteration_counter: Option<Arc<std::sync::atomic::AtomicU32>>,
 ) -> Result<TerminationReason> {
     // Set up process group leadership per spec
     // "The orchestrator must run as a process group leader"
@@ -132,7 +134,7 @@ pub async fn run_loop_impl(
     // PTY is required for TUI/RPC observation and true interactive sessions.
     // Headless `ralph run --no-tui` should use CliExecutor so backends get their
     // non-interactive prompt forms (for example `claude -p` or `codex exec`).
-    let use_pty = enable_tui || enable_rpc || user_interactive;
+    let use_pty = enable_tui || enable_rpc || user_interactive || output_tx.is_some();
 
     // Set up interrupt channel for signal handling
     // Per spec:
@@ -1426,6 +1428,11 @@ pub async fn run_loop_impl(
                 .store(iteration, std::sync::atomic::Ordering::Relaxed);
         }
 
+        // Update factory worker iteration counter (read by heartbeat task)
+        if let Some(ref counter) = iteration_counter {
+            counter.store(iteration, std::sync::atomic::Ordering::Relaxed);
+        }
+
         // Determine which hat to display in iteration separator
         // When Ralph is coordinating (hat_id == "ralph"), show the active hat being worked on
         let preview_display_hat = if hat_id.as_str() == "ralph" {
@@ -1713,6 +1720,7 @@ pub async fn run_loop_impl(
         let interrupt_rx_for_pty = interrupt_rx.clone();
         let tui_lines_for_pty = tui_lines.clone();
         let rpc_stdout_for_pty = rpc_stdout.clone();
+        let output_tx_for_exec = output_tx.clone();
         let execute_future = async {
             if effective_backend.output_format == BackendOutputFormat::Acp {
                 execute_acp(
@@ -1725,6 +1733,7 @@ pub async fn run_loop_impl(
                     iteration,
                     display_hat.as_str(),
                     &backend_name_for_timeout,
+                    output_tx_for_exec,
                 )
                 .await
             } else if use_pty {
@@ -1741,6 +1750,7 @@ pub async fn run_loop_impl(
                     iteration,
                     display_hat.as_str(),
                     &backend_name_for_timeout,
+                    output_tx_for_exec,
                 )
                 .await
             } else {
@@ -4121,7 +4131,10 @@ async fn execute_acp(
     iteration: u32,
     hat: &str,
     backend_name: &str,
+    output_tx: Option<std::sync::mpsc::Sender<ralph_adapters::StreamLine>>,
 ) -> Result<ExecutionOutcome> {
+    use ralph_adapters::{ChannelStreamHandler, TeeStreamHandler};
+
     let executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
 
     let pty_result = if let Some(lines) = tui_lines {
@@ -4135,6 +4148,23 @@ async fn execute_acp(
             Some(backend_name.to_string()),
         );
         executor.execute(prompt, &mut handler).await?
+    } else if let Some(tx) = output_tx {
+        // Headless with log streaming: tee console + channel
+        let channel = ChannelStreamHandler::new(tx);
+        match verbosity {
+            Verbosity::Quiet => {
+                let mut handler = TeeStreamHandler::new(QuietStreamHandler, channel);
+                executor.execute(prompt, &mut handler).await?
+            }
+            Verbosity::Normal => {
+                let mut handler = TeeStreamHandler::new(ConsoleStreamHandler::new(false), channel);
+                executor.execute(prompt, &mut handler).await?
+            }
+            Verbosity::Verbose => {
+                let mut handler = TeeStreamHandler::new(ConsoleStreamHandler::new(true), channel);
+                executor.execute(prompt, &mut handler).await?
+            }
+        }
     } else {
         match verbosity {
             Verbosity::Quiet => {
@@ -4183,6 +4213,7 @@ async fn execute_pty(
     iteration: u32,
     hat: &str,
     backend_name: &str,
+    output_tx: Option<std::sync::mpsc::Sender<ralph_adapters::StreamLine>>,
 ) -> Result<ExecutionOutcome> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
@@ -4252,6 +4283,27 @@ async fn execute_pty(
         );
         exec.run_observe_streaming(prompt, interrupt_rx, &mut handler)
             .await
+    } else if let Some(tx) = output_tx {
+        // Headless with log streaming: tee console + channel
+        use ralph_adapters::{ChannelStreamHandler, TeeStreamHandler};
+        let channel = ChannelStreamHandler::new(tx);
+        match verbosity {
+            Verbosity::Quiet => {
+                let mut handler = TeeStreamHandler::new(QuietStreamHandler, channel);
+                exec.run_observe_streaming(prompt, interrupt_rx, &mut handler)
+                    .await
+            }
+            Verbosity::Normal => {
+                let mut handler = TeeStreamHandler::new(ConsoleStreamHandler::new(false), channel);
+                exec.run_observe_streaming(prompt, interrupt_rx, &mut handler)
+                    .await
+            }
+            Verbosity::Verbose => {
+                let mut handler = TeeStreamHandler::new(ConsoleStreamHandler::new(true), channel);
+                exec.run_observe_streaming(prompt, interrupt_rx, &mut handler)
+                    .await
+            }
+        }
     } else {
         // Use streaming handler for non-interactive mode (respects verbosity)
         // Use PrettyStreamHandler for StreamJson backends (Claude) on TTY for markdown rendering
@@ -4838,6 +4890,8 @@ pub async fn start_loop(
         Vec::new(),         // no custom args
         None,               // default auto-merge
         None,               // no explicit loop ID
+        None,               // output_tx — only used by factory workers
+        None,               // iteration_counter — only used by factory workers
     )
     .await
 }

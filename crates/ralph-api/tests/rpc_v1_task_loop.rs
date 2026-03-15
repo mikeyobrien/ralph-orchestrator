@@ -2179,6 +2179,27 @@ async fn board_summary_returns_correct_counts_and_recommendations() -> Result<()
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0]["id"], "task-bs-done");
 
+    // Verify readyItems contains unassigned ready tasks
+    let ready_items = result["readyItems"].as_array().unwrap();
+    assert_eq!(ready_items.len(), 2, "should have 2 ready items");
+    let ready_ids: Vec<&str> = ready_items
+        .iter()
+        .filter_map(|v| v["id"].as_str())
+        .collect();
+    assert!(
+        ready_ids.contains(&"task-bs-ready-1"),
+        "readyItems should contain task-bs-ready-1, got: {ready_ids:?}"
+    );
+    assert!(
+        ready_ids.contains(&"task-bs-ready-2"),
+        "readyItems should contain task-bs-ready-2, got: {ready_ids:?}"
+    );
+
+    // Verify backlogItems contains the backlog task
+    let backlog_items = result["backlogItems"].as_array().unwrap();
+    assert_eq!(backlog_items.len(), 1, "should have 1 backlog item");
+    assert_eq!(backlog_items[0]["id"], "task-bs-backlog");
+
     // Verify staleItems is empty (no expired leases)
     let stale = result["staleItems"].as_array().unwrap();
     assert_eq!(stale.len(), 0, "no stale items expected");
@@ -2416,7 +2437,7 @@ async fn board_metrics_returns_cycle_time_for_completed_tasks() -> Result<()> {
     let summary = &result["summary"];
     assert_eq!(summary["totalTasks"], 2);
     assert_eq!(summary["doneTasks"], 2);
-    assert_eq!(summary["completionRate"], 100.0);
+    assert_eq!(summary["completionRate"], 1.0);
 
     // snapshotAt should be present
     assert!(
@@ -2607,11 +2628,11 @@ async fn board_metrics_queue_age_reclaim_count_and_summary() -> Result<()> {
     assert_eq!(summary["inProgressTasks"], 1);
     assert_eq!(summary["totalWorkers"], 1);
 
-    // completionRate: 1 done out of 6 total
+    // completionRate: 1 done out of 6 total (ratio, not percentage)
     let rate = summary["completionRate"].as_f64().unwrap();
     assert!(
-        (rate - 16.67).abs() < 0.1,
-        "completionRate should be ~16.67%, got {rate}"
+        (rate - 0.1667).abs() < 0.01,
+        "completionRate should be ~0.1667, got {rate}"
     );
 
     // snapshotAt present
@@ -2620,6 +2641,69 @@ async fn board_metrics_queue_age_reclaim_count_and_summary() -> Result<()> {
     // cycleTime should exist (1 done task)
     assert!(!result["cycleTime"].is_null());
     assert_eq!(result["cycleTime"]["count"], 1);
+
+    server.stop().await;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// git.status integration tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn git_status_returns_branch_files_and_clean() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+    let ws = server.workspace_path();
+
+    // Initialise a git repo in the workspace tempdir
+    std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(ws)
+        .output()
+        .expect("git init");
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(ws)
+        .output()
+        .expect("git config email");
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(ws)
+        .output()
+        .expect("git config name");
+    std::fs::write(ws.join("init.txt"), "hello").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(ws)
+        .output()
+        .expect("git add");
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(ws)
+        .output()
+        .expect("git commit");
+
+    // --- clean repo ---
+    let req = rpc_request("req-git-clean", "git.status", json!({}), None);
+    let (status, body) = post_rpc(&client, &server, &req).await?;
+    assert_eq!(status, 200);
+    let result = &body["result"];
+    assert_eq!(result["branch"], "main");
+    assert_eq!(result["clean"], true);
+    assert!(result["files"].as_array().unwrap().is_empty());
+
+    // --- dirty repo: add an untracked file ---
+    std::fs::write(ws.join("dirty.txt"), "change").unwrap();
+    let req2 = rpc_request("req-git-dirty", "git.status", json!({}), None);
+    let (status2, body2) = post_rpc(&client, &server, &req2).await?;
+    assert_eq!(status2, 200);
+    let result2 = &body2["result"];
+    assert_eq!(result2["clean"], false);
+    let files = result2["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["status"], "??");
+    assert_eq!(files[0]["path"], "dirty.txt");
 
     server.stop().await;
     Ok(())

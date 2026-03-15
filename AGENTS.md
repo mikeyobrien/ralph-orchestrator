@@ -31,8 +31,9 @@ npm run test:server                          # Backend tests
 ## Architecture
 
 ```
-ralph-cli      → CLI entry point, commands (run, plan, task, loops, web)
+ralph-cli      → CLI entry point, commands (run, plan, task, loops, web, worker)
 ralph-core     → Orchestration logic, event loop, hats, memories, tasks
+ralph-api      → RPC runtime, task/worker/loop domains, board metrics
 ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, Roo, etc.)
 ralph-telegram → Telegram bot for human-in-the-loop communication
 ralph-tui      → Terminal UI (ratatui-based)
@@ -54,6 +55,7 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 | `.ralph/loops.json` | Registry of all tracked loops |
 | `.ralph/merge-queue.jsonl` | Event-sourced merge queue |
 | `.ralph/telegram-state.json` | Telegram bot state (chat ID, pending questions) |
+| `.ralph/workers.json` | Worker registry state (registered workers, heartbeats) |
 
 ### Code Locations
 
@@ -67,6 +69,11 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 - **CLI commands**: `crates/ralph-cli/src/loops.rs`, `task_cli.rs`
 - **Telegram integration**: `crates/ralph-telegram/src/` (bot, service, state, handler)
 - **RObot config**: `crates/ralph-core/src/config.rs` (`RobotConfig`, `TelegramBotConfig`)
+- **Worker domain**: `crates/ralph-api/src/worker_domain.rs` (registry, heartbeat, claim/lease/reclaim)
+- **Worker CLI**: `crates/ralph-cli/src/worker_cli.rs` (ralph worker list/show/deregister/reclaim)
+- **Factory spawner**: `crates/ralph-cli/src/factory.rs` (spawns N workers that claim tasks)
+- **File ownership**: `crates/ralph-api/src/file_ownership.rs` (lock-backed file read/write helpers)
+- **Worker config**: `crates/ralph-core/src/config.rs` (`WorkerConfig`)
 - **Web server**: `backend/ralph-web-server/src/` (tRPC routes in `api/`, runners in `runner/`)
 - **Web dashboard**: `frontend/ralph-web/src/` (React components in `components/`)
 
@@ -146,6 +153,48 @@ ralph run -p "Add footer after </p>" --max-iterations 5
 # Monitor
 ralph loops
 ```
+
+## Factory Workers
+
+Ralph supports a software factory mode where multiple worker loops claim tasks from a shared pool.
+
+### Worker Mode
+
+Run a loop as a factory worker with `--worker`:
+
+```bash
+ralph run --worker -p "your prompt"
+```
+
+Or enable via config:
+
+```yaml
+worker:
+  enabled: true
+  heartbeat_interval_seconds: 30
+  worker_name: "my-worker"        # optional, defaults to loop ID
+```
+
+When worker mode is enabled:
+- The loop registers itself in `.ralph/workers.json` on startup
+- Each iteration sends a heartbeat and attempts to claim the next ready task
+- The claimed task is injected into the prompt instead of the full ready-tasks list
+- The worker is deregistered on shutdown
+- Primary loops also reclaim expired leases from dead workers
+
+### Factory CLI
+
+```bash
+ralph worker list                     # List all registered workers
+ralph worker show <worker-id>         # Show worker details
+ralph worker deregister <worker-id>   # Remove a stale worker entry
+ralph worker reclaim                  # Manually trigger reclaim of expired leases
+ralph worker summary                  # Show worker summary (idle/busy/blocked/dead counts)
+```
+
+### Lock Ordering Invariant
+
+Worker and task state are stored in separate files (`.ralph/workers.json` and `.ralph/api/tasks-v1.json`). Any code that touches both **must acquire the worker lock first, then the task lock** to prevent deadlocks. This ordering is enforced throughout `worker_domain.rs` (e.g., `claim_next`, `reclaim_expired`).
 
 ## Smoke Tests (Replay-Based)
 

@@ -221,3 +221,39 @@ ralph tools memory add "cargo test hangs: kill orphan postgres from previous run
 # Context: project-specific knowledge
 ralph tools memory add "The /legacy folder is deprecated, use /v2 endpoints" -t context --tags api,migration
 ```
+
+## Worker Commands
+
+Manage factory workers that register, heartbeat, and claim tasks from a shared pool.
+
+```bash
+ralph worker list                     # List all registered workers (default)
+ralph worker show <worker-id>         # Show worker details
+ralph worker deregister <worker-id>   # Remove a stale worker entry
+ralph worker reclaim                  # Manually trigger reclaim of expired leases
+ralph worker summary                  # Show worker summary (idle/busy/blocked/dead counts)
+```
+
+### Worker Mode
+
+Run a loop as a factory worker with `--worker`:
+
+```bash
+ralph run --worker -p "your prompt"
+```
+
+Or enable via config:
+
+```yaml
+worker:
+  enabled: true
+  heartbeat_interval_seconds: 30
+  worker_name: "my-worker"        # optional, defaults to loop ID
+```
+
+When worker mode is enabled:
+- The loop registers itself in `.ralph/workers.json` on startup
+- Each iteration sends a heartbeat and attempts to claim the next ready task
+- The claimed task is injected into the prompt instead of the full ready-tasks list
+- The worker is deregistered on shutdown
+- Primary loops also reclaim expired leases from dead workers

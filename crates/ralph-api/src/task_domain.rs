@@ -27,6 +27,7 @@ pub struct TaskCreateParams {
     pub assignee_worker_id: Option<String>,
     pub claimed_at: Option<String>,
     pub lease_expires_at: Option<String>,
+    pub scope_files: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +67,8 @@ pub struct TaskRecord {
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope_files: Vec<String>,
 }
 
 pub struct TaskDomain {
@@ -150,6 +153,7 @@ impl TaskDomain {
             updated_at: now,
             completed_at,
             error_message: None,
+            scope_files: params.scope_files.unwrap_or_default(),
         };
 
         let task_id = task.id.clone();

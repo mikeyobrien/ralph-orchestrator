@@ -188,6 +188,8 @@ impl agent_client_protocol::Client for RalphAcpClient {
         for env_var in &args.env {
             cmd.env(&env_var.name, &env_var.value);
         }
+        // Allow nested Claude Code invocations (e.g., factory workers spawning `claude -p`)
+        cmd.env_remove("CLAUDECODE");
 
         let mut child = cmd.spawn().map_err(|e| {
             let mut err = agent_client_protocol::Error::internal_error();

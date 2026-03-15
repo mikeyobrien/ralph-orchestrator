@@ -1699,6 +1699,8 @@ fn inject_ralph_runtime_env(cmd_builder: &mut CommandBuilder, workspace_root: &s
     }
     cmd_builder.env("RALPH_BIN", current_exe);
     cmd_builder.env("RALPH_WORKSPACE_ROOT", workspace_root);
+    // Allow nested Claude Code invocations (e.g., factory workers spawning `claude -p`)
+    cmd_builder.env_remove("CLAUDECODE");
     if std::path::Path::new("/var/tmp").is_dir() {
         cmd_builder.env("TMPDIR", "/var/tmp");
         cmd_builder.env("TMP", "/var/tmp");

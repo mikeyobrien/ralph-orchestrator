@@ -1,11 +1,18 @@
 # Progress
 
 ## Current Step
-- Slice 6: lease expiry and reclaim across `crates/ralph-api/src/worker_domain.rs` with the existing task snapshot plumbing in `crates/ralph-api/src/task_domain.rs` / `storage.rs`.
-- Status: awaiting QA; Slice 6 reclaim is implemented and the final builder verification wave is green: `cargo test -p ralph-api` (`logs/step6-5-cargo-test-ralph-api.log`), `cargo test -p ralph-core` (`logs/step6-6-cargo-test-ralph-core.log`), `cargo test -p ralph-core --features recording --test smoke_runner` (`logs/step6-7-cargo-test-ralph-core-smoke-runner-recording.log`), and repo-wide `cargo test` (`logs/step6-8-cargo-test.log`).
+- **Runtime wiring**: All 15 API slices are complete. Now wiring the API into the runtime so Ralph loops can operate as factory workers.
+- Status: implementation complete (Units 1-5 landed). Running verification.
+
+## Runtime Wiring (Units 1-5)
+- **Unit 1**: `WorkerConfig` struct added to `RalphConfig` in `crates/ralph-core/src/config.rs`. `--worker` flag added to `RunArgs` in `crates/ralph-cli/src/main.rs`.
+- **Unit 2**: Worker lifecycle (register/heartbeat/deregister/reclaim) wired into `crates/ralph-cli/src/loop_runner.rs`. Registration at startup, heartbeat + reclaim per-iteration, RAII guard for deregistration on shutdown.
+- **Unit 3**: `worker_claimed_task` field + setter added to `EventLoop` in `crates/ralph-core/src/event_loop/mod.rs`. `prepend_ready_tasks()` early-returns with only the claimed task in worker mode. `claim_next()` called per-iteration in loop_runner before prompt build.
+- **Unit 4**: `ralph worker` CLI subcommand in `crates/ralph-cli/src/worker_cli.rs` with list/show/deregister/reclaim/summary subcommands.
+- **Unit 5**: `ralph-tools.md` updated with worker command documentation. This progress file updated.
 
 ## Active Wave
-- Slice 5 is complete: claim-next passed review plus Round 1 QA (`cargo test -p ralph-api --lib worker_domain::tests::claim_next_*`, `cargo test -p ralph-api`, `RUST_TEST_THREADS=1 cargo test -p ralph-core`, repo-wide `cargo test`, and `cargo test -p ralph-core --features recording --test smoke_runner`), so the planner has advanced to Slice 6.
+- Runtime wiring is the final implementation phase. All API domain logic (slices 1-15) is complete and tested.
 - Slice 6 stays intentionally bounded to reclaiming expired worker leases: detect stale claimed work from fresh worker/task snapshots, return tasks to `ready` by default with reclaim evidence, clear ownership fields, and mark the stale worker no longer busy without pulling RPC transport or dispatch-policy heuristics into this slice.
 - Success condition: expired leases are reclaimed deterministically, reclaimed tasks do not stay ghost-owned, live/non-expired claims remain untouched, and persisted `.ralph/api/tasks-v1.json` plus `.ralph/workers.json` stay consistent across concurrent handles.
 - Error-handling focus remains explicit: reclaim should skip live leases, keep the worker/task lock order from claim-next so heartbeat-vs-reclaim races do not double-own work, and record reclaim reason/evidence without inventing a new event system.

@@ -102,6 +102,7 @@ ralph run [OPTIONS]
 | `--record-session <FILE>` | Record session JSONL |
 | `-q, --quiet` | Suppress streaming output |
 | `--continue` | Resume from existing state |
+| `--worker` | Run as a factory worker (register, heartbeat, claim tasks from pool) |
 
 ### ralph init
 
@@ -413,6 +414,42 @@ ralph tools skill <SUBCOMMAND>
 #### ralph tools interact
 
 Interact with human via Telegram progress/proactiveness hooks.
+
+### ralph worker
+
+Manage factory workers that register, heartbeat, and claim tasks from a shared pool.
+
+```bash
+ralph worker <COMMAND>
+```
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all registered workers (default) |
+| `show <worker-id>` | Show worker details |
+| `deregister <worker-id>` | Remove a stale worker entry |
+| `reclaim` | Manually trigger reclaim of expired leases |
+| `summary` | Show worker summary (idle/busy/blocked/dead counts) |
+
+### ralph factory
+
+Spawn multiple worker loops that claim tasks from a shared pool.
+
+```bash
+ralph factory [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-n, --workers <N>` | Number of workers to spawn |
+| `-p, --prompt <TEXT>` | Prompt for each worker |
+| Other `ralph run` options | Passed through to each spawned worker |
+
+Each spawned worker runs `ralph run --worker` in its own worktree, registers itself, and claims tasks from the board.
 
 ### ralph completions
 

@@ -59,7 +59,7 @@ impl RpcRuntime {
             config.idempotency_ttl_secs,
         )));
 
-        Ok(Self::with_components(config, auth, idempotency)?)
+        Self::with_components(config, auth, idempotency)
     }
 
     pub fn with_components(
@@ -279,7 +279,12 @@ impl RpcRuntime {
             );
         }
 
-        if let Err(errors) = validate_request_schema(&raw) {
+        // Skip JSON schema validation for internal methods — they're not part
+        // of the public API schema and are only used by trusted callers (e.g.
+        // factory workers publishing log lines).
+        if !method.starts_with("_internal.")
+            && let Err(errors) = validate_request_schema(&raw)
+        {
             return Err(
                 ApiError::invalid_params("request does not match rpc-v1 schema")
                     .with_context(request_id, Some(method))

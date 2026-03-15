@@ -3,6 +3,7 @@ pub mod collection_domain;
 pub mod config;
 pub mod config_domain;
 pub mod errors;
+pub mod file_ownership;
 pub mod idempotency;
 pub mod loop_domain;
 pub mod loop_side_effects;

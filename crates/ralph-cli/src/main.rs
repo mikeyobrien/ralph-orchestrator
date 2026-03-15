@@ -18,6 +18,7 @@ mod bot;
 mod config_resolution;
 mod display;
 mod doctor;
+mod factory;
 mod hats;
 mod hooks;
 mod init;
@@ -36,6 +37,7 @@ mod task_cli;
 mod test_support;
 mod tools;
 mod web;
+mod worker_cli;
 
 use anyhow::{Context, Result};
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -625,6 +627,12 @@ enum Commands {
     /// Manage Telegram bot setup and testing
     Bot(bot::BotArgs),
 
+    /// Run a software factory: spawn N workers that claim and execute tasks in parallel
+    Factory(FactoryArgs),
+
+    /// Manage factory workers
+    Worker(worker_cli::WorkerArgs),
+
     /// Generate shell completions
     Completions(CompletionsArgs),
 }
@@ -757,6 +765,10 @@ struct RunArgs {
     /// Record session to JSONL file for replay testing
     #[arg(long, value_name = "FILE")]
     record_session: Option<PathBuf>,
+
+    /// Run as a software factory worker (register, heartbeat, claim tasks)
+    #[arg(long)]
+    worker: bool,
 
     /// Custom backend command and arguments (use after --)
     #[arg(last = true)]
@@ -919,6 +931,34 @@ struct CodeTaskArgs {
     /// Custom backend command and arguments (use after --)
     #[arg(last = true)]
     custom_args: Vec<String>,
+}
+
+/// Arguments for the `ralph factory` subcommand.
+#[derive(Parser, Debug)]
+struct FactoryArgs {
+    /// Number of parallel workers to spawn
+    #[arg(short = 'w', long, default_value = "2")]
+    workers: u32,
+
+    /// Override max iterations per task
+    #[arg(long)]
+    max_iterations: Option<u32>,
+
+    /// Override backend from config
+    #[arg(short = 'b', long = "backend", value_name = "BACKEND")]
+    backend: Option<String>,
+
+    /// API server URL for log streaming (e.g. http://localhost:3000)
+    #[arg(long, env = "RALPH_API_URL")]
+    api_url: Option<String>,
+
+    /// Enable verbose output
+    #[arg(short = 'v', long, conflicts_with = "quiet")]
+    verbose: bool,
+
+    /// Suppress streaming output
+    #[arg(short = 'q', long, conflicts_with = "verbose")]
+    quiet: bool,
 }
 
 /// Arguments for the `ralph tui` subcommand.
@@ -1194,6 +1234,17 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Some(Commands::Factory(args)) => {
+            factory_command(
+                &config_sources,
+                hats_source.as_ref(),
+                cli.verbose,
+                cli.color,
+                args,
+            )
+            .await
+        }
+        Some(Commands::Worker(args)) => worker_cli::execute(args),
         Some(Commands::Completions(args)) => completions_command(args),
         None => {
             // Default to run with TUI enabled (new default behavior)
@@ -1217,6 +1268,7 @@ async fn main() -> Result<()> {
                 verbose: false,
                 quiet: false,
                 record_session: None,
+                worker: false,
                 custom_args: Vec::new(),
             };
             run_command(
@@ -1386,6 +1438,57 @@ fn print_preflight_summary(
     }
 }
 
+async fn factory_command(
+    config_sources: &[ConfigSource],
+    hats_source: Option<&HatsSource>,
+    verbose: bool,
+    color_mode: ColorMode,
+    args: FactoryArgs,
+) -> Result<()> {
+    let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
+
+    // Apply CLI overrides
+    if let Some(max_iter) = args.max_iterations {
+        config.event_loop.max_iterations = max_iter;
+    }
+    if let Some(backend) = args.backend {
+        config.cli.backend = backend;
+    }
+    if verbose || args.verbose {
+        config.verbose = true;
+    }
+
+    // Workers always enabled in factory mode
+    config.worker.enabled = true;
+
+    // Handle auto-detection if backend is "auto"
+    if config.cli.backend == "auto" {
+        let priority = config.get_agent_priority();
+        let detected = detect_backend(&priority, |backend| {
+            config.adapter_settings(backend).enabled
+        });
+        match detected {
+            Ok(backend) => {
+                info!("Auto-detected backend: {}", backend);
+                config.cli.backend = backend;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return Err(anyhow::Error::new(e));
+            }
+        }
+    }
+
+    let verbosity = Verbosity::resolve(args.verbose || verbose, args.quiet);
+
+    eprintln!(
+        "Starting factory with {} workers (backend: {}, max-iterations: {})",
+        args.workers, config.cli.backend, config.event_loop.max_iterations
+    );
+
+    factory::run_factory(config, args.workers, color_mode, verbosity, args.api_url).await
+}
+
 async fn run_command(
     config_sources: &[ConfigSource],
     hats_source: Option<&HatsSource>,
@@ -1432,6 +1535,11 @@ async fn run_command(
     }
     if verbose {
         config.verbose = true;
+    }
+
+    // Apply --worker flag override
+    if args.worker {
+        config.worker.enabled = true;
     }
 
     // Apply execution mode overrides per spec
@@ -1569,7 +1677,15 @@ async fn run_command(
     // This implements the lock detection flow from the multi-loop spec
     // Skip lock acquisition in subprocess TUI mode - let the child acquire it
     let workspace_root = &config.core.workspace_root;
-    let (loop_context, _lock_guard) = if use_subprocess_tui {
+    let (loop_context, _lock_guard) = if config.worker.enabled {
+        // Workers bypass the loop lock — they coordinate through task claiming
+        let name_generator =
+            ralph_core::LoopNameGenerator::from_config(&config.features.loop_naming);
+        let worker_loop_id = name_generator.generate_memorable_unique(|_| false);
+        debug!("Worker mode: bypassing lock, loop_id={}", worker_loop_id);
+        let context = LoopContext::worker(worker_loop_id, workspace_root.clone());
+        (context, None)
+    } else if use_subprocess_tui {
         // In subprocess TUI mode, don't acquire lock here - the child RPC process will do it
         // This avoids the self-lock contention where parent holds lock and child sees it,
         // then incorrectly spawns a worktree thinking there's another concurrent loop
@@ -1684,8 +1800,8 @@ async fn run_command(
         }
     };
 
-    // Update workspace_root in config if running in worktree
-    if !loop_context.is_primary() {
+    // Update workspace_root in config if running in worktree (not worker — workers share workspace)
+    if !loop_context.is_primary() && loop_context.workspace() != loop_context.repo_root() {
         config.core.workspace_root = loop_context.workspace().to_path_buf();
         // Also update scratchpad path to use worktree location
         config.core.scratchpad = loop_context.scratchpad_path().to_string_lossy().to_string();
@@ -1768,6 +1884,8 @@ async fn run_command(
             custom_args,
             auto_merge_override,
             args.loop_id,
+            None, // output_tx — only used by factory workers
+            None, // iteration_counter — only used by factory workers
         )
         .await?
     };
@@ -2171,6 +2289,8 @@ async fn resume_command(
         Vec::new(), // Resume command doesn't support custom args
         None,       // Use config.features.auto_merge (deprecated command)
         None,       // Deprecated resume command doesn't support --loop-id
+        None,       // output_tx — only used by factory workers
+        None,       // iteration_counter — only used by factory workers
     )
     .await?;
     let exit_code = reason.exit_code();
@@ -3654,6 +3774,7 @@ core:
             verbose: false,
             quiet: false,
             record_session: None,
+            worker: false,
             custom_args: Vec::new(),
         }
     }

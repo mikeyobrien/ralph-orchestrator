@@ -35,8 +35,9 @@ import {
   GitMerge,
   AlertCircle,
   FileQuestion,
+  RefreshCw,
 } from "lucide-react";
-import type { TaskAction } from "@/components/tasks/TaskDetailHeader";
+import type { TaskAction, TaskStatus } from "@/components/tasks/TaskDetailHeader";
 
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -74,12 +75,25 @@ export function TaskDetailPage() {
 
   // Mutations
   const utils = trpc.useUtils();
-  const runMutation = trpc.task.run.useMutation();
-  const retryMutation = trpc.task.retry.useMutation();
-  const cancelMutation = trpc.task.cancel.useMutation();
+  const invalidateTask = () => {
+    utils.task.get.invalidate();
+    utils.task.list.invalidate();
+    utils.factory.summary.invalidate();
+  };
+  const runMutation = trpc.task.run.useMutation({ onSuccess: invalidateTask });
+  const retryMutation = trpc.task.retry.useMutation({ onSuccess: invalidateTask });
+  const cancelMutation = trpc.task.cancel.useMutation({ onSuccess: invalidateTask });
+  const promoteMutation = trpc.task.promote.useMutation({ onSuccess: invalidateTask });
   const deleteMutation = trpc.task.delete.useMutation({
     onSuccess: () => {
       navigate("/tasks");
+    },
+  });
+  const reclaimMutation = trpc.factory.reclaimStale.useMutation({
+    onSuccess: () => {
+      utils.factory.summary.invalidate();
+      utils.factory.workers.invalidate();
+      utils.task.get.invalidate();
     },
   });
   const retryMergeMutation = trpc.loops.retry.useMutation({
@@ -103,9 +117,12 @@ export function TaskDetailPage() {
         case "cancel":
           cancelMutation.mutate({ id: task.id });
           break;
+        case "promote":
+          promoteMutation.mutate({ id: task.id });
+          break;
       }
     },
-    [task, runMutation, retryMutation, cancelMutation]
+    [task, runMutation, retryMutation, cancelMutation, promoteMutation]
   );
 
   // Handle retry merge with user steering input
@@ -176,29 +193,30 @@ export function TaskDetailPage() {
     );
   }
 
-  // Allow deletion only for terminal states (failed or closed)
-  const showDeleteButton = task.status === "failed" || task.status === "closed";
+  // Allow deletion only for terminal states
+  const showDeleteButton =
+    task.status === "failed" || task.status === "closed" ||
+    task.status === "done" || task.status === "cancelled";
 
-  // Determine if log viewer should be shown (for running or completed tasks)
+  // Determine if log viewer should be shown (for active or terminal tasks)
   const showLogViewer =
     task.status === "running" ||
     task.status === "completed" ||
     task.status === "closed" ||
-    task.status === "failed";
+    task.status === "failed" ||
+    task.status === "in_progress" ||
+    task.status === "in_review" ||
+    task.status === "done" ||
+    task.status === "cancelled";
 
   // Check if any action is pending
   const isActionPending =
     runMutation.isPending ||
     retryMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    promoteMutation.isPending;
 
-  // Map task status for components
-  const taskStatus = task.status as
-    | "open"
-    | "running"
-    | "completed"
-    | "closed"
-    | "failed";
+  const taskStatus = task.status as TaskStatus;
 
   return (
     <div className="p-6 space-y-6">
@@ -212,6 +230,32 @@ export function TaskDetailPage() {
         onDelete={handleDelete}
         isDeletePending={deleteMutation.isPending}
       />
+
+      {/* Stale task warning */}
+      {task.isStale && (
+        <div className="border border-destructive/30 bg-destructive/10 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-semibold text-destructive">Stale — Worker Died</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              The worker&apos;s lease expired without completing this task. Reclaim to set it back to &quot;ready&quot; for pickup by another worker.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => reclaimMutation.mutate()}
+            disabled={reclaimMutation.isPending}
+          >
+            {reclaimMutation.isPending ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-1" />
+            )}
+            Reclaim
+          </Button>
+        </div>
+      )}
 
       {/* Page title - full prompt display with markdown rendering */}
       <div className="markdown-prose">

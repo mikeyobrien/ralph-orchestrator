@@ -10,6 +10,7 @@
  */
 
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type { LogEntry } from "@/hooks/useTaskWebSocket";
 
 /** Stable empty array to avoid creating new references in selectors */
@@ -78,7 +79,12 @@ interface LogStore {
  *   const logs = useLogStore(state => state.getLogs(taskId));
  *   const appendLog = useLogStore(state => state.appendLog);
  */
-export const useLogStore = create<LogStore>()((set, get) => ({
+/** Max log entries per task to persist (keeps sessionStorage bounded) */
+const MAX_PERSISTED_ENTRIES = 2000;
+
+export const useLogStore = create<LogStore>()(
+  persist(
+    (set, get) => ({
   taskLogs: {},
   taskLogMeta: {},
 
@@ -136,7 +142,10 @@ export const useLogStore = create<LogStore>()((set, get) => ({
         return state;
       }
 
-      const newLogs = [...existing, ...toAppend];
+      let newLogs = [...existing, ...toAppend];
+      if (newLogs.length > MAX_PERSISTED_ENTRIES) {
+        newLogs = newLogs.slice(newLogs.length - MAX_PERSISTED_ENTRIES);
+      }
 
       return {
         taskLogs: {
@@ -179,4 +188,14 @@ export const useLogStore = create<LogStore>()((set, get) => ({
   getLastCursor: (taskId) => {
     return get().taskLogMeta[taskId]?.lastCursor ?? null;
   },
-}));
+}),
+    {
+      name: "ralph-task-logs",
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({
+        taskLogs: state.taskLogs,
+        taskLogMeta: state.taskLogMeta,
+      }),
+    },
+  ),
+);

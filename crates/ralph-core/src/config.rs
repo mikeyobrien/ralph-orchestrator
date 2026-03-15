@@ -137,6 +137,10 @@ pub struct RalphConfig {
     /// RObot (Ralph-Orchestrator bot) configuration for Telegram-based interaction.
     #[serde(default, rename = "RObot")]
     pub robot: RobotConfig,
+
+    /// Worker mode configuration for software factory workers.
+    #[serde(default)]
+    pub worker: WorkerConfig,
 }
 
 fn default_true() -> bool {
@@ -184,6 +188,8 @@ impl Default for RalphConfig {
             features: FeaturesConfig::default(),
             // RObot (Ralph-Orchestrator bot)
             robot: RobotConfig::default(),
+            // Worker mode
+            worker: WorkerConfig::default(),
         }
     }
 }
@@ -1112,6 +1118,46 @@ impl Default for TasksConfig {
     fn default() -> Self {
         Self {
             enabled: true, // Tasks enabled by default
+        }
+    }
+}
+
+/// Worker configuration.
+///
+/// Controls the software factory worker mode where Ralph loops participate
+/// as workers that register, heartbeat, and claim tasks from a shared pool.
+///
+/// Example configuration:
+/// ```yaml
+/// worker:
+///   enabled: true
+///   heartbeat_interval_seconds: 30
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerConfig {
+    /// Whether worker mode is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Interval between heartbeat updates in seconds.
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval_seconds: u64,
+
+    /// Optional worker display name. Defaults to the loop ID if not set.
+    #[serde(default)]
+    pub worker_name: Option<String>,
+}
+
+fn default_heartbeat_interval() -> u64 {
+    30
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            heartbeat_interval_seconds: 30,
+            worker_name: None,
         }
     }
 }
@@ -3436,5 +3482,68 @@ hats:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let hat = config.hats.get("simple").unwrap();
         assert!(hat.extra_instructions.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // WORKER CONFIG TESTS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_worker_config_defaults_disabled() {
+        let config = RalphConfig::default();
+        assert!(!config.worker.enabled);
+        assert_eq!(config.worker.heartbeat_interval_seconds, 30);
+        assert!(config.worker.worker_name.is_none());
+    }
+
+    #[test]
+    fn test_worker_config_absent_parses_as_default() {
+        // Existing configs without worker: section should still parse
+        let yaml = r"
+event_loop:
+  max_iterations: 5
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.worker.enabled);
+        assert_eq!(config.worker.heartbeat_interval_seconds, 30);
+        assert!(config.worker.worker_name.is_none());
+    }
+
+    #[test]
+    fn test_worker_config_valid_full() {
+        let yaml = r#"
+worker:
+  enabled: true
+  heartbeat_interval_seconds: 60
+  worker_name: "my-builder"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.worker.enabled);
+        assert_eq!(config.worker.heartbeat_interval_seconds, 60);
+        assert_eq!(config.worker.worker_name.as_deref(), Some("my-builder"));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_worker_config_enabled_without_name() {
+        let yaml = r"
+worker:
+  enabled: true
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.worker.enabled);
+        assert_eq!(config.worker.heartbeat_interval_seconds, 30);
+        assert!(config.worker.worker_name.is_none());
+    }
+
+    #[test]
+    fn test_worker_config_custom_heartbeat_interval() {
+        let yaml = r"
+worker:
+  heartbeat_interval_seconds: 10
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.worker.enabled);
+        assert_eq!(config.worker.heartbeat_interval_seconds, 10);
     }
 }

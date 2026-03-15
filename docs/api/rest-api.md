@@ -2,6 +2,16 @@
 
 Legacy Node Web Server exposes a REST API at `/api/v1/*` for consumers that still depend on the old tRPC/REST surface. This API is deprecated; RPC v1 (`/rpc/v1`) is the canonical control plane.
 
+!!! warning "Deprecated API"
+    This entire REST surface is deprecated. Use [RPC v1](../api/rpc-v1.md) instead.
+
+    **Deprecated task statuses:** The legacy statuses `open`, `running`, `closed`, `failed`, and `pending` are no longer used by the canonical RPC v1 control plane. The canonical board states are: `backlog`, `ready`, `in_progress`, `in_review`, `blocked`, `done`, and `cancelled`.
+
+    **Removed features:**
+    - `POST /api/v1/tasks/:id/run` — Task execution via TaskBridge is removed. Workers claim tasks via `worker.claim_next` in RPC v1.
+    - `autoExecute` field on task create — Replaced by the worker claim/lease model.
+    - `queuedTaskId` in run responses — No longer applicable.
+
 ## Base URL
 
 ```

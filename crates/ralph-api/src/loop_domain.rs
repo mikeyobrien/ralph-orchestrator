@@ -447,6 +447,7 @@ impl LoopDomain {
             assignee_worker_id: None,
             claimed_at: None,
             lease_expires_at: None,
+            scope_files: None,
         })?;
 
         Ok(TriggerMergeTaskResult {
