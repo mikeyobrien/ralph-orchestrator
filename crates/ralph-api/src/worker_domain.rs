@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::{Duration, SecondsFormat, Utc};
 use ralph_core::FileLock;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::ApiError;
+use crate::task_domain::{TaskDomain, TaskRecord};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -72,6 +74,14 @@ impl WorkerHeartbeatInput {
 #[serde(rename_all = "camelCase")]
 struct WorkerSnapshot {
     workers: Vec<WorkerRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerClaimNextResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskRecord>,
+    pub worker: WorkerRecord,
 }
 
 pub struct WorkerDomain {
@@ -156,6 +166,104 @@ impl WorkerDomain {
                 "failed updating worker heartbeat for '{}'",
                 worker_id
             ))
+        })
+    }
+
+    pub fn claim_next(&mut self, worker_id: &str) -> Result<WorkerClaimNextResult, ApiError> {
+        validate_required_string("workerId", worker_id)?;
+        let worker_id = worker_id.to_string();
+
+        let lock = self.file_lock()?;
+        let _guard = lock.exclusive().map_err(|error| {
+            ApiError::internal(format!(
+                "failed locking worker registry '{}': {error}",
+                self.store_path.display()
+            ))
+        })?;
+
+        let mut workers = self.read_workers_from_disk()?;
+        let worker = workers
+            .get(&worker_id)
+            .cloned()
+            .ok_or_else(|| worker_not_found_error(&worker_id))?;
+        if worker.status != WorkerStatus::Idle || worker.current_task_id.is_some() {
+            return Err(worker_not_idle_error(&worker));
+        }
+
+        let original_workers = workers.clone();
+        let (claimed_at, lease_expires_at) = claim_timestamps();
+        let mut worker_persisted = false;
+        let mut task_domain = TaskDomain::new(self.workspace_root()?);
+
+        let claim_result = task_domain.with_exclusive_snapshot(|tasks| {
+            let Some(next_ready_task) = TaskDomain::ready_from_tasks(tasks).into_iter().next()
+            else {
+                return Ok(None);
+            };
+
+            let task = tasks.get_mut(&next_ready_task.id).ok_or_else(|| {
+                ApiError::internal(format!(
+                    "failed claiming ready task '{}': snapshot changed before it could be updated",
+                    next_ready_task.id
+                ))
+            })?;
+            task.status = "in_progress".to_string();
+            task.assignee_worker_id = Some(worker_id.clone());
+            task.claimed_at = Some(claimed_at.clone());
+            task.lease_expires_at = Some(lease_expires_at.clone());
+            task.updated_at = claimed_at.clone();
+            task.completed_at = None;
+            task.error_message = None;
+            let claimed_task = task.clone();
+
+            let worker = workers
+                .get_mut(&worker_id)
+                .ok_or_else(|| worker_not_found_error(&worker_id))?;
+            worker.status = WorkerStatus::Busy;
+            worker.current_task_id = Some(claimed_task.id.clone());
+            worker.current_hat = None;
+            worker.last_heartbeat_at = claimed_at.clone();
+
+            self.persist_workers_to_disk(&workers)?;
+            worker_persisted = true;
+
+            Ok(Some(claimed_task))
+        });
+
+        let claim_result = match claim_result {
+            Ok(result) => result,
+            Err(error) => {
+                if worker_persisted {
+                    self.persist_workers_to_disk(&original_workers)
+                        .map_err(|rollback_error| {
+                            ApiError::internal(format!(
+                                "failed finalizing claim_next for worker '{}': {}; rollback failed: {}",
+                                worker_id, error.message, rollback_error.message
+                            ))
+                        })?;
+
+                    return Err(ApiError::internal(format!(
+                        "failed finalizing claim_next for worker '{}': {}; rolled back worker registry",
+                        worker_id, error.message
+                    )));
+                }
+
+                return Err(error);
+            }
+        };
+
+        let worker = if claim_result.is_some() {
+            workers
+                .get(&worker_id)
+                .cloned()
+                .ok_or_else(|| worker_not_found_error(&worker_id))?
+        } else {
+            worker
+        };
+
+        Ok(WorkerClaimNextResult {
+            task: claim_result,
+            worker,
         })
     }
 
@@ -282,6 +390,18 @@ impl WorkerDomain {
         })
     }
 
+    fn workspace_root(&self) -> Result<&Path, ApiError> {
+        self.store_path
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| {
+                ApiError::internal(format!(
+                    "failed resolving workspace root from worker registry '{}': unexpected path layout",
+                    self.store_path.display()
+                ))
+            })
+    }
+
     fn sorted_workers(workers: &BTreeMap<String, WorkerRecord>) -> Vec<WorkerRecord> {
         workers.values().cloned().collect()
     }
@@ -303,6 +423,27 @@ fn validate_optional_string(field_name: &str, value: Option<&str>) -> Result<(),
     }
 
     Ok(())
+}
+
+fn claim_timestamps() -> (String, String) {
+    let claimed_at = Utc::now();
+    let lease_expires_at = claimed_at + Duration::minutes(2);
+    (
+        claimed_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        lease_expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+    )
+}
+
+fn worker_not_idle_error(worker: &WorkerRecord) -> ApiError {
+    ApiError::precondition_failed(format!(
+        "Worker with id '{}' must be idle and unassigned before claiming the next task",
+        worker.worker_id
+    ))
+    .with_details(serde_json::json!({
+        "workerId": worker.worker_id,
+        "status": worker.status,
+        "currentTaskId": worker.current_task_id,
+    }))
 }
 
 fn worker_not_found_error(worker_id: &str) -> ApiError {

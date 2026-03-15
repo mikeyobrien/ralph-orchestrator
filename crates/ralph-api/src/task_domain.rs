@@ -107,21 +107,7 @@ impl TaskDomain {
     }
 
     pub fn ready(&self) -> Vec<TaskRecord> {
-        let unblocking_ids = self.unblocking_ids();
-        let mut tasks: Vec<_> = self
-            .tasks
-            .values()
-            .filter(|task| task.status == "ready" && task.archived_at.is_none())
-            .filter(|task| {
-                task.blocked_by
-                    .as_ref()
-                    .is_none_or(|blocker_id| unblocking_ids.contains(blocker_id))
-            })
-            .cloned()
-            .collect();
-
-        tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        tasks
+        Self::ready_from_tasks(&self.tasks)
     }
 
     pub fn create(&mut self, params: TaskCreateParams) -> Result<TaskRecord, ApiError> {
@@ -336,18 +322,39 @@ impl TaskDomain {
         self.get(id)
     }
 
-    fn unblocking_ids(&self) -> HashSet<String> {
-        self.tasks
+    fn sorted_tasks(&self) -> Vec<TaskRecord> {
+        Self::sorted_tasks_from(&self.tasks)
+    }
+
+    pub(crate) fn ready_from_tasks(tasks: &BTreeMap<String, TaskRecord>) -> Vec<TaskRecord> {
+        let unblocking_ids = Self::unblocking_ids_from_tasks(tasks);
+        let mut ready_tasks: Vec<_> = tasks
+            .values()
+            .filter(|task| task.status == "ready" && task.archived_at.is_none())
+            .filter(|task| {
+                task.blocked_by
+                    .as_ref()
+                    .is_none_or(|blocker_id| unblocking_ids.contains(blocker_id))
+            })
+            .cloned()
+            .collect();
+
+        ready_tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        ready_tasks
+    }
+
+    fn unblocking_ids_from_tasks(tasks: &BTreeMap<String, TaskRecord>) -> HashSet<String> {
+        tasks
             .values()
             .filter(|task| task.status == "done" || task.archived_at.is_some())
             .map(|task| task.id.clone())
             .collect()
     }
 
-    fn sorted_tasks(&self) -> Vec<TaskRecord> {
-        let mut tasks: Vec<_> = self.tasks.values().cloned().collect();
-        tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        tasks
+    fn sorted_tasks_from(tasks: &BTreeMap<String, TaskRecord>) -> Vec<TaskRecord> {
+        let mut sorted_tasks: Vec<_> = tasks.values().cloned().collect();
+        sorted_tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        sorted_tasks
     }
 }
 
