@@ -19,7 +19,9 @@ use crate::planning_domain::{
 use crate::protocol::{API_VERSION, RpcRequestEnvelope};
 use crate::stream_domain::{StreamAckParams, StreamSubscribeParams, StreamUnsubscribeParams};
 use crate::task_domain::{TaskCreateParams, TaskListParams, TaskRecord, TaskUpdateInput};
-use crate::worker_domain::{WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord};
+use crate::worker_domain::{
+    WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord, WorkerStatus,
+};
 
 impl RpcRuntime {
     pub(super) fn dispatch(
@@ -41,6 +43,7 @@ impl RpcRuntime {
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
             method if method.starts_with("worker.") => self.dispatch_worker(request),
+            method if method.starts_with("board.") => self.dispatch_board(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
             "_internal.publish" => self.dispatch_internal_publish(request),
             _ => {
@@ -389,6 +392,314 @@ impl RpcRuntime {
                 request.method
             ))),
         }
+    }
+
+    fn dispatch_board(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        match request.method.as_str() {
+            "board.summary" => self.board_summary(),
+            "board.metrics" => self.board_metrics(),
+            _ => Err(ApiError::service_unavailable(format!(
+                "method '{}' is recognized but not implemented",
+                request.method
+            ))),
+        }
+    }
+
+    /// Aggregate operator view: task counts by status, workers, stale/blocked/in-review
+    /// items, recent completions, and actionable recommendations.
+    fn board_summary(&self) -> Result<Value, ApiError> {
+        // Reload from disk to capture changes made by other domain instances
+        self.task_domain_mut()?.load();
+        // Load all non-archived tasks
+        let all_tasks = self.task_domain_mut()?.list(TaskListParams {
+            status: None,
+            include_archived: Some(false),
+        });
+
+        // Load workers (empty map if unavailable)
+        let workers: BTreeMap<String, WorkerRecord> = self
+            .worker_domain_mut()
+            .and_then(|wd| wd.list())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|w| (w.worker_id.clone(), w))
+            .collect();
+
+        // Count tasks by status
+        let mut counts = serde_json::Map::new();
+        for status in &[
+            "backlog",
+            "ready",
+            "in_progress",
+            "in_review",
+            "blocked",
+            "done",
+            "cancelled",
+        ] {
+            let count = all_tasks.iter().filter(|t| t.status == *status).count();
+            counts.insert(status.to_string(), json!(count));
+        }
+
+        let now = Utc::now();
+
+        // Stale items: in_progress with expired lease
+        let stale_items: Vec<Value> = all_tasks
+            .iter()
+            .filter(|t| {
+                t.status == "in_progress"
+                    && t.lease_expires_at
+                        .as_deref()
+                        .and_then(|ts| ts.parse::<DateTime<Utc>>().ok())
+                        .map_or(false, |expires| expires < now)
+            })
+            .cloned()
+            .map(|t| enrich_task(t, &workers))
+            .collect();
+
+        // Blocked items
+        let blocked_items: Vec<Value> = all_tasks
+            .iter()
+            .filter(|t| t.status == "blocked")
+            .cloned()
+            .map(|t| enrich_task(t, &workers))
+            .collect();
+
+        // In-review items
+        let in_review_items: Vec<Value> = all_tasks
+            .iter()
+            .filter(|t| t.status == "in_review")
+            .cloned()
+            .map(|t| enrich_task(t, &workers))
+            .collect();
+
+        // Recent completions (done, sorted by completed_at desc, limit 10)
+        let mut done_tasks: Vec<&TaskRecord> =
+            all_tasks.iter().filter(|t| t.status == "done").collect();
+        done_tasks.sort_by(|a, b| {
+            let a_ts = a.completed_at.as_deref().unwrap_or("");
+            let b_ts = b.completed_at.as_deref().unwrap_or("");
+            b_ts.cmp(a_ts)
+        });
+        let recent_completions: Vec<Value> = done_tasks
+            .into_iter()
+            .take(10)
+            .cloned()
+            .map(|t| enrich_task(t, &workers))
+            .collect();
+
+        // Enriched workers
+        let enriched_workers: Vec<Value> = workers
+            .values()
+            .map(|w| {
+                let current_task = w
+                    .current_task_id
+                    .as_deref()
+                    .and_then(|tid| all_tasks.iter().find(|t| t.id == tid))
+                    .cloned()
+                    .map(|t| enrich_task(t, &workers));
+
+                json!({
+                    "workerId": w.worker_id,
+                    "workerName": w.worker_name,
+                    "loopId": w.loop_id,
+                    "backend": w.backend,
+                    "status": w.status,
+                    "currentHat": w.current_hat,
+                    "lastHeartbeatAt": w.last_heartbeat_at,
+                    "currentTask": current_task,
+                })
+            })
+            .collect();
+
+        // Recommendations
+        let mut recommendations: Vec<String> = Vec::new();
+
+        if !stale_items.is_empty() {
+            for item in &stale_items {
+                if let Some(id) = item.get("id").and_then(Value::as_str) {
+                    recommendations.push(format!("Reclaim stale task {id}"));
+                }
+            }
+        }
+
+        let blocked_count = blocked_items.len();
+        if blocked_count > 0 {
+            recommendations.push(format!(
+                "{blocked_count} task{} blocked — review dependencies",
+                if blocked_count == 1 { "" } else { "s" }
+            ));
+        }
+
+        let review_count = in_review_items.len();
+        if review_count > 0 {
+            recommendations.push(format!(
+                "{review_count} task{} awaiting review",
+                if review_count == 1 { "" } else { "s" }
+            ));
+        }
+
+        let ready_count = all_tasks.iter().filter(|t| t.status == "ready").count();
+        let idle_workers = workers
+            .values()
+            .filter(|w| w.status == WorkerStatus::Idle)
+            .count();
+        if ready_count > 0 && idle_workers > 0 {
+            recommendations.push(format!(
+                "{ready_count} ready task{} and {idle_workers} idle worker{} — dispatch available",
+                if ready_count == 1 { "" } else { "s" },
+                if idle_workers == 1 { "" } else { "s" },
+            ));
+        }
+
+        Ok(json!({
+            "counts": counts,
+            "workers": enriched_workers,
+            "staleItems": stale_items,
+            "blockedItems": blocked_items,
+            "inReviewItems": in_review_items,
+            "recentCompletions": recent_completions,
+            "recommendations": recommendations,
+        }))
+    }
+
+    /// Throughput and quality metrics computed from current task snapshot.
+    ///
+    /// Returns cycle-time stats for completed tasks, queue-age stats for ready
+    /// tasks, reclaim count, and a summary overview. All durations in seconds.
+    /// Metrics are snapshot-based (no event sourcing).
+    fn board_metrics(&self) -> Result<Value, ApiError> {
+        // Reload from disk to capture changes made by other domain instances
+        // (e.g. worker_domain's reclaim writes error_message via its own TaskDomain)
+        self.task_domain_mut()?.load();
+        let all_tasks = self.task_domain_mut()?.list(TaskListParams {
+            status: None,
+            include_archived: Some(false),
+        });
+
+        let workers: Vec<WorkerRecord> = self
+            .worker_domain_mut()
+            .and_then(|wd| wd.list())
+            .unwrap_or_default();
+
+        let now = Utc::now();
+
+        // --- Cycle time: done tasks with both created_at and completed_at ---
+        let cycle_times: Vec<f64> = all_tasks
+            .iter()
+            .filter(|t| t.status == "done")
+            .filter_map(|t| {
+                let created = t.created_at.parse::<DateTime<Utc>>().ok()?;
+                let completed = t.completed_at.as_deref()?.parse::<DateTime<Utc>>().ok()?;
+                let secs = (completed - created).num_seconds() as f64;
+                if secs >= 0.0 { Some(secs) } else { None }
+            })
+            .collect();
+
+        let cycle_time = if cycle_times.is_empty() {
+            json!(null)
+        } else {
+            let count = cycle_times.len();
+            let sum: f64 = cycle_times.iter().sum();
+            let avg = sum / count as f64;
+            let min = cycle_times.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max = cycle_times
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
+
+            // p50 (median)
+            let mut sorted = cycle_times.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let p50 = if count % 2 == 0 {
+                (sorted[count / 2 - 1] + sorted[count / 2]) / 2.0
+            } else {
+                sorted[count / 2]
+            };
+
+            json!({
+                "avgSeconds": (avg * 100.0).round() / 100.0,
+                "minSeconds": (min * 100.0).round() / 100.0,
+                "maxSeconds": (max * 100.0).round() / 100.0,
+                "p50Seconds": (p50 * 100.0).round() / 100.0,
+                "count": count,
+            })
+        };
+
+        // --- Queue age: ready tasks ---
+        let queue_ages: Vec<f64> = all_tasks
+            .iter()
+            .filter(|t| t.status == "ready")
+            .filter_map(|t| {
+                let created = t.created_at.parse::<DateTime<Utc>>().ok()?;
+                let secs = (now - created).num_seconds() as f64;
+                if secs >= 0.0 { Some(secs) } else { None }
+            })
+            .collect();
+
+        let queue_age = if queue_ages.is_empty() {
+            json!({ "count": 0 })
+        } else {
+            let count = queue_ages.len();
+            let sum: f64 = queue_ages.iter().sum();
+            let avg = sum / count as f64;
+            let max = queue_ages.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            json!({
+                "avgSeconds": (avg * 100.0).round() / 100.0,
+                "maxSeconds": (max * 100.0).round() / 100.0,
+                "count": count,
+            })
+        };
+
+        // --- Reclaim count: tasks with error_message containing "Reclaimed" ---
+        let reclaim_count = all_tasks
+            .iter()
+            .filter(|t| {
+                t.error_message
+                    .as_deref()
+                    .map_or(false, |msg| msg.contains("reclaimed"))
+            })
+            .count();
+
+        // --- Summary ---
+        let total = all_tasks.len();
+        let done_count = all_tasks.iter().filter(|t| t.status == "done").count();
+        let cancelled_count = all_tasks.iter().filter(|t| t.status == "cancelled").count();
+        let in_progress_count = all_tasks
+            .iter()
+            .filter(|t| t.status == "in_progress")
+            .count();
+        let active_workers = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Busy)
+            .count();
+        let total_workers = workers.len();
+        let completion_rate = if total > 0 {
+            ((done_count as f64 / total as f64) * 10000.0).round() / 100.0
+        } else {
+            0.0
+        };
+        let utilization = if total_workers > 0 {
+            ((active_workers as f64 / total_workers as f64) * 10000.0).round() / 100.0
+        } else {
+            0.0
+        };
+
+        Ok(json!({
+            "cycleTime": cycle_time,
+            "queueAge": queue_age,
+            "reclaimCount": reclaim_count,
+            "summary": {
+                "totalTasks": total,
+                "doneTasks": done_count,
+                "cancelledTasks": cancelled_count,
+                "inProgressTasks": in_progress_count,
+                "completionRate": completion_rate,
+                "activeWorkers": active_workers,
+                "totalWorkers": total_workers,
+                "utilization": utilization,
+            },
+            "snapshotAt": now.to_rfc3339(),
+        }))
     }
 
     fn dispatch_stream(

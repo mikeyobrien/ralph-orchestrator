@@ -64,6 +64,8 @@ pub const KNOWN_METHODS: &[&str] = &[
     "worker.heartbeat",
     "worker.claim_next",
     "worker.reclaim_expired",
+    "board.summary",
+    "board.metrics",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",

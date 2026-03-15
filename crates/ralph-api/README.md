@@ -26,6 +26,7 @@ Rust-native bootstrap runtime for the RPC v1 control plane.
   - Full `preset.*` family (`list`)
   - Full `collection.*` family (`list/get/create/update/delete/import/export`)
   - Full `worker.*` family (`list/get/register/deregister/heartbeat/claim_next/reclaim_expired`)
+  - Full `board.*` family (`summary/metrics`)
 
 Persistence notes:
 - `task.*` data is persisted in `.ralph/api/tasks-v1.json`
@@ -77,6 +78,23 @@ Worker lifecycle semantics:
 - `worker.claim_next` assigns the highest-priority unblocked `ready` task to an `idle` worker. The task transitions to `in_progress` with `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt` set. The worker transitions to `busy`. Returns `{ task, worker }` where `task` is `null` if no ready tasks exist.
 - `worker.reclaim_expired` accepts an `asOf` ISO 8601 timestamp and reclaims tasks from workers whose lease has expired. Reclaimed tasks return to `ready` with ownership fields cleared. Expired workers transition to `dead`. Returns `{ tasks, workers }` listing affected records.
 - All mutating worker methods (`register`, `deregister`, `heartbeat`, `claim_next`, `reclaim_expired`) require `meta.idempotencyKey` in the RPC envelope.
+
+Board views (read-only, no idempotency key required):
+- `board.summary` returns an aggregate operator view of the current task board. Response includes:
+  - `counts`: task counts by status (`backlog`, `ready`, `in_progress`, `in_review`, `blocked`, `done`, `cancelled`).
+  - `workers`: enriched worker records with their current task (if any).
+  - `staleItems`: `in_progress` tasks whose lease has expired (enriched with worker fields).
+  - `blockedItems`: tasks in `blocked` status (enriched).
+  - `inReviewItems`: tasks in `in_review` status (enriched).
+  - `recentCompletions`: up to 10 most recently completed tasks, sorted by `completedAt` descending (enriched).
+  - `recommendations`: actionable strings (e.g. "Reclaim stale task X", "N tasks blocked — review dependencies", "N ready tasks and M idle workers — dispatch available").
+- `board.metrics` returns throughput and quality metrics computed from the current task snapshot. All durations are in seconds. Response includes:
+  - `cycleTime`: stats for completed tasks (`avgSeconds`, `minSeconds`, `maxSeconds`, `p50Seconds`, `count`), or `null` if no tasks are done.
+  - `queueAge`: stats for ready tasks (`avgSeconds`, `maxSeconds`, `count`), measuring time since creation. `{ count: 0 }` if no ready tasks.
+  - `reclaimCount`: number of tasks whose `errorMessage` contains "reclaimed" (tracks lease-expiry reclaims).
+  - `summary`: overview stats — `totalTasks`, `doneTasks`, `cancelledTasks`, `inProgressTasks`, `completionRate` (percentage, 2 decimal places), `activeWorkers` (busy), `totalWorkers`, `utilization` (percentage, 2 decimal places).
+  - `snapshotAt`: ISO 8601 timestamp of when the metrics were computed.
+- Both methods reload task data from disk before computing, ensuring cross-domain writes (e.g. `worker.reclaim_expired` modifying task state) are reflected.
 
 Intentional migration differences vs legacy Node backend:
 - `planning.start` returns a full `session` object instead of just `{sessionId}`.

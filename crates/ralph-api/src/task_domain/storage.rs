@@ -15,7 +15,7 @@ struct TaskSnapshot {
 }
 
 impl TaskDomain {
-    pub(super) fn load(&mut self) {
+    pub(crate) fn load(&mut self) {
         self.tasks = match self.read_tasks_from_disk() {
             Ok(tasks) => tasks,
             Err(error) => {
