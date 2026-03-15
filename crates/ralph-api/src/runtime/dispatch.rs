@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use tracing::warn;
 
@@ -8,14 +11,14 @@ use crate::collection_domain::{
 use crate::config_domain::ConfigUpdateParams;
 use crate::errors::ApiError;
 use crate::loop_domain::{
-    LoopListParams, LoopRetryParams, LoopStopMergeParams, LoopTriggerMergeTaskParams,
+    LoopListParams, LoopRecord, LoopRetryParams, LoopStopMergeParams, LoopTriggerMergeTaskParams,
 };
 use crate::planning_domain::{
     PlanningGetArtifactParams, PlanningRespondParams, PlanningStartParams,
 };
 use crate::protocol::{API_VERSION, RpcRequestEnvelope};
 use crate::stream_domain::{StreamAckParams, StreamSubscribeParams, StreamUnsubscribeParams};
-use crate::task_domain::{TaskCreateParams, TaskListParams, TaskUpdateInput};
+use crate::task_domain::{TaskCreateParams, TaskListParams, TaskRecord, TaskUpdateInput};
 use crate::worker_domain::{WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord};
 
 impl RpcRuntime {
@@ -63,45 +66,56 @@ impl RpcRuntime {
     }
 
     fn dispatch_task(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        // Load worker snapshot once for enrichment (cheap in-memory read).
+        // Falls back to empty map if worker domain is unavailable so task
+        // RPCs never fail due to worker-domain issues.
+        let workers: BTreeMap<String, WorkerRecord> = self
+            .worker_domain_mut()
+            .and_then(|wd| wd.list())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|w| (w.worker_id.clone(), w))
+            .collect();
+
         match request.method.as_str() {
             "task.list" => {
                 let params: TaskListParams = self.parse_params(request)?;
                 let tasks = self.task_domain_mut()?.list(params);
-                Ok(json!({ "tasks": tasks }))
+                Ok(json!({ "tasks": enrich_tasks(tasks, &workers) }))
             }
             "task.get" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.get(&params.id)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.ready" => {
                 let tasks = self.task_domain_mut()?.ready();
-                Ok(json!({ "tasks": tasks }))
+                Ok(json!({ "tasks": enrich_tasks(tasks, &workers) }))
             }
             "task.create" => {
                 let params: TaskCreateParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.create(params)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.update" => {
                 let input = parse_task_update_input(request)?;
                 let task = self.task_domain_mut()?.update(input)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.close" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.close(&params.id)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.archive" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.archive(&params.id)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.unarchive" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.unarchive(&params.id)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.delete" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
@@ -115,12 +129,12 @@ impl RpcRuntime {
             "task.retry" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.retry(&params.id)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.cancel" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.cancel(&params.id)?;
-                Ok(json!({ "task": task }))
+                Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             _ => Err(ApiError::service_unavailable(format!(
                 "method '{}' is recognized but not implemented",
@@ -130,11 +144,21 @@ impl RpcRuntime {
     }
 
     fn dispatch_loop(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        // Load worker snapshot once for loop enrichment (same pattern as dispatch_task).
+        // Falls back to empty map if worker domain is unavailable.
+        let workers: BTreeMap<String, WorkerRecord> = self
+            .worker_domain_mut()
+            .and_then(|wd| wd.list())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|w| (w.worker_id.clone(), w))
+            .collect();
+
         match request.method.as_str() {
             "loop.list" => {
                 let params: LoopListParams = self.parse_params(request)?;
                 let loops = self.loop_domain_mut()?.list(params)?;
-                Ok(json!({ "loops": loops }))
+                Ok(json!({ "loops": enrich_loops(loops, &workers) }))
             }
             "loop.status" => {
                 let status = self.loop_domain_mut()?.status();
@@ -407,6 +431,80 @@ impl RpcRuntime {
         );
         Ok(json!({ "success": true }))
     }
+}
+
+/// Enrich a single `TaskRecord` with computed fields derived from the worker snapshot.
+///
+/// Injected fields:
+/// - `currentLoopId`  — loop the assigned worker belongs to, or `null`
+/// - `currentHat`     — hat the assigned worker is wearing, or `null`
+/// - `isClaimed`      — `true` when `assigneeWorkerId` is set
+/// - `isStale`        — `true` when `leaseExpiresAt` is in the past
+fn enrich_task(task: TaskRecord, workers: &BTreeMap<String, WorkerRecord>) -> Value {
+    let is_claimed = task.assignee_worker_id.is_some();
+
+    let is_stale = task
+        .lease_expires_at
+        .as_deref()
+        .and_then(|ts| ts.parse::<DateTime<Utc>>().ok())
+        .map_or(false, |expires| expires < Utc::now());
+
+    let (current_loop_id, current_hat) = task
+        .assignee_worker_id
+        .as_deref()
+        .and_then(|wid| workers.get(wid))
+        .map(|w| (Some(w.loop_id.clone()), w.current_hat.clone()))
+        .unwrap_or((None, None));
+
+    let mut val = serde_json::to_value(&task).expect("TaskRecord is always serializable");
+    let obj = val
+        .as_object_mut()
+        .expect("TaskRecord serializes to object");
+    obj.insert("currentLoopId".to_string(), json!(current_loop_id));
+    obj.insert("currentHat".to_string(), json!(current_hat));
+    obj.insert("isClaimed".to_string(), json!(is_claimed));
+    obj.insert("isStale".to_string(), json!(is_stale));
+    val
+}
+
+/// Batch-enrich a list of tasks.
+fn enrich_tasks(tasks: Vec<TaskRecord>, workers: &BTreeMap<String, WorkerRecord>) -> Vec<Value> {
+    tasks.into_iter().map(|t| enrich_task(t, workers)).collect()
+}
+
+/// Enrich a single loop record with worker-facing fields.
+///
+/// Finds the worker whose `loop_id` matches this loop's `id` and injects
+/// `workerId`, `workerStatus`, `currentTaskId`, `currentHat`, `lastHeartbeatAt`.
+/// All fields are null when no worker is assigned to the loop.
+fn enrich_loop(loop_rec: LoopRecord, workers: &BTreeMap<String, WorkerRecord>) -> Value {
+    let worker = workers.values().find(|w| w.loop_id == loop_rec.id);
+
+    let mut val = serde_json::to_value(&loop_rec).expect("LoopRecord is always serializable");
+    let obj = val
+        .as_object_mut()
+        .expect("LoopRecord serializes to object");
+
+    if let Some(w) = worker {
+        obj.insert("workerId".to_string(), json!(w.worker_id));
+        obj.insert("workerStatus".to_string(), json!(w.status));
+        obj.insert("currentTaskId".to_string(), json!(w.current_task_id));
+        obj.insert("currentHat".to_string(), json!(w.current_hat));
+        obj.insert("lastHeartbeatAt".to_string(), json!(w.last_heartbeat_at));
+    } else {
+        obj.insert("workerId".to_string(), json!(null));
+        obj.insert("workerStatus".to_string(), json!(null));
+        obj.insert("currentTaskId".to_string(), json!(null));
+        obj.insert("currentHat".to_string(), json!(null));
+        obj.insert("lastHeartbeatAt".to_string(), json!(null));
+    }
+
+    val
+}
+
+/// Batch-enrich a list of loop records.
+fn enrich_loops(loops: Vec<LoopRecord>, workers: &BTreeMap<String, WorkerRecord>) -> Vec<Value> {
+    loops.into_iter().map(|l| enrich_loop(l, workers)).collect()
 }
 
 fn parse_optional_nullable_string_field(

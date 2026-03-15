@@ -242,6 +242,24 @@
             "string",
             "null"
           ]
+        },
+        "currentLoopId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currentHat": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isClaimed": {
+          "type": "boolean"
+        },
+        "isStale": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -262,6 +280,21 @@
         },
         "location": {
           "type": "string"
+        },
+        "workerId": {
+          "type": ["string", "null"]
+        },
+        "workerStatus": {
+          "type": ["string", "null"]
+        },
+        "currentTaskId": {
+          "type": ["string", "null"]
+        },
+        "currentHat": {
+          "type": ["string", "null"]
+        },
+        "lastHeartbeatAt": {
+          "type": ["string", "null"]
         }
       },
       "required": [

@@ -48,6 +48,26 @@ Current task board-state semantics:
 - `task.create`, `task.get`, and `task.update` surface those ownership/lease fields directly, and the same serde snapshot persists them in `.ralph/api/tasks-v1.json` when present.
 - `task.update` accepts either a string or explicit `null` for those fields; malformed JSON types are rejected at the RPC boundary with `INVALID_PARAMS` instead of being silently ignored.
 
+Task enrichment fields:
+- All task RPC methods that return task objects (`task.list`, `task.get`, `task.ready`, `task.create`, `task.update`, `task.close`, `task.archive`, `task.unarchive`, `task.retry`, `task.cancel`) inject computed enrichment fields at the dispatch layer.
+- `isClaimed` (`boolean`): `true` when `assigneeWorkerId` is set, `false` otherwise.
+- `isStale` (`boolean`): `true` when `leaseExpiresAt` is in the past, `false` when no lease or lease is still valid.
+- `currentLoopId` (`string | null`): the `loopId` of the assigned worker, or `null` if unclaimed or the worker is no longer registered.
+- `currentHat` (`string | null`): the `currentHat` of the assigned worker, or `null` if unclaimed or the worker has no active hat.
+- Enrichment is computed at response time by joining against the in-memory worker registry. The persisted `TaskRecord` is not denormalized — these fields exist only in RPC responses.
+- `task.delete` and `task.clear` do not return task objects and are not enriched.
+
+Loop enrichment fields:
+- `loop.list` injects computed worker fields at the dispatch layer by joining against the in-memory worker registry.
+- For each loop, the enrichment finds the worker whose `loopId` matches the loop's `id` and injects:
+  - `workerId` (`string | null`): the ID of the worker assigned to this loop, or `null` if no worker is running it.
+  - `workerStatus` (`string | null`): the worker's status (`idle`, `busy`, `dead`), or `null`.
+  - `currentTaskId` (`string | null`): the task the worker is currently executing, or `null`.
+  - `currentHat` (`string | null`): the hat the worker is currently wearing, or `null`.
+  - `lastHeartbeatAt` (`string | null`): ISO 8601 timestamp of the worker's last heartbeat, or `null`.
+- Enrichment is computed at response time. The persisted `LoopRecord` is not denormalized — these fields exist only in RPC responses.
+- Other `loop.*` methods (`status`, `process`, `prune`, `retry`, `discard`, `stop`, `merge`, `merge_button_state`, `trigger_merge_task`) do not return loop record objects and are not enriched.
+
 Worker lifecycle semantics:
 - Workers are registered via `worker.register` with a unique `workerId`, `workerName`, `loopId`, `backend`, `workspaceRoot`, and `lastHeartbeatAt`.
 - `worker.list` returns all registered workers. `worker.get` returns a single worker by ID (404 if unknown).

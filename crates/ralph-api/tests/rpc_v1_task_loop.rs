@@ -830,3 +830,347 @@ async fn task_worker_lease_fields_round_trip_persist_and_validate() -> Result<()
     server.stop().await;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// 8.5 — Task enrichment fields (currentLoopId, currentHat, isClaimed, isStale)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn task_enrichment_fields_unclaimed_and_claimed() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+    let ws = server.workspace_path().display().to_string();
+
+    // ── Create an unclaimed task ──────────────────────────────────────────
+    let create = rpc_request(
+        "req-enrich-create-1",
+        "task.create",
+        json!({
+            "id": "task-enrich-1",
+            "title": "Unclaimed enrichment test",
+            "status": "ready",
+            "priority": 1
+        }),
+        Some("idem-enrich-create-1"),
+    );
+    let (status, create_payload) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // Unclaimed → isClaimed false, isStale false, currentLoopId/currentHat null
+    let task = &create_payload["result"]["task"];
+    assert_eq!(task["isClaimed"], false);
+    assert_eq!(task["isStale"], false);
+    assert!(task["currentLoopId"].is_null());
+    assert!(task["currentHat"].is_null());
+
+    // task.get should also carry enrichment fields
+    let get = rpc_request(
+        "req-enrich-get-1",
+        "task.get",
+        json!({ "id": "task-enrich-1" }),
+        None,
+    );
+    let (status, get_payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+    let task_get = &get_payload["result"]["task"];
+    assert_eq!(task_get["isClaimed"], false);
+    assert_eq!(task_get["isStale"], false);
+    assert!(task_get["currentLoopId"].is_null());
+    assert!(task_get["currentHat"].is_null());
+
+    // task.list should carry enrichment fields
+    let list = rpc_request("req-enrich-list-1", "task.list", json!({}), None);
+    let (status, list_payload) = post_rpc(&client, &server, &list).await?;
+    assert_eq!(status, 200);
+    let tasks = list_payload["result"]["tasks"].as_array().unwrap();
+    assert!(!tasks.is_empty());
+    let listed = tasks
+        .iter()
+        .find(|t| t["id"] == "task-enrich-1")
+        .expect("task-enrich-1 should appear in list");
+    assert_eq!(listed["isClaimed"], false);
+    assert_eq!(listed["isStale"], false);
+    assert!(listed["currentLoopId"].is_null());
+    assert!(listed["currentHat"].is_null());
+
+    // task.ready should carry enrichment fields
+    let ready = rpc_request("req-enrich-ready-1", "task.ready", json!({}), None);
+    let (status, ready_payload) = post_rpc(&client, &server, &ready).await?;
+    assert_eq!(status, 200);
+    let ready_tasks = ready_payload["result"]["tasks"].as_array().unwrap();
+    let ready_task = ready_tasks
+        .iter()
+        .find(|t| t["id"] == "task-enrich-1")
+        .expect("task-enrich-1 should appear in ready");
+    assert_eq!(ready_task["isClaimed"], false);
+    assert_eq!(ready_task["isStale"], false);
+
+    // ── Register a worker and assign it to the task ──────────────────────
+    let reg = rpc_request(
+        "req-enrich-reg-w1",
+        "worker.register",
+        json!({
+            "workerId": "worker-enrich-1",
+            "workerName": "Enrichment Worker",
+            "loopId": "loop-enrich-1",
+            "backend": "claude",
+            "workspaceRoot": ws,
+            "status": "idle",
+            "lastHeartbeatAt": "2026-03-15T10:00:00Z"
+        }),
+        Some("idem-enrich-reg-w1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &reg).await?;
+    assert_eq!(status, 200);
+
+    // Heartbeat to set currentHat
+    let hb = rpc_request(
+        "req-enrich-hb-w1",
+        "worker.heartbeat",
+        json!({
+            "workerId": "worker-enrich-1",
+            "status": "busy",
+            "currentTaskId": "task-enrich-1",
+            "currentHat": "builder",
+            "lastHeartbeatAt": "2026-03-15T10:01:00Z"
+        }),
+        Some("idem-enrich-hb-w1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &hb).await?;
+    assert_eq!(status, 200);
+
+    // Assign the worker to the task with a future lease
+    let assign = rpc_request(
+        "req-enrich-assign-1",
+        "task.update",
+        json!({
+            "id": "task-enrich-1",
+            "status": "in_progress",
+            "assigneeWorkerId": "worker-enrich-1",
+            "claimedAt": "2026-03-15T10:01:00Z",
+            "leaseExpiresAt": "2099-12-31T23:59:59Z"
+        }),
+        Some("idem-enrich-assign-1"),
+    );
+    let (status, assign_payload) = post_rpc(&client, &server, &assign).await?;
+    assert_eq!(status, 200);
+
+    // Claimed task → isClaimed true, isStale false, currentLoopId/currentHat resolved
+    let claimed = &assign_payload["result"]["task"];
+    assert_eq!(claimed["isClaimed"], true);
+    assert_eq!(claimed["isStale"], false);
+    assert_eq!(claimed["currentLoopId"], "loop-enrich-1");
+    assert_eq!(claimed["currentHat"], "builder");
+
+    // task.get on claimed task
+    let get2 = rpc_request(
+        "req-enrich-get-2",
+        "task.get",
+        json!({ "id": "task-enrich-1" }),
+        None,
+    );
+    let (status, get2_payload) = post_rpc(&client, &server, &get2).await?;
+    assert_eq!(status, 200);
+    let claimed_get = &get2_payload["result"]["task"];
+    assert_eq!(claimed_get["isClaimed"], true);
+    assert_eq!(claimed_get["isStale"], false);
+    assert_eq!(claimed_get["currentLoopId"], "loop-enrich-1");
+    assert_eq!(claimed_get["currentHat"], "builder");
+
+    // task.list on claimed task
+    let list2 = rpc_request("req-enrich-list-2", "task.list", json!({}), None);
+    let (status, list2_payload) = post_rpc(&client, &server, &list2).await?;
+    assert_eq!(status, 200);
+    let listed2 = list2_payload["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "task-enrich-1")
+        .expect("task-enrich-1 should appear in list");
+    assert_eq!(listed2["isClaimed"], true);
+    assert_eq!(listed2["currentLoopId"], "loop-enrich-1");
+    assert_eq!(listed2["currentHat"], "builder");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_enrichment_stale_lease_detected() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create a task with an already-expired lease
+    let create = rpc_request(
+        "req-stale-create-1",
+        "task.create",
+        json!({
+            "id": "task-stale-1",
+            "title": "Stale lease enrichment test",
+            "status": "in_progress",
+            "assigneeWorkerId": "worker-ghost",
+            "claimedAt": "2020-01-01T00:00:00Z",
+            "leaseExpiresAt": "2020-01-01T00:05:00Z"
+        }),
+        Some("idem-stale-create-1"),
+    );
+    let (status, create_payload) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // Expired lease → isClaimed true, isStale true
+    // Worker doesn't exist in registry so currentLoopId/currentHat are null
+    let task = &create_payload["result"]["task"];
+    assert_eq!(task["isClaimed"], true);
+    assert_eq!(task["isStale"], true);
+    assert!(task["currentLoopId"].is_null());
+    assert!(task["currentHat"].is_null());
+
+    // task.get confirms stale enrichment
+    let get = rpc_request(
+        "req-stale-get-1",
+        "task.get",
+        json!({ "id": "task-stale-1" }),
+        None,
+    );
+    let (status, get_payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+    let stale_get = &get_payload["result"]["task"];
+    assert_eq!(stale_get["isClaimed"], true);
+    assert_eq!(stale_get["isStale"], true);
+    assert!(stale_get["currentLoopId"].is_null());
+    assert!(stale_get["currentHat"].is_null());
+
+    server.stop().await;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 9.5 — Loop enrichment fields (workerId, workerStatus, currentTaskId,
+//        currentHat, lastHeartbeatAt)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn loop_enrichment_fields_with_and_without_worker() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+    let ws = server.workspace_path().display().to_string();
+
+    // ── Set up two loops: one via registry, one via merge queue ──────────
+    // (LoopRegistry::register dedupes by PID, so we can only register one
+    //  entry from the test process; use the merge queue for the second.)
+    let worktree_a = server.workspace_path().join(".worktrees/loop-enrich-a");
+    std::fs::create_dir_all(&worktree_a)?;
+
+    let loop_registry = LoopRegistry::new(server.workspace_path());
+    loop_registry.register(LoopEntry::with_id(
+        "loop-enrich-a",
+        "Loop A with worker",
+        Some(worktree_a.to_string_lossy().to_string()),
+        ws.clone(),
+    ))?;
+
+    let merge_queue = MergeQueue::new(server.workspace_path());
+    merge_queue.enqueue("loop-enrich-b", "Loop B without worker")?;
+
+    // ── List before any workers — all enrichment fields should be null ───
+    let list1 = rpc_request(
+        "req-loop-enrich-list-1",
+        "loop.list",
+        json!({ "includeTerminal": false }),
+        None,
+    );
+    let (status, list1_payload) = post_rpc(&client, &server, &list1).await?;
+    assert_eq!(status, 200);
+
+    let loops1 = list1_payload["result"]["loops"].as_array().unwrap();
+    let loop_a1 = loops1
+        .iter()
+        .find(|l| l["id"] == "loop-enrich-a")
+        .expect("loop-enrich-a should appear in list");
+    assert!(loop_a1["workerId"].is_null());
+    assert!(loop_a1["workerStatus"].is_null());
+    assert!(loop_a1["currentTaskId"].is_null());
+    assert!(loop_a1["currentHat"].is_null());
+    assert!(loop_a1["lastHeartbeatAt"].is_null());
+
+    let loop_b1 = loops1
+        .iter()
+        .find(|l| l["id"] == "loop-enrich-b")
+        .expect("loop-enrich-b should appear in list");
+    assert!(loop_b1["workerId"].is_null());
+    assert!(loop_b1["workerStatus"].is_null());
+    assert!(loop_b1["currentTaskId"].is_null());
+    assert!(loop_b1["currentHat"].is_null());
+    assert!(loop_b1["lastHeartbeatAt"].is_null());
+
+    // ── Register a worker assigned to loop-enrich-a ─────────────────────
+    let reg = rpc_request(
+        "req-loop-enrich-reg-w1",
+        "worker.register",
+        json!({
+            "workerId": "worker-loop-enrich-1",
+            "workerName": "Loop Enrichment Worker",
+            "loopId": "loop-enrich-a",
+            "backend": "claude",
+            "workspaceRoot": ws,
+            "status": "idle",
+            "lastHeartbeatAt": "2026-03-15T12:00:00Z"
+        }),
+        Some("idem-loop-enrich-reg-w1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &reg).await?;
+    assert_eq!(status, 200);
+
+    // Heartbeat to set currentTaskId and currentHat
+    let hb = rpc_request(
+        "req-loop-enrich-hb-w1",
+        "worker.heartbeat",
+        json!({
+            "workerId": "worker-loop-enrich-1",
+            "status": "busy",
+            "currentTaskId": "task-from-loop-a",
+            "currentHat": "planner",
+            "lastHeartbeatAt": "2026-03-15T12:01:00Z"
+        }),
+        Some("idem-loop-enrich-hb-w1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &hb).await?;
+    assert_eq!(status, 200);
+
+    // ── List again — loop A should be enriched, loop B still null ───────
+    let list2 = rpc_request(
+        "req-loop-enrich-list-2",
+        "loop.list",
+        json!({ "includeTerminal": false }),
+        None,
+    );
+    let (status, list2_payload) = post_rpc(&client, &server, &list2).await?;
+    assert_eq!(status, 200);
+
+    let loops2 = list2_payload["result"]["loops"].as_array().unwrap();
+
+    // Loop A: enriched with worker data
+    let loop_a2 = loops2
+        .iter()
+        .find(|l| l["id"] == "loop-enrich-a")
+        .expect("loop-enrich-a should appear in list");
+    assert_eq!(loop_a2["workerId"], "worker-loop-enrich-1");
+    assert_eq!(loop_a2["workerStatus"], "busy");
+    assert_eq!(loop_a2["currentTaskId"], "task-from-loop-a");
+    assert_eq!(loop_a2["currentHat"], "planner");
+    assert_eq!(loop_a2["lastHeartbeatAt"], "2026-03-15T12:01:00Z");
+
+    // Loop B: no worker → all null
+    let loop_b2 = loops2
+        .iter()
+        .find(|l| l["id"] == "loop-enrich-b")
+        .expect("loop-enrich-b should appear in list");
+    assert!(loop_b2["workerId"].is_null());
+    assert!(loop_b2["workerStatus"].is_null());
+    assert!(loop_b2["currentTaskId"].is_null());
+    assert!(loop_b2["currentHat"].is_null());
+    assert!(loop_b2["lastHeartbeatAt"].is_null());
+
+    server.stop().await;
+    Ok(())
+}
