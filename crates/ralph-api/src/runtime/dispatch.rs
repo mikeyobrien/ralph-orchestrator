@@ -92,6 +92,10 @@ impl RpcRuntime {
                 let tasks = self.task_domain_mut()?.ready();
                 Ok(json!({ "tasks": enrich_tasks(tasks, &workers) }))
             }
+            "task.in_review" => {
+                let tasks = self.task_domain_mut()?.in_review();
+                Ok(json!({ "tasks": enrich_tasks(tasks, &workers) }))
+            }
             "task.create" => {
                 let params: TaskCreateParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.create(params)?;
@@ -129,6 +133,21 @@ impl RpcRuntime {
             "task.retry" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.retry(&params.id)?;
+                Ok(json!({ "task": enrich_task(task, &workers) }))
+            }
+            "task.promote" => {
+                let params: IdOnlyParams = self.parse_params(request)?;
+                let task = self.task_domain_mut()?.promote(&params.id)?;
+                Ok(json!({ "task": enrich_task(task, &workers) }))
+            }
+            "task.submit_for_review" => {
+                let params: IdOnlyParams = self.parse_params(request)?;
+                let task = self.task_domain_mut()?.submit_for_review(&params.id)?;
+                Ok(json!({ "task": enrich_task(task, &workers) }))
+            }
+            "task.request_changes" => {
+                let params: IdOnlyParams = self.parse_params(request)?;
+                let task = self.task_domain_mut()?.request_changes(&params.id)?;
                 Ok(json!({ "task": enrich_task(task, &workers) }))
             }
             "task.cancel" => {

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use ralph_api::errors::RpcErrorCode;
-use ralph_api::task_domain::{TaskCreateParams, TaskDomain};
+use ralph_api::task_domain::{TaskCreateParams, TaskDomain, TaskUpdateInput};
 use ralph_api::worker_domain::{
     WorkerDomain, WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord, WorkerStatus,
 };
@@ -46,19 +46,67 @@ fn create_task_with_lease(
     claimed_at: Option<&str>,
     lease_expires_at: Option<&str>,
 ) {
-    TaskDomain::new(workspace_root)
+    let mut domain = TaskDomain::new(workspace_root);
+
+    // Determine creation status and transition path
+    let (creation_status, transitions): (&str, &[&str]) = match status {
+        "backlog" => ("backlog", &[]),
+        "ready" => ("ready", &[]),
+        "in_progress" => ("ready", &["in_progress"]),
+        "in_review" => ("ready", &["in_progress", "in_review"]),
+        "blocked" => ("ready", &["in_progress", "blocked"]),
+        "done" => ("ready", &["in_progress", "done"]),
+        "cancelled" => ("ready", &["cancelled"]),
+        other => panic!("create_task_with_lease: unknown target status '{other}'"),
+    };
+
+    // Create with valid creation status
+    domain
         .create(TaskCreateParams {
             id: id.to_string(),
             title: title.to_string(),
-            status: Some(status.to_string()),
+            status: Some(creation_status.to_string()),
             priority: None,
             blocked_by: None,
             merge_loop_prompt: None,
-            assignee_worker_id: assignee_worker_id.map(str::to_string),
-            claimed_at: claimed_at.map(str::to_string),
-            lease_expires_at: lease_expires_at.map(str::to_string),
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
         })
         .expect("task fixture should persist");
+
+    // Transition through valid states to reach the target status
+
+    for &next_status in transitions {
+        domain
+            .update(TaskUpdateInput {
+                id: id.to_string(),
+                title: None,
+                status: Some(next_status.to_string()),
+                priority: None,
+                blocked_by: None,
+                assignee_worker_id: None,
+                claimed_at: None,
+                lease_expires_at: None,
+            })
+            .unwrap_or_else(|e| panic!("transition to '{next_status}' should succeed: {e:?}"));
+    }
+
+    // Apply lease fields if provided (separate update to avoid interfering with transitions)
+    if assignee_worker_id.is_some() || claimed_at.is_some() || lease_expires_at.is_some() {
+        domain
+            .update(TaskUpdateInput {
+                id: id.to_string(),
+                title: None,
+                status: None,
+                priority: None,
+                blocked_by: None,
+                assignee_worker_id: assignee_worker_id.map(|v| Some(v.to_string())),
+                claimed_at: claimed_at.map(|v| Some(v.to_string())),
+                lease_expires_at: lease_expires_at.map(|v| Some(v.to_string())),
+            })
+            .expect("lease field update should succeed");
+    }
 }
 
 fn create_task(workspace_root: &Path, id: &str, title: &str, status: &str) {

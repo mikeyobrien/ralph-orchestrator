@@ -138,6 +138,15 @@ async fn task_crud_ready_and_guardrails_parity() -> Result<()> {
         "task-blocker-1"
     );
 
+    let update_blocker_in_progress = rpc_request(
+        "req-task-update-blocker-ip-1",
+        "task.update",
+        json!({ "id": "task-blocker-1", "status": "in_progress" }),
+        Some("idem-task-update-blocker-ip-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &update_blocker_in_progress).await?;
+    assert_eq!(status, 200);
+
     let close_blocker = rpc_request(
         "req-task-close-1",
         "task.close",
@@ -201,6 +210,15 @@ async fn task_crud_ready_and_guardrails_parity() -> Result<()> {
     assert_eq!(status, 412);
     assert_eq!(delete_ready_payload["error"]["code"], "PRECONDITION_FAILED");
 
+    let update_blocked_in_progress = rpc_request(
+        "req-task-update-blocked-ip-1",
+        "task.update",
+        json!({ "id": "task-blocked-1", "status": "in_progress" }),
+        Some("idem-task-update-blocked-ip-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &update_blocked_in_progress).await?;
+    assert_eq!(status, 200);
+
     let close_blocked = rpc_request(
         "req-task-close-2",
         "task.close",
@@ -242,29 +260,7 @@ async fn task_update_clears_terminal_fields_on_non_terminal_transition() -> Resu
     assert_eq!(status, 200);
     assert_eq!(create_payload["result"]["task"]["status"], "ready");
 
-    let update_done = rpc_request(
-        "req-task-state-update-done-1",
-        "task.update",
-        json!({ "id": "task-state-1", "status": "done" }),
-        Some("idem-task-state-update-done-1"),
-    );
-    let (status, update_done_payload) = post_rpc(&client, &server, &update_done).await?;
-    assert_eq!(status, 200);
-    assert_eq!(update_done_payload["result"]["task"]["status"], "done");
-    assert!(update_done_payload["result"]["task"]["completedAt"].is_string());
-
-    let reopen_ready = rpc_request(
-        "req-task-state-reopen-ready-1",
-        "task.update",
-        json!({ "id": "task-state-1", "status": "ready" }),
-        Some("idem-task-state-reopen-ready-1"),
-    );
-    let (status, reopen_ready_payload) = post_rpc(&client, &server, &reopen_ready).await?;
-    assert_eq!(status, 200);
-    assert_eq!(reopen_ready_payload["result"]["task"]["status"], "ready");
-    assert!(reopen_ready_payload["result"]["task"]["completedAt"].is_null());
-    assert!(reopen_ready_payload["result"]["task"]["errorMessage"].is_null());
-
+    // ready → in_progress (valid)
     let update_in_progress = rpc_request(
         "req-task-state-update-in-progress-1",
         "task.update",
@@ -280,6 +276,7 @@ async fn task_update_clears_terminal_fields_on_non_terminal_transition() -> Resu
     );
     assert!(update_in_progress_payload["result"]["task"]["completedAt"].is_null());
 
+    // in_progress → cancelled via task.cancel (sets completedAt + errorMessage)
     let cancel = rpc_request(
         "req-task-state-cancel-1",
         "task.cancel",
@@ -295,6 +292,7 @@ async fn task_update_clears_terminal_fields_on_non_terminal_transition() -> Resu
     );
     assert!(cancel_payload["result"]["task"]["completedAt"].is_string());
 
+    // cancelled → ready (valid, clears terminal fields)
     let reopen_after_cancel = rpc_request(
         "req-task-state-reopen-after-cancel-1",
         "task.update",
@@ -308,6 +306,39 @@ async fn task_update_clears_terminal_fields_on_non_terminal_transition() -> Resu
         reopen_after_cancel_payload["result"]["task"]["status"],
         "ready"
     );
+    assert!(reopen_after_cancel_payload["result"]["task"]["completedAt"].is_null());
+    assert!(reopen_after_cancel_payload["result"]["task"]["errorMessage"].is_null());
+
+    // ready → in_progress → done (valid path to terminal done)
+    let update_in_progress_2 = rpc_request(
+        "req-task-state-update-in-progress-2",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "in_progress" }),
+        Some("idem-task-state-update-in-progress-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &update_in_progress_2).await?;
+    assert_eq!(status, 200);
+
+    let update_done = rpc_request(
+        "req-task-state-update-done-1",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "done" }),
+        Some("idem-task-state-update-done-1"),
+    );
+    let (status, update_done_payload) = post_rpc(&client, &server, &update_done).await?;
+    assert_eq!(status, 200);
+    assert_eq!(update_done_payload["result"]["task"]["status"], "done");
+    assert!(update_done_payload["result"]["task"]["completedAt"].is_string());
+
+    // done is terminal — verify transition to ready is rejected
+    let reopen_from_done = rpc_request(
+        "req-task-state-reopen-done-1",
+        "task.update",
+        json!({ "id": "task-state-1", "status": "ready" }),
+        Some("idem-task-state-reopen-done-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &reopen_from_done).await?;
+    assert_eq!(status, 412, "done is terminal — no transitions allowed");
     assert!(reopen_after_cancel_payload["result"]["task"]["completedAt"].is_null());
     assert!(reopen_after_cancel_payload["result"]["task"]["errorMessage"].is_null());
 
@@ -470,24 +501,7 @@ async fn task_board_state_transitions() -> Result<()> {
     assert_eq!(status, 200);
     assert_eq!(create_a_payload["result"]["task"]["status"], "ready");
 
-    let cancel_ready = rpc_request(
-        "req-board-cancel-ready",
-        "task.cancel",
-        json!({ "id": "task-board-a" }),
-        Some("idem-board-cancel-ready"),
-    );
-    let (status, cancel_ready_payload) = post_rpc(&client, &server, &cancel_ready).await?;
-    assert_eq!(status, 412);
-    assert_eq!(cancel_ready_payload["error"]["code"], "PRECONDITION_FAILED");
-    assert_eq!(
-        cancel_ready_payload["error"]["message"],
-        "Only in_progress tasks can be cancelled"
-    );
-    assert_eq!(cancel_ready_payload["error"]["details"]["status"], "ready");
-    assert_eq!(
-        cancel_ready_payload["error"]["details"]["taskId"],
-        "task-board-a"
-    );
+    // --- Retry on ready task → 412 (ready→ready is not a valid transition) ---
 
     let retry_ready = rpc_request(
         "req-board-retry-ready",
@@ -500,13 +514,41 @@ async fn task_board_state_transitions() -> Result<()> {
     assert_eq!(retry_ready_payload["error"]["code"], "PRECONDITION_FAILED");
     assert_eq!(
         retry_ready_payload["error"]["message"],
-        "Only cancelled tasks can be retried"
+        "Invalid transition from 'ready' to 'ready'"
     );
-    assert_eq!(retry_ready_payload["error"]["details"]["status"], "ready");
+    assert_eq!(retry_ready_payload["error"]["details"]["from"], "ready");
+    assert_eq!(retry_ready_payload["error"]["details"]["to"], "ready");
     assert_eq!(
         retry_ready_payload["error"]["details"]["taskId"],
         "task-board-a"
     );
+
+    // --- Cancel on ready task → 200 (ready→cancelled is valid per spec) ---
+
+    let cancel_ready = rpc_request(
+        "req-board-cancel-ready",
+        "task.cancel",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-cancel-ready"),
+    );
+    let (status, cancel_ready_payload) = post_rpc(&client, &server, &cancel_ready).await?;
+    assert_eq!(status, 200);
+    assert_eq!(
+        cancel_ready_payload["result"]["task"]["status"],
+        "cancelled"
+    );
+
+    // --- Retry cancelled → ready (valid) ---
+
+    let retry_cancelled = rpc_request(
+        "req-board-retry-cancelled",
+        "task.retry",
+        json!({ "id": "task-board-a" }),
+        Some("idem-board-retry-cancelled"),
+    );
+    let (status, retry_cancelled_payload) = post_rpc(&client, &server, &retry_cancelled).await?;
+    assert_eq!(status, 200);
+    assert_eq!(retry_cancelled_payload["result"]["task"]["status"], "ready");
 
     let create_b = rpc_request(
         "req-board-create-b",
@@ -565,6 +607,16 @@ async fn task_board_state_transitions() -> Result<()> {
     let (status, retry_payload) = post_rpc(&client, &server, &retry).await?;
     assert_eq!(status, 200);
     assert_eq!(retry_payload["result"]["task"]["status"], "ready");
+
+    // ready → in_progress (required before done)
+    let update_in_progress_2 = rpc_request(
+        "req-board-update-in-progress-2",
+        "task.update",
+        json!({ "id": "task-board-a", "status": "in_progress" }),
+        Some("idem-board-update-in-progress-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &update_in_progress_2).await?;
+    assert_eq!(status, 200);
 
     let update_done = rpc_request(
         "req-board-update-done",
@@ -1000,21 +1052,32 @@ async fn task_enrichment_stale_lease_detected() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
 
-    // Create a task with an already-expired lease
+    // Create a task as ready, then transition to in_progress with an expired lease
     let create = rpc_request(
         "req-stale-create-1",
         "task.create",
         json!({
             "id": "task-stale-1",
             "title": "Stale lease enrichment test",
+        }),
+        Some("idem-stale-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    let update = rpc_request(
+        "req-stale-update-1",
+        "task.update",
+        json!({
+            "id": "task-stale-1",
             "status": "in_progress",
             "assigneeWorkerId": "worker-ghost",
             "claimedAt": "2020-01-01T00:00:00Z",
             "leaseExpiresAt": "2020-01-01T00:05:00Z"
         }),
-        Some("idem-stale-create-1"),
+        Some("idem-stale-update-1"),
     );
-    let (status, create_payload) = post_rpc(&client, &server, &create).await?;
+    let (status, create_payload) = post_rpc(&client, &server, &update).await?;
     assert_eq!(status, 200);
 
     // Expired lease → isClaimed true, isStale true
@@ -1170,6 +1233,768 @@ async fn loop_enrichment_fields_with_and_without_worker() -> Result<()> {
     assert!(loop_b2["currentTaskId"].is_null());
     assert!(loop_b2["currentHat"].is_null());
     assert!(loop_b2["lastHeartbeatAt"].is_null());
+
+    server.stop().await;
+    Ok(())
+}
+
+// ── Step 7: Transition validation & promote integration tests ───────────
+
+#[tokio::test]
+async fn task_transition_validation_rejects_invalid_via_update() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create a task (defaults to "ready")
+    let create = rpc_request(
+        "req-tv-create-1",
+        "task.create",
+        json!({ "id": "task-tv-1", "title": "Transition test" }),
+        Some("idem-tv-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // ready → done is NOT allowed (must go through in_progress first)
+    let bad_update = rpc_request(
+        "req-tv-bad-1",
+        "task.update",
+        json!({ "id": "task-tv-1", "status": "done" }),
+        Some("idem-tv-bad-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &bad_update).await?;
+    assert_eq!(status, 412, "ready→done should be rejected");
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert!(payload["error"]["details"]["from"].as_str().unwrap() == "ready");
+    assert!(payload["error"]["details"]["to"].as_str().unwrap() == "done");
+    let allowed = payload["error"]["details"]["allowedTargets"]
+        .as_array()
+        .expect("allowedTargets should be an array");
+    assert!(
+        allowed.iter().any(|v| v == "in_progress"),
+        "in_progress should be allowed from ready"
+    );
+    assert!(
+        allowed.iter().any(|v| v == "cancelled"),
+        "cancelled should be allowed from ready"
+    );
+
+    // ready → blocked is NOT allowed
+    let bad_update2 = rpc_request(
+        "req-tv-bad-2",
+        "task.update",
+        json!({ "id": "task-tv-1", "status": "blocked" }),
+        Some("idem-tv-bad-2"),
+    );
+    let (status, payload2) = post_rpc(&client, &server, &bad_update2).await?;
+    assert_eq!(status, 412, "ready→blocked should be rejected");
+    assert_eq!(payload2["error"]["details"]["from"], "ready");
+    assert_eq!(payload2["error"]["details"]["to"], "blocked");
+
+    // ready → in_progress IS allowed
+    let good_update = rpc_request(
+        "req-tv-good-1",
+        "task.update",
+        json!({ "id": "task-tv-1", "status": "in_progress" }),
+        Some("idem-tv-good-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &good_update).await?;
+    assert_eq!(status, 200);
+
+    // in_progress → ready is NOT allowed
+    let bad_update3 = rpc_request(
+        "req-tv-bad-3",
+        "task.update",
+        json!({ "id": "task-tv-1", "status": "ready" }),
+        Some("idem-tv-bad-3"),
+    );
+    let (status, payload3) = post_rpc(&client, &server, &bad_update3).await?;
+    assert_eq!(status, 412, "in_progress→ready should be rejected");
+    assert_eq!(payload3["error"]["details"]["from"], "in_progress");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_transition_validation_rejects_invalid_close_cancel_retry() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create a task in ready state
+    let create = rpc_request(
+        "req-tcr-create-1",
+        "task.create",
+        json!({ "id": "task-tcr-1", "title": "Close/cancel/retry test" }),
+        Some("idem-tcr-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // task.close on ready task should fail (close = →done, only from in_progress/in_review)
+    let close_ready = rpc_request(
+        "req-tcr-close-ready",
+        "task.close",
+        json!({ "id": "task-tcr-1" }),
+        Some("idem-tcr-close-ready"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &close_ready).await?;
+    assert_eq!(status, 412, "close from ready should be rejected");
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(payload["error"]["details"]["from"], "ready");
+    assert_eq!(payload["error"]["details"]["to"], "done");
+
+    // task.retry on ready task should fail (retry = →ready, ready→ready not valid)
+    let retry_ready = rpc_request(
+        "req-tcr-retry-ready",
+        "task.retry",
+        json!({ "id": "task-tcr-1" }),
+        Some("idem-tcr-retry-ready"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &retry_ready).await?;
+    assert_eq!(status, 412, "retry from ready should be rejected");
+    assert_eq!(payload["error"]["details"]["from"], "ready");
+
+    // Move to in_progress, then done
+    let to_ip = rpc_request(
+        "req-tcr-to-ip",
+        "task.update",
+        json!({ "id": "task-tcr-1", "status": "in_progress" }),
+        Some("idem-tcr-to-ip"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip).await?;
+    assert_eq!(status, 200);
+
+    let close_ip = rpc_request(
+        "req-tcr-close-ip",
+        "task.close",
+        json!({ "id": "task-tcr-1" }),
+        Some("idem-tcr-close-ip"),
+    );
+    let (status, _) = post_rpc(&client, &server, &close_ip).await?;
+    assert_eq!(status, 200);
+
+    // task.cancel on done task should fail (done is terminal)
+    let cancel_done = rpc_request(
+        "req-tcr-cancel-done",
+        "task.cancel",
+        json!({ "id": "task-tcr-1" }),
+        Some("idem-tcr-cancel-done"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &cancel_done).await?;
+    assert_eq!(status, 412, "cancel from done should be rejected");
+    assert_eq!(payload["error"]["details"]["from"], "done");
+
+    // task.retry on done task should also fail (done is terminal)
+    let retry_done = rpc_request(
+        "req-tcr-retry-done",
+        "task.retry",
+        json!({ "id": "task-tcr-1" }),
+        Some("idem-tcr-retry-done"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &retry_done).await?;
+    assert_eq!(status, 412, "retry from done should be rejected");
+    assert_eq!(payload["error"]["details"]["from"], "done");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_promote_backlog_to_ready_round_trip() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create a task in backlog
+    let create = rpc_request(
+        "req-promo-create-1",
+        "task.create",
+        json!({ "id": "task-promo-1", "title": "Backlog task", "status": "backlog" }),
+        Some("idem-promo-create-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "backlog");
+
+    // Promote backlog → ready
+    let promote = rpc_request(
+        "req-promo-promote-1",
+        "task.promote",
+        json!({ "id": "task-promo-1" }),
+        Some("idem-promo-promote-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &promote).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "ready");
+    assert!(payload["result"]["task"]["completedAt"].is_null());
+
+    // Verify via task.get
+    let get = rpc_request(
+        "req-promo-get-1",
+        "task.get",
+        json!({ "id": "task-promo-1" }),
+        None,
+    );
+    let (status, payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "ready");
+
+    // Promote on already-ready task should fail (ready→ready not valid)
+    let promote_again = rpc_request(
+        "req-promo-promote-2",
+        "task.promote",
+        json!({ "id": "task-promo-1" }),
+        Some("idem-promo-promote-2"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &promote_again).await?;
+    assert_eq!(status, 412, "promote from ready should be rejected");
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(payload["error"]["details"]["from"], "ready");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_create_rejects_invalid_initial_status() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create with status "in_progress" should be rejected
+    let create_ip = rpc_request(
+        "req-cis-create-ip",
+        "task.create",
+        json!({ "id": "task-cis-1", "title": "Bad status", "status": "in_progress" }),
+        Some("idem-cis-create-ip"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &create_ip).await?;
+    assert_eq!(status, 400, "create with in_progress should be rejected");
+    assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+    let details = &payload["error"]["details"];
+    assert_eq!(details["requestedStatus"], "in_progress");
+    let allowed = details["allowedStatuses"]
+        .as_array()
+        .expect("allowedStatuses array");
+    assert!(allowed.iter().any(|v| v == "backlog"));
+    assert!(allowed.iter().any(|v| v == "ready"));
+
+    // Create with status "done" should be rejected
+    let create_done = rpc_request(
+        "req-cis-create-done",
+        "task.create",
+        json!({ "id": "task-cis-2", "title": "Bad status done", "status": "done" }),
+        Some("idem-cis-create-done"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create_done).await?;
+    assert_eq!(status, 400, "create with done should be rejected");
+
+    // Create with status "backlog" should succeed
+    let create_backlog = rpc_request(
+        "req-cis-create-backlog",
+        "task.create",
+        json!({ "id": "task-cis-3", "title": "Backlog ok", "status": "backlog" }),
+        Some("idem-cis-create-backlog"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &create_backlog).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "backlog");
+
+    // Create with default status (no status field) should succeed as "ready"
+    let create_default = rpc_request(
+        "req-cis-create-default",
+        "task.create",
+        json!({ "id": "task-cis-4", "title": "Default ready" }),
+        Some("idem-cis-create-default"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &create_default).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "ready");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_promote_also_works_from_cancelled_and_blocked() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // ── cancelled → ready via promote ────────────────────────────────────
+    let create1 = rpc_request(
+        "req-pex-create-1",
+        "task.create",
+        json!({ "id": "task-pex-1", "title": "Cancel then promote" }),
+        Some("idem-pex-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create1).await?;
+    assert_eq!(status, 200);
+
+    // ready → cancelled
+    let cancel = rpc_request(
+        "req-pex-cancel-1",
+        "task.cancel",
+        json!({ "id": "task-pex-1" }),
+        Some("idem-pex-cancel-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &cancel).await?;
+    assert_eq!(status, 200);
+
+    // promote cancelled → ready
+    let promote1 = rpc_request(
+        "req-pex-promote-1",
+        "task.promote",
+        json!({ "id": "task-pex-1" }),
+        Some("idem-pex-promote-1"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &promote1).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "ready");
+
+    // ── blocked → ready via promote ──────────────────────────────────────
+    let create2 = rpc_request(
+        "req-pex-create-2",
+        "task.create",
+        json!({ "id": "task-pex-2", "title": "Block then promote" }),
+        Some("idem-pex-create-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create2).await?;
+    assert_eq!(status, 200);
+
+    // ready → in_progress → blocked
+    let to_ip = rpc_request(
+        "req-pex-to-ip-2",
+        "task.update",
+        json!({ "id": "task-pex-2", "status": "in_progress" }),
+        Some("idem-pex-to-ip-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip).await?;
+    assert_eq!(status, 200);
+
+    let to_blocked = rpc_request(
+        "req-pex-to-blocked-2",
+        "task.update",
+        json!({ "id": "task-pex-2", "status": "blocked" }),
+        Some("idem-pex-to-blocked-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_blocked).await?;
+    assert_eq!(status, 200);
+
+    // promote blocked → ready
+    let promote2 = rpc_request(
+        "req-pex-promote-2",
+        "task.promote",
+        json!({ "id": "task-pex-2" }),
+        Some("idem-pex-promote-2"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &promote2).await?;
+    assert_eq!(status, 200);
+    assert_eq!(payload["result"]["task"]["status"], "ready");
+
+    // ── promote from in_progress should fail (in_progress→ready not valid) ──
+    let create3 = rpc_request(
+        "req-pex-create-3",
+        "task.create",
+        json!({ "id": "task-pex-3", "title": "IP promote fail" }),
+        Some("idem-pex-create-3"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create3).await?;
+    assert_eq!(status, 200);
+
+    let to_ip3 = rpc_request(
+        "req-pex-to-ip-3",
+        "task.update",
+        json!({ "id": "task-pex-3", "status": "in_progress" }),
+        Some("idem-pex-to-ip-3"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip3).await?;
+    assert_eq!(status, 200);
+
+    let promote3 = rpc_request(
+        "req-pex-promote-3",
+        "task.promote",
+        json!({ "id": "task-pex-3" }),
+        Some("idem-pex-promote-3"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &promote3).await?;
+    assert_eq!(status, 412, "promote from in_progress should be rejected");
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+
+    server.stop().await;
+    Ok(())
+}
+
+// ── Step 8: Review queue semantics integration tests ────────────────────
+
+#[tokio::test]
+async fn review_lifecycle_full_round_trip() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create task, move to in_progress
+    let create = rpc_request(
+        "req-rev-create-1",
+        "task.create",
+        json!({ "id": "task-rev-1", "title": "Review lifecycle test" }),
+        Some("idem-rev-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    let to_ip = rpc_request(
+        "req-rev-to-ip-1",
+        "task.update",
+        json!({ "id": "task-rev-1", "status": "in_progress" }),
+        Some("idem-rev-to-ip-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip).await?;
+    assert_eq!(status, 200);
+
+    // submit_for_review: in_progress → in_review
+    let submit = rpc_request(
+        "req-rev-submit-1",
+        "task.submit_for_review",
+        json!({ "id": "task-rev-1" }),
+        Some("idem-rev-submit-1"),
+    );
+    let (status, submit_payload) = post_rpc(&client, &server, &submit).await?;
+    assert_eq!(status, 200);
+    assert_eq!(submit_payload["result"]["task"]["status"], "in_review");
+
+    // request_changes: in_review → in_progress
+    let changes = rpc_request(
+        "req-rev-changes-1",
+        "task.request_changes",
+        json!({ "id": "task-rev-1" }),
+        Some("idem-rev-changes-1"),
+    );
+    let (status, changes_payload) = post_rpc(&client, &server, &changes).await?;
+    assert_eq!(status, 200);
+    assert_eq!(changes_payload["result"]["task"]["status"], "in_progress");
+
+    // Re-submit for review
+    let submit2 = rpc_request(
+        "req-rev-submit-2",
+        "task.submit_for_review",
+        json!({ "id": "task-rev-1" }),
+        Some("idem-rev-submit-2"),
+    );
+    let (status, submit2_payload) = post_rpc(&client, &server, &submit2).await?;
+    assert_eq!(status, 200);
+    assert_eq!(submit2_payload["result"]["task"]["status"], "in_review");
+
+    // Close from in_review (in_review → done is valid)
+    let close = rpc_request(
+        "req-rev-close-1",
+        "task.close",
+        json!({ "id": "task-rev-1" }),
+        Some("idem-rev-close-1"),
+    );
+    let (status, close_payload) = post_rpc(&client, &server, &close).await?;
+    assert_eq!(status, 200);
+    assert_eq!(close_payload["result"]["task"]["status"], "done");
+    assert!(close_payload["result"]["task"]["completedAt"].is_string());
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_ownership_preserved_through_transitions() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create task with worker assignment
+    let create = rpc_request(
+        "req-rown-create-1",
+        "task.create",
+        json!({
+            "id": "task-rown-1",
+            "title": "Ownership preservation test",
+            "assigneeWorkerId": "worker-owner-1",
+            "claimedAt": "2026-03-15T10:00:00Z",
+            "leaseExpiresAt": "2099-12-31T23:59:59Z"
+        }),
+        Some("idem-rown-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // ready → in_progress
+    let to_ip = rpc_request(
+        "req-rown-to-ip-1",
+        "task.update",
+        json!({ "id": "task-rown-1", "status": "in_progress" }),
+        Some("idem-rown-to-ip-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip).await?;
+    assert_eq!(status, 200);
+
+    // submit_for_review — ownership fields must survive
+    let submit = rpc_request(
+        "req-rown-submit-1",
+        "task.submit_for_review",
+        json!({ "id": "task-rown-1" }),
+        Some("idem-rown-submit-1"),
+    );
+    let (status, submit_payload) = post_rpc(&client, &server, &submit).await?;
+    assert_eq!(status, 200);
+    let task_after_submit = &submit_payload["result"]["task"];
+    assert_eq!(task_after_submit["status"], "in_review");
+    assert_eq!(task_after_submit["assigneeWorkerId"], "worker-owner-1");
+    assert_eq!(task_after_submit["claimedAt"], "2026-03-15T10:00:00Z");
+    assert_eq!(task_after_submit["leaseExpiresAt"], "2099-12-31T23:59:59Z");
+
+    // request_changes — ownership fields must survive
+    let changes = rpc_request(
+        "req-rown-changes-1",
+        "task.request_changes",
+        json!({ "id": "task-rown-1" }),
+        Some("idem-rown-changes-1"),
+    );
+    let (status, changes_payload) = post_rpc(&client, &server, &changes).await?;
+    assert_eq!(status, 200);
+    let task_after_changes = &changes_payload["result"]["task"];
+    assert_eq!(task_after_changes["status"], "in_progress");
+    assert_eq!(task_after_changes["assigneeWorkerId"], "worker-owner-1");
+    assert_eq!(task_after_changes["claimedAt"], "2026-03-15T10:00:00Z");
+    assert_eq!(task_after_changes["leaseExpiresAt"], "2099-12-31T23:59:59Z");
+
+    // Verify via task.get
+    let get = rpc_request(
+        "req-rown-get-1",
+        "task.get",
+        json!({ "id": "task-rown-1" }),
+        None,
+    );
+    let (status, get_payload) = post_rpc(&client, &server, &get).await?;
+    assert_eq!(status, 200);
+    let task_get = &get_payload["result"]["task"];
+    assert_eq!(task_get["assigneeWorkerId"], "worker-owner-1");
+    assert_eq!(task_get["claimedAt"], "2026-03-15T10:00:00Z");
+    assert_eq!(task_get["leaseExpiresAt"], "2099-12-31T23:59:59Z");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_in_review_query_returns_correct_tasks() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create three tasks: one stays ready, one goes to in_review, one goes to in_progress
+    for (id, title) in [
+        ("task-irq-1", "Stays ready"),
+        ("task-irq-2", "Goes to review"),
+        ("task-irq-3", "Goes to in_progress"),
+    ] {
+        let create = rpc_request(
+            &format!("req-irq-create-{id}"),
+            "task.create",
+            json!({ "id": id, "title": title }),
+            Some(&format!("idem-irq-create-{id}")),
+        );
+        let (status, _) = post_rpc(&client, &server, &create).await?;
+        assert_eq!(status, 200);
+    }
+
+    // Move task-irq-2 to in_progress then in_review
+    let to_ip2 = rpc_request(
+        "req-irq-to-ip-2",
+        "task.update",
+        json!({ "id": "task-irq-2", "status": "in_progress" }),
+        Some("idem-irq-to-ip-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip2).await?;
+    assert_eq!(status, 200);
+
+    let submit2 = rpc_request(
+        "req-irq-submit-2",
+        "task.submit_for_review",
+        json!({ "id": "task-irq-2" }),
+        Some("idem-irq-submit-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &submit2).await?;
+    assert_eq!(status, 200);
+
+    // Move task-irq-3 to in_progress only
+    let to_ip3 = rpc_request(
+        "req-irq-to-ip-3",
+        "task.update",
+        json!({ "id": "task-irq-3", "status": "in_progress" }),
+        Some("idem-irq-to-ip-3"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip3).await?;
+    assert_eq!(status, 200);
+
+    // task.in_review should return only task-irq-2
+    let in_review = rpc_request("req-irq-query-1", "task.in_review", json!({}), None);
+    let (status, in_review_payload) = post_rpc(&client, &server, &in_review).await?;
+    assert_eq!(status, 200);
+    let review_tasks = in_review_payload["result"]["tasks"]
+        .as_array()
+        .expect("tasks should be an array");
+    assert_eq!(review_tasks.len(), 1, "only one task should be in_review");
+    assert_eq!(review_tasks[0]["id"], "task-irq-2");
+    assert_eq!(review_tasks[0]["status"], "in_review");
+
+    // Move task-irq-2 back to in_progress via request_changes
+    let changes = rpc_request(
+        "req-irq-changes-2",
+        "task.request_changes",
+        json!({ "id": "task-irq-2" }),
+        Some("idem-irq-changes-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &changes).await?;
+    assert_eq!(status, 200);
+
+    // task.in_review should now be empty
+    let in_review2 = rpc_request("req-irq-query-2", "task.in_review", json!({}), None);
+    let (status, in_review2_payload) = post_rpc(&client, &server, &in_review2).await?;
+    assert_eq!(status, 200);
+    let review_tasks2 = in_review2_payload["result"]["tasks"]
+        .as_array()
+        .expect("tasks should be an array");
+    assert_eq!(
+        review_tasks2.len(),
+        0,
+        "no tasks should be in_review after request_changes"
+    );
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_submit_and_request_changes_reject_invalid_states() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    // Create a task (defaults to ready)
+    let create = rpc_request(
+        "req-rrej-create-1",
+        "task.create",
+        json!({ "id": "task-rrej-1", "title": "Review rejection test" }),
+        Some("idem-rrej-create-1"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create).await?;
+    assert_eq!(status, 200);
+
+    // submit_for_review from ready should fail (only in_progress → in_review)
+    let submit_ready = rpc_request(
+        "req-rrej-submit-ready",
+        "task.submit_for_review",
+        json!({ "id": "task-rrej-1" }),
+        Some("idem-rrej-submit-ready"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &submit_ready).await?;
+    assert_eq!(
+        status, 412,
+        "submit_for_review from ready should be rejected"
+    );
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(payload["error"]["details"]["from"], "ready");
+    assert_eq!(payload["error"]["details"]["to"], "in_review");
+    let allowed = payload["error"]["details"]["allowedTargets"]
+        .as_array()
+        .expect("allowedTargets should be present");
+    assert!(
+        allowed.iter().any(|v| v == "in_progress"),
+        "in_progress should be in allowedTargets from ready"
+    );
+
+    // Move to in_progress, then done (terminal — no transitions out)
+    let to_ip = rpc_request(
+        "req-rrej-to-ip",
+        "task.update",
+        json!({ "id": "task-rrej-1", "status": "in_progress" }),
+        Some("idem-rrej-to-ip"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip).await?;
+    assert_eq!(status, 200);
+
+    let to_done = rpc_request(
+        "req-rrej-to-done",
+        "task.close",
+        json!({ "id": "task-rrej-1" }),
+        Some("idem-rrej-to-done"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_done).await?;
+    assert_eq!(status, 200);
+
+    // request_changes from done should fail (done is terminal)
+    let changes_done = rpc_request(
+        "req-rrej-changes-done",
+        "task.request_changes",
+        json!({ "id": "task-rrej-1" }),
+        Some("idem-rrej-changes-done"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &changes_done).await?;
+    assert_eq!(status, 412, "request_changes from done should be rejected");
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(payload["error"]["details"]["from"], "done");
+    assert_eq!(payload["error"]["details"]["to"], "in_progress");
+
+    // submit_for_review from done should fail (done is terminal)
+    let submit_done = rpc_request(
+        "req-rrej-submit-done",
+        "task.submit_for_review",
+        json!({ "id": "task-rrej-1" }),
+        Some("idem-rrej-submit-done"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &submit_done).await?;
+    assert_eq!(
+        status, 412,
+        "submit_for_review from done should be rejected"
+    );
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(payload["error"]["details"]["from"], "done");
+    assert_eq!(payload["error"]["details"]["to"], "in_review");
+
+    // --- Second task: test submit_for_review from in_review (self-transition) ---
+    let create2 = rpc_request(
+        "req-rrej-create-2",
+        "task.create",
+        json!({ "id": "task-rrej-2", "title": "Review self-transition test" }),
+        Some("idem-rrej-create-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &create2).await?;
+    assert_eq!(status, 200);
+
+    // ready → in_progress → in_review
+    let to_ip2 = rpc_request(
+        "req-rrej-to-ip-2",
+        "task.update",
+        json!({ "id": "task-rrej-2", "status": "in_progress" }),
+        Some("idem-rrej-to-ip-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &to_ip2).await?;
+    assert_eq!(status, 200);
+
+    let submit = rpc_request(
+        "req-rrej-submit-ip",
+        "task.submit_for_review",
+        json!({ "id": "task-rrej-2" }),
+        Some("idem-rrej-submit-ip"),
+    );
+    let (status, _) = post_rpc(&client, &server, &submit).await?;
+    assert_eq!(status, 200);
+
+    // submit_for_review from in_review should fail (in_review→in_review not valid)
+    let submit_review = rpc_request(
+        "req-rrej-submit-review",
+        "task.submit_for_review",
+        json!({ "id": "task-rrej-2" }),
+        Some("idem-rrej-submit-review"),
+    );
+    let (status, payload) = post_rpc(&client, &server, &submit_review).await?;
+    assert_eq!(
+        status, 412,
+        "submit_for_review from in_review should be rejected"
+    );
+    assert_eq!(payload["error"]["code"], "PRECONDITION_FAILED");
+    assert_eq!(payload["error"]["details"]["from"], "in_review");
+    assert_eq!(payload["error"]["details"]["to"], "in_review");
 
     server.stop().await;
     Ok(())

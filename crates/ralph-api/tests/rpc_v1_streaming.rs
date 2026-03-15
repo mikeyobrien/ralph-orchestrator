@@ -382,13 +382,25 @@ async fn replay_overflow_emits_backpressure_error_and_bounds_batch() -> Result<(
         .to_string();
     live_stream.close(None).await?;
 
-    for index in 0..8 {
+    // Generate 8 valid status transitions to overflow the replay buffer.
+    // Cycle: ready → in_progress → in_review → in_progress → in_review → ...
+    let overflow_statuses = [
+        "in_progress",
+        "in_review",
+        "in_progress",
+        "in_review",
+        "in_progress",
+        "in_review",
+        "in_progress",
+        "in_review",
+    ];
+    for (index, next_status) in overflow_statuses.iter().enumerate() {
         let request_id = format!("req-stream-overflow-update-{index}");
         let idempotency_key = format!("idem-stream-overflow-update-{index}");
         let update = rpc_request(
             &request_id,
             "task.update",
-            json!({ "id": task_id, "status": format!("state-{index}") }),
+            json!({ "id": task_id, "status": next_status }),
             Some(&idempotency_key),
         );
         let (status, _) = post_rpc(&client, &server, &update).await?;

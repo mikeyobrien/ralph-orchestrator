@@ -198,19 +198,48 @@ async fn task_clear_removes_all_tasks() -> Result<()> {
     let create2 = rpc_request(
         "clr-create-2",
         "task.create",
-        json!({ "id": "task-clear-done", "title": "Done", "status": "done", "priority": 1 }),
+        json!({ "id": "task-clear-done", "title": "Done", "status": "ready", "priority": 1 }),
         Some("idem-clr-create-2"),
     );
     let (status, _) = post_rpc(&client, &server, &create2).await?;
     assert_eq!(status, 200);
 
+    // Transition ready→in_progress→done
+    let update2a = rpc_request(
+        "clr-update-2a",
+        "task.update",
+        json!({ "id": "task-clear-done", "status": "in_progress" }),
+        Some("idem-clr-update-2a"),
+    );
+    let (status, _) = post_rpc(&client, &server, &update2a).await?;
+    assert_eq!(status, 200);
+
+    let close2 = rpc_request(
+        "clr-close-2",
+        "task.close",
+        json!({ "id": "task-clear-done" }),
+        Some("idem-clr-close-2"),
+    );
+    let (status, _) = post_rpc(&client, &server, &close2).await?;
+    assert_eq!(status, 200);
+
     let create3 = rpc_request(
         "clr-create-3",
         "task.create",
-        json!({ "id": "task-clear-cancelled", "title": "Cancelled", "status": "cancelled", "priority": 1 }),
+        json!({ "id": "task-clear-cancelled", "title": "Cancelled", "status": "ready", "priority": 1 }),
         Some("idem-clr-create-3"),
     );
     let (status, _) = post_rpc(&client, &server, &create3).await?;
+    assert_eq!(status, 200);
+
+    // Transition ready→cancelled
+    let cancel3 = rpc_request(
+        "clr-cancel-3",
+        "task.cancel",
+        json!({ "id": "task-clear-cancelled" }),
+        Some("idem-clr-cancel-3"),
+    );
+    let (status, _) = post_rpc(&client, &server, &cancel3).await?;
     assert_eq!(status, 200);
 
     let clear = rpc_request("clr-clear", "task.clear", json!({}), Some("idem-clr-clear"));

@@ -119,6 +119,19 @@ impl TaskDomain {
         }
 
         let requested_status = params.status.unwrap_or_else(|| "ready".to_string());
+
+        if !VALID_CREATION_STATUSES.contains(&requested_status.as_str()) {
+            return Err(ApiError::invalid_params(format!(
+                "Invalid initial status '{}'. Tasks can only be created with status: {}",
+                requested_status,
+                VALID_CREATION_STATUSES.join(", ")
+            ))
+            .with_details(serde_json::json!({
+                "requestedStatus": requested_status,
+                "allowedStatuses": VALID_CREATION_STATUSES,
+            })));
+        }
+
         let now = now_ts();
         let completed_at = is_terminal_status(&requested_status).then_some(now.clone());
 
@@ -157,6 +170,20 @@ impl TaskDomain {
             task.title = title;
         }
         if let Some(status) = input.status {
+            if !is_valid_transition(&task.status, &status) {
+                let from = task.status.clone();
+                let allowed = allowed_targets(&from);
+                return Err(ApiError::precondition_failed(format!(
+                    "Invalid transition from '{}' to '{}'",
+                    from, status
+                ))
+                .with_details(serde_json::json!({
+                    "taskId": input.id,
+                    "from": from,
+                    "to": status,
+                    "allowedTargets": allowed,
+                })));
+            }
             task.status = status;
 
             if is_terminal_status(&task.status) {
@@ -251,14 +278,19 @@ impl TaskDomain {
                 .get_mut(id)
                 .ok_or_else(|| task_not_found_error(id))?;
 
-            if task.status != "cancelled" {
-                return Err(
-                    ApiError::precondition_failed("Only cancelled tasks can be retried")
-                        .with_details(serde_json::json!({
-                            "taskId": id,
-                            "status": task.status,
-                        })),
-                );
+            if !is_valid_transition(&task.status, "ready") {
+                let from = task.status.clone();
+                let allowed = allowed_targets(&from);
+                return Err(ApiError::precondition_failed(format!(
+                    "Invalid transition from '{}' to 'ready'",
+                    from
+                ))
+                .with_details(serde_json::json!({
+                    "taskId": id,
+                    "from": from,
+                    "to": "ready",
+                    "allowedTargets": allowed,
+                })));
             }
 
             let now = now_ts();
@@ -272,20 +304,48 @@ impl TaskDomain {
         self.get(id)
     }
 
+    pub fn promote(&mut self, id: &str) -> Result<TaskRecord, ApiError> {
+        self.transition_task(id, "ready")
+    }
+
+    pub fn submit_for_review(&mut self, id: &str) -> Result<TaskRecord, ApiError> {
+        self.transition_task(id, "in_review")
+    }
+
+    pub fn request_changes(&mut self, id: &str) -> Result<TaskRecord, ApiError> {
+        self.transition_task(id, "in_progress")
+    }
+
+    pub fn in_review(&self) -> Vec<TaskRecord> {
+        let mut tasks: Vec<_> = self
+            .tasks
+            .values()
+            .filter(|t| t.status == "in_review" && t.archived_at.is_none())
+            .cloned()
+            .collect();
+        tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        tasks
+    }
+
     pub fn cancel(&mut self, id: &str) -> Result<TaskRecord, ApiError> {
         let task = self
             .tasks
             .get_mut(id)
             .ok_or_else(|| task_not_found_error(id))?;
 
-        if task.status != "in_progress" {
-            return Err(
-                ApiError::precondition_failed("Only in_progress tasks can be cancelled")
-                    .with_details(serde_json::json!({
-                        "taskId": id,
-                        "status": task.status,
-                    })),
-            );
+        if !is_valid_transition(&task.status, "cancelled") {
+            let from = task.status.clone();
+            let allowed = allowed_targets(&from);
+            return Err(ApiError::precondition_failed(format!(
+                "Invalid transition from '{}' to 'cancelled'",
+                from
+            ))
+            .with_details(serde_json::json!({
+                "taskId": id,
+                "from": from,
+                "to": "cancelled",
+                "allowedTargets": allowed,
+            })));
         }
 
         let now = now_ts();
@@ -303,6 +363,21 @@ impl TaskDomain {
             .tasks
             .get_mut(id)
             .ok_or_else(|| task_not_found_error(id))?;
+
+        if !is_valid_transition(&task.status, status) {
+            let from = task.status.clone();
+            let allowed = allowed_targets(&from);
+            return Err(ApiError::precondition_failed(format!(
+                "Invalid transition from '{}' to '{}'",
+                from, status
+            ))
+            .with_details(serde_json::json!({
+                "taskId": id,
+                "from": from,
+                "to": status,
+                "allowedTargets": allowed,
+            })));
+        }
 
         let now = now_ts();
         task.status = status.to_string();
@@ -365,4 +440,208 @@ fn task_not_found_error(task_id: &str) -> ApiError {
 
 fn is_terminal_status(status: &str) -> bool {
     matches!(status, "done" | "cancelled")
+}
+
+/// Returns the list of statuses a task may transition to from `from`.
+pub fn allowed_targets(from: &str) -> &'static [&'static str] {
+    match from {
+        "backlog" => &["ready"],
+        "ready" => &["in_progress", "cancelled"],
+        "in_progress" => &["in_review", "blocked", "done", "cancelled"],
+        "in_review" => &["in_progress", "done", "blocked"],
+        "blocked" => &["ready", "cancelled"],
+        "cancelled" => &["ready"],
+        _ => &[],
+    }
+}
+
+/// Returns true when transitioning from `from` to `to` is allowed per the
+/// canonical board-state machine defined in the spec.
+pub fn is_valid_transition(from: &str, to: &str) -> bool {
+    allowed_targets(from).contains(&to)
+}
+
+/// Statuses allowed when creating a new task.
+pub const VALID_CREATION_STATUSES: &[&str] = &["backlog", "ready"];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── allowed transitions ──────────────────────────────────────────
+
+    #[test]
+    fn backlog_to_ready() {
+        assert!(is_valid_transition("backlog", "ready"));
+    }
+
+    #[test]
+    fn ready_to_in_progress() {
+        assert!(is_valid_transition("ready", "in_progress"));
+    }
+
+    #[test]
+    fn ready_to_cancelled() {
+        assert!(is_valid_transition("ready", "cancelled"));
+    }
+
+    #[test]
+    fn in_progress_to_in_review() {
+        assert!(is_valid_transition("in_progress", "in_review"));
+    }
+
+    #[test]
+    fn in_progress_to_blocked() {
+        assert!(is_valid_transition("in_progress", "blocked"));
+    }
+
+    #[test]
+    fn in_progress_to_done() {
+        assert!(is_valid_transition("in_progress", "done"));
+    }
+
+    #[test]
+    fn in_progress_to_cancelled() {
+        assert!(is_valid_transition("in_progress", "cancelled"));
+    }
+
+    #[test]
+    fn in_review_to_in_progress() {
+        assert!(is_valid_transition("in_review", "in_progress"));
+    }
+
+    #[test]
+    fn in_review_to_done() {
+        assert!(is_valid_transition("in_review", "done"));
+    }
+
+    #[test]
+    fn in_review_to_blocked() {
+        assert!(is_valid_transition("in_review", "blocked"));
+    }
+
+    #[test]
+    fn blocked_to_ready() {
+        assert!(is_valid_transition("blocked", "ready"));
+    }
+
+    #[test]
+    fn blocked_to_cancelled() {
+        assert!(is_valid_transition("blocked", "cancelled"));
+    }
+
+    #[test]
+    fn cancelled_to_ready() {
+        assert!(is_valid_transition("cancelled", "ready"));
+    }
+
+    // ── forbidden transitions ────────────────────────────────────────
+
+    #[test]
+    fn backlog_to_done_rejected() {
+        assert!(!is_valid_transition("backlog", "done"));
+    }
+
+    #[test]
+    fn backlog_to_in_progress_rejected() {
+        assert!(!is_valid_transition("backlog", "in_progress"));
+    }
+
+    #[test]
+    fn ready_to_done_rejected() {
+        assert!(!is_valid_transition("ready", "done"));
+    }
+
+    #[test]
+    fn ready_to_blocked_rejected() {
+        assert!(!is_valid_transition("ready", "blocked"));
+    }
+
+    #[test]
+    fn done_to_anything_rejected() {
+        assert!(!is_valid_transition("done", "ready"));
+        assert!(!is_valid_transition("done", "in_progress"));
+        assert!(!is_valid_transition("done", "cancelled"));
+    }
+
+    #[test]
+    fn cancelled_to_done_rejected() {
+        assert!(!is_valid_transition("cancelled", "done"));
+    }
+
+    #[test]
+    fn cancelled_to_in_progress_rejected() {
+        assert!(!is_valid_transition("cancelled", "in_progress"));
+    }
+
+    #[test]
+    fn unknown_status_rejected() {
+        assert!(!is_valid_transition("unknown", "ready"));
+        assert!(!is_valid_transition("ready", "unknown"));
+    }
+
+    // ── allowed_targets exhaustive ───────────────────────────────────
+
+    #[test]
+    fn allowed_targets_backlog() {
+        assert_eq!(allowed_targets("backlog"), &["ready"]);
+    }
+
+    #[test]
+    fn allowed_targets_ready() {
+        assert_eq!(allowed_targets("ready"), &["in_progress", "cancelled"]);
+    }
+
+    #[test]
+    fn allowed_targets_in_progress() {
+        assert_eq!(
+            allowed_targets("in_progress"),
+            &["in_review", "blocked", "done", "cancelled"]
+        );
+    }
+
+    #[test]
+    fn allowed_targets_in_review() {
+        assert_eq!(
+            allowed_targets("in_review"),
+            &["in_progress", "done", "blocked"]
+        );
+    }
+
+    #[test]
+    fn allowed_targets_blocked() {
+        assert_eq!(allowed_targets("blocked"), &["ready", "cancelled"]);
+    }
+
+    #[test]
+    fn allowed_targets_cancelled() {
+        assert_eq!(allowed_targets("cancelled"), &["ready"]);
+    }
+
+    #[test]
+    fn allowed_targets_done_is_empty() {
+        assert!(allowed_targets("done").is_empty());
+    }
+
+    #[test]
+    fn allowed_targets_unknown_is_empty() {
+        assert!(allowed_targets("garbage").is_empty());
+    }
+
+    // ── VALID_CREATION_STATUSES ──────────────────────────────────────
+
+    #[test]
+    fn creation_statuses_are_backlog_and_ready() {
+        assert_eq!(VALID_CREATION_STATUSES, &["backlog", "ready"]);
+    }
+
+    #[test]
+    fn creation_rejects_in_progress() {
+        assert!(!VALID_CREATION_STATUSES.contains(&"in_progress"));
+    }
+
+    #[test]
+    fn creation_rejects_done() {
+        assert!(!VALID_CREATION_STATUSES.contains(&"done"));
+    }
 }
