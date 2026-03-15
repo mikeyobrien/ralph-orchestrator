@@ -58,6 +58,13 @@
         "collection.delete",
         "collection.import",
         "collection.export",
+        "worker.list",
+        "worker.get",
+        "worker.register",
+        "worker.deregister",
+        "worker.heartbeat",
+        "worker.claim_next",
+        "worker.reclaim_expired",
         "stream.subscribe",
         "stream.unsubscribe",
         "stream.ack"
@@ -90,7 +97,12 @@
         "collection.create",
         "collection.update",
         "collection.delete",
-        "collection.import"
+        "collection.import",
+        "worker.register",
+        "worker.deregister",
+        "worker.heartbeat",
+        "worker.claim_next",
+        "worker.reclaim_expired"
       ]
     },
     "authMeta": {
@@ -683,6 +695,104 @@
         "name"
       ]
     },
+    "workerIdParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workerId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["workerId"]
+    },
+    "workerRegisterParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workerId": { "type": "string", "minLength": 1 },
+        "workerName": { "type": "string", "minLength": 1 },
+        "loopId": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string", "minLength": 1 },
+        "workspaceRoot": { "type": "string", "minLength": 1 },
+        "currentTaskId": { "type": "string" },
+        "currentHat": { "type": "string" },
+        "status": { "type": "string", "enum": ["idle", "busy", "blocked", "dead"] },
+        "lastHeartbeatAt": { "type": "string", "minLength": 1 }
+      },
+      "required": ["workerId", "workerName", "loopId", "backend", "workspaceRoot", "status", "lastHeartbeatAt"]
+    },
+    "workerHeartbeatParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workerId": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["idle", "busy", "blocked", "dead"] },
+        "currentTaskId": { "type": "string" },
+        "currentHat": { "type": "string" },
+        "lastHeartbeatAt": { "type": "string", "minLength": 1 }
+      },
+      "required": ["workerId", "status", "lastHeartbeatAt"]
+    },
+    "workerReclaimExpiredParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asOf": { "type": "string", "minLength": 1 }
+      },
+      "required": ["asOf"]
+    },
+    "workerRecord": {
+      "type": "object",
+      "properties": {
+        "workerId": { "type": "string" },
+        "workerName": { "type": "string" },
+        "loopId": { "type": "string" },
+        "backend": { "type": "string" },
+        "workspaceRoot": { "type": "string" },
+        "currentTaskId": { "type": "string" },
+        "currentHat": { "type": "string" },
+        "status": { "type": "string", "enum": ["idle", "busy", "blocked", "dead"] },
+        "lastHeartbeatAt": { "type": "string" }
+      },
+      "required": ["workerId", "workerName", "loopId", "backend", "workspaceRoot", "status", "lastHeartbeatAt"]
+    },
+    "workerResult": {
+      "type": "object",
+      "properties": {
+        "worker": { "$ref": "#/$defs/workerRecord" }
+      },
+      "required": ["worker"]
+    },
+    "workerListResult": {
+      "type": "object",
+      "properties": {
+        "workers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workerRecord" }
+        }
+      },
+      "required": ["workers"]
+    },
+    "workerClaimNextResult": {
+      "type": "object",
+      "properties": {
+        "task": { "type": ["object", "null"] },
+        "worker": { "$ref": "#/$defs/workerRecord" }
+      },
+      "required": ["worker"]
+    },
+    "workerReclaimExpiredResult": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "workers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workerRecord" }
+        }
+      },
+      "required": ["tasks", "workers"]
+    },
     "streamSubscribeParams": {
       "type": "object",
       "additionalProperties": false,
@@ -792,6 +902,14 @@
         { "properties": { "method": { "const": "collection.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.import" }, "params": { "$ref": "#/$defs/collectionImportParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.export" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "worker.list" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "worker.get" }, "params": { "$ref": "#/$defs/workerIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "worker.register" }, "params": { "$ref": "#/$defs/workerRegisterParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "worker.deregister" }, "params": { "$ref": "#/$defs/workerIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "worker.heartbeat" }, "params": { "$ref": "#/$defs/workerHeartbeatParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "worker.claim_next" }, "params": { "$ref": "#/$defs/workerIdParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "worker.reclaim_expired" }, "params": { "$ref": "#/$defs/workerReclaimExpiredParams" } }, "required": ["method", "params"] },
 
         { "properties": { "method": { "const": "stream.subscribe" }, "params": { "$ref": "#/$defs/streamSubscribeParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "params": { "$ref": "#/$defs/streamUnsubscribeParams" } }, "required": ["method", "params"] },
@@ -1071,6 +1189,14 @@
         { "properties": { "method": { "const": "collection.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.import" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.export" }, "result": { "$ref": "#/$defs/collectionExportResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "worker.list" }, "result": { "$ref": "#/$defs/workerListResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "worker.get" }, "result": { "$ref": "#/$defs/workerResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "worker.register" }, "result": { "$ref": "#/$defs/workerResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "worker.deregister" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "worker.heartbeat" }, "result": { "$ref": "#/$defs/workerResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "worker.claim_next" }, "result": { "$ref": "#/$defs/workerClaimNextResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "worker.reclaim_expired" }, "result": { "$ref": "#/$defs/workerReclaimExpiredResult" } }, "required": ["method", "result"] },
 
         { "properties": { "method": { "const": "stream.subscribe" }, "result": { "$ref": "#/$defs/streamSubscribeResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },

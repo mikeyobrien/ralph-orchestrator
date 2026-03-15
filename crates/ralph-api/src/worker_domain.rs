@@ -2,12 +2,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::{Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use ralph_core::FileLock;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::ApiError;
 use crate::task_domain::{TaskDomain, TaskRecord};
+
+const LEASE_DURATION_MINUTES: i64 = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +72,19 @@ impl WorkerHeartbeatInput {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerReclaimExpiredInput {
+    pub as_of: String,
+}
+
+impl WorkerReclaimExpiredInput {
+    fn validate(&self) -> Result<(), ApiError> {
+        parse_input_timestamp("asOf", &self.as_of)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct WorkerSnapshot {
@@ -82,6 +97,13 @@ pub struct WorkerClaimNextResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<TaskRecord>,
     pub worker: WorkerRecord,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerReclaimExpiredResult {
+    pub tasks: Vec<TaskRecord>,
+    pub workers: Vec<WorkerRecord>,
 }
 
 pub struct WorkerDomain {
@@ -267,6 +289,127 @@ impl WorkerDomain {
         })
     }
 
+    pub fn reclaim_expired(
+        &mut self,
+        input: WorkerReclaimExpiredInput,
+    ) -> Result<WorkerReclaimExpiredResult, ApiError> {
+        input.validate()?;
+        let as_of = parse_input_timestamp("asOf", &input.as_of)?;
+
+        let lock = self.file_lock()?;
+        let _guard = lock.exclusive().map_err(|error| {
+            ApiError::internal(format!(
+                "failed locking worker registry '{}': {error}",
+                self.store_path.display()
+            ))
+        })?;
+
+        let mut workers = self.read_workers_from_disk()?;
+        let stale_worker_ids = workers
+            .iter()
+            .filter_map(|(worker_id, worker)| {
+                worker.current_task_id.as_ref()?;
+                match worker_lease_deadline(worker) {
+                    Ok(deadline) if deadline <= as_of => Some(Ok(worker_id.clone())),
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if stale_worker_ids.is_empty() {
+            return Ok(WorkerReclaimExpiredResult {
+                tasks: Vec::new(),
+                workers: Vec::new(),
+            });
+        }
+
+        let original_workers = workers.clone();
+        let mut worker_persisted = false;
+        let mut task_domain = TaskDomain::new(self.workspace_root()?);
+
+        let reclaim_result = task_domain.with_exclusive_snapshot(|tasks| {
+            let mut reclaimed_tasks = Vec::new();
+            let mut reclaimed_workers = Vec::new();
+
+            for worker_id in &stale_worker_ids {
+                let worker_snapshot = workers
+                    .get(worker_id)
+                    .cloned()
+                    .ok_or_else(|| worker_not_found_error(worker_id))?;
+                let Some(task_id) = worker_snapshot.current_task_id.as_deref() else {
+                    continue;
+                };
+
+                let effective_lease_expires_at =
+                    effective_lease_expires_at(&worker_snapshot, tasks.get(task_id))?;
+                if effective_lease_expires_at > as_of {
+                    continue;
+                }
+
+                if let Some(task) = tasks.get_mut(task_id) {
+                    if task.status == "in_progress"
+                        && task.assignee_worker_id.as_deref() == Some(worker_id.as_str())
+                    {
+                        task.status = "ready".to_string();
+                        task.assignee_worker_id = None;
+                        task.claimed_at = None;
+                        task.lease_expires_at = None;
+                        task.updated_at = input.as_of.clone();
+                        task.completed_at = None;
+                        task.error_message = Some(reclaim_reason(
+                            &worker_snapshot,
+                            task_id,
+                            &effective_lease_expires_at,
+                            &input.as_of,
+                        ));
+                        reclaimed_tasks.push(task.clone());
+                    }
+                }
+
+                let worker = workers
+                    .get_mut(worker_id)
+                    .ok_or_else(|| worker_not_found_error(worker_id))?;
+                worker.status = WorkerStatus::Dead;
+                worker.current_task_id = None;
+                worker.current_hat = None;
+                reclaimed_workers.push(worker.clone());
+            }
+
+            if !reclaimed_workers.is_empty() {
+                self.persist_workers_to_disk(&workers)?;
+                worker_persisted = true;
+            }
+
+            Ok(WorkerReclaimExpiredResult {
+                tasks: reclaimed_tasks,
+                workers: reclaimed_workers,
+            })
+        });
+
+        match reclaim_result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                if worker_persisted {
+                    self.persist_workers_to_disk(&original_workers)
+                        .map_err(|rollback_error| {
+                            ApiError::internal(format!(
+                                "failed finalizing reclaim_expired at '{}': {}; rollback failed: {}",
+                                input.as_of, error.message, rollback_error.message
+                            ))
+                        })?;
+
+                    return Err(ApiError::internal(format!(
+                        "failed finalizing reclaim_expired at '{}': {}; rolled back worker registry",
+                        input.as_of, error.message
+                    )));
+                }
+
+                Err(error)
+            }
+        }
+    }
+
     fn read_workers_with_shared_lock(&self) -> Result<BTreeMap<String, WorkerRecord>, ApiError> {
         if !self.store_path.exists() {
             return Ok(BTreeMap::new());
@@ -427,10 +570,98 @@ fn validate_optional_string(field_name: &str, value: Option<&str>) -> Result<(),
 
 fn claim_timestamps() -> (String, String) {
     let claimed_at = Utc::now();
-    let lease_expires_at = claimed_at + Duration::minutes(2);
+    let lease_expires_at = claimed_at + lease_duration();
     (
-        claimed_at.to_rfc3339_opts(SecondsFormat::Secs, true),
-        lease_expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        format_timestamp(claimed_at),
+        format_timestamp(lease_expires_at),
+    )
+}
+
+fn lease_duration() -> Duration {
+    Duration::minutes(LEASE_DURATION_MINUTES)
+}
+
+fn format_timestamp(timestamp: DateTime<Utc>) -> String {
+    timestamp.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn parse_input_timestamp(field_name: &str, value: &str) -> Result<DateTime<Utc>, ApiError> {
+    validate_required_string(field_name, value)?;
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|error| {
+            ApiError::invalid_params(format!(
+                "worker.{field_name} must be a valid RFC3339 timestamp: {error}"
+            ))
+        })
+}
+
+fn parse_worker_timestamp(
+    worker: &WorkerRecord,
+    field_name: &str,
+    value: &str,
+) -> Result<DateTime<Utc>, ApiError> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|error| {
+            ApiError::internal(format!(
+                "failed parsing worker {field_name} for '{}': {error}",
+                worker.worker_id
+            ))
+        })
+}
+
+fn parse_task_timestamp(
+    task: &TaskRecord,
+    field_name: &str,
+    value: &str,
+) -> Result<DateTime<Utc>, ApiError> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|error| {
+            ApiError::internal(format!(
+                "failed parsing task {field_name} for '{}': {error}",
+                task.id
+            ))
+        })
+}
+
+fn worker_lease_deadline(worker: &WorkerRecord) -> Result<DateTime<Utc>, ApiError> {
+    Ok(
+        parse_worker_timestamp(worker, "lastHeartbeatAt", &worker.last_heartbeat_at)?
+            + lease_duration(),
+    )
+}
+
+fn effective_lease_expires_at(
+    worker: &WorkerRecord,
+    task: Option<&TaskRecord>,
+) -> Result<DateTime<Utc>, ApiError> {
+    let mut deadline = worker_lease_deadline(worker)?;
+
+    if let Some(task) = task {
+        if let Some(lease_expires_at) = task.lease_expires_at.as_deref() {
+            let task_deadline = parse_task_timestamp(task, "leaseExpiresAt", lease_expires_at)?;
+            if task_deadline > deadline {
+                deadline = task_deadline;
+            }
+        }
+    }
+
+    Ok(deadline)
+}
+
+fn reclaim_reason(
+    worker: &WorkerRecord,
+    task_id: &str,
+    lease_expires_at: &DateTime<Utc>,
+    as_of: &str,
+) -> String {
+    format!(
+        "Task '{task_id}' reclaimed after worker '{}' lease expired at {} (last heartbeat {}, as of {as_of})",
+        worker.worker_id,
+        format_timestamp(*lease_expires_at),
+        worker.last_heartbeat_at,
     )
 }
 

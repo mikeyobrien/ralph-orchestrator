@@ -53,6 +53,13 @@ pub const KNOWN_METHODS: &[&str] = &[
     "collection.delete",
     "collection.import",
     "collection.export",
+    "worker.list",
+    "worker.get",
+    "worker.register",
+    "worker.deregister",
+    "worker.heartbeat",
+    "worker.claim_next",
+    "worker.reclaim_expired",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",
@@ -84,6 +91,11 @@ pub const MUTATING_METHODS: &[&str] = &[
     "collection.update",
     "collection.delete",
     "collection.import",
+    "worker.register",
+    "worker.deregister",
+    "worker.heartbeat",
+    "worker.claim_next",
+    "worker.reclaim_expired",
 ];
 
 pub const STREAM_TOPICS: &[&str] = &[

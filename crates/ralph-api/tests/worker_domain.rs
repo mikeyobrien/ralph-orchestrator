@@ -3,7 +3,9 @@ use std::path::Path;
 
 use ralph_api::errors::RpcErrorCode;
 use ralph_api::task_domain::{TaskCreateParams, TaskDomain};
-use ralph_api::worker_domain::{WorkerDomain, WorkerHeartbeatInput, WorkerRecord, WorkerStatus};
+use ralph_api::worker_domain::{
+    WorkerDomain, WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord, WorkerStatus,
+};
 use serde_json::{Value, json};
 
 fn sample_worker(
@@ -35,7 +37,15 @@ fn sample_heartbeat(worker_id: &str, status: WorkerStatus) -> WorkerHeartbeatInp
     }
 }
 
-fn create_task(workspace_root: &Path, id: &str, title: &str, status: &str) {
+fn create_task_with_lease(
+    workspace_root: &Path,
+    id: &str,
+    title: &str,
+    status: &str,
+    assignee_worker_id: Option<&str>,
+    claimed_at: Option<&str>,
+    lease_expires_at: Option<&str>,
+) {
     TaskDomain::new(workspace_root)
         .create(TaskCreateParams {
             id: id.to_string(),
@@ -44,11 +54,15 @@ fn create_task(workspace_root: &Path, id: &str, title: &str, status: &str) {
             priority: None,
             blocked_by: None,
             merge_loop_prompt: None,
-            assignee_worker_id: None,
-            claimed_at: None,
-            lease_expires_at: None,
+            assignee_worker_id: assignee_worker_id.map(str::to_string),
+            claimed_at: claimed_at.map(str::to_string),
+            lease_expires_at: lease_expires_at.map(str::to_string),
         })
         .expect("task fixture should persist");
+}
+
+fn create_task(workspace_root: &Path, id: &str, title: &str, status: &str) {
+    create_task_with_lease(workspace_root, id, title, status, None, None, None);
 }
 
 #[test]
@@ -654,6 +668,246 @@ fn heartbeat_rejects_unknown_workers_and_invalid_live_state_inputs() {
         domain
             .get("worker-gamma")
             .expect("invalid heartbeats should not mutate persisted worker state"),
+        worker
+    );
+}
+
+#[test]
+fn reclaim_expired_requeues_stale_claims_and_marks_workers_dead_across_handles() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir should be created");
+    let workspace_root = workspace.path().display().to_string();
+    let mut domain_a =
+        WorkerDomain::new(workspace.path()).expect("first worker domain should initialize");
+    let mut domain_b =
+        WorkerDomain::new(workspace.path()).expect("second worker domain should initialize");
+
+    let stale_worker = WorkerRecord {
+        current_task_id: Some("task-stale".to_string()),
+        current_hat: Some("builder".to_string()),
+        status: WorkerStatus::Busy,
+        last_heartbeat_at: "2026-03-14T22:30:00Z".to_string(),
+        ..sample_worker("worker-stale", "stale", &workspace_root, WorkerStatus::Idle)
+    };
+    domain_a
+        .register(stale_worker.clone())
+        .expect("stale worker should register before reclaiming");
+    create_task_with_lease(
+        workspace.path(),
+        "task-stale",
+        "Stale Task",
+        "in_progress",
+        Some("worker-stale"),
+        Some("2026-03-14T22:30:00Z"),
+        Some("2026-03-14T22:32:00Z"),
+    );
+
+    let reclaim = domain_b
+        .reclaim_expired(WorkerReclaimExpiredInput {
+            as_of: "2026-03-14T22:33:00Z".to_string(),
+        })
+        .expect("expired claim should be reclaimed");
+    assert_eq!(reclaim.tasks.len(), 1);
+    let reclaimed_task = &reclaim.tasks[0];
+    let expected_reason = "Task 'task-stale' reclaimed after worker 'worker-stale' lease expired at 2026-03-14T22:32:00Z (last heartbeat 2026-03-14T22:30:00Z, as of 2026-03-14T22:33:00Z)";
+    assert_eq!(reclaimed_task.id, "task-stale");
+    assert_eq!(reclaimed_task.status, "ready");
+    assert_eq!(reclaimed_task.assignee_worker_id, None);
+    assert_eq!(reclaimed_task.claimed_at, None);
+    assert_eq!(reclaimed_task.lease_expires_at, None);
+    assert_eq!(reclaimed_task.completed_at, None);
+    assert_eq!(
+        reclaimed_task.error_message.as_deref(),
+        Some(expected_reason)
+    );
+    assert_eq!(reclaimed_task.updated_at, "2026-03-14T22:33:00Z");
+
+    let reclaimed_worker = WorkerRecord {
+        current_task_id: None,
+        current_hat: None,
+        status: WorkerStatus::Dead,
+        ..stale_worker.clone()
+    };
+    assert_eq!(reclaim.workers, vec![reclaimed_worker.clone()]);
+
+    let fresh_task = TaskDomain::new(workspace.path())
+        .get("task-stale")
+        .expect("reclaimed task should reload from disk");
+    assert_eq!(fresh_task.status, "ready");
+    assert_eq!(fresh_task.assignee_worker_id, None);
+    assert_eq!(fresh_task.claimed_at, None);
+    assert_eq!(fresh_task.lease_expires_at, None);
+    assert_eq!(fresh_task.completed_at, None);
+    assert_eq!(fresh_task.error_message.as_deref(), Some(expected_reason));
+    assert_eq!(
+        TaskDomain::new(workspace.path())
+            .ready()
+            .into_iter()
+            .map(|task| task.id)
+            .collect::<Vec<_>>(),
+        vec!["task-stale".to_string()]
+    );
+
+    assert_eq!(
+        domain_a
+            .get("worker-stale")
+            .expect("stale handle should refresh dead worker state after reclaim"),
+        reclaimed_worker.clone()
+    );
+    assert_eq!(
+        WorkerDomain::new(workspace.path())
+            .expect("reloaded worker domain should initialize")
+            .list()
+            .expect("reloaded worker list should show the reclaimed worker"),
+        vec![reclaimed_worker.clone()]
+    );
+
+    let task_snapshot: Value = serde_json::from_str(
+        &fs::read_to_string(workspace.path().join(".ralph/api/tasks-v1.json"))
+            .expect("task snapshot should be persisted"),
+    )
+    .expect("task snapshot JSON should parse after reclaim");
+    let tasks = task_snapshot["tasks"]
+        .as_array()
+        .expect("task snapshot should store an array of tasks");
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["id"], json!("task-stale"));
+    assert_eq!(tasks[0]["status"], json!("ready"));
+    assert!(tasks[0].get("assigneeWorkerId").is_none());
+    assert!(tasks[0].get("claimedAt").is_none());
+    assert!(tasks[0].get("leaseExpiresAt").is_none());
+    assert_eq!(tasks[0]["errorMessage"], json!(expected_reason));
+
+    let worker_snapshot: Value = serde_json::from_str(
+        &fs::read_to_string(workspace.path().join(".ralph/workers.json"))
+            .expect("worker registry should be persisted"),
+    )
+    .expect("worker registry JSON should parse after reclaim");
+    let workers = worker_snapshot["workers"]
+        .as_array()
+        .expect("worker registry should store an array of workers");
+    assert_eq!(workers.len(), 1);
+    assert_eq!(workers[0]["workerId"], json!("worker-stale"));
+    assert_eq!(workers[0]["status"], json!("dead"));
+    assert!(workers[0].get("currentTaskId").is_none());
+    assert!(workers[0].get("currentHat").is_none());
+}
+
+#[test]
+fn reclaim_expired_skips_tasks_with_live_task_leases() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir should be created");
+    let workspace_root = workspace.path().display().to_string();
+    let mut domain = WorkerDomain::new(workspace.path()).expect("worker domain should initialize");
+
+    let worker = WorkerRecord {
+        current_task_id: Some("task-live".to_string()),
+        current_hat: Some("builder".to_string()),
+        status: WorkerStatus::Busy,
+        last_heartbeat_at: "2026-03-14T22:30:00Z".to_string(),
+        ..sample_worker("worker-live", "live", &workspace_root, WorkerStatus::Idle)
+    };
+    domain
+        .register(worker.clone())
+        .expect("worker should register before reclaim checks");
+    create_task_with_lease(
+        workspace.path(),
+        "task-live",
+        "Live Task",
+        "in_progress",
+        Some("worker-live"),
+        Some("2026-03-14T22:30:00Z"),
+        Some("2026-03-14T22:35:00Z"),
+    );
+
+    let reclaim = domain
+        .reclaim_expired(WorkerReclaimExpiredInput {
+            as_of: "2026-03-14T22:33:00Z".to_string(),
+        })
+        .expect("live task lease should skip reclaim");
+    assert!(reclaim.tasks.is_empty());
+    assert!(reclaim.workers.is_empty());
+
+    let fresh_task = TaskDomain::new(workspace.path())
+        .get("task-live")
+        .expect("live task should remain readable");
+    assert_eq!(fresh_task.status, "in_progress");
+    assert_eq!(
+        fresh_task.assignee_worker_id.as_deref(),
+        Some("worker-live")
+    );
+    assert_eq!(
+        fresh_task.claimed_at.as_deref(),
+        Some("2026-03-14T22:30:00Z")
+    );
+    assert_eq!(
+        fresh_task.lease_expires_at.as_deref(),
+        Some("2026-03-14T22:35:00Z")
+    );
+    assert_eq!(fresh_task.error_message, None);
+    assert!(TaskDomain::new(workspace.path()).ready().is_empty());
+    assert_eq!(
+        WorkerDomain::new(workspace.path())
+            .expect("reloaded worker domain should initialize")
+            .get("worker-live")
+            .expect("worker should remain unchanged when reclaim is skipped"),
+        worker
+    );
+}
+
+#[test]
+fn reclaim_expired_rejects_invalid_as_of_without_mutation() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir should be created");
+    let workspace_root = workspace.path().display().to_string();
+    let mut domain = WorkerDomain::new(workspace.path()).expect("worker domain should initialize");
+
+    let worker = WorkerRecord {
+        current_task_id: Some("task-held".to_string()),
+        current_hat: Some("builder".to_string()),
+        status: WorkerStatus::Busy,
+        last_heartbeat_at: "2026-03-14T22:30:00Z".to_string(),
+        ..sample_worker("worker-held", "held", &workspace_root, WorkerStatus::Idle)
+    };
+    domain
+        .register(worker.clone())
+        .expect("worker should register before invalid reclaim input");
+    create_task_with_lease(
+        workspace.path(),
+        "task-held",
+        "Held Task",
+        "in_progress",
+        Some("worker-held"),
+        Some("2026-03-14T22:30:00Z"),
+        Some("2026-03-14T22:32:00Z"),
+    );
+
+    let error = domain
+        .reclaim_expired(WorkerReclaimExpiredInput {
+            as_of: "   ".to_string(),
+        })
+        .expect_err("invalid reclaim input should be rejected");
+    assert_eq!(error.code, RpcErrorCode::InvalidParams);
+    assert_eq!(error.message, "worker.asOf must be a non-empty string");
+
+    let fresh_task = TaskDomain::new(workspace.path())
+        .get("task-held")
+        .expect("invalid reclaim input should leave the task untouched");
+    assert_eq!(fresh_task.status, "in_progress");
+    assert_eq!(
+        fresh_task.assignee_worker_id.as_deref(),
+        Some("worker-held")
+    );
+    assert_eq!(
+        fresh_task.claimed_at.as_deref(),
+        Some("2026-03-14T22:30:00Z")
+    );
+    assert_eq!(
+        fresh_task.lease_expires_at.as_deref(),
+        Some("2026-03-14T22:32:00Z")
+    );
+    assert_eq!(fresh_task.error_message, None);
+    assert_eq!(
+        domain
+            .get("worker-held")
+            .expect("invalid reclaim input should leave the worker untouched"),
         worker
     );
 }

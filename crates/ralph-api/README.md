@@ -25,12 +25,14 @@ Rust-native bootstrap runtime for the RPC v1 control plane.
   - Full `config.*` family (`get/update`)
   - Full `preset.*` family (`list`)
   - Full `collection.*` family (`list/get/create/update/delete/import/export`)
+  - Full `worker.*` family (`list/get/register/deregister/heartbeat/claim_next/reclaim_expired`)
 
 Persistence notes:
 - `task.*` data is persisted in `.ralph/api/tasks-v1.json`
 - `loop.*` reads/writes `.ralph/loops.json` and `.ralph/merge-queue.jsonl` via `ralph-core`
 - `planning.*` data is persisted under `.ralph/planning-sessions/<session-id>/`
 - `collection.*` data is persisted in `.ralph/api/collections-v1.json`
+- `worker.*` data is persisted in `.ralph/api/workers-v1.json`
 - `config.*` reads/writes `ralph.yml` with YAML validation + atomic replace semantics
 - `preset.list` reads builtins from `presets/`, local files from `.ralph/hats/`, and collection-backed presets
 
@@ -45,6 +47,16 @@ Current task board-state semantics:
 - Task records may also carry nullable worker ownership metadata: `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt`.
 - `task.create`, `task.get`, and `task.update` surface those ownership/lease fields directly, and the same serde snapshot persists them in `.ralph/api/tasks-v1.json` when present.
 - `task.update` accepts either a string or explicit `null` for those fields; malformed JSON types are rejected at the RPC boundary with `INVALID_PARAMS` instead of being silently ignored.
+
+Worker lifecycle semantics:
+- Workers are registered via `worker.register` with a unique `workerId`, `workerName`, `loopId`, `backend`, `workspaceRoot`, and `lastHeartbeatAt`.
+- `worker.list` returns all registered workers. `worker.get` returns a single worker by ID (404 if unknown).
+- `worker.deregister` removes a worker from the registry (404 if unknown).
+- `worker.heartbeat` updates a worker's `status`, `currentTaskId`, `currentHat`, and `lastHeartbeatAt`. Returns the updated record (404 if unknown).
+- Worker statuses are `idle`, `busy`, and `dead`.
+- `worker.claim_next` assigns the highest-priority unblocked `ready` task to an `idle` worker. The task transitions to `in_progress` with `assigneeWorkerId`, `claimedAt`, and `leaseExpiresAt` set. The worker transitions to `busy`. Returns `{ task, worker }` where `task` is `null` if no ready tasks exist.
+- `worker.reclaim_expired` accepts an `asOf` ISO 8601 timestamp and reclaims tasks from workers whose lease has expired. Reclaimed tasks return to `ready` with ownership fields cleared. Expired workers transition to `dead`. Returns `{ tasks, workers }` listing affected records.
+- All mutating worker methods (`register`, `deregister`, `heartbeat`, `claim_next`, `reclaim_expired`) require `meta.idempotencyKey` in the RPC envelope.
 
 Intentional migration differences vs legacy Node backend:
 - `planning.start` returns a full `session` object instead of just `{sessionId}`.

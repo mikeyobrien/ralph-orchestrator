@@ -16,6 +16,7 @@ use crate::planning_domain::{
 use crate::protocol::{API_VERSION, RpcRequestEnvelope};
 use crate::stream_domain::{StreamAckParams, StreamSubscribeParams, StreamUnsubscribeParams};
 use crate::task_domain::{TaskCreateParams, TaskListParams, TaskUpdateInput};
+use crate::worker_domain::{WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord};
 
 impl RpcRuntime {
     pub(super) fn dispatch(
@@ -36,6 +37,7 @@ impl RpcRuntime {
             method if method.starts_with("config.") => self.dispatch_config(request),
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
+            method if method.starts_with("worker.") => self.dispatch_worker(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
             "_internal.publish" => self.dispatch_internal_publish(request),
             _ => {
@@ -303,6 +305,49 @@ impl RpcRuntime {
         }
     }
 
+    fn dispatch_worker(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        match request.method.as_str() {
+            "worker.list" => {
+                let workers = self.worker_domain_mut()?.list()?;
+                Ok(json!({ "workers": workers }))
+            }
+            "worker.get" => {
+                let params: WorkerIdParams = self.parse_params(request)?;
+                let worker = self.worker_domain_mut()?.get(&params.worker_id)?;
+                Ok(json!({ "worker": worker }))
+            }
+            "worker.register" => {
+                let record: WorkerRecord = self.parse_params(request)?;
+                let worker = self.worker_domain_mut()?.register(record)?;
+                Ok(json!({ "worker": worker }))
+            }
+            "worker.deregister" => {
+                let params: WorkerIdParams = self.parse_params(request)?;
+                self.worker_domain_mut()?.deregister(&params.worker_id)?;
+                Ok(json!({ "success": true }))
+            }
+            "worker.heartbeat" => {
+                let input: WorkerHeartbeatInput = self.parse_params(request)?;
+                let worker = self.worker_domain_mut()?.heartbeat(input)?;
+                Ok(json!({ "worker": worker }))
+            }
+            "worker.claim_next" => {
+                let params: WorkerIdParams = self.parse_params(request)?;
+                let result = self.worker_domain_mut()?.claim_next(&params.worker_id)?;
+                Ok(json!(result))
+            }
+            "worker.reclaim_expired" => {
+                let input: WorkerReclaimExpiredInput = self.parse_params(request)?;
+                let result = self.worker_domain_mut()?.reclaim_expired(input)?;
+                Ok(json!(result))
+            }
+            _ => Err(ApiError::service_unavailable(format!(
+                "method '{}' is recognized but not implemented",
+                request.method
+            ))),
+        }
+    }
+
     fn dispatch_stream(
         &self,
         request: &RpcRequestEnvelope,
@@ -333,6 +378,12 @@ impl RpcRuntime {
 }
 
 use serde::Deserialize as InternalDeserialize;
+
+#[derive(Debug, Clone, InternalDeserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerIdParams {
+    worker_id: String,
+}
 
 #[derive(Debug, Clone, InternalDeserialize)]
 #[serde(rename_all = "camelCase")]

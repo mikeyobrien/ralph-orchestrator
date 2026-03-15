@@ -27,6 +27,7 @@ use crate::protocol::{
 };
 use crate::stream_domain::StreamDomain;
 use crate::task_domain::TaskDomain;
+use crate::worker_domain::WorkerDomain;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +44,7 @@ pub struct RpcRuntime {
     loops: Arc<Mutex<LoopDomain>>,
     planning: Arc<Mutex<PlanningDomain>>,
     collections: Arc<Mutex<CollectionDomain>>,
+    workers: Arc<Mutex<WorkerDomain>>,
     streams: StreamDomain,
     config_domain: ConfigDomain,
     preset_domain: PresetDomain,
@@ -57,14 +59,14 @@ impl RpcRuntime {
             config.idempotency_ttl_secs,
         )));
 
-        Ok(Self::with_components(config, auth, idempotency))
+        Ok(Self::with_components(config, auth, idempotency)?)
     }
 
     pub fn with_components(
         config: ApiConfig,
         auth: Arc<dyn Authenticator>,
         idempotency: Arc<dyn IdempotencyStore>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let tasks = Arc::new(Mutex::new(TaskDomain::new(&config.workspace_root)));
         let loops = Arc::new(Mutex::new(LoopDomain::new(
             &config.workspace_root,
@@ -73,11 +75,15 @@ impl RpcRuntime {
         )));
         let planning = Arc::new(Mutex::new(PlanningDomain::new(&config.workspace_root)));
         let collections = Arc::new(Mutex::new(CollectionDomain::new(&config.workspace_root)));
+        let workers = Arc::new(Mutex::new(
+            WorkerDomain::new(&config.workspace_root)
+                .map_err(|e| anyhow::anyhow!("worker domain init failed: {}", e.message))?,
+        ));
         let streams = StreamDomain::new();
         let config_domain = ConfigDomain::new(&config.workspace_root);
         let preset_domain = PresetDomain::new(&config.workspace_root);
 
-        Self {
+        Ok(Self {
             config,
             auth,
             idempotency,
@@ -85,10 +91,11 @@ impl RpcRuntime {
             loops,
             planning,
             collections,
+            workers,
             streams,
             config_domain,
             preset_domain,
-        }
+        })
     }
 
     pub fn health_payload(&self) -> Value {
@@ -214,6 +221,12 @@ impl RpcRuntime {
         self.collections
             .lock()
             .map_err(|_| ApiError::internal("collection domain lock poisoned"))
+    }
+
+    pub(crate) fn worker_domain_mut(&self) -> Result<MutexGuard<'_, WorkerDomain>, ApiError> {
+        self.workers
+            .lock()
+            .map_err(|_| ApiError::internal("worker domain lock poisoned"))
     }
 
     pub(crate) fn stream_domain(&self) -> StreamDomain {
