@@ -343,6 +343,75 @@ event_loop:
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_run_autonomous_mode_does_not_apply_adapter_wall_clock_timeout() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+    let backend_script = temp_path.join("slow-complete.sh");
+
+    std::fs::write(
+        &backend_script,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nprintf 'heartbeat-1\\n'\nsleep 0.4\nprintf 'heartbeat-2\\n'\nsleep 0.4\nprintf 'heartbeat-3\\n'\nsleep 0.4\n\"{}\" emit LOOP_COMPLETE autonomous-done\n",
+            env!("CARGO_BIN_EXE_ralph")
+        ),
+    )
+    .expect("write backend script");
+
+    let mut permissions = std::fs::metadata(&backend_script)
+        .expect("metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&backend_script, permissions).expect("set executable permissions");
+
+    std::fs::write(
+        temp_path.join("ralph.yml"),
+        r#"
+cli:
+  backend: custom
+  command: "./slow-complete.sh"
+  prompt_mode: stdin
+adapters:
+  claude:
+    timeout: 1
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 1
+  max_runtime_seconds: 10
+"#,
+    )
+    .expect("write config");
+
+    let output = run_ralph(
+        temp_path,
+        &[
+            "run",
+            "--autonomous",
+            "--skip-preflight",
+            "--prompt",
+            "slow autonomous test",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("heartbeat-3"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Event emitted: LOOP_COMPLETE"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Execution inactivity timeout reached, sending SIGTERM"),
+        "stderr: {stderr}"
+    );
+}
+
 #[test]
 fn test_run_continue_requires_scratchpad() {
     let temp_dir = TempDir::new().expect("temp dir");

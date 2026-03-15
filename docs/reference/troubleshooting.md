@@ -277,7 +277,7 @@ hats:
 
 **Solutions**:
 
-1. Increase timeout:
+1. Increase the adapter inactivity timeout:
 
    ```yaml
    # In ralph.yml

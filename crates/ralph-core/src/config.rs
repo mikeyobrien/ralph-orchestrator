@@ -215,7 +215,7 @@ pub struct AdaptersConfig {
 /// Per-adapter settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterSettings {
-    /// CLI execution timeout in seconds.
+    /// CLI execution inactivity timeout in seconds.
     #[serde(default = "default_timeout")]
     pub timeout: u64,
 

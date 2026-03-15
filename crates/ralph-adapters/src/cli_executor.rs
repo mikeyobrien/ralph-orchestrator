@@ -14,9 +14,8 @@ use std::env;
 use std::io::Write;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 /// Result of a CLI execution.
@@ -39,11 +38,15 @@ pub struct CliExecutor {
 }
 
 enum StreamEvent {
-    Stdout(String),
-    Stderr(String),
-    StdoutClosed,
-    StderrClosed,
-    ReadError(std::io::Error),
+    StdoutLine(String),
+    StderrLine(String),
+    StdoutEof,
+    StderrEof,
+}
+
+enum StreamKind {
+    Stdout,
+    Stderr,
 }
 
 impl CliExecutor {
@@ -55,8 +58,9 @@ impl CliExecutor {
     /// Executes a prompt and streams output to the provided writer.
     ///
     /// Output is streamed line-by-line to the writer while being accumulated
-    /// for the return value. If `timeout` is provided and the execution exceeds
-    /// it, the process receives SIGTERM and the result indicates timeout.
+    /// for the return value. If `timeout` is provided and the execution produces
+    /// no stdout/stderr activity for longer than that duration, the process
+    /// receives SIGTERM and the result indicates timeout.
     ///
     /// When `verbose` is true, stderr output is also written to the output writer
     /// with a `[stderr]` prefix. When false, stderr is captured but not displayed.
@@ -108,116 +112,82 @@ impl CliExecutor {
 
         let mut timed_out = false;
 
-        // Take both stdout and stderr handles upfront to read concurrently
-        // This prevents deadlock when stderr fills its buffer before stdout produces output
+        // Take both stdout and stderr handles upfront to read concurrently.
+        // Each emitted line resets the inactivity timeout.
         let stdout_handle = child.stdout.take();
         let stderr_handle = child.stderr.take();
-        let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
-        let mut reader_tasks = Vec::new();
-        let mut open_streams = 0usize;
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(256);
 
-        if let Some(stdout) = stdout_handle {
-            open_streams += 1;
-            let event_tx = event_tx.clone();
-            reader_tasks.push(tokio::spawn(async move {
-                let reader = BufReader::new(stdout);
-                let mut lines = reader.lines();
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => {
-                            if event_tx.send(StreamEvent::Stdout(line)).await.is_err() {
-                                break;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(err) => {
-                            let _ = event_tx.send(StreamEvent::ReadError(err)).await;
-                            break;
-                        }
-                    }
-                }
-                let _ = event_tx.send(StreamEvent::StdoutClosed).await;
-            }));
-        }
-
-        if let Some(stderr) = stderr_handle {
-            open_streams += 1;
-            let event_tx = event_tx.clone();
-            reader_tasks.push(tokio::spawn(async move {
-                let reader = BufReader::new(stderr);
-                let mut lines = reader.lines();
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => {
-                            if event_tx.send(StreamEvent::Stderr(line)).await.is_err() {
-                                break;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(err) => {
-                            let _ = event_tx.send(StreamEvent::ReadError(err)).await;
-                            break;
-                        }
-                    }
-                }
-                let _ = event_tx.send(StreamEvent::StderrClosed).await;
-            }));
-        }
-
+        let stdout_task = stdout_handle.map(|stdout| {
+            let tx = event_tx.clone();
+            tokio::spawn(async move { read_stream(stdout, tx, StreamKind::Stdout).await })
+        });
+        let stderr_task = stderr_handle.map(|stderr| {
+            let tx = event_tx.clone();
+            tokio::spawn(async move { read_stream(stderr, tx, StreamKind::Stderr).await })
+        });
         drop(event_tx);
 
-        let deadline = timeout.map(|duration| {
-            debug!(timeout_secs = duration.as_secs(), "Executing with timeout");
-            tokio::time::Instant::now() + duration
-        });
-
+        let mut stdout_done = stdout_task.is_none();
+        let mut stderr_done = stderr_task.is_none();
         let mut accumulated_output = String::new();
 
-        while open_streams > 0 {
-            let maybe_event = if let Some(deadline) = deadline {
-                let now = tokio::time::Instant::now();
-                if now >= deadline {
-                    warn!("Execution timeout reached, sending SIGTERM");
-                    timed_out = true;
-                    Self::terminate_child(&mut child)?;
-                    break;
-                }
+        if let Some(duration) = timeout {
+            debug!(
+                timeout_secs = duration.as_secs(),
+                "Executing with inactivity timeout"
+            );
+        }
 
-                match tokio::time::timeout(deadline - now, event_rx.recv()).await {
+        while !stdout_done || !stderr_done {
+            let next_event = match timeout {
+                Some(duration) => match tokio::time::timeout(duration, event_rx.recv()).await {
                     Ok(event) => event,
                     Err(_) => {
-                        warn!("Execution timeout reached, sending SIGTERM");
+                        warn!(
+                            timeout_secs = duration.as_secs(),
+                            "Execution inactivity timeout reached, sending SIGTERM"
+                        );
                         timed_out = true;
                         Self::terminate_child(&mut child)?;
                         break;
                     }
-                }
-            } else {
-                event_rx.recv().await
+                },
+                None => event_rx.recv().await,
             };
 
-            let Some(event) = maybe_event else {
-                break;
-            };
-
-            match event {
-                StreamEvent::Stdout(line) => {
-                    handle_stdout_line(&line, &mut output_writer, &mut accumulated_output)?
+            match next_event {
+                Some(StreamEvent::StdoutLine(line)) => {
+                    writeln!(output_writer, "{line}")?;
+                    output_writer.flush()?;
+                    accumulated_output.push_str(&line);
+                    accumulated_output.push('\n');
                 }
-                StreamEvent::Stderr(line) => {
-                    handle_stderr_line(&line, &mut output_writer, &mut accumulated_output, verbose)?
+                Some(StreamEvent::StderrLine(line)) => {
+                    if verbose {
+                        writeln!(output_writer, "[stderr] {line}")?;
+                        output_writer.flush()?;
+                    }
+                    accumulated_output.push_str("[stderr] ");
+                    accumulated_output.push_str(&line);
+                    accumulated_output.push('\n');
                 }
-                StreamEvent::StdoutClosed | StreamEvent::StderrClosed => {
-                    open_streams = open_streams.saturating_sub(1);
+                Some(StreamEvent::StdoutEof) => stdout_done = true,
+                Some(StreamEvent::StderrEof) => stderr_done = true,
+                None => {
+                    stdout_done = true;
+                    stderr_done = true;
                 }
-                StreamEvent::ReadError(err) => return Err(err),
             }
         }
 
         let status = child.wait().await?;
-        for task in reader_tasks {
-            task.await
-                .map_err(|err| std::io::Error::other(err.to_string()))?;
+
+        if let Some(handle) = stdout_task {
+            handle.await.map_err(join_error_to_io)??;
+        }
+        if let Some(handle) = stderr_task {
+            handle.await.map_err(join_error_to_io)??;
         }
 
         Ok(ExecutionResult {
@@ -269,36 +239,36 @@ impl CliExecutor {
     }
 }
 
-fn handle_stdout_line<W: Write>(
-    line: &str,
-    output_writer: &mut W,
-    accumulated_output: &mut String,
-) -> std::io::Result<()> {
-    accumulated_output.push_str(line);
-    accumulated_output.push('\n');
+async fn read_stream<R>(
+    stream: R,
+    tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    stream_kind: StreamKind,
+) -> std::io::Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    let reader = BufReader::new(stream);
+    let mut lines = reader.lines();
+    while let Some(line) = lines.next_line().await? {
+        let event = match stream_kind {
+            StreamKind::Stdout => StreamEvent::StdoutLine(line),
+            StreamKind::Stderr => StreamEvent::StderrLine(line),
+        };
+        if tx.send(event).await.is_err() {
+            return Ok(());
+        }
+    }
 
-    writeln!(output_writer, "{line}")?;
-    output_writer.flush()?;
-
+    let eof_event = match stream_kind {
+        StreamKind::Stdout => StreamEvent::StdoutEof,
+        StreamKind::Stderr => StreamEvent::StderrEof,
+    };
+    let _ = tx.send(eof_event).await;
     Ok(())
 }
 
-fn handle_stderr_line<W: Write>(
-    line: &str,
-    output_writer: &mut W,
-    accumulated_output: &mut String,
-    verbose: bool,
-) -> std::io::Result<()> {
-    accumulated_output.push_str("[stderr] ");
-    accumulated_output.push_str(line);
-    accumulated_output.push('\n');
-
-    if verbose {
-        writeln!(output_writer, "[stderr] {line}")?;
-        output_writer.flush()?;
-    }
-
-    Ok(())
+fn join_error_to_io(error: tokio::task::JoinError) -> std::io::Error {
+    std::io::Error::other(error.to_string())
 }
 
 fn inject_ralph_runtime_env(command: &mut Command, workspace_root: &std::path::Path) {
@@ -424,6 +394,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execute_timeout_resets_on_output_activity() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let timeout = Some(Duration::from_millis(300));
+        let result = executor
+            .execute_capture_with_timeout(
+                "printf 'start\\n'; sleep 0.2; printf 'middle\\n'; sleep 0.2; printf 'done\\n'",
+                timeout,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            !result.timed_out,
+            "Periodic output should reset the inactivity timeout"
+        );
+        assert!(result.success, "Periodic-output command should succeed");
+        assert!(result.output.contains("start"));
+        assert!(result.output.contains("middle"));
+        assert!(result.output.contains("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_streams_output_before_inactivity_timeout() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "printf 'hello\\n'; sleep 10".to_string()],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let mut output = Vec::new();
+        let result = executor
+            .execute("", &mut output, Some(Duration::from_millis(200)), false)
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Expected inactivity timeout after output stops"
+        );
+        assert_eq!(String::from_utf8(output).unwrap(), "hello\n");
+        assert!(result.output.contains("hello"));
+    }
+
+    #[tokio::test]
     async fn test_execute_no_timeout_when_fast() {
         // Use echo which completes immediately
         let backend = CliBackend {
@@ -447,28 +474,5 @@ mod tests {
         assert!(!result.timed_out, "Fast command should not time out");
         assert!(result.success);
         assert!(result.output.contains("fast"));
-    }
-
-    #[tokio::test]
-    async fn test_execute_streams_output_before_timeout() {
-        let backend = CliBackend {
-            command: "sh".to_string(),
-            args: vec!["-c".to_string(), "printf 'hello\\n'; sleep 10".to_string()],
-            prompt_mode: PromptMode::Stdin,
-            prompt_flag: None,
-            output_format: OutputFormat::Text,
-            env_vars: vec![],
-        };
-
-        let executor = CliExecutor::new(backend);
-        let mut output = Vec::new();
-        let result = executor
-            .execute("", &mut output, Some(Duration::from_millis(200)), false)
-            .await
-            .unwrap();
-
-        assert!(result.timed_out);
-        assert_eq!(String::from_utf8(output).unwrap(), "hello\n");
-        assert!(result.output.contains("hello"));
     }
 }
