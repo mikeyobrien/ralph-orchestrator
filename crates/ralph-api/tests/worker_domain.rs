@@ -1662,3 +1662,218 @@ fn busy_heartbeat_does_not_revive_dead_worker() {
     assert_eq!(from_disk.status, WorkerStatus::Dead);
     assert_eq!(from_disk.current_task_id, None);
 }
+
+// ── Task event tracking ─────────────────────────────────────────────────
+
+#[test]
+fn task_events_on_create() {
+    let dir = tempfile::tempdir().unwrap();
+    // TaskDomain::new + create auto-initializes .ralph/api/
+
+    let mut task_domain = TaskDomain::new(dir.path());
+    let task = task_domain
+        .create(TaskCreateParams {
+            id: "task-evt-1".to_string(),
+            title: "Test events".to_string(),
+            status: None,
+            priority: None,
+            blocked_by: None,
+            merge_loop_prompt: None,
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
+            scope_files: None,
+        })
+        .unwrap();
+
+    assert_eq!(task.events.len(), 1);
+    assert_eq!(task.events[0].event_type, "created");
+    assert!(task.events[0].details.as_ref().unwrap().contains("ready"));
+}
+
+#[test]
+fn task_events_on_claim_and_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    // TaskDomain::new + create auto-initializes .ralph/api/
+
+    // Create a task
+    let mut task_domain = TaskDomain::new(dir.path());
+    task_domain
+        .create(TaskCreateParams {
+            id: "task-evt-2".to_string(),
+            title: "Claim test".to_string(),
+            status: None,
+            priority: None,
+            blocked_by: None,
+            merge_loop_prompt: None,
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
+            scope_files: None,
+        })
+        .unwrap();
+
+    // Register a worker and claim
+    let mut domain = WorkerDomain::new(dir.path()).unwrap();
+    let ws = dir.path().to_string_lossy().to_string();
+    domain
+        .register(sample_worker(
+            "worker-evt",
+            "evt-worker",
+            &ws,
+            WorkerStatus::Idle,
+        ))
+        .unwrap();
+    let claim = domain.claim_next("worker-evt").unwrap();
+    assert!(claim.task.is_some());
+
+    // Check claimed event
+    let task_domain = TaskDomain::new(dir.path());
+    let task = task_domain.get("task-evt-2").unwrap();
+    let claimed_events: Vec<_> = task
+        .events
+        .iter()
+        .filter(|e| e.event_type == "claimed")
+        .collect();
+    assert_eq!(claimed_events.len(), 1);
+    assert_eq!(claimed_events[0].worker_id.as_deref(), Some("worker-evt"));
+
+    // Complete the task
+    domain
+        .complete_task("worker-evt", "task-evt-2", true, None)
+        .unwrap();
+
+    let task_domain = TaskDomain::new(dir.path());
+    let task = task_domain.get("task-evt-2").unwrap();
+    let completed_events: Vec<_> = task
+        .events
+        .iter()
+        .filter(|e| e.event_type == "completed")
+        .collect();
+    assert_eq!(completed_events.len(), 1);
+    assert_eq!(completed_events[0].worker_id.as_deref(), Some("worker-evt"));
+}
+
+#[test]
+fn task_events_on_reclaim() {
+    let dir = tempfile::tempdir().unwrap();
+    // TaskDomain::new + create auto-initializes .ralph/api/
+
+    // Create an in_progress task with expired lease
+    create_task_with_lease(
+        dir.path(),
+        "task-evt-3",
+        "Reclaim events",
+        "in_progress",
+        Some("worker-stale"),
+        Some("2026-03-14T22:00:00Z"),
+        Some("2026-03-14T22:01:00Z"),
+    );
+
+    let mut domain = WorkerDomain::new(dir.path()).unwrap();
+    let ws = dir.path().to_string_lossy().to_string();
+    domain
+        .register(sample_worker(
+            "worker-stale",
+            "stale",
+            &ws,
+            WorkerStatus::Busy,
+        ))
+        .unwrap();
+
+    // Set current_task_id via modify_workers (not heartbeat, which extends leases)
+    domain
+        .heartbeat(WorkerHeartbeatInput {
+            worker_id: "worker-stale".to_string(),
+            status: WorkerStatus::Idle,
+            current_task_id: Some("task-evt-3".to_string()),
+            current_hat: None,
+            last_heartbeat_at: "2026-03-14T22:00:30Z".to_string(),
+            iteration: None,
+            max_iterations: None,
+        })
+        .unwrap();
+
+    // Reclaim — use a far-future timestamp so the lease is definitely expired
+    let result = domain
+        .reclaim_expired(WorkerReclaimExpiredInput {
+            as_of: "2099-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+    assert_eq!(result.tasks.len(), 1);
+
+    // Check reclaimed event
+    let task_domain = TaskDomain::new(dir.path());
+    let task = task_domain.get("task-evt-3").unwrap();
+    let reclaimed_events: Vec<_> = task
+        .events
+        .iter()
+        .filter(|e| e.event_type == "reclaimed")
+        .collect();
+    assert_eq!(reclaimed_events.len(), 1);
+    assert_eq!(
+        reclaimed_events[0].worker_id.as_deref(),
+        Some("worker-stale")
+    );
+}
+
+#[test]
+fn task_events_on_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    // TaskDomain::new + create auto-initializes .ralph/api/
+
+    let mut task_domain = TaskDomain::new(dir.path());
+    task_domain
+        .create(TaskCreateParams {
+            id: "task-evt-4".to_string(),
+            title: "Fail test".to_string(),
+            status: None,
+            priority: None,
+            blocked_by: None,
+            merge_loop_prompt: None,
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
+            scope_files: None,
+        })
+        .unwrap();
+
+    let mut domain = WorkerDomain::new(dir.path()).unwrap();
+    let ws = dir.path().to_string_lossy().to_string();
+    domain
+        .register(sample_worker(
+            "worker-fail",
+            "fail-worker",
+            &ws,
+            WorkerStatus::Idle,
+        ))
+        .unwrap();
+    domain.claim_next("worker-fail").unwrap();
+
+    // Fail the task
+    domain
+        .complete_task(
+            "worker-fail",
+            "task-evt-4",
+            false,
+            Some("build failed".to_string()),
+        )
+        .unwrap();
+
+    let task_domain = TaskDomain::new(dir.path());
+    let task = task_domain.get("task-evt-4").unwrap();
+    let failed_events: Vec<_> = task
+        .events
+        .iter()
+        .filter(|e| e.event_type == "failed")
+        .collect();
+    assert_eq!(failed_events.len(), 1);
+    assert_eq!(failed_events[0].worker_id.as_deref(), Some("worker-fail"));
+    assert!(
+        failed_events[0]
+            .details
+            .as_ref()
+            .unwrap()
+            .contains("failed")
+    );
+}

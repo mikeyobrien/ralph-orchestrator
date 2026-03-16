@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::ApiError;
 use crate::file_ownership::FileOwnershipRegistry;
-use crate::task_domain::{TaskDomain, TaskRecord};
+use crate::task_domain::{TaskDomain, TaskEvent, TaskRecord};
 
 const LEASE_DURATION_MINUTES: i64 = 2;
 const DEAD_PURGE_MINUTES: i64 = 5;
@@ -280,6 +280,11 @@ impl WorkerDomain {
             task.updated_at = claimed_at.clone();
             task.completed_at = None;
             task.error_message = None;
+            task.events.push(
+                TaskEvent::new("claimed")
+                    .with_worker(&worker_id)
+                    .with_details("ready -> in_progress"),
+            );
 
             // Auto-extract scope_files from task title if not explicitly set
             if task.scope_files.is_empty() {
@@ -387,6 +392,7 @@ impl WorkerDomain {
         worker.last_heartbeat_at = format_timestamp(Utc::now());
         self.persist_workers_to_disk(&workers)?;
 
+        let wid = worker_id.to_string();
         let mut task_domain = TaskDomain::new(self.workspace_root()?);
         if success {
             if was_dead {
@@ -395,9 +401,34 @@ impl WorkerDomain {
                 // bypassing the state machine (ready → done is not valid, but
                 // the work IS done).
                 let tid = task_id.to_string();
+                let wid2 = wid.clone();
                 let _ = task_domain.with_exclusive_snapshot(|tasks| {
                     if let Some(task) = tasks.get_mut(&tid)
                         && (task.status == "ready" || task.status == "in_progress")
+                    {
+                        let from = task.status.clone();
+                        task.status = "done".to_string();
+                        task.assignee_worker_id = None;
+                        task.claimed_at = None;
+                        task.lease_expires_at = None;
+                        task.completed_at = Some(format_timestamp(Utc::now()));
+                        task.updated_at = format_timestamp(Utc::now());
+                        task.error_message = None;
+                        task.events.push(
+                            TaskEvent::new("completed")
+                                .with_worker(&wid2)
+                                .with_details(&format!("{} -> done (was_dead)", from)),
+                        );
+                    }
+                    Ok(())
+                });
+            } else {
+                // Close + append completed event in a single write
+                let tid = task_id.to_string();
+                let wid2 = wid.clone();
+                let _ = task_domain.with_exclusive_snapshot(|tasks| {
+                    if let Some(task) = tasks.get_mut(&tid)
+                        && task.status == "in_progress"
                     {
                         task.status = "done".to_string();
                         task.assignee_worker_id = None;
@@ -406,11 +437,14 @@ impl WorkerDomain {
                         task.completed_at = Some(format_timestamp(Utc::now()));
                         task.updated_at = format_timestamp(Utc::now());
                         task.error_message = None;
+                        task.events.push(
+                            TaskEvent::new("completed")
+                                .with_worker(&wid2)
+                                .with_details("in_progress -> done"),
+                        );
                     }
                     Ok(())
                 });
-            } else {
-                let _ = task_domain.close(task_id);
             }
         } else if !was_dead {
             // Reset to ready so it can be reclaimed, bypassing the state machine
@@ -420,6 +454,7 @@ impl WorkerDomain {
             // double-mutation.
             let error_msg = error_message.clone();
             let tid = task_id.to_string();
+            let wid2 = wid.clone();
             let _ = task_domain.with_exclusive_snapshot(|tasks| {
                 if let Some(task) = tasks.get_mut(&tid) {
                     task.status = "ready".to_string();
@@ -431,6 +466,11 @@ impl WorkerDomain {
                     if let Some(ref msg) = error_msg {
                         task.error_message = Some(msg.clone());
                     }
+                    task.events.push(
+                        TaskEvent::new("failed")
+                            .with_worker(&wid2)
+                            .with_details("in_progress -> ready (task failed)"),
+                    );
                 }
                 Ok(())
             });
@@ -528,6 +568,11 @@ impl WorkerDomain {
                         &effective_lease_expires_at,
                         &input.as_of,
                     ));
+                    task.events.push(
+                        TaskEvent::new("reclaimed")
+                            .with_worker(worker_id)
+                            .with_details("in_progress -> ready (lease expired)"),
+                    );
                     reclaimed_tasks.push(task.clone());
                 }
 

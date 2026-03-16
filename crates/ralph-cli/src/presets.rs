@@ -450,10 +450,7 @@ mod tests {
                 .instructions
                 .contains("`code-assist:{task_name}:step-02:{slug}`")
         );
-        assert_eq!(
-            planner.triggers,
-            vec!["build.start".to_string(), "queue.advance".to_string()]
-        );
+        assert_eq!(planner.triggers, vec!["build.start".to_string()]);
         assert!(planner.instructions.contains("`task_id`"));
         assert!(planner.instructions.contains("`task_key`"));
         assert!(planner.instructions.contains("context.md"));
@@ -505,7 +502,7 @@ mod tests {
         assert!(builder.instructions.contains(
             "Keep documentation in the shared docs directory and code in the repo itself"
         ));
-        assert!(builder.instructions.contains("VALIDATE THE INCREMENT"));
+        assert!(builder.instructions.contains("VALIDATE AND DECIDE NEXT"));
         assert!(
             builder
                 .instructions
@@ -530,60 +527,37 @@ mod tests {
                 .contains("Implement exactly one runtime task per iteration.")
         );
 
-        let finalizer = config
+        let reviewer = config
             .hats
-            .get("finalizer")
-            .expect("finalizer hat should exist");
+            .get("reviewer")
+            .expect("reviewer hat should exist");
         assert_eq!(
-            finalizer.publishes,
+            reviewer.publishes,
             vec![
-                "queue.advance".to_string(),
-                "finalization.failed".to_string(),
+                "build.continue".to_string(),
+                "review.passed".to_string(),
+                "review.rejected".to_string(),
                 "LOOP_COMPLETE".to_string(),
             ]
         );
-        assert!(
-            finalizer
-                .instructions
-                .contains("runtime tasks as the canonical completion gate")
+        assert_eq!(
+            reviewer.triggers,
+            vec!["review.ready".to_string()]
         );
         assert!(
-            finalizer
+            reviewer
                 .instructions
-                .contains("ralph tools task close <task_id>")
+                .contains("You are both the quality gate AND the completion gate")
         );
         assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task reopen <task_id>")
-        );
-        assert!(
-            finalizer
+            reviewer
                 .instructions
                 .contains(".agents/scratchpad/implementation/{task_name}/")
         );
         assert!(
-            finalizer
+            reviewer
                 .instructions
-                .contains("Do not go hunting for planner docs under `.eval-sandbox/code-assist/`.")
-        );
-        assert!(finalizer.instructions.contains(
-            "`queue.advance` if the current step still has open work OR later planned steps remain"
-        ));
-        assert!(
-            !finalizer
-                .instructions
-                .contains("`task.complete` if more runtime work remains")
-        );
-        assert!(
-            finalizer
-                .instructions
-                .contains("You MUST NOT ensure the next step's runtime tasks yourself because Planner owns wave creation")
-        );
-        assert!(
-            finalizer
-                .instructions
-                .contains("all planned steps are complete and no runtime tasks remain open")
+                .contains("ALL planned steps are complete")
         );
     }
 

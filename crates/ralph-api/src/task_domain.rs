@@ -6,6 +6,38 @@ use serde::{Deserialize, Serialize};
 use crate::errors::ApiError;
 use crate::loop_support::now_ts;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEvent {
+    pub timestamp: String,
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
+impl TaskEvent {
+    pub fn new(event_type: &str) -> Self {
+        Self {
+            timestamp: now_ts(),
+            event_type: event_type.to_string(),
+            worker_id: None,
+            details: None,
+        }
+    }
+
+    pub fn with_worker(mut self, worker_id: &str) -> Self {
+        self.worker_id = Some(worker_id.to_string());
+        self
+    }
+
+    pub fn with_details(mut self, details: &str) -> Self {
+        self.details = Some(details.to_string());
+        self
+    }
+}
+
 mod storage;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +101,8 @@ pub struct TaskRecord {
     pub error_message: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<TaskEvent>,
 }
 
 pub struct TaskDomain {
@@ -141,7 +175,7 @@ impl TaskDomain {
         let task = TaskRecord {
             id: params.id.clone(),
             title: params.title,
-            status: requested_status,
+            status: requested_status.clone(),
             priority: params.priority.unwrap_or(2).clamp(1, 5),
             blocked_by: params.blocked_by,
             archived_at: None,
@@ -154,6 +188,9 @@ impl TaskDomain {
             completed_at,
             error_message: None,
             scope_files: params.scope_files.unwrap_or_default(),
+            events: vec![
+                TaskEvent::new("created").with_details(&format!("status={}", requested_status)),
+            ],
         };
 
         let task_id = task.id.clone();
@@ -188,7 +225,8 @@ impl TaskDomain {
                     "allowedTargets": allowed,
                 })));
             }
-            task.status = status;
+            let from = task.status.clone();
+            task.status = status.clone();
 
             if is_terminal_status(&task.status) {
                 task.completed_at = Some(now.clone());
@@ -199,6 +237,10 @@ impl TaskDomain {
             if task.status != "cancelled" {
                 task.error_message = None;
             }
+
+            task.events.push(
+                TaskEvent::new("status_changed").with_details(&format!("{} -> {}", from, status)),
+            );
         }
         if let Some(priority) = input.priority {
             task.priority = priority.clamp(1, 5);
@@ -298,10 +340,13 @@ impl TaskDomain {
             }
 
             let now = now_ts();
+            let from = task.status.clone();
             task.status = "ready".to_string();
             task.completed_at = None;
             task.error_message = None;
             task.updated_at = now;
+            task.events
+                .push(TaskEvent::new("retried").with_details(&format!("{} -> ready", from)));
         }
 
         self.persist()?;
@@ -353,10 +398,13 @@ impl TaskDomain {
         }
 
         let now = now_ts();
+        let from = task.status.clone();
         task.status = "cancelled".to_string();
         task.completed_at = Some(now.clone());
         task.updated_at = now;
         task.error_message = Some("Task cancelled by user".to_string());
+        task.events
+            .push(TaskEvent::new("cancelled").with_details(&format!("{} -> cancelled", from)));
 
         self.persist()?;
         self.get(id)
@@ -384,6 +432,7 @@ impl TaskDomain {
         }
 
         let now = now_ts();
+        let from = task.status.clone();
         task.status = status.to_string();
         task.updated_at = now.clone();
 
@@ -396,6 +445,10 @@ impl TaskDomain {
         if status != "cancelled" {
             task.error_message = None;
         }
+
+        task.events.push(
+            TaskEvent::new("status_changed").with_details(&format!("{} -> {}", from, status)),
+        );
 
         self.persist()?;
         self.get(id)

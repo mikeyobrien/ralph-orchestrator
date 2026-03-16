@@ -9,6 +9,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use ralph_api::task_domain::{TaskDomain, TaskListParams};
 use ralph_api::worker_domain::{WorkerDomain, WorkerReclaimExpiredInput, WorkerStatus};
 use std::path::PathBuf;
 
@@ -132,6 +133,35 @@ fn show_worker(root: &PathBuf, id: &str) -> Result<()> {
         w.current_hat.as_deref().unwrap_or("-")
     );
     println!("Last Heartbeat:  {}", w.last_heartbeat_at);
+
+    // Show tasks this worker has interacted with (via events)
+    let task_domain = TaskDomain::new(root);
+    let all_tasks = task_domain.list(TaskListParams {
+        status: None,
+        include_archived: Some(true),
+    });
+    let worker_tasks: Vec<_> = all_tasks
+        .iter()
+        .filter(|t| t.events.iter().any(|e| e.worker_id.as_deref() == Some(id)))
+        .collect();
+
+    if !worker_tasks.is_empty() {
+        println!("\nTask History:");
+        for task in &worker_tasks {
+            println!("  {} [{}] {}", task.id, task.status, task.title);
+            let worker_events: Vec<_> = task
+                .events
+                .iter()
+                .filter(|e| e.worker_id.as_deref() == Some(id))
+                .collect();
+            for event in &worker_events {
+                let ts = event.timestamp.get(..19).unwrap_or(&event.timestamp);
+                let details = event.details.as_deref().unwrap_or("");
+                println!("    {} {} {}", ts, event.event_type, details);
+            }
+        }
+    }
+
     Ok(())
 }
 

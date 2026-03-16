@@ -483,21 +483,29 @@ async fn run_worker_loop(
 
         // Create an isolated worktree for this task
         let worktree_id = task_id.clone();
-        let worktree_result =
-            create_worktree(&workspace, &worktree_id, &WorktreeConfig::default());
+        let worktree_result = create_worktree(&workspace, &worktree_id, &WorktreeConfig::default());
         let worktree = match worktree_result {
             Ok(wt) => wt,
             Err(e) => {
                 warn!(worker_id = %worker_id, task_id = %task_id, error = %e, "Failed to create worktree");
-                // Release the task so another worker can pick it up
-                if let Ok(mut domain) = WorkerDomain::new(&workspace) {
-                    let _ = domain.complete_task(
-                        &worker_id,
-                        &task_id,
-                        false,
-                        Some(format!("Worktree creation failed: {e}")),
-                    );
-                }
+                // Cancel the task (in_progress → cancelled is valid) instead of
+                // using complete_task which requeues to "ready" and causes an
+                // infinite claim loop when worktree creation persistently fails.
+                let err_msg = format!("Worktree creation failed: {e}");
+                let mut tasks = TaskDomain::new(&workspace);
+                let _ = tasks.update(ralph_api::task_domain::TaskUpdateInput {
+                    id: task_id.clone(),
+                    status: Some("cancelled".to_string()),
+                    title: None,
+                    priority: None,
+                    blocked_by: None,
+                    assignee_worker_id: Some(None),
+                    claimed_at: Some(None),
+                    lease_expires_at: Some(None),
+                });
+                warn!(worker_id = %worker_id, task_id = %task_id, reason = %err_msg, "Task cancelled");
+                // Clear worker's current_task_id
+                send_idle_heartbeat(&workspace, &worker_id);
                 tasks_failed += 1;
                 continue;
             }
@@ -507,11 +515,7 @@ async fn run_worker_loop(
         info!(worker_id = %worker_id, task_id = %task_id, worktree = %worktree_path.display(), "Created worktree");
 
         // Set up worktree context with symlinks
-        let ctx = LoopContext::worktree(
-            loop_id.clone(),
-            worktree_path.clone(),
-            workspace.clone(),
-        );
+        let ctx = LoopContext::worktree(loop_id.clone(), worktree_path.clone(), workspace.clone());
         if let Err(e) = ctx.setup_worktree_symlinks() {
             warn!(worker_id = %worker_id, error = %e, "Failed to setup worktree symlinks");
         }
@@ -617,8 +621,8 @@ async fn run_worker_loop(
                 let wt_path = worktree_path.clone();
                 let ws = workspace.clone();
                 let integrate_result = with_merge_lock(&workspace, move || {
-                    let current_branch = get_current_branch(&ws)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let current_branch =
+                        get_current_branch(&ws).map_err(|e| anyhow::anyhow!("{e}"))?;
                     rebase_and_integrate(&ws, &wt_path, &wt_branch, &current_branch)
                         .map_err(|e| anyhow::anyhow!("{e}"))
                 });
@@ -646,7 +650,9 @@ async fn run_worker_loop(
                             let merge_prompt = format!(
                                 "Resolve merge conflicts and integrate branch {} from worktree at {}. \
                                  The original task was: {}",
-                                worktree_branch, worktree_path.display(), task_title,
+                                worktree_branch,
+                                worktree_path.display(),
+                                task_title,
                             );
                             let mut tasks = TaskDomain::new(&workspace);
                             match tasks.create(TaskCreateParams {
@@ -661,8 +667,12 @@ async fn run_worker_loop(
                                 lease_expires_at: None,
                                 scope_files: None,
                             }) {
-                                Ok(_) => info!(worker_id = %worker_id, merge_task = %merge_task_id, "Created merge task for conflict resolution"),
-                                Err(e) => warn!(worker_id = %worker_id, error = %e.message, "Failed to create merge task"),
+                                Ok(_) => {
+                                    info!(worker_id = %worker_id, merge_task = %merge_task_id, "Created merge task for conflict resolution")
+                                }
+                                Err(e) => {
+                                    warn!(worker_id = %worker_id, error = %e.message, "Failed to create merge task")
+                                }
                             }
                         }
                         tasks_failed += 1;
@@ -703,9 +713,7 @@ async fn run_worker_loop(
         }
 
         // Cleanup worktree (skip if merge conflict — keep for manual resolution)
-        if should_cleanup_worktree
-            && let Err(e) = remove_worktree(&workspace, &worktree_path)
-        {
+        if should_cleanup_worktree && let Err(e) = remove_worktree(&workspace, &worktree_path) {
             warn!(worker_id = %worker_id, error = %e, "Failed to remove worktree");
         }
 

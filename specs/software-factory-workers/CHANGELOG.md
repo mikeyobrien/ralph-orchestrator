@@ -6,6 +6,57 @@
 
 This release implements the full software-factory worker model: canonical board states, worker registry with heartbeat/claim/lease/reclaim lifecycle, dead worker purge, task and loop enrichment, operator control room views, and factory CLI/dashboard.
 
+## 2026-03-16 — Factory UX Polish & Reliability
+
+### Added
+
+- **Worker iteration tracking** — Workers now track `iterationCount` and `totalIterations` in their state, displayed in the factory dashboard for progress visibility.
+- **Per-task git worktrees** — `crates/ralph-cli/src/factory.rs`: factory workers now isolate each claimed task in its own git worktree, preventing file conflicts between concurrent workers.
+- **Git status RPC** — `git.status` RPC method returning working tree status for factory monitoring; `GitStatusPanel` component in the web dashboard.
+- **Code-assist 3-hat preset** — Migrated `presets/code-assist.yml` from 4-hat (Planner+Builder+Critic+Finalizer) to 3-hat (Planner+Builder+Reviewer) model for faster iteration cycles.
+
+### Fixed
+
+- **Infinite claim loop** — `crates/ralph-cli/src/factory.rs`: workers that fail to create a worktree now break out of the claim loop instead of retrying indefinitely.
+- **Double-write in complete_task** — Consolidated non-dead success path from two disk writes to one `with_exclusive_snapshot` call.
+
+### Crates Affected
+
+- **ralph-cli** — `factory.rs` (worktree isolation, claim loop fix), `presets/code-assist.yml` (3-hat refactor)
+- **ralph-api** — `git_status` RPC method, `task_domain.rs` (event audit trail)
+- **frontend** — `GitStatusPanel`, factory dashboard iteration display
+
+### Suggested AGENTS.md Updates
+
+- **Per-task worktree isolation**: Factory workers create a git worktree per claimed task. When modifying `factory.rs`, ensure worktree cleanup happens on both success and failure paths.
+- **3-hat preset model**: The code-assist preset now uses Planner+Builder+Reviewer instead of 4 hats. When creating new presets, prefer the 3-hat model as the baseline.
+- **Claim loop safety**: Any retry loop in worker task claiming must have a bounded exit condition to prevent infinite loops on persistent failures.
+
+---
+
+## 2026-03-16 — Task Event Audit Trail
+
+### Added
+
+- **TaskEvent struct** — `crates/ralph-api/src/task_domain.rs`: new `TaskEvent` struct with `timestamp`, `event_type`, `worker_id`, and `details` fields. Builder methods `with_worker()` and `with_details()` for ergonomic construction.
+- **Events field on TaskRecord** — `events: Vec<TaskEvent>` appended on every state transition: `created`, `status_changed`, `claimed`, `completed`, `failed`, `reclaimed`, `retried`, `cancelled`.
+- **Worker show event trail** — `crates/ralph-cli/src/worker_cli.rs`: `ralph worker show <id>` now displays per-task event history filtered to that worker, showing timestamp, event type, and transition details.
+- **4 new tests** — `crates/ralph-api/tests/worker_domain.rs`: `task_events_on_create`, `task_events_on_claim_and_complete`, `task_events_on_reclaim`, `task_events_on_failure`.
+
+### Changed
+
+- `complete_task` non-dead success path consolidated from double-write (close + snapshot) to single `with_exclusive_snapshot` call, eliminating redundant disk I/O.
+
+### Crates Affected
+
+- **ralph-api** — `task_domain.rs` (TaskEvent struct, events on all transitions), `worker_domain.rs` (events on claim/complete/fail/reclaim)
+- **ralph-cli** — `worker_cli.rs` (worker show event display)
+
+### Suggested AGENTS.md Updates
+
+- **Task event audit trail**: All task state transitions now emit `TaskEvent` entries. When adding new task transitions, always append a `TaskEvent` with the appropriate `event_type` and `from -> to` details.
+- **Single-write pattern**: Prefer `with_exclusive_snapshot` over calling a domain method followed by a separate snapshot when you need to append extra data. This avoids double-writes to disk.
+
 ## 2026-03-16 — Documentation & Finalization
 
 ### Added
