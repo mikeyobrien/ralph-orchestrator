@@ -303,6 +303,36 @@ hats:
       - Are they backward-compatible?
       - Config format changes documented?
 
+      **Architecture Quality**
+      Review new code against the existing codebase for structural quality.
+      Architecture CRITICAL findings get their own section in `.ralph/review-findings.md`.
+
+      *DRY (Don't Repeat Yourself)*
+      - CRITICAL: Logic block (>=5 lines) structurally identical or near-identical to code already in the codebase. "Near-identical" = same control flow with only names/literals changed.
+      - CRITICAL: Constants, config values, or magic numbers duplicated across locations without shared definition.
+      - SUGGESTION: Pattern of 3+ lines appearing twice with minor variation — candidate for extraction.
+      - EXEMPT: Repeated code that is genuinely coincidental (same structure, different semantic purpose) or where extraction would couple unrelated modules.
+
+      *Modularity*
+      - CRITICAL: Function exceeding 50 lines of logic (excluding comments, blanks, closing braces).
+      - CRITICAL: File exceeding 500 lines (exempt: exhaustive match arms, test files, declarative data).
+      - CRITICAL: Struct/class with >7 public methods — likely a god-object.
+      - SUGGESTION: Function with >4 parameters — consider config/options struct.
+      - SUGGESTION: Module mixing unrelated concerns in one file.
+
+      *Decoupling*
+      - CRITICAL: Module directly constructs a concrete dependency it could receive via injection (exempt: entry points, CLI commands, main(), test setup).
+      - CRITICAL: Circular dependency between modules.
+      - SUGGESTION: Reaching >1 layer deep into another module's internals (Law of Demeter).
+      - SUGGESTION: Module importing >5 siblings at the same level — suggests need for trait/facade.
+
+      *Separation of Concerns*
+      - CRITICAL: Business logic performing I/O directly instead of receiving data or using injected service.
+      - CRITICAL: Single function that mutates state AND returns computed result AND performs I/O.
+      - SUGGESTION: Error formatting/presentation mixed with error detection logic.
+      - SUGGESTION: Serialization/deserialization mixed with domain logic in same function.
+      - EXEMPT: Thin orchestration functions that wire I/O and logic are OK — test is whether business logic is unit-testable without I/O mocks.
+
       ### Write Review
       Append findings to `.ralph/review-findings.md`:
       ```markdown
@@ -316,6 +346,10 @@ hats:
 
       ## Critical Issues (Must Fix)
       - file:line — description
+
+      ## Architecture Issues
+      - [CRITICAL] file:line — DRY/Modularity/Decoupling/SoC violation description
+      - [SUGGESTION] file:line — description
 
       ## Suggestions
       - file:line — description
@@ -401,6 +435,7 @@ hats:
       - Triggered by `review.blocked` → REQUEST_CHANGES (include the blocked reason prominently)
       - Any new test failure → REQUEST_CHANGES
       - Any critical issue → REQUEST_CHANGES
+      - Any architecture CRITICAL finding → REQUEST_CHANGES
       - TUI verification failed → REQUEST_CHANGES
       - TUI verification skipped/missing when TUI changes were flagged → REQUEST_CHANGES
       - Uncovered high-risk changes → REQUEST_CHANGES

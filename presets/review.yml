@@ -101,6 +101,12 @@ hats:
       ## Critical Issues (Must Fix)
       - [ ] file:line — [issue description]
 
+      ## Architecture Issues
+      Flag DRY violations (>=5 lines duplicated), oversized functions (>50 LOC) or files (>500 LOC),
+      god-objects (>7 public methods), concrete dependencies in business logic, and I/O mixed into domain logic.
+      - [ ] [CRITICAL] file:line — DRY/Modularity/Decoupling/SoC violation
+      - [SUGGESTION] file:line — architecture improvement opportunity
+
       ## Suggestions (Should Consider)
       - file:line — [suggestion]
 
@@ -142,7 +148,10 @@ hats:
       1. Read the `review.section` payload and focus on that specific risk.
       2. Start the deep-analysis runtime task with `ralph tools task start <analysis_task_id>`.
       3. Attack the code adversarially: look for breakage, unsafe assumptions,
-         security problems, and nearby failure paths.
+         security problems, nearby failure paths, and architecture quality issues.
+         Specifically search the broader codebase for logic duplicated by the new code
+         (DRY), check for oversized functions/files (Modularity), concrete dependencies
+         in business logic (Decoupling), and I/O mixed into domain logic (Separation of Concerns).
       4. If the reviewed code is runnable, rerun the strongest harness available and
          at least one adversarial or failure-path case.
       5. Append concrete findings to `.eval-sandbox/review/findings.md`.
@@ -199,12 +208,25 @@ hats:
 #   - Security vulnerabilities
 #   - Data loss risks
 #   - Breaking API changes without version bump
+#   - Duplicated logic (>=5 lines structurally identical to existing code)
+#   - Functions exceeding 50 lines of logic
+#   - Files exceeding 500 lines (exempt: match arms, tests, declarative data)
+#   - God-objects with >7 public methods
+#   - Business logic performing I/O directly
+#   - Single function that mutates state AND computes AND performs I/O
+#   - Concrete dependency construction in business logic (exempt: entry points, tests)
+#   - Circular dependencies between modules
 #
 # Suggestions (Should Address):
 #   - Missing error handling
 #   - Unclear logic
 #   - Missing tests for new code
 #   - Performance issues
+#   - Functions with >4 parameters (consider config struct)
+#   - Modules mixing unrelated concerns
+#   - Law of Demeter violations (reaching >1 layer into another module)
+#   - Serialization mixed with domain logic
+#   - Error formatting mixed with error detection
 #
 # Nitpicks (Optional):
 #   - Naming improvements

@@ -39,6 +39,7 @@ core:
     - "Verification is mandatory — tests/typecheck/lint/audit must pass"
     - "YAGNI ruthlessly — no speculative features"
     - "KISS always — simplest solution that works"
+    - "Architecture quality is a blocking gate: no duplicated logic (>=5 lines), no functions >50 LOC, no files >500 LOC, no concrete deps in business logic, no I/O in domain logic."
     - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
 
 hats:
@@ -334,6 +335,10 @@ hats:
       1. Verify tests pass for the changed area
       2. Check for obvious regressions (build still compiles, no new warnings)
       3. Spot-check the code diff for clear bugs or style issues
+      4. Quick architecture scan:
+         - Any copy-paste from existing code? (>=5 structurally identical lines = BLOCK)
+         - Any new functions exceeding 50 lines of logic? (BLOCK)
+         - Any magic numbers or config values duplicated without a shared definition? (BLOCK)
 
       **If OK:** emit `task.next` with `{ "continue": true }`
       The Builder will pick up the next ready subtask.
@@ -358,7 +363,36 @@ hats:
       - Does the code look native to the codebase or foreign to it?
       - Do the subtasks integrate well with each other?
 
-      **3. Verification**
+      **3. Architecture quality**
+      Apply the full architecture rubric. Any BLOCK finding triggers `review.rejected`.
+
+      **DRY (Don't Repeat Yourself)**
+      - BLOCK: Logic block (>=5 lines) structurally identical or near-identical to another location. "Near-identical" = same control flow with only names/literals changed.
+      - BLOCK: Constants, config values, or magic numbers duplicated across locations without shared definition.
+      - WARN: Pattern of 3+ lines appearing twice with minor variation — candidate for extraction.
+      - EXEMPT: Repeated code that is genuinely coincidental (same structure, different semantic purpose) or where extraction would couple unrelated modules.
+
+      **Modularity**
+      - BLOCK: Function exceeding 50 lines of logic (excluding comments, blanks, closing braces).
+      - BLOCK: File exceeding 500 lines (exempt: exhaustive match arms, test files, declarative data).
+      - BLOCK: Struct/class with >7 public methods — likely a god-object.
+      - WARN: Function with >4 parameters — consider config/options struct.
+      - WARN: Module mixing unrelated concerns in one file.
+
+      **Decoupling**
+      - BLOCK: Module directly constructs a concrete dependency it could receive via injection (exempt: entry points, CLI commands, main(), test setup).
+      - BLOCK: Circular dependency between modules.
+      - WARN: Reaching >1 layer deep into another module's internals (Law of Demeter).
+      - WARN: Module importing >5 siblings at the same level — suggests need for trait/facade.
+
+      **Separation of Concerns**
+      - BLOCK: Business logic performing I/O directly instead of receiving data or using injected service.
+      - BLOCK: Single function that mutates state AND returns computed result AND performs I/O.
+      - WARN: Error formatting/presentation mixed with error detection logic.
+      - WARN: Serialization/deserialization mixed with domain logic in same function.
+      - EXEMPT: Thin orchestration functions that wire I/O and logic are OK — test is whether business logic is unit-testable without I/O mocks.
+
+      **4. Verification**
       Do not trust "it passes locally" claims.
       Re-run the strongest checks that matter for the changed area:
       - task-focused tests first,
@@ -386,13 +420,46 @@ hats:
       - Is there unnecessary complexity that fails KISS?
       - Does the code look native to the codebase or foreign to it?
 
-      **3. Verification**
+      **3. Cross-wave architecture review**
+      Review the ENTIRE implementation across all waves for architecture quality.
+      BLOCK findings must trigger `review.rejected`.
+
+      **DRY (Don't Repeat Yourself)**
+      - BLOCK: Logic block (>=5 lines) structurally identical or near-identical to another location — including duplication BETWEEN waves. "Near-identical" = same control flow with only names/literals changed.
+      - BLOCK: Constants, config values, or magic numbers duplicated across locations without shared definition.
+      - WARN: Pattern of 3+ lines appearing twice with minor variation — candidate for extraction.
+      - EXEMPT: Repeated code that is genuinely coincidental (same structure, different semantic purpose) or where extraction would couple unrelated modules.
+
+      **Modularity**
+      - BLOCK: Function exceeding 50 lines of logic (excluding comments, blanks, closing braces).
+      - BLOCK: File exceeding 500 lines (exempt: exhaustive match arms, test files, declarative data).
+      - BLOCK: Struct/class with >7 public methods — likely a god-object.
+      - WARN: Function with >4 parameters — consider config/options struct.
+      - WARN: Module mixing unrelated concerns in one file.
+
+      **Decoupling**
+      - BLOCK: Module directly constructs a concrete dependency it could receive via injection (exempt: entry points, CLI commands, main(), test setup).
+      - BLOCK: Circular dependency between modules.
+      - WARN: Reaching >1 layer deep into another module's internals (Law of Demeter).
+      - WARN: Module importing >5 siblings at the same level — suggests need for trait/facade.
+
+      **Separation of Concerns**
+      - BLOCK: Business logic performing I/O directly instead of receiving data or using injected service.
+      - BLOCK: Single function that mutates state AND returns computed result AND performs I/O.
+      - WARN: Error formatting/presentation mixed with error detection logic.
+      - WARN: Serialization/deserialization mixed with domain logic in same function.
+      - EXEMPT: Thin orchestration functions that wire I/O and logic are OK — test is whether business logic is unit-testable without I/O mocks.
+
+      Check specifically that code across ALL waves doesn't introduce duplication between waves,
+      that the overall structure is modular, and that coupling between new components is minimal.
+
+      **4. Verification**
       Do not trust "it passes locally" claims.
       Re-run the strongest checks that matter for the changed area:
       - task-focused tests first,
       - then broader build/lint/typecheck if the change crosses subsystem boundaries.
 
-      **4. Real harness pass**
+      **5. Real harness pass**
       Execute the strongest real harness available for the changed behavior.
       - Browser app or web flow: use Playwright or equivalent browser automation
       - Terminal or TUI flow: use tmux or equivalent terminal harness
@@ -400,7 +467,7 @@ hats:
 
       Do not stop at the happy path — try at least one adversarial or failure-path scenario.
 
-      **5. Whole-prompt completeness**
+      **6. Whole-prompt completeness**
       - Reconcile against `plan.md`, `progress.md`, and all runtime tasks
       - Check whether the delivered implementation satisfies the whole request
 
