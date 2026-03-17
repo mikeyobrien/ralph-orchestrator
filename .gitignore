@@ -98,8 +98,12 @@ site/
 
 .worktrees
 PROMPT.md
+PROMPTS*.md
 # But allow benchmark task prompts
 !bench/tasks/**/PROMPT.md
+
+# Autoresearch experiment logs
+autoresearch.*
 .tmp-ralph-claude-code
 
 # Ralph orchestrator state
