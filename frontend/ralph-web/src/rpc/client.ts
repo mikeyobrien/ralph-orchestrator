@@ -1,4 +1,10 @@
+import { useUIStore } from "@/store";
+
 const RPC_ENDPOINT = "/rpc/v1";
+
+function getActiveFolderSlug(): string | null {
+  return useUIStore.getState().activeFolderSlug;
+}
 
 const MUTATING_METHODS = new Set<string>([
   "task.create",
@@ -129,6 +135,15 @@ export async function rpcCall<TResult>(
     };
   }
 
+  // Inject folderId into meta for multi-folder routing
+  const activeFolderSlug = getActiveFolderSlug();
+  if (activeFolderSlug) {
+    body.meta = {
+      ...(body.meta as Record<string, unknown> || {}),
+      folderId: activeFolderSlug,
+    };
+  }
+
   let response: Response;
   try {
     response = await fetch(endpoint, {
@@ -219,18 +234,26 @@ export async function rpcAck(subscriptionId: string, cursor: string): Promise<vo
 }
 
 export function buildStreamWebSocketUrl(subscriptionId: string, wsUrl?: string): string {
+  const folderId = getActiveFolderSlug();
+
   if (wsUrl) {
     try {
       const url = new URL(wsUrl, window.location.href);
       url.searchParams.set("subscriptionId", subscriptionId);
+      if (folderId) url.searchParams.set("folderId", folderId);
       return url.toString();
     } catch {
-      const separator = wsUrl.includes("?") ? "&" : "?";
-      return `${wsUrl}${separator}subscriptionId=${encodeURIComponent(subscriptionId)}`;
+      let result = wsUrl;
+      const separator = result.includes("?") ? "&" : "?";
+      result = `${result}${separator}subscriptionId=${encodeURIComponent(subscriptionId)}`;
+      if (folderId) result = `${result}&folderId=${encodeURIComponent(folderId)}`;
+      return result;
     }
   }
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.host;
-  return `${protocol}//${host}/rpc/v1/stream?subscriptionId=${encodeURIComponent(subscriptionId)}`;
+  let url = `${protocol}//${host}/rpc/v1/stream?subscriptionId=${encodeURIComponent(subscriptionId)}`;
+  if (folderId) url += `&folderId=${encodeURIComponent(folderId)}`;
+  return url;
 }

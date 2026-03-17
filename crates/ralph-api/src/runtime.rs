@@ -26,6 +26,7 @@ use crate::protocol::{
     validate_request_schema,
 };
 use crate::stream_domain::StreamDomain;
+use crate::supervisor::ProcessSupervisor;
 use crate::task_domain::TaskDomain;
 use crate::worker_domain::WorkerDomain;
 
@@ -48,6 +49,7 @@ pub struct RpcRuntime {
     streams: StreamDomain,
     config_domain: ConfigDomain,
     preset_domain: PresetDomain,
+    supervisor: Option<ProcessSupervisor>,
 }
 
 impl RpcRuntime {
@@ -95,7 +97,18 @@ impl RpcRuntime {
             streams,
             config_domain,
             preset_domain,
+            supervisor: None,
         })
+    }
+
+    /// Create a runtime with a process supervisor for factory management.
+    pub fn with_supervisor(
+        config: ApiConfig,
+        supervisor: ProcessSupervisor,
+    ) -> anyhow::Result<Self> {
+        let mut runtime = Self::new(config)?;
+        runtime.supervisor = Some(supervisor);
+        Ok(runtime)
     }
 
     pub fn health_payload(&self) -> Value {
@@ -239,6 +252,19 @@ impl RpcRuntime {
 
     pub(crate) fn preset_domain(&self) -> &PresetDomain {
         &self.preset_domain
+    }
+
+    pub(crate) fn supervisor(&self) -> Result<&ProcessSupervisor, ApiError> {
+        self.supervisor.as_ref().ok_or_else(|| {
+            ApiError::service_unavailable(
+                "process supervisor not available (start with `ralph web`)",
+            )
+        })
+    }
+
+    /// Non-fallible access to the supervisor reference (for registry use).
+    pub fn supervisor_ref(&self) -> Option<&ProcessSupervisor> {
+        self.supervisor.as_ref()
     }
 
     pub(crate) fn parse_params<T>(&self, request: &RpcRequestEnvelope) -> Result<T, ApiError>

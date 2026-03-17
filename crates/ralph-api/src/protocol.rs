@@ -64,12 +64,18 @@ pub const KNOWN_METHODS: &[&str] = &[
     "worker.heartbeat",
     "worker.claim_next",
     "worker.reclaim_expired",
+    "factory.create",
+    "factory.stop",
+    "factory.list",
     "board.summary",
     "board.metrics",
     "git.status",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",
+    "folder.list",
+    "folder.register",
+    "folder.unregister",
     "_internal.publish",
 ];
 
@@ -107,6 +113,10 @@ pub const MUTATING_METHODS: &[&str] = &[
     "worker.heartbeat",
     "worker.claim_next",
     "worker.reclaim_expired",
+    "factory.create",
+    "factory.stop",
+    "folder.register",
+    "folder.unregister",
     "_internal.publish",
 ];
 
@@ -144,6 +154,7 @@ pub struct RequestMeta {
     pub auth: Option<AuthMeta>,
     pub timeout_ms: Option<u64>,
     pub request_ts: Option<String>,
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

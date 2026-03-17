@@ -8,6 +8,7 @@
 
 import { ListTodo, PanelLeftClose, PanelLeft, Workflow, Settings, Factory } from "lucide-react";
 import { NavItem } from "./NavItem";
+import { FolderSelector } from "./FolderSelector";
 import { useUIStore } from "@/store";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +68,9 @@ export function Sidebar() {
           </span>
         )}
       </div>
+
+      {/* Folder selector (only visible when multiple folders registered) */}
+      <FolderSelector collapsed={!sidebarOpen} />
 
       {/* Navigation items */}
       <nav className="flex-1 p-2 space-y-1">

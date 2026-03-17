@@ -69,12 +69,18 @@
         "worker.heartbeat",
         "worker.claim_next",
         "worker.reclaim_expired",
+        "factory.create",
+        "factory.stop",
+        "factory.list",
         "board.summary",
         "board.metrics",
         "git.status",
         "stream.subscribe",
         "stream.unsubscribe",
-        "stream.ack"
+        "stream.ack",
+        "folder.list",
+        "folder.register",
+        "folder.unregister"
       ]
     },
     "mutatingMethodName": {
@@ -112,7 +118,11 @@
         "worker.deregister",
         "worker.heartbeat",
         "worker.claim_next",
-        "worker.reclaim_expired"
+        "worker.reclaim_expired",
+        "factory.create",
+        "factory.stop",
+        "folder.register",
+        "folder.unregister"
       ]
     },
     "authMeta": {
@@ -174,6 +184,11 @@
         "requestTs": {
           "type": "string",
           "format": "date-time"
+        },
+        "folderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         }
       }
     },
@@ -422,6 +437,64 @@
       "type": "object",
       "maxProperties": 0,
       "additionalProperties": false
+    },
+    "folderRegisterParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["path"]
+    },
+    "folderUnregisterParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["slug"]
+    },
+    "folderListResult": {
+      "type": "object",
+      "properties": {
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": { "type": "string" },
+              "path": { "type": "string" },
+              "displayName": { "type": "string" }
+            },
+            "required": ["slug", "path", "displayName"]
+          }
+        },
+        "defaultSlug": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["folders"]
+    },
+    "folderRegisterResult": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "object",
+          "properties": {
+            "slug": { "type": "string" },
+            "path": { "type": "string" },
+            "displayName": { "type": "string" }
+          },
+          "required": ["slug", "path", "displayName"]
+        }
+      },
+      "required": ["folder"]
     },
     "idOnlyParams": {
       "type": "object",
@@ -1863,6 +1936,90 @@
             "method",
             "params"
           ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "factory.create"
+            },
+            "params": {
+              "$ref": "#/$defs/factoryCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "factory.stop"
+            },
+            "params": {
+              "$ref": "#/$defs/idOnlyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "factory.list"
+            },
+            "params": {
+              "$ref": "#/$defs/emptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "folder.list"
+            },
+            "params": {
+              "$ref": "#/$defs/emptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "folder.register"
+            },
+            "params": {
+              "$ref": "#/$defs/folderRegisterParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "folder.unregister"
+            },
+            "params": {
+              "$ref": "#/$defs/folderUnregisterParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ]
         }
       ]
     },
@@ -3070,6 +3227,90 @@
             "method",
             "result"
           ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "factory.create"
+            },
+            "result": {
+              "$ref": "#/$defs/factoryCreateResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "factory.stop"
+            },
+            "result": {
+              "$ref": "#/$defs/successResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "factory.list"
+            },
+            "result": {
+              "$ref": "#/$defs/factoryListResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "folder.list"
+            },
+            "result": {
+              "$ref": "#/$defs/folderListResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "folder.register"
+            },
+            "result": {
+              "$ref": "#/$defs/folderRegisterResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "folder.unregister"
+            },
+            "result": {
+              "$ref": "#/$defs/successResult"
+            }
+          },
+          "required": [
+            "method",
+            "result"
+          ]
         }
       ]
     },
@@ -3315,6 +3556,60 @@
         "clean": { "type": "boolean" }
       },
       "required": ["branch", "files", "clean"]
+    },
+    "factoryCreateParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "numWorkers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "backend": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxIterations": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": ["numWorkers"]
+    },
+    "factoryRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "pid": { "type": "integer" },
+        "numWorkers": { "type": "integer" },
+        "config": { "type": "object" },
+        "startedAt": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["running", "exited"]
+        },
+        "exitCode": { "type": ["integer", "null"] }
+      },
+      "required": ["id", "pid", "numWorkers", "status", "startedAt"]
+    },
+    "factoryCreateResult": {
+      "type": "object",
+      "properties": {
+        "factory": { "$ref": "#/$defs/factoryRecord" }
+      },
+      "required": ["factory"]
+    },
+    "factoryListResult": {
+      "type": "object",
+      "properties": {
+        "factories": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/factoryRecord" }
+        }
+      },
+      "required": ["factories"]
     }
   }
 }

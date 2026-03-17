@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
@@ -10,11 +11,14 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{error, info, warn};
 
 use crate::config::ApiConfig;
+use crate::folder_registry::FolderRegistry;
+use crate::protocol;
 use crate::runtime::RpcRuntime;
 use crate::stream_domain::KEEPALIVE_INTERVAL_MS;
 
@@ -23,10 +27,16 @@ struct AppState {
     runtime: RpcRuntime,
 }
 
+#[derive(Clone)]
+struct RegistryAppState {
+    registry: Arc<tokio::sync::RwLock<FolderRegistry>>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StreamQuery {
     subscription_id: Option<String>,
+    folder_id: Option<String>,
 }
 
 pub fn router(runtime: RpcRuntime) -> Router {
@@ -43,7 +53,7 @@ pub fn router(runtime: RpcRuntime) -> Router {
 /// IPv6 addresses must be wrapped in brackets so the port is unambiguous:
 /// `::1` → `[::1]:3000`. Already-bracketed hosts (e.g. `[::1]`) are left
 /// as-is to prevent double-wrapping. IPv4 and hostnames are unchanged.
-pub(crate) fn bind_addr_string(host: &str, port: u16) -> String {
+pub fn bind_addr_string(host: &str, port: u16) -> String {
     let trimmed = host.trim();
     if trimmed.starts_with('[') {
         // Already bracketed (e.g. "[::1]" from env var)
@@ -128,6 +138,190 @@ async fn stream_handler(
         stream_connection(socket, state.runtime, query.subscription_id, principal)
     })
 }
+
+// --- Registry-aware router (multi-folder) ---
+
+pub fn router_with_registry(
+    registry: Arc<tokio::sync::RwLock<FolderRegistry>>,
+) -> Router {
+    Router::new()
+        .route("/health", get(health_handler_registry))
+        .route("/rpc/v1", post(rpc_handler_registry))
+        .route("/rpc/v1/capabilities", get(capabilities_handler_registry))
+        .route("/rpc/v1/stream", get(stream_handler_registry))
+        .with_state(RegistryAppState { registry })
+}
+
+async fn health_handler_registry(
+    State(state): State<RegistryAppState>,
+) -> Json<serde_json::Value> {
+    let registry = state.registry.read().await;
+    match registry.resolve(None) {
+        Ok(runtime) => Json(runtime.health_payload()),
+        Err(_) => Json(serde_json::json!({
+            "status": "ok",
+            "timestamp": crate::loop_support::now_ts(),
+            "folders": 0
+        })),
+    }
+}
+
+async fn capabilities_handler_registry(
+    State(state): State<RegistryAppState>,
+) -> Json<serde_json::Value> {
+    let registry = state.registry.read().await;
+    match registry.resolve(None) {
+        Ok(runtime) => Json(runtime.capabilities_payload()),
+        Err(_) => Json(serde_json::json!({
+            "methods": protocol::KNOWN_METHODS,
+            "streamTopics": protocol::STREAM_TOPICS,
+        })),
+    }
+}
+
+fn extract_folder_id(raw: &Value) -> Option<String> {
+    raw.get("meta")
+        .and_then(|m| m.get("folderId"))
+        .and_then(Value::as_str)
+        .map(String::from)
+}
+
+async fn rpc_handler_registry(
+    State(state): State<RegistryAppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    // Parse raw JSON to extract folder_id and method before routing
+    let raw = match protocol::parse_json_value(&body) {
+        Ok(v) => v,
+        Err(error) => {
+            let status = error.status;
+            let envelope = protocol::error_envelope(&error, "ralph-api");
+            return (status, Json(envelope));
+        }
+    };
+
+    let folder_id = extract_folder_id(&raw);
+    let method = raw.get("method").and_then(Value::as_str);
+
+    // Folder-level methods are dispatched directly to the registry
+    if let Some(method) = method {
+        if method.starts_with("folder.") {
+            let mut registry = state.registry.write().await;
+            let (request_id, method_opt) = protocol::request_context(&raw);
+
+            // Folder methods require idempotency key for mutating ops
+            if protocol::is_mutating_method(method) {
+                let has_key = raw
+                    .get("meta")
+                    .and_then(|m| m.get("idempotencyKey"))
+                    .and_then(Value::as_str)
+                    .is_some();
+                if !has_key {
+                    let error = crate::errors::ApiError::invalid_params(
+                        "mutating methods require meta.idempotencyKey",
+                    )
+                    .with_context(request_id, method_opt);
+                    let status = error.status;
+                    let envelope = protocol::error_envelope(&error, "ralph-api");
+                    return (status, Json(envelope));
+                }
+            }
+
+            let params = raw.get("params").cloned().unwrap_or(Value::Object(Default::default()));
+            let result = registry.dispatch_folder_method(method, params);
+
+            let envelope_request = protocol::parse_request(&raw);
+            return match (result, envelope_request) {
+                (Ok(result), Ok(req)) => {
+                    let envelope = protocol::success_envelope(&req, result, "ralph-api");
+                    (axum::http::StatusCode::OK, Json(envelope))
+                }
+                (Err(error), _) => {
+                    let error = error.with_context(request_id, method_opt);
+                    let status = error.status;
+                    let envelope = protocol::error_envelope(&error, "ralph-api");
+                    (status, Json(envelope))
+                }
+                (_, Err(error)) => {
+                    let status = error.status;
+                    let envelope = protocol::error_envelope(&error, "ralph-api");
+                    (status, Json(envelope))
+                }
+            };
+        }
+    }
+
+    // Non-folder methods: resolve the correct runtime
+    let registry = state.registry.read().await;
+    let runtime = match registry.resolve(folder_id.as_deref()) {
+        Ok(rt) => rt.clone(),
+        Err(error) => {
+            let (request_id, method_opt) = protocol::request_context(&raw);
+            let error = error.with_context(request_id, method_opt);
+            let status = error.status;
+            let envelope = protocol::error_envelope(&error, "ralph-api");
+            return (status, Json(envelope));
+        }
+    };
+    drop(registry);
+
+    let (status, payload) = runtime.handle_http_request(&body, &headers);
+    (status, Json(payload))
+}
+
+async fn stream_handler_registry(
+    ws: WebSocketUpgrade,
+    Query(query): Query<StreamQuery>,
+    headers: HeaderMap,
+    State(state): State<RegistryAppState>,
+) -> impl IntoResponse {
+    let registry = state.registry.read().await;
+    let runtime = match registry.resolve(query.folder_id.as_deref()) {
+        Ok(rt) => rt.clone(),
+        Err(error) => {
+            let error = error.with_context("ws-upgrade", Some("stream.subscribe".to_string()));
+            let status = error.status;
+            let error_payload = protocol::error_envelope(&error, "ralph-api");
+            return (status, Json(error_payload)).into_response();
+        }
+    };
+    drop(registry);
+
+    let principal = match runtime.authenticate_websocket(&headers) {
+        Ok(p) => p,
+        Err(error) => {
+            let status = error.status;
+            let error_payload = protocol::error_envelope(&error, &runtime.config.served_by);
+            return (status, Json(error_payload)).into_response();
+        }
+    };
+
+    ws.on_upgrade(move |socket| {
+        stream_connection(socket, runtime, query.subscription_id, principal)
+    })
+}
+
+pub async fn serve_registry<F>(
+    listener: TcpListener,
+    registry: Arc<tokio::sync::RwLock<FolderRegistry>>,
+    shutdown: F,
+) -> Result<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let local_addr = listener
+        .local_addr()
+        .context("failed to read listener local_addr")?;
+    info!(%local_addr, "ralph-api listening (multi-folder mode)");
+
+    axum::serve(listener, router_with_registry(registry))
+        .with_graceful_shutdown(shutdown)
+        .await
+        .context("axum server terminated with error")
+}
+
+// --- Single-runtime handlers (existing) ---
 
 async fn stream_connection(
     mut socket: WebSocket,

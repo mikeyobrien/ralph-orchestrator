@@ -39,6 +39,10 @@ pub struct WebArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
+    /// Additional folder paths to register as domains
+    #[arg(long = "folder", value_name = "PATH")]
+    pub extra_folders: Vec<PathBuf>,
+
     /// Use deprecated Node tRPC backend instead of Rust RPC API
     #[arg(long)]
     pub legacy_node_api: bool,
@@ -404,6 +408,38 @@ async fn forward_output(
     let _ = tokio::join!(stdout_task, stderr_task);
 }
 
+fn print_ready_status<T>(
+    ready_result: &Result<T, tokio::time::error::Elapsed>,
+    dashboard_url: &str,
+    api_url: &str,
+    no_open: bool,
+) {
+    match ready_result {
+        Ok(_) => {
+            println!();
+            println!("Both servers ready!");
+            println!("  Dashboard: {}", dashboard_url);
+            println!("  API:       {}", api_url);
+            println!();
+
+            if !no_open {
+                let _ = open::that(dashboard_url);
+            }
+        }
+        Err(_) => {
+            println!();
+            println!(
+                "Warning: servers did not report ready within {} seconds.",
+                READY_TIMEOUT.as_secs()
+            );
+            println!("They may still be starting. Check the output above for errors.");
+            println!("  Dashboard: {}", dashboard_url);
+            println!("  API:       {}", api_url);
+            println!();
+        }
+    }
+}
+
 /// Run both backend and frontend dev servers in parallel
 pub async fn execute(args: WebArgs) -> Result<()> {
     println!("Starting Ralph web servers...");
@@ -438,52 +474,7 @@ pub async fn execute(args: WebArgs) -> Result<()> {
 
     println!("Using workspace: {}", workspace_root.display());
 
-    // Spawn backend (default Rust RPC API, optional legacy Node backend) and frontend.
-    let backend_label = if args.legacy_node_api {
-        "backend"
-    } else {
-        "api"
-    };
-    let backend_ready_pattern = if args.legacy_node_api {
-        "Server started on"
-    } else {
-        "ralph-api listening"
-    };
-
-    let mut backend = if args.legacy_node_api {
-        AsyncCommand::new("npm")
-            .args(["run", "dev"])
-            .current_dir(&backend_dir)
-            .env("RALPH_WORKSPACE_ROOT", &workspace_root)
-            .env("PORT", args.backend_port.to_string())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to start legacy backend server. Is npm installed and {} set up?\nError: {}",
-                    backend_dir.join("package.json").display(),
-                    e
-                )
-            })?
-    } else {
-        AsyncCommand::new("cargo")
-            .args(["run", "-p", "ralph-api"])
-            .current_dir(&workspace_root)
-            .env("RALPH_API_PORT", args.backend_port.to_string())
-            .env("RALPH_API_WORKSPACE_ROOT", &workspace_root)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to start Rust RPC API (cargo run -p ralph-api).\nError: {}",
-                    e
-                )
-            })?
-    };
-
-    // Pass --port for Vite and RALPH_BACKEND_PORT for proxy config.
+    // Spawn frontend.
     let mut frontend = AsyncCommand::new("npm")
         .args([
             "run",
@@ -505,28 +496,9 @@ pub async fn execute(args: WebArgs) -> Result<()> {
             )
         })?;
 
-    // Take ownership of stdout/stderr pipes.
-    let backend_stdout = backend.stdout.take().expect("backend stdout piped");
-    let backend_stderr = backend.stderr.take().expect("backend stderr piped");
     let frontend_stdout = frontend.stdout.take().expect("frontend stdout piped");
     let frontend_stderr = frontend.stderr.take().expect("frontend stderr piped");
-
-    // Set up ready detection.
-    let backend_ready = std::sync::Arc::new(Notify::new());
     let frontend_ready = std::sync::Arc::new(Notify::new());
-
-    // Spawn output forwarding tasks.
-    let backend_ready_clone = backend_ready.clone();
-    tokio::spawn(async move {
-        forward_output(
-            backend_stdout,
-            backend_stderr,
-            backend_label,
-            backend_ready_pattern,
-            backend_ready_clone,
-        )
-        .await;
-    });
 
     let frontend_ready_clone = frontend_ready.clone();
     tokio::spawn(async move {
@@ -540,43 +512,7 @@ pub async fn execute(args: WebArgs) -> Result<()> {
         .await;
     });
 
-    // Wait for both servers to become ready
-    let dashboard_url = format!("http://localhost:{}", args.frontend_port);
-    let api_url = format!("http://localhost:{}", args.backend_port);
-
-    let ready_result = tokio::time::timeout(READY_TIMEOUT, async {
-        tokio::join!(backend_ready.notified(), frontend_ready.notified());
-    })
-    .await;
-
-    match ready_result {
-        Ok(()) => {
-            println!();
-            println!("Both servers ready!");
-            println!("  Dashboard: {}", dashboard_url);
-            println!("  API:       {}", api_url);
-            println!();
-
-            if !args.no_open {
-                let _ = open::that(&dashboard_url);
-            }
-        }
-        Err(_) => {
-            println!();
-            println!(
-                "Warning: servers did not report ready within {} seconds.",
-                READY_TIMEOUT.as_secs()
-            );
-            println!("They may still be starting. Check the output above for errors.");
-            println!("  Dashboard: {}", dashboard_url);
-            println!("  API:       {}", api_url);
-            println!();
-        }
-    }
-
-    println!("Press Ctrl+C to stop both servers");
-
-    // Set up shutdown channel
+    // Set up shutdown channel (shared across signal handlers + server tasks)
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
     // Spawn signal handlers
@@ -610,27 +546,176 @@ pub async fn execute(args: WebArgs) -> Result<()> {
         });
     }
 
-    // Wait for shutdown signal or server exit
-    tokio::select! {
-        _ = shutdown_rx.changed() => {
-            // Signal received - gracefully terminate both servers
-            println!("Stopping backend server...");
-            terminate_gracefully(&mut backend, SHUTDOWN_GRACE_PERIOD).await;
-            println!("Stopping frontend server...");
-            terminate_gracefully(&mut frontend, SHUTDOWN_GRACE_PERIOD).await;
-            println!("All servers stopped.");
+    let dashboard_url = format!("http://localhost:{}", args.frontend_port);
+    let api_url = format!("http://localhost:{}", args.backend_port);
+
+    // Branch: in-process Rust API (with supervisor) vs legacy Node backend (child process)
+    if args.legacy_node_api {
+        let mut backend = AsyncCommand::new("npm")
+            .args(["run", "dev"])
+            .current_dir(&backend_dir)
+            .env("RALPH_WORKSPACE_ROOT", &workspace_root)
+            .env("PORT", args.backend_port.to_string())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to start legacy backend server. Is npm installed and {} set up?\nError: {}",
+                    backend_dir.join("package.json").display(),
+                    e
+                )
+            })?;
+
+        let backend_stdout = backend.stdout.take().expect("backend stdout piped");
+        let backend_stderr = backend.stderr.take().expect("backend stderr piped");
+        let backend_ready = std::sync::Arc::new(Notify::new());
+        let backend_ready_clone = backend_ready.clone();
+        tokio::spawn(async move {
+            forward_output(
+                backend_stdout,
+                backend_stderr,
+                "backend",
+                "Server started on",
+                backend_ready_clone,
+            )
+            .await;
+        });
+
+        // Wait for both servers to become ready
+        let ready_result = tokio::time::timeout(READY_TIMEOUT, async {
+            tokio::join!(backend_ready.notified(), frontend_ready.notified());
+        })
+        .await;
+
+        print_ready_status(&ready_result, &dashboard_url, &api_url, args.no_open);
+
+        println!("Press Ctrl+C to stop both servers");
+
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                println!("Stopping backend server...");
+                terminate_gracefully(&mut backend, SHUTDOWN_GRACE_PERIOD).await;
+                println!("Stopping frontend server...");
+                terminate_gracefully(&mut frontend, SHUTDOWN_GRACE_PERIOD).await;
+                println!("All servers stopped.");
+            }
+            r = backend.wait() => {
+                println!("Backend exited: {:?}", r);
+                println!("Stopping frontend server...");
+                terminate_gracefully(&mut frontend, SHUTDOWN_GRACE_PERIOD).await;
+            }
+            r = frontend.wait() => {
+                println!("Frontend exited: {:?}", r);
+                println!("Stopping backend server...");
+                terminate_gracefully(&mut backend, SHUTDOWN_GRACE_PERIOD).await;
+            }
         }
-        r = backend.wait() => {
-            println!("Backend exited: {:?}", r);
-            // Gracefully terminate frontend on backend exit
-            println!("Stopping frontend server...");
-            terminate_gracefully(&mut frontend, SHUTDOWN_GRACE_PERIOD).await;
+    } else {
+        // In-process Rust API with folder registry (multi-folder support)
+        let persist_path = env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(".ralph/web/folders.json");
+
+        let mut registry = ralph_api::FolderRegistry::load(&persist_path, args.backend_port)
+            .unwrap_or_else(|e| {
+                eprintln!("Warning: failed to load folder registry: {e}");
+                ralph_api::FolderRegistry::new(persist_path, args.backend_port)
+            });
+
+        // Register workspace as the default folder
+        let default_folder = registry
+            .register(workspace_root.clone())
+            .with_context(|| "Failed to register workspace as folder domain")?;
+        registry.set_default(&default_folder.slug).ok();
+
+        // Register any additional --folder paths
+        for extra in &args.extra_folders {
+            let canonical = extra.canonicalize().with_context(|| {
+                format!("Invalid folder path: {}", extra.display())
+            })?;
+            match registry.register(canonical.clone()) {
+                Ok(f) => println!("Registered folder: {} ({})", f.slug, f.path.display()),
+                Err(e) => eprintln!("Warning: failed to register {}: {e}", extra.display()),
+            }
         }
-        r = frontend.wait() => {
-            println!("Frontend exited: {:?}", r);
-            // Gracefully terminate backend on frontend exit
-            println!("Stopping backend server...");
-            terminate_gracefully(&mut backend, SHUTDOWN_GRACE_PERIOD).await;
+
+        let registry = std::sync::Arc::new(tokio::sync::RwLock::new(registry));
+
+        // Start reaper tasks for all supervisors
+        let reaper_handles: Vec<_> = {
+            let reg = registry.blocking_read();
+            reg.supervisors()
+                .into_iter()
+                .map(|sup| sup.start_reaper())
+                .collect()
+        };
+
+        let registry_for_shutdown = registry.clone();
+
+        let bind_address =
+            ralph_api::transport::bind_addr_string("127.0.0.1", args.backend_port);
+        let listener = tokio::net::TcpListener::bind(&bind_address)
+            .await
+            .with_context(|| format!("Failed to bind API listener at {bind_address}"))?;
+
+        // Shutdown signal for the API server
+        let mut api_shutdown_rx = shutdown_tx.subscribe();
+        let api_shutdown = async move {
+            let _ = api_shutdown_rx.changed().await;
+        };
+
+        let mut api_handle = tokio::spawn(async move {
+            if let Err(e) =
+                ralph_api::serve_registry(listener, registry, api_shutdown).await
+            {
+                eprintln!("[api] Server error: {e}");
+            }
+        });
+
+        // Wait for frontend ready (API is ready as soon as listener binds)
+        let ready_result = tokio::time::timeout(READY_TIMEOUT, async {
+            frontend_ready.notified().await;
+        })
+        .await;
+
+        print_ready_status(&ready_result, &dashboard_url, &api_url, args.no_open);
+
+        println!("Press Ctrl+C to stop all servers");
+
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                // Stop all factories across all folders
+                println!("Stopping managed factories...");
+                {
+                    let reg = registry_for_shutdown.read().await;
+                    for sup in reg.supervisors() {
+                        sup.stop_all().await;
+                    }
+                }
+                println!("Stopping frontend server...");
+                terminate_gracefully(&mut frontend, SHUTDOWN_GRACE_PERIOD).await;
+                for h in reaper_handles { h.abort(); }
+                println!("All servers stopped.");
+            }
+            r = &mut api_handle => {
+                println!("API server exited: {:?}", r);
+                println!("Stopping frontend server...");
+                terminate_gracefully(&mut frontend, SHUTDOWN_GRACE_PERIOD).await;
+            }
+            r = frontend.wait() => {
+                println!("Frontend exited: {:?}", r);
+                // Signal shutdown to stop API + factories
+                let _ = shutdown_tx.send(true);
+                {
+                    let reg = registry_for_shutdown.read().await;
+                    for sup in reg.supervisors() {
+                        sup.stop_all().await;
+                    }
+                }
+                for h in reaper_handles { h.abort(); }
+            }
         }
     }
 
@@ -1136,6 +1221,7 @@ exit 1",
             backend_port: 3000,
             frontend_port: 5173,
             workspace: Some(missing),
+            extra_folders: vec![],
             legacy_node_api: false,
             no_open: true,
         };

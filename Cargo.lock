@@ -2764,6 +2764,7 @@ dependencies = [
  "chrono",
  "futures",
  "jsonschema",
+ "nix 0.29.0",
  "ralph-core",
  "reqwest 0.12.28",
  "rmcp",
