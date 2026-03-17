@@ -110,6 +110,7 @@ pub async fn run_loop_impl(
     resume_loop_id: Option<String>,
     output_tx: Option<std::sync::mpsc::Sender<ralph_adapters::StreamLine>>,
     iteration_counter: Option<Arc<std::sync::atomic::AtomicU32>>,
+    event_tx: Option<std::sync::mpsc::Sender<(String, serde_json::Value)>>,
 ) -> Result<TerminationReason> {
     // Set up process group leadership per spec
     // "The orchestrator must run as a process group leader"
@@ -472,6 +473,17 @@ pub async fn run_loop_impl(
                 started_at: rpc_state_started_at,
             };
             let _ = tx.try_send(started_event);
+        }
+
+        // Emit worker lifecycle event (for factory dashboard)
+        if let Some(ref tx) = event_tx {
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let _ = tx.send(("worker.lifecycle".to_string(), serde_json::json!({
+                "event": "started",
+                "backend": config.cli.backend,
+                "max_iterations": config.event_loop.max_iterations,
+                "started_at": now,
+            })));
         }
 
         Some(RpcSharedState {
@@ -887,6 +899,23 @@ pub async fn run_loop_impl(
                 terminated_at,
             };
             let _ = tx.try_send(terminate_event);
+        }
+
+        // Emit worker lifecycle terminated event (for factory dashboard)
+        if let Some(ref tx) = event_tx {
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let reason_str = match reason {
+                TerminationReason::CompletionPromise => "completed",
+                TerminationReason::MaxIterations => "max_iterations",
+                TerminationReason::Interrupted | TerminationReason::Stopped => "interrupted",
+                _ => "error",
+            };
+            let _ = tx.send(("worker.lifecycle".to_string(), serde_json::json!({
+                "event": "terminated",
+                "reason": reason_str,
+                "total_iterations": state.iteration,
+                "terminated_at": now,
+            })));
         }
     };
 
@@ -1591,6 +1620,17 @@ pub async fn run_loop_impl(
             let _ = tx.try_send(start_event);
         }
 
+        // Emit worker iteration_started event (for factory dashboard)
+        if let Some(ref tx) = event_tx {
+            let _ = tx.send(("worker.iteration.started".to_string(), serde_json::json!({
+                "iteration": iteration,
+                "max_iterations": config.event_loop.max_iterations,
+                "hat": display_hat.as_str(),
+                "hat_display": hat_display,
+                "backend": config.cli.backend,
+            })));
+        }
+
         // Per spec: Print iteration demarcation separator
         // "Each iteration must be clearly demarcated in the output so users can
         // visually distinguish where one iteration ends and another begins."
@@ -1912,6 +1952,22 @@ pub async fn run_loop_impl(
                 loop_complete_triggered,
             };
             let _ = tx.try_send(end_event);
+        }
+
+        // Emit worker iteration_ended event (for factory dashboard)
+        if let Some(ref tx) = event_tx {
+            let duration_ms = iteration_started_at.elapsed().as_millis() as u64;
+            let loop_complete_triggered = output.contains(&config.event_loop.completion_promise);
+            let _ = tx.send(("worker.iteration.ended".to_string(), serde_json::json!({
+                "iteration": iteration,
+                "duration_ms": duration_ms,
+                "cost_usd": outcome.total_cost_usd,
+                "input_tokens": outcome.input_tokens,
+                "output_tokens": outcome.output_tokens,
+                "cache_read_tokens": outcome.cache_read_tokens,
+                "cache_write_tokens": outcome.cache_write_tokens,
+                "loop_complete_triggered": loop_complete_triggered,
+            })));
         }
 
         // Log events from output before processing
@@ -4892,6 +4948,7 @@ pub async fn start_loop(
         None,               // no explicit loop ID
         None,               // output_tx — only used by factory workers
         None,               // iteration_counter — only used by factory workers
+        None,               // event_tx — only used by factory workers
     )
     .await
 }

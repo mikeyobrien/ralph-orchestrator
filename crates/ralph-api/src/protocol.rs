@@ -135,6 +135,10 @@ pub const STREAM_TOPICS: &[&str] = &[
     "preset.refreshed",
     "error.raised",
     "stream.keepalive",
+    "worker.iteration.started",
+    "worker.iteration.ended",
+    "worker.hat.changed",
+    "worker.lifecycle",
 ];
 
 #[derive(Debug, Clone, Deserialize)]

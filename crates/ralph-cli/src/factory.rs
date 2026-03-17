@@ -318,6 +318,56 @@ fn uuid_v4_fast() -> String {
     format!("{:016x}-{:016x}", ts as u64, rand_bits)
 }
 
+/// Spawns a tokio task that reads structured `(topic, payload)` tuples from the
+/// receiver and publishes them as `_internal.publish` RPCs to the API server.
+fn spawn_event_publisher(
+    rx: std::sync::mpsc::Receiver<(String, serde_json::Value)>,
+    api_url: String,
+    task_id: String,
+) -> tokio::task::JoinHandle<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    let rpc_url = format!("{api_url}/rpc/v1");
+
+    tokio::spawn(async move {
+        let (event_tx, mut event_rx) =
+            tokio::sync::mpsc::channel::<(String, serde_json::Value)>(256);
+        let reader_handle = tokio::task::spawn_blocking(move || {
+            while let Ok(event) = rx.recv() {
+                if event_tx.blocking_send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
+        while let Some((topic, payload)) = event_rx.recv().await {
+            let body = serde_json::json!({
+                "apiVersion": "v1",
+                "id": format!("evt-{}", uuid_v4_fast()),
+                "method": "_internal.publish",
+                "params": {
+                    "topic": topic,
+                    "resourceType": "worker",
+                    "resourceId": task_id,
+                    "payload": payload,
+                },
+                "meta": {
+                    "idempotencyKey": format!("evt-{}", uuid_v4_fast()),
+                }
+            });
+
+            if let Err(e) = client.post(&rpc_url).json(&body).send().await {
+                warn!(error = %e, topic = %topic, "Failed to publish worker event to API");
+            }
+        }
+
+        reader_handle.abort();
+    })
+}
+
 /// Gets the current branch name for a git repository.
 fn get_current_branch(repo_root: &Path) -> Result<String, String> {
     let output = Command::new("git")
@@ -541,6 +591,15 @@ async fn run_worker_loop(
             (None, None)
         };
 
+        // Set up structured event streaming channel for worker dashboard events
+        let (event_tx, event_publisher_handle) = if let Some(url) = &api_url {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let handle = spawn_event_publisher(rx, url.clone(), task_id.clone());
+            (Some(tx), Some(handle))
+        } else {
+            (None, None)
+        };
+
         // Iteration counter shared between the heartbeat task and the loop runner
         let iteration_counter = Arc::new(AtomicU32::new(0));
         let max_iterations = task_config.event_loop.max_iterations;
@@ -580,6 +639,7 @@ async fn run_worker_loop(
             None,        // no resume loop id
             output_tx,
             Some(iteration_counter),
+            event_tx,
         )
         .await;
 
@@ -587,10 +647,13 @@ async fn run_worker_loop(
         let _ = hb_stop_tx.send(true);
         let _ = heartbeat_handle.await;
 
-        // Drop the sender to signal the publisher to flush and exit
-        // (output_tx was moved into run_loop_impl, so it's already dropped)
+        // Drop the senders to signal the publishers to flush and exit
+        // (output_tx and event_tx were moved into run_loop_impl, so they're already dropped)
         if let Some(handle) = publisher_handle {
             // Give the publisher a moment to flush remaining lines
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        }
+        if let Some(handle) = event_publisher_handle {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
 

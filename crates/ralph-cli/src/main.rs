@@ -1886,6 +1886,7 @@ async fn run_command(
             args.loop_id,
             None, // output_tx — only used by factory workers
             None, // iteration_counter — only used by factory workers
+            None, // event_tx — only used by factory workers
         )
         .await?
     };
@@ -2291,6 +2292,7 @@ async fn resume_command(
         None,       // Deprecated resume command doesn't support --loop-id
         None,       // output_tx — only used by factory workers
         None,       // iteration_counter — only used by factory workers
+        None,       // event_tx — only used by factory workers
     )
     .await?;
     let exit_code = reason.exit_code();
