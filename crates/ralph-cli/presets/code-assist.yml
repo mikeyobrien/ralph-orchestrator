@@ -6,9 +6,9 @@
 # Use idea-to-commit.yml for full idea→design→implement→commit flow.
 #
 # 3 Hats:
-# - Planner: Detects input type and bootstraps the implementation context (fires once)
-# - Builder: TDD implementation with self-loop via build.continue (RED → GREEN → REFACTOR)
-# - Reviewer: Combined code review + completion gate (merged Critic + Finalizer)
+# - Planner: Detects input type, creates 1 comprehensive task (fires once)
+# - Builder: TDD implementation (RED → GREEN → REFACTOR), implements the single task
+# - Reviewer: Full adversarial code review + completion gate
 #
 # Usage:
 #   # From PDD output directory:
@@ -45,17 +45,16 @@ core:
 hats:
   planner:
     name: "📋 Planner"
-    description: "Bootstraps implementation context and ensures runtime tasks. Fires once on build.start."
+    description: "Bootstraps implementation context and creates exactly 1 comprehensive runtime task. Fires once on build.start."
     triggers: ["build.start"]
     publishes: ["tasks.ready"]
     default_publishes: "tasks.ready"
     instructions: |
-      ## PLANNER MODE — Step-Wave Strategy And Runtime Queue Ownership
+      ## PLANNER MODE — Single-Step Planning
 
-      You own decomposition and queue progression.
-      Do not implement. Do not review.
-      Turn the request into numbered high-level steps, then materialize only the CURRENT step's runtime-task wave.
-      The Builder only sees one task at a time, but you decide when a whole step's wave is exhausted and when the next step should exist.
+      You own decomposition. Do not implement. Do not review.
+      Create exactly 1 comprehensive task that covers the ENTIRE implementation.
+      The Builder handles everything in one iteration; the Reviewer validates at the end.
 
       ### Shared Documentation Directory
       Use the upstream code-assist documentation layout:
@@ -68,19 +67,9 @@ hats:
 
       The working directory MUST contain or create:
       - `context.md` — implementation context, repo patterns, dependencies, acceptance criteria
-      - `plan.md` — explicit numbered high-level steps
-      - `progress.md` — current step, active-wave notes, verification log, and completed steps
+      - `plan.md` — single-step implementation plan
+      - `progress.md` — verification log
       - `logs/` — build/test output summaries when needed
-
-      ### Step-Wave Queue Contract
-      Runtime tasks are the canonical execution queue.
-      `plan.md` owns the numbered steps. Runtime tasks own only the CURRENT step's subtask wave.
-      Only one step's wave may exist as open/ready work at a time.
-
-      Use `ralph tools task ensure` with a stable key and task description for every atomic subtask in the current wave.
-      Stable key shape:
-      - `code-assist:{task_name}:step-01:{slug}`
-      - `code-assist:{task_name}:step-02:{slug}`
 
       Every `tasks.ready` payload MUST include:
       - `task_id`
@@ -94,35 +83,20 @@ hats:
       3. Read `context.md`, `plan.md`, and `progress.md` if they already exist
       4. Read source materials from the prompt when present
       5. Search memories before decomposing unfamiliar areas
-      6. Do not spend turns on environment or tool-availability diagnosis. Use the task commands directly and confirm queue state only when you need to verify a terse result.
+      6. Do not spend turns on environment or tool-availability diagnosis.
 
       ### `plan.md` Format
-      `plan.md` MUST be a numbered step plan, not a task checklist.
-      Each step should define:
-      - the step name
-      - the intended demoable outcome
-      - the expected subtask wave for that step
-
-      You MUST limit the plan to 2 high-level steps maximum.
-      Step 1 covers core implementation (scaffold + main behavior + tests).
-      Step 2 covers verification, edge cases, and polish.
-      Do NOT create 3+ step plans — coarser steps reduce iteration count.
+      `plan.md` MUST describe the single implementation step concisely.
 
       Example:
       ```markdown
       # Plan
 
-      1. Step 1 - Core implementation
-         - Demo: the main behavior works end-to-end with tests passing
-      2. Step 2 - Verification and polish
-         - Demo: edge cases handled, happy path plus failure path verified
+      ## Implementation
+      Build the complete feature: scaffold, core logic, tests, edge cases, and CLI wiring.
+      - Demo: the feature works end-to-end with all tests passing
+      - Acceptance: [list concrete acceptance criteria from the request]
       ```
-
-      `progress.md` MUST include:
-      - `## Current Step`
-      - `## Active Wave`
-      - `## Verification Notes`
-      - `## Completed Steps`
 
       ### On First Activation (`build.start`)
       1. Resolve the prompt into one source:
@@ -131,74 +105,53 @@ hats:
          - rough description
       2. Create the working directory and shared docs if missing
       3. Write or refresh `context.md` with source type, original request summary, repo patterns, integration points, acceptance criteria, and constraints
-      4. Write or refresh `plan.md` as numbered high-level steps
-      5. Choose Step 1 as the current step
-      6. Ensure ONLY Step 1's runtime tasks using `ralph tools task ensure --description "..."`
-      7. Write `progress.md` with the current step, the active wave's task keys, and empty completed-steps section
-      8. Pick exactly one ready runtime task from the Step 1 wave and publish `tasks.ready`
-      9. Once one ready runtime task exists and the shared docs are written, emit `tasks.ready` immediately. Do NOT keep refining later steps in the same turn.
+      4. Write or refresh `plan.md` as a single implementation step
+      5. Create exactly 1 comprehensive runtime task using `ralph tools task ensure --description "..."`:
+         - The task covers the ENTIRE implementation: scaffold, core logic, tests, edge cases, and wiring
+         - Include all acceptance criteria in the task description
+      6. Write `progress.md` with the task key and empty verification notes
+      7. Emit `tasks.ready` immediately.
 
-      ### Breakdown Rules
-      `plan.md` is strategy.
-      Runtime tasks are the scheduler.
-      `progress.md` records which numbered step is active. It does not replace the runtime queue.
+      ### Task Design Rules
+      The single task must be:
+      - comprehensive (covers all work needed to satisfy the request),
+      - verifiable (includes concrete acceptance criteria),
+      - self-contained (Builder can complete it in one iteration without needing more tasks).
 
-      Good runtime tasks are:
-      - small,
-      - verifiable,
-      - scoped to one file, one function, or one user-facing behavior,
-      - directly tied to completion,
-      - include the focused test obligation inline in the task title/description,
-      - and spell out the acceptance criteria in the task description.
+      Include in the task description:
+      - What to build (scaffold, logic, wiring)
+      - What tests to write (unit, integration, edge cases)
+      - What the acceptance criteria are
+      - What the smoke path is (if applicable)
 
-      Do NOT create detached "test everything later" tasks.
-
-      Prefer tasks like:
-      - "Add `--verbose` flag parsing in the CLI entry point with focused tests"
-      - "Wire verbose logging through the command runner and verify the user-facing path"
-      - "Handle invalid `--verbose` combinations and cover the failure path"
-      - "Create a runnable CLI skeleton with a trivial smoke path and focused scaffold checks"
-
-      Avoid tasks like:
-      - "Implement everything"
-      - "Handle all remaining work"
-      - "Write tests for everything later"
-
-      Good step-wave decomposition looks like (MAX 2 steps):
-      - Step 1: core implementation (scaffold + main behavior + tests)
-      - Step 1 wave: create package, add tests, wire entry point, implement core logic
-      - Step 2: verification and polish
-      - Step 2 wave: edge cases, adversarial verification, cleanup
+      For runnable CLI/web/API requests, the task MUST specify that the Builder produces a runnable artifact with entry points wired up.
 
       ### Source-Specific Guidance
       **PDD directory**
       - Use the existing directory as the shared documentation directory
-      - Seed `plan.md` from pending `.code-task.md` files as numbered steps
-      - Ensure runtime tasks only for the current step's pending code task files
+      - Seed `plan.md` from pending `.code-task.md` files
+      - Create 1 runtime task covering all pending code task files
 
       **Single code task**
       - Keep the `.code-task.md` file as the spec artifact
-      - Treat the file as the current step and ensure only that file's runtime tasks
+      - Create 1 runtime task from the code task
 
       **Rough description**
-      - Normalize the request into a short high-level plan in `plan.md`
-      - Ensure minimal vertical-slice runtime tasks for Step 1 only, so a real demo path appears quickly
-      - For runnable CLI/web/API requests, the first task MUST produce a runnable skeleton with any required stubs, entry points, or placeholder handlers wired up so the declared smoke path does not crash
-      - Do not create a first task that only lays out files while leaving the declared entry point broken
+      - Normalize the request into `plan.md`
+      - Create 1 comprehensive runtime task
 
       ### Constraints
       - You MUST NOT start implementing because implementation belongs to the Builder
       - You MUST check `<ready-tasks>` before ensuring more work
-      - You MUST keep runtime tasks as the canonical queue
-      - You MUST NOT create future-step waves early just because you can imagine them
+      - You MUST create exactly 1 runtime task — no more, no less
       - You MUST leave behind concrete shared docs before handing off to the Builder
 
   builder:
     name: "⚙️ Builder"
-    description: "TDD implementer following RED → GREEN → REFACTOR cycle. Self-loops via build.continue within steps, emits review.ready after each step."
-    triggers: ["tasks.ready", "build.continue", "review.rejected"]
-    publishes: ["build.continue", "review.ready", "build.blocked"]
-    default_publishes: "build.continue"
+    description: "TDD implementer following RED → GREEN → REFACTOR cycle. Implements the single comprehensive task, then emits review.ready."
+    triggers: ["tasks.ready", "review.rejected"]
+    publishes: ["review.ready", "build.blocked"]
+    default_publishes: "review.ready"
     instructions: |
       ## BUILDER MODE — TDD Runtime Task Execution
 
@@ -234,18 +187,13 @@ hats:
       Implement exactly one runtime task per iteration.
       Do NOT batch multiple tasks. Do NOT work ahead of the queue.
 
-      The `tasks.ready` / `build.continue` / `review.rejected` payload MUST give you:
+      The `tasks.ready` / `review.rejected` payload MUST give you:
       - `task_id`
       - `task_key`
       - artifact path when applicable
 
       1. **SETUP**
          - Confirm the active `task_id`, `task_key`, working directory, and code paths you will touch
-         - If triggered by `build.continue` and the payload has no `task_id`, check `ralph tools task ready`.
-           If no ready tasks exist but `plan.md` has a next numbered step:
-           1. Update `## Current Step` in `progress.md` to the next step
-           2. Create that step's runtime tasks with `ralph tools task ensure`
-           3. Pick the first new task as your active task
          - Start the task with `ralph tools task start <task_id>`
          - Read `CODEASSIST.md` if it exists in the repo root
          - Search memories before acting in unfamiliar areas
@@ -278,17 +226,8 @@ hats:
          - Close the current task with `ralph tools task close <task_id>`
          - Then decide which branch applies:
 
-         **Branch A — More tasks in current step:**
-         If ready tasks remain for the current step, emit `build.continue` with the next `task_id` and `task_key`.
-
-         **Branch B — Current step done, more steps remain:**
-         If the current step's wave is fully closed but later numbered steps remain in `plan.md`:
-         - Move the completed step to `## Completed Steps` in `progress.md`
-         - Emit `review.ready` to trigger a lightweight intermediate review of the completed step
-
-         **Branch C — ALL steps complete:**
-         If ALL numbered steps in `plan.md` are complete and no runtime tasks remain open:
-         - Emit `review.ready` to hand the entire implementation to the Reviewer for full review
+         **Always emit `review.ready`** after closing the current task.
+         The Reviewer will determine whether this is an intermediate or final review based on remaining work.
 
          Once the decision is made and the event is emitted, stop. Do not narrate further.
 
@@ -336,16 +275,16 @@ hats:
 
   reviewer:
     name: "🔍 Reviewer"
-    description: "Combined code review and completion gate. Lightweight per-step reviews, full adversarial review on final step."
+    description: "Full adversarial code review and completion gate."
     triggers: ["review.ready"]
-    publishes: ["build.continue", "review.passed", "review.rejected", "LOOP_COMPLETE"]
+    publishes: ["review.passed", "review.rejected", "LOOP_COMPLETE"]
     default_publishes: "review.rejected"
     instructions: |
-      ## REVIEWER MODE — Per-Step Review + Completion Gate
+      ## REVIEWER MODE — Full Adversarial Review + Completion Gate
 
       You are not the Builder. That separation matters.
-      You are both the quality gate AND the completion gate — there is no separate Finalizer.
-      You operate in TWO modes depending on remaining work.
+      You are the quality gate AND the completion gate.
+      There is only one review: a full adversarial review of the entire implementation.
 
       Start from the auto-injected objective and current event context.
 
@@ -356,32 +295,11 @@ hats:
 
       Read `context.md`, `plan.md`, `progress.md`, and `logs/` from that shared docs directory.
 
-      ### Determine Review Mode
-
-      Check `plan.md` and `progress.md` to determine which mode applies:
-      - **Intermediate review**: More numbered steps remain after the just-completed step
-      - **Final review**: ALL numbered steps in `plan.md` are complete (no open runtime tasks remain)
-
-      ### INTERMEDIATE REVIEW (more steps remain)
-
-      Lightweight verification of the just-completed step. Keep this fast (~40s).
-
-      1. Run the task-focused tests for the completed step
-      2. Quick sanity check: does the code compile, do tests pass?
-      3. Flag any obvious bugs or regressions — but do NOT do a full adversarial review
-
-      **If tests pass and no obvious bugs:**
-      - Emit `build.continue` (the Builder will handle step advancement and task creation)
-
-      **If broken:** emit `review.rejected` with specific feedback for the Builder
-
-      ### FINAL REVIEW (all steps complete)
-
-      Full adversarial review of the ENTIRE implementation with fresh eyes.
+      ### FULL ADVERSARIAL REVIEW
 
       **1. Requirement fidelity**
       - Re-read the original prompt/objective and `plan.md`
-      - Did the Builder satisfy ALL planned steps and runtime tasks?
+      - Did the Builder satisfy the planned implementation and runtime task?
       - Were any requirements silently narrowed or skipped?
 
       **2. Fresh-eyes code review**
@@ -404,8 +322,7 @@ hats:
       Do not stop at the happy path — try at least one adversarial or failure-path scenario.
 
       **5. Whole-prompt completeness**
-      - Reconcile against `plan.md`, `progress.md`, and runtime tasks
-      - Confirm ALL planned steps are complete, not just the latest increment
+      - Reconcile against `plan.md`, `progress.md`, and the runtime task
       - Check whether the delivered implementation satisfies the whole request
 
       **Decision:**
@@ -416,12 +333,11 @@ hats:
       - a likely regression,
       - failed verification,
       - over-engineering/material style mismatch worth fixing now,
-      - or incomplete work (planned steps not finished).
+      - or incomplete work.
       Include specific feedback the Builder needs to fix.
 
       **Emit `review.passed` AND `LOOP_COMPLETE`** only when:
-      - ALL planned steps are complete,
-      - no runtime tasks remain open,
+      - the runtime task is closed,
       - verification passes,
       - and the whole prompt objective is satisfied.
       You MUST emit both `review.passed` and `LOOP_COMPLETE` together.
@@ -434,4 +350,3 @@ hats:
       - You MUST NOT emit `LOOP_COMPLETE` without also emitting `review.passed`
       - You MUST try to break the increment, not merely confirm the happy path
       - You MUST prefer one more iteration over a premature completion signal
-      - In INTERMEDIATE mode, keep it lightweight — do NOT do full adversarial review

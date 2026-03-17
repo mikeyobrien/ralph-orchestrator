@@ -428,27 +428,12 @@ mod tests {
         assert!(
             planner
                 .instructions
-                .contains("one file, one function, or one user-facing behavior")
+                .contains("Create exactly 1 comprehensive task")
         );
         assert!(
             planner
                 .instructions
-                .contains("Runtime tasks are the canonical execution queue")
-        );
-        assert!(
-            planner
-                .instructions
-                .contains("Use `ralph tools task ensure` with a stable key")
-        );
-        assert!(
-            planner
-                .instructions
-                .contains("`code-assist:{task_name}:step-01:{slug}`")
-        );
-        assert!(
-            planner
-                .instructions
-                .contains("`code-assist:{task_name}:step-02:{slug}`")
+                .contains("ralph tools task ensure")
         );
         assert_eq!(planner.triggers, vec!["build.start".to_string()]);
         assert!(planner.instructions.contains("`task_id`"));
@@ -460,19 +445,7 @@ mod tests {
         assert!(
             planner
                 .instructions
-                .contains("`plan.md` MUST be a numbered step plan")
-        );
-        assert!(planner.instructions.contains("`## Current Step`"));
-        assert!(planner.instructions.contains("`## Active Wave`"));
-        assert!(
-            planner
-                .instructions
-                .contains("Only one step's wave may exist as open/ready work at a time.")
-        );
-        assert!(
-            planner
-                .instructions
-                .contains("You MUST NOT create future-step waves early")
+                .contains("You MUST create exactly 1 runtime task")
         );
 
         let builder = config
@@ -534,20 +507,16 @@ mod tests {
         assert_eq!(
             reviewer.publishes,
             vec![
-                "build.continue".to_string(),
                 "review.passed".to_string(),
                 "review.rejected".to_string(),
                 "LOOP_COMPLETE".to_string(),
             ]
         );
-        assert_eq!(
-            reviewer.triggers,
-            vec!["review.ready".to_string()]
-        );
+        assert_eq!(reviewer.triggers, vec!["review.ready".to_string()]);
         assert!(
             reviewer
                 .instructions
-                .contains("You are both the quality gate AND the completion gate")
+                .contains("You are the quality gate AND the completion gate")
         );
         assert!(
             reviewer
@@ -557,7 +526,7 @@ mod tests {
         assert!(
             reviewer
                 .instructions
-                .contains("ALL planned steps are complete")
+                .contains("the whole prompt objective is satisfied")
         );
     }
 

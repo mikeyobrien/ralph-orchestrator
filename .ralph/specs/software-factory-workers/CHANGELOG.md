@@ -1,5 +1,23 @@
 # Software Factory Workers — Changelog
 
+## 2026-03-16 (worker inspect)
+
+### Added
+
+- **`ralph worker inspect <worker-id>`** — New CLI subcommand that resolves a worker's worktree from its `current_task_id`, lists all `.ralph/agent/**/*.md` files with contents (truncated at 50 lines), and displays `tasks.jsonl` subtasks in table format. Handles idle workers (no task), missing worktrees, and absent files gracefully.
+- **6 integration tests** in `crates/ralph-cli/tests/integration_worker_inspect.rs` covering: worker not found, idle worker, missing worktree, agent file display, subtask table rendering, and long file truncation.
+- **ralph-tools.md documentation** — Added `ralph worker inspect <worker-id>` to the Worker Commands reference and an "Inspecting Workers" subsection explaining agent files, subtasks, and worktree resolution.
+
+### Crates affected
+
+- `ralph-cli` — `worker_cli.rs` (new `Inspect` variant + `InspectArgs`, `inspect_worker()` function), `main.rs` (command wiring)
+- `ralph-core` — `data/ralph-tools.md` (documentation update)
+
+## Suggested AGENTS.md Updates
+
+- **Code Locations table**: Add `worker_cli.rs` entry — `crates/ralph-cli/src/worker_cli.rs` now includes `inspect_worker()` for worktree agent file discovery alongside existing `list`/`show`/`deregister`/`reclaim`/`summary` commands.
+- **Worker → worktree mapping convention**: Workers resolve their worktree path as `.worktrees/<current_task_id>/` relative to workspace root. This pattern is used by `inspect` and should be followed by any future commands that need to access worker-local state.
+
 ## 2026-03-16 (git status)
 
 ### Added
