@@ -902,7 +902,7 @@ mod tests {
         let nested = root.join("deep/work/tree");
         std::fs::create_dir_all(&nested).expect("nested dir");
         let _cwd = CwdGuard::set_ignoring_workspace_root_env(&nested);
-        let expected_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let expected_root = root.canonicalize().unwrap_or_else(|_| root.clone());
 
         assert_eq!(
             get_tasks_path(None),

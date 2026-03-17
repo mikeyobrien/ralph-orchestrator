@@ -229,10 +229,20 @@ Manage factory workers that register, heartbeat, and claim tasks from a shared p
 ```bash
 ralph worker list                     # List all registered workers (default)
 ralph worker show <worker-id>         # Show worker details
+ralph worker inspect <worker-id>     # Inspect worker's agent files, memories, and subtasks
 ralph worker deregister <worker-id>   # Remove a stale worker entry
 ralph worker reclaim                  # Manually trigger reclaim of expired leases
 ralph worker summary                  # Show worker summary (idle/busy/blocked/dead counts)
 ```
+
+### Inspecting Workers
+
+`ralph worker inspect` shows a worker's live state inside its worktree:
+
+- **Agent files** — All `.ralph/agent/**/*.md` files (scratchpad, memories, decisions, etc.), truncated to 50 lines each
+- **Subtasks** — Runtime tasks from `.ralph/agent/tasks.jsonl` with ID, status, priority, and title
+
+The worktree is resolved from the worker's `current_task_id` → `.worktrees/<task_id>/`. If the worker has no current task or the worktree no longer exists on disk, the command reports that and exits cleanly.
 
 ### Worker Mode
 
