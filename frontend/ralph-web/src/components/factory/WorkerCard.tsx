@@ -16,9 +16,16 @@ interface Worker {
   registeredAt?: string;
 }
 
+interface Subtask {
+  id: string;
+  status: string;
+  title: string;
+  priority: number;
+}
+
 interface WorkerCardProps {
   worker: Worker;
-  currentTask?: { title?: string; claimedAt?: string } | null;
+  currentTask?: { title?: string; claimedAt?: string; subtasks?: Subtask[] } | null;
 }
 
 const STATUS_VARIANT: Record<string, "secondary" | "default" | "destructive" | "outline"> = {
@@ -87,6 +94,25 @@ export function WorkerCard({ worker, currentTask }: WorkerCardProps) {
           "—"
         )}
       </div>
+
+      {currentTask?.subtasks && currentTask.subtasks.length > 0 && (() => {
+        const done = currentTask.subtasks.filter(s => s.status === "closed").length;
+        const total = currentTask.subtasks.length;
+        const pct = Math.round((done / total) * 100);
+        return (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {done}/{total} done
+            </span>
+          </div>
+        );
+      })()}
 
       <div className="flex items-center gap-2 flex-wrap">
         {worker.currentHat && (

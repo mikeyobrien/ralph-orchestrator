@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
@@ -18,6 +19,7 @@ use crate::planning_domain::{
 };
 use crate::protocol::{API_VERSION, RpcRequestEnvelope};
 use crate::stream_domain::{StreamAckParams, StreamSubscribeParams, StreamUnsubscribeParams};
+use crate::supervisor::FactoryCreateParams;
 use crate::task_domain::{TaskCreateParams, TaskListParams, TaskRecord, TaskUpdateInput};
 use crate::worker_domain::{
     WorkerHeartbeatInput, WorkerReclaimExpiredInput, WorkerRecord, WorkerStatus,
@@ -43,6 +45,12 @@ impl RpcRuntime {
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
             method if method.starts_with("worker.") => self.dispatch_worker(request),
+            method if method.starts_with("folder.") => {
+                Err(ApiError::service_unavailable(
+                    "folder methods require multi-folder mode (start with `ralph web`)",
+                ))
+            }
+            method if method.starts_with("factory.") => self.dispatch_factory(request),
             method if method.starts_with("board.") => self.dispatch_board(request),
             method if method.starts_with("git.") => self.dispatch_git(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
@@ -90,7 +98,7 @@ impl RpcRuntime {
             "task.get" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.get(&params.id)?;
-                Ok(json!({ "task": enrich_task(task, &workers) }))
+                Ok(json!({ "task": enrich_task_with_subtasks(task, &workers, &self.config.workspace_root) }))
             }
             "task.ready" => {
                 let tasks = self.task_domain_mut()?.ready();
@@ -395,6 +403,38 @@ impl RpcRuntime {
         }
     }
 
+    fn dispatch_factory(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        let supervisor = self.supervisor()?;
+
+        match request.method.as_str() {
+            "factory.create" => {
+                let params: FactoryCreateParams = self.parse_params(request)?;
+                let factory = tokio::runtime::Handle::current()
+                    .block_on(supervisor.create_factory(params))
+                    .map_err(|e| ApiError::internal(format!("failed to spawn factory: {e}")))?;
+                Ok(json!({ "factory": factory }))
+            }
+            "factory.stop" => {
+                let params: IdOnlyParams = self.parse_params(request)?;
+                tokio::runtime::Handle::current()
+                    .block_on(supervisor.stop_factory(&params.id))
+                    .map_err(|e| {
+                        ApiError::not_found(format!("failed to stop factory: {e}"))
+                    })?;
+                Ok(json!({ "success": true }))
+            }
+            "factory.list" => {
+                let factories = tokio::runtime::Handle::current()
+                    .block_on(supervisor.list_factories());
+                Ok(json!({ "factories": factories }))
+            }
+            _ => Err(ApiError::service_unavailable(format!(
+                "method '{}' is recognized but not implemented",
+                request.method
+            ))),
+        }
+    }
+
     fn dispatch_board(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
         match request.method.as_str() {
             "board.summary" => self.board_summary(),
@@ -582,7 +622,7 @@ impl RpcRuntime {
                     .as_deref()
                     .and_then(|tid| all_tasks.iter().find(|t| t.id == tid))
                     .cloned()
-                    .map(|t| enrich_task(t, &workers));
+                    .map(|t| enrich_task_with_subtasks(t, &workers, &self.config.workspace_root));
 
                 json!({
                     "workerId": w.worker_id,
@@ -859,6 +899,49 @@ impl RpcRuntime {
         );
         Ok(json!({ "success": true }))
     }
+}
+
+/// Load agent subtasks from a worker's worktree TaskStore (read-only).
+/// Returns empty vec if the file doesn't exist or can't be read.
+fn load_subtasks(workspace_root: &Path, task_id: &str) -> Vec<Value> {
+    let tasks_path = workspace_root
+        .join(".worktrees")
+        .join(task_id)
+        .join(".ralph/agent/tasks.jsonl");
+
+    if !tasks_path.exists() {
+        return Vec::new();
+    }
+
+    match ralph_core::TaskStore::load(&tasks_path) {
+        Ok(store) => store
+            .all()
+            .iter()
+            .map(|t| serde_json::to_value(t).unwrap_or_default())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Enrich a task with subtasks from the worker's worktree.
+/// Only loads subtasks for active tasks (in_progress/in_review) since
+/// completed/cancelled tasks have their worktrees cleaned up.
+fn enrich_task_with_subtasks(
+    task: TaskRecord,
+    workers: &BTreeMap<String, WorkerRecord>,
+    workspace_root: &Path,
+) -> Value {
+    let should_load = task.status == "in_progress" || task.status == "in_review";
+    let subtasks = if should_load {
+        load_subtasks(workspace_root, &task.id)
+    } else {
+        Vec::new()
+    };
+    let mut val = enrich_task(task, workers);
+    val.as_object_mut()
+        .unwrap()
+        .insert("subtasks".to_string(), json!(subtasks));
+    val
 }
 
 /// Enrich a single `TaskRecord` with computed fields derived from the worker snapshot.

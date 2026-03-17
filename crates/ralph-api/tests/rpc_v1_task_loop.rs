@@ -724,10 +724,15 @@ async fn task_worker_lease_fields_round_trip_persist_and_validate() -> Result<()
     );
     let (status, get_payload) = post_rpc(&client, &server, &get).await?;
     assert_eq!(status, 200);
-    assert_eq!(
-        get_payload["result"]["task"],
-        create_payload["result"]["task"]
-    );
+    // task.get now includes a "subtasks" field (empty array) that task.create does not,
+    // so compare field-by-field for the shared fields.
+    let get_task = &get_payload["result"]["task"];
+    let create_task = &create_payload["result"]["task"];
+    for key in ["id", "title", "status", "priority", "assigneeWorkerId", "claimedAt",
+                "leaseExpiresAt", "isClaimed", "isStale", "currentLoopId", "currentHat"] {
+        assert_eq!(get_task[key], create_task[key], "mismatch on field {key}");
+    }
+    assert_eq!(get_task["subtasks"], json!([]));
 
     let update = rpc_request(
         "req-task-worker-fields-update-1",

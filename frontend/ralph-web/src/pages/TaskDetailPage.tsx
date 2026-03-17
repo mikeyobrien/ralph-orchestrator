@@ -36,8 +36,24 @@ import {
   AlertCircle,
   FileQuestion,
   RefreshCw,
+  CheckCircle2,
+  Circle,
+  XCircle,
 } from "lucide-react";
 import type { TaskAction, TaskStatus } from "@/components/tasks/TaskDetailHeader";
+
+function SubtaskStatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case "closed":
+      return <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />;
+    case "in_progress":
+      return <Loader2 className="h-4 w-4 text-blue-500 shrink-0 animate-spin" />;
+    case "failed":
+      return <XCircle className="h-4 w-4 text-destructive shrink-0" />;
+    default:
+      return <Circle className="h-4 w-4 text-muted-foreground shrink-0" />;
+  }
+}
 
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -277,6 +293,24 @@ export function TaskDetailPage() {
         // Future: Pass metrics when backend supports token/cost tracking
         // metrics={{ tokensIn: task.tokensIn, tokensOut: task.tokensOut, estimatedCost: task.estimatedCost }}
       />
+
+      {/* Agent subtasks (from worker's worktree TaskStore) */}
+      {task.subtasks?.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-muted-foreground">
+            Agent Subtasks ({task.subtasks.filter((s: { status: string }) => s.status === "closed").length}/{task.subtasks.length})
+          </h3>
+          <div className="border rounded-lg divide-y text-sm">
+            {task.subtasks.map((st: { id: string; status: string; title: string; priority: number }) => (
+              <div key={st.id} className="flex items-center gap-3 px-3 py-1.5">
+                <SubtaskStatusIcon status={st.status} />
+                <span className="flex-1 truncate">{st.title}</span>
+                <span className="text-xs text-muted-foreground">P{st.priority}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* User steering UI for needs-review loops */}
       {associatedLoop?.status === "needs-review" && (
