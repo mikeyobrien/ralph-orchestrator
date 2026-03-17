@@ -796,6 +796,15 @@ pub struct EventLoopConfig {
     /// `{hat_id}.scope_violation` diagnostic events. Defaults to false (permissive).
     #[serde(default)]
     pub enforce_hat_scope: bool,
+
+    /// Number of consecutive identical event signatures before the loop is
+    /// considered stale. Defaults to 3. Presets with many waves can raise this.
+    #[serde(default = "default_stale_loop_threshold")]
+    pub stale_loop_threshold: u32,
+}
+
+fn default_stale_loop_threshold() -> u32 {
+    3
 }
 
 fn default_prompt_file() -> String {
@@ -836,6 +845,7 @@ impl Default for EventLoopConfig {
             required_events: Vec::new(),
             cancellation_promise: String::new(),
             enforce_hat_scope: false,
+            stale_loop_threshold: default_stale_loop_threshold(),
         }
     }
 }

@@ -110,21 +110,14 @@ impl LoopState {
         self.started_at.elapsed()
     }
 
-    fn event_counts_toward_stale_loop(event: &Event) -> bool {
-        !matches!(event.topic.as_str(), "task.complete")
-    }
-
     /// Record that an event has been seen during this loop run.
     ///
-    /// Also tracks consecutive same-signature emissions for stale loop detection.
+    /// Tracks consecutive identical-signature emissions for stale loop detection.
+    /// The signature includes topic, source, and a hash of the payload, so events
+    /// with different payloads (different task IDs, wave numbers, etc.) are
+    /// naturally distinguished without needing a topic exemption list.
     pub fn record_event(&mut self, event: &Event) {
         self.seen_topics.insert(event.topic.to_string());
-
-        if !Self::event_counts_toward_stale_loop(event) {
-            self.consecutive_same_signature = 0;
-            self.last_emitted_signature = Some(EventSignature::from_event(event));
-            return;
-        }
 
         let signature = EventSignature::from_event(event);
         if self.last_emitted_signature.as_ref() == Some(&signature) {
@@ -166,27 +159,25 @@ mod tests {
     use ralph_proto::Event;
 
     #[test]
-    fn repeated_task_complete_does_not_accumulate_stale_loop_count() {
+    fn same_topic_different_payloads_does_not_accumulate() {
+        // Events with the same topic but different payloads have different
+        // fingerprints, so the counter resets each time.
         let mut state = LoopState::new();
 
         state.record_event(&Event::new("task.complete", "task 1 complete"));
-        assert_eq!(state.consecutive_same_signature, 0);
+        assert_eq!(state.consecutive_same_signature, 1);
 
         state.record_event(&Event::new("task.complete", "task 2 complete"));
-        state.record_event(&Event::new("task.complete", "task 3 complete"));
+        assert_eq!(state.consecutive_same_signature, 1);
 
-        assert_eq!(state.consecutive_same_signature, 0);
-        assert_eq!(
-            state
-                .last_emitted_signature
-                .as_ref()
-                .map(|s| s.topic.as_str()),
-            Some("task.complete")
-        );
+        state.record_event(&Event::new("task.complete", "task 3 complete"));
+        assert_eq!(state.consecutive_same_signature, 1);
     }
 
     #[test]
-    fn repeated_non_progress_topics_still_accumulate_stale_loop_count() {
+    fn same_topic_same_payload_accumulates() {
+        // Identical events (same topic + same payload) accumulate, indicating
+        // the loop is stuck repeating the same action.
         let mut state = LoopState::new();
 
         state.record_event(&Event::new("task.resume", "same payload"));
@@ -201,5 +192,39 @@ mod tests {
                 .map(|s| s.topic.as_str()),
             Some("task.resume")
         );
+    }
+
+    #[test]
+    fn different_topics_reset_counter() {
+        let mut state = LoopState::new();
+
+        state.record_event(&Event::new("tasks.ready", "wave 1"));
+        state.record_event(&Event::new("review.ready", r#"{"task_id":"t1"}"#));
+        state.record_event(&Event::new("task.next", "continue"));
+        state.record_event(&Event::new("review.ready", r#"{"task_id":"t2"}"#));
+        state.record_event(&Event::new("wave.complete", "wave 1 done"));
+
+        assert_eq!(state.consecutive_same_signature, 1);
+    }
+
+    #[test]
+    fn wave_flow_with_distinct_payloads_never_accumulates() {
+        // Simulates a multi-wave flow where every event carries a distinct payload.
+        let mut state = LoopState::new();
+
+        // Wave 1
+        state.record_event(&Event::new("tasks.ready", r#"{"wave":1}"#));
+        state.record_event(&Event::new("review.ready", r#"{"task_id":"1a","wave_done":false}"#));
+        state.record_event(&Event::new("task.next", "continue 1a"));
+        state.record_event(&Event::new("review.ready", r#"{"task_id":"1b","wave_done":true}"#));
+        state.record_event(&Event::new("wave.complete", "wave 1"));
+
+        // Wave 2
+        state.record_event(&Event::new("tasks.ready", r#"{"wave":2}"#));
+        state.record_event(&Event::new("review.ready", r#"{"task_id":"2a","wave_done":true}"#));
+        state.record_event(&Event::new("wave.complete", "wave 2"));
+
+        // No event repeated with the same payload, so counter stays at 1
+        assert_eq!(state.consecutive_same_signature, 1);
     }
 }

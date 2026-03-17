@@ -4354,3 +4354,119 @@ fn worker_mode_prompt_without_ownership_omits_shared_workspace() {
         "prompt should not contain shared workspace when no ownership is set"
     );
 }
+
+#[test]
+fn test_wave_flow_does_not_trigger_stale_detection() {
+    // Simulate a 3-wave flow: P B B R P B B R P B R
+    // Each event carries a distinct payload (different task IDs, wave numbers),
+    // so the fingerprint-based stale detection never triggers.
+    let yaml = r#"
+event_loop:
+  stale_loop_threshold: 3
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["build.start", "wave.complete"]
+    publishes: ["tasks.ready"]
+  builder:
+    name: "Builder"
+    triggers: ["tasks.ready", "review.rejected", "task.next"]
+    publishes: ["review.ready"]
+  reviewer:
+    name: "Reviewer"
+    triggers: ["review.ready"]
+    publishes: ["task.next", "wave.complete", "review.rejected", "review.passed", "LOOP_COMPLETE"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("implement a big feature");
+
+    // Wave 1: Planner -> Builder(a) -> Reviewer -> Builder(b) -> Reviewer(wave done)
+    event_loop
+        .state
+        .record_event(&Event::new("tasks.ready", r#"{"wave":1,"tasks":["1a","1b"]}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("review.ready", r#"{"task_id":"1a","wave_done":false}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("task.next", "continue wave 1"));
+    event_loop
+        .state
+        .record_event(&Event::new("review.ready", r#"{"task_id":"1b","wave_done":true}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("wave.complete", "wave 1 passed"));
+
+    // Wave 2: Planner -> Builder(a) -> Reviewer -> Builder(b) -> Reviewer(wave done)
+    event_loop
+        .state
+        .record_event(&Event::new("tasks.ready", r#"{"wave":2,"tasks":["2a","2b"]}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("review.ready", r#"{"task_id":"2a","wave_done":false}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("task.next", "continue wave 2"));
+    event_loop
+        .state
+        .record_event(&Event::new("review.ready", r#"{"task_id":"2b","wave_done":true}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("wave.complete", "wave 2 passed"));
+
+    // Wave 3: Planner -> Builder(a) -> Reviewer(final)
+    event_loop
+        .state
+        .record_event(&Event::new("tasks.ready", r#"{"wave":3,"tasks":["3a"],"final_wave":true}"#));
+    event_loop
+        .state
+        .record_event(&Event::new("review.ready", r#"{"task_id":"3a","wave_done":true,"final":true}"#));
+
+    // Every event had a distinct payload, so counter never exceeded 1
+    assert_eq!(
+        event_loop.state.consecutive_same_signature, 1,
+        "Distinct payloads should keep stale count at 1"
+    );
+
+    // check_termination should not return LoopStale
+    let termination = event_loop.check_termination();
+    assert!(
+        !matches!(termination, Some(TerminationReason::LoopStale)),
+        "Wave-based flow should not trigger stale loop detection, got: {:?}",
+        termination
+    );
+}
+
+#[test]
+fn test_configurable_stale_threshold() {
+    // With a threshold of 5, 4 repeated events should NOT trigger stale detection
+    let yaml = r#"
+event_loop:
+  stale_loop_threshold: 5
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("test");
+
+    for _ in 0..4 {
+        event_loop
+            .state
+            .record_event(&Event::new("some.event", "same payload"));
+    }
+
+    assert!(
+        !matches!(event_loop.check_termination(), Some(TerminationReason::LoopStale)),
+        "4 repetitions should not trigger stale with threshold 5"
+    );
+
+    // 5th repetition should trigger it
+    event_loop
+        .state
+        .record_event(&Event::new("some.event", "same payload"));
+
+    assert!(
+        matches!(event_loop.check_termination(), Some(TerminationReason::LoopStale)),
+        "5 repetitions should trigger stale with threshold 5"
+    );
+}

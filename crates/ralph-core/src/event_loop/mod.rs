@@ -524,8 +524,8 @@ impl EventLoop {
             return Some(TerminationReason::ValidationFailure);
         }
 
-        // Check for stale loop: same event signature emitted 3+ times in a row
-        if self.state.consecutive_same_signature >= 3 {
+        // Check for stale loop: same event signature emitted N+ times in a row
+        if self.state.consecutive_same_signature >= self.config.event_loop.stale_loop_threshold {
             let topic = self
                 .state
                 .last_emitted_signature

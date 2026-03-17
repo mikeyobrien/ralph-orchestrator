@@ -92,7 +92,7 @@ event_loop:
 }
 
 #[test]
-fn test_repeated_task_complete_does_not_trigger_loop_stale() {
+fn test_repeated_task_complete_with_distinct_payloads_does_not_trigger_loop_stale() {
     let temp_dir = TempDir::new().unwrap();
     let ralph_dir = temp_dir.path().join(".ralph");
     fs::create_dir_all(&ralph_dir).unwrap();
@@ -121,8 +121,8 @@ event_loop:
     config.core.workspace_root = temp_dir.path().to_path_buf();
     let mut event_loop = EventLoop::new(config);
 
-    // Repeated `task.complete` handling should also read from the temp
-    // workspace without relying on or leaking process-global cwd changes.
+    // Each task.complete has a different payload, so the fingerprint differs
+    // and the stale counter stays at 1 (never accumulates).
     event_loop.process_events_from_jsonl().unwrap();
     let termination = event_loop.check_termination();
 
@@ -135,7 +135,7 @@ event_loop:
             .map(|sig| sig.topic.as_str()),
         Some("task.complete")
     );
-    assert_eq!(event_loop.state().consecutive_same_signature, 0);
+    assert_eq!(event_loop.state().consecutive_same_signature, 1);
 }
 
 #[test]

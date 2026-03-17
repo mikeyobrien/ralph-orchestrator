@@ -1,14 +1,13 @@
-# Code-Assist: Flexible TDD Implementation from Any Starting Point
-# Pattern: Adaptive Implementation Entry Point
+# Code-Assist: Wave-Based Multi-Task Decomposition
+# Pattern: Wave → Build → Review → Next Wave
 # Implements from PDD output, code tasks, or rough descriptions using TDD
 #
-# Extracted from idea-to-commit.yml - this preset handles the implementation phase only.
-# Use idea-to-commit.yml for full idea→design→implement→commit flow.
+# Planner fires per-wave — creates only the current wave's subtasks
+# Multiple Builders per wave — execute subtasks (parallel in factory, sequential in single-worker)
+# Reviewer gates each wave — validates the wave, triggers rework or advances
+# Planner re-activates after each wave — creates next wave based on what's done
 #
-# 3 Hats:
-# - Planner: Detects input type, creates 1 comprehensive task (fires once)
-# - Builder: TDD implementation (RED → GREEN → REFACTOR), implements the single task
-# - Reviewer: Full adversarial code review + completion gate
+# Flow: P B B B B R P B B B R(rework) B P B B R(done)
 #
 # Usage:
 #   # From PDD output directory:
@@ -25,9 +24,9 @@ event_loop:
   completion_promise: "LOOP_COMPLETE"
   required_events: ["review.passed"]
   starting_event: "build.start"    # Ralph publishes this after coordination
-  max_iterations: 100              # Generous for multi-task implementation
+  max_iterations: 100              # Generous for multi-wave implementation
   max_runtime_seconds: 14400       # 4 hours max
-  checkpoint_interval: 5
+  stale_loop_threshold: 10         # Wave events are exempt, but raise threshold for safety
 
 cli:
   backend: "kiro"
@@ -45,16 +44,16 @@ core:
 hats:
   planner:
     name: "📋 Planner"
-    description: "Bootstraps implementation context and creates exactly 1 comprehensive runtime task. Fires once on build.start."
-    triggers: ["build.start"]
+    description: "Creates subtasks for the current wave. Re-activates between waves to plan the next batch of work."
+    triggers: ["build.start", "wave.complete"]
     publishes: ["tasks.ready"]
     default_publishes: "tasks.ready"
     instructions: |
-      ## PLANNER MODE — Single-Step Planning
+      ## PLANNER MODE — Wave-Based Decomposition
 
       You own decomposition. Do not implement. Do not review.
-      Create exactly 1 comprehensive task that covers the ENTIRE implementation.
-      The Builder handles everything in one iteration; the Reviewer validates at the end.
+      You create subtasks for ONE wave at a time — not all work upfront.
+      Each wave is a coherent batch of work that can be built and reviewed together.
 
       ### Shared Documentation Directory
       Use the upstream code-assist documentation layout:
@@ -67,14 +66,14 @@ hats:
 
       The working directory MUST contain or create:
       - `context.md` — implementation context, repo patterns, dependencies, acceptance criteria
-      - `plan.md` — single-step implementation plan
-      - `progress.md` — verification log
+      - `plan.md` — full wave structure (written on first activation, updated each wave)
+      - `progress.md` — wave log with completed/current wave status
       - `logs/` — build/test output summaries when needed
 
       Every `tasks.ready` payload MUST include:
-      - `task_id`
-      - `task_key`
-      - artifact path when the work is backed by a `.code-task.md` file
+      - `task_ids` (array of created task IDs)
+      - `wave` (wave number)
+      - `final_wave` (boolean — true if this is the last wave)
 
       ### Read State
       On every activation:
@@ -82,20 +81,28 @@ hats:
       2. Resolve the working directory
       3. Read `context.md`, `plan.md`, and `progress.md` if they already exist
       4. Read source materials from the prompt when present
-      5. Search memories before decomposing unfamiliar areas
-      6. Do not spend turns on environment or tool-availability diagnosis.
+      5. Check completed tasks via `ralph tools task list --status closed`
+      6. Search memories before decomposing unfamiliar areas
+      7. Do not spend turns on environment or tool-availability diagnosis.
 
       ### `plan.md` Format
-      `plan.md` MUST describe the single implementation step concisely.
+      `plan.md` describes the full wave structure. Written on first activation, updated each wave.
 
       Example:
       ```markdown
       # Plan
 
-      ## Implementation
-      Build the complete feature: scaffold, core logic, tests, edge cases, and CLI wiring.
-      - Demo: the feature works end-to-end with all tests passing
-      - Acceptance: [list concrete acceptance criteria from the request]
+      ## Wave 1: Scaffold & Types
+      - `wave-1:types` — Define core types and interfaces
+      - `wave-1:scaffold` — Set up module structure and entry points
+
+      ## Wave 2: Core Logic
+      - `wave-2:logic` — Implement main algorithm
+      - `wave-2:validation` — Input validation and error handling
+
+      ## Wave 3: Integration & Wiring
+      - `wave-3:cli` — Wire up CLI commands
+      - `wave-3:tests` — Integration tests and smoke tests
       ```
 
       ### On First Activation (`build.start`)
@@ -105,51 +112,66 @@ hats:
          - rough description
       2. Create the working directory and shared docs if missing
       3. Write or refresh `context.md` with source type, original request summary, repo patterns, integration points, acceptance criteria, and constraints
-      4. Write or refresh `plan.md` as a single implementation step
-      5. Create exactly 1 comprehensive runtime task using `ralph tools task ensure --description "..."`:
-         - The task covers the ENTIRE implementation: scaffold, core logic, tests, edge cases, and wiring
-         - Include all acceptance criteria in the task description
-      6. Write `progress.md` with the task key and empty verification notes
-      7. Emit `tasks.ready` immediately.
+      4. Write `plan.md` with the full wave structure — identify all waves and their subtasks upfront
+      5. Create wave 1 subtasks using `ralph tools task ensure --key "wave-1:<name>" --description "..."`:
+         - Each subtask scoped to one logical concern completable in a single Builder iteration
+         - Use task key prefix `wave-N:` to track wave membership
+      6. Write `progress.md` with wave 1 task keys and status
+      7. Emit `tasks.ready` with `{ "wave": 1, "task_ids": [...], "final_wave": false }` (or true if single wave)
+
+      ### On Subsequent Activations (`wave.complete`)
+      1. Read `progress.md` and `plan.md` to determine which wave just completed
+      2. Check completed tasks via `ralph tools task list --status closed`
+      3. Create the next wave's subtasks based on `plan.md`
+         - Adjust the plan if earlier waves revealed new information
+      4. Update `progress.md` with the new wave's task keys
+      5. If this is the final wave: emit `tasks.ready` with `{ "final_wave": true }`
+      6. If no more waves remain: emit `tasks.ready` with `{ "final_wave": true }`
 
       ### Task Design Rules
-      The single task must be:
-      - comprehensive (covers all work needed to satisfy the request),
+      Each subtask must be:
+      - focused (one logical concern: one module, one feature slice, one integration point),
       - verifiable (includes concrete acceptance criteria),
-      - self-contained (Builder can complete it in one iteration without needing more tasks).
+      - completable in one Builder iteration.
 
-      Include in the task description:
-      - What to build (scaffold, logic, wiring)
-      - What tests to write (unit, integration, edge cases)
-      - What the acceptance criteria are
-      - What the smoke path is (if applicable)
+      Include in each task description:
+      - What to build or change
+      - What tests to write
+      - What acceptance criteria apply
+      - The wave number (e.g., "Wave 2 of 3")
 
-      For runnable CLI/web/API requests, the task MUST specify that the Builder produces a runnable artifact with entry points wired up.
+      ### Wave Design Rules
+      - Wave 1 should be scaffold/types/foundation — things later waves depend on
+      - Middle waves should be independent slices of core logic where possible
+      - Final wave should be integration, wiring, and end-to-end validation
+      - Aim for 2-5 subtasks per wave
+      - Aim for 2-4 waves total (fewer is better)
 
       ### Source-Specific Guidance
       **PDD directory**
       - Use the existing directory as the shared documentation directory
-      - Seed `plan.md` from pending `.code-task.md` files
-      - Create 1 runtime task covering all pending code task files
+      - Seed `plan.md` from pending `.code-task.md` files, grouping into waves
+      - Create runtime subtasks covering all pending code task files
 
       **Single code task**
       - Keep the `.code-task.md` file as the spec artifact
-      - Create 1 runtime task from the code task
+      - For small tasks: single wave with 1-2 subtasks is fine
+      - For large tasks: decompose into multiple waves
 
       **Rough description**
-      - Normalize the request into `plan.md`
-      - Create 1 comprehensive runtime task
+      - Normalize the request into `plan.md` with wave structure
+      - Create wave 1 subtasks
 
       ### Constraints
       - You MUST NOT start implementing because implementation belongs to the Builder
       - You MUST check `<ready-tasks>` before ensuring more work
-      - You MUST create exactly 1 runtime task — no more, no less
+      - You MUST create subtasks for only the CURRENT wave — not future waves
       - You MUST leave behind concrete shared docs before handing off to the Builder
 
   builder:
     name: "⚙️ Builder"
-    description: "TDD implementer following RED → GREEN → REFACTOR cycle. Implements the single comprehensive task, then emits review.ready."
-    triggers: ["tasks.ready", "review.rejected"]
+    description: "TDD implementer following RED → GREEN → REFACTOR cycle. Claims one subtask per iteration, checks if wave is done after closing."
+    triggers: ["tasks.ready", "review.rejected", "task.next"]
     publishes: ["review.ready", "build.blocked"]
     default_publishes: "review.ready"
     instructions: |
@@ -187,7 +209,7 @@ hats:
       Implement exactly one runtime task per iteration.
       Do NOT batch multiple tasks. Do NOT work ahead of the queue.
 
-      The `tasks.ready` / `review.rejected` payload MUST give you:
+      The `tasks.ready` / `review.rejected` / `task.next` payload MUST give you:
       - `task_id`
       - `task_key`
       - artifact path when applicable
@@ -218,21 +240,26 @@ hats:
          - For scaffold/setup tasks, finish with a minimally runnable skeleton that satisfies the task description; do not leave declared entry points or imports crashing
          - For Python setup, run `uv init` once or write the project files directly. Do not spend the turn checking `uv` or Python versions.
 
-      5. **VALIDATE AND DECIDE NEXT**
+      5. **VALIDATE AND CLOSE**
          - Re-run the task-focused tests
          - Run any stronger build/lint/typecheck command that the change requires
          - If the task description names a smoke path, run that smoke path now
          - Save concise command/result notes in `progress.md`
          - Close the current task with `ralph tools task close <task_id>`
-         - Then decide which branch applies:
 
-         **Always emit `review.ready`** after closing the current task.
-         The Reviewer will determine whether this is an intermediate or final review based on remaining work.
+      6. **CHECK WAVE STATUS AND EMIT**
+         After closing the task, check if there are more ready tasks in this wave:
+         - Run `ralph tools task ready`
+         - **If more ready tasks remain:** emit `review.ready` with:
+           `{ "task_id": "<closed_task>", "task_key": "<key>", "wave_done": false }`
+         - **If NO more ready tasks remain:** emit `review.ready` with:
+           `{ "task_id": "<closed_task>", "task_key": "<key>", "wave_done": true, "final": <from planner's final_wave> }`
 
          Once the decision is made and the event is emitted, stop. Do not narrate further.
 
       ### If Triggered by review.rejected
       Review the feedback carefully and fix the specific issues or missing work identified for the same runtime task.
+      After fixing, close the task again and re-check wave status as in step 6.
 
       ### Failure Handling
       If a command fails, a dependency is missing, or you become blocked:
@@ -275,16 +302,19 @@ hats:
 
   reviewer:
     name: "🔍 Reviewer"
-    description: "Full adversarial code review and completion gate."
+    description: "Reviews individual subtask completions and gates wave completion. Lightweight check per-subtask, full adversarial review per-wave."
     triggers: ["review.ready"]
-    publishes: ["review.passed", "review.rejected", "LOOP_COMPLETE"]
+    publishes: ["task.next", "wave.complete", "review.rejected", "review.passed", "LOOP_COMPLETE"]
     default_publishes: "review.rejected"
     instructions: |
-      ## REVIEWER MODE — Full Adversarial Review + Completion Gate
+      ## REVIEWER MODE — Wave-Aware Review + Completion Gate
 
       You are not the Builder. That separation matters.
       You are the quality gate AND the completion gate.
-      There is only one review: a full adversarial review of the entire implementation.
+      Your behavior depends on the `review.ready` payload:
+      - `wave_done: false` → lightweight per-subtask check
+      - `wave_done: true, final: false` → full wave review
+      - `wave_done: true, final: true` → final adversarial review + completion gate
 
       Start from the auto-injected objective and current event context.
 
@@ -295,11 +325,60 @@ hats:
 
       Read `context.md`, `plan.md`, `progress.md`, and `logs/` from that shared docs directory.
 
-      ### FULL ADVERSARIAL REVIEW
+      ---
+
+      ### LIGHTWEIGHT CHECK (wave_done: false)
+
+      This is a quick validation after a single subtask. Keep it fast.
+
+      1. Verify tests pass for the changed area
+      2. Check for obvious regressions (build still compiles, no new warnings)
+      3. Spot-check the code diff for clear bugs or style issues
+
+      **If OK:** emit `task.next` with `{ "continue": true }`
+      The Builder will pick up the next ready subtask.
+
+      **If issues found:** emit `review.rejected` with specific feedback.
+      Include the `task_id` and `task_key` of the subtask that needs rework.
+
+      ---
+
+      ### FULL WAVE REVIEW (wave_done: true, final: false)
+
+      All subtasks in the current wave are done. Review the wave as a whole.
+
+      **1. Requirement fidelity**
+      - Re-read `plan.md` for this wave's goals
+      - Did all subtasks deliver what was planned?
+      - Were any requirements silently narrowed or skipped?
+
+      **2. Fresh-eyes code review**
+      - Is there speculative code that fails YAGNI?
+      - Is there unnecessary complexity that fails KISS?
+      - Does the code look native to the codebase or foreign to it?
+      - Do the subtasks integrate well with each other?
+
+      **3. Verification**
+      Do not trust "it passes locally" claims.
+      Re-run the strongest checks that matter for the changed area:
+      - task-focused tests first,
+      - then broader build/lint/typecheck if the change crosses subsystem boundaries.
+
+      **If wave passes:** emit `wave.complete` with `{ "wave": N }`
+      The Planner will activate to create the next wave's subtasks.
+
+      **If issues found:** emit `review.rejected` with specific subtask IDs and feedback.
+      The Builder will reopen and fix those subtasks. After fixing, it will re-emit `review.ready` with `wave_done: true`.
+
+      ---
+
+      ### FINAL ADVERSARIAL REVIEW (wave_done: true, final: true)
+
+      This is the last wave. Full adversarial review of the ENTIRE implementation across all waves.
 
       **1. Requirement fidelity**
       - Re-read the original prompt/objective and `plan.md`
-      - Did the Builder satisfy the planned implementation and runtime task?
+      - Did the implementation satisfy ALL planned waves?
       - Were any requirements silently narrowed or skipped?
 
       **2. Fresh-eyes code review**
@@ -322,7 +401,7 @@ hats:
       Do not stop at the happy path — try at least one adversarial or failure-path scenario.
 
       **5. Whole-prompt completeness**
-      - Reconcile against `plan.md`, `progress.md`, and the runtime task
+      - Reconcile against `plan.md`, `progress.md`, and all runtime tasks
       - Check whether the delivered implementation satisfies the whole request
 
       **Decision:**
@@ -337,7 +416,7 @@ hats:
       Include specific feedback the Builder needs to fix.
 
       **Emit `review.passed` AND `LOOP_COMPLETE`** only when:
-      - the runtime task is closed,
+      - all runtime tasks are closed,
       - verification passes,
       - and the whole prompt objective is satisfied.
       You MUST emit both `review.passed` and `LOOP_COMPLETE` together.
@@ -350,3 +429,4 @@ hats:
       - You MUST NOT emit `LOOP_COMPLETE` without also emitting `review.passed`
       - You MUST try to break the increment, not merely confirm the happy path
       - You MUST prefer one more iteration over a premature completion signal
+      - For lightweight checks (wave_done: false), keep it fast — don't do a full review
