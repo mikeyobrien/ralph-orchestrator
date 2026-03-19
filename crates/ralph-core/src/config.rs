@@ -805,6 +805,41 @@ pub struct EventLoopConfig {
     /// `{hat_id}.scope_violation` diagnostic events. Defaults to false (permissive).
     #[serde(default)]
     pub enforce_hat_scope: bool,
+
+    /// Idle timeout configuration for individual iterations.
+    ///
+    /// When an iteration produces no output for `duration_secs`, it is killed and
+    /// (if `fallback_enabled`) a hatless Ralph fallback iteration runs with context
+    /// about what the stuck iteration attempted.
+    #[serde(default)]
+    pub idle_timeout: Option<IdleTimeoutConfig>,
+}
+
+/// Configuration for iteration idle-timeout and hatless fallback behavior.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdleTimeoutConfig {
+    /// Seconds of inactivity (no PTY output) before cancelling the iteration.
+    pub duration_secs: u64,
+
+    /// Whether to run a hatless Ralph fallback after an idle timeout.
+    /// When false, the loop stops on timeout (old behavior).
+    /// Default: true.
+    #[serde(default = "default_idle_timeout_fallback_enabled")]
+    pub fallback_enabled: bool,
+
+    /// Custom fallback prompt template.
+    ///
+    /// Available template variables:
+    /// - `{timeout_secs}` — duration that elapsed before cancellation
+    /// - `{iteration}` — the iteration number that timed out
+    /// - `{stdout_log}` — full stdout captured before cancellation
+    ///
+    /// When `None`, a built-in default template is used.
+    pub fallback_prompt_template: Option<String>,
+}
+
+fn default_idle_timeout_fallback_enabled() -> bool {
+    true
 }
 
 fn default_prompt_file() -> String {
@@ -845,6 +880,7 @@ impl Default for EventLoopConfig {
             required_events: Vec::new(),
             cancellation_promise: String::new(),
             enforce_hat_scope: false,
+            idle_timeout: None,
         }
     }
 }
