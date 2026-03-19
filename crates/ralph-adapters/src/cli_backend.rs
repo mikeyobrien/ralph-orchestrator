@@ -668,7 +668,7 @@ impl CliBackend {
             args = self.filter_args_for_interactive(args);
         }
 
-        // Handle prompt passing: Roo uses --prompt-file, Claude uses temp file for large prompts
+        // Handle prompt passing: Roo uses --prompt-file, all others use temp file for large prompts
         let (stdin_input, temp_file) = match self.prompt_mode {
             PromptMode::Arg => {
                 // Roo headless: always use --prompt-file for all prompts
@@ -676,11 +676,8 @@ impl CliBackend {
                 if self.command == "roo" && args.contains(&"--print".to_string()) {
                     Self::build_roo_prompt_file(&mut args, prompt)
                 } else {
-                    // Handle large prompts for Claude (>7000 chars)
-                    let (prompt_text, temp_file) = if self.command == "claude"
-                        && prompt.len() > 7000
-                    {
-                        // Write to temp file and instruct Claude to read it
+                    // Use temp file for large prompts (>7000 chars) to avoid shell ARG_MAX limits
+                    let (prompt_text, temp_file) = if prompt.len() > 7000 {
                         match NamedTempFile::new() {
                             Ok(mut file) => {
                                 if let Err(e) = file.write_all(prompt.as_bytes()) {
@@ -858,12 +855,11 @@ mod tests {
     fn test_non_claude_large_prompt() {
         let backend = CliBackend::kiro();
         let large_prompt = "x".repeat(7001);
-        let (cmd, args, stdin, temp) = backend.build_command(&large_prompt, false);
+        let (cmd, args, _stdin, temp) = backend.build_command(&large_prompt, false);
 
         assert_eq!(cmd, "kiro-cli");
-        assert_eq!(args[3], large_prompt);
-        assert!(stdin.is_none());
-        assert!(temp.is_none());
+        assert!(temp.is_some());
+        assert!(args.iter().any(|a| a.contains("Please read and execute")));
     }
 
     #[test]
@@ -902,6 +898,17 @@ mod tests {
         assert_eq!(cmd, "codex");
         assert_eq!(args, vec!["exec", "--yolo", "test prompt"]);
         assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn test_codex_large_prompt_uses_temp_file() {
+        let backend = CliBackend::codex();
+        let large_prompt = "x".repeat(7001);
+        let (cmd, args, _stdin, temp) = backend.build_command(&large_prompt, false);
+
+        assert_eq!(cmd, "codex");
+        assert!(temp.is_some());
+        assert!(args.iter().any(|a| a.contains("Please read and execute")));
     }
 
     #[test]
@@ -1601,16 +1608,14 @@ mod tests {
     }
 
     #[test]
-    fn test_pi_large_prompt_no_temp_file() {
-        // Pi should NOT use temp files (only Claude does)
+    fn test_pi_large_prompt_uses_temp_file() {
         let backend = CliBackend::pi();
         let large_prompt = "x".repeat(7001);
         let (cmd, args, _stdin, temp) = backend.build_command(&large_prompt, false);
 
         assert_eq!(cmd, "pi");
-        assert!(temp.is_none());
-        // Prompt should be passed directly as positional arg
-        assert!(args.last().unwrap().len() > 7000);
+        assert!(temp.is_some());
+        assert!(args.iter().any(|a| a.contains("Please read and execute")));
     }
 
     #[test]
