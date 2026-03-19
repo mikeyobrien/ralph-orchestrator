@@ -143,7 +143,11 @@ pub async fn run_loop_impl(
     // PTY is required for TUI/RPC observation and true interactive sessions.
     // Headless `ralph run --no-tui` should use CliExecutor so backends get their
     // non-interactive prompt forms (for example `claude -p` or `codex exec`).
-    let use_pty = enable_tui || enable_rpc || user_interactive;
+    // Also enable PTY when event_loop.idle_timeout is configured: the idle-timeout
+    // detection lives in the PTY executor's output loop, so we need PTY mode for it
+    // to fire in autonomous/headless runs.
+    let use_pty =
+        enable_tui || enable_rpc || user_interactive || config.event_loop.idle_timeout.is_some();
 
     // Set up interrupt channel for signal handling
     // Per spec:
@@ -4153,17 +4157,10 @@ fn convert_termination_type(
     match termination_type {
         ralph_adapters::TerminationType::Natural => None,
         ralph_adapters::TerminationType::IdleTimeout => {
-            if interactive {
-                // In interactive mode, idle timeout signals iteration complete,
-                // not loop termination. Let output be processed for events.
-                info!("PTY idle timeout in interactive mode, iteration complete");
-                None
-            } else {
-                // In autonomous mode, the main loop checks `was_idle_timeout` and decides
-                // whether to run a hatless fallback or stop. Return None here so the
-                // termination field stays clear; the fallback path handles stopping.
-                None
-            }
+            // Do not terminate the loop directly.  The main loop reads
+            // `was_idle_timeout` (set in `execute_pty`) and decides whether to
+            // run a hatless fallback (autonomous) or continue (interactive).
+            None
         }
         ralph_adapters::TerminationType::UserInterrupt
         | ralph_adapters::TerminationType::ForceKill => Some(TerminationReason::Interrupted),
@@ -4399,6 +4396,8 @@ async fn execute_pty(
     } else {
         let idle_timeout_secs = if interactive {
             config.cli.idle_timeout_secs
+        } else if let Some(ref ito) = config.event_loop.idle_timeout {
+            ito.duration_secs as u32
         } else {
             0
         };
@@ -9664,35 +9663,18 @@ exit 73"#
     }
 
     #[test]
-    fn test_idle_timeout_interactive_mode_continues() {
-        // Given: interactive mode and IdleTimeout termination
+    fn test_idle_timeout_returns_none_in_all_modes() {
+        // IdleTimeout never maps to a TerminationReason — the main loop reads
+        // `was_idle_timeout` on the ExecutionOutcome and decides whether to run
+        // a hatless fallback (autonomous) or continue (interactive).
         let termination_type = ralph_adapters::TerminationType::IdleTimeout;
-        let interactive = true;
-
-        // When: converting termination type
-        let result = convert_termination_type(termination_type, interactive);
-
-        // Then: should return None (allow iteration to continue)
         assert!(
-            result.is_none(),
-            "Interactive mode idle timeout should return None to allow iteration progression"
+            convert_termination_type(termination_type.clone(), true).is_none(),
+            "Interactive mode idle timeout should return None"
         );
-    }
-
-    #[test]
-    fn test_idle_timeout_autonomous_mode_returns_none() {
-        // Given: autonomous mode and IdleTimeout termination
-        let termination_type = ralph_adapters::TerminationType::IdleTimeout;
-        let interactive = false;
-
-        // When: converting termination type
-        let result = convert_termination_type(termination_type, interactive);
-
-        // Then: should return None — the main loop reads `was_idle_timeout` and
-        // decides whether to run a hatless fallback or stop the loop.
         assert!(
-            result.is_none(),
-            "Autonomous mode idle timeout should return None; main loop handles stop/fallback via was_idle_timeout"
+            convert_termination_type(termination_type, false).is_none(),
+            "Autonomous mode idle timeout should return None"
         );
     }
 
