@@ -230,6 +230,9 @@ impl TaskDomain {
 
             if is_terminal_status(&task.status) {
                 task.completed_at = Some(now.clone());
+                task.assignee_worker_id = None;
+                task.claimed_at = None;
+                task.lease_expires_at = None;
             } else {
                 task.completed_at = None;
             }
@@ -402,6 +405,9 @@ impl TaskDomain {
         task.status = "cancelled".to_string();
         task.completed_at = Some(now.clone());
         task.updated_at = now;
+        task.assignee_worker_id = None;
+        task.claimed_at = None;
+        task.lease_expires_at = None;
         task.error_message = Some("Task cancelled by user".to_string());
         task.events
             .push(TaskEvent::new("cancelled").with_details(&format!("{} -> cancelled", from)));
@@ -438,6 +444,9 @@ impl TaskDomain {
 
         if is_terminal_status(status) {
             task.completed_at = Some(now);
+            task.assignee_worker_id = None;
+            task.claimed_at = None;
+            task.lease_expires_at = None;
         } else {
             task.completed_at = None;
         }
@@ -471,7 +480,12 @@ impl TaskDomain {
             .cloned()
             .collect();
 
-        ready_tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        ready_tasks.sort_by(|a, b| {
+            a.priority
+                .cmp(&b.priority)
+                .then_with(|| a.created_at.cmp(&b.created_at))
+                .then_with(|| a.id.cmp(&b.id))
+        });
         ready_tasks
     }
 

@@ -456,7 +456,9 @@ impl WorkerDomain {
             let tid = task_id.to_string();
             let wid2 = wid.clone();
             let _ = task_domain.with_exclusive_snapshot(|tasks| {
-                if let Some(task) = tasks.get_mut(&tid) {
+                if let Some(task) = tasks.get_mut(&tid)
+                    && task.status == "in_progress"
+                {
                     task.status = "ready".to_string();
                     task.assignee_worker_id = None;
                     task.claimed_at = None;
@@ -481,6 +483,75 @@ impl WorkerDomain {
             let registry = FileOwnershipRegistry::new(workspace);
             let _ = registry.release_all_for_worker(worker_id);
         }
+
+        Ok(())
+    }
+
+    /// Sends guidance text to a busy factory worker by appending a `human.guidance`
+    /// event to the worker's worktree events file. The worker picks it up on its
+    /// next iteration via `process_events_from_jsonl()`.
+    pub fn send_guidance(&self, worker_id: &str, message: &str) -> Result<(), ApiError> {
+        validate_required_string("workerId", worker_id)?;
+        if message.trim().is_empty() {
+            return Err(ApiError::invalid_params(
+                "worker.send_guidance requires a non-empty 'message'",
+            ));
+        }
+
+        let workers = self.read_workers_with_shared_lock()?;
+        let worker = workers
+            .get(worker_id)
+            .ok_or_else(|| worker_not_found_error(worker_id))?;
+
+        if worker.status != WorkerStatus::Busy {
+            return Err(ApiError::precondition_failed(format!(
+                "Worker '{}' must be busy to receive guidance (current status: {:?})",
+                worker_id, worker.status
+            )));
+        }
+
+        let task_id = worker.current_task_id.as_deref().ok_or_else(|| {
+            ApiError::precondition_failed(format!(
+                "Worker '{}' is busy but has no current task",
+                worker_id
+            ))
+        })?;
+
+        let events_path = self.resolve_worker_events_path(&worker.workspace_root, task_id)?;
+
+        let event = serde_json::json!({
+            "topic": "human.guidance",
+            "payload": message,
+            "ts": format_timestamp(Utc::now()),
+        });
+        let mut line = serde_json::to_string(&event)
+            .map_err(|e| ApiError::internal(format!("failed serializing guidance event: {e}")))?;
+        line.push('\n');
+
+        use std::io::Write;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&events_path)
+            .map_err(|e| {
+                ApiError::internal(format!(
+                    "failed opening events file '{}': {e}",
+                    events_path.display()
+                ))
+            })?;
+        let mut writer = std::io::BufWriter::new(file);
+        writer.write_all(line.as_bytes()).map_err(|e| {
+            ApiError::internal(format!(
+                "failed writing guidance event to '{}': {e}",
+                events_path.display()
+            ))
+        })?;
+        writer.flush().map_err(|e| {
+            ApiError::internal(format!(
+                "failed flushing guidance event to '{}': {e}",
+                events_path.display()
+            ))
+        })?;
 
         Ok(())
     }
@@ -767,6 +838,42 @@ impl WorkerDomain {
 
     fn sorted_workers(workers: &BTreeMap<String, WorkerRecord>) -> Vec<WorkerRecord> {
         workers.values().cloned().collect()
+    }
+
+    /// Resolves the active events file for a worker's worktree.
+    ///
+    /// Reads the `current-events` marker (which contains a relative path to the
+    /// timestamped events file), falling back to `events.jsonl` when the marker
+    /// is absent.
+    fn resolve_worker_events_path(
+        &self,
+        workspace_root: &str,
+        task_id: &str,
+    ) -> Result<PathBuf, ApiError> {
+        let worktree_ralph_dir = Path::new(workspace_root)
+            .join(".worktrees")
+            .join(task_id)
+            .join(".ralph");
+
+        if !worktree_ralph_dir.exists() {
+            return Err(ApiError::precondition_failed(format!(
+                "Worker worktree .ralph dir does not exist: '{}'",
+                worktree_ralph_dir.display()
+            )));
+        }
+
+        let marker_path = worktree_ralph_dir.join("current-events");
+        if let Ok(contents) = fs::read_to_string(&marker_path) {
+            let relative = contents.trim();
+            if !relative.is_empty() {
+                return Ok(Path::new(workspace_root)
+                    .join(".worktrees")
+                    .join(task_id)
+                    .join(relative));
+            }
+        }
+
+        Ok(worktree_ralph_dir.join("events.jsonl"))
     }
 }
 
@@ -1252,5 +1359,168 @@ mod serde_tests {
             as_of: "not-a-timestamp".to_string(),
         };
         assert!(input.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod send_guidance_tests {
+    use super::*;
+    use std::fs;
+
+    fn make_busy_worker(workspace_root: &str, task_id: &str) -> WorkerRecord {
+        WorkerRecord {
+            worker_id: "worker-1".to_string(),
+            worker_name: "alpha".to_string(),
+            loop_id: "loop-1".to_string(),
+            backend: "claude".to_string(),
+            workspace_root: workspace_root.to_string(),
+            current_task_id: Some(task_id.to_string()),
+            current_hat: Some("builder".to_string()),
+            status: WorkerStatus::Busy,
+            last_heartbeat_at: "2026-01-01T00:00:00Z".to_string(),
+            iteration: Some(3),
+            max_iterations: Some(10),
+            registered_at: Some("2026-01-01T00:00:00Z".to_string()),
+        }
+    }
+
+    fn setup_domain_with_worker(worker: &WorkerRecord) -> (tempfile::TempDir, WorkerDomain) {
+        let tmp = tempfile::tempdir().unwrap();
+        let ralph_dir = tmp.path().join(".ralph");
+        fs::create_dir_all(&ralph_dir).unwrap();
+
+        let store_path = ralph_dir.join("workers.json");
+        let snapshot = WorkerSnapshot {
+            workers: vec![worker.clone()],
+        };
+        fs::write(
+            &store_path,
+            serde_json::to_string_pretty(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let domain = WorkerDomain { store_path };
+        (tmp, domain)
+    }
+
+    #[test]
+    fn send_guidance_to_busy_worker() {
+        let tmp_workspace = tempfile::tempdir().unwrap();
+        let task_id = "task-1";
+        let worktree_ralph = tmp_workspace
+            .path()
+            .join(".worktrees")
+            .join(task_id)
+            .join(".ralph");
+        fs::create_dir_all(&worktree_ralph).unwrap();
+        // Create a current-events marker pointing to a timestamped events file
+        let events_file = ".ralph/events-20260101-000000.jsonl";
+        fs::write(worktree_ralph.join("current-events"), events_file).unwrap();
+        // Pre-create the events file
+        let full_events_path = tmp_workspace
+            .path()
+            .join(".worktrees")
+            .join(task_id)
+            .join(events_file);
+        fs::write(&full_events_path, "").unwrap();
+
+        let worker = make_busy_worker(tmp_workspace.path().to_str().unwrap(), task_id);
+        let (_tmp, domain) = setup_domain_with_worker(&worker);
+
+        let result = domain.send_guidance("worker-1", "Focus on error handling first");
+        assert!(result.is_ok(), "send_guidance should succeed: {:?}", result);
+
+        let contents = fs::read_to_string(&full_events_path).unwrap();
+        assert!(!contents.is_empty(), "events file should have content");
+        let event: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(event["topic"], "human.guidance");
+        assert_eq!(event["payload"], "Focus on error handling first");
+        assert!(event["ts"].as_str().is_some());
+    }
+
+    #[test]
+    fn send_guidance_to_idle_worker_fails() {
+        let tmp_workspace = tempfile::tempdir().unwrap();
+        let mut worker = make_busy_worker(tmp_workspace.path().to_str().unwrap(), "task-1");
+        worker.status = WorkerStatus::Idle;
+        worker.current_task_id = None;
+
+        let (_tmp, domain) = setup_domain_with_worker(&worker);
+
+        let err = domain
+            .send_guidance("worker-1", "some guidance")
+            .unwrap_err();
+        assert!(err.message.contains("must be busy"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn send_guidance_to_missing_worker_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ralph_dir = tmp.path().join(".ralph");
+        fs::create_dir_all(&ralph_dir).unwrap();
+        let store_path = ralph_dir.join("workers.json");
+        let snapshot = WorkerSnapshot { workers: vec![] };
+        fs::write(
+            &store_path,
+            serde_json::to_string_pretty(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let domain = WorkerDomain { store_path };
+
+        let err = domain.send_guidance("nonexistent", "hello").unwrap_err();
+        assert!(err.message.contains("not found"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn send_guidance_to_missing_worktree_fails() {
+        // Worker is busy but the worktree .ralph dir doesn't exist
+        let tmp_workspace = tempfile::tempdir().unwrap();
+        let worker = make_busy_worker(tmp_workspace.path().to_str().unwrap(), "task-gone");
+        let (_tmp, domain) = setup_domain_with_worker(&worker);
+
+        let err = domain
+            .send_guidance("worker-1", "guidance text")
+            .unwrap_err();
+        assert!(
+            err.message.contains("does not exist"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn send_guidance_falls_back_to_events_jsonl() {
+        let tmp_workspace = tempfile::tempdir().unwrap();
+        let task_id = "task-2";
+        let worktree_ralph = tmp_workspace
+            .path()
+            .join(".worktrees")
+            .join(task_id)
+            .join(".ralph");
+        fs::create_dir_all(&worktree_ralph).unwrap();
+        // No current-events marker — should fallback to events.jsonl
+
+        let worker = make_busy_worker(tmp_workspace.path().to_str().unwrap(), task_id);
+        let (_tmp, domain) = setup_domain_with_worker(&worker);
+
+        let result = domain.send_guidance("worker-1", "fallback test");
+        assert!(result.is_ok(), "send_guidance should succeed: {:?}", result);
+
+        let fallback_path = worktree_ralph.join("events.jsonl");
+        let contents = fs::read_to_string(&fallback_path).unwrap();
+        let event: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(event["topic"], "human.guidance");
+        assert_eq!(event["payload"], "fallback test");
+    }
+
+    #[test]
+    fn send_guidance_rejects_empty_message() {
+        let tmp_workspace = tempfile::tempdir().unwrap();
+        let worker = make_busy_worker(tmp_workspace.path().to_str().unwrap(), "task-1");
+        let (_tmp, domain) = setup_domain_with_worker(&worker);
+
+        let err = domain.send_guidance("worker-1", "   ").unwrap_err();
+        assert!(err.message.contains("non-empty"), "got: {}", err.message);
     }
 }

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -45,11 +46,9 @@ impl RpcRuntime {
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
             method if method.starts_with("worker.") => self.dispatch_worker(request),
-            method if method.starts_with("folder.") => {
-                Err(ApiError::service_unavailable(
-                    "folder methods require multi-folder mode (start with `ralph web`)",
-                ))
-            }
+            method if method.starts_with("folder.") => Err(ApiError::service_unavailable(
+                "folder methods require multi-folder mode (start with `ralph web`)",
+            )),
             method if method.starts_with("factory.") => self.dispatch_factory(request),
             method if method.starts_with("board.") => self.dispatch_board(request),
             method if method.starts_with("git.") => self.dispatch_git(request),
@@ -98,7 +97,9 @@ impl RpcRuntime {
             "task.get" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
                 let task = self.task_domain_mut()?.get(&params.id)?;
-                Ok(json!({ "task": enrich_task_with_subtasks(task, &workers, &self.config.workspace_root) }))
+                Ok(
+                    json!({ "task": enrich_task_with_subtasks(task, &workers, &self.config.workspace_root) }),
+                )
             }
             "task.ready" => {
                 let tasks = self.task_domain_mut()?.ready();
@@ -396,6 +397,18 @@ impl RpcRuntime {
                 let result = self.worker_domain_mut()?.reclaim_expired(input)?;
                 Ok(json!(result))
             }
+            "worker.send_guidance" => {
+                let params: WorkerSendGuidanceParams = self.parse_params(request)?;
+                self.worker_domain_mut()?
+                    .send_guidance(&params.worker_id, &params.message)?;
+                self.stream_domain().publish(
+                    "worker.guidance.sent",
+                    "worker",
+                    &params.worker_id,
+                    json!({ "message": params.message, "workerId": params.worker_id }),
+                );
+                Ok(json!({ "success": true }))
+            }
             _ => Err(ApiError::service_unavailable(format!(
                 "method '{}' is recognized but not implemented",
                 request.method
@@ -409,23 +422,18 @@ impl RpcRuntime {
         match request.method.as_str() {
             "factory.create" => {
                 let params: FactoryCreateParams = self.parse_params(request)?;
-                let factory = tokio::runtime::Handle::current()
-                    .block_on(supervisor.create_factory(params))
+                let factory = block_on_runtime(supervisor.create_factory(params))?
                     .map_err(|e| ApiError::internal(format!("failed to spawn factory: {e}")))?;
                 Ok(json!({ "factory": factory }))
             }
             "factory.stop" => {
                 let params: IdOnlyParams = self.parse_params(request)?;
-                tokio::runtime::Handle::current()
-                    .block_on(supervisor.stop_factory(&params.id))
-                    .map_err(|e| {
-                        ApiError::not_found(format!("failed to stop factory: {e}"))
-                    })?;
+                block_on_runtime(supervisor.stop_factory(&params.id))?
+                    .map_err(|e| ApiError::not_found(format!("failed to stop factory: {e}")))?;
                 Ok(json!({ "success": true }))
             }
             "factory.list" => {
-                let factories = tokio::runtime::Handle::current()
-                    .block_on(supervisor.list_factories());
+                let factories = block_on_runtime(supervisor.list_factories())?;
                 Ok(json!({ "factories": factories }))
             }
             _ => Err(ApiError::service_unavailable(format!(
@@ -879,6 +887,13 @@ struct WorkerIdParams {
 
 #[derive(Debug, Clone, InternalDeserialize)]
 #[serde(rename_all = "camelCase")]
+struct WorkerSendGuidanceParams {
+    worker_id: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, InternalDeserialize)]
+#[serde(rename_all = "camelCase")]
 struct InternalPublishParams {
     topic: String,
     resource_type: String,
@@ -1058,6 +1073,22 @@ fn parse_optional_nullable_string_field(
     })?;
 
     Ok(Some(Some(value.to_string())))
+}
+
+fn block_on_runtime<F>(future: F) -> Result<F::Output, ApiError>
+where
+    F: Future,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => Ok(tokio::task::block_in_place(|| handle.block_on(future))),
+        Err(_) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| ApiError::internal(format!("failed creating helper runtime: {e}")))?;
+            Ok(runtime.block_on(future))
+        }
+    }
 }
 
 fn parse_task_update_input(request: &RpcRequestEnvelope) -> Result<TaskUpdateInput, ApiError> {

@@ -120,6 +120,28 @@ describe("TaskDetailHeader", () => {
       });
     });
 
+    describe("when status is 'backlog'", () => {
+      it("renders Promote button", () => {
+        render(<TaskDetailHeader {...defaultProps} status="backlog" />);
+
+        const promoteButton = screen.getByRole("button", { name: /promote/i });
+        expect(promoteButton).toBeInTheDocument();
+        expect(promoteButton).toHaveClass("bg-primary");
+      });
+
+      it("calls onAction with 'promote' when Promote is clicked", () => {
+        const onAction = vi.fn();
+        render(
+          <TaskDetailHeader {...defaultProps} status="backlog" onAction={onAction} />
+        );
+
+        const promoteButton = screen.getByRole("button", { name: /promote/i });
+        fireEvent.click(promoteButton);
+
+        expect(onAction).toHaveBeenCalledWith("promote");
+      });
+    });
+
     describe("when status is 'completed'", () => {
       it("does not render any action button", () => {
         render(<TaskDetailHeader {...defaultProps} status="completed" />);

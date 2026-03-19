@@ -49,7 +49,7 @@ function getActionForStatus(status: TaskStatus): { action: TaskAction; label: st
     case "ready":
       return { action: "cancel", label: "Cancel", variant: "destructive" };
     case "backlog":
-      return { action: "run", label: "Promote", variant: "default" };
+      return { action: "promote", label: "Promote", variant: "default" };
     case "completed":
     case "closed":
     case "done":

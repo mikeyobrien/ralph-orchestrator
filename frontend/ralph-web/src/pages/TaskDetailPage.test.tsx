@@ -93,6 +93,12 @@ vi.mock("@/components/tasks/EnhancedLogViewer", () => ({
   )),
 }));
 
+vi.mock("@/components/tasks/IterationTimeline", () => ({
+  IterationTimeline: vi.fn(() => (
+    <div data-testid="iteration-timeline">Mocked IterationTimeline</div>
+  )),
+}));
+
 // Mock TaskCardSkeleton component to track rendering
 vi.mock("@/components/tasks/TaskCardSkeleton", () => ({
   TaskCardSkeleton: vi.fn(() => (
@@ -136,6 +142,12 @@ vi.mock("@/trpc", () => ({
           isPending: false,
         })),
       },
+      promote: {
+        useMutation: vi.fn(() => ({
+          mutate: vi.fn(),
+          isPending: false,
+        })),
+      },
       delete: {
         useMutation: vi.fn(() => ({
           mutate: vi.fn(),
@@ -158,11 +170,47 @@ vi.mock("@/trpc", () => ({
         })),
       },
     },
+    factory: {
+      reclaimStale: {
+        useMutation: vi.fn(() => ({
+          mutate: vi.fn(),
+          isPending: false,
+        })),
+      },
+      summary: {
+        invalidate: vi.fn(),
+      },
+      workers: {
+        invalidate: vi.fn(),
+      },
+    },
     useUtils: vi.fn(() => ({
-      task: { list: { invalidate: vi.fn() } },
+      task: {
+        get: { invalidate: vi.fn() },
+        list: { invalidate: vi.fn() },
+      },
       loops: { list: { invalidate: vi.fn() } },
+      factory: {
+        summary: { invalidate: vi.fn() },
+        workers: { invalidate: vi.fn() },
+      },
     })),
   },
+}));
+
+vi.mock("@/hooks/useTaskWebSocket", () => ({
+  useTaskWebSocket: vi.fn(() => ({
+    entries: [],
+    latestEntry: null,
+    events: [],
+    latestEvent: null,
+    connectionState: "connected",
+    taskStatus: "unknown",
+    error: null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    clearEntries: vi.fn(),
+  })),
 }));
 
 // Mock react-router-dom useParams

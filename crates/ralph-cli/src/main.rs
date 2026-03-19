@@ -1639,6 +1639,14 @@ async fn run_command(
         return Ok(());
     }
 
+    if config.worker.enabled {
+        if config.event_loop.prompt.is_some() || !config.event_loop.prompt_file.is_empty() {
+            warn!("Worker mode ignores CLI prompts and claims tasks from the shared board");
+        }
+        let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
+        return factory::run_factory(config, 1, color_mode, verbosity, None).await;
+    }
+
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
     ensure_scratchpad_directory(&config)?;

@@ -1124,6 +1124,57 @@ fn complete_task_failure_resets_task_to_ready_with_error() {
 }
 
 #[test]
+fn complete_task_failure_preserves_manual_cancellation() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir should be created");
+    let workspace_root = workspace.path().display().to_string();
+    let mut domain = WorkerDomain::new(workspace.path()).expect("worker domain should initialize");
+
+    domain
+        .register(busy_worker(
+            "worker-alpha",
+            "alpha",
+            &workspace_root,
+            "task-1",
+        ))
+        .expect("busy worker should register");
+    create_task_with_lease(
+        workspace.path(),
+        "task-1",
+        "Build feature",
+        "in_progress",
+        Some("worker-alpha"),
+        Some("2026-03-14T22:30:00Z"),
+        Some("2026-03-14T22:35:00Z"),
+    );
+
+    let mut tasks = TaskDomain::new(workspace.path());
+    tasks
+        .cancel("task-1")
+        .expect("manual cancellation should succeed");
+
+    domain
+        .complete_task(
+            "worker-alpha",
+            "task-1",
+            false,
+            Some("Interrupted".to_string()),
+        )
+        .expect("complete_task should not overwrite cancellation");
+
+    let task = TaskDomain::new(workspace.path())
+        .get("task-1")
+        .expect("task should remain readable after completion");
+    assert_eq!(task.status, "cancelled");
+    assert_eq!(task.assignee_worker_id, None);
+    assert_eq!(task.claimed_at, None);
+    assert_eq!(task.lease_expires_at, None);
+    assert_eq!(
+        task.error_message.as_deref(),
+        Some("Task cancelled by user")
+    );
+}
+
+#[test]
 fn complete_task_releases_file_ownership() {
     let workspace = tempfile::tempdir().expect("workspace tempdir should be created");
     let workspace_root = workspace.path().display().to_string();
@@ -1307,6 +1358,59 @@ fn failed_task_reclaimable_by_another_worker() {
         reclaimed_task.assignee_worker_id.as_deref(),
         Some("worker-beta")
     );
+}
+
+#[test]
+fn claim_next_prefers_higher_priority_ready_tasks() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir should be created");
+    let workspace_root = workspace.path().display().to_string();
+    let mut domain = WorkerDomain::new(workspace.path()).expect("worker domain should initialize");
+
+    domain
+        .register(sample_worker(
+            "worker-alpha",
+            "alpha",
+            &workspace_root,
+            WorkerStatus::Idle,
+        ))
+        .expect("idle worker should register");
+
+    let mut tasks = TaskDomain::new(workspace.path());
+    tasks
+        .create(TaskCreateParams {
+            id: "task-low".to_string(),
+            title: "Low priority".to_string(),
+            status: Some("ready".to_string()),
+            priority: Some(5),
+            blocked_by: None,
+            merge_loop_prompt: None,
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
+            scope_files: None,
+        })
+        .expect("low-priority task should persist");
+    tasks
+        .create(TaskCreateParams {
+            id: "task-high".to_string(),
+            title: "High priority".to_string(),
+            status: Some("ready".to_string()),
+            priority: Some(1),
+            blocked_by: None,
+            merge_loop_prompt: None,
+            assignee_worker_id: None,
+            claimed_at: None,
+            lease_expires_at: None,
+            scope_files: None,
+        })
+        .expect("high-priority task should persist");
+
+    let claim = domain
+        .claim_next("worker-alpha")
+        .expect("claim_next should succeed");
+    let task = claim.task.expect("worker should claim a task");
+    assert_eq!(task.id, "task-high");
+    assert_eq!(task.priority, 1);
 }
 
 #[test]

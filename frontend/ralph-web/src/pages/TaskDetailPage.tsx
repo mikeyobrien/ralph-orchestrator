@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   EnhancedLogViewer,
+  IterationTimeline,
   TaskCardSkeleton,
   EmptyState,
   TaskDetailHeader,
@@ -29,6 +30,7 @@ import {
   LoopBadge,
   type LoopDetailData,
 } from "@/components/tasks";
+import { useTaskWebSocket } from "@/hooks/useTaskWebSocket";
 import {
   AlertTriangle,
   Loader2,
@@ -86,6 +88,9 @@ export function TaskDetailPage() {
     return loop;
   }, [loopsQuery.data, task?.loopId, task?.status]);
 
+  // Stream subscription for logs + iteration events (lifted to page level)
+  const stream = useTaskWebSocket(task?.id ?? null);
+
   // User steering state for needs-review loops
   const [steeringInput, setSteeringInput] = useState("");
 
@@ -125,7 +130,11 @@ export function TaskDetailPage() {
       if (!task) return;
       switch (action) {
         case "run":
-          runMutation.mutate({ id: task.id });
+          if (task.status === "backlog") {
+            promoteMutation.mutate({ id: task.id });
+          } else {
+            runMutation.mutate({ id: task.id });
+          }
           break;
         case "retry":
           retryMutation.mutate({ id: task.id });
@@ -312,6 +321,9 @@ export function TaskDetailPage() {
         </div>
       )}
 
+      {/* Iteration timeline (from worker stream events) */}
+      {showLogViewer && <IterationTimeline events={stream.events} />}
+
       {/* User steering UI for needs-review loops */}
       {associatedLoop?.status === "needs-review" && (
         <div
@@ -373,7 +385,13 @@ export function TaskDetailPage() {
       {/* Log viewer (for running/completed/failed tasks) */}
       {showLogViewer && (
         <div data-testid="log-viewer">
-          <EnhancedLogViewer taskId={task.id} />
+          <EnhancedLogViewer
+            taskId={task.id}
+            controlledEntries={stream.entries}
+            controlledConnectionState={stream.connectionState}
+            controlledError={stream.error}
+            controlledOnClear={stream.clearEntries}
+          />
         </div>
       )}
     </div>
