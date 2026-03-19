@@ -1854,71 +1854,67 @@ pub async fn run_loop_impl(
                         "Iteration idle timeout - running hatless Ralph fallback"
                     );
                     let stdout_log = outcome.output.clone();
-                    let fallback_prompt = build_idle_timeout_fallback_prompt(
-                        ito,
-                        iteration,
-                        &stdout_log,
-                    );
+                    let fallback_prompt =
+                        build_idle_timeout_fallback_prompt(ito, iteration, &stdout_log);
 
                     let interrupt_rx_for_fallback = interrupt_rx.clone();
                     let rpc_stdout_for_fallback = rpc_stdout.clone();
 
-                    let fallback_result = if effective_backend.output_format
-                        == BackendOutputFormat::Acp
-                    {
-                        execute_acp(
-                            &effective_backend,
-                            &config,
-                            &fallback_prompt,
-                            verbosity,
-                            None, // no TUI sub-iteration for fallback
-                            rpc_stdout_for_fallback,
-                            iteration,
-                            "ralph",
-                            &backend_name_for_timeout,
-                        )
-                        .await
-                    } else if use_pty {
-                        execute_pty(
-                            pty_executor.as_mut(),
-                            &effective_backend,
-                            &config,
-                            &fallback_prompt,
-                            false, // always autonomous for fallback
-                            interrupt_rx_for_fallback,
-                            verbosity,
-                            None, // no TUI sub-iteration for fallback
-                            rpc_stdout_for_fallback,
-                            iteration,
-                            "ralph",
-                            &backend_name_for_timeout,
-                        )
-                        .await
-                    } else {
-                        let executor = CliExecutor::new(effective_backend.clone());
-                        let result = executor
-                            .execute(
+                    let fallback_result =
+                        if effective_backend.output_format == BackendOutputFormat::Acp {
+                            execute_acp(
+                                &effective_backend,
+                                &config,
                                 &fallback_prompt,
-                                stdout(),
-                                timeout,
-                                verbosity == Verbosity::Verbose,
+                                verbosity,
+                                None, // no TUI sub-iteration for fallback
+                                rpc_stdout_for_fallback,
+                                iteration,
+                                "ralph",
+                                &backend_name_for_timeout,
                             )
-                            .await?;
-                        Ok(ExecutionOutcome {
-                            output: normalize_cli_output_for_parsing(
-                                effective_backend.output_format,
-                                &result.output,
-                            ),
-                            success: result.success,
-                            termination: None,
-                            total_cost_usd: 0.0,
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            cache_read_tokens: 0,
-                            cache_write_tokens: 0,
-                            was_idle_timeout: false,
-                        })
-                    };
+                            .await
+                        } else if use_pty {
+                            execute_pty(
+                                pty_executor.as_mut(),
+                                &effective_backend,
+                                &config,
+                                &fallback_prompt,
+                                false, // always autonomous for fallback
+                                interrupt_rx_for_fallback,
+                                verbosity,
+                                None, // no TUI sub-iteration for fallback
+                                rpc_stdout_for_fallback,
+                                iteration,
+                                "ralph",
+                                &backend_name_for_timeout,
+                            )
+                            .await
+                        } else {
+                            let executor = CliExecutor::new(effective_backend.clone());
+                            let result = executor
+                                .execute(
+                                    &fallback_prompt,
+                                    stdout(),
+                                    timeout,
+                                    verbosity == Verbosity::Verbose,
+                                )
+                                .await?;
+                            Ok(ExecutionOutcome {
+                                output: normalize_cli_output_for_parsing(
+                                    effective_backend.output_format,
+                                    &result.output,
+                                ),
+                                success: result.success,
+                                termination: None,
+                                total_cost_usd: 0.0,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cache_read_tokens: 0,
+                                cache_write_tokens: 0,
+                                was_idle_timeout: false,
+                            })
+                        };
 
                     match fallback_result {
                         Ok(mut fo) => {
@@ -9787,7 +9783,10 @@ hats:
         let prompt = build_idle_timeout_fallback_prompt(&config, 7, "some output\nhere");
         assert!(prompt.contains("300s"), "should include timeout duration");
         assert!(prompt.contains("#7"), "should include iteration number");
-        assert!(prompt.contains("some output\nhere"), "should include stdout log");
+        assert!(
+            prompt.contains("some output\nhere"),
+            "should include stdout log"
+        );
     }
 
     #[test]
