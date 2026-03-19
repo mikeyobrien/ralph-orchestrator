@@ -4152,7 +4152,6 @@ fn disposition_from_on_error(on_error: HookOnError) -> HookDisposition {
 /// * `Some(TerminationReason)` - Stop the loop
 fn convert_termination_type(
     termination_type: ralph_adapters::TerminationType,
-    interactive: bool,
 ) -> Option<TerminationReason> {
     match termination_type {
         ralph_adapters::TerminationType::Natural => None,
@@ -4493,7 +4492,7 @@ async fn execute_pty(
         Ok(pty_result) => {
             let was_idle_timeout = !interactive
                 && pty_result.termination == ralph_adapters::TerminationType::IdleTimeout;
-            let termination = convert_termination_type(pty_result.termination, interactive);
+            let termination = convert_termination_type(pty_result.termination);
 
             // Use extracted_text for event parsing when available (NDJSON backends like Claude),
             // otherwise fall back to stripped_output (non-JSON backends or interactive mode).
@@ -9663,70 +9662,31 @@ exit 73"#
     }
 
     #[test]
-    fn test_idle_timeout_returns_none_in_all_modes() {
+    fn test_idle_timeout_returns_none() {
         // IdleTimeout never maps to a TerminationReason — the main loop reads
         // `was_idle_timeout` on the ExecutionOutcome and decides whether to run
-        // a hatless fallback (autonomous) or continue (interactive).
-        let termination_type = ralph_adapters::TerminationType::IdleTimeout;
-        assert!(
-            convert_termination_type(termination_type.clone(), true).is_none(),
-            "Interactive mode idle timeout should return None"
-        );
-        assert!(
-            convert_termination_type(termination_type, false).is_none(),
-            "Autonomous mode idle timeout should return None"
+        // a hatless fallback or continue.
+        assert!(convert_termination_type(ralph_adapters::TerminationType::IdleTimeout).is_none());
+    }
+
+    #[test]
+    fn test_natural_termination_continues() {
+        assert!(convert_termination_type(ralph_adapters::TerminationType::Natural).is_none());
+    }
+
+    #[test]
+    fn test_user_interrupt_terminates() {
+        assert_eq!(
+            convert_termination_type(ralph_adapters::TerminationType::UserInterrupt),
+            Some(TerminationReason::Interrupted),
         );
     }
 
     #[test]
-    fn test_natural_termination_always_continues() {
-        // Given: Natural termination in any mode
-        let termination_type = ralph_adapters::TerminationType::Natural;
-
-        // When/Then: should return None regardless of mode
-        assert!(
-            convert_termination_type(termination_type.clone(), true).is_none(),
-            "Natural termination should continue in interactive mode"
-        );
-        assert!(
-            convert_termination_type(termination_type, false).is_none(),
-            "Natural termination should continue in autonomous mode"
-        );
-    }
-
-    #[test]
-    fn test_user_interrupt_always_terminates() {
-        // Given: UserInterrupt termination in any mode
-        let termination_type = ralph_adapters::TerminationType::UserInterrupt;
-
-        // When/Then: should return Interrupted regardless of mode
+    fn test_force_kill_terminates() {
         assert_eq!(
-            convert_termination_type(termination_type.clone(), true),
+            convert_termination_type(ralph_adapters::TerminationType::ForceKill),
             Some(TerminationReason::Interrupted),
-            "UserInterrupt should terminate in interactive mode"
-        );
-        assert_eq!(
-            convert_termination_type(termination_type, false),
-            Some(TerminationReason::Interrupted),
-            "UserInterrupt should terminate in autonomous mode"
-        );
-    }
-
-    #[test]
-    fn test_force_kill_always_terminates() {
-        // Given: ForceKill termination in any mode
-        let termination_type = ralph_adapters::TerminationType::ForceKill;
-
-        // When/Then: should return Interrupted regardless of mode
-        assert_eq!(
-            convert_termination_type(termination_type.clone(), true),
-            Some(TerminationReason::Interrupted),
-            "ForceKill should terminate in interactive mode"
-        );
-        assert_eq!(
-            convert_termination_type(termination_type, false),
-            Some(TerminationReason::Interrupted),
-            "ForceKill should terminate in autonomous mode"
         );
     }
 
