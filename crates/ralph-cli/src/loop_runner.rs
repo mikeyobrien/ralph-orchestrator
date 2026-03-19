@@ -1769,6 +1769,7 @@ pub async fn run_loop_impl(
                     iteration,
                     display_hat.as_str(),
                     &backend_name_for_timeout,
+                    _session_recorder.as_ref(),
                 )
                 .await
             } else {
@@ -1892,6 +1893,7 @@ pub async fn run_loop_impl(
                                 iteration,
                                 "ralph",
                                 &backend_name_for_timeout,
+                                _session_recorder.as_ref(),
                             )
                             .await
                         } else {
@@ -4379,6 +4381,7 @@ async fn execute_pty(
     iteration: u32,
     hat: &str,
     backend_name: &str,
+    session_recorder: Option<&Arc<SessionRecorder<BufWriter<File>>>>,
 ) -> Result<ExecutionOutcome> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
@@ -4490,6 +4493,23 @@ async fn execute_pty(
 
     match result {
         Ok(pty_result) => {
+            // Record terminal output for session replay (all backends, including
+            // non-PTY ones like Pi that stream NDJSON).  We synthesise a single
+            // TerminalWrite from the best-available text so the smoke-test
+            // fixtures contain something replayable.
+            if let Some(recorder) = session_recorder {
+                let text = if pty_result.extracted_text.is_empty() {
+                    &pty_result.stripped_output
+                } else {
+                    &pty_result.extracted_text
+                };
+                if !text.is_empty() {
+                    recorder.record_ux_event(&ralph_proto::UxEvent::TerminalWrite(
+                        ralph_proto::TerminalWrite::new(text.as_bytes(), true, 0),
+                    ));
+                }
+            }
+
             let was_idle_timeout = !interactive
                 && pty_result.termination == ralph_adapters::TerminationType::IdleTimeout;
             let termination = convert_termination_type(pty_result.termination);
