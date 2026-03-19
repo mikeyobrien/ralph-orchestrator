@@ -1777,11 +1777,22 @@ pub async fn run_loop_impl(
                 let result = executor
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
+                let output = normalize_cli_output_for_parsing(
+                    effective_backend.output_format,
+                    &result.output,
+                );
+
+                // Record terminal output for session replay (non-PTY path)
+                if let Some(ref recorder) = _session_recorder {
+                    if !output.is_empty() {
+                        recorder.record_ux_event(&ralph_proto::UxEvent::TerminalWrite(
+                            ralph_proto::TerminalWrite::new(output.as_bytes(), true, 0),
+                        ));
+                    }
+                }
+
                 Ok(ExecutionOutcome {
-                    output: normalize_cli_output_for_parsing(
-                        effective_backend.output_format,
-                        &result.output,
-                    ),
+                    output,
                     success: result.success,
                     termination: None,
                     total_cost_usd: 0.0,
