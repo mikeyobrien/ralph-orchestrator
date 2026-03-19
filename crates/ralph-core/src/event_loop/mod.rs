@@ -409,8 +409,15 @@ impl EventLoop {
             .unwrap_or_else(|| PathBuf::from(".ralph/agent/tasks.jsonl"))
     }
 
-    /// Returns the scratchpad path based on loop context or config.
+    /// Returns the scratchpad path based on config and loop context.
+    ///
+    /// If the config specifies a custom (non-default) scratchpad path, that
+    /// always wins. Otherwise, the loop context path is used for worktree
+    /// isolation, falling back to the config default.
     fn scratchpad_path(&self) -> PathBuf {
+        if self.config.core.scratchpad != ".ralph/agent/scratchpad.md" {
+            return PathBuf::from(&self.config.core.scratchpad);
+        }
         self.loop_context
             .as_ref()
             .map(|ctx| ctx.scratchpad_path())

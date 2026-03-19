@@ -440,8 +440,10 @@ Keep temporary artifacts where later steps can still inspect them, such as a rep
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let path = e.path();
+                    let fname = path.file_name().and_then(|s| s.to_str());
                     if path.extension().and_then(|s| s.to_str()) == Some("md")
-                        && path.file_name().and_then(|s| s.to_str()) != Some("memories.md")
+                        && fname != Some("memories.md")
+                        && fname != Some("scratchpad.md")
                     {
                         path.file_name()
                             .and_then(|s| s.to_str())

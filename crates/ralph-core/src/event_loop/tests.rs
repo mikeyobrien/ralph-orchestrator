@@ -3480,6 +3480,25 @@ fn test_paths_use_loop_context_when_present() {
 }
 
 #[test]
+fn test_custom_scratchpad_overrides_loop_context() {
+    use crate::loop_context::LoopContext;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_context = LoopContext::primary(temp_dir.path().to_path_buf());
+    let mut config = RalphConfig::default();
+    config.core.scratchpad = ".ralph/debug/global.md".to_string();
+
+    let event_loop = EventLoop::with_context(config, loop_context);
+
+    // Custom scratchpad path should take precedence over loop context
+    assert_eq!(
+        event_loop.scratchpad_path(),
+        PathBuf::from(".ralph/debug/global.md"),
+        "Custom scratchpad in config should override loop context default"
+    );
+}
+
+#[test]
 fn test_paths_fallback_to_config_when_no_context() {
     let temp_dir = tempfile::tempdir().unwrap();
     let scratchpad_path = temp_dir.path().join("scratchpad.md");
