@@ -28,6 +28,7 @@ mod mcp;
 mod memory;
 mod preflight;
 mod presets;
+mod prps;
 mod rpc_stdin;
 mod skill_cli;
 mod sop_runner;
@@ -601,6 +602,9 @@ enum Commands {
     /// Manage parallel loops
     Loops(loops::LoopsArgs),
 
+    /// Manage the PRP queue
+    Prps(prps::PrpsArgs),
+
     /// Manage configured hats
     Hats(hats::HatsArgs),
 
@@ -1165,6 +1169,7 @@ async fn main() -> Result<()> {
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
         Some(Commands::Wave(args)) => wave::execute(args, cli.color.should_use_colors()),
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
+        Some(Commands::Prps(args)) => prps::execute(args),
         Some(Commands::Hats(args)) => {
             hats::execute(
                 &config_sources,

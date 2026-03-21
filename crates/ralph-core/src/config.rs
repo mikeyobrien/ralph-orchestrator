@@ -137,6 +137,10 @@ pub struct RalphConfig {
     /// RObot (Ralph-Orchestrator bot) configuration for Telegram-based interaction.
     #[serde(default, rename = "RObot")]
     pub robot: RobotConfig,
+
+    /// PRP (Pull Request Process) queue configuration.
+    #[serde(default)]
+    pub prps: PrpsConfig,
 }
 
 fn default_true() -> bool {
@@ -182,6 +186,8 @@ impl Default for RalphConfig {
             skills: SkillsConfig::default(),
             // Features
             features: FeaturesConfig::default(),
+            // PRP queue
+            prps: PrpsConfig::default(),
             // RObot (Ralph-Orchestrator bot)
             robot: RobotConfig::default(),
         }
@@ -1100,6 +1106,121 @@ pub struct MemoriesFilter {
     /// Only include memories from the last N days (0 = no time limit).
     #[serde(default)]
     pub recent: u32,
+}
+
+/// PRP (Pull Request Process) queue configuration.
+///
+/// Controls the native PRP queue system for sequential PRP processing
+/// with implementation and integration phases.
+///
+/// Example configuration:
+/// ```yaml
+/// prps:
+///   enabled: true
+///   import_dir: ./PRPs/remaining_work
+///   completed_dir: ./PRPs/completed
+///   queue_file: .ralph/prp-queue.jsonl
+///   implementation_config: ralph.yml
+///   integration_config: ralph-landing.yml
+///   integration_branch: integration
+///   implementation_worktree_dir: .worktrees
+///   integration_worktree: .worktrees/integration
+///   implementation_branch_prefix: prp/
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrpsConfig {
+    /// Whether the PRP queue feature is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Directory containing PRP markdown files to import.
+    #[serde(default = "default_prp_import_dir")]
+    pub import_dir: PathBuf,
+
+    /// Directory where completed PRPs are archived.
+    #[serde(default = "default_prp_completed_dir")]
+    pub completed_dir: PathBuf,
+
+    /// Path to the PRP queue JSONL file.
+    #[serde(default = "default_prp_queue_file")]
+    pub queue_file: PathBuf,
+
+    /// Config file for implementation phase.
+    #[serde(default = "default_prp_implementation_config")]
+    pub implementation_config: PathBuf,
+
+    /// Config file for integration phase.
+    #[serde(default = "default_prp_integration_config")]
+    pub integration_config: PathBuf,
+
+    /// Branch name for shared integration worktree.
+    #[serde(default = "default_prp_integration_branch")]
+    pub integration_branch: String,
+
+    /// Directory for PRP implementation worktrees.
+    #[serde(default = "default_prp_implementation_worktree_dir")]
+    pub implementation_worktree_dir: PathBuf,
+
+    /// Path to the shared integration worktree.
+    #[serde(default = "default_prp_integration_worktree")]
+    pub integration_worktree: PathBuf,
+
+    /// Prefix for PRP implementation branches.
+    #[serde(default = "default_prp_branch_prefix")]
+    pub implementation_branch_prefix: String,
+}
+
+fn default_prp_import_dir() -> PathBuf {
+    PathBuf::from("PRPs/remaining_work")
+}
+
+fn default_prp_completed_dir() -> PathBuf {
+    PathBuf::from("PRPs/completed")
+}
+
+fn default_prp_queue_file() -> PathBuf {
+    PathBuf::from(".ralph/prp-queue.jsonl")
+}
+
+fn default_prp_implementation_config() -> PathBuf {
+    PathBuf::from("ralph.yml")
+}
+
+fn default_prp_integration_config() -> PathBuf {
+    PathBuf::from("ralph-landing.yml")
+}
+
+fn default_prp_integration_branch() -> String {
+    String::from("integration")
+}
+
+fn default_prp_implementation_worktree_dir() -> PathBuf {
+    PathBuf::from(".worktrees")
+}
+
+fn default_prp_integration_worktree() -> PathBuf {
+    PathBuf::from(".worktrees/integration")
+}
+
+fn default_prp_branch_prefix() -> String {
+    String::from("prp/")
+}
+
+impl Default for PrpsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            import_dir: default_prp_import_dir(),
+            completed_dir: default_prp_completed_dir(),
+            queue_file: default_prp_queue_file(),
+            implementation_config: default_prp_implementation_config(),
+            integration_config: default_prp_integration_config(),
+            integration_branch: default_prp_integration_branch(),
+            implementation_worktree_dir: default_prp_implementation_worktree_dir(),
+            integration_worktree: default_prp_integration_worktree(),
+            implementation_branch_prefix: default_prp_branch_prefix(),
+        }
+    }
 }
 
 /// Tasks configuration.

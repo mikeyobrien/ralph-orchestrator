@@ -38,6 +38,8 @@ mod memory_store;
 pub mod merge_queue;
 pub mod planning_session;
 pub mod preflight;
+pub mod prp_files;
+pub mod prp_queue;
 #[cfg(feature = "recording")]
 mod session_player;
 #[cfg(feature = "recording")]
@@ -61,7 +63,7 @@ pub mod worktree;
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
     CliConfig, ConfigError, CoreConfig, EventLoopConfig, EventMetadata, FeaturesConfig, HatBackend,
-    HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig, SkillOverride,
+    HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, PrpsConfig, RalphConfig, SkillOverride,
     SkillsConfig,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
@@ -114,6 +116,13 @@ pub use preflight::{
     AcceptanceCriterion, CheckResult, CheckStatus, PreflightCheck, PreflightReport,
     PreflightRunner, extract_acceptance_criteria, extract_all_criteria, extract_criteria_from_file,
 };
+pub use prp_files::{
+    archive_prp, definition_of_done_complete, discover_prps, extract_title, parse_prp_id,
+    DiscoveredPrp, PrpFilesError,
+};
+pub use prp_queue::{
+    PrpEntry, PrpEvent, PrpEventType, PrpPhase, PrpQueue, PrpQueueError, PrpState,
+};
 #[cfg(feature = "recording")]
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};
 #[cfg(feature = "recording")]
@@ -135,7 +144,8 @@ pub use workspace::{
     WorkspaceManager,
 };
 pub use worktree::{
-    SyncStats, Worktree, WorktreeConfig, WorktreeError, create_worktree, ensure_gitignore,
-    list_ralph_worktrees, list_worktrees, remove_worktree, sync_working_directory_to_worktree,
-    worktree_exists,
+    SyncStats, Worktree, WorktreeConfig, WorktreeError, ConsolidationResult, WorktreeSpec,
+    consolidate_child_worktrees, create_worktree, create_worktree_with_spec, ensure_gitignore,
+    list_child_worktrees, list_ralph_worktrees, list_worktrees, remove_worktree,
+    sync_working_directory_to_worktree, worktree_exists,
 };
