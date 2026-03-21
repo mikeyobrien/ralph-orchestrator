@@ -120,3 +120,4 @@ PROMPT.md
 .codex/
 .agents/
 .playwright-cli/
+.aider*
