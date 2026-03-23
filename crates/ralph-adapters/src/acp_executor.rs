@@ -74,6 +74,18 @@ struct RalphAcpClient {
     terminals: Terminals,
 }
 
+/// Apply byte limit to output buffer, truncating from beginning if needed.
+/// Finds a valid UTF-8 boundary before truncating.
+fn apply_byte_limit(data: &mut Vec<u8>, limit: Option<u64>) {
+    let Some(max) = limit else { return };
+    let max = max as usize;
+    if data.len() > max {
+        let start = data.len() - max;
+        let s = String::from_utf8_lossy(&data[start..]);
+        *data = s.into_owned().into_bytes();
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl agent_client_protocol::Client for RalphAcpClient {
     async fn request_permission(
@@ -213,7 +225,12 @@ impl agent_client_protocol::Client for RalphAcpClient {
                 loop {
                     match out.read(&mut tmp).await {
                         Ok(0) => break,
-                        Ok(n) => combined.extend_from_slice(&tmp[..n]),
+                        Ok(n) => {
+                            combined.extend_from_slice(&tmp[..n]);
+                            // Update shared buffer incrementally for live terminal_output()
+                            apply_byte_limit(&mut combined, limit);
+                            *buf_clone.borrow_mut() = combined.clone();
+                        }
                         Err(_) => break,
                     }
                 }
@@ -223,21 +240,17 @@ impl agent_client_protocol::Client for RalphAcpClient {
                 loop {
                     match err.read(&mut tmp).await {
                         Ok(0) => break,
-                        Ok(n) => combined.extend_from_slice(&tmp[..n]),
+                        Ok(n) => {
+                            combined.extend_from_slice(&tmp[..n]);
+                            // Update shared buffer incrementally for live terminal_output()
+                            apply_byte_limit(&mut combined, limit);
+                            *buf_clone.borrow_mut() = combined.clone();
+                        }
                         Err(_) => break,
                     }
                 }
             }
-            // Apply byte limit (truncate from beginning)
-            if let Some(max) = limit {
-                let max = max as usize;
-                if combined.len() > max {
-                    // Find a valid UTF-8 boundary
-                    let start = combined.len() - max;
-                    let s = String::from_utf8_lossy(&combined[start..]);
-                    combined = s.into_owned().into_bytes();
-                }
-            }
+            // Final update (may be redundant but ensures consistency)
             *buf_clone.borrow_mut() = combined;
             // Mark as "reader done" — exit_status set by wait
             let _ = exit_clone;
