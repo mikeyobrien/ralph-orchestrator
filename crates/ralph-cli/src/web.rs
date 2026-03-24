@@ -108,6 +108,55 @@ async fn run_async_command_with_retry(
     unreachable!("retry loop should always return before exhausting attempts")
 }
 
+/// Minimum Cargo version required (edition 2024 + workspace inheritance + dependency MSRV).
+const MIN_CARGO_VERSION: (u32, u32) = (1, 88);
+
+/// Check that Cargo is installed and meets minimum version requirements.
+fn check_cargo_version() -> Result<String> {
+    let output = run_command_with_retry(OsStr::new("cargo"), &["--version"]).map_err(|_| {
+        anyhow::anyhow!(
+            "Cargo is not installed or not in PATH.\n\
+             Install Rust: https://rustup.rs/"
+        )
+    })?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to run `cargo --version`.\n\
+             Install Rust: https://rustup.rs/"
+        );
+    }
+
+    let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Parse version from e.g. "cargo 1.85.0 (abc1234 2025-01-01)"
+    let version_part = version_str
+        .strip_prefix("cargo ")
+        .and_then(|s| s.split_whitespace().next())
+        .unwrap_or("");
+
+    let parts: Vec<u32> = version_part
+        .split('.')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    let (major, minor) = (
+        parts.first().copied().unwrap_or(0),
+        parts.get(1).copied().unwrap_or(0),
+    );
+
+    if (major, minor) < MIN_CARGO_VERSION {
+        anyhow::bail!(
+            "Cargo {} is too old (need >= {}.{} for edition 2024, workspace inheritance, and dependencies).\n\
+             Update with: rustup update stable",
+            version_part,
+            MIN_CARGO_VERSION.0,
+            MIN_CARGO_VERSION.1,
+        );
+    }
+
+    Ok(version_str)
+}
+
 /// Check that Node.js is installed and >= 18. Returns the version string.
 fn check_node_with(node_cmd: &OsStr) -> Result<String> {
     let output = run_command_with_retry(node_cmd, &["--version"]).map_err(|_| {
@@ -326,6 +375,12 @@ async fn preflight_with(
     npm_cmd: &OsStr,
     npx_cmd: &OsStr,
 ) -> Result<()> {
+    // Check Cargo version when using the Rust RPC API (non-legacy mode)
+    if !legacy_node_api {
+        let cargo_version = check_cargo_version()?;
+        println!("Using {}", cargo_version);
+    }
+
     let node_version = check_node_with(node_cmd)?;
     let npm_version = check_npm_with(npm_cmd)?;
     println!(
