@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit hook: mirror CI Rust checks locally to catch issues before push.
-# CI parity targets:
-#   1) ./scripts/sync-embedded-files.sh check
-#   2) cargo fmt --all -- --check
-#   3) cargo clippy --all-targets --all-features -- -D warnings
-#   4) cargo test
+# Pre-commit hook: run the fast subset of the shared Rust CI parity gate.
+# This keeps commit-time checks aligned with CI without running the slower
+# hooks BDD and mock E2E steps on every commit.
 
 set -euo pipefail
 
@@ -17,82 +14,4 @@ while IFS= read -r git_env_var; do
   unset "$git_env_var"
 done < <(git rev-parse --local-env-vars)
 
-# Prefer CI-equivalent toolchain selection when possible.
-# CI uses: dtolnay/rust-toolchain@stable (+ rustfmt, clippy components).
-TOOLCHAIN_MODE="path"
-FMT_MODE="path"
-
-if command -v rustup >/dev/null 2>&1; then
-  echo "🔧 Ensuring CI-equivalent Rust toolchain (stable + rustfmt + clippy)..."
-  rustup toolchain install stable \
-    --profile minimal \
-    --component rustfmt \
-    --component clippy \
-    --no-self-update \
-    >/dev/null
-  TOOLCHAIN_MODE="rustup"
-  FMT_MODE="rustup"
-else
-  echo "⚠️  rustup not found; clippy/test will use cargo from PATH (may differ from CI stable)." >&2
-
-  if cargo fmt --version >/dev/null 2>&1; then
-    FMT_MODE="path"
-  elif command -v nix >/dev/null 2>&1; then
-    echo "⚠️  rustfmt not found in PATH; using nix shell fallback for fmt only." >&2
-    FMT_MODE="nix"
-  else
-    echo "❌ rustfmt is not available (no rustup and no nix fallback)." >&2
-    echo "   Install rustup (recommended) or rustfmt via your package manager." >&2
-    exit 1
-  fi
-
-  if ! cargo clippy --version >/dev/null 2>&1; then
-    echo "❌ clippy is not available in PATH." >&2
-    echo "   Install rustup (recommended) or clippy via your package manager." >&2
-    exit 1
-  fi
-fi
-
-run_cargo() {
-  if [[ "$TOOLCHAIN_MODE" == "rustup" ]]; then
-    rustup run stable cargo "$@"
-  else
-    cargo "$@"
-  fi
-}
-
-run_fmt_check() {
-  case "$FMT_MODE" in
-    rustup)
-      rustup run stable cargo fmt --all -- --check
-      ;;
-    nix)
-      nix shell nixpkgs#cargo nixpkgs#rustc nixpkgs#rustfmt -c cargo fmt --all -- --check
-      ;;
-    *)
-      cargo fmt --all -- --check
-      ;;
-  esac
-}
-
-run_check() {
-  local label="$1"
-  shift
-
-  echo ""
-  echo "🔍 ${label}..."
-  if ! "$@"; then
-    echo ""
-    echo "❌ ${label} failed!"
-    exit 1
-  fi
-  echo "✅ ${label} passed"
-}
-
-run_check "Embedded files sync check" ./scripts/sync-embedded-files.sh check
-run_check "Formatting (cargo fmt --all -- --check)" run_fmt_check
-run_check "Clippy (all targets/features, warnings as errors)" run_cargo clippy --all-targets --all-features -- -D warnings
-run_check "Tests (cargo test)" run_cargo test
-
-echo ""
-echo "🎉 All pre-commit checks passed!"
+./scripts/ci-rust-gate.sh --skip-hooks-bdd --skip-mock-e2e

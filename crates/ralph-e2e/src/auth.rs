@@ -324,12 +324,19 @@ mod tests {
         let checker = AuthChecker::new();
         // Check Claude (most likely to be installed in development)
         let info = checker.check(Backend::Claude).await;
-        // If available, should have a version
+        // `which` availability does not guarantee `--version` succeeds in every environment,
+        // but authenticated backends must still surface a version because auth detection uses it.
         if info.is_available {
             assert!(
-                info.version.is_some(),
-                "Available backend should have version"
+                info.error.is_none(),
+                "Available backend should not report an availability error"
             );
+            if info.is_authenticated {
+                assert!(
+                    info.version.is_some(),
+                    "Authenticated backend should have version"
+                );
+            }
         } else {
             // If not available, should have error message
             assert!(

@@ -72,7 +72,7 @@ impl CliExecutor {
         verbose: bool,
     ) -> std::io::Result<ExecutionResult> {
         // Note: _temp_file is kept alive for the duration of this function scope.
-        // For large prompts (>7000 chars), Claude reads from the temp file.
+        // Some Arg-mode backends use temp-file indirection for very large prompts.
         let (cmd, args, stdin_input, _temp_file) = self.backend.build_command(prompt, false);
 
         let mut command = Command::new(&cmd);

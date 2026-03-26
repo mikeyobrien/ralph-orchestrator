@@ -31,7 +31,7 @@ jobs:
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: ./scripts/ci-rust-gate.sh --skip-embedded-files --skip-clippy --skip-tests --skip-hooks-bdd --skip-mock-e2e
 
   test:
     name: Test
@@ -47,16 +47,8 @@ jobs:
           components: clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Run tests
-        run: cargo test -- --skip acp_executor::tests::test_create_terminal_and_output
-      - name: Run hooks BDD gate
-        run: ./scripts/hooks-bdd-gate.sh
-      - name: Run mock E2E tests
-        run: |
-          cargo build -p ralph-e2e
-          ./target/debug/ralph-e2e --mock --skip-analysis || true
+      - name: Run shared Rust CI gate
+        run: ./scripts/ci-rust-gate.sh --skip-embedded-files --skip-format
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
