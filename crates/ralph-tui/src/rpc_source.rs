@@ -822,8 +822,14 @@ mod tests {
             .position(|line| line.contains("Recovered after failure."))
             .expect("after text should remain visible");
 
-        assert!(before_idx < error_idx, "error should stay after preceding text: {rendered:?}");
-        assert!(error_idx < after_idx, "error should stay before following text: {rendered:?}");
+        assert!(
+            before_idx < error_idx,
+            "error should stay after preceding text: {rendered:?}"
+        );
+        assert!(
+            error_idx < after_idx,
+            "error should stay before following text: {rendered:?}"
+        );
     }
 
     #[test]

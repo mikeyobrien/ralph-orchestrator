@@ -539,7 +539,10 @@ impl StreamHandler for TuiStreamHandler {
         let line = Line::from(vec![
             Span::styled("  ↳ ", Style::default().fg(RatatuiColor::DarkGray)),
             Span::styled("✓ ", Style::default().fg(RatatuiColor::Green)),
-            Span::styled(truncate(&clean, 200), Style::default().fg(RatatuiColor::DarkGray)),
+            Span::styled(
+                truncate(&clean, 200),
+                Style::default().fg(RatatuiColor::DarkGray),
+            ),
         ]);
         self.add_non_text_line(line);
     }
