@@ -13,6 +13,7 @@ class CheckResult:
 
     passed: bool
     reason: str
+    score: Optional[int] = None  # 1-10 score for scored rubrics
 
 
 @dataclass
@@ -24,17 +25,25 @@ class JudgeResult:
     overall_reason: str = ""
     raw_response: str = ""
 
+    @property
+    def total_score(self) -> int:
+        """Sum of all criterion scores (0 if no scored criteria)."""
+        return sum(c.score for c in self.checks.values() if c.score is not None)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result: dict[str, Any] = {
             "passed": self.passed,
             "checks": {
-                name: {"passed": check.passed, "reason": check.reason}
+                name: {"passed": check.passed, "reason": check.reason, **({"score": check.score} if check.score is not None else {})}
                 for name, check in self.checks.items()
             },
             "overall_reason": self.overall_reason,
             "raw_response": self.raw_response,
         }
+        if any(c.score is not None for c in self.checks.values()):
+            result["total_score"] = self.total_score
+        return result
 
 
 # Default validation criteria for idle timeout TUI state
@@ -284,9 +293,12 @@ Please read and analyze the image at: {image_path}
             checks = {}
             if "checks" in data:
                 for name, check_data in data["checks"].items():
+                    score = check_data.get("score")
+                    passed = check_data.get("pass", score is not None and score >= 7)
                     checks[name] = CheckResult(
-                        passed=check_data.get("pass", False),
+                        passed=passed,
                         reason=check_data.get("reason", ""),
+                        score=score,
                     )
 
             return JudgeResult(

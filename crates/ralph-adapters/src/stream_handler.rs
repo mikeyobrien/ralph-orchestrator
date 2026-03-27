@@ -19,6 +19,11 @@ use std::{
 };
 use termimad::MadSkin;
 
+#[path = "tool_preview.rs"]
+mod tool_preview;
+
+use tool_preview::{format_tool_result, format_tool_summary};
+
 /// Detects if text contains ANSI escape sequences.
 ///
 /// Checks for the common ANSI escape sequence prefix `\x1b[` (ESC + `[`)
@@ -531,19 +536,23 @@ impl StreamHandler for TuiStreamHandler {
             return;
         }
         let clean = sanitize_tui_inline_text(&display);
-        let line = Line::from(Span::styled(
-            format!(" \u{2713} {}", truncate(&clean, 200)),
-            Style::default().fg(RatatuiColor::DarkGray),
-        ));
+        let line = Line::from(vec![
+            Span::styled("  ↳ ", Style::default().fg(RatatuiColor::DarkGray)),
+            Span::styled("✓ ", Style::default().fg(RatatuiColor::Green)),
+            Span::styled(truncate(&clean, 200), Style::default().fg(RatatuiColor::DarkGray)),
+        ]);
         self.add_non_text_line(line);
     }
 
     fn on_error(&mut self, error: &str) {
         let clean = sanitize_tui_inline_text(error);
-        let line = Line::from(Span::styled(
-            format!("\u{2717} Error: {}", clean),
-            Style::default().fg(RatatuiColor::Red),
-        ));
+        let line = Line::from(vec![
+            Span::styled("  ↳ ", Style::default().fg(RatatuiColor::DarkGray)),
+            Span::styled(
+                format!("\u{2717} Error: {}", clean),
+                Style::default().fg(RatatuiColor::Red),
+            ),
+        ]);
         self.add_non_text_line(line);
     }
 
@@ -567,130 +576,6 @@ impl StreamHandler for TuiStreamHandler {
         let line = Line::from(Span::styled(summary, Style::default().fg(color)));
         self.add_non_text_line(line);
     }
-}
-
-/// Extracts the most relevant field from tool input for display.
-///
-/// Returns a human-readable summary (file path, command, pattern, etc.) based on the tool type.
-/// Returns `None` for unknown tools or if the expected field is missing.
-fn format_tool_summary(name: &str, input: &serde_json::Value) -> Option<String> {
-    match name {
-        "Read" | "Edit" | "Write" | "read" | "write" => input
-            .get("file_path")
-            .or_else(|| input.get("path"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "Bash" | "shell" => {
-            let cmd = input.get("command")?.as_str()?;
-            Some(truncate(cmd, 60))
-        }
-        "Grep" | "grep" => input.get("pattern")?.as_str().map(|s| s.to_string()),
-        "Glob" | "glob" | "ls" => input
-            .get("pattern")
-            .or_else(|| input.get("path"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "Task" => input.get("description")?.as_str().map(|s| s.to_string()),
-        "WebFetch" | "web_fetch" => input.get("url")?.as_str().map(|s| s.to_string()),
-        "WebSearch" | "web_search" => input.get("query")?.as_str().map(|s| s.to_string()),
-        "LSP" => {
-            let op = input.get("operation")?.as_str()?;
-            let file = input.get("filePath")?.as_str()?;
-            Some(format!("{} @ {}", op, file))
-        }
-        "NotebookEdit" => input.get("notebook_path")?.as_str().map(|s| s.to_string()),
-        "TodoWrite" => Some("updating todo list".to_string()),
-        _ => {
-            // Generic fallback: try common keys
-            input
-                .get("path")
-                .or_else(|| input.get("file_path"))
-                .or_else(|| input.get("command"))
-                .or_else(|| input.get("pattern"))
-                .or_else(|| input.get("url"))
-                .or_else(|| input.get("query"))
-                .and_then(|v| v.as_str())
-                .map(|s| truncate(s, 60))
-        }
-    }
-}
-
-/// Extracts human-readable content from ACP tool result JSON envelopes.
-///
-/// ACP tool results arrive as `{"items":[{"Text":"..."} | {"Json":{...}}]}`.
-/// This function extracts the meaningful content:
-/// - Shell results (Json with stdout/stderr): shows stdout, or stderr on failure
-/// - Glob results (Json with filePaths): shows count and basenames
-/// - Text results: shows the text content directly
-/// - Falls back to raw string for non-JSON or unknown formats.
-fn format_tool_result(output: &str) -> String {
-    let Ok(val) = serde_json::from_str::<serde_json::Value>(output) else {
-        return output.to_string();
-    };
-    let Some(items) = val.get("items").and_then(|v| v.as_array()) else {
-        return output.to_string();
-    };
-    let Some(item) = items.first() else {
-        return String::new();
-    };
-
-    // {"Text": "..."}
-    if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-
-    // {"Json": {...}}
-    if let Some(json) = item.get("Json") {
-        // Shell: {exit_status, stdout, stderr}
-        if let Some(stdout) = json.get("stdout").and_then(|v| v.as_str()) {
-            let stderr = json.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-            let exit = json
-                .get("exit_status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let failed = !exit.contains("status: 0");
-            return if failed && !stderr.is_empty() {
-                stderr.to_string()
-            } else if !stdout.is_empty() {
-                stdout.to_string()
-            } else {
-                stderr.to_string()
-            };
-        }
-        // Glob: {filePaths, totalFiles, truncated}
-        if let Some(paths) = json.get("filePaths").and_then(|v| v.as_array()) {
-            let total = json
-                .get("totalFiles")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(paths.len() as u64);
-            let names: Vec<&str> = paths
-                .iter()
-                .filter_map(|p| p.as_str())
-                .map(|p| p.rsplit('/').next().unwrap_or(p))
-                .collect();
-            return format!("{} files: {}", total, names.join(", "));
-        }
-        // Grep: {numFiles, numMatches, results: [{file, matches: [...]}]}
-        if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
-            let num_matches = json.get("numMatches").and_then(|v| v.as_u64()).unwrap_or(0);
-            let first_match = results.first().and_then(|r| {
-                let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("");
-                let basename = file.rsplit('/').next().unwrap_or(file);
-                let matches = r.get("matches").and_then(|v| v.as_array())?;
-                let first = matches.first().and_then(|m| m.as_str())?;
-                Some(format!("{}: {}", basename, first.trim()))
-            });
-            return match first_match {
-                Some(m) => format!("{} matches: {}", num_matches, m),
-                None => format!("{} matches", num_matches),
-            };
-        }
-
-        // Unknown Json: compact stringify
-        return json.to_string();
-    }
-
-    output.to_string()
 }
 
 /// Truncates a string to approximately `max_len` characters, adding "..." if truncated.
@@ -1070,10 +955,10 @@ mod tests {
                 line_text
             );
 
-            // Check style is red
-            let first_span = &lines[0].spans[0];
+            // Check style is red on the error payload span (after the dim arrow prefix)
+            let error_span = &lines[0].spans[1];
             assert_eq!(
-                first_span.style.fg,
+                error_span.style.fg,
                 Some(Color::Red),
                 "Error line should have red foreground"
             );
@@ -1814,6 +1699,20 @@ mod tests {
             let output = "just plain text output";
             let result = format_tool_result(output);
             assert_eq!(result, output, "Non-JSON should pass through unchanged");
+        }
+
+        #[test]
+        fn format_tool_result_compacts_short_multiline_text() {
+            let output = "README.md\nnotes.txt\nsummary.md\n";
+            let result = format_tool_result(output);
+            assert_eq!(result, "README.md • notes.txt • summary.md");
+        }
+
+        #[test]
+        fn format_tool_result_summarizes_long_multiline_text() {
+            let output = "first line\nsecond line\nthird line\nfourth line\nfifth line\n";
+            let result = format_tool_result(output);
+            assert_eq!(result, "first line • second line (+3 more lines)");
         }
 
         #[test]

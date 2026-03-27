@@ -9,13 +9,18 @@ from datetime import datetime
 from typing import AsyncGenerator
 
 import pytest
-import pytest_asyncio
+
+try:
+    import pytest_asyncio
+except ModuleNotFoundError:  # pragma: no cover - exercised by ambient python3 benchmark setup
+    pytest_asyncio = None
 
 from .helpers import TmuxSession, FreezeCapture, LLMJudge, IterationCapture
 
 
-# Configure pytest-asyncio
-pytest_plugins = ("pytest_asyncio",)
+# Configure pytest-asyncio when available.
+pytest_plugins = ("pytest_asyncio",) if pytest_asyncio is not None else ()
+async_fixture = pytest_asyncio.fixture if pytest_asyncio is not None else pytest.fixture
 
 
 def pytest_configure(config):
@@ -80,7 +85,7 @@ def tmux_session_name() -> str:
     return f"ralph-e2e-{uuid.uuid4().hex[:8]}"
 
 
-@pytest_asyncio.fixture
+@async_fixture
 async def tmux_session(tmux_session_name: str) -> AsyncGenerator[TmuxSession, None]:
     """Create and manage a tmux session for testing.
 
@@ -167,7 +172,7 @@ def iteration_evidence_dir(iteration_evidence_base_dir: Path) -> Path:
     return run_dir
 
 
-@pytest_asyncio.fixture
+@async_fixture
 async def iteration_capture(tmux_session: TmuxSession) -> IterationCapture:
     """Create an IterationCapture instance for the test.
 

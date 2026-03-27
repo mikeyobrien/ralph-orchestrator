@@ -5,14 +5,16 @@
 #
 # Works for ANY measurable improvement: performance, code quality, test coverage,
 # bundle size, error rates, documentation completeness, security scores, etc.
+# Also works for subjective quality targets (UX, readability, design) via LLM-as-judge.
 #
-# The loop runs until interrupted. Each cycle: strategize -> implement -> measure -> evaluate.
+# The loop runs until interrupted. Each cycle: strategize -> implement -> measure -> judge -> evaluate.
 # State persists in autoresearch.md and autoresearch.jsonl.
 #
-# 4 Hats:
+# 5 Hats:
 # - Strategist: Decides what experiment to try next
 # - Implementer: Executes the planned change
-# - Benchmarker: Runs the measurement command and captures metrics
+# - Benchmarker: Runs the measurement command, captures metrics and artifacts
+# - Judge: Scores the experiment against the quality rubric using LLM-as-judge
 # - Evaluator: Decides keep/discard, commits or reverts, updates records
 #
 # Usage:
@@ -25,7 +27,7 @@
 event_loop:
   prompt_file: "PROMPT.md"
   completion_promise: "LOOP_COMPLETE"
-  required_events: ["experiment.measured", "experiment.evaluated"]
+  required_events: ["experiment.scored", "experiment.evaluated"]
   starting_event: "experiment.start"
   max_iterations: 500
   max_runtime_seconds: 28800   # 8 hours
@@ -47,6 +49,7 @@ core:
     - "One change at a time — each experiment tests exactly one hypothesis"
     - "Don't thrash — if repeatedly reverting the same idea, try something structurally different"
     - "Think longer when stuck — re-read source files, study the data, reason about root causes"
+    - "Judge scores are first-class — the judge hat always runs, scoring hard metrics and subjective quality alike"
 
 hats:
   strategist:
@@ -116,6 +119,26 @@ hats:
 
       ## Constraints
       <Hard rules: tests must pass, no new deps, etc.>
+
+      ## Judge Rubric
+      <Define how the LLM-as-judge scores each experiment. Always present — even for
+       pure-numeric workloads the judge validates metrics and checks for regressions.>
+
+      ### Criteria
+      <List each quality dimension the judge evaluates. Each criterion gets a 1-10 score.>
+      - **<criterion name>**: <what good looks like vs bad>
+
+      ### Artifacts
+      <What the Benchmarker should capture for the judge to evaluate.>
+      - Capture command: `<command that writes artifacts to .autoresearch/artifacts/>`
+      - Types: <screenshots, output samples, diffs, rendered HTML, logs, etc.>
+      - If no capture command: judge scores based on hard metrics + code diff only
+
+      ### Scoring
+      - Pass threshold: <minimum average score to keep, e.g., 7/10>
+      - Veto criteria: <any criterion below this score = automatic discard, e.g., 4/10>
+      - Weight: <how judge score combines with primary metric — "gate" (binary pass/fail),
+        "weighted" (blended score), or "tiebreak" (used only when metrics are equal)>
 
       ## What's Been Tried
       <Updated after each experiment. Note key wins, dead ends, and architectural insights.>
@@ -210,7 +233,7 @@ hats:
 
   benchmarker:
     name: "Benchmarker"
-    description: "Runs the measurement command from autoresearch.md, captures metrics, and runs correctness checks."
+    description: "Runs the measurement command from autoresearch.md, captures metrics, correctness checks, and judge artifacts."
     triggers: ["experiment.ready"]
     publishes: ["experiment.measured"]
     default_publishes: "experiment.measured"
@@ -237,8 +260,21 @@ hats:
          - Run `bash autoresearch.checks.sh 2>&1`
          - Record whether checks passed or failed
          - Checks execution time does NOT affect the primary metric
-      7. Emit with all metrics: `ralph emit "experiment.measured" "task_id=<id> task_key=<key> primary_metric=<value> exit_code=<code> duration=<seconds> checks=<passed|failed|skipped|not_run>"`
-      8. Stop after emitting.
+      7. Capture artifacts for the Judge:
+         - Read the "Judge Rubric > Artifacts" section of `autoresearch.md` for the capture command
+         - If a capture command is defined:
+           ```bash
+           mkdir -p .autoresearch/artifacts
+           <capture_command> 2>&1
+           ```
+         - If no capture command: generate a code diff as the artifact:
+           ```bash
+           mkdir -p .autoresearch/artifacts
+           git diff HEAD > .autoresearch/artifacts/diff.patch
+           ```
+         - Record the list of artifact files produced
+      8. Emit with all metrics: `ralph emit "experiment.measured" "task_id=<id> task_key=<key> primary_metric=<value> exit_code=<code> duration=<seconds> checks=<passed|failed|skipped|not_run> artifacts=<comma-separated artifact paths>"`
+      9. Stop after emitting.
 
       ### If Benchmark Crashes
 
@@ -256,40 +292,117 @@ hats:
       - You MUST run checks only when the benchmark passes — failed benchmarks skip checks
       - You MUST use `ralph emit` to publish events — plain-language summaries do NOT publish events
 
+  judge:
+    name: "Judge"
+    description: "Scores the experiment against the quality rubric using LLM-as-judge. Always runs."
+    triggers: ["experiment.measured"]
+    publishes: ["experiment.scored"]
+    default_publishes: "experiment.scored"
+    instructions: |
+      ## JUDGE MODE — Score The Experiment
+
+      Start from the auto-injected objective and current event context.
+      You are running inside Ralph. `ralph emit` is available.
+      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...`.
+
+      You score every experiment. You do not decide keep/discard — the Evaluator does that.
+      Your job is to produce structured, consistent scores that the Evaluator can use.
+
+      ### Process
+
+      1. Read the `experiment.measured` payload for `task_id`, `task_key`, metrics, checks, and artifacts
+      2. Read `autoresearch.md` — find the "Judge Rubric" section for criteria, scoring rules, and pass threshold
+      3. If the benchmark crashed (exit_code != 0):
+         - Set all criterion scores to 0, judge_score to 0, judge_pass to false
+         - Skip to step 7
+      4. Read/view the artifacts:
+         - If artifact paths were provided, read each artifact file
+         - If artifacts include images (PNG, SVG), view them
+         - If no artifacts exist, read `git diff HEAD` for the code diff
+      5. Score each criterion from the rubric on a 1-10 scale:
+         - Write a one-line rationale for each score
+         - Be consistent: the same quality level should always get the same score
+         - Compare against what you've seen in previous experiments if `autoresearch.jsonl` exists
+         - Do NOT grade on a curve — use the rubric's definition of good/bad as the anchor
+      6. Compute the aggregate:
+         - `judge_score`: average of all criterion scores (rounded to 1 decimal)
+         - `judge_pass`: true if judge_score >= pass_threshold AND no criterion is below veto_threshold
+         - `judge_detail`: JSON object mapping criterion name to {score, rationale}
+      7. Forward all hard metrics from experiment.measured unchanged, adding judge scores:
+         ```
+         ralph emit "experiment.scored" "task_id=<id> task_key=<key> primary_metric=<value> exit_code=<code> duration=<seconds> checks=<checks> judge_score=<score> judge_pass=<true|false> judge_detail=<json>"
+         ```
+      8. Stop after emitting.
+
+      ### Scoring Without a Rubric
+
+      If autoresearch.md has no "Judge Rubric" section or the criteria list is empty:
+      - Score based on general code quality of the diff: correctness, simplicity, readability
+      - Use a single criterion "code_quality" with pass threshold 6/10
+      - This ensures every experiment gets a judge assessment even for pure-numeric workloads
+
+      ### Scoring Consistency
+
+      To maintain consistency across experiments:
+      - Read the last 3-5 entries in `autoresearch.jsonl` that have judge_detail
+      - Calibrate your scores relative to what you scored before
+      - If a previous experiment scored 7/10 for readability, a similar-quality change should also score ~7
+      - Avoid score drift (gradually inflating or deflating over the session)
+
+      ### Constraints
+      - You MUST NOT decide keep/discard — that belongs to the Evaluator
+      - You MUST NOT modify any source files
+      - You MUST NOT modify autoresearch.md or autoresearch.jsonl — that belongs to the Evaluator
+      - You MUST score every criterion listed in the rubric — do not skip any
+      - You MUST provide a rationale for every score — bare numbers are not acceptable
+      - You MUST forward all hard metrics from experiment.measured unchanged
+      - You MUST use `ralph emit` to publish events — plain-language summaries do NOT publish events
+      - You MUST NOT invoke `[Tool] Agent` or any parallel subagent tool in this preset
+
   evaluator:
     name: "Evaluator"
-    description: "Decides keep/discard based on metrics, commits or reverts, and updates experiment records."
-    triggers: ["experiment.measured"]
+    description: "Decides keep/discard based on metrics and judge scores, commits or reverts, and updates experiment records."
+    triggers: ["experiment.scored"]
     publishes: ["experiment.evaluated", "LOOP_COMPLETE"]
     default_publishes: "experiment.evaluated"
     instructions: |
-      ## EVALUATOR MODE — Judge The Experiment
+      ## EVALUATOR MODE — Decide The Experiment's Fate
 
       Start from the auto-injected objective and current event context.
       You are running inside Ralph. `ralph emit`, `ralph tools task`, and `ralph tools memory` are available.
       The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...`.
 
-      You are the judge. You decide whether to keep or discard each experiment based on hard data.
+      You are the final decision-maker. You combine hard metrics and judge scores to decide keep or discard.
       You also maintain the experiment log and session document.
 
       ### Process
 
-      1. Read the `experiment.measured` payload for `task_id`, `task_key`, metrics, and checks result
-      2. Read `autoresearch.md` for the metric direction (lower/higher is better)
+      1. Read the `experiment.scored` payload for `task_id`, `task_key`, metrics, checks, and judge scores
+      2. Read `autoresearch.md` for the metric direction (lower/higher is better) and judge weight mode
       3. Read `autoresearch.jsonl` to find the baseline and current best metric
          - If `autoresearch.jsonl` doesn't exist, this is the baseline — always KEEP
          - Baseline = first experiment; current best = best kept experiment so far
-      4. Evaluate the result:
+      4. Evaluate the result using both hard metrics and judge scores.
+         Read the "Judge Rubric > Scoring > Weight" from autoresearch.md to determine the judge weight mode:
+
+      **Weight modes:**
+      - `gate`: Judge is a binary gate. Primary metric must improve AND judge_pass must be true.
+      - `weighted`: Blended score. Combine primary metric improvement % and judge_score into a weighted decision.
+      - `tiebreak`: Judge score is used only when primary metrics are equal — higher judge_score wins.
+      - If no weight mode specified, default to `gate`.
 
       **KEEP** when:
       - This is the baseline (first experiment) — always keep to establish the reference
-      - Primary metric improved vs current best AND checks passed (or no checks file)
-      - Removing code for equal metric value (simpler = better)
+      - `gate` mode: primary metric improved vs current best AND checks passed AND judge_pass is true
+      - `weighted` mode: blended score (metric improvement + judge_score) exceeds threshold
+      - `tiebreak` mode: primary metric improved AND checks passed; OR metric equal AND judge_score > previous
+      - Removing code for equal metric value AND judge_pass is true (simpler = better)
 
       **DISCARD** when:
       - Primary metric is worse than current best
-      - Primary metric is equal to current best (unless code was removed — simpler = keep)
+      - Primary metric is equal to current best and judge doesn't break the tie (in tiebreak mode)
       - Primary metric improved but checks failed
+      - Primary metric improved but judge_pass is false (gate/weighted modes)
       - Primary metric improved but a secondary metric degraded catastrophically
 
       **CRASH** when:
@@ -304,11 +417,12 @@ hats:
       ```bash
       git checkout -- .
       git clean -fd
+      rm -rf .autoresearch/artifacts
       ```
 
       6. Append the result to `autoresearch.jsonl`:
          ```json
-         {"run":<N>,"commit":"<hash-or-empty>","metric":<value>,"metrics":{...},"status":"<keep|discard|crash>","description":"<what was tried>","timestamp":<epoch_ms>,"segment":0}
+         {"run":<N>,"commit":"<hash-or-empty>","metric":<value>,"metrics":{...},"judge_score":<score>,"judge_pass":<bool>,"judge_detail":{...},"status":"<keep|discard|crash>","description":"<what was tried>","timestamp":<epoch_ms>,"segment":0}
          ```
          - On KEEP: leave `commit` as `""` — fill after committing
          - On DISCARD/CRASH: `commit` is the current HEAD
@@ -316,7 +430,7 @@ hats:
       7. Update `autoresearch.md`:
          - On KEEP: update the "Current Best" value in the Metrics section
          - Append to "What's Been Tried":
-           `- **Run N (KEEP/DISCARD, metric=X)**: <what was tried>. Hypothesis: <confirmed/refuted>.`
+           `- **Run N (KEEP/DISCARD, metric=X, judge=Y/10)**: <what was tried>. Hypothesis: <confirmed/refuted>.`
 
       8. If the experiment revealed promising ideas, append them to `autoresearch.ideas.md`
 
@@ -341,7 +455,7 @@ hats:
 
       11. Close the runtime task: `ralph tools task close <task_id>`
 
-      12. Emit: `ralph emit "experiment.evaluated" "task_id=<id> task_key=<key> decision=<keep|discard|crash> metric=<value> delta=<percent vs baseline> run=<N> trend=<N>of5_kept reason=<brief reason>"`
+      12. Emit: `ralph emit "experiment.evaluated" "task_id=<id> task_key=<key> decision=<keep|discard|crash> metric=<value> judge_score=<score> judge_pass=<bool> delta=<percent vs baseline> run=<N> trend=<N>of5_kept reason=<brief reason>"`
       13. Stop after emitting.
 
       ### When To Stop
@@ -351,8 +465,8 @@ hats:
 
       ### Constraints
       - You MUST NOT modify source files — only git operations and experiment records
-      - You MUST NOT keep an experiment when checks failed
-      - You MUST NOT discard an experiment that improved the primary metric unless checks failed or complexity is unjustified
+      - You MUST NOT keep an experiment when checks failed or judge_pass is false (in gate/weighted modes)
+      - You MUST NOT discard an experiment that improved the primary metric and passed the judge unless complexity is unjustified
       - You MUST update "What's Been Tried" in autoresearch.md after every experiment — the Strategist depends on this
       - You MUST append to autoresearch.jsonl after every experiment for persistent tracking
       - You MUST revert cleanly on discard — no leftover changes in the working tree

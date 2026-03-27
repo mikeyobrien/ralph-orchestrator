@@ -12,17 +12,19 @@ use std::time::Instant;
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tracing::{debug, warn};
 
 use ralph_proto::json_rpc::RpcEvent;
 
 use crate::state::{TaskCounts, TuiState, WaveInfo};
-use crate::state_mutations::{
-    append_error_line, apply_loop_completed, apply_task_active, apply_task_close,
-};
-use crate::text_renderer::{text_to_lines, truncate};
+use crate::state_mutations::{apply_loop_completed, apply_task_active, apply_task_close};
+use crate::text_renderer::{sanitize_tui_inline_text, text_to_lines, truncate};
+
+#[path = "../../ralph-adapters/src/tool_preview.rs"]
+mod tool_preview;
+
+use tool_preview::{format_tool_result, format_tool_summary};
 
 /// Runs the RPC event reader, processing events from the given async reader.
 ///
@@ -145,6 +147,27 @@ struct TextAccumulator {
 enum ContentBlock {
     Text(String),
     NonText(Line<'static>),
+}
+
+fn format_error_line(code: &str, message: &str) -> Line<'static> {
+    let clean = sanitize_tui_inline_text(message);
+    if code == "EXECUTION_ERROR" {
+        Line::from(vec![
+            Span::styled("  ↳ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("\u{2717} Error: {}", clean),
+                Style::default().fg(Color::Red),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                format!("\u{26A0} [{code}] "),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw(clean),
+        ])
+    }
 }
 
 impl TextAccumulator {
@@ -283,6 +306,7 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>, acc: &mut Tex
             if !tool_name.contains(' ')
                 && let Some(summary) = format_tool_summary(tool_name, input)
             {
+                let summary = sanitize_tui_inline_text(&summary);
                 spans.push(Span::styled(
                     format!(" {}", summary),
                     Style::default().fg(Color::DarkGray),
@@ -309,17 +333,21 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>, acc: &mut Tex
                 return;
             }
 
-            let (prefix, color) = if *is_error {
-                ("\u{2717} ", Color::Red)
+            let clean = sanitize_tui_inline_text(&display);
+            let truncated = truncate(&clean, 200);
+            let line = if *is_error {
+                Line::from(vec![
+                    Span::styled("  ↳ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("✗ ", Style::default().fg(Color::Red)),
+                    Span::styled(truncated, Style::default().fg(Color::Red)),
+                ])
             } else {
-                ("\u{2713} ", Color::DarkGray)
+                Line::from(vec![
+                    Span::styled("  ↳ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("✓ ", Style::default().fg(Color::Green)),
+                    Span::styled(truncated, Style::default().fg(Color::DarkGray)),
+                ])
             };
-
-            let truncated = truncate(&display, 200);
-            let line = Line::from(Span::styled(
-                format!(" {}{}", prefix, truncated),
-                Style::default().fg(color),
-            ));
 
             if let Some(handle) = s.latest_iteration_lines_handle() {
                 acc.push_non_text(line, &handle);
@@ -330,7 +358,10 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>, acc: &mut Tex
         }
 
         RpcEvent::Error { code, message, .. } => {
-            append_error_line(&mut s, code, message);
+            let line = format_error_line(code, message);
+            if let Some(handle) = s.latest_iteration_lines_handle() {
+                acc.push_non_text(line, &handle);
+            }
 
             s.last_event = Some("error".to_string());
             s.last_event_at = Some(Instant::now());
@@ -544,122 +575,6 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>, acc: &mut Tex
     }
 }
 
-/// Extracts the most relevant field from tool input for display.
-fn format_tool_summary(name: &str, input: &Value) -> Option<String> {
-    // Try the primary key for the tool name first, then common fallbacks.
-    // ACP tools use lowercase names (read, write, shell, ls, glob, grep)
-    // while Claude uses PascalCase (Read, Write, Bash, Glob, Grep).
-    match name {
-        "Read" | "Edit" | "Write" | "read" | "write" => input
-            .get("path")
-            .or_else(|| input.get("file_path"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "Bash" | "shell" => {
-            let cmd = input.get("command")?.as_str()?;
-            Some(truncate(cmd, 60))
-        }
-        "Grep" | "grep" => input.get("pattern")?.as_str().map(|s| s.to_string()),
-        "Glob" | "glob" | "ls" => input
-            .get("pattern")
-            .or_else(|| input.get("path"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        "Task" => input.get("description")?.as_str().map(|s| s.to_string()),
-        "WebFetch" | "web_fetch" => input.get("url")?.as_str().map(|s| s.to_string()),
-        "WebSearch" | "web_search" => input.get("query")?.as_str().map(|s| s.to_string()),
-        "LSP" => {
-            let op = input.get("operation")?.as_str()?;
-            let file = input.get("filePath")?.as_str()?;
-            Some(format!("{} @ {}", op, file))
-        }
-        "NotebookEdit" => input.get("notebook_path")?.as_str().map(|s| s.to_string()),
-        "TodoWrite" => Some("updating todo list".to_string()),
-        _ => {
-            // Generic fallback: try common keys
-            input
-                .get("path")
-                .or_else(|| input.get("file_path"))
-                .or_else(|| input.get("command"))
-                .or_else(|| input.get("pattern"))
-                .or_else(|| input.get("url"))
-                .or_else(|| input.get("query"))
-                .and_then(|v| v.as_str())
-                .map(|s| truncate(s, 60))
-        }
-    }
-}
-
-/// Extracts human-readable content from ACP tool result JSON envelopes.
-///
-/// ACP tool results arrive as `{"items":[{"Text":"..."} | {"Json":{...}}]}`.
-fn format_tool_result(output: &str) -> String {
-    let Ok(val) = serde_json::from_str::<Value>(output) else {
-        return output.to_string();
-    };
-    let Some(items) = val.get("items").and_then(|v| v.as_array()) else {
-        return output.to_string();
-    };
-    let Some(item) = items.first() else {
-        return String::new();
-    };
-
-    if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
-        return text.to_string();
-    }
-
-    if let Some(json) = item.get("Json") {
-        // Shell: {exit_status, stdout, stderr}
-        if let Some(stdout) = json.get("stdout").and_then(|v| v.as_str()) {
-            let stderr = json.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-            let exit = json
-                .get("exit_status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let failed = !exit.contains("status: 0");
-            return if failed && !stderr.is_empty() {
-                stderr.to_string()
-            } else if !stdout.is_empty() {
-                stdout.to_string()
-            } else {
-                stderr.to_string()
-            };
-        }
-        // Glob/ls: {filePaths, totalFiles}
-        if let Some(paths) = json.get("filePaths").and_then(|v| v.as_array()) {
-            let total = json
-                .get("totalFiles")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(paths.len() as u64);
-            let names: Vec<&str> = paths
-                .iter()
-                .filter_map(|p| p.as_str())
-                .map(|p| p.rsplit('/').next().unwrap_or(p))
-                .collect();
-            return format!("{} files: {}", total, names.join(", "));
-        }
-        // Grep: {numFiles, numMatches, results}
-        if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
-            let num_matches = json.get("numMatches").and_then(|v| v.as_u64()).unwrap_or(0);
-            let first_match = results.first().and_then(|r| {
-                let file = r.get("file").and_then(|v| v.as_str()).unwrap_or("");
-                let basename = file.rsplit('/').next().unwrap_or(file);
-                let matches = r.get("matches").and_then(|v| v.as_array())?;
-                let first = matches.first().and_then(|m| m.as_str())?;
-                Some(format!("{}: {}", basename, first.trim()))
-            });
-            return match first_match {
-                Some(m) => format!("{} matches: {}", num_matches, m),
-                None => format!("{} matches", num_matches),
-            };
-        }
-
-        return json.to_string();
-    }
-
-    output.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,6 +686,151 @@ mod tests {
         let s = state.lock().unwrap();
         let lines = s.iterations[0].lines.lock().unwrap();
         assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn test_tool_call_start_sanitizes_multiline_summary() {
+        let state = make_state();
+        let mut acc = make_acc();
+
+        apply_rpc_event(
+            &RpcEvent::IterationStart {
+                iteration: 1,
+                max_iterations: None,
+                hat: "builder".to_string(),
+                hat_display: "🔨Builder".to_string(),
+                backend: "claude".to_string(),
+                started_at: 0,
+            },
+            &state,
+            &mut acc,
+        );
+
+        apply_rpc_event(
+            &RpcEvent::ToolCallStart {
+                iteration: 1,
+                tool_name: "Bash".to_string(),
+                tool_call_id: "tool_1".to_string(),
+                input: json!({"command": "printf 'first line'\nprintf 'second line'"}),
+            },
+            &state,
+            &mut acc,
+        );
+
+        let s = state.lock().unwrap();
+        let lines = s.iterations[0].lines.lock().unwrap();
+        let rendered = lines[0].to_string();
+        assert!(!rendered.contains('\n'));
+        assert!(rendered.contains("printf 'first line' printf 'second line'"));
+    }
+
+    #[test]
+    fn test_tool_call_end_sanitizes_multiline_result_preview() {
+        let state = make_state();
+        let mut acc = make_acc();
+
+        apply_rpc_event(
+            &RpcEvent::IterationStart {
+                iteration: 1,
+                max_iterations: None,
+                hat: "builder".to_string(),
+                hat_display: "🔨Builder".to_string(),
+                backend: "pi".to_string(),
+                started_at: 0,
+            },
+            &state,
+            &mut acc,
+        );
+
+        apply_rpc_event(
+            &RpcEvent::ToolCallEnd {
+                iteration: 1,
+                tool_call_id: "tool_1".to_string(),
+                output: "# Demo README\nSecond line of context.".to_string(),
+                is_error: false,
+                duration_ms: 12,
+            },
+            &state,
+            &mut acc,
+        );
+
+        let s = state.lock().unwrap();
+        let lines = s.iterations[0].lines.lock().unwrap();
+        let rendered = lines[0].to_string();
+        assert_eq!(rendered, "  ↳ ✓ # Demo README • Second line of context.");
+    }
+
+    #[test]
+    fn test_execution_error_preserves_order_with_following_text() {
+        let state = make_state();
+        let mut acc = make_acc();
+
+        apply_rpc_event(
+            &RpcEvent::IterationStart {
+                iteration: 1,
+                max_iterations: None,
+                hat: "builder".to_string(),
+                hat_display: "🔨Builder".to_string(),
+                backend: "pi".to_string(),
+                started_at: 0,
+            },
+            &state,
+            &mut acc,
+        );
+
+        apply_rpc_event(
+            &RpcEvent::TextDelta {
+                iteration: 1,
+                delta: "Before failure. ".to_string(),
+            },
+            &state,
+            &mut acc,
+        );
+        apply_rpc_event(
+            &RpcEvent::Error {
+                iteration: 1,
+                code: "EXECUTION_ERROR".to_string(),
+                message: "permission denied: /root/summary.md".to_string(),
+                recoverable: true,
+            },
+            &state,
+            &mut acc,
+        );
+        apply_rpc_event(
+            &RpcEvent::TextDelta {
+                iteration: 1,
+                delta: "Recovered after failure.".to_string(),
+            },
+            &state,
+            &mut acc,
+        );
+
+        let s = state.lock().unwrap();
+        let lines = s.iterations[0].lines.lock().unwrap();
+        let rendered: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+
+        let before_idx = rendered
+            .iter()
+            .position(|line| line.contains("Before failure."))
+            .expect("before text should remain visible");
+        let error_idx = rendered
+            .iter()
+            .position(|line| line.contains("Error: permission denied"))
+            .expect("error line should remain visible");
+        let after_idx = rendered
+            .iter()
+            .position(|line| line.contains("Recovered after failure."))
+            .expect("after text should remain visible");
+
+        assert!(before_idx < error_idx, "error should stay after preceding text: {rendered:?}");
+        assert!(error_idx < after_idx, "error should stay before following text: {rendered:?}");
+    }
+
+    #[test]
+    fn test_execution_error_uses_legacy_style_red_error_line() {
+        let line = format_error_line("EXECUTION_ERROR", "permission denied");
+        assert_eq!(line.to_string(), "  ↳ ✗ Error: permission denied");
+        assert_eq!(line.spans[1].style.fg, Some(Color::Red));
     }
 
     #[test]
