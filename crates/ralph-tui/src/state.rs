@@ -207,6 +207,8 @@ pub struct TuiState {
     pub idle_timeout_remaining: Option<Duration>,
     /// Status of the asynchronous update check.
     pub update_status: UpdateStatus,
+    /// Git branch for the workspace the TUI was launched from.
+    current_branch: Option<String>,
     /// Map of event topics to hat display information (for custom hats).
     /// Key: event topic (e.g., "review.security")
     /// Value: (HatId, display name including emoji)
@@ -320,6 +322,7 @@ impl TuiState {
             max_iterations: None,
             idle_timeout_remaining: None,
             update_status: UpdateStatus::Unknown,
+            current_branch: None,
             hat_map: HashMap::new(),
             // Iteration management
             iterations: Vec::new(),
@@ -363,6 +366,21 @@ impl TuiState {
         state
     }
 
+    /// Sets the git branch displayed by the TUI.
+    pub fn set_current_branch(&mut self, branch: Option<String>) {
+        self.current_branch = branch;
+    }
+
+    /// Returns the git branch displayed by the TUI, if known.
+    pub fn current_branch(&self) -> Option<&str> {
+        self.current_branch.as_deref()
+    }
+
+    /// Replaces the dynamic topic-to-hat mapping without resetting the rest of the state.
+    pub fn set_hat_map(&mut self, hat_map: HashMap<String, (HatId, String)>) {
+        self.hat_map = hat_map;
+    }
+
     /// Updates state based on event topic.
     pub fn update(&mut self, event: &Event) {
         let now = Instant::now();
@@ -393,6 +411,7 @@ impl TuiState {
                 let saved_following_latest = self.following_latest;
                 let saved_new_iteration_alert = self.new_iteration_alert.take();
                 let saved_pending_backend = self.pending_backend.clone();
+                let saved_current_branch = self.current_branch.clone();
                 let saved_guidance_next_queue = Arc::clone(&self.guidance_next_queue);
                 let saved_events_path = self.events_path.clone();
                 let saved_urgent_steer_path = self.urgent_steer_path.clone();
@@ -405,6 +424,7 @@ impl TuiState {
                 self.following_latest = saved_following_latest;
                 self.new_iteration_alert = saved_new_iteration_alert;
                 self.pending_backend = saved_pending_backend;
+                self.current_branch = saved_current_branch;
                 self.guidance_next_queue = saved_guidance_next_queue;
                 self.events_path = saved_events_path;
                 self.urgent_steer_path = saved_urgent_steer_path;

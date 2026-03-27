@@ -1,4 +1,5 @@
 use crate::state::{TuiState, UpdateStatus};
+use ralph_core::truncate_with_ellipsis;
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
@@ -24,6 +25,7 @@ use unicode_width::UnicodeWidthStr;
 const WIDTH_FULL: u16 = 80; // Show everything including help hint
 #[allow(dead_code)] // Kept for documentation of breakpoint tiers
 const WIDTH_HIDE_HELP: u16 = 65; // Below this: help hint hidden
+const WIDTH_SHOW_BRANCH: u16 = 65; // Below this: hide branch name
 const WIDTH_COMPRESS: u16 = 50; // Compress mode/hat, hide time
 const WIDTH_MINIMAL: u16 = 40; // Hide idle countdown
 
@@ -161,10 +163,26 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
         }
     }
 
+    if let Some(branch) = state.current_branch()
+        && width >= WIDTH_SHOW_BRANCH
+    {
+        let prefix = " | git:";
+        let available_width = (width as usize).saturating_sub(spans_width(&left_spans));
+
+        if available_width > prefix.len() + 3 {
+            let branch = truncate_with_ellipsis(branch, available_width - prefix.len());
+            left_spans.push(Span::styled(
+                format!("{prefix}{branch}"),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+    }
+
     // Priority 6: Help hint - shown only at WIDTH_FULL (80+)
-    if width >= WIDTH_FULL {
+    let help_hint = " | ? help";
+    if width >= WIDTH_FULL && spans_width(&left_spans) + help_hint.len() <= width as usize {
         left_spans.push(Span::styled(
-            " | ? help",
+            help_hint,
             Style::default().fg(Color::DarkGray),
         ));
     }
@@ -699,6 +717,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn header_shows_branch_on_wide_terminal() {
+        let mut state = create_full_state();
+        state.set_current_branch(Some("feature/show-branch".to_string()));
+
+        let text = render_to_string_with_width(&state, 80);
+        assert!(
+            text.contains("git:feature"),
+            "branch prefix should be visible on wide terminals, got: {}",
+            text
+        );
+        assert!(
+            text.contains("..."),
+            "long branch names should use an ellipsis, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn header_hides_branch_on_compact_terminal() {
+        let mut state = create_full_state();
+        state.set_current_branch(Some("main".to_string()));
+
+        let text = render_to_string_with_width(&state, 50);
+        assert!(
+            !text.contains("git:main"),
+            "branch should be hidden on compact terminals, got: {}",
+            text
+        );
+    }
+
     // =========================================================================
     // TUI Iteration Pagination Tests (Task 05)
     // =========================================================================
@@ -958,5 +1007,15 @@ mod tests {
             "should NOT show stale frozen hat 'Planner' when iteration is finished, got: {}",
             text
         );
+    }
+
+    #[test]
+    fn task_start_preserves_current_branch() {
+        let mut state = TuiState::new();
+        state.set_current_branch(Some("main".to_string()));
+
+        state.update(&Event::new("task.start", ""));
+
+        assert_eq!(state.current_branch(), Some("main"));
     }
 }

@@ -57,6 +57,17 @@ struct SubprocessConfig {
     stdout: ChildStdout,
 }
 
+fn detect_current_branch() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    ralph_core::get_current_branch(cwd).ok()
+}
+
+fn initial_state() -> Arc<Mutex<TuiState>> {
+    let mut state = TuiState::new();
+    state.set_current_branch(detect_current_branch());
+    Arc::new(Mutex::new(state))
+}
+
 /// Main TUI handle that integrates with the event bus.
 pub struct Tui {
     state: Arc<Mutex<TuiState>>,
@@ -75,7 +86,7 @@ impl Tui {
     /// Creates a new TUI instance with shared state (in-process mode).
     pub fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(TuiState::new())),
+            state: initial_state(),
             terminated_rx: None,
             interrupt_tx: None,
             rpc_client: None,
@@ -93,7 +104,7 @@ impl Tui {
     pub fn connect(base_url: &str) -> Result<Self> {
         let client = RpcClient::new(base_url)?;
         Ok(Self {
-            state: Arc::new(Mutex::new(TuiState::new())),
+            state: initial_state(),
             terminated_rx: None,
             interrupt_tx: None,
             rpc_client: Some(client),
@@ -163,7 +174,7 @@ impl Tui {
         info!(args = ?args, "TUI spawned ralph subprocess in RPC mode");
 
         Ok(Self {
-            state: Arc::new(Mutex::new(TuiState::new())),
+            state: initial_state(),
             terminated_rx: None,
             interrupt_tx: None,
             rpc_client: None,
@@ -182,7 +193,7 @@ impl Tui {
     #[must_use]
     pub fn with_hat_map(self, hat_map: HashMap<String, (HatId, String)>) -> Self {
         if let Ok(mut state) = self.state.lock() {
-            *state = TuiState::with_hat_map(hat_map);
+            state.set_hat_map(hat_map);
         }
         self
     }
