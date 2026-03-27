@@ -1783,12 +1783,12 @@ pub async fn run_loop_impl(
                 );
 
                 // Record terminal output for session replay (non-PTY path)
-                if let Some(ref recorder) = _session_recorder {
-                    if !output.is_empty() {
-                        recorder.record_ux_event(&ralph_proto::UxEvent::TerminalWrite(
-                            ralph_proto::TerminalWrite::new(output.as_bytes(), true, 0),
-                        ));
-                    }
+                if let Some(ref recorder) = _session_recorder
+                    && !output.is_empty()
+                {
+                    recorder.record_ux_event(&ralph_proto::UxEvent::TerminalWrite(
+                        ralph_proto::TerminalWrite::new(output.as_bytes(), true, 0),
+                    ));
                 }
 
                 Ok(ExecutionOutcome {
