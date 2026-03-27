@@ -48,6 +48,11 @@ pub struct RpcRuntime {
     preset_domain: PresetDomain,
 }
 
+enum ExecutionOutcome {
+    Fresh(Value),
+    Replay(StoredResponse),
+}
+
 impl RpcRuntime {
     pub fn new(config: ApiConfig) -> anyhow::Result<Self> {
         config.validate()?;
@@ -136,7 +141,10 @@ impl RpcRuntime {
         }
 
         let request = self.parse_and_validate_request_value(raw)?;
-        self.execute_request(&request, principal)
+        match self.execute_request(&request, principal)? {
+            ExecutionOutcome::Fresh(result) => Ok(result),
+            ExecutionOutcome::Replay(response) => self.replay_stored_response(&request, response),
+        }
     }
 
     pub fn handle_http_request(&self, body: &[u8], headers: &HeaderMap) -> (StatusCode, Value) {
@@ -162,9 +170,13 @@ impl RpcRuntime {
             };
 
         let (status, envelope) = match self.execute_request(&request, &principal) {
-            Ok(result) => (
+            Ok(ExecutionOutcome::Fresh(result)) => (
                 StatusCode::OK,
                 success_envelope(&request, result, &self.config.served_by),
+            ),
+            Ok(ExecutionOutcome::Replay(response)) => (
+                StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK),
+                response.envelope,
             ),
             Err(error) => {
                 let status = error.status;
@@ -292,7 +304,7 @@ impl RpcRuntime {
         &self,
         request: &RpcRequestEnvelope,
         principal: &str,
-    ) -> Result<Value, ApiError> {
+    ) -> Result<ExecutionOutcome, ApiError> {
         let mut idempotency_context: Option<String> = None;
         if is_mutating_method(&request.method) {
             let key = match request
@@ -319,7 +331,7 @@ impl RpcRuntime {
                         request_id = %request.id,
                         "idempotency replay"
                     );
-                    return self.replay_stored_response(request, response);
+                    return Ok(ExecutionOutcome::Replay(response));
                 }
                 IdempotencyCheck::Conflict => {
                     return Err(ApiError::idempotency_conflict(
@@ -360,7 +372,7 @@ impl RpcRuntime {
             );
         }
 
-        result
+        result.map(ExecutionOutcome::Fresh)
     }
 
     fn replay_stored_response(

@@ -161,6 +161,7 @@ async fn deduplicates_mutating_requests_by_idempotency_key() -> Result<()> {
     });
 
     let (first_status, first_payload) = post_rpc(&client, &server, &first_request, None).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let (second_status, second_payload) = post_rpc(&client, &server, &first_request, None).await?;
 
     assert_eq!(first_status, 200);
