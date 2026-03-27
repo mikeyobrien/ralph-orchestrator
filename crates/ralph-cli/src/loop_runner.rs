@@ -1935,6 +1935,14 @@ pub async fn run_loop_impl(
 
                     match fallback_result {
                         Ok(mut fo) => {
+                            if fo.was_idle_timeout {
+                                warn!(
+                                    iteration = iteration,
+                                    timeout_secs = ito.duration_secs,
+                                    "Fallback iteration also hit idle timeout - stopping loop"
+                                );
+                                fo.termination = Some(TerminationReason::Stopped);
+                            }
                             // Clear was_idle_timeout so we don't recurse
                             fo.was_idle_timeout = false;
                             fo
