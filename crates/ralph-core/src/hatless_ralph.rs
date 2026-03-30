@@ -2,7 +2,7 @@
 //!
 //! Ralph is always present, cannot be configured away, and acts as a universal fallback.
 
-use crate::config::CoreConfig;
+use crate::config::{CoreConfig, ScratchpadConfig};
 use crate::hat_registry::HatRegistry;
 use ralph_proto::{HatId, Topic};
 use std::collections::HashMap;
@@ -27,6 +27,12 @@ pub struct HatlessRalph {
     /// Collected robot guidance messages for injection into prompts.
     /// Set by EventLoop before build_prompt(), cleared after injection.
     robot_guidance: Vec<String>,
+    /// Resolved scratchpad config for the currently active hat.
+    /// Set by EventLoop before build_prompt() via set_active_scratchpad().
+    active_scratchpad: ScratchpadConfig,
+    /// Current iteration number, set by EventLoop before build_prompt().
+    /// Used to determine if this is the first iteration (fresh start).
+    iteration: u32,
 }
 
 /// Hat topology for multi-hat mode prompt generation.
@@ -232,6 +238,7 @@ impl HatlessRalph {
             Some(HatTopology::from_registry(registry))
         };
 
+        let active_scratchpad = core.scratchpad.clone();
         Self {
             completion_promise: completion_promise.into(),
             core,
@@ -241,7 +248,30 @@ impl HatlessRalph {
             objective: None,
             skill_index: String::new(),
             robot_guidance: Vec::new(),
+            active_scratchpad,
+            iteration: 0,
         }
+    }
+
+    /// Sets the resolved scratchpad config for the currently active hat.
+    ///
+    /// Called by EventLoop before build_prompt() to set the per-hat scratchpad
+    /// configuration, resolved via hat override → global core config → defaults.
+    pub fn set_active_scratchpad(&mut self, config: ScratchpadConfig) {
+        self.active_scratchpad = config;
+    }
+
+    /// Returns a reference to the active scratchpad config.
+    pub fn active_scratchpad(&self) -> &ScratchpadConfig {
+        &self.active_scratchpad
+    }
+
+    /// Sets the current iteration number.
+    ///
+    /// Called by EventLoop before build_prompt() to allow iteration-aware
+    /// decisions like fresh-start detection.
+    pub fn set_iteration(&mut self, iteration: u32) {
+        self.iteration = iteration;
     }
 
     /// Sets whether memories mode is enabled.
@@ -393,19 +423,30 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
         true
     }
 
-    /// Checks if this is a fresh start (starting_event set, no scratchpad).
+    /// Checks if this is a fresh start (first iteration with a starting_event).
     ///
     /// Used to enable fast path delegation that skips the PLAN step
     /// when immediate delegation to specialized hats is appropriate.
+    /// Only triggers on the first iteration to avoid repeated re-publication.
     fn is_fresh_start(&self) -> bool {
         // Fast path only applies when starting_event is configured
         if self.starting_event.is_none() {
             return false;
         }
 
-        // Check if scratchpad exists
-        let path = Path::new(&self.core.scratchpad);
-        !path.exists()
+        // Only the first iteration can be a fresh start
+        if self.iteration > 0 {
+            return false;
+        }
+
+        // When scratchpad is enabled, check if it already exists
+        // (existing scratchpad means resumed session, not fresh)
+        if self.active_scratchpad.enabled {
+            return !Path::new(&self.active_scratchpad.path).exists();
+        }
+
+        // First iteration + scratchpad disabled = fresh start
+        true
     }
 
     fn core_prompt(&self) -> String {
@@ -431,7 +472,8 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
             .join("\n");
 
         let mut prompt = if self.memories_enabled {
-            r"
+            if self.active_scratchpad.enabled {
+                r"
 ### 0a. ORIENTATION
 You are Ralph. You are running in a loop. You have fresh context each iteration.
 You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
@@ -441,18 +483,32 @@ You MUST complete only one atomic task for the overall objective. Leave work for
 2. Review your `<ready-tasks>` (auto-injected above) to see what work exists
 3. If tasks exist, pick one. If not, create them from your plan.
 "
+                .to_string()
+            } else {
+                r"
+### 0a. ORIENTATION
+You are Ralph. You are running in a loop. You have fresh context each iteration.
+You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
+
+**First thing every iteration:**
+1. Review your `<ready-tasks>` (auto-injected above) to see what work exists
+2. If tasks exist, pick one. If not, create them from your plan.
+"
+                .to_string()
+            }
         } else {
             r"
 ### 0a. ORIENTATION
 You are Ralph. You are running in a loop. You have fresh context each iteration.
 You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
 "
-        }
-        .to_string();
+            .to_string()
+        };
 
-        // SCRATCHPAD section - ALWAYS present
-        prompt.push_str(&format!(
-            r"### 0b. SCRATCHPAD
+        // SCRATCHPAD section - only when enabled
+        if self.active_scratchpad.enabled {
+            prompt.push_str(&format!(
+                r"### 0b. SCRATCHPAD
 `{scratchpad}` is your thinking journal for THIS objective.
 Its content is auto-injected in `<scratchpad>` tags at the top of your context each iteration.
 
@@ -468,16 +524,18 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
 - Checklists or todo lists (use `ralph tools task ensure` when a stable key exists, otherwise `ralph tools task add`)
 
 ",
-            scratchpad = self.core.scratchpad,
-        ));
+                scratchpad = self.active_scratchpad.path,
+            ));
+        }
 
         // TASKS section removed — now injected via skills auto-injection pipeline
         // (see EventLoop::inject_memories_and_tools_skill)
         // TASK BREAKDOWN guidance moved into ralph-tools.md
 
         // Add state management guidance (tasks/memories descriptions now live in their respective skills)
-        prompt.push_str(&format!(
-            "### STATE MANAGEMENT\n\n\
+        if self.active_scratchpad.enabled {
+            prompt.push_str(&format!(
+                "### STATE MANAGEMENT\n\n\
 **Scratchpad** (`{scratchpad}`) — Your thinking:\n\
 - Current understanding and reasoning\n\
 - Analysis notes, decisions, plan narrative\n\
@@ -493,8 +551,29 @@ Do not spend turns on shell or tool-availability diagnosis unless the task is ex
 Do NOT infer failure from empty or terse stdout alone. Verify the intended side effect in the task/event state or in the files and artifacts the command should have changed.\n\
 Keep temporary artifacts where later steps can still inspect them, such as a repo-local `logs/` directory or `/var/tmp` when needed.\n\
 \n",
-            scratchpad = self.core.scratchpad,
-        ));
+                scratchpad = self.active_scratchpad.path,
+            ));
+        } else {
+            prompt.push_str(
+                "### STATE MANAGEMENT\n\n\
+**Tasks** (`ralph tools task`) — What needs to be done:\n\
+- Work items, their status, priorities, and dependencies\n\
+- Source of truth for progress across iterations\n\
+- Auto-injected in `<ready-tasks>` tags at the top of your context\n\
+\n\
+**Memories** (`.ralph/agent/memories.md`) — Persistent learning:\n\
+- Codebase patterns and conventions\n\
+- Architectural decisions and rationale\n\
+- Recurring problem solutions\n\
+\n\
+**Context Files** (`.ralph/agent/*.md`) — Research artifacts:\n\
+- Analysis and temporary notes\n\
+- Read when relevant\n\
+\n\
+**Rule:** Work items go in tasks. Learnings go in memories.\n\
+\n",
+            );
+        }
 
         // List available context files in .ralph/agent/
         if let Ok(entries) = std::fs::read_dir(".ralph/agent") {
@@ -540,6 +619,9 @@ Keep temporary artifacts where later steps can still inspect them, such as a rep
     }
 
     fn workflow_section(&self) -> String {
+        let scratchpad_enabled = self.active_scratchpad.enabled;
+        let scratchpad = &self.active_scratchpad.path;
+
         // Different workflow for solo mode vs multi-hat mode
         if self.hat_topology.is_some() {
             // Check for fast path: starting_event set AND no scratchpad
@@ -560,9 +642,10 @@ You MUST NOT plan or analyze — delegate now.
 
             // Multi-hat mode: Ralph coordinates and delegates
             if self.memories_enabled {
-                // Memories mode: reference both scratchpad AND tasks CLI
-                format!(
-                    r"## WORKFLOW
+                if scratchpad_enabled {
+                    // Memories mode: reference both scratchpad AND tasks CLI
+                    format!(
+                        r"## WORKFLOW
 
 ### 1. PLAN
 You MUST update `{scratchpad}` with your understanding and plan.
@@ -577,9 +660,20 @@ Plain-language summaries do NOT hand off work.
 You MUST NOT do implementation work — delegation is your only job.
 
 ",
-                    scratchpad = self.core.scratchpad
-                )
-            } else {
+                    )
+                } else {
+                    // Memories mode, scratchpad disabled
+                    "## WORKFLOW\n\n\
+### 1. PLAN\n\
+You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).\n\
+\n\
+### 2. DELEGATE\n\
+You MUST publish exactly ONE event to hand off to specialized hats.\n\
+You MUST NOT do implementation work — delegation is your only job.\n\
+\n"
+                    .to_string()
+                }
+            } else if scratchpad_enabled {
                 // Scratchpad-only mode (legacy)
                 format!(
                     r"## WORKFLOW
@@ -593,15 +687,23 @@ Plain-language summaries do NOT hand off work.
 You MUST NOT do implementation work — delegation is your only job.
 
 ",
-                    scratchpad = self.core.scratchpad
                 )
+            } else {
+                // Legacy mode, scratchpad disabled (unusual)
+                "## WORKFLOW\n\n\
+### 1. DELEGATE\n\
+You MUST publish exactly ONE event to hand off to specialized hats.\n\
+You MUST NOT do implementation work — delegation is your only job.\n\
+\n"
+                .to_string()
             }
         } else {
             // Solo mode: Ralph does everything
             if self.memories_enabled {
-                // Memories mode: reference both scratchpad AND tasks CLI
-                format!(
-                    r"## WORKFLOW
+                if scratchpad_enabled {
+                    // Memories mode: reference both scratchpad AND tasks CLI
+                    format!(
+                        r"## WORKFLOW
 
 ### 1. Study the prompt.
 You MUST study, explore, and research what needs to be done.
@@ -633,9 +735,32 @@ You MUST update scratchpad with what you learned (tasks track what remains).
 You MUST exit after completing ONE task.
 
 ",
-                    scratchpad = self.core.scratchpad
-                )
-            } else {
+                    )
+                } else {
+                    // Memories mode, scratchpad disabled
+                    "## WORKFLOW\n\n\
+### 1. Study the prompt.\n\
+You MUST study, explore, and research what needs to be done.\n\
+\n\
+### 2. PLAN\n\
+You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).\n\
+\n\
+### 3. IMPLEMENT\n\
+You MUST pick exactly ONE task from `<ready-tasks>` to implement.\n\
+\n\
+### 4. VERIFY & COMMIT\n\
+You MUST run tests and verify the implementation works.\n\
+You MUST commit after verification passes - one commit per task.\n\
+You SHOULD run `git diff --cached` to review staged changes before committing.\n\
+You MUST close the task with `ralph tools task close <id>` AFTER commit.\n\
+You SHOULD save learnings to memories with `ralph tools memory add`.\n\
+\n\
+### 5. EXIT\n\
+You MUST exit after completing ONE task.\n\
+\n"
+                    .to_string()
+                }
+            } else if scratchpad_enabled {
                 // Scratchpad-only mode (legacy)
                 format!(
                     r"## WORKFLOW
@@ -663,8 +788,27 @@ You MUST mark the task `[x]` in scratchpad when complete.
 You MUST continue until all tasks are `[x]` or `[~]`.
 
 ",
-                    scratchpad = self.core.scratchpad
                 )
+            } else {
+                // Legacy mode, scratchpad disabled (unusual)
+                "## WORKFLOW\n\n\
+### 1. Study the prompt.\n\
+You MUST study, explore, and research what needs to be done.\n\
+You MAY use parallel subagents (up to 10) for searches.\n\
+\n\
+### 2. IMPLEMENT\n\
+You MUST pick exactly ONE task to implement.\n\
+You MUST NOT use more than 1 subagent for build/tests.\n\
+\n\
+### 3. COMMIT\n\
+You MUST commit after completing each atomic unit of work.\n\
+You MUST capture the why, not just the what.\n\
+You SHOULD run `git diff` before committing to review changes.\n\
+\n\
+### 4. REPEAT\n\
+You MUST continue.\n\
+\n"
+                .to_string()
             }
         }
     }
@@ -903,11 +1047,14 @@ You MUST continue until all tasks are `[x]` or `[~]`.
     }
 
     fn event_writing_section(&self) -> String {
-        // Always use scratchpad for detailed output (scratchpad is always present)
-        let detailed_output_hint = format!(
-            "You SHOULD write detailed output to `{}` and emit only a brief event.",
-            self.core.scratchpad
-        );
+        let detailed_output_hint = if self.active_scratchpad.enabled {
+            format!(
+                "\nYou SHOULD write detailed output to `{}` and emit only a brief event.\n",
+                self.active_scratchpad.path
+            )
+        } else {
+            String::new()
+        };
 
         format!(
             r#"## EVENT WRITING
@@ -921,9 +1068,7 @@ ralph emit "review.done" --json '{{"status": "approved", "issues": 0}}'
 ```
 
 You MUST NOT use echo/cat to write events because shell escaping breaks JSON.
-
 {detailed_output_hint}
-
 **Constraints:**
 - You MUST stop working after publishing an event because a new iteration will start with fresh context
 - You MUST NOT continue with additional work after publishing because the next iteration handles it with the appropriate hat persona
@@ -2636,6 +2781,202 @@ hats:
         assert!(
             !prompt.contains("## ROBOT GUIDANCE"),
             "Should NOT include ROBOT GUIDANCE when no guidance set"
+        );
+    }
+
+    // === Per-Hat Scratchpad Prompt Tests ===
+
+    /// AC3: Hat disables scratchpad — all scratchpad sections suppressed
+    #[test]
+    fn test_scratchpad_disabled_suppresses_all_sections() {
+        use crate::config::ScratchpadConfig;
+
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_memories_enabled(true);
+        ralph.set_active_scratchpad(ScratchpadConfig {
+            enabled: false,
+            path: ".ralph/agent/scratchpad.md".to_string(),
+        });
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        // 0a. ORIENTATION should NOT contain scratchpad reference
+        assert!(
+            !prompt.contains("Review your `<scratchpad>`"),
+            "Disabled scratchpad: ORIENTATION should not reference scratchpad"
+        );
+        // 0b. SCRATCHPAD section should not exist
+        assert!(
+            !prompt.contains("### 0b. SCRATCHPAD"),
+            "Disabled scratchpad: SCRATCHPAD section should be suppressed"
+        );
+        // STATE MANAGEMENT should not reference "Scratchpad"
+        assert!(
+            !prompt.contains("**Scratchpad**"),
+            "Disabled scratchpad: STATE MANAGEMENT should not reference Scratchpad"
+        );
+        assert!(
+            !prompt.contains("Thinking goes in scratchpad"),
+            "Disabled scratchpad: Rule should not reference scratchpad"
+        );
+        // WORKFLOW should not reference scratchpad
+        assert!(
+            !prompt.contains("update scratchpad"),
+            "Disabled scratchpad: WORKFLOW should not reference scratchpad"
+        );
+        // EVENT WRITING should not have detailed output hint
+        assert!(
+            !prompt.contains("write detailed output to"),
+            "Disabled scratchpad: EVENT WRITING should not reference scratchpad"
+        );
+    }
+
+    /// AC4: Hat with custom path — all scratchpad instruction references use custom path
+    #[test]
+    fn test_scratchpad_custom_path_in_prompt() {
+        use crate::config::ScratchpadConfig;
+
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let mut ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+            .with_memories_enabled(true);
+        ralph.set_active_scratchpad(ScratchpadConfig {
+            enabled: true,
+            path: ".ralph/agent/planner.md".to_string(),
+        });
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        // SCRATCHPAD section should reference custom path
+        assert!(
+            prompt.contains("`.ralph/agent/planner.md` is your thinking journal"),
+            "Custom path should appear in SCRATCHPAD section"
+        );
+        // STATE MANAGEMENT should reference custom path
+        assert!(
+            prompt.contains("**Scratchpad** (`.ralph/agent/planner.md`)"),
+            "STATE MANAGEMENT should reference custom path"
+        );
+        // WORKFLOW should reference custom path
+        assert!(
+            prompt.contains("`.ralph/agent/planner.md`") && prompt.contains("PLAN"),
+            "WORKFLOW should reference custom path"
+        );
+        // EVENT WRITING should use custom path
+        assert!(
+            prompt.contains("write detailed output to `.ralph/agent/planner.md`"),
+            "EVENT WRITING should use custom scratchpad path"
+        );
+    }
+
+    /// AC5: Hat inherits global — default path used
+    #[test]
+    fn test_scratchpad_inherits_global_path() {
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+        let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
+
+        let prompt = ralph.build_prompt("", &[]);
+
+        assert!(
+            prompt.contains("`.ralph/agent/scratchpad.md`"),
+            "Default global path should be used"
+        );
+        assert!(
+            prompt.contains("### 0b. SCRATCHPAD"),
+            "SCRATCHPAD section should be present"
+        );
+    }
+
+    /// AC11: Disabled scratchpad + first iteration triggers fresh start
+    #[test]
+    fn test_disabled_scratchpad_is_fresh_start() {
+        use crate::config::ScratchpadConfig;
+
+        let yaml = r#"
+hats:
+  tdd_writer:
+    name: "TDD Writer"
+    triggers: ["tdd.start"]
+    publishes: ["test.written"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let mut ralph = HatlessRalph::new(
+            "LOOP_COMPLETE",
+            config.core.clone(),
+            &registry,
+            Some("tdd.start".to_string()),
+        );
+        ralph.set_active_scratchpad(ScratchpadConfig {
+            enabled: false,
+            path: ".ralph/agent/scratchpad.md".to_string(),
+        });
+
+        // First iteration (iteration=0): should trigger fast path
+        ralph.set_iteration(0);
+        let prompt = ralph.build_prompt("", &[]);
+        assert!(
+            prompt.contains("FAST PATH"),
+            "First iteration with disabled scratchpad should trigger fast path"
+        );
+
+        // Second iteration (iteration=1): should NOT trigger fast path
+        ralph.set_iteration(1);
+        let prompt = ralph.build_prompt("", &[]);
+        assert!(
+            !prompt.contains("FAST PATH"),
+            "Second iteration should NOT trigger fast path even with disabled scratchpad"
+        );
+    }
+
+    /// AC9: Multiple hats with different configs produce correct prompts
+    #[test]
+    fn test_multiple_hats_different_scratchpad_prompts() {
+        use crate::config::ScratchpadConfig;
+
+        let config = RalphConfig::default();
+        let registry = HatRegistry::new();
+
+        // Planner with custom path
+        let mut ralph_planner =
+            HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+                .with_memories_enabled(true);
+        ralph_planner.set_active_scratchpad(ScratchpadConfig {
+            enabled: true,
+            path: ".ralph/agent/planner.md".to_string(),
+        });
+        let planner_prompt = ralph_planner.build_prompt("", &[]);
+        assert!(
+            planner_prompt.contains("`.ralph/agent/planner.md`"),
+            "Planner should use custom path"
+        );
+
+        // Builder inherits global
+        let mut ralph_builder =
+            HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+                .with_memories_enabled(true);
+        ralph_builder.set_active_scratchpad(config.core.scratchpad.clone());
+        let builder_prompt = ralph_builder.build_prompt("", &[]);
+        assert!(
+            builder_prompt.contains("`.ralph/agent/scratchpad.md`"),
+            "Builder should use global path"
+        );
+
+        // Validator disabled
+        let mut ralph_validator =
+            HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None)
+                .with_memories_enabled(true);
+        ralph_validator.set_active_scratchpad(ScratchpadConfig {
+            enabled: false,
+            path: ".ralph/agent/scratchpad.md".to_string(),
+        });
+        let validator_prompt = ralph_validator.build_prompt("", &[]);
+        assert!(
+            !validator_prompt.contains("### 0b. SCRATCHPAD"),
+            "Validator should have no scratchpad sections"
         );
     }
 }

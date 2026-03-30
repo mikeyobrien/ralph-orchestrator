@@ -223,6 +223,7 @@ You MUST handle these events:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ScratchpadConfig;
 
     fn default_builder() -> InstructionBuilder {
         InstructionBuilder::new(CoreConfig::default())
@@ -285,7 +286,10 @@ mod tests {
     #[test]
     fn test_custom_guardrails_injected() {
         let custom_core = CoreConfig {
-            scratchpad: ".workspace/plan.md".to_string(),
+            scratchpad: ScratchpadConfig {
+                enabled: true,
+                path: ".workspace/plan.md".to_string(),
+            },
             specs_dir: "./specifications/".to_string(),
             guardrails: vec!["Custom rule one".to_string(), "Custom rule two".to_string()],
             workspace_root: std::path::PathBuf::from("."),

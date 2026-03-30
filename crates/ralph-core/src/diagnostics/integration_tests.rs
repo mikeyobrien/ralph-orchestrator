@@ -226,7 +226,7 @@ mod tests {
 
         // Configure event loop to use temp directory scratchpad
         let mut config = RalphConfig::default();
-        config.core.scratchpad = scratchpad_path.to_string_lossy().to_string();
+        config.core.scratchpad.path = scratchpad_path.to_string_lossy().to_string();
 
         let diagnostics = DiagnosticsCollector::with_enabled(temp_dir.path(), true).unwrap();
         let mut event_loop = EventLoop::with_diagnostics(config, diagnostics);

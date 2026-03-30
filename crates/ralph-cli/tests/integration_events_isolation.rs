@@ -665,6 +665,83 @@ features:
     Ok(())
 }
 
+#[test]
+fn test_fresh_run_clears_per_hat_scratchpads() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let temp_path = temp_dir.path();
+
+    // Config with global + per-hat scratchpad overrides
+    let config = r#"
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 1
+  max_runtime_seconds: 5
+
+cli:
+  backend: "custom"
+  command: "true"
+
+core:
+  scratchpad:
+    path: ".ralph/agent/scratchpad.md"
+
+hats:
+  planner:
+    name: "Planner"
+    description: "Plans work"
+    triggers: ["plan.start"]
+    scratchpad:
+      path: ".ralph/agent/planner.md"
+  builder:
+    name: "Builder"
+    description: "Builds things"
+    triggers: ["build.start"]
+    scratchpad: ".ralph/agent/builder.md"
+
+features:
+  preflight:
+    enabled: false
+"#;
+    fs::write(temp_path.join("ralph.yml"), config)?;
+    fs::write(temp_path.join("PROMPT.md"), "Test task")?;
+
+    // Create stale scratchpads at all three paths
+    let global_scratchpad = temp_path.join(".ralph/agent/scratchpad.md");
+    let planner_scratchpad = temp_path.join(".ralph/agent/planner.md");
+    let builder_scratchpad = temp_path.join(".ralph/agent/builder.md");
+
+    fs::create_dir_all(temp_path.join(".ralph/agent"))?;
+    fs::write(&global_scratchpad, "# Stale global\n- [ ] Old task\n")?;
+    fs::write(&planner_scratchpad, "# Stale planner\n- [ ] Plan old\n")?;
+    fs::write(&builder_scratchpad, "# Stale builder\n- [ ] Build old\n")?;
+
+    // Run ralph fresh (exit code doesn't matter — max_iterations=1 exits non-zero,
+    // but scratchpad cleanup happens before the loop starts)
+    let _output = Command::new(ralph_bin())
+        .arg("run")
+        .arg("--config")
+        .arg(temp_path.join("ralph.yml"))
+        .current_dir(temp_path)
+        .output()?;
+
+    // All scratchpads should have been cleared
+    assert!(
+        !global_scratchpad.exists(),
+        "Fresh run should clear the global scratchpad"
+    );
+    assert!(
+        !planner_scratchpad.exists(),
+        "Fresh run should clear the planner hat scratchpad"
+    );
+    assert!(
+        !builder_scratchpad.exists(),
+        "Fresh run should clear the builder hat scratchpad"
+    );
+
+    Ok(())
+}
+
 // =============================================================================
 // Directory Structure Tests
 // =============================================================================

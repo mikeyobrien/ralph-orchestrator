@@ -4,10 +4,147 @@
 //! Users can switch from Python v1.x to Rust v2.0 with zero config changes.
 
 use ralph_proto::Topic;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::debug;
+
+/// Scratchpad configuration with enabled flag and path.
+///
+/// Supports both plain string (legacy) and structured object in YAML:
+/// ```yaml
+/// # Legacy (plain string) — treated as { enabled: true, path: "..." }
+/// core:
+///   scratchpad: ".ralph/agent/scratchpad.md"
+///
+/// # Structured object
+/// core:
+///   scratchpad:
+///     enabled: true
+///     path: .ralph/agent/scratchpad.md
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScratchpadConfig {
+    #[serde(default = "scratchpad_enabled_default")]
+    pub enabled: bool,
+
+    #[serde(default = "default_scratchpad_path")]
+    pub path: String,
+}
+
+fn scratchpad_enabled_default() -> bool {
+    true
+}
+
+fn default_scratchpad_path() -> String {
+    ".ralph/agent/scratchpad.md".to_string()
+}
+
+impl Default for ScratchpadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: scratchpad_enabled_default(),
+            path: default_scratchpad_path(),
+        }
+    }
+}
+
+impl ScratchpadConfig {
+    /// Resolves the effective scratchpad config for a hat run.
+    ///
+    /// Resolution order: hat override → global core config → defaults.
+    pub fn resolve(
+        hat_config: Option<&ScratchpadConfig>,
+        global: &ScratchpadConfig,
+    ) -> ScratchpadConfig {
+        match hat_config {
+            Some(override_config) => override_config.clone(),
+            None => global.clone(),
+        }
+    }
+}
+
+/// Custom deserializer that accepts both a plain string and a structured object.
+///
+/// - Plain string → `ScratchpadConfig { enabled: true, path: <string> }`
+/// - Map → normal `ScratchpadConfig` deserialization
+fn deserialize_scratchpad_config<'de, D>(deserializer: D) -> Result<ScratchpadConfig, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct ScratchpadConfigVisitor;
+
+    impl<'de> de::Visitor<'de> for ScratchpadConfigVisitor {
+        type Value = ScratchpadConfig;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or a scratchpad config object")
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<ScratchpadConfig, E> {
+            Ok(ScratchpadConfig {
+                enabled: true,
+                path: value.to_string(),
+            })
+        }
+
+        fn visit_map<M: de::MapAccess<'de>>(self, map: M) -> Result<ScratchpadConfig, M::Error> {
+            Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
+        }
+    }
+
+    deserializer.deserialize_any(ScratchpadConfigVisitor)
+}
+
+/// Custom deserializer for optional scratchpad config on hats.
+///
+/// Handles: absent (None), plain string, or structured object.
+fn deserialize_optional_scratchpad_config<'de, D>(
+    deserializer: D,
+) -> Result<Option<ScratchpadConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct OptionalScratchpadConfigVisitor;
+
+    impl<'de> de::Visitor<'de> for OptionalScratchpadConfigVisitor {
+        type Value = Option<ScratchpadConfig>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("null, a string, or a scratchpad config object")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Option<ScratchpadConfig>, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Option<ScratchpadConfig>, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Option<ScratchpadConfig>, E> {
+            Ok(Some(ScratchpadConfig {
+                enabled: true,
+                path: value.to_string(),
+            }))
+        }
+
+        fn visit_map<M: de::MapAccess<'de>>(
+            self,
+            map: M,
+        ) -> Result<Option<ScratchpadConfig>, M::Error> {
+            let config: ScratchpadConfig =
+                Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(config))
+        }
+    }
+
+    deserializer.deserialize_any(OptionalScratchpadConfigVisitor)
+}
 
 /// Top-level configuration for Ralph Orchestrator.
 ///
@@ -854,9 +991,10 @@ impl Default for EventLoopConfig {
 /// Per spec: "Core behaviors (always injected, can customize paths)"
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreConfig {
-    /// Path to the scratchpad file (shared state between hats).
-    #[serde(default = "default_scratchpad")]
-    pub scratchpad: String,
+    /// Scratchpad configuration (path and enabled flag).
+    /// Accepts both plain string (legacy) and structured object.
+    #[serde(default, deserialize_with = "deserialize_scratchpad_config")]
+    pub scratchpad: ScratchpadConfig,
 
     /// Path to the specs directory (source of truth for requirements).
     #[serde(default = "default_specs_dir")]
@@ -878,10 +1016,6 @@ pub struct CoreConfig {
     pub workspace_root: std::path::PathBuf,
 }
 
-fn default_scratchpad() -> String {
-    ".ralph/agent/scratchpad.md".to_string()
-}
-
 fn default_specs_dir() -> String {
     ".ralph/specs/".to_string()
 }
@@ -900,7 +1034,7 @@ fn default_guardrails() -> Vec<String> {
 impl Default for CoreConfig {
     fn default() -> Self {
         Self {
-            scratchpad: default_scratchpad(),
+            scratchpad: ScratchpadConfig::default(),
             specs_dir: default_specs_dir(),
             guardrails: default_guardrails(),
             workspace_root: std::env::var("RALPH_WORKSPACE_ROOT")
@@ -1731,6 +1865,11 @@ pub struct HatConfig {
     /// instead of activating the hat again.
     pub max_activations: Option<u32>,
 
+    /// Per-hat scratchpad override. If None, inherits from core.scratchpad.
+    /// Accepts both a plain string shorthand and a structured object.
+    #[serde(default, deserialize_with = "deserialize_optional_scratchpad_config")]
+    pub scratchpad: Option<ScratchpadConfig>,
+
     /// Tools the hat is not allowed to use.
     ///
     /// Injected as a TOOL RESTRICTIONS section in the prompt (soft enforcement).
@@ -2391,7 +2530,9 @@ hats:
     #[test]
     fn test_core_config_defaults() {
         let config = RalphConfig::default();
-        assert_eq!(config.core.scratchpad, ".ralph/agent/scratchpad.md");
+        assert_eq!(config.core.scratchpad, ScratchpadConfig::default());
+        assert_eq!(config.core.scratchpad.path, ".ralph/agent/scratchpad.md");
+        assert!(config.core.scratchpad.enabled);
         assert_eq!(config.core.specs_dir, ".ralph/specs/");
         // Default guardrails per spec
         assert_eq!(config.core.guardrails.len(), 6);
@@ -2411,7 +2552,8 @@ core:
   specs_dir: "./specifications/"
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.core.scratchpad, ".workspace/plan.md");
+        assert_eq!(config.core.scratchpad.path, ".workspace/plan.md");
+        assert!(config.core.scratchpad.enabled);
         assert_eq!(config.core.specs_dir, "./specifications/");
         // Guardrails should use defaults when not specified
         assert_eq!(config.core.guardrails.len(), 6);
@@ -3506,6 +3648,271 @@ hats:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let hat = config.hats.get("simple").unwrap();
         assert!(hat.extra_instructions.is_empty());
+    }
+
+    // === Per-Hat Scratchpad Configuration Tests ===
+
+    /// AC1: Legacy plain-string config
+    #[test]
+    fn test_scratchpad_legacy_plain_string() {
+        let yaml = r#"
+core:
+  scratchpad: ".workspace/plan.md"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.core.scratchpad,
+            ScratchpadConfig {
+                enabled: true,
+                path: ".workspace/plan.md".to_string()
+            }
+        );
+    }
+
+    /// AC2: Structured config with enabled/path
+    #[test]
+    fn test_scratchpad_structured_config() {
+        let yaml = r#"
+core:
+  scratchpad:
+    enabled: true
+    path: ".ralph/agent/scratchpad.md"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.core.scratchpad,
+            ScratchpadConfig {
+                enabled: true,
+                path: ".ralph/agent/scratchpad.md".to_string()
+            }
+        );
+    }
+
+    /// AC2 variant: Structured config with enabled: false
+    #[test]
+    fn test_scratchpad_structured_disabled() {
+        let yaml = r"
+core:
+  scratchpad:
+    enabled: false
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.core.scratchpad.enabled);
+        assert_eq!(config.core.scratchpad.path, ".ralph/agent/scratchpad.md");
+    }
+
+    /// AC5/AC7: Default config unchanged
+    #[test]
+    fn test_scratchpad_default_config() {
+        let config = RalphConfig::default();
+        assert_eq!(
+            config.core.scratchpad,
+            ScratchpadConfig {
+                enabled: true,
+                path: ".ralph/agent/scratchpad.md".to_string()
+            }
+        );
+    }
+
+    /// AC8: Hat with plain-string scratchpad shorthand
+    #[test]
+    fn test_hat_scratchpad_plain_string() {
+        let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["plan.start"]
+    scratchpad: ".ralph/agent/planner.md"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("planner").unwrap();
+        assert_eq!(
+            hat.scratchpad,
+            Some(ScratchpadConfig {
+                enabled: true,
+                path: ".ralph/agent/planner.md".to_string()
+            })
+        );
+    }
+
+    /// AC3 (config part): Hat disables scratchpad
+    #[test]
+    fn test_hat_scratchpad_disabled() {
+        let yaml = r#"
+hats:
+  validator:
+    name: "Validator"
+    triggers: ["validate.start"]
+    scratchpad:
+      enabled: false
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("validator").unwrap();
+        assert_eq!(
+            hat.scratchpad,
+            Some(ScratchpadConfig {
+                enabled: false,
+                path: ".ralph/agent/scratchpad.md".to_string()
+            })
+        );
+    }
+
+    /// AC4 (config part): Hat with custom path
+    #[test]
+    fn test_hat_scratchpad_custom_path() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    scratchpad:
+      path: ".ralph/agent/builder.md"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("builder").unwrap();
+        assert_eq!(
+            hat.scratchpad,
+            Some(ScratchpadConfig {
+                enabled: true,
+                path: ".ralph/agent/builder.md".to_string()
+            })
+        );
+    }
+
+    /// AC5 (config part): Hat inherits global (no scratchpad key)
+    #[test]
+    fn test_hat_scratchpad_inherits_global() {
+        let yaml = r#"
+hats:
+  reviewer:
+    name: "Reviewer"
+    triggers: ["review.start"]
+    instructions: "Review the code."
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("reviewer").unwrap();
+        assert!(
+            hat.scratchpad.is_none(),
+            "No scratchpad key means None (inherit global)"
+        );
+    }
+
+    /// Resolution function test
+    #[test]
+    fn test_scratchpad_resolve_hat_override() {
+        let global = ScratchpadConfig {
+            enabled: true,
+            path: ".ralph/agent/scratchpad.md".to_string(),
+        };
+        let hat_override = ScratchpadConfig {
+            enabled: true,
+            path: ".ralph/agent/planner.md".to_string(),
+        };
+        let resolved = ScratchpadConfig::resolve(Some(&hat_override), &global);
+        assert_eq!(resolved, hat_override);
+    }
+
+    #[test]
+    fn test_scratchpad_resolve_global_fallback() {
+        let global = ScratchpadConfig {
+            enabled: true,
+            path: ".ralph/agent/scratchpad.md".to_string(),
+        };
+        let resolved = ScratchpadConfig::resolve(None, &global);
+        assert_eq!(resolved, global);
+    }
+
+    /// AC9 (config part): Multiple hats with different configs
+    #[test]
+    fn test_multiple_hats_different_scratchpad_configs() {
+        let yaml = r#"
+core:
+  scratchpad:
+    enabled: true
+    path: ".ralph/agent/scratchpad.md"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["plan.start"]
+    scratchpad:
+      path: ".ralph/agent/planner.md"
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+  validator:
+    name: "Validator"
+    triggers: ["validate.start"]
+    scratchpad:
+      enabled: false
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Planner has custom path
+        let planner = config.hats.get("planner").unwrap();
+        let planner_resolved =
+            ScratchpadConfig::resolve(planner.scratchpad.as_ref(), &config.core.scratchpad);
+        assert_eq!(planner_resolved.path, ".ralph/agent/planner.md");
+        assert!(planner_resolved.enabled);
+
+        // Builder inherits global
+        let builder = config.hats.get("builder").unwrap();
+        let builder_resolved =
+            ScratchpadConfig::resolve(builder.scratchpad.as_ref(), &config.core.scratchpad);
+        assert_eq!(builder_resolved.path, ".ralph/agent/scratchpad.md");
+        assert!(builder_resolved.enabled);
+
+        // Validator is disabled
+        let validator = config.hats.get("validator").unwrap();
+        let validator_resolved =
+            ScratchpadConfig::resolve(validator.scratchpad.as_ref(), &config.core.scratchpad);
+        assert!(!validator_resolved.enabled);
+    }
+
+    /// Edge case: core.scratchpad missing entirely
+    #[test]
+    fn test_scratchpad_missing_defaults() {
+        let yaml = r#"
+core:
+  specs_dir: "./specs/"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.core.scratchpad, ScratchpadConfig::default());
+    }
+
+    /// Edge case: hat scratchpad with enabled but no path
+    #[test]
+    fn test_hat_scratchpad_enabled_no_path() {
+        let yaml = r#"
+hats:
+  worker:
+    name: "Worker"
+    triggers: ["work.start"]
+    scratchpad:
+      enabled: true
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("worker").unwrap();
+        let sc = hat.scratchpad.as_ref().unwrap();
+        assert!(sc.enabled);
+        assert_eq!(sc.path, ".ralph/agent/scratchpad.md");
+    }
+
+    /// Edge case: hat scratchpad with path but no enabled
+    #[test]
+    fn test_hat_scratchpad_path_no_enabled() {
+        let yaml = r#"
+hats:
+  worker:
+    name: "Worker"
+    triggers: ["work.start"]
+    scratchpad:
+      path: ".ralph/agent/worker.md"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let hat = config.hats.get("worker").unwrap();
+        let sc = hat.scratchpad.as_ref().unwrap();
+        assert!(sc.enabled);
+        assert_eq!(sc.path, ".ralph/agent/worker.md");
     }
 
     // ── Wave config tests (Step 2: HatConfig extensions) ──

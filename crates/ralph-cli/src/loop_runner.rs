@@ -201,18 +201,31 @@ pub async fn run_loop_impl(
 
         debug!("Created events file for this run: {}", relative_events_path);
 
-        // Clear scratchpad for fresh objective start
+        // Clear scratchpads for fresh objective start
         // Stale content from previous runs can confuse the agent about current task state
-        // Use the config's scratchpad path resolved against the workspace, not the
-        // hardcoded LoopContext default, so custom paths are properly cleared
-        let scratchpad_path = ctx.workspace().join(&config.core.scratchpad);
-        if scratchpad_path.exists() {
-            fs::remove_file(&scratchpad_path)
-                .with_context(|| format!("Failed to clear scratchpad: {:?}", scratchpad_path))?;
-            debug!(
-                "Cleared scratchpad for fresh objective: {:?}",
-                scratchpad_path
-            );
+        // Clear global scratchpad and all per-hat scratchpad overrides
+        let mut scratchpad_paths: Vec<PathBuf> =
+            vec![ctx.workspace().join(&config.core.scratchpad.path)];
+        for hat in config.hats.values() {
+            if let Some(ref sc) = hat.scratchpad
+                && sc.enabled
+            {
+                let hat_path = ctx.workspace().join(&sc.path);
+                if !scratchpad_paths.contains(&hat_path) {
+                    scratchpad_paths.push(hat_path);
+                }
+            }
+        }
+        for scratchpad_path in &scratchpad_paths {
+            if scratchpad_path.exists() {
+                fs::remove_file(scratchpad_path).with_context(|| {
+                    format!("Failed to clear scratchpad: {:?}", scratchpad_path)
+                })?;
+                debug!(
+                    "Cleared scratchpad for fresh objective: {:?}",
+                    scratchpad_path
+                );
+            }
         }
     }
 
@@ -945,7 +958,7 @@ pub async fn run_loop_impl(
         handle_termination(
             &reason,
             event_loop.state(),
-            &config.core.scratchpad,
+            &config.core.scratchpad.path,
             &loop_history,
             &loop_context,
             auto_merge,
@@ -1016,7 +1029,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -1139,7 +1152,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -1224,7 +1237,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -1298,7 +1311,7 @@ pub async fn run_loop_impl(
                         handle_termination(
                             &reason,
                             event_loop.state(),
-                            &config.core.scratchpad,
+                            &config.core.scratchpad.path,
                             &loop_history,
                             &loop_context,
                             auto_merge,
@@ -1360,7 +1373,7 @@ pub async fn run_loop_impl(
                     handle_termination(
                         &reason,
                         event_loop.state(),
-                        &config.core.scratchpad,
+                        &config.core.scratchpad.path,
                         &loop_history,
                         &loop_context,
                         auto_merge,
@@ -1423,7 +1436,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -1521,7 +1534,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -1616,6 +1629,9 @@ pub async fn run_loop_impl(
                 use_colors,
             );
         }
+
+        // Log full prompt to diagnostics (RALPH_DIAGNOSTICS=1)
+        event_loop.log_prompt(iteration, display_hat.as_str(), &prompt);
 
         // In verbose mode, print the full prompt before execution
         if verbosity == Verbosity::Verbose {
@@ -1830,7 +1846,7 @@ pub async fn run_loop_impl(
                 )
                 .await?;
 
-                handle_termination(&reason, event_loop.state(), &config.core.scratchpad, &loop_history, &loop_context, auto_merge, &prompt_content);
+                handle_termination(&reason, event_loop.state(), &config.core.scratchpad.path, &loop_history, &loop_context, auto_merge, &prompt_content);
                 // Signal TUI to exit immediately on interrupt
                 let _ = terminated_tx.send(true);
                 return Ok(reason);
@@ -1876,7 +1892,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -1980,7 +1996,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -2078,7 +2094,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -2173,7 +2189,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -2270,7 +2286,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -2357,7 +2373,7 @@ pub async fn run_loop_impl(
                 handle_termination(
                     &reason,
                     event_loop.state(),
-                    &config.core.scratchpad,
+                    &config.core.scratchpad.path,
                     &loop_history,
                     &loop_context,
                     auto_merge,
@@ -2442,7 +2458,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -2498,7 +2514,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -2559,7 +2575,7 @@ pub async fn run_loop_impl(
             handle_termination(
                 &reason,
                 event_loop.state(),
-                &config.core.scratchpad,
+                &config.core.scratchpad.path,
                 &loop_history,
                 &loop_context,
                 auto_merge,
@@ -9909,6 +9925,7 @@ hats:
                 timeout: Some(timeout_secs),
                 concurrency: 1,
                 aggregate: None,
+                scratchpad: None,
             },
             events: vec![event],
             total: 1,

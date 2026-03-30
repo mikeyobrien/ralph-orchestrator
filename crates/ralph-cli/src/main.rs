@@ -402,7 +402,7 @@ pub(crate) fn apply_config_overrides(
         if let ConfigSource::Override { key, value } = source {
             match key.as_str() {
                 "core.scratchpad" => {
-                    config.core.scratchpad = value.clone();
+                    config.core.scratchpad.path = value.clone();
                 }
                 "core.specs_dir" => {
                     config.core.specs_dir = value.clone();
@@ -425,7 +425,7 @@ pub(crate) fn apply_config_overrides(
 
 /// Ensures the scratchpad's parent directory exists, creating it if needed.
 pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Result<()> {
-    let scratchpad_path = config.core.resolve_path(&config.core.scratchpad);
+    let scratchpad_path = config.core.resolve_path(&config.core.scratchpad.path);
     if let Some(parent) = scratchpad_path.parent()
         && !parent.exists()
     {
@@ -1395,17 +1395,17 @@ async fn run_command(
     // Handle --continue mode: check scratchpad exists before proceeding
     let resume = args.continue_mode;
     if resume {
-        let scratchpad_path = std::path::Path::new(&config.core.scratchpad);
+        let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
         if !scratchpad_path.exists() {
             anyhow::bail!(
                 "Cannot continue: scratchpad not found at '{}'. \
                  Start a fresh run with `ralph run`.",
-                config.core.scratchpad
+                config.core.scratchpad.path
             );
         }
         info!(
             "Found existing scratchpad at '{}', continuing from previous state",
-            config.core.scratchpad
+            config.core.scratchpad.path
         );
     }
 
@@ -1510,7 +1510,10 @@ async fn run_command(
         );
         println!("  Max iterations: {}", config.event_loop.max_iterations);
         println!("  Max runtime: {}s", config.event_loop.max_runtime_seconds);
-        println!("  Scratchpad: {}", config.core.scratchpad);
+        println!(
+            "  Scratchpad: {} (enabled: {})",
+            config.core.scratchpad.path, config.core.scratchpad.enabled
+        );
         println!("  Specs dir: {}", config.core.specs_dir);
         println!("  Backend: {}", config.cli.backend);
         println!("  Verbose: {}", config.verbose);
@@ -1685,11 +1688,11 @@ async fn run_command(
     if !loop_context.is_primary() {
         config.core.workspace_root = loop_context.workspace().to_path_buf();
         // Also update scratchpad path to use worktree location
-        config.core.scratchpad = loop_context.scratchpad_path().to_string_lossy().to_string();
+        config.core.scratchpad.path = loop_context.scratchpad_path().to_string_lossy().to_string();
         debug!(
             "Running in worktree: workspace={}, scratchpad={}",
             config.core.workspace_root.display(),
-            config.core.scratchpad
+            config.core.scratchpad.path
         );
     }
 
@@ -2087,18 +2090,18 @@ async fn resume_command(
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
 
     // Check that scratchpad exists (required for resume)
-    let scratchpad_path = std::path::Path::new(&config.core.scratchpad);
+    let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
     if !scratchpad_path.exists() {
         anyhow::bail!(
             "Cannot continue: scratchpad not found at '{}'. \
              Start a fresh run with `ralph run`.",
-            config.core.scratchpad
+            config.core.scratchpad.path
         );
     }
 
     info!(
         "Found existing scratchpad at '{}', continuing from previous state",
-        config.core.scratchpad
+        config.core.scratchpad.path
     );
 
     // Apply CLI overrides
@@ -2332,11 +2335,11 @@ fn clean_command(
     let config = load_config_with_overrides(config_sources)?;
 
     // Extract the .agent directory path from scratchpad path
-    let scratchpad_path = Path::new(&config.core.scratchpad);
+    let scratchpad_path = Path::new(&config.core.scratchpad.path);
     let agent_dir = scratchpad_path.parent().ok_or_else(|| {
         anyhow::anyhow!(
             "Could not determine parent directory from scratchpad path: {}",
-            config.core.scratchpad
+            config.core.scratchpad.path
         )
     })?;
 
@@ -3167,7 +3170,7 @@ mod tests {
             value: ".custom/scratch.md".to_string(),
         }];
         apply_config_overrides(&mut config, &sources).unwrap();
-        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(config.core.scratchpad.path, ".custom/scratch.md");
     }
 
     #[test]
@@ -3195,7 +3198,7 @@ mod tests {
             },
         ];
         apply_config_overrides(&mut config, &sources).unwrap();
-        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(config.core.scratchpad.path, ".custom/scratch.md");
         assert_eq!(config.core.specs_dir, "./my-specs/");
     }
 
@@ -3203,7 +3206,7 @@ mod tests {
     fn test_apply_config_overrides_unknown_field() {
         // Unknown core.* fields should warn but not error
         let mut config = RalphConfig::default();
-        let original_scratchpad = config.core.scratchpad.clone();
+        let original_scratchpad = config.core.scratchpad.path.clone();
         let sources = vec![ConfigSource::Override {
             key: "core.unknown_field".to_string(),
             value: "some_value".to_string(),
@@ -3211,7 +3214,7 @@ mod tests {
         // Should not error
         apply_config_overrides(&mut config, &sources).unwrap();
         // Original values should be unchanged
-        assert_eq!(config.core.scratchpad, original_scratchpad);
+        assert_eq!(config.core.scratchpad.path, original_scratchpad);
     }
 
     #[test]
@@ -3235,7 +3238,7 @@ mod tests {
         let mut config = RalphConfig::default();
         config.core.workspace_root = temp_dir.path().to_path_buf();
 
-        config.core.scratchpad = "a/b/c/scratchpad.md".to_string();
+        config.core.scratchpad.path = "a/b/c/scratchpad.md".to_string();
 
         let result = ensure_scratchpad_directory(&config);
         assert!(result.is_ok());
@@ -3254,7 +3257,7 @@ mod tests {
         // Pre-create the directory
         let subdir = temp_dir.path().join("existing");
         std::fs::create_dir_all(&subdir).unwrap();
-        config.core.scratchpad = "existing/scratchpad.md".to_string();
+        config.core.scratchpad.path = "existing/scratchpad.md".to_string();
 
         // Should succeed without error (no-op)
         let result = ensure_scratchpad_directory(&config);
@@ -3407,7 +3410,7 @@ core:
         .unwrap();
 
         let mut config = RalphConfig::from_file(&config_path).unwrap();
-        assert_eq!(config.core.scratchpad, ".agent/scratchpad.md");
+        assert_eq!(config.core.scratchpad.path, ".agent/scratchpad.md");
 
         // Apply override
         let overrides = vec![ConfigSource::Override {
@@ -3416,7 +3419,7 @@ core:
         }];
         apply_config_overrides(&mut config, &overrides).unwrap();
 
-        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(config.core.scratchpad.path, ".custom/scratch.md");
         assert_eq!(config.core.specs_dir, "./specs/"); // Unchanged
     }
 
@@ -3605,7 +3608,7 @@ core:
 
         let config = load_config_with_overrides(&sources).unwrap();
 
-        assert_eq!(config.core.scratchpad, ".custom/scratch.md");
+        assert_eq!(config.core.scratchpad.path, ".custom/scratch.md");
         let expected_root = std::fs::canonicalize(temp_dir.path())
             .unwrap_or_else(|_| temp_dir.path().to_path_buf());
         let actual_root = std::fs::canonicalize(&config.core.workspace_root)
@@ -3642,7 +3645,7 @@ core:
 
         let config = load_config_with_overrides(&sources).unwrap();
 
-        assert!(!config.core.scratchpad.is_empty());
+        assert!(!config.core.scratchpad.path.is_empty());
         let expected_root = std::fs::canonicalize(temp_dir.path())
             .unwrap_or_else(|_| temp_dir.path().to_path_buf());
         let actual_root = std::fs::canonicalize(&config.core.workspace_root)

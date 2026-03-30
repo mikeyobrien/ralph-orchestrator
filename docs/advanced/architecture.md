@@ -173,7 +173,7 @@ All persistent state lives in `.agent/`:
 ├── memories.md         # Persistent learning
 ├── tasks.jsonl         # Runtime work tracking
 ├── event_history.jsonl # Event audit log
-└── scratchpad.md       # Legacy state (deprecated)
+└── scratchpad.md       # Iteration state (per-hat scratchpads may also exist)
 ```
 
 ### Event Bus
@@ -196,10 +196,10 @@ Loaded from `ralph.yml`:
 struct Config {
     cli: CliConfig,
     event_loop: EventLoopConfig,
-    core: CoreConfig,
+    core: CoreConfig,       // includes scratchpad: ScratchpadConfig
     memories: MemoryConfig,
     tasks: TaskConfig,
-    hats: HashMap<String, HatConfig>,
+    hats: HashMap<String, HatConfig>,  // each HatConfig has scratchpad: Option<ScratchpadConfig>
 }
 ```
 

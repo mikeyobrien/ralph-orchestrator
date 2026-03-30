@@ -67,7 +67,7 @@ Ralph uses files for all persistent state:
 | `.agent/memories.md` | Cross-session learning |
 | `.agent/tasks.jsonl` | Runtime work tracking |
 | `.agent/event_history.jsonl` | Event audit log |
-| `.agent/scratchpad.md` | Legacy state (deprecated) |
+| `.agent/scratchpad.md` | Iteration state (per-hat scratchpads may also exist) |
 
 ## Quick Reference
 

@@ -511,11 +511,13 @@ adapters:
 ```
 
 **Agent Scratchpad:**
-All agents maintain context across iterations via `.agent/scratchpad.md`:
+All agents maintain context across iterations via a scratchpad file (`.agent/scratchpad.md` by default):
 - Persists progress from previous iterations
 - Records decisions and context
 - Tracks current blockers or issues
 - Lists remaining work items
+
+In hat-based configurations, each hat can have its own scratchpad via the `scratchpad` config option — set a custom path, disable it entirely, or inherit from `core.scratchpad`. See [Per-Hat Scratchpads](configuration.md#with-per-hat-scratchpads) for details.
 
 ```bash
 # The scratchpad is automatically managed
@@ -703,7 +705,7 @@ Agents write events to the run's events file (`.ralph/events-YYYYMMDD-HHMMSS.jso
 - ❌ **DON'T**: Use YAML formatting in payloads (causes literal newlines)
 - ❌ **DON'T**: Put multi-line content directly in payloads
 
-For detailed output, write to `.agent/scratchpad.md` and emit a brief event.
+For detailed output, write to your scratchpad file and emit a brief event.
 
 ### Example: Builder Hat
 

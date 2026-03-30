@@ -45,7 +45,7 @@ If `-H/--hats` is provided, it takes precedence over hats in `-c`:
 
 | Field | Description |
 |-------|-------------|
-| `core.scratchpad` | Path to scratchpad file |
+| `core.scratchpad` | Path to scratchpad file (string shorthand for `scratchpad.path`) |
 | `core.specs_dir` | Path to specs directory |
 
 ### Hat Collection Sources (`-H`)

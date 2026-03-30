@@ -614,6 +614,7 @@ mod tests {
             backend,
             default_publishes: None,
             max_activations: None,
+            scratchpad: None,
             disallowed_tools: vec![],
             timeout: None,
             concurrency: 1,

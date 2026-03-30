@@ -198,7 +198,7 @@ ralph run --continue
 
 After completion, check `.agent/` for:
 
-- `scratchpad.md` - Shared memory (legacy mode)
+- `scratchpad.md` - Iteration state (per-hat scratchpads may also exist)
 - `memories.md` - Persistent learning
 - `tasks.jsonl` - Task tracking
 
