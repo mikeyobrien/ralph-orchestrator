@@ -196,10 +196,10 @@ Loaded from `ralph.yml`:
 struct Config {
     cli: CliConfig,
     event_loop: EventLoopConfig,
-    core: CoreConfig,       // includes scratchpad: ScratchpadConfig
+    core: CoreConfig,
     memories: MemoryConfig,
     tasks: TaskConfig,
-    hats: HashMap<String, HatConfig>,  // each HatConfig has scratchpad: Option<ScratchpadConfig>
+    hats: HashMap<String, HatConfig>,
 }
 ```
 

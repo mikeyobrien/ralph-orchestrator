@@ -143,7 +143,8 @@ hats:
     max_activations: 10                 # Activation limit
     backend: "claude"                   # Backend override
     scratchpad:                         # Per-hat scratchpad override
-      path: .ralph/agent/my-hat.md     #   (omit to inherit core.scratchpad)
+      enabled: true                     #   Enable scratchpad (default: true)
+      path: .ralph/agent/my-hat.md      #   Scratchpad file path. Inherits from core if omitted.
     instructions: |
       Hat-specific instructions...
 ```
