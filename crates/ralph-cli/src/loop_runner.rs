@@ -1630,9 +1630,6 @@ pub async fn run_loop_impl(
             );
         }
 
-        // Log full prompt to diagnostics (RALPH_DIAGNOSTICS=1)
-        event_loop.log_prompt(iteration, display_hat.as_str(), &prompt);
-
         // In verbose mode, print the full prompt before execution
         if verbosity == Verbosity::Verbose {
             eprintln!("\n{}", "=".repeat(80));
