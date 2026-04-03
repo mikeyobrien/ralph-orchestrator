@@ -21,10 +21,7 @@ use crate::state::{TaskCounts, TuiState, WaveInfo};
 use crate::state_mutations::{apply_loop_completed, apply_task_active, apply_task_close};
 use crate::text_renderer::{sanitize_tui_inline_text, text_to_lines, truncate};
 
-#[path = "../../ralph-adapters/src/tool_preview.rs"]
-mod tool_preview;
-
-use tool_preview::{format_tool_result, format_tool_summary};
+use ralph_proto::tool_preview::{format_tool_result, format_tool_summary};
 
 /// Runs the RPC event reader, processing events from the given async reader.
 ///

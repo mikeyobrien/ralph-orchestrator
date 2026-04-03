@@ -19,10 +19,7 @@ use std::{
 };
 use termimad::MadSkin;
 
-#[path = "tool_preview.rs"]
-mod tool_preview;
-
-use tool_preview::{format_tool_result, format_tool_summary};
+use ralph_proto::tool_preview::{format_tool_result, format_tool_summary};
 
 /// Detects if text contains ANSI escape sequences.
 ///

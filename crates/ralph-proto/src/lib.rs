@@ -16,6 +16,7 @@ mod event_bus;
 mod hat;
 pub mod json_rpc;
 pub mod robot;
+pub mod tool_preview;
 mod topic;
 mod ux_event;
 

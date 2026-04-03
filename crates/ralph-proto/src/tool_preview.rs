@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-pub(super) fn format_tool_summary(name: &str, input: &Value) -> Option<String> {
+pub fn format_tool_summary(name: &str, input: &Value) -> Option<String> {
     match name {
         "Read" | "Edit" | "Write" | "read" | "edit" | "write" => input
             .get("file_path")
@@ -39,7 +39,7 @@ pub(super) fn format_tool_summary(name: &str, input: &Value) -> Option<String> {
     }
 }
 
-pub(super) fn format_tool_result(output: &str) -> String {
+pub fn format_tool_result(output: &str) -> String {
     let Ok(val) = serde_json::from_str::<Value>(output) else {
         return summarize_plain_text(output);
     };
