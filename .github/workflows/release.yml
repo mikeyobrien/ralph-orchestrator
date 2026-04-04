@@ -374,16 +374,51 @@ jobs:
             exit 1
           fi
 
+  # Smoke test: verify `cargo install ralph-cli` works from crates.io
+  smoke-test-install:
+    needs:
+      - plan
+      - publish-crates
+    if: ${{ needs.plan.outputs.publishing == 'true' && needs.publish-crates.result == 'success' }}
+    runs-on: "ubuntu-22.04"
+    steps:
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install ralph-cli from crates.io
+        run: |
+          VERSION="${{ needs.plan.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          echo "Installing ralph-cli@${VERSION} from crates.io..."
+
+          # Retry up to 3 times — crates.io index propagation can lag
+          for attempt in 1 2 3; do
+            if cargo install ralph-cli --version "${VERSION}" --locked 2>&1; then
+              echo "Install succeeded on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::cargo install ralph-cli@${VERSION} failed after 3 attempts"
+              exit 1
+            fi
+            echo "Attempt $attempt failed, waiting 30s for index propagation..."
+            sleep 30
+          done
+      - name: Verify binary runs
+        run: |
+          ralph --version
+          ralph --help > /dev/null
+
   announce:
     needs:
       - plan
       - host
       - publish-crates
       - publish-npm
+      - smoke-test-install
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.publish-crates.result == 'skipped' || needs.publish-crates.result == 'success') && (needs.publish-npm.result == 'skipped' || needs.publish-npm.result == 'success') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-crates.result == 'skipped' || needs.publish-crates.result == 'success') && (needs.publish-npm.result == 'skipped' || needs.publish-npm.result == 'success') && (needs.smoke-test-install.result == 'skipped' || needs.smoke-test-install.result == 'success') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
