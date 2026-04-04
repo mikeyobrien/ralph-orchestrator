@@ -14,6 +14,7 @@ Ralph supports multiple AI CLI backends. This guide covers setup and selection.
 | Copilot CLI | `copilot` | GitHub |
 | OpenCode | `opencode` | Community |
 | Pi | `pi` | Multi-provider |
+| Roo | `roo` | Multi-provider |
 
 ## Auto-Detection
 
@@ -33,6 +34,7 @@ Detection order (first available wins):
 6. Copilot
 7. OpenCode
 8. Pi
+9. Roo
 
 ## Explicit Selection
 
@@ -57,7 +59,7 @@ Each backend below includes:
 - **Hat YAML** configuration
 - **`ralph doctor`** validation notes
 
-Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `pi`.
+Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `pi`, `roo`.
 
 ### Claude Code (`claude`)
 
@@ -307,6 +309,42 @@ hats:
 - `pi --version` must succeed
 - Warns if no provider API key is set
 
+### Roo (`roo`)
+
+Multi-provider AI coding assistant.
+
+```bash
+# Install
+# Visit https://github.com/RooVetGit/Roo-Code
+
+# Verify
+roo --version
+```
+
+**Auth & env vars:**
+- Set one of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or any supported provider key
+- Roo supports multiple providers via `--provider` flag
+
+**Hat YAML:**
+```yaml
+hats:
+  coder:
+    backend: "roo"
+```
+
+**Roo provider selection (optional):**
+```yaml
+hats:
+  coder:
+    backend:
+      type: "roo"
+      args: ["--provider", "bedrock", "--model", "anthropic.claude-opus-4-6"]
+```
+
+**Doctor checks:**
+- `roo --version` must succeed
+- Warns if no provider API key is set
+
 ## Per-Hat Backend Override
 
 Different hats can use different backends:
@@ -344,13 +382,13 @@ cli:
 
 ## Backend Comparison
 
-| Feature | Claude | Kiro | Gemini | Codex | Pi |
-|---------|--------|------|--------|-------|----|
-| Streaming | Yes | Yes | Yes | Yes | Yes |
-| Tool use | Full | Full | Partial | Partial | Full |
-| Context size | Large | Large | Large | Medium | Large |
-| Speed | Fast | Fast | Fast | Medium | Fast |
-| Cost | $$ | $ | $ | $$ | $ |
+| Feature | Claude | Kiro | Gemini | Codex | Pi | Roo |
+|---------|--------|------|--------|-------|----|----|
+| Streaming | Yes | Yes | Yes | Yes | Yes | Yes |
+| Tool use | Full | Full | Partial | Partial | Full | Full |
+| Context size | Large | Large | Large | Medium | Large | Large |
+| Speed | Fast | Fast | Fast | Medium | Fast | Fast |
+| Cost | $$ | $ | $ | $$ | $ | $ |
 
 ## Troubleshooting
 
