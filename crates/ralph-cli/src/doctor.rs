@@ -374,6 +374,16 @@ fn auth_env_vars(backend: &str) -> Option<Vec<&'static str>> {
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
         ]),
+        "pi" => Some(vec![
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+        ]),
+        "roo" => Some(vec![
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+        ]),
         _ => None,
     }
 }
@@ -433,6 +443,8 @@ fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
         "amp" => "amp".to_string(),
         "copilot" => "copilot".to_string(),
         "opencode" => "opencode".to_string(),
+        "pi" => "pi".to_string(),
+        "roo" => "roo".to_string(),
         _ => normalized,
     }
 }
