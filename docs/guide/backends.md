@@ -13,6 +13,8 @@ Ralph supports multiple AI CLI backends. This guide covers setup and selection.
 | Amp | `amp` | Sourcegraph |
 | Copilot CLI | `copilot` | GitHub |
 | OpenCode | `opencode` | Community |
+| Pi | `pi` | Multi-provider |
+| Roo | `roo` | Multi-provider |
 
 ## Auto-Detection
 
@@ -31,6 +33,8 @@ Detection order (first available wins):
 5. Amp
 6. Copilot
 7. OpenCode
+8. Pi
+9. Roo
 
 ## Explicit Selection
 
@@ -55,7 +59,7 @@ Each backend below includes:
 - **Hat YAML** configuration
 - **`ralph doctor`** validation notes
 
-Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`.
+Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `pi`, `roo`.
 
 ### Claude Code (`claude`)
 
@@ -268,6 +272,79 @@ hats:
 - `opencode --version` must succeed
 - Warns if none of `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` are set
 
+### Pi (`pi`)
+
+Multi-provider AI coding assistant.
+
+```bash
+# Install
+npm install -g @mariozechner/pi-coding-agent
+
+# Verify
+pi --version
+```
+
+**Auth & env vars:**
+- Set one of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or any supported provider key
+- Pi routes to the provider specified via `--provider` (default: google)
+- Pass API key explicitly with `--api-key` or rely on provider-specific env vars
+
+**Hat YAML:**
+```yaml
+hats:
+  coder:
+    backend: "pi"
+```
+
+**Pi provider selection (optional):**
+```yaml
+hats:
+  coder:
+    backend:
+      type: "pi"
+      args: ["--provider", "anthropic", "--model", "claude-sonnet-4"]
+```
+
+**Doctor checks:**
+- `pi --version` must succeed
+- Warns if no provider API key is set
+
+### Roo (`roo`)
+
+Multi-provider AI coding assistant.
+
+```bash
+# Install
+# Visit https://github.com/RooVetGit/Roo-Code
+
+# Verify
+roo --version
+```
+
+**Auth & env vars:**
+- Set one of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or any supported provider key
+- Roo supports multiple providers via `--provider` flag
+
+**Hat YAML:**
+```yaml
+hats:
+  coder:
+    backend: "roo"
+```
+
+**Roo provider selection (optional):**
+```yaml
+hats:
+  coder:
+    backend:
+      type: "roo"
+      args: ["--provider", "bedrock", "--model", "anthropic.claude-opus-4-6"]
+```
+
+**Doctor checks:**
+- `roo --version` must succeed
+- Warns if no provider API key is set
+
 ## Per-Hat Backend Override
 
 Different hats can use different backends:
@@ -305,13 +382,13 @@ cli:
 
 ## Backend Comparison
 
-| Feature | Claude | Kiro | Gemini | Codex |
-|---------|--------|------|--------|-------|
-| Streaming | Yes | Yes | Yes | Yes |
-| Tool use | Full | Full | Partial | Partial |
-| Context size | Large | Large | Large | Medium |
-| Speed | Fast | Fast | Fast | Medium |
-| Cost | $$ | $ | $ | $$ |
+| Feature | Claude | Kiro | Gemini | Codex | Pi | Roo |
+|---------|--------|------|--------|-------|----|----|
+| Streaming | Yes | Yes | Yes | Yes | Yes | Yes |
+| Tool use | Full | Full | Partial | Partial | Full | Full |
+| Context size | Large | Large | Large | Medium | Large | Large |
+| Speed | Fast | Fast | Fast | Medium | Fast | Fast |
+| Cost | $$ | $ | $ | $$ | $ | $ |
 
 ## Troubleshooting
 
@@ -324,7 +401,7 @@ ERROR: No AI agents detected
 **Solution:**
 1. Install a supported backend
 2. Ensure it's in your PATH
-3. Test directly: `claude -p "test"`
+3. Test directly: `claude -p "test"` or `pi -p "test"`
 
 ### Authentication Failed
 
@@ -342,6 +419,9 @@ copilot auth login
 
 # Gemini - set API key
 export GEMINI_API_KEY=your-key
+
+# Pi - set provider API key
+export ANTHROPIC_API_KEY=your-key
 ```
 
 If the CLI is already authenticated but `ralph doctor` still warns, ensure the
