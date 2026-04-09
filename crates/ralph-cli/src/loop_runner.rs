@@ -4044,7 +4044,7 @@ fn convert_termination_type(
         | ralph_adapters::TerminationType::ForceKill => Some(TerminationReason::Interrupted),
     }
 }
-#[cfg(test_]
+#[cfg(test)]
 fn detect_solo_output_completion(
     registry: &ralph_core::HatRegistry,
     output: &str,
