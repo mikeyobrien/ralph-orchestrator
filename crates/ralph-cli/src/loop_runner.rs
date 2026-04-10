@@ -5228,7 +5228,11 @@ async fn execute_wave(
             // Test-only: allow fake backend PATH injection to flow through the global backend
             // when a wave worker resolves its command from a hat-specific backend.
             for (key, value) in &global_backend.env_vars {
-                if !worker_backend.env_vars.iter().any(|(existing, _)| existing == key) {
+                if !worker_backend
+                    .env_vars
+                    .iter()
+                    .any(|(existing, _)| existing == key)
+                {
                     worker_backend.env_vars.push((key.clone(), value.clone()));
                 }
             }
@@ -6263,8 +6267,9 @@ mod tests {
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
     #[cfg(unix)]
-    static FAKE_PATH_BACKEND_BIN: std::sync::LazyLock<std::sync::Mutex<Option<std::path::PathBuf>>> =
-        std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+    static FAKE_PATH_BACKEND_BIN: std::sync::LazyLock<
+        std::sync::Mutex<Option<std::path::PathBuf>>,
+    > = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
     #[cfg(unix)]
     struct FakePathBackendsGuard {

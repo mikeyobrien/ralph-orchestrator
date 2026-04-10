@@ -103,11 +103,17 @@ impl CliExecutor {
 
         let mut child = command.spawn()?;
 
-        // Write to stdin if needed
+        // Write to stdin if needed. Some short-lived commands can exit before
+        // consuming stdin, which surfaces as BrokenPipe. Treat that as benign
+        // and continue collecting output/exit status from the child.
         if let Some(input) = stdin_input
             && let Some(mut stdin) = child.stdin.take()
         {
-            stdin.write_all(input.as_bytes()).await?;
+            if let Err(err) = stdin.write_all(input.as_bytes()).await
+                && err.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                return Err(err);
+            }
             drop(stdin); // Close stdin to signal EOF
         }
 
