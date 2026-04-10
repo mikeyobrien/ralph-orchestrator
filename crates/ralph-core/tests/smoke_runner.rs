@@ -953,6 +953,95 @@ mod kiro_acp_smoke_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PI SMOKE TESTS
+// Pi runs in non-PTY JSON mode so fixtures contain only _meta and bus.publish
+// events (no ux.terminal.write).  These tests validate session structure and
+// cross-backend compatibility.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod pi_smoke_tests {
+    use super::*;
+
+    fn pi_fixtures_dir() -> PathBuf {
+        fixtures_dir().join("pi")
+    }
+
+    #[test]
+    fn test_pi_fixtures_directory_exists() {
+        let dir = pi_fixtures_dir();
+        assert!(
+            dir.exists(),
+            "Pi fixtures directory should exist at {:?}",
+            dir
+        );
+    }
+
+    #[test]
+    fn test_pi_readme_exists() {
+        let readme = pi_fixtures_dir().join("README.md");
+        assert!(
+            readme.exists(),
+            "Pi fixtures README should exist at {:?}",
+            readme
+        );
+    }
+
+    #[test]
+    fn test_pi_basic_session_fixture_loads() {
+        let fixture = pi_fixtures_dir().join("basic_pi_session.jsonl");
+        assert!(fixture.exists(), "basic_pi_session.jsonl should exist");
+
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should load and run Pi fixture");
+
+        assert!(
+            result.completed_successfully(),
+            "Pi basic session should complete successfully"
+        );
+    }
+
+    #[test]
+    fn test_pi_all_fixtures_valid() {
+        let fixtures = list_fixtures(pi_fixtures_dir()).expect("Should list Pi fixtures");
+        assert!(!fixtures.is_empty(), "Pi should have at least 1 fixture");
+
+        for fixture_path in fixtures {
+            let config = SmokeTestConfig::new(&fixture_path);
+            let result = SmokeRunner::run(&config);
+            assert!(
+                result.is_ok(),
+                "Pi fixture {:?} should be valid and runnable: {:?}",
+                fixture_path,
+                result.err()
+            );
+        }
+    }
+
+    #[test]
+    fn test_pi_cross_backend_compatibility() {
+        // Run Claude fixture
+        let claude_fixture = fixtures_dir().join("basic_session.jsonl");
+        let claude_config = SmokeTestConfig::new(&claude_fixture);
+        let claude_result = SmokeRunner::run(&claude_config).expect("Claude fixture should run");
+
+        // Run Pi fixture
+        let pi_fixture = pi_fixtures_dir().join("basic_pi_session.jsonl");
+        let pi_config = SmokeTestConfig::new(&pi_fixture);
+        let pi_result = SmokeRunner::run(&pi_config).expect("Pi fixture should run");
+
+        // Both should complete using the same SmokeRunner
+        assert!(
+            claude_result.completed_successfully(),
+            "Claude fixture should complete"
+        );
+        assert!(
+            pi_result.completed_successfully(),
+            "Pi fixture should complete"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SKILLS SYSTEM SMOKE TESTS
 // Tests that the skills system integrates correctly: discovery, index generation,
 // prompt injection, and backwards compatibility.

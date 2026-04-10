@@ -53,6 +53,9 @@ pub(crate) struct ExecutionOutcome {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
+    /// True when the iteration was killed by a PTY idle timeout.
+    /// The main loop uses this to decide whether to run a hatless fallback.
+    pub was_idle_timeout: bool,
 }
 
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
@@ -140,7 +143,11 @@ pub async fn run_loop_impl(
     // PTY is required for TUI/RPC observation and true interactive sessions.
     // Headless `ralph run --no-tui` should use CliExecutor so backends get their
     // non-interactive prompt forms (for example `claude -p` or `codex exec`).
-    let use_pty = enable_tui || enable_rpc || user_interactive;
+    // Also enable PTY when event_loop.idle_timeout is configured: the idle-timeout
+    // detection lives in the PTY executor's output loop, so we need PTY mode for it
+    // to fire in autonomous/headless runs.
+    let use_pty =
+        enable_tui || enable_rpc || user_interactive || config.event_loop.idle_timeout.is_some();
 
     // Set up interrupt channel for signal handling
     // Per spec:
@@ -357,6 +364,9 @@ pub async fn run_loop_impl(
     let mut pty_executor = if use_pty {
         let idle_timeout_secs = if user_interactive {
             config.cli.idle_timeout_secs
+        } else if let Some(ref ito) = config.event_loop.idle_timeout {
+            // Autonomous mode: use event_loop idle timeout when configured
+            ito.duration_secs as u32
         } else {
             0
         };
@@ -1759,6 +1769,7 @@ pub async fn run_loop_impl(
                     iteration,
                     display_hat.as_str(),
                     &backend_name_for_timeout,
+                    _session_recorder.as_ref(),
                 )
                 .await
             } else {
@@ -1766,11 +1777,22 @@ pub async fn run_loop_impl(
                 let result = executor
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
+                let output = normalize_cli_output_for_parsing(
+                    effective_backend.output_format,
+                    &result.output,
+                );
+
+                // Record terminal output for session replay (non-PTY path)
+                if let Some(ref recorder) = _session_recorder
+                    && !output.is_empty()
+                {
+                    recorder.record_ux_event(&ralph_proto::UxEvent::TerminalWrite(
+                        ralph_proto::TerminalWrite::new(output.as_bytes(), true, 0),
+                    ));
+                }
+
                 Ok(ExecutionOutcome {
-                    output: normalize_cli_output_for_parsing(
-                        effective_backend.output_format,
-                        &result.output,
-                    ),
+                    output,
                     success: result.success,
                     termination: None,
                     total_cost_usd: 0.0,
@@ -1778,6 +1800,7 @@ pub async fn run_loop_impl(
                     output_tokens: 0,
                     cache_read_tokens: 0,
                     cache_write_tokens: 0,
+                    was_idle_timeout: false,
                 })
             }
         };
@@ -1835,6 +1858,133 @@ pub async fn run_loop_impl(
                 let _ = terminated_tx.send(true);
                 return Ok(reason);
             }
+        };
+
+        // Handle idle timeout: run hatless fallback or stop the loop.
+        let outcome = if outcome.was_idle_timeout {
+            if let Some(ref ito) = config.event_loop.idle_timeout {
+                if ito.fallback_enabled {
+                    warn!(
+                        iteration = iteration,
+                        timeout_secs = ito.duration_secs,
+                        "Iteration idle timeout - running hatless Ralph fallback"
+                    );
+                    let stdout_log = outcome.output.clone();
+                    let fallback_prompt =
+                        build_idle_timeout_fallback_prompt(ito, iteration, &stdout_log);
+
+                    let interrupt_rx_for_fallback = interrupt_rx.clone();
+                    let rpc_stdout_for_fallback = rpc_stdout.clone();
+
+                    let fallback_result =
+                        if effective_backend.output_format == BackendOutputFormat::Acp {
+                            execute_acp(
+                                &effective_backend,
+                                &config,
+                                &fallback_prompt,
+                                verbosity,
+                                None, // no TUI sub-iteration for fallback
+                                rpc_stdout_for_fallback,
+                                iteration,
+                                "ralph",
+                                &backend_name_for_timeout,
+                            )
+                            .await
+                        } else if use_pty {
+                            execute_pty(
+                                pty_executor.as_mut(),
+                                &effective_backend,
+                                &config,
+                                &fallback_prompt,
+                                false, // always autonomous for fallback
+                                interrupt_rx_for_fallback,
+                                verbosity,
+                                None, // no TUI sub-iteration for fallback
+                                rpc_stdout_for_fallback,
+                                iteration,
+                                "ralph",
+                                &backend_name_for_timeout,
+                                _session_recorder.as_ref(),
+                            )
+                            .await
+                        } else {
+                            let executor = CliExecutor::new(effective_backend.clone());
+                            let result = executor
+                                .execute(
+                                    &fallback_prompt,
+                                    stdout(),
+                                    timeout,
+                                    verbosity == Verbosity::Verbose,
+                                )
+                                .await?;
+                            Ok(ExecutionOutcome {
+                                output: normalize_cli_output_for_parsing(
+                                    effective_backend.output_format,
+                                    &result.output,
+                                ),
+                                success: result.success,
+                                termination: None,
+                                total_cost_usd: 0.0,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cache_read_tokens: 0,
+                                cache_write_tokens: 0,
+                                was_idle_timeout: false,
+                            })
+                        };
+
+                    match fallback_result {
+                        Ok(mut fo) => {
+                            if fo.was_idle_timeout {
+                                warn!(
+                                    iteration = iteration,
+                                    timeout_secs = ito.duration_secs,
+                                    "Fallback iteration also hit idle timeout - stopping loop"
+                                );
+                                fo.termination = Some(TerminationReason::Stopped);
+                            }
+                            // Clear was_idle_timeout so we don't recurse
+                            fo.was_idle_timeout = false;
+                            fo
+                        }
+                        Err(e) => {
+                            warn!("Idle timeout fallback execution failed: {}", e);
+                            ExecutionOutcome {
+                                output: String::new(),
+                                success: false,
+                                termination: Some(TerminationReason::Stopped),
+                                total_cost_usd: 0.0,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cache_read_tokens: 0,
+                                cache_write_tokens: 0,
+                                was_idle_timeout: false,
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback disabled - stop the loop
+                    warn!(
+                        iteration = iteration,
+                        timeout_secs = ito.duration_secs,
+                        "Iteration idle timeout (fallback disabled) - stopping loop"
+                    );
+                    ExecutionOutcome {
+                        termination: Some(TerminationReason::Stopped),
+                        ..outcome
+                    }
+                }
+            } else {
+                // was_idle_timeout is true but no event_loop.idle_timeout config.
+                // This happens when cli.idle_timeout_secs fired in autonomous mode
+                // without the new config - preserve old stop behavior.
+                ExecutionOutcome {
+                    termination: Some(TerminationReason::Stopped),
+                    ..outcome
+                }
+            }
+        } else {
+            outcome
         };
 
         if let Some(reason) = outcome.termination {
@@ -4023,20 +4173,14 @@ fn disposition_from_on_error(on_error: HookOnError) -> HookDisposition {
 /// * `Some(TerminationReason)` - Stop the loop
 fn convert_termination_type(
     termination_type: ralph_adapters::TerminationType,
-    interactive: bool,
 ) -> Option<TerminationReason> {
     match termination_type {
         ralph_adapters::TerminationType::Natural => None,
         ralph_adapters::TerminationType::IdleTimeout => {
-            if interactive {
-                // In interactive mode, idle timeout signals iteration complete,
-                // not loop termination. Let output be processed for events.
-                info!("PTY idle timeout in interactive mode, iteration complete");
-                None
-            } else {
-                warn!("PTY idle timeout reached, terminating loop");
-                Some(TerminationReason::Stopped)
-            }
+            // Do not terminate the loop directly.  The main loop reads
+            // `was_idle_timeout` (set in `execute_pty`) and decides whether to
+            // run a hatless fallback (autonomous) or continue (interactive).
+            None
         }
         ralph_adapters::TerminationType::UserInterrupt
         | ralph_adapters::TerminationType::ForceKill => Some(TerminationReason::Interrupted),
@@ -4049,6 +4193,40 @@ fn detect_solo_output_completion(
     completion_promise: &str,
 ) -> bool {
     registry.is_empty() && EventParser::contains_promise(output, completion_promise)
+}
+
+/// Builds the fallback prompt injected when an iteration's idle timeout fires.
+///
+/// Uses the user-supplied `fallback_prompt_template` when configured, otherwise
+/// falls back to a sensible built-in template.  Template variables:
+/// - `{timeout_secs}` — idle timeout that elapsed
+/// - `{iteration}` — the iteration that timed out
+/// - `{stdout_log}` — full stdout captured before cancellation
+fn build_idle_timeout_fallback_prompt(
+    config: &ralph_core::IdleTimeoutConfig,
+    iteration: u32,
+    stdout_log: &str,
+) -> String {
+    const DEFAULT_TEMPLATE: &str = "\
+The previous iteration (#{iteration}) timed out after {timeout_secs}s of inactivity \
+and was cancelled. Here is the full stdout log captured before cancellation:
+
+---
+{stdout_log}
+---
+
+Please analyse what went wrong and attempt to complete the task. If the stdout \
+log is empty, the agent likely never started or exited immediately.";
+
+    let template = config
+        .fallback_prompt_template
+        .as_deref()
+        .unwrap_or(DEFAULT_TEMPLATE);
+
+    template
+        .replace("{timeout_secs}", &config.duration_secs.to_string())
+        .replace("{iteration}", &iteration.to_string())
+        .replace("{stdout_log}", stdout_log)
 }
 
 fn normalize_cli_output_for_parsing(
@@ -4205,6 +4383,7 @@ async fn execute_acp(
         output_tokens: pty_result.output_tokens,
         cache_read_tokens: pty_result.cache_read_tokens,
         cache_write_tokens: pty_result.cache_write_tokens,
+        was_idle_timeout: false,
     })
 }
 
@@ -4221,6 +4400,7 @@ async fn execute_pty(
     iteration: u32,
     hat: &str,
     backend_name: &str,
+    session_recorder: Option<&Arc<SessionRecorder<BufWriter<File>>>>,
 ) -> Result<ExecutionOutcome> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
@@ -4237,6 +4417,8 @@ async fn execute_pty(
     } else {
         let idle_timeout_secs = if interactive {
             config.cli.idle_timeout_secs
+        } else if let Some(ref ito) = config.event_loop.idle_timeout {
+            ito.duration_secs as u32
         } else {
             0
         };
@@ -4330,7 +4512,26 @@ async fn execute_pty(
 
     match result {
         Ok(pty_result) => {
-            let termination = convert_termination_type(pty_result.termination, interactive);
+            // Record terminal output for session replay (all backends, including
+            // non-PTY ones like Pi that stream NDJSON).  We synthesise a single
+            // TerminalWrite from the best-available text so the smoke-test
+            // fixtures contain something replayable.
+            if let Some(recorder) = session_recorder {
+                let text = if pty_result.extracted_text.is_empty() {
+                    &pty_result.stripped_output
+                } else {
+                    &pty_result.extracted_text
+                };
+                if !text.is_empty() {
+                    recorder.record_ux_event(&ralph_proto::UxEvent::TerminalWrite(
+                        ralph_proto::TerminalWrite::new(text.as_bytes(), true, 0),
+                    ));
+                }
+            }
+
+            let was_idle_timeout = !interactive
+                && pty_result.termination == ralph_adapters::TerminationType::IdleTimeout;
+            let termination = convert_termination_type(pty_result.termination);
 
             // Use extracted_text for event parsing when available (NDJSON backends like Claude),
             // otherwise fall back to stripped_output (non-JSON backends or interactive mode).
@@ -4350,6 +4551,7 @@ async fn execute_pty(
                 output_tokens: pty_result.output_tokens,
                 cache_read_tokens: pty_result.cache_read_tokens,
                 cache_write_tokens: pty_result.cache_write_tokens,
+                was_idle_timeout,
             })
         }
         Err(e) => {
@@ -9501,87 +9703,31 @@ exit 73"#
     }
 
     #[test]
-    fn test_idle_timeout_interactive_mode_continues() {
-        // Given: interactive mode and IdleTimeout termination
-        let termination_type = ralph_adapters::TerminationType::IdleTimeout;
-        let interactive = true;
+    fn test_idle_timeout_returns_none() {
+        // IdleTimeout never maps to a TerminationReason — the main loop reads
+        // `was_idle_timeout` on the ExecutionOutcome and decides whether to run
+        // a hatless fallback or continue.
+        assert!(convert_termination_type(ralph_adapters::TerminationType::IdleTimeout).is_none());
+    }
 
-        // When: converting termination type
-        let result = convert_termination_type(termination_type, interactive);
+    #[test]
+    fn test_natural_termination_continues() {
+        assert!(convert_termination_type(ralph_adapters::TerminationType::Natural).is_none());
+    }
 
-        // Then: should return None (allow iteration to continue)
-        assert!(
-            result.is_none(),
-            "Interactive mode idle timeout should return None to allow iteration progression"
+    #[test]
+    fn test_user_interrupt_terminates() {
+        assert_eq!(
+            convert_termination_type(ralph_adapters::TerminationType::UserInterrupt),
+            Some(TerminationReason::Interrupted),
         );
     }
 
     #[test]
-    fn test_idle_timeout_autonomous_mode_stops() {
-        // Given: autonomous mode and IdleTimeout termination
-        let termination_type = ralph_adapters::TerminationType::IdleTimeout;
-        let interactive = false;
-
-        // When: converting termination type
-        let result = convert_termination_type(termination_type, interactive);
-
-        // Then: should return Some(Stopped)
+    fn test_force_kill_terminates() {
         assert_eq!(
-            result,
-            Some(TerminationReason::Stopped),
-            "Autonomous mode idle timeout should return Stopped"
-        );
-    }
-
-    #[test]
-    fn test_natural_termination_always_continues() {
-        // Given: Natural termination in any mode
-        let termination_type = ralph_adapters::TerminationType::Natural;
-
-        // When/Then: should return None regardless of mode
-        assert!(
-            convert_termination_type(termination_type.clone(), true).is_none(),
-            "Natural termination should continue in interactive mode"
-        );
-        assert!(
-            convert_termination_type(termination_type, false).is_none(),
-            "Natural termination should continue in autonomous mode"
-        );
-    }
-
-    #[test]
-    fn test_user_interrupt_always_terminates() {
-        // Given: UserInterrupt termination in any mode
-        let termination_type = ralph_adapters::TerminationType::UserInterrupt;
-
-        // When/Then: should return Interrupted regardless of mode
-        assert_eq!(
-            convert_termination_type(termination_type.clone(), true),
+            convert_termination_type(ralph_adapters::TerminationType::ForceKill),
             Some(TerminationReason::Interrupted),
-            "UserInterrupt should terminate in interactive mode"
-        );
-        assert_eq!(
-            convert_termination_type(termination_type, false),
-            Some(TerminationReason::Interrupted),
-            "UserInterrupt should terminate in autonomous mode"
-        );
-    }
-
-    #[test]
-    fn test_force_kill_always_terminates() {
-        // Given: ForceKill termination in any mode
-        let termination_type = ralph_adapters::TerminationType::ForceKill;
-
-        // When/Then: should return Interrupted regardless of mode
-        assert_eq!(
-            convert_termination_type(termination_type.clone(), true),
-            Some(TerminationReason::Interrupted),
-            "ForceKill should terminate in interactive mode"
-        );
-        assert_eq!(
-            convert_termination_type(termination_type, false),
-            Some(TerminationReason::Interrupted),
-            "ForceKill should terminate in autonomous mode"
         );
     }
 
@@ -9607,6 +9753,37 @@ hats:
             !detect_solo_output_completion(&registry, "done\nLOOP_COMPLETE\n", "LOOP_COMPLETE"),
             "text completion should not terminate multi-hat workflows"
         );
+    }
+
+    #[test]
+    fn test_build_idle_timeout_fallback_prompt_default_template() {
+        use ralph_core::IdleTimeoutConfig;
+        let config = IdleTimeoutConfig {
+            duration_secs: 300,
+            fallback_enabled: true,
+            fallback_prompt_template: None,
+        };
+        let prompt = build_idle_timeout_fallback_prompt(&config, 7, "some output\nhere");
+        assert!(prompt.contains("300s"), "should include timeout duration");
+        assert!(prompt.contains("#7"), "should include iteration number");
+        assert!(
+            prompt.contains("some output\nhere"),
+            "should include stdout log"
+        );
+    }
+
+    #[test]
+    fn test_build_idle_timeout_fallback_prompt_custom_template() {
+        use ralph_core::IdleTimeoutConfig;
+        let config = IdleTimeoutConfig {
+            duration_secs: 60,
+            fallback_enabled: true,
+            fallback_prompt_template: Some(
+                "Timeout {timeout_secs}s iter {iteration}: {stdout_log}".to_string(),
+            ),
+        };
+        let prompt = build_idle_timeout_fallback_prompt(&config, 3, "log data");
+        assert_eq!(prompt, "Timeout 60s iter 3: log data");
     }
 
     #[test]

@@ -412,6 +412,73 @@ event_loop:
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_run_idle_timeout_fallback_stops_when_fallback_also_times_out() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+    let backend_script = temp_path.join("never-completes.sh");
+
+    std::fs::write(&backend_script, "#!/bin/sh\ncat >/dev/null\nsleep 5\n")
+        .expect("write backend script");
+
+    let mut permissions = std::fs::metadata(&backend_script)
+        .expect("metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&backend_script, permissions).expect("set executable permissions");
+
+    std::fs::write(
+        temp_path.join("ralph.yml"),
+        r#"
+cli:
+  backend: custom
+  command: "./never-completes.sh"
+  prompt_mode: stdin
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 3
+  max_runtime_seconds: 30
+  idle_timeout:
+    duration_secs: 1
+    fallback_enabled: true
+"#,
+    )
+    .expect("write config");
+
+    let output = run_ralph(
+        temp_path,
+        &[
+            "run",
+            "--autonomous",
+            "--skip-preflight",
+            "--prompt",
+            "timeout fallback repro",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("ITERATION 1"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains("ITERATION 2"),
+        "fallback double-timeout should stop the loop before a second iteration\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Fallback iteration also hit idle timeout - stopping loop"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Loop terminated: Manually stopped"),
+        "stderr: {stderr}\nstdout: {stdout}"
+    );
+}
+
 #[test]
 fn test_run_continue_requires_scratchpad() {
     let temp_dir = TempDir::new().expect("temp dir");

@@ -377,7 +377,7 @@ impl PtyExecutor {
         drop(pair.slave);
 
         let mut output = Vec::new();
-        let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
+        let timeout_duration = if self.config.idle_timeout_secs == 0 {
             None
         } else {
             Some(Duration::from_secs(u64::from(
@@ -678,7 +678,7 @@ impl PtyExecutor {
         let mut copilot_state = CopilotStreamState::new();
         let mut completion: Option<SessionResult> = None;
         let start_time = Instant::now();
-        let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
+        let timeout_duration = if self.config.idle_timeout_secs == 0 {
             None
         } else {
             Some(Duration::from_secs(u64::from(
