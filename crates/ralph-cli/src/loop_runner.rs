@@ -5223,6 +5223,17 @@ async fn execute_wave(
             global_backend.clone()
         };
 
+        #[cfg(test)]
+        {
+            // Test-only: allow fake backend PATH injection to flow through the global backend
+            // when a wave worker resolves its command from a hat-specific backend.
+            for (key, value) in &global_backend.env_vars {
+                if !worker_backend.env_vars.iter().any(|(existing, _)| existing == key) {
+                    worker_backend.env_vars.push((key.clone(), value.clone()));
+                }
+            }
+        }
+
         // Inject wave env vars
         worker_backend.env_vars.extend([
             ("RALPH_WAVE_WORKER".into(), "1".into()),
@@ -6252,8 +6263,13 @@ mod tests {
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
     #[cfg(unix)]
+    static FAKE_PATH_BACKEND_BIN: std::sync::LazyLock<std::sync::Mutex<Option<std::path::PathBuf>>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+    #[cfg(unix)]
     struct FakePathBackendsGuard {
         _guard: std::sync::MutexGuard<'static, ()>,
+        _temp_dir: tempfile::TempDir,
         installed_paths: Vec<std::path::PathBuf>,
     }
 
@@ -6263,35 +6279,10 @@ mod tests {
             for path in &self.installed_paths {
                 let _ = std::fs::remove_file(path);
             }
+            *FAKE_PATH_BACKEND_BIN
+                .lock()
+                .expect("fake PATH backend bin lock") = None;
         }
-    }
-
-    #[cfg(unix)]
-    fn fake_path_backend_dir(backends: &[(&str, &str)]) -> std::path::PathBuf {
-        use std::fs::OpenOptions;
-
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        for dir in std::env::split_paths(&path) {
-            if !dir.is_dir() {
-                continue;
-            }
-            if backends.iter().any(|(name, _)| dir.join(name).exists()) {
-                continue;
-            }
-
-            let probe = dir.join(format!(".ralph-fake-path-probe-{}", std::process::id()));
-            if OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&probe)
-                .is_ok()
-            {
-                let _ = std::fs::remove_file(&probe);
-                return dir;
-            }
-        }
-
-        panic!("expected at least one writable PATH entry for fake backend installation");
     }
 
     #[cfg(unix)]
@@ -6299,7 +6290,9 @@ mod tests {
         let guard = FAKE_PATH_BACKEND_SERIAL
             .lock()
             .expect("fake PATH backend serial lock");
-        let bin_dir = fake_path_backend_dir(backends);
+        let temp_dir = tempfile::tempdir().expect("fake backend temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("fake backend bin dir");
 
         let mut installed_paths = Vec::with_capacity(backends.len());
         for (name, body) in backends {
@@ -6311,9 +6304,13 @@ mod tests {
             );
             installed_paths.push(write_fake_executable(&bin_dir, name, body));
         }
+        *FAKE_PATH_BACKEND_BIN
+            .lock()
+            .expect("fake PATH backend bin lock") = Some(bin_dir.clone());
 
         FakePathBackendsGuard {
             _guard: guard,
+            _temp_dir: temp_dir,
             installed_paths,
         }
     }
@@ -10062,14 +10059,30 @@ hats:
 
     #[cfg(unix)]
     fn missing_global_wave_backend() -> CliBackend {
-        CliBackend {
+        let mut backend = CliBackend {
             command: "/definitely/missing-wave-worker".to_string(),
             args: vec![],
             prompt_mode: ralph_adapters::PromptMode::Arg,
             prompt_flag: None,
             output_format: BackendOutputFormat::Text,
             env_vars: vec![],
+        };
+
+        if let Some(bin_dir) = FAKE_PATH_BACKEND_BIN
+            .lock()
+            .expect("fake PATH backend bin lock")
+            .clone()
+        {
+            let existing_path = std::env::var("PATH").unwrap_or_default();
+            let path_value = if existing_path.is_empty() {
+                bin_dir.display().to_string()
+            } else {
+                format!("{}:{}", bin_dir.display(), existing_path)
+            };
+            backend.env_vars.push(("PATH".to_string(), path_value));
         }
+
+        backend
     }
 
     #[cfg(unix)]
