@@ -115,6 +115,8 @@ impl CliBackend {
                 "--verbose".to_string(),
                 "--output-format".to_string(),
                 "stream-json".to_string(),
+                "--setting-sources".to_string(),
+                "project,local".to_string(),
                 "--print".to_string(),
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet".to_string(),
             ],
@@ -139,6 +141,8 @@ impl CliBackend {
             command: "claude".to_string(),
             args: vec![
                 "--dangerously-skip-permissions".to_string(),
+                "--setting-sources".to_string(),
+                "project,local".to_string(),
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
@@ -365,6 +369,8 @@ impl CliBackend {
             command: "claude".to_string(),
             args: vec![
                 "--dangerously-skip-permissions".to_string(),
+                "--setting-sources".to_string(),
+                "project,local".to_string(),
                 "--disallowedTools=TodoWrite".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
@@ -839,6 +845,8 @@ mod tests {
                 "--verbose",
                 "--output-format",
                 "stream-json",
+                "--setting-sources",
+                "project,local",
                 "--print",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
             ]
@@ -854,13 +862,15 @@ mod tests {
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
 
         assert_eq!(cmd, "claude");
-        // Should have --dangerously-skip-permissions, --disallowedTools=..., and prompt as positional arg
+        // Should have --dangerously-skip-permissions, --setting-sources, --disallowedTools=..., and prompt as positional arg
         // No -p flag, no --output-format, no --verbose
         // Uses = syntax to prevent variadic consumption of the prompt
         assert_eq!(
             args,
             vec![
                 "--dangerously-skip-permissions",
+                "--setting-sources",
+                "project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 "test prompt"
             ]
@@ -1114,6 +1124,8 @@ mod tests {
                 "--verbose",
                 "--output-format",
                 "stream-json",
+                "--setting-sources",
+                "project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
             ]
         );
@@ -1408,6 +1420,8 @@ mod tests {
             args,
             vec![
                 "--dangerously-skip-permissions",
+                "--setting-sources",
+                "project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 "test prompt"
             ]
@@ -1748,6 +1762,8 @@ mod tests {
             args,
             vec![
                 "--dangerously-skip-permissions",
+                "--setting-sources",
+                "project,local",
                 "--disallowedTools=TodoWrite",
                 "test prompt"
             ]
@@ -1777,6 +1793,30 @@ mod tests {
         assert!(CliBackend::opencode().env_vars.is_empty());
         assert!(CliBackend::pi().env_vars.is_empty());
         assert!(CliBackend::roo().env_vars.is_empty());
+    }
+
+    #[test]
+    fn test_all_claude_constructors_isolate_user_settings() {
+        let claude = CliBackend::claude();
+        let claude_interactive = CliBackend::claude_interactive();
+        let claude_interactive_teams = CliBackend::claude_interactive_teams();
+        let interactive_prompt = CliBackend::for_interactive_prompt("claude").unwrap();
+
+        for backend in [
+            &claude,
+            &claude_interactive,
+            &claude_interactive_teams,
+            &interactive_prompt,
+        ] {
+            let mut setting_sources = backend
+                .args
+                .windows(2)
+                .filter(|window| window[0] == "--setting-sources")
+                .map(|window| window[1].as_str());
+
+            assert_eq!(setting_sources.next(), Some("project,local"));
+            assert_eq!(setting_sources.next(), None);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
