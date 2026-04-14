@@ -123,7 +123,7 @@ impl CliExecutor {
         }
 
         let mut timed_out = false;
-        let mut post_event_grace_active = false;
+        let mut post_event_deadline: Option<tokio::time::Instant> = None;
         let mut terminated_status = None;
 
         // Take both stdout and stderr handles upfront to read concurrently.
@@ -154,13 +154,16 @@ impl CliExecutor {
         }
 
         while !stdout_done || !stderr_done {
-            let effective_timeout = timeout.map(|duration| {
-                if post_event_grace_active {
-                    duration.min(POST_EVENT_GRACE_TIMEOUT)
-                } else {
-                    duration
+            let now = tokio::time::Instant::now();
+            let effective_timeout = match (timeout, post_event_deadline) {
+                (_, Some(deadline)) if deadline <= now => Some(Duration::ZERO),
+                (Some(duration), Some(deadline)) => {
+                    Some(duration.min(deadline.saturating_duration_since(now)))
                 }
-            });
+                (None, Some(deadline)) => Some(deadline.saturating_duration_since(now)),
+                (Some(duration), None) => Some(duration),
+                (None, None) => None,
+            };
 
             let next_event = match effective_timeout {
                 Some(duration) => match tokio::time::timeout(duration, event_rx.recv()).await {
@@ -181,7 +184,9 @@ impl CliExecutor {
             match next_event {
                 Some(StreamEvent::StdoutLine(line)) => {
                     if line_signals_event_emitted(&line) {
-                        post_event_grace_active = true;
+                        post_event_deadline.get_or_insert_with(|| {
+                            tokio::time::Instant::now() + POST_EVENT_GRACE_TIMEOUT
+                        });
                     }
                     if self.backend.output_format == OutputFormat::CopilotStreamJson {
                         if let Some(text) = CopilotStreamParser::extract_text(&line) {
@@ -199,7 +204,9 @@ impl CliExecutor {
                 }
                 Some(StreamEvent::StderrLine(line)) => {
                     if line_signals_event_emitted(&line) {
-                        post_event_grace_active = true;
+                        post_event_deadline.get_or_insert_with(|| {
+                            tokio::time::Instant::now() + POST_EVENT_GRACE_TIMEOUT
+                        });
                     }
                     if verbose {
                         writeln!(output_writer, "[stderr] {line}")?;
@@ -565,6 +572,40 @@ mod tests {
             "Event-emitting backends should use the short post-event grace timeout instead of the full inactivity timeout"
         );
         assert!(result.output.contains("Event emitted: task.done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_post_event_deadline_does_not_reset_on_output_activity() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "printf 'Event emitted: task.done\\n'; while :; do printf 'heartbeat\\n'; sleep 1; done"
+                    .to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let started = std::time::Instant::now();
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_secs(30)))
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Expected noisy post-event process to be terminated"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "Event-emitting backends should respect the fixed post-event grace deadline even if they keep producing output"
+        );
+        assert!(result.output.contains("Event emitted: task.done"));
+        assert!(result.output.contains("heartbeat"));
     }
 
     #[tokio::test]
