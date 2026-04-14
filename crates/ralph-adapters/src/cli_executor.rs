@@ -16,8 +16,11 @@ use std::io::Write;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tracing::{debug, warn};
+
+const POST_EVENT_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
+const TERMINATION_GRACE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Result of a CLI execution.
 #[derive(Debug)]
@@ -80,6 +83,8 @@ impl CliExecutor {
         command.args(&args);
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
+        #[cfg(unix)]
+        command.process_group(0);
 
         // Set working directory to current directory (mirrors PTY executor behavior)
         // Use fallback to "." if current_dir fails (e.g., E2E test workspaces)
@@ -118,6 +123,8 @@ impl CliExecutor {
         }
 
         let mut timed_out = false;
+        let mut post_event_grace_active = false;
+        let mut terminated_status = None;
 
         // Take both stdout and stderr handles upfront to read concurrently.
         // Each emitted line resets the inactivity timeout.
@@ -147,7 +154,15 @@ impl CliExecutor {
         }
 
         while !stdout_done || !stderr_done {
-            let next_event = match timeout {
+            let effective_timeout = timeout.map(|duration| {
+                if post_event_grace_active {
+                    duration.min(POST_EVENT_GRACE_TIMEOUT)
+                } else {
+                    duration
+                }
+            });
+
+            let next_event = match effective_timeout {
                 Some(duration) => match tokio::time::timeout(duration, event_rx.recv()).await {
                     Ok(event) => event,
                     Err(_) => {
@@ -156,7 +171,7 @@ impl CliExecutor {
                             "Execution inactivity timeout reached, sending SIGTERM"
                         );
                         timed_out = true;
-                        Self::terminate_child(&mut child)?;
+                        terminated_status = Some(Self::terminate_child_and_wait(&mut child).await?);
                         break;
                     }
                 },
@@ -165,6 +180,9 @@ impl CliExecutor {
 
             match next_event {
                 Some(StreamEvent::StdoutLine(line)) => {
+                    if line_signals_event_emitted(&line) {
+                        post_event_grace_active = true;
+                    }
                     if self.backend.output_format == OutputFormat::CopilotStreamJson {
                         if let Some(text) = CopilotStreamParser::extract_text(&line) {
                             write!(output_writer, "{text}")?;
@@ -180,6 +198,9 @@ impl CliExecutor {
                     accumulated_output.push('\n');
                 }
                 Some(StreamEvent::StderrLine(line)) => {
+                    if line_signals_event_emitted(&line) {
+                        post_event_grace_active = true;
+                    }
                     if verbose {
                         writeln!(output_writer, "[stderr] {line}")?;
                         output_writer.flush()?;
@@ -197,7 +218,11 @@ impl CliExecutor {
             }
         }
 
-        let status = child.wait().await?;
+        let status = if let Some(status) = terminated_status {
+            status
+        } else {
+            child.wait().await?
+        };
 
         if let Some(handle) = stdout_task {
             handle.await.map_err(join_error_to_io)??;
@@ -214,24 +239,33 @@ impl CliExecutor {
         })
     }
 
-    /// Terminates the child process with SIGTERM.
-    fn terminate_child(child: &mut tokio::process::Child) -> std::io::Result<()> {
+    /// Terminates the child process with SIGTERM, then SIGKILL if it ignores graceful shutdown.
+    async fn terminate_child_and_wait(
+        child: &mut Child,
+    ) -> std::io::Result<std::process::ExitStatus> {
         #[cfg(not(unix))]
         {
-            // SIGTERM doesn't exist on Windows. Best-effort termination:
-            // On Unix this would be SIGKILL, on Windows it maps to process termination.
-            child.start_kill()
+            child.start_kill()?;
+            return child.wait().await;
         }
 
         #[cfg(unix)]
         if let Some(pid) = child.id() {
             #[allow(clippy::cast_possible_wrap)]
             let pid = Pid::from_raw(pid as i32);
-            debug!(%pid, "Sending SIGTERM to child process");
-            let _ = kill(pid, Signal::SIGTERM);
-            Ok(())
+            let pgid = Pid::from_raw(-pid.as_raw());
+            debug!(%pid, "Sending SIGTERM to child process group");
+            let _ = kill(pgid, Signal::SIGTERM);
+            match tokio::time::timeout(TERMINATION_GRACE_TIMEOUT, child.wait()).await {
+                Ok(status) => status,
+                Err(_) => {
+                    warn!(%pid, "Child process ignored SIGTERM, sending SIGKILL");
+                    let _ = kill(pgid, Signal::SIGKILL);
+                    child.wait().await
+                }
+            }
         } else {
-            Ok(())
+            child.wait().await
         }
     }
 
@@ -253,6 +287,10 @@ impl CliExecutor {
         let sink = std::io::sink();
         self.execute(prompt, sink, timeout, false).await
     }
+}
+
+fn line_signals_event_emitted(line: &str) -> bool {
+    line.contains("Event emitted:")
 }
 
 async fn read_stream<R>(
@@ -464,6 +502,69 @@ mod tests {
         );
         assert_eq!(String::from_utf8(output).unwrap(), "hello\n");
         assert!(result.output.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_timeout_force_kills_processes_that_ignore_sigterm() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "trap '' TERM; while :; do sleep 1; done".to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let started = std::time::Instant::now();
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_millis(100)))
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Expected ignored-SIGTERM command to time out"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "Executor should force-kill ignored-SIGTERM processes instead of hanging"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_uses_short_post_event_grace_timeout() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "printf 'Event emitted: task.done\\n'; sleep 30".to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let started = std::time::Instant::now();
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_secs(30)))
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Expected lingering post-event process to be terminated"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "Event-emitting backends should use the short post-event grace timeout instead of the full inactivity timeout"
+        );
+        assert!(result.output.contains("Event emitted: task.done"));
     }
 
     #[tokio::test]

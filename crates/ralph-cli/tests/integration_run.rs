@@ -412,6 +412,78 @@ event_loop:
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_run_text_backend_exits_promptly_after_event_emitted_even_if_backend_lingers() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+    let backend_script = temp_path.join("emit-then-hang.sh");
+
+    std::fs::write(
+        &backend_script,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\n\"{}\" emit LOOP_COMPLETE lingering-done\ntrap '' TERM\nsleep 30\n",
+            env!("CARGO_BIN_EXE_ralph")
+        ),
+    )
+    .expect("write backend script");
+
+    let mut permissions = std::fs::metadata(&backend_script)
+        .expect("metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&backend_script, permissions).expect("set executable permissions");
+
+    std::fs::write(
+        temp_path.join("ralph.yml"),
+        r#"
+cli:
+  backend: custom
+  command: "./emit-then-hang.sh"
+  prompt_mode: stdin
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 5
+  max_runtime_seconds: 60
+adapters:
+  custom:
+    timeout: 30
+"#,
+    )
+    .expect("write config");
+
+    let started = Instant::now();
+    let output = run_ralph(
+        temp_path,
+        &[
+            "run",
+            "--autonomous",
+            "--skip-preflight",
+            "--prompt",
+            "emit completion and stop promptly",
+        ],
+    );
+    let elapsed = started.elapsed();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "run failed: {stderr}\nstdout:{stdout}"
+    );
+    assert!(
+        stdout.contains("Event emitted: LOOP_COMPLETE"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "loop should terminate shortly after event emission, not wait for the full backend timeout; elapsed={elapsed:?}\nstdout:{stdout}\nstderr:{stderr}"
+    );
+}
+
 #[test]
 fn test_run_continue_requires_scratchpad() {
     let temp_dir = TempDir::new().expect("temp dir");
