@@ -87,10 +87,11 @@ hooks:
         .expect_err("expected unsupported scope field to fail validation");
 
     assert!(matches!(
-        err,
+        &err,
         ConfigError::UnsupportedHookField { field, .. }
             if field == "hooks.events.pre.loop.start[0].scope"
     ));
+    assert!(err.to_string().contains("~/.ralph/config.yml"));
 }
 
 #[test]

@@ -4,12 +4,55 @@ Complete reference for Ralph's YAML configuration.
 
 ## Configuration File
 
-Ralph uses `ralph.yml` by default. Override with `$RALPH_CONFIG` or:
+Ralph composes configuration from up to three layers:
+
+1. `~/.ralph/config.yml` when present — user-level defaults loaded automatically
+2. `ralph.yml` in the current workspace (or `$RALPH_CONFIG` / `-c <file>`) — project-level overrides
+3. `-c core.field=value` overrides — applied last
+
+Project config overlays on top of the user config via deep merge. Mappings are merged recursively and scalar values or arrays from the project config replace the user-level value.
 
 ```bash
+# Use the workspace config (and automatically merge ~/.ralph/config.yml if present)
+ralph run
+
+# Override the project config path
 RALPH_CONFIG=/path/to/config.yml ralph run ...
 ralph run -c custom-config.yml
 ```
+
+### User-level config (`~/.ralph/config.yml`)
+
+Use `~/.ralph/config.yml` for defaults you want everywhere, such as shared backend settings, global lifecycle hooks, or organization-wide guardrails.
+
+A common pattern is keeping notification hooks global while leaving project-specific automation in the repo-local `ralph.yml`:
+
+```yaml
+# ~/.ralph/config.yml
+hooks:
+  enabled: true
+  events:
+    post.loop.complete:
+      - name: notify-success
+        command: ["./scripts/notify.sh", "complete"]
+        on_error: warn
+    post.loop.error:
+      - name: notify-failure
+        command: ["./scripts/notify.sh", "error"]
+        on_error: warn
+```
+
+```yaml
+# ./ralph.yml
+hooks:
+  events:
+    pre.loop.start:
+      - name: env-guard
+        command: ["./scripts/hooks/env-guard.sh"]
+        on_error: block
+```
+
+With those two files, Ralph loads both and deep-merges them before validation and execution.
 
 ## MCP Workspace Resolution
 
@@ -260,7 +303,9 @@ When `features.preflight.enabled: true`, `ralph run` uses the default preflight 
 
 ### hooks
 
-Per-project lifecycle hooks for orchestrator phase-events (v1).
+Lifecycle hooks for orchestrator phase-events (v1).
+
+Hooks can be defined in either the user-level `~/.ralph/config.yml` or the workspace `ralph.yml`. Ralph loads the user config first, then overlays the project config on top. That means hooks in the user config apply globally unless the project config replaces the same event mapping.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|

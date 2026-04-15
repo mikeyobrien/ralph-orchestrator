@@ -746,7 +746,7 @@ impl RalphConfig {
                 "global" | "globals" | "global_defaults" | "global_hooks" | "scope" => {
                     return Err(ConfigError::UnsupportedHookField {
                         field,
-                        reason: "Global hooks are out of scope for v1; use per-project hooks only"
+                        reason: "Use ~/.ralph/config.yml for user-level defaults; per-hook `global`/`scope` fields are not supported in v1"
                             .to_string(),
                     });
                 }
