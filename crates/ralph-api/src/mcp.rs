@@ -629,17 +629,88 @@ fn schema_method_map(
     Ok(map)
 }
 
-fn schema_ref_object(root_schema: &Value, schema_ref: &str) -> Result<Map<String, Value>> {
+/// Collect all $ref paths from a JSON value recursively.
+fn collect_refs(val: &Value) -> Vec<String> {
+    let mut refs = Vec::new();
+    match val {
+        Value::Object(map) => {
+            if let Some(r) = map.get("$ref").and_then(Value::as_str) {
+                refs.push(r.to_string());
+            }
+            for v in map.values() {
+                refs.extend(collect_refs(v));
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                refs.extend(collect_refs(v));
+            }
+        }
+        _ => {}
+    }
+    refs
+}
+
+/// Resolve a $ref like "#/$defs/Foo" to just the def name "Foo".
+fn resolve_def_name(ref_path: &str) -> Option<&str> {
+    ref_path.strip_prefix("#/$defs/")
+}
+
+/// Collect all transitive $def names needed for a given schema.
+fn collect_needed_defs(
+    root_schema: &Value,
+    schema_ref: &str,
+) -> Result<std::collections::HashSet<String>> {
     let defs = root_schema
+        .get("$defs")
+        .context("schema must expose $defs")?;
+
+    let mut needed = std::collections::HashSet::new();
+    let mut to_process = Vec::new();
+
+    // Start with the directly referenced def
+    if let Some(def_name) = resolve_def_name(schema_ref) {
+        to_process.push(def_name.to_string());
+    }
+
+    while let Some(current) = to_process.pop() {
+        if !needed.insert(current.clone()) {
+            continue; // Already processed
+        }
+        if let Some(def_val) = defs.get(&current) {
+            for ref_path in collect_refs(def_val) {
+                if let Some(dep_name) = resolve_def_name(&ref_path) {
+                    to_process.push(dep_name.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(needed)
+}
+
+fn schema_ref_object(root_schema: &Value, schema_ref: &str) -> Result<Map<String, Value>> {
+    let all_defs = root_schema
         .get("$defs")
         .cloned()
         .context("schema must expose $defs")?;
+
+    // Only include $defs that are actually referenced by this tool's schema
+    let needed_names = collect_needed_defs(root_schema, schema_ref)?;
+    let filtered_defs: Map<String, Value> = all_defs
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, _)| needed_names.contains(name))
+        .collect();
+
     let schema = json!({
         "$schema": root_schema
             .get("$schema")
             .cloned()
             .unwrap_or_else(|| json!("https://json-schema.org/draft/2020-12/schema")),
-        "$defs": defs,
+        "$defs": filtered_defs,
         "$ref": schema_ref,
     });
     schema
