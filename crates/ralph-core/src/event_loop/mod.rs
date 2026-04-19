@@ -621,9 +621,21 @@ impl EventLoop {
         Some(TerminationReason::Cancelled)
     }
 
+    /// Request completion from the text fallback path.
+    ///
+    /// When a backend outputs a completion promise as plain text (without
+    /// using `ralph emit`), this sets `completion_requested = true` so that
+    /// `check_completion_event()` can apply all safety checks (persistent mode,
+    /// required events, runtime tasks) before terminating.
+    pub fn request_completion_from_text_fallback(&mut self) {
+        self.state.completion_requested = true;
+        info!("Completion requested via text fallback (output contained completion promise)");
+    }
+
     /// Checks if a completion event was received and returns termination reason.
     ///
-    /// Completion is only accepted via JSONL events (e.g., `ralph emit`).
+    /// Completion is accepted via JSONL events (e.g., `ralph emit`) or via
+    /// [`request_completion_from_text_fallback`].
     pub fn check_completion_event(&mut self) -> Option<TerminationReason> {
         if !self.state.completion_requested {
             return None;
