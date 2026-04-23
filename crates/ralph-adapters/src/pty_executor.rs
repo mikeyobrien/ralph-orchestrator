@@ -2506,6 +2506,55 @@ mod tests {
         assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
     }
 
+    /// Fixture-driven proof: parsing real stream-json bytes into
+    /// `ClaudeStreamEvent` and feeding them through `dispatch_stream_event`
+    /// yields `SessionResult.input_tokens` equal to the PEAK per-turn live
+    /// footprint, not the cumulative sum across turns. (Spec §4, AC2.)
+    ///
+    /// This is the only test in the workspace that exercises the full
+    /// serde parse + aggregate path on bytes shaped like actual Claude
+    /// stream-json. If the aggregation logic is reverted from `.max(...)`
+    /// to `+=`, the assertion on `input_tokens == 4310` fails (cumulative
+    /// sum would be 1150 + 4310 + 211 = 5671).
+    #[test]
+    fn test_fixture_driven_peak_not_sum() {
+        let fixture = include_str!("../tests/fixtures/claude_stream_peak.jsonl");
+
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionState::new();
+        let mut last_session: Option<SessionResult> = None;
+
+        for line in fixture.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let event: ClaudeStreamEvent = serde_json::from_str(trimmed)
+                .unwrap_or_else(|e| panic!("fixture line failed to parse: {e}\n  line: {trimmed}"));
+            let maybe_session = dispatch_stream_event(
+                event,
+                &mut handler,
+                &mut extracted_text,
+                &mut claude_state,
+                200_000,
+            );
+            if maybe_session.is_some() {
+                last_session = maybe_session;
+            }
+        }
+
+        let session = last_session.expect("Result event must yield SessionResult");
+
+        // Peak live footprint across turns: turn2 = 300 + 10 + 4000 = 4310.
+        // Cumulative sum would be 1150 + 4310 + 211 = 5671 — the guard.
+        assert_eq!(session.input_tokens, 4310);
+        assert_eq!(session.output_tokens, 65); // 20 + 40 + 5 cumulative
+        assert_eq!(session.cache_read_tokens, 4000); // peak
+        assert_eq!(session.cache_write_tokens, 50); // peak
+        assert_eq!(session.context_window, 200_000);
+    }
+
     /// Regression test: TUI mode should not spawn stdin reader thread
     ///
     /// Bug: In TUI mode, Ctrl+C required double-press to exit because the stdin
