@@ -1967,6 +1967,9 @@ pub async fn run_loop_impl(
         // Emit synthetic iteration.summary row to events.jsonl (spec §10).
         log_iteration_summary(&mut event_logger, iteration, summary_metrics);
 
+        // Update LoopState peak context-token tracking (spec §11).
+        event_loop.record_iteration_tokens(&hat_id, outcome.context_tokens);
+
         // Process output
         if let Some(reason) = event_loop.process_output(&hat_id, &output, success) {
             // Per spec: Log "All done! {promise} detected." when completion promise found
