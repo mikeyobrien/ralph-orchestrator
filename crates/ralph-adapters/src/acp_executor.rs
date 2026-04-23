@@ -512,6 +512,7 @@ impl AcpExecutor {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            context_window: 0,
         });
 
         Ok(PtyExecutionResult {

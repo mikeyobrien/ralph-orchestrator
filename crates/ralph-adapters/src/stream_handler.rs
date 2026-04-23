@@ -82,14 +82,22 @@ pub struct SessionResult {
     pub total_cost_usd: f64,
     pub num_turns: u32,
     pub is_error: bool,
-    /// Total input tokens consumed in the session.
+    /// Peak input tokens observed in a single turn during the session.
+    ///
+    /// For Claude, this is `max(message.usage.input_tokens + cache_* )` across
+    /// `Assistant` events. For Pi, this is `max(turn.input + turn.cache_read)`
+    /// across `TurnEnd` events. Treated as a high-water mark of prompt
+    /// occupancy, not a cumulative sum.
     pub input_tokens: u64,
-    /// Total output tokens generated in the session.
+    /// Total output tokens generated in the session (cumulative).
     pub output_tokens: u64,
-    /// Total cache-read tokens in the session.
+    /// Cache-read tokens (peak for Claude, cumulative for Pi).
     pub cache_read_tokens: u64,
-    /// Total cache-write tokens in the session.
+    /// Cache-write tokens (peak for Claude, cumulative for Pi).
     pub cache_write_tokens: u64,
+    /// Resolved context-window ceiling in tokens. `0` suppresses the
+    /// `Context:` display suffix and results in zero-valued telemetry fields.
+    pub context_window: u64,
 }
 
 /// Renders streaming output with colors and markdown.

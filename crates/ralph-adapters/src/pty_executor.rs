@@ -1132,6 +1132,7 @@ impl PtyExecutor {
                         output_tokens: pi_state.output_tokens,
                         cache_read_tokens: pi_state.cache_read_tokens,
                         cache_write_tokens: pi_state.cache_write_tokens,
+                        context_window: 0,
                     };
                     handler.on_complete(&session_result);
                     completion = Some(session_result);
@@ -1188,6 +1189,7 @@ impl PtyExecutor {
                 output_tokens: pi_state.output_tokens,
                 cache_read_tokens: pi_state.cache_read_tokens,
                 cache_write_tokens: pi_state.cache_write_tokens,
+                context_window: 0,
             };
             handler.on_complete(&session_result);
             completion = Some(session_result);
@@ -2276,8 +2278,8 @@ mod tests {
                         input: serde_json::json!({"path": "README.md"}),
                     },
                 ],
+                usage: None,
             },
-            usage: None,
         };
 
         dispatch_stream_event(event, &mut handler, &mut extracted_text);

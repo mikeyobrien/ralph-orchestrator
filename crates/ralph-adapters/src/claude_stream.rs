@@ -22,11 +22,7 @@ pub enum ClaudeStreamEvent {
     },
 
     /// Claude's response - contains text or tool invocations.
-    Assistant {
-        message: AssistantMessage,
-        #[serde(default)]
-        usage: Option<Usage>,
-    },
+    Assistant { message: AssistantMessage },
 
     /// Tool results returned to Claude.
     User { message: UserMessage },
@@ -44,6 +40,8 @@ pub enum ClaudeStreamEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AssistantMessage {
     pub content: Vec<ContentBlock>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
 }
 
 /// Message content from tool results (user turn).
@@ -77,11 +75,21 @@ pub enum UserContentBlock {
     },
 }
 
-/// Token usage statistics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Token usage statistics reported by Claude on each `Assistant` message.
+///
+/// Real `stream-json` payloads nest this under `message.usage`. Cache fields
+/// may be absent on turns that do not use caching; `#[serde(default)]` makes
+/// every field tolerant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Usage {
+    #[serde(default)]
     pub input_tokens: u64,
+    #[serde(default)]
     pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
 }
 
 /// Parses NDJSON lines from Claude's stream output.
@@ -208,6 +216,41 @@ mod tests {
                 }
             }
             _ => panic!("Expected User event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_assistant_message_usage_with_cache_fields() {
+        // Real stream-json shape: usage lives inside message, alongside content.
+        let json = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":123,"output_tokens":45,"cache_creation_input_tokens":10,"cache_read_input_tokens":88}}}"#;
+        let event = ClaudeStreamParser::parse_line(json).unwrap();
+
+        match event {
+            ClaudeStreamEvent::Assistant { message } => {
+                let usage = message.usage.expect("usage should parse from message");
+                assert_eq!(usage.input_tokens, 123);
+                assert_eq!(usage.output_tokens, 45);
+                assert_eq!(usage.cache_creation_input_tokens, 10);
+                assert_eq!(usage.cache_read_input_tokens, 88);
+            }
+            _ => panic!("Expected Assistant event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_assistant_message_usage_missing_cache_fields() {
+        // Cache fields default to zero when absent (early sessions, non-cached turns).
+        let json = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":7,"output_tokens":2}}}"#;
+        let event = ClaudeStreamParser::parse_line(json).unwrap();
+        match event {
+            ClaudeStreamEvent::Assistant { message } => {
+                let usage = message.usage.expect("usage should parse");
+                assert_eq!(usage.input_tokens, 7);
+                assert_eq!(usage.output_tokens, 2);
+                assert_eq!(usage.cache_creation_input_tokens, 0);
+                assert_eq!(usage.cache_read_input_tokens, 0);
+            }
+            _ => panic!("Expected Assistant event"),
         }
     }
 
