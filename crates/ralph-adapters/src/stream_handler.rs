@@ -100,6 +100,29 @@ pub struct SessionResult {
     pub context_window: u64,
 }
 
+/// Builds the one-line session summary used by Pretty / Console / TUI on_complete.
+///
+/// The `Context:` suffix is omitted when `context_window == 0` or when
+/// `used == 0` (used = input_tokens + cache_read_tokens + cache_write_tokens).
+pub fn format_session_summary(r: &SessionResult) -> String {
+    let base = format!(
+        "Duration: {}ms | Est. cost: ${:.4} | Turns: {}",
+        r.duration_ms, r.total_cost_usd, r.num_turns
+    );
+    let used = r
+        .input_tokens
+        .saturating_add(r.cache_read_tokens)
+        .saturating_add(r.cache_write_tokens);
+    if r.context_window > 0 && used > 0 {
+        let pct = used.saturating_mul(100) / r.context_window;
+        let used_k = (used + 500) / 1_000;
+        let max_k = (r.context_window + 500) / 1_000;
+        format!("{} | Context: {}% ({}K/{}K)", base, pct, used_k, max_k)
+    } else {
+        base
+    }
+}
+
 /// Renders streaming output with colors and markdown.
 pub struct PrettyStreamHandler {
     stdout: io::Stdout,
@@ -176,13 +199,8 @@ impl StreamHandler for PrettyStreamHandler {
             Color::Green
         };
         let _ = self.stdout.queue(style::SetForegroundColor(color));
-        let _ = self.stdout.write(
-            format!(
-                "Duration: {}ms | Est. cost: ${:.4} | Turns: {}\n",
-                result.duration_ms, result.total_cost_usd, result.num_turns
-            )
-            .as_bytes(),
-        );
+        let summary = format_session_summary(result);
+        let _ = self.stdout.write(format!("{}\n", summary).as_bytes());
         let _ = self.stdout.queue(style::ResetColor);
         let _ = self.stdout.flush();
     }
@@ -306,8 +324,8 @@ impl StreamHandler for ConsoleStreamHandler {
         if self.verbose {
             let _ = writeln!(
                 self.stdout,
-                "\n--- Session Complete ---\nDuration: {}ms | Est. cost: ${:.4} | Turns: {}",
-                result.duration_ms, result.total_cost_usd, result.num_turns
+                "\n--- Session Complete ---\n{}",
+                format_session_summary(result)
             );
         }
     }
@@ -577,10 +595,7 @@ impl StreamHandler for TuiStreamHandler {
         } else {
             RatatuiColor::Green
         };
-        let summary = format!(
-            "Duration: {}ms | Est. cost: ${:.4} | Turns: {}",
-            result.duration_ms, result.total_cost_usd, result.num_turns
-        );
+        let summary = format_session_summary(result);
         let line = Line::from(Span::styled(summary, Style::default().fg(color)));
         self.add_non_text_line(line);
     }
@@ -662,6 +677,56 @@ mod tests {
             is_error: false,
             ..Default::default()
         });
+    }
+
+    #[test]
+    fn test_format_session_summary_table() {
+        // Six rows from spec §9 — five rendered rows plus the
+        // `context_window = 0` suppression row. Base Duration/Cost/Turns
+        // kept constant across rows to keep the suffix diff obvious.
+        let base = "Duration: 12345ms | Est. cost: $0.0526 | Turns: 3";
+        let cases: &[(u64, u64, u64, u64, &str)] = &[
+            // (context_window, input, cache_read, cache_write, expected_suffix)
+            // Row 1: context_window = 0 → suffix omitted even with used > 0.
+            (0, 42_000, 0, 0, ""),
+            // Row 2: used = 0 → suffix omitted.
+            (200_000, 0, 0, 0, ""),
+            // Row 3: 45% (sum across all three token buckets).
+            (200_000, 50_000, 30_000, 10_000, " | Context: 45% (90K/200K)"),
+            // Row 4: integer-truncated pct = 0, used_k rounds 1_500 → 2K.
+            (200_000, 1_500, 0, 0, " | Context: 0% (2K/200K)"),
+            // Row 5: over the window — no clamp.
+            (200_000, 250_000, 0, 0, " | Context: 125% (250K/200K)"),
+            // Row 6: 1M window, mixed used.
+            (
+                1_000_000,
+                123_456,
+                0,
+                0,
+                " | Context: 12% (123K/1000K)",
+            ),
+        ];
+
+        for (window, input, cache_read, cache_write, suffix) in cases {
+            let r = SessionResult {
+                duration_ms: 12345,
+                total_cost_usd: 0.0526,
+                num_turns: 3,
+                is_error: false,
+                input_tokens: *input,
+                output_tokens: 0,
+                cache_read_tokens: *cache_read,
+                cache_write_tokens: *cache_write,
+                context_window: *window,
+            };
+            let expected = format!("{}{}", base, suffix);
+            assert_eq!(
+                format_session_summary(&r),
+                expected,
+                "row: window={} input={} cache_read={} cache_write={}",
+                window, input, cache_read, cache_write
+            );
+        }
     }
 
     #[test]
