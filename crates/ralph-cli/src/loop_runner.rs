@@ -55,6 +55,7 @@ pub(crate) struct ExecutionOutcome {
     pub cache_write_tokens: u64,
     pub context_window: u64,
     pub context_tokens: u64,
+    pub num_turns: u32,
 }
 
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
@@ -1795,6 +1796,7 @@ pub async fn run_loop_impl(
                     cache_write_tokens: 0,
                     context_window: resolve_context_window(&config),
                     context_tokens: 0,
+                    num_turns: 0,
                 })
             }
         };
@@ -1906,6 +1908,19 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
+        let iteration_duration_ms = iteration_started_at.elapsed().as_millis() as u64;
+        let summary_metrics = IterationSummaryMetrics {
+            duration_ms: iteration_duration_ms,
+            total_cost_usd: outcome.total_cost_usd,
+            num_turns: outcome.num_turns,
+            input_tokens: outcome.input_tokens,
+            output_tokens: outcome.output_tokens,
+            cache_read_tokens: outcome.cache_read_tokens,
+            cache_write_tokens: outcome.cache_write_tokens,
+            context_window: outcome.context_window,
+            context_tokens: outcome.context_tokens,
+        };
+
         let output = outcome.output;
         let success = outcome.success;
 
@@ -1917,7 +1932,6 @@ pub async fn run_loop_impl(
 
         // Emit RPC iteration_end event
         if let Some(ref tx) = rpc_event_tx {
-            let duration_ms = iteration_started_at.elapsed().as_millis() as u64;
             // Check if this iteration's output contains LOOP_COMPLETE
             let loop_complete_triggered = output.contains(&config.event_loop.completion_promise);
             let iteration_cost_usd = outcome.total_cost_usd;
@@ -1928,7 +1942,7 @@ pub async fn run_loop_impl(
             }
             let end_event = RpcEvent::IterationEnd {
                 iteration,
-                duration_ms,
+                duration_ms: iteration_duration_ms,
                 cost_usd: iteration_cost_usd,
                 input_tokens: outcome.input_tokens,
                 output_tokens: outcome.output_tokens,
@@ -1949,6 +1963,9 @@ pub async fn run_loop_impl(
             &output,
             event_loop.registry(),
         );
+
+        // Emit synthetic iteration.summary row to events.jsonl (spec §10).
+        log_iteration_summary(&mut event_logger, iteration, summary_metrics);
 
         // Process output
         if let Some(reason) = event_loop.process_output(&hat_id, &output, success) {
@@ -4232,6 +4249,7 @@ async fn execute_acp(
             .input_tokens
             .saturating_add(pty_result.cache_read_tokens)
             .saturating_add(pty_result.cache_write_tokens),
+        num_turns: pty_result.num_turns,
     })
 }
 
@@ -4388,6 +4406,7 @@ async fn execute_pty(
                     .input_tokens
                     .saturating_add(pty_result.cache_read_tokens)
                     .saturating_add(pty_result.cache_write_tokens),
+                num_turns: pty_result.num_turns,
             })
         }
         Err(e) => {
@@ -4476,6 +4495,60 @@ fn log_terminate_event(logger: &mut EventLogger, iteration: u32, event: &Event) 
 
     if let Err(e) = logger.log(&record) {
         warn!("Failed to log loop.terminate event: {}", e);
+    }
+}
+
+/// Metrics captured once per iteration and emitted as the synthetic
+/// `iteration.summary` events.jsonl row.
+#[derive(Clone, Copy)]
+struct IterationSummaryMetrics {
+    duration_ms: u64,
+    total_cost_usd: f64,
+    num_turns: u32,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+    context_window: u64,
+    context_tokens: u64,
+}
+
+/// Emits a synthetic `iteration.summary` event to events.jsonl once per iteration.
+///
+/// Payload fields are stable per spec §10 so downstream consumers
+/// (`ralph events --topic iteration.summary`, dashboards) can rely on them.
+fn log_iteration_summary(
+    logger: &mut EventLogger,
+    iteration: u32,
+    metrics: IterationSummaryMetrics,
+) {
+    let context_pct = if metrics.context_window > 0 {
+        metrics
+            .context_tokens
+            .saturating_mul(100)
+            .saturating_div(metrics.context_window)
+    } else {
+        0
+    };
+    let payload = serde_json::json!({
+        "duration_ms": metrics.duration_ms,
+        "cost_usd": metrics.total_cost_usd,
+        "num_turns": metrics.num_turns,
+        "input_tokens": metrics.input_tokens,
+        "output_tokens": metrics.output_tokens,
+        "cache_read_tokens": metrics.cache_read_tokens,
+        "cache_write_tokens": metrics.cache_write_tokens,
+        "context_window": metrics.context_window,
+        "context_tokens": metrics.context_tokens,
+        "context_pct": context_pct,
+    });
+    let event = Event::new(
+        "iteration.summary",
+        serde_json::to_string(&payload).unwrap_or_default(),
+    );
+    let record = EventRecord::new(iteration, "loop", &event, None::<&HatId>);
+    if let Err(e) = logger.log(&record) {
+        warn!("Failed to log iteration.summary event: {}", e);
     }
 }
 
@@ -12687,6 +12760,83 @@ EOF"#,
             .find(|record| record.topic == "task.start")
             .and_then(|record| record.triggered.clone());
         assert_eq!(triggered.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn test_log_iteration_summary_writes_payload() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("events.jsonl");
+        let mut logger = EventLogger::new(&log_path);
+
+        let metrics = IterationSummaryMetrics {
+            duration_ms: 12_345,
+            total_cost_usd: 0.0526,
+            num_turns: 3,
+            input_tokens: 88_000,
+            output_tokens: 1_200,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            context_window: 200_000,
+            context_tokens: 88_000,
+        };
+
+        log_iteration_summary(&mut logger, 42, metrics);
+
+        let content = std::fs::read_to_string(&log_path).expect("read events");
+        let records: Vec<EventRecord> = content
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record"))
+            .collect();
+
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.topic, "iteration.summary");
+        assert_eq!(record.hat, "loop");
+        assert_eq!(record.iteration, 42);
+        assert!(record.triggered.is_none());
+        assert!(record.blocked_count.is_none());
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&record.payload).expect("payload json");
+        assert_eq!(payload["duration_ms"], 12_345);
+        assert_eq!(payload["cost_usd"], 0.0526);
+        assert_eq!(payload["num_turns"], 3);
+        assert_eq!(payload["input_tokens"], 88_000);
+        assert_eq!(payload["output_tokens"], 1_200);
+        assert_eq!(payload["cache_read_tokens"], 0);
+        assert_eq!(payload["cache_write_tokens"], 0);
+        assert_eq!(payload["context_window"], 200_000);
+        assert_eq!(payload["context_tokens"], 88_000);
+        assert_eq!(payload["context_pct"], 44);
+    }
+
+    #[test]
+    fn test_log_iteration_summary_suppresses_pct_when_window_zero() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("events.jsonl");
+        let mut logger = EventLogger::new(&log_path);
+
+        let metrics = IterationSummaryMetrics {
+            duration_ms: 1,
+            total_cost_usd: 0.0,
+            num_turns: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            context_window: 0,
+            context_tokens: 0,
+        };
+
+        log_iteration_summary(&mut logger, 1, metrics);
+
+        let content = std::fs::read_to_string(&log_path).expect("read events");
+        let record: EventRecord =
+            serde_json::from_str(content.lines().next().expect("one line")).expect("record");
+        let payload: serde_json::Value =
+            serde_json::from_str(&record.payload).expect("payload json");
+        assert_eq!(payload["context_window"], 0);
+        assert_eq!(payload["context_pct"], 0);
     }
 
     #[test]

@@ -67,6 +67,8 @@ pub struct PtyExecutionResult {
     pub cache_read_tokens: u64,
     /// Total cache-write tokens in the session.
     pub cache_write_tokens: u64,
+    /// Number of turns reported by the session (0 when unknown).
+    pub num_turns: u32,
 }
 
 /// How the PTY process was terminated.
@@ -1984,18 +1986,25 @@ fn build_result(
     extracted_text: String,
     session_result: Option<&SessionResult>,
 ) -> PtyExecutionResult {
-    let (total_cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) =
-        if let Some(result) = session_result {
-            (
-                result.total_cost_usd,
-                result.input_tokens,
-                result.output_tokens,
-                result.cache_read_tokens,
-                result.cache_write_tokens,
-            )
-        } else {
-            (0.0, 0, 0, 0, 0)
-        };
+    let (
+        total_cost_usd,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        num_turns,
+    ) = if let Some(result) = session_result {
+        (
+            result.total_cost_usd,
+            result.input_tokens,
+            result.output_tokens,
+            result.cache_read_tokens,
+            result.cache_write_tokens,
+            result.num_turns,
+        )
+    } else {
+        (0.0, 0, 0, 0, 0, 0)
+    };
 
     PtyExecutionResult {
         output: String::from_utf8_lossy(output).to_string(),
@@ -2009,6 +2018,7 @@ fn build_result(
         output_tokens,
         cache_read_tokens,
         cache_write_tokens,
+        num_turns,
     }
 }
 
@@ -2205,6 +2215,7 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            num_turns: 0,
         };
 
         assert!(

@@ -2280,6 +2280,14 @@ impl EventLoop {
 
         let mut has_orphans = false;
 
+        // Drop orchestrator-synthetic observer rows (spec §10) so they don't
+        // count toward the "completion must be last" ordering check below and
+        // don't get routed on the bus.
+        let events: Vec<_> = events
+            .into_iter()
+            .filter(|event| event.topic.as_str() != "iteration.summary")
+            .collect();
+
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();
         let completion_topic = self.config.event_loop.completion_promise.as_str();
