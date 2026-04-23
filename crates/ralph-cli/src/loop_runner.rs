@@ -19,7 +19,7 @@ use ralph_core::{
     HookPayloadContextInput, HookPhaseEvent, HookRunRequest, HookRunResult, HookSuspendMode,
     LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record,
     SessionRecorder, SummaryWriter, SuspendStateRecord, SuspendStateStore, TerminationReason,
-    UrgentSteerStore,
+    UrgentSteerStore, resolve_context_window,
 };
 use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
@@ -4175,7 +4175,8 @@ async fn execute_acp(
     hat: &str,
     backend_name: &str,
 ) -> Result<ExecutionOutcome> {
-    let executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
+    let mut executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
+    executor.set_context_window(resolve_context_window(config));
 
     let pty_result = if let Some(lines) = tui_lines {
         let mut handler = TuiStreamHandler::with_lines(verbosity == Verbosity::Verbose, lines);
@@ -4270,6 +4271,12 @@ async fn execute_pty(
     if tui_lines.is_some() {
         exec.set_tui_mode(true);
     }
+
+    // Resolved context-window ceiling (tokens) is threaded into SessionResult so
+    // downstream renderers can show `Context: NN% (KK/200K)`. Re-resolved each
+    // call because the executor instance may be reused across iterations and
+    // the user may flip `event_loop.context_window_tokens` between runs.
+    exec.set_context_window(resolve_context_window(config));
 
     // Enter raw mode for interactive mode to capture keystrokes
     // Skip if TUI is connected - TUI owns raw mode and will manage it

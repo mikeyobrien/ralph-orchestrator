@@ -227,6 +227,10 @@ pub struct PtyExecutor {
     // This replaces the previous inference via output_rx.is_none() which broke
     // after the streaming refactor (handle() is no longer called in TUI mode).
     tui_mode: bool,
+    // Resolved context-window ceiling in tokens. Threaded into SessionResult
+    // so downstream renderers can compute the `Context: NN% (KK/200K)` suffix.
+    // Defaults to 0 (suppresses the suffix when unset by the caller).
+    context_window: u64,
 }
 
 impl PtyExecutor {
@@ -249,7 +253,17 @@ impl PtyExecutor {
             terminated_tx,
             terminated_rx: Some(terminated_rx),
             tui_mode: false,
+            context_window: 0,
         }
+    }
+
+    /// Sets the resolved context-window ceiling (tokens) for this run.
+    ///
+    /// Callers compute this via `ralph_core::resolve_context_window` so that an
+    /// explicit user override wins over the backend default. Threaded into
+    /// `SessionResult.context_window` for downstream display.
+    pub fn set_context_window(&mut self, context_window: u64) {
+        self.context_window = context_window;
     }
 
     /// Sets the TUI mode flag.
@@ -701,6 +715,7 @@ impl PtyExecutor {
         let mut claude_state = ClaudeSessionState::new();
         let mut copilot_state = CopilotStreamState::new();
         let mut completion: Option<SessionResult> = None;
+        let context_window = self.context_window;
         let start_time = Instant::now();
         let timeout_duration = if !self.config.interactive || self.config.idle_timeout_secs == 0 {
             None
@@ -808,6 +823,7 @@ impl PtyExecutor {
                                                 handler,
                                                 &mut extracted_text,
                                                 &mut claude_state,
+                                                context_window,
                                             )
                                         {
                                             completion = Some(session_result);
@@ -865,6 +881,7 @@ impl PtyExecutor {
                                     handler,
                                     &mut extracted_text,
                                     &mut claude_state,
+                                    context_window,
                                 ) {
                                     completion = Some(session_result);
                                 }
@@ -941,6 +958,7 @@ impl PtyExecutor {
                                             handler,
                                             &mut extracted_text,
                                             &mut claude_state,
+                                            context_window,
                                         )
                                     {
                                         completion = Some(session_result);
@@ -1008,6 +1026,7 @@ impl PtyExecutor {
                                                 handler,
                                                 &mut extracted_text,
                                                 &mut claude_state,
+                                                context_window,
                                             )
                                         {
                                             completion = Some(session_result);
@@ -1065,6 +1084,7 @@ impl PtyExecutor {
                         handler,
                         &mut extracted_text,
                         &mut claude_state,
+                        context_window,
                     )
                 {
                     completion = Some(session_result);
@@ -1107,11 +1127,11 @@ impl PtyExecutor {
                         total_cost_usd: pi_state.total_cost_usd,
                         num_turns: pi_state.num_turns,
                         is_error: !status.success(),
-                        input_tokens: pi_state.input_tokens,
+                        input_tokens: pi_state.peak_input_tokens,
                         output_tokens: pi_state.output_tokens,
                         cache_read_tokens: pi_state.cache_read_tokens,
                         cache_write_tokens: pi_state.cache_write_tokens,
-                        context_window: 0,
+                        context_window,
                     };
                     handler.on_complete(&session_result);
                     completion = Some(session_result);
@@ -1164,11 +1184,11 @@ impl PtyExecutor {
                 total_cost_usd: pi_state.total_cost_usd,
                 num_turns: pi_state.num_turns,
                 is_error: !success,
-                input_tokens: pi_state.input_tokens,
+                input_tokens: pi_state.peak_input_tokens,
                 output_tokens: pi_state.output_tokens,
                 cache_read_tokens: pi_state.cache_read_tokens,
                 cache_write_tokens: pi_state.cache_write_tokens,
-                context_window: 0,
+                context_window,
             };
             handler.on_complete(&session_result);
             completion = Some(session_result);
@@ -1871,6 +1891,7 @@ fn dispatch_stream_event<H: StreamHandler>(
     handler: &mut H,
     extracted_text: &mut String,
     state: &mut ClaudeSessionState,
+    context_window: u64,
 ) -> Option<SessionResult> {
     match event {
         ClaudeStreamEvent::System { .. } => {
@@ -1939,7 +1960,7 @@ fn dispatch_stream_event<H: StreamHandler>(
                 output_tokens: state.total_output_tokens,
                 cache_read_tokens: state.peak_cache_read_tokens,
                 cache_write_tokens: state.peak_cache_write_tokens,
-                context_window: 0,
+                context_window,
             };
             handler.on_complete(&session_result);
             Some(session_result)
@@ -2298,6 +2319,7 @@ mod tests {
             &mut handler,
             &mut extracted_text,
             &mut claude_state,
+            0,
         );
 
         assert!(result.is_none());
@@ -2329,6 +2351,7 @@ mod tests {
             &mut handler,
             &mut extracted_text,
             &mut claude_state,
+            0,
         );
         assert!(result.is_none());
         assert_eq!(handler.tool_results.len(), 1);
@@ -2347,6 +2370,7 @@ mod tests {
             &mut handler,
             &mut extracted_text,
             &mut claude_state,
+            0,
         );
         assert!(result.is_some());
         assert_eq!(handler.errors.len(), 1);
@@ -2371,6 +2395,7 @@ mod tests {
             &mut handler,
             &mut extracted_text,
             &mut claude_state,
+            0,
         );
 
         assert!(result.is_none());
@@ -2403,7 +2428,7 @@ mod tests {
                 }),
             },
         };
-        dispatch_stream_event(turn1, &mut handler, &mut extracted_text, &mut claude_state);
+        dispatch_stream_event(turn1, &mut handler, &mut extracted_text, &mut claude_state, 0);
         assert_eq!(claude_state.peak_input_tokens, 1150);
         assert_eq!(claude_state.total_output_tokens, 20);
         assert_eq!(claude_state.peak_cache_read_tokens, 1000);
@@ -2421,7 +2446,7 @@ mod tests {
                 }),
             },
         };
-        dispatch_stream_event(turn2, &mut handler, &mut extracted_text, &mut claude_state);
+        dispatch_stream_event(turn2, &mut handler, &mut extracted_text, &mut claude_state, 0);
         assert_eq!(claude_state.peak_input_tokens, 4310);
         // Output sums; caches keep max.
         assert_eq!(claude_state.total_output_tokens, 60);
@@ -2440,7 +2465,7 @@ mod tests {
                 }),
             },
         };
-        dispatch_stream_event(turn3, &mut handler, &mut extracted_text, &mut claude_state);
+        dispatch_stream_event(turn3, &mut handler, &mut extracted_text, &mut claude_state, 0);
         assert_eq!(claude_state.peak_input_tokens, 4310);
         assert_eq!(claude_state.total_output_tokens, 65);
         assert_eq!(claude_state.peak_cache_read_tokens, 4000);
@@ -2458,13 +2483,14 @@ mod tests {
             &mut handler,
             &mut extracted_text,
             &mut claude_state,
+            200_000,
         )
         .expect("Result event must yield SessionResult");
         assert_eq!(session.input_tokens, 4310);
         assert_eq!(session.output_tokens, 65);
         assert_eq!(session.cache_read_tokens, 4000);
         assert_eq!(session.cache_write_tokens, 50);
-        assert_eq!(session.context_window, 0);
+        assert_eq!(session.context_window, 200_000);
         assert_eq!(session.duration_ms, 1234);
         assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
     }
