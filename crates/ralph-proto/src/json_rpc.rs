@@ -196,6 +196,10 @@ pub enum RpcEvent {
         cache_read_tokens: u64,
         /// Cache write tokens.
         cache_write_tokens: u64,
+        /// Resolved context-window ceiling (tokens). `0` when unknown.
+        context_window: u64,
+        /// Context tokens occupied (`input + cache_read + cache_write`).
+        context_tokens: u64,
         /// Whether this iteration triggered LOOP_COMPLETE.
         loop_complete_triggered: bool,
     },
@@ -681,6 +685,8 @@ mod tests {
             output_tokens: 500,
             cache_read_tokens: 7500,
             cache_write_tokens: 100,
+            context_window: 200_000,
+            context_tokens: 15_600,
             loop_complete_triggered: false,
         };
         let json = serde_json::to_string(&event).unwrap();

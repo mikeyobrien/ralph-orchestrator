@@ -53,6 +53,8 @@ pub(crate) struct ExecutionOutcome {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
+    pub context_window: u64,
+    pub context_tokens: u64,
 }
 
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
@@ -1791,6 +1793,8 @@ pub async fn run_loop_impl(
                     output_tokens: 0,
                     cache_read_tokens: 0,
                     cache_write_tokens: 0,
+                    context_window: resolve_context_window(&config),
+                    context_tokens: 0,
                 })
             }
         };
@@ -1930,6 +1934,8 @@ pub async fn run_loop_impl(
                 output_tokens: outcome.output_tokens,
                 cache_read_tokens: outcome.cache_read_tokens,
                 cache_write_tokens: outcome.cache_write_tokens,
+                context_window: outcome.context_window,
+                context_tokens: outcome.context_tokens,
                 loop_complete_triggered,
             };
             let _ = tx.try_send(end_event);
@@ -4221,6 +4227,11 @@ async fn execute_acp(
         output_tokens: pty_result.output_tokens,
         cache_read_tokens: pty_result.cache_read_tokens,
         cache_write_tokens: pty_result.cache_write_tokens,
+        context_window: resolve_context_window(config),
+        context_tokens: pty_result
+            .input_tokens
+            .saturating_add(pty_result.cache_read_tokens)
+            .saturating_add(pty_result.cache_write_tokens),
     })
 }
 
@@ -4372,6 +4383,11 @@ async fn execute_pty(
                 output_tokens: pty_result.output_tokens,
                 cache_read_tokens: pty_result.cache_read_tokens,
                 cache_write_tokens: pty_result.cache_write_tokens,
+                context_window: resolve_context_window(config),
+                context_tokens: pty_result
+                    .input_tokens
+                    .saturating_add(pty_result.cache_read_tokens)
+                    .saturating_add(pty_result.cache_write_tokens),
             })
         }
         Err(e) => {
