@@ -159,6 +159,11 @@ pub struct PiSessionState {
     pub cache_read_tokens: u64,
     /// Accumulated cache-write tokens across all turns.
     pub cache_write_tokens: u64,
+    /// Peak per-turn input footprint (`usage.input + usage.cache_read`)
+    /// across all turns. Used as the Pi `SessionResult.input_tokens` so the
+    /// reported figure reflects the largest live-context turn rather than a
+    /// cumulative sum.
+    pub peak_input_tokens: u64,
 }
 
 impl PiSessionState {
@@ -172,6 +177,7 @@ impl PiSessionState {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            peak_input_tokens: 0,
         }
     }
 }
@@ -260,6 +266,9 @@ pub fn dispatch_pi_stream_event<H: StreamHandler>(
                     state.output_tokens += usage.output;
                     state.cache_read_tokens += usage.cache_read;
                     state.cache_write_tokens += usage.cache_write;
+                    state.peak_input_tokens = state
+                        .peak_input_tokens
+                        .max(usage.input + usage.cache_read);
                 }
             }
         }
@@ -692,6 +701,70 @@ mod tests {
 
         assert_eq!(state.num_turns, 3);
         assert!((state.total_cost_usd - 0.09).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_dispatch_turn_end_tracks_peak_input_tokens() {
+        let mut handler = RecordingHandler::default();
+        let mut extracted = String::new();
+        let mut state = PiSessionState::new();
+
+        // Turn 1 — smaller live context: input=100, cacheRead=1000 (total 1100).
+        let turn1 = PiStreamEvent::TurnEnd {
+            message: Some(PiTurnMessage {
+                stop_reason: Some("stop".to_string()),
+                provider: None,
+                model: None,
+                usage: Some(PiUsage {
+                    input: 100,
+                    output: 50,
+                    cache_read: 1000,
+                    cache_write: 20,
+                    cost: None,
+                }),
+            }),
+        };
+        dispatch_pi_stream_event(turn1, &mut handler, &mut extracted, &mut state, false);
+        assert_eq!(state.peak_input_tokens, 1100);
+
+        // Turn 2 — larger live context: input=500, cacheRead=4000 (total 4500).
+        let turn2 = PiStreamEvent::TurnEnd {
+            message: Some(PiTurnMessage {
+                stop_reason: Some("stop".to_string()),
+                provider: None,
+                model: None,
+                usage: Some(PiUsage {
+                    input: 500,
+                    output: 60,
+                    cache_read: 4000,
+                    cache_write: 30,
+                    cost: None,
+                }),
+            }),
+        };
+        dispatch_pi_stream_event(turn2, &mut handler, &mut extracted, &mut state, false);
+        assert_eq!(state.peak_input_tokens, 4500);
+
+        // Turn 3 — smaller again: peak must be retained (not replaced or summed).
+        let turn3 = PiStreamEvent::TurnEnd {
+            message: Some(PiTurnMessage {
+                stop_reason: Some("stop".to_string()),
+                provider: None,
+                model: None,
+                usage: Some(PiUsage {
+                    input: 10,
+                    output: 20,
+                    cache_read: 200,
+                    cache_write: 5,
+                    cost: None,
+                }),
+            }),
+        };
+        dispatch_pi_stream_event(turn3, &mut handler, &mut extracted, &mut state, false);
+        assert_eq!(state.peak_input_tokens, 4500);
+        // Confirm cumulative fields still sum (untouched by peak logic).
+        assert_eq!(state.input_tokens, 610);
+        assert_eq!(state.cache_read_tokens, 5200);
     }
 
     #[test]

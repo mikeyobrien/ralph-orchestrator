@@ -138,6 +138,27 @@ impl PtyConfig {
     }
 }
 
+/// Aggregated token counters captured from Claude `stream-json` assistant
+/// events.
+///
+/// Claude's `usage` reports the **live** input footprint per turn (input +
+/// cache_read + cache_creation), so summing across turns double-counts shared
+/// context. We track peak for input/cache fields and sum only `output_tokens`
+/// (new tokens produced per turn never overlap).
+#[derive(Debug, Default)]
+struct ClaudeSessionState {
+    peak_input_tokens: u64,
+    total_output_tokens: u64,
+    peak_cache_read_tokens: u64,
+    peak_cache_write_tokens: u64,
+}
+
+impl ClaudeSessionState {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// State machine for double Ctrl+C detection.
 #[derive(Debug)]
 pub struct CtrlCState {
@@ -675,6 +696,9 @@ impl PtyExecutor {
         let mut extracted_text = String::new();
         // Pi session state for accumulating cost/turns (wall-clock for duration)
         let mut pi_state = PiSessionState::new();
+        // Claude session state: peak input/cache tokens across turns, plus a
+        // cumulative output_tokens sum (see `ClaudeSessionState` for rationale).
+        let mut claude_state = ClaudeSessionState::new();
         let mut copilot_state = CopilotStreamState::new();
         let mut completion: Option<SessionResult> = None;
         let start_time = Instant::now();
@@ -778,23 +802,15 @@ impl PtyExecutor {
                                         let line = line_buffer[..newline_pos].to_string();
                                         line_buffer = line_buffer[newline_pos + 1..].to_string();
 
-                                        if let Some(event) = ClaudeStreamParser::parse_line(&line) {
-                                            if let ClaudeStreamEvent::Result {
-                                                duration_ms,
-                                                total_cost_usd,
-                                                num_turns,
-                                                is_error,
-                                            } = &event
-                                            {
-                                                completion = Some(SessionResult {
-                                                    duration_ms: *duration_ms,
-                                                    total_cost_usd: *total_cost_usd,
-                                                    num_turns: *num_turns,
-                                                    is_error: *is_error,
-                                                    ..Default::default()
-                                                });
-                                            }
-                                            dispatch_stream_event(event, handler, &mut extracted_text);
+                                        if let Some(event) = ClaudeStreamParser::parse_line(&line)
+                                            && let Some(session_result) = dispatch_stream_event(
+                                                event,
+                                                handler,
+                                                &mut extracted_text,
+                                                &mut claude_state,
+                                            )
+                                        {
+                                            completion = Some(session_result);
                                         }
                                     }
                                 } else if is_copilot_stream {
@@ -844,22 +860,14 @@ impl PtyExecutor {
                             if is_stream_json && !line_buffer.is_empty()
                                 && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
                             {
-                                if let ClaudeStreamEvent::Result {
-                                    duration_ms,
-                                    total_cost_usd,
-                                    num_turns,
-                                    is_error,
-                                } = &event
-                                {
-                                    completion = Some(SessionResult {
-                                        duration_ms: *duration_ms,
-                                        total_cost_usd: *total_cost_usd,
-                                        num_turns: *num_turns,
-                                        is_error: *is_error,
-                                        ..Default::default()
-                                    });
+                                if let Some(session_result) = dispatch_stream_event(
+                                    event,
+                                    handler,
+                                    &mut extracted_text,
+                                    &mut claude_state,
+                                ) {
+                                    completion = Some(session_result);
                                 }
-                                dispatch_stream_event(event, handler, &mut extracted_text);
                             } else if is_copilot_stream && !line_buffer.is_empty() {
                                 if let Some(session_result) = handle_copilot_stream_line(
                                     &line_buffer,
@@ -927,23 +935,15 @@ impl PtyExecutor {
                                 while let Some(newline_pos) = line_buffer.find('\n') {
                                     let line = line_buffer[..newline_pos].to_string();
                                     line_buffer = line_buffer[newline_pos + 1..].to_string();
-                                    if let Some(event) = ClaudeStreamParser::parse_line(&line) {
-                                        if let ClaudeStreamEvent::Result {
-                                            duration_ms,
-                                            total_cost_usd,
-                                            num_turns,
-                                            is_error,
-                                        } = &event
-                                        {
-                                            completion = Some(SessionResult {
-                                                duration_ms: *duration_ms,
-                                                total_cost_usd: *total_cost_usd,
-                                                num_turns: *num_turns,
-                                                is_error: *is_error,
-                                                ..Default::default()
-                                            });
-                                        }
-                                        dispatch_stream_event(event, handler, &mut extracted_text);
+                                    if let Some(event) = ClaudeStreamParser::parse_line(&line)
+                                        && let Some(session_result) = dispatch_stream_event(
+                                            event,
+                                            handler,
+                                            &mut extracted_text,
+                                            &mut claude_state,
+                                        )
+                                    {
+                                        completion = Some(session_result);
                                     }
                                 }
                             } else if is_copilot_stream {
@@ -1002,27 +1002,15 @@ impl PtyExecutor {
                                     while let Some(newline_pos) = line_buffer.find('\n') {
                                         let line = line_buffer[..newline_pos].to_string();
                                         line_buffer = line_buffer[newline_pos + 1..].to_string();
-                                        if let Some(event) = ClaudeStreamParser::parse_line(&line) {
-                                            if let ClaudeStreamEvent::Result {
-                                                duration_ms,
-                                                total_cost_usd,
-                                                num_turns,
-                                                is_error,
-                                            } = &event
-                                            {
-                                                completion = Some(SessionResult {
-                                                    duration_ms: *duration_ms,
-                                                    total_cost_usd: *total_cost_usd,
-                                                    num_turns: *num_turns,
-                                                    is_error: *is_error,
-                                                    ..Default::default()
-                                                });
-                                            }
-                                            dispatch_stream_event(
+                                        if let Some(event) = ClaudeStreamParser::parse_line(&line)
+                                            && let Some(session_result) = dispatch_stream_event(
                                                 event,
                                                 handler,
                                                 &mut extracted_text,
-                                            );
+                                                &mut claude_state,
+                                            )
+                                        {
+                                            completion = Some(session_result);
                                         }
                                     }
                                 } else if is_copilot_stream {
@@ -1072,23 +1060,14 @@ impl PtyExecutor {
                 if is_stream_json
                     && !line_buffer.is_empty()
                     && let Some(event) = ClaudeStreamParser::parse_line(&line_buffer)
+                    && let Some(session_result) = dispatch_stream_event(
+                        event,
+                        handler,
+                        &mut extracted_text,
+                        &mut claude_state,
+                    )
                 {
-                    if let ClaudeStreamEvent::Result {
-                        duration_ms,
-                        total_cost_usd,
-                        num_turns,
-                        is_error,
-                    } = &event
-                    {
-                        completion = Some(SessionResult {
-                            duration_ms: *duration_ms,
-                            total_cost_usd: *total_cost_usd,
-                            num_turns: *num_turns,
-                            is_error: *is_error,
-                            ..Default::default()
-                        });
-                    }
-                    dispatch_stream_event(event, handler, &mut extracted_text);
+                    completion = Some(session_result);
                 } else if is_copilot_stream && !line_buffer.is_empty() {
                     if let Some(session_result) = handle_copilot_stream_line(
                         &line_buffer,
@@ -1880,17 +1859,40 @@ fn extract_cli_flag_value(args: &[String], long_flag: &str, short_flag: &str) ->
 }
 
 /// Dispatches a Claude stream event to the appropriate handler method.
-/// Also accumulates text content into `extracted_text` for event parsing.
+///
+/// Also accumulates text content into `extracted_text` for event parsing, and
+/// updates `state` with per-turn token usage so the final `SessionResult`
+/// reflects peak live-context sizes.
+///
+/// Returns `Some(SessionResult)` when the event is `Result` — the caller
+/// persists it to feed `build_result`. Returns `None` for all other events.
 fn dispatch_stream_event<H: StreamHandler>(
     event: ClaudeStreamEvent,
     handler: &mut H,
     extracted_text: &mut String,
-) {
+    state: &mut ClaudeSessionState,
+) -> Option<SessionResult> {
     match event {
         ClaudeStreamEvent::System { .. } => {
             // Session initialization - could log in verbose mode but not user-facing
+            None
         }
         ClaudeStreamEvent::Assistant { message, .. } => {
+            if let Some(usage) = &message.usage {
+                let turn_input = usage
+                    .input_tokens
+                    .saturating_add(usage.cache_creation_input_tokens)
+                    .saturating_add(usage.cache_read_input_tokens);
+                state.peak_input_tokens = state.peak_input_tokens.max(turn_input);
+                state.total_output_tokens =
+                    state.total_output_tokens.saturating_add(usage.output_tokens);
+                state.peak_cache_read_tokens = state
+                    .peak_cache_read_tokens
+                    .max(usage.cache_read_input_tokens);
+                state.peak_cache_write_tokens = state
+                    .peak_cache_write_tokens
+                    .max(usage.cache_creation_input_tokens);
+            }
             for block in message.content {
                 match block {
                     ContentBlock::Text { text } => {
@@ -1904,6 +1906,7 @@ fn dispatch_stream_event<H: StreamHandler>(
                     }
                 }
             }
+            None
         }
         ClaudeStreamEvent::User { message } => {
             for block in message.content {
@@ -1916,6 +1919,7 @@ fn dispatch_stream_event<H: StreamHandler>(
                     }
                 }
             }
+            None
         }
         ClaudeStreamEvent::Result {
             duration_ms,
@@ -1926,13 +1930,19 @@ fn dispatch_stream_event<H: StreamHandler>(
             if is_error {
                 handler.on_error("Session ended with error");
             }
-            handler.on_complete(&SessionResult {
+            let session_result = SessionResult {
                 duration_ms,
                 total_cost_usd,
                 num_turns,
                 is_error,
-                ..Default::default()
-            });
+                input_tokens: state.peak_input_tokens,
+                output_tokens: state.total_output_tokens,
+                cache_read_tokens: state.peak_cache_read_tokens,
+                cache_write_tokens: state.peak_cache_write_tokens,
+                context_window: 0,
+            };
+            handler.on_complete(&session_result);
+            Some(session_result)
         }
     }
 }
@@ -2265,6 +2275,7 @@ mod tests {
     fn test_dispatch_stream_event_routes_text_and_tool_calls() {
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionState::new();
 
         let event = ClaudeStreamEvent::Assistant {
             message: AssistantMessage {
@@ -2282,18 +2293,27 @@ mod tests {
             },
         };
 
-        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+        let result = dispatch_stream_event(
+            event,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+        );
 
+        assert!(result.is_none());
         assert_eq!(handler.texts, vec!["Hello".to_string()]);
         assert_eq!(handler.tool_calls.len(), 1);
         assert!(extracted_text.contains("Hello"));
         assert!(extracted_text.ends_with('\n'));
+        // Usage=None means no aggregation.
+        assert_eq!(claude_state.peak_input_tokens, 0);
     }
 
     #[test]
     fn test_dispatch_stream_event_routes_tool_results_and_completion() {
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionState::new();
 
         let event = ClaudeStreamEvent::User {
             message: UserMessage {
@@ -2304,7 +2324,13 @@ mod tests {
             },
         };
 
-        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+        let result = dispatch_stream_event(
+            event,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+        );
+        assert!(result.is_none());
         assert_eq!(handler.tool_results.len(), 1);
         assert_eq!(handler.tool_results[0].0, "tool-1");
         assert_eq!(handler.tool_results[0].1, "done");
@@ -2316,7 +2342,13 @@ mod tests {
             is_error: true,
         };
 
-        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+        let result = dispatch_stream_event(
+            event,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+        );
+        assert!(result.is_some());
         assert_eq!(handler.errors.len(), 1);
         assert_eq!(handler.completions.len(), 1);
         assert!(handler.completions[0].is_error);
@@ -2326,6 +2358,7 @@ mod tests {
     fn test_dispatch_stream_event_system_noop() {
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionState::new();
 
         let event = ClaudeStreamEvent::System {
             session_id: "session-1".to_string(),
@@ -2333,14 +2366,107 @@ mod tests {
             tools: Vec::new(),
         };
 
-        dispatch_stream_event(event, &mut handler, &mut extracted_text);
+        let result = dispatch_stream_event(
+            event,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+        );
 
+        assert!(result.is_none());
         assert!(handler.texts.is_empty());
         assert!(handler.tool_calls.is_empty());
         assert!(handler.tool_results.is_empty());
         assert!(handler.errors.is_empty());
         assert!(handler.completions.is_empty());
         assert!(extracted_text.is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_stream_event_aggregates_assistant_usage() {
+        use crate::claude_stream::Usage;
+
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionState::new();
+
+        // Turn 1: input=100, cache_read=1000, cache_creation=50, output=20.
+        // Live footprint = 100 + 1000 + 50 = 1150.
+        let turn1 = ClaudeStreamEvent::Assistant {
+            message: AssistantMessage {
+                content: vec![],
+                usage: Some(Usage {
+                    input_tokens: 100,
+                    output_tokens: 20,
+                    cache_creation_input_tokens: 50,
+                    cache_read_input_tokens: 1000,
+                }),
+            },
+        };
+        dispatch_stream_event(turn1, &mut handler, &mut extracted_text, &mut claude_state);
+        assert_eq!(claude_state.peak_input_tokens, 1150);
+        assert_eq!(claude_state.total_output_tokens, 20);
+        assert_eq!(claude_state.peak_cache_read_tokens, 1000);
+        assert_eq!(claude_state.peak_cache_write_tokens, 50);
+
+        // Turn 2: larger footprint (300 + 4000 + 10 = 4310). Peaks grow.
+        let turn2 = ClaudeStreamEvent::Assistant {
+            message: AssistantMessage {
+                content: vec![],
+                usage: Some(Usage {
+                    input_tokens: 300,
+                    output_tokens: 40,
+                    cache_creation_input_tokens: 10,
+                    cache_read_input_tokens: 4000,
+                }),
+            },
+        };
+        dispatch_stream_event(turn2, &mut handler, &mut extracted_text, &mut claude_state);
+        assert_eq!(claude_state.peak_input_tokens, 4310);
+        // Output sums; caches keep max.
+        assert_eq!(claude_state.total_output_tokens, 60);
+        assert_eq!(claude_state.peak_cache_read_tokens, 4000);
+        assert_eq!(claude_state.peak_cache_write_tokens, 50);
+
+        // Turn 3: smaller. Peaks must be retained (not replaced).
+        let turn3 = ClaudeStreamEvent::Assistant {
+            message: AssistantMessage {
+                content: vec![],
+                usage: Some(Usage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    cache_creation_input_tokens: 1,
+                    cache_read_input_tokens: 200,
+                }),
+            },
+        };
+        dispatch_stream_event(turn3, &mut handler, &mut extracted_text, &mut claude_state);
+        assert_eq!(claude_state.peak_input_tokens, 4310);
+        assert_eq!(claude_state.total_output_tokens, 65);
+        assert_eq!(claude_state.peak_cache_read_tokens, 4000);
+        assert_eq!(claude_state.peak_cache_write_tokens, 50);
+
+        // Result event emits a SessionResult populated from the aggregated state.
+        let result = ClaudeStreamEvent::Result {
+            duration_ms: 1234,
+            total_cost_usd: 0.5,
+            num_turns: 3,
+            is_error: false,
+        };
+        let session = dispatch_stream_event(
+            result,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+        )
+        .expect("Result event must yield SessionResult");
+        assert_eq!(session.input_tokens, 4310);
+        assert_eq!(session.output_tokens, 65);
+        assert_eq!(session.cache_read_tokens, 4000);
+        assert_eq!(session.cache_write_tokens, 50);
+        assert_eq!(session.context_window, 0);
+        assert_eq!(session.duration_ms, 1234);
+        assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
     }
 
     /// Regression test: TUI mode should not spawn stdin reader thread
