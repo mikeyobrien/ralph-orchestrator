@@ -68,8 +68,10 @@ load_pdd_source_config() {
         exit 1
     fi
 
-    # shellcheck disable=SC1090
-    source "$config_path"
+    # Extract only the three expected variables without executing arbitrary shell code.
+    PDD_UPSTREAM_REPO="$(grep '^PDD_UPSTREAM_REPO=' "$config_path" | head -1 | sed 's/^PDD_UPSTREAM_REPO="\(.*\)"$/\1/')"
+    PDD_UPSTREAM_REF="$(grep '^PDD_UPSTREAM_REF=' "$config_path" | head -1 | sed 's/^PDD_UPSTREAM_REF="\(.*\)"$/\1/')"
+    PDD_UPSTREAM_PATH="$(grep '^PDD_UPSTREAM_PATH=' "$config_path" | head -1 | sed 's/^PDD_UPSTREAM_PATH="\(.*\)"$/\1/')"
 
     : "${PDD_UPSTREAM_REPO:?PDD_UPSTREAM_REPO must be set in $PDD_SOURCE_CONFIG}"
     : "${PDD_UPSTREAM_REF:?PDD_UPSTREAM_REF must be set in $PDD_SOURCE_CONFIG}"
