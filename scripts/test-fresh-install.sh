@@ -65,9 +65,9 @@ fi
 cd "$WORK_DIR"
 
 # --- npm install ---
-info "Running npm install..."
-npm install
-pass "npm install succeeded"
+info "Running npm ci..."
+npm ci
+pass "npm ci succeeded"
 
 # Verify lockfile artifact
 if [ ! -f "node_modules/.package-lock.json" ]; then
