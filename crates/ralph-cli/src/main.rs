@@ -2492,13 +2492,15 @@ fn emit_command_with_root(
 
     // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg
     // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = if let Ok(path) = std::env::var("RALPH_EVENTS_FILE") {
-        PathBuf::from(path)
-    } else {
-        fs::read_to_string(&current_events_marker)
-            .map(|s| resolve_marker_target(&workspace_root, &s))
-            .unwrap_or_else(|_| args.file.clone())
-    };
+    let events_file = std::env::var("RALPH_EVENTS_FILE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            fs::read_to_string(&current_events_marker)
+                .map(|s| resolve_marker_target(&workspace_root, &s))
+                .unwrap_or_else(|_| args.file.clone())
+        });
 
     // Ensure parent directory exists
     if let Some(parent) = events_file.parent()
