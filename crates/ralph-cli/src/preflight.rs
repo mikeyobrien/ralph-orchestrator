@@ -455,7 +455,11 @@ fn validate_core_config_shape(value: &Value, label: &str) -> Result<()> {
 }
 
 const ALLOWED_HATS_TOP_LEVEL: &[&str] = &["hats", "events", "event_loop", "name", "description"];
-const ALLOWED_HATS_EVENT_LOOP_OVERLAY_KEYS: &[&str] = &["completion_promise", "starting_event"];
+const ALLOWED_HATS_EVENT_LOOP_OVERLAY_KEYS: &[&str] = &[
+    "completion_promise",
+    "starting_event",
+    "cancellation_promise",
+];
 
 fn hats_disallowed_keys(mapping: &Mapping) -> Vec<String> {
     let mut disallowed = Vec::new();
@@ -725,13 +729,14 @@ hats:
     }
 
     #[test]
-    fn merge_hats_overlay_ignores_runtime_limits_from_hats_event_loop() {
+    fn merge_hats_overlay_allows_workflow_promises_from_hats_event_loop() {
         let core: Value = serde_yaml::from_str(
             r"
 event_loop:
   max_iterations: 100
   max_runtime_seconds: 28800
   completion_promise: LOOP_COMPLETE
+  cancellation_promise: LOOP_CANCELLED
 hats:
   builder:
     name: Builder
@@ -743,6 +748,8 @@ hats:
             r"
 event_loop:
   completion_promise: REVIEW_COMPLETE
+  cancellation_promise: BUILD_PARKED
+  starting_event: build.start
   max_iterations: 150
   max_runtime_seconds: 14400
 hats:
@@ -758,6 +765,11 @@ hats:
         assert_eq!(config.event_loop.max_iterations, 100);
         assert_eq!(config.event_loop.max_runtime_seconds, 28800);
         assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
+        assert_eq!(config.event_loop.cancellation_promise, "BUILD_PARKED");
+        assert_eq!(
+            config.event_loop.starting_event.as_deref(),
+            Some("build.start")
+        );
     }
 
     #[tokio::test]
