@@ -129,7 +129,9 @@ pub fn write_wave_events(topic: &str, payloads: &[String], events_file: &Path) -
 /// Priority: RALPH_EVENTS_FILE env > .ralph/current-events marker > default .ralph/events.jsonl
 pub fn resolve_events_file() -> PathBuf {
     if let Ok(path) = std::env::var("RALPH_EVENTS_FILE") {
-        return PathBuf::from(path);
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
     }
     fs::read_to_string(".ralph/current-events")
         .map(|s| PathBuf::from(s.trim()))

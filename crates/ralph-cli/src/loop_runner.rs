@@ -2388,13 +2388,18 @@ pub async fn run_loop_impl(
             .map(|events| events.had_events)
             .unwrap_or(false);
 
+        let mut late_termination_reason: Option<TerminationReason> = None;
         if !agent_wrote_events && output_mentions_ralph_emit(&output) {
             match recover_expected_emit_after_output(&mut event_loop)
                 .inspect_err(|e| warn!(error = %e, "Failed to recover expected emit events"))
                 .ok()
             {
-                Some(LateEventRecovery::PendingWork | LateEventRecovery::Terminate(_)) => {
+                Some(LateEventRecovery::PendingWork) => {
                     agent_wrote_events = true;
+                }
+                Some(LateEventRecovery::Terminate(reason)) => {
+                    agent_wrote_events = true;
+                    late_termination_reason = Some(reason);
                 }
                 Some(LateEventRecovery::NoLateEvents) | None => {
                     warn!(
@@ -2467,7 +2472,9 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
-        if let Some(reason) = event_loop.check_completion_event() {
+        if let Some(reason) =
+            late_termination_reason.or_else(|| event_loop.check_completion_event())
+        {
             info!(
                 "Completion event {} detected.",
                 config.event_loop.completion_promise
