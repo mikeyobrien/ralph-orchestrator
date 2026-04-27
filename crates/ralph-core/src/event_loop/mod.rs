@@ -465,6 +465,14 @@ impl EventLoop {
         &self.state
     }
 
+    /// Record this iteration's context-token usage for `hat`.
+    ///
+    /// Passthrough to `LoopState::record_iteration_tokens` — preserves the
+    /// `record_event` encapsulation precedent (callers don't need `&mut LoopState`).
+    pub fn record_iteration_tokens(&mut self, hat: &HatId, tokens: u64) {
+        self.state.record_iteration_tokens(hat, tokens);
+    }
+
     /// Resets the stale-loop topic counter.
     ///
     /// Call after processing wave results — multiple events with the same topic
@@ -2279,6 +2287,14 @@ impl EventLoop {
         // --- End scope enforcement ---
 
         let mut has_orphans = false;
+
+        // Drop orchestrator-synthetic observer rows (spec §10) so they don't
+        // count toward the "completion must be last" ordering check below and
+        // don't get routed on the bus.
+        let events: Vec<_> = events
+            .into_iter()
+            .filter(|event| event.topic.as_str() != "iteration.summary")
+            .collect();
 
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();

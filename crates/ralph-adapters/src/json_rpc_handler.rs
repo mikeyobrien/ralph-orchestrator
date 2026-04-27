@@ -143,6 +143,10 @@ impl<W: Write + Send> StreamHandler for JsonRpcStreamHandler<W> {
     }
 
     fn on_complete(&mut self, result: &SessionResult) {
+        let context_tokens = result
+            .input_tokens
+            .saturating_add(result.cache_read_tokens)
+            .saturating_add(result.cache_write_tokens);
         self.emit(RpcEvent::IterationEnd {
             iteration: self.iteration,
             duration_ms: result.duration_ms,
@@ -151,6 +155,8 @@ impl<W: Write + Send> StreamHandler for JsonRpcStreamHandler<W> {
             output_tokens: result.output_tokens,
             cache_read_tokens: result.cache_read_tokens,
             cache_write_tokens: result.cache_write_tokens,
+            context_window: result.context_window,
+            context_tokens,
             loop_complete_triggered: false, // Determined externally by orchestration
         });
     }

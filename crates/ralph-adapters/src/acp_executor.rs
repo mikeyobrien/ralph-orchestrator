@@ -400,6 +400,7 @@ impl Drop for ChildKillGuard {
 pub struct AcpExecutor {
     backend: CliBackend,
     workspace_root: PathBuf,
+    context_window: u64,
 }
 
 impl AcpExecutor {
@@ -407,7 +408,18 @@ impl AcpExecutor {
         Self {
             backend,
             workspace_root,
+            context_window: 0,
         }
+    }
+
+    /// Sets the resolved context-window ceiling (tokens) for this run.
+    ///
+    /// Threaded into `SessionResult.context_window` so downstream renderers can
+    /// emit the `Context: NN% (KK/200K)` suffix when the user provides an
+    /// explicit override (`event_loop.context_window_tokens`). For ACP backends
+    /// without an override this stays at 0 (the suffix is suppressed).
+    pub fn set_context_window(&mut self, context_window: u64) {
+        self.context_window = context_window;
     }
 
     /// Execute a single prompt turn via ACP.
@@ -512,6 +524,7 @@ impl AcpExecutor {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            context_window: self.context_window,
         });
 
         Ok(PtyExecutionResult {
@@ -526,6 +539,7 @@ impl AcpExecutor {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            num_turns: 1,
         })
     }
 }
