@@ -291,7 +291,7 @@ impl TaskStore {
     pub fn open(&self) -> Vec<&Task> {
         self.tasks
             .iter()
-            .filter(|t| t.status != TaskStatus::Closed)
+            .filter(|t| !t.status.is_terminal())
             .collect()
     }
 
