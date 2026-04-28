@@ -62,6 +62,12 @@ function TagEditor({
       return;
     }
 
+    // Event names must be lowercase dot-separated identifiers (e.g. build.done)
+    if (!/^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$/.test(tag)) {
+      setError("Use lowercase dot-separated names (e.g. build.done)");
+      return;
+    }
+
     setError(null);
     onChange([...value, tag]);
     setInputValue("");
@@ -151,13 +157,16 @@ export function PropertiesPanel({
 }: PropertiesPanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [localData, setLocalData] = useState<HatNodeData | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Sync local state when selection changes
   useEffect(() => {
     if (selectedNode) {
       setLocalData({ ...selectedNode.data });
+      setNameError(null);
     } else {
       setLocalData(null);
+      setNameError(null);
     }
   }, [selectedNode]);
 
@@ -235,10 +244,17 @@ export function PropertiesPanel({
               <Label className="text-xs">Name</Label>
               <Input
                 value={localData.name}
-                onChange={(e) => updateField("name", e.target.value)}
-                className="h-8 text-xs"
+                onChange={(e) => {
+                  updateField("name", e.target.value);
+                  if (e.target.value.trim()) setNameError(null);
+                }}
+                onBlur={() => {
+                  if (!localData.name.trim()) setNameError("Hat name is required");
+                }}
+                className={cn("h-8 text-xs", nameError && "border-destructive")}
                 placeholder="Hat name"
               />
+              {nameError && <p className="text-xs text-destructive">{nameError}</p>}
             </div>
 
             {/* Description */}

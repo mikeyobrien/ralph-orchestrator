@@ -17,7 +17,7 @@ export function AppShell() {
 
       {/* Main content area - renders active route via Outlet */}
       <main className="flex-1 overflow-auto">
-        <div className="p-6">
+        <div className="p-6 h-full">
           <Outlet />
         </div>
       </main>

@@ -310,6 +310,16 @@ impl RpcRuntime {
                 let yaml = self.collection_domain_mut()?.export(&params.id)?;
                 Ok(json!({ "yaml": yaml }))
             }
+            "collection.run" => {
+                let params: crate::collection_domain::CollectionRunParams =
+                    self.parse_params(request)?;
+                let result = self.collection_domain_mut()?.run(
+                    params,
+                    &self.config.ralph_command,
+                    &self.config.workspace_root,
+                )?;
+                Ok(json!(result))
+            }
             _ => Err(ApiError::service_unavailable(format!(
                 "method '{}' is recognized but not implemented",
                 request.method

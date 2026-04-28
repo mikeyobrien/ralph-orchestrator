@@ -56,6 +56,7 @@ pub const KNOWN_METHODS: &[&str] = &[
     "collection.delete",
     "collection.import",
     "collection.export",
+    "collection.run",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",
@@ -89,6 +90,7 @@ pub const MUTATING_METHODS: &[&str] = &[
     "collection.update",
     "collection.delete",
     "collection.import",
+    "collection.run",
 ];
 
 pub const STREAM_TOPICS: &[&str] = &[
@@ -98,6 +100,7 @@ pub const STREAM_TOPICS: &[&str] = &[
     "task.status.changed",
     "loop.status.changed",
     "loop.merge.progress",
+    "loop.orchestration",
     "planning.prompt.issued",
     "planning.response.recorded",
     "planning.artifact.updated",

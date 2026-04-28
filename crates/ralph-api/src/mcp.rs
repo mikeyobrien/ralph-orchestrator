@@ -582,6 +582,7 @@ fn build_tool(
         "preset.list" => "List all available Ralph presets.".into(),
         "collection.import" => "Import a preset collection from YAML.".into(),
         "collection.export" => "Export a preset collection to YAML.".into(),
+        "collection.run" => "Run a loop using a collection's hats with a given prompt.".into(),
         "stream.subscribe" => "Create a Ralph event stream subscription.".into(),
         "stream.unsubscribe" => "Close a Ralph event stream subscription.".into(),
         "stream.ack" => "Advance a Ralph event stream subscription cursor.".into(),

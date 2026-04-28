@@ -28,6 +28,7 @@ const MUTATING_METHODS = new Set<string>([
   "collection.update",
   "collection.delete",
   "collection.import",
+  "collection.run",
 ]);
 
 let requestCounter = 0;

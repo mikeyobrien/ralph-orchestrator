@@ -13,9 +13,10 @@
  * - Compact layout optimized for workflow canvas
  */
 
-import { memo } from "react";
-import { Handle, Position } from "@xyflow/react";
 import { cn } from "@/lib/utils";
+import { Handle, Position } from "@xyflow/react";
+import { memo } from "react";
+import { getRoleMeta } from "./roles";
 
 /**
  * Data structure for a hat node
@@ -27,6 +28,8 @@ export interface HatNodeData {
   triggersOn: string[];
   publishes: string[];
   instructions?: string;
+  /** Observation state set by the live observation overlay. */
+  observationState?: "idle" | "pending" | "active" | "completed";
 }
 
 /**
@@ -37,22 +40,40 @@ interface HatNodeProps {
   selected?: boolean;
 }
 
+const OBSERVATION_BORDER: Record<string, string> = {
+  pending: "!border-sky-400 !border-2",
+  active: "!border-2 animate-border-pulse",
+  completed: "!border-teal-400 !border-2",
+};
+
 /**
  * HatNode - visual representation of a hat in the workflow
  */
 function HatNodeComponent({ data, selected }: HatNodeProps) {
   const hatData = data;
+  const role = getRoleMeta(hatData.key);
+  const obsState = hatData.observationState;
+  const obsBorder = obsState ? OBSERVATION_BORDER[obsState] : undefined;
 
   return (
     <div
+      data-hat-key={hatData.key}
+      data-observation-state={obsState ?? "idle"}
       className={cn(
         "bg-card border rounded-lg shadow-md min-w-[180px] max-w-[280px]",
-        "transition-all duration-200",
+        "transition-all duration-200 relative",
         selected
           ? "border-primary ring-2 ring-primary/30 shadow-lg"
-          : "border-border hover:border-muted-foreground/50"
+          : cn("hover:border-muted-foreground/50", role.borderClass || "border-border"),
+        obsBorder
       )}
     >
+      {/* Completed badge */}
+      {obsState === "completed" && (
+        <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-teal-500 text-white text-xs flex items-center justify-center font-bold shadow">
+          ✓
+        </span>
+      )}
       {/* Input handles (triggers) - placed on left side */}
       <div className="absolute -left-[9px] top-0 h-full flex flex-col justify-center gap-2 py-3">
         {hatData.triggersOn.map((trigger, index) => (
@@ -90,7 +111,7 @@ function HatNodeComponent({ data, selected }: HatNodeProps) {
       <div className="p-3">
         {/* Header with name */}
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-lg">🎩</span>
+          <span className="text-lg">{role.emoji}</span>
           <h3 className="font-semibold text-sm truncate">{hatData.name}</h3>
         </div>
 

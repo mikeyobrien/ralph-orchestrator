@@ -61,6 +61,7 @@
         "collection.delete",
         "collection.import",
         "collection.export",
+        "collection.run",
         "stream.subscribe",
         "stream.unsubscribe",
         "stream.ack"
@@ -637,6 +638,24 @@
         "name"
       ]
     },
+    "collectionRunParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "prompt"
+      ]
+    },
     "streamSubscribeParams": {
       "type": "object",
       "additionalProperties": false,
@@ -749,6 +768,7 @@
         { "properties": { "method": { "const": "collection.delete" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.import" }, "params": { "$ref": "#/$defs/collectionImportParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.export" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "collection.run" }, "params": { "$ref": "#/$defs/collectionRunParams" } }, "required": ["method", "params"] },
 
         { "properties": { "method": { "const": "stream.subscribe" }, "params": { "$ref": "#/$defs/streamSubscribeParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "params": { "$ref": "#/$defs/streamUnsubscribeParams" } }, "required": ["method", "params"] },
@@ -998,6 +1018,16 @@
       },
       "required": ["yaml"]
     },
+    "collectionRunResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" },
+        "configPath": { "type": "string" },
+        "pid": { "type": "integer" }
+      },
+      "required": ["success", "configPath", "pid"]
+    },
     "streamSubscribeResult": {
       "type": "object",
       "additionalProperties": false,
@@ -1061,6 +1091,7 @@
         { "properties": { "method": { "const": "collection.delete" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.import" }, "result": { "$ref": "#/$defs/collectionResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.export" }, "result": { "$ref": "#/$defs/collectionExportResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "collection.run" }, "result": { "$ref": "#/$defs/collectionRunResult" } }, "required": ["method", "result"] },
 
         { "properties": { "method": { "const": "stream.subscribe" }, "result": { "$ref": "#/$defs/streamSubscribeResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },

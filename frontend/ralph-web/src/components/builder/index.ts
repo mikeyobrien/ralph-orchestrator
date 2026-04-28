@@ -7,4 +7,6 @@
 export { CollectionBuilder } from "./CollectionBuilder";
 export { HatNode, type HatNodeData } from "./HatNode";
 export { HatPalette } from "./HatPalette";
+export { ImportYamlDialog } from "./ImportYamlDialog";
 export { PropertiesPanel } from "./PropertiesPanel";
+
