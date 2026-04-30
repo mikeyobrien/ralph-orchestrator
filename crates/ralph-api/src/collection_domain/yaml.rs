@@ -62,12 +62,7 @@ pub fn starting_hat_for_collection(collection: &CollectionRecord) -> Option<Stri
         .flat_map(|t| t.iter())
         .find(|t| !all_published.contains(t.as_str()))
         .cloned()
-        .or_else(|| {
-            hat_triggers
-                .values()
-                .find_map(|t| t.iter().next())
-                .cloned()
-        })?;
+        .or_else(|| hat_triggers.values().find_map(|t| t.iter().next()).cloned())?;
 
     // Find which hat triggers on the starting_event.
     for (node_id, triggers) in &hat_triggers {
@@ -342,11 +337,7 @@ pub(super) fn export_collection_yaml(collection: &CollectionRecord) -> Result<St
         // Fallback for pure cycles (all triggers are internal): use the
         // first trigger of the first hat. It's internal, but at least it
         // matches a real hat and will activate the cycle.
-        .or_else(|| {
-            hats.values()
-                .find_map(|h| h.triggers.first())
-                .cloned()
-        })
+        .or_else(|| hats.values().find_map(|h| h.triggers.first()).cloned())
         .unwrap_or_else(|| "work.start".to_string());
 
     let preset = ExportPreset {
