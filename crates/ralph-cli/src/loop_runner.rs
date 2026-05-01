@@ -36,8 +36,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::display::{
-    build_tui_hat_map, print_iteration_separator, print_termination, print_wave_header,
-    print_wave_summary, print_wave_worker_done,
+    build_tui_hat_map, print_iteration_footer, print_iteration_separator, print_loop_banner,
+    print_termination, print_wave_header, print_wave_summary, print_wave_worker_done,
 };
 use crate::process_management;
 use crate::rpc_stdin::{GuidanceMessage, RpcDispatcher, run_stdin_reader, run_stdout_emitter};
@@ -873,7 +873,7 @@ pub async fn run_loop_impl(
         // Print termination info to console (skip in TUI mode - TUI handles display)
         // Skip in RPC mode - JSON events replace console output
         if !enable_tui && !enable_rpc {
-            print_termination(reason, state, use_colors);
+            print_termination(reason, state, use_colors, Some(&loop_id));
         }
 
         // Mark RPC state as completed so get_state reflects termination
@@ -971,6 +971,24 @@ pub async fn run_loop_impl(
         }
 
         return Ok(reason);
+    }
+
+    // Print startup banner for --no-tui runs. Gives agents/humans tailing
+    // the stream the loop-id, key state files, and tail/resume commands up
+    // front so they don't have to reverse-engineer them from scrollback.
+    if !enable_tui && !enable_rpc {
+        let events_path = resolve_current_events_path(&ctx);
+        let scratchpad_path = ctx.workspace().join(&config.core.scratchpad.path);
+        print_loop_banner(
+            &loop_id,
+            &config.cli.backend,
+            std::path::Path::new(&config.event_loop.prompt_file),
+            &events_path,
+            &scratchpad_path,
+            config.event_loop.max_iterations,
+            resume,
+            use_colors,
+        );
     }
 
     // Main orchestration loop
@@ -1933,6 +1951,21 @@ pub async fn run_loop_impl(
                 loop_complete_triggered,
             };
             let _ = tx.try_send(end_event);
+        }
+
+        // Per-iteration footer for --no-tui: one line with budget/cost/elapsed
+        // so tailing agents can catch runaway loops without parsing events.
+        if tui_state.is_none() && !enable_rpc {
+            let iter_duration = iteration_started_at.elapsed();
+            print_iteration_footer(
+                iteration,
+                config.event_loop.max_iterations,
+                iter_duration,
+                event_loop.state().elapsed(),
+                outcome.total_cost_usd,
+                event_loop.state().cumulative_cost,
+                use_colors,
+            );
         }
 
         // Log events from output before processing
