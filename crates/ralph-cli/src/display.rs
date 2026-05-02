@@ -577,6 +577,92 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "visual demo; run with: cargo test -- --ignored --nocapture zzz_visual_demo"]
+    fn zzz_visual_demo() {
+        use ralph_core::LoopState;
+        use std::path::PathBuf;
+        use std::time::Duration;
+
+        println!("\n===== --no-tui UX demo (plain / no color) =====\n");
+        print_loop_banner(
+            "lp-2026-05-01-abc123",
+            "pi",
+            &PathBuf::from("PROMPT.md"),
+            &PathBuf::from(".ralph/events-abc123.jsonl"),
+            &PathBuf::from(".ralph/agent/scratchpad.md"),
+            150,
+            false,
+            false,
+        );
+
+        println!();
+        print_iteration_separator(1, "planner", Duration::from_secs(0), 150, false);
+        println!("  (… backend streams tool calls and text here …)");
+        print_iteration_footer(
+            1,
+            150,
+            Duration::from_secs(42),
+            Duration::from_secs(42),
+            0.03,
+            0.03,
+            false,
+        );
+
+        print_iteration_separator(2, "builder", Duration::from_secs(42), 150, false);
+        println!("  (… builder output …)");
+        print_iteration_footer(
+            2,
+            150,
+            Duration::from_secs(68),
+            Duration::from_secs(110),
+            0.08,
+            0.11,
+            false,
+        );
+
+        print_iteration_separator(3, "reviewer", Duration::from_secs(110), 150, false);
+        println!("  (… reviewer output …)");
+        print_iteration_footer(
+            3,
+            150,
+            Duration::from_secs(72),
+            Duration::from_secs(182),
+            0.14,
+            0.25,
+            false,
+        );
+
+        let mut state = LoopState::new();
+        state.iteration = 150;
+        state.cumulative_cost = 7.42;
+        print_termination(
+            &TerminationReason::MaxIterations,
+            &state,
+            false,
+            Some("lp-2026-05-01-abc123"),
+        );
+
+        println!("\n\n===== alternate: completion promise (no resume hint) =====\n");
+        let mut state = LoopState::new();
+        state.iteration = 87;
+        state.cumulative_cost = 3.15;
+        print_termination(
+            &TerminationReason::CompletionPromise,
+            &state,
+            false,
+            Some("lp-2026-05-01-abc123"),
+        );
+
+        println!("\n===== alternate: cancelled (no resume hint — was C1 autosde fix) =====\n");
+        print_termination(
+            &TerminationReason::Cancelled,
+            &state,
+            false,
+            Some("lp-2026-05-01-abc123"),
+        );
+    }
+
+    #[test]
     fn test_resume_hint_present_for_interrupted() {
         assert!(resume_hint_for(&TerminationReason::Interrupted, "xy").is_some());
     }
