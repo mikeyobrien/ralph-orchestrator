@@ -412,8 +412,7 @@ mod tests {
 
     #[test]
     fn test_resolve_backend_accepts_kiro_acp_from_config() {
-        let config =
-            RalphConfig::parse_yaml("cli:\n  backend: kiro-acp\n").expect("parse config");
+        let config = RalphConfig::parse_yaml("cli:\n  backend: kiro-acp\n").expect("parse config");
         let config_path = std::path::PathBuf::from("ralph.yml");
         let backend = resolve_backend(None, Some(&config), Some(&config_path)).expect("backend");
         assert_eq!(backend, "kiro-acp");
