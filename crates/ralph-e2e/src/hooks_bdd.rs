@@ -914,7 +914,7 @@ fn assert_runtime_integration_coverage(
             &workspace_root,
             Path::new("cargo"),
             &args,
-            Duration::from_secs(180),
+            Duration::from_mins(3),
         )?;
 
         if artifact.timed_out {
