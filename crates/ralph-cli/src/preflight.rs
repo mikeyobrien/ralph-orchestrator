@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{ArgAction, Parser, ValueEnum};
 use ralph_core::{CheckResult, CheckStatus, PreflightReport, PreflightRunner, RalphConfig};
 use serde_yaml::{Mapping, Value};
+use std::path::Path;
 use tracing::{info, warn};
 
 use crate::{ConfigSource, HatsSource, config_resolution, presets};
@@ -212,6 +213,16 @@ pub(crate) async fn load_config_for_preflight(
             );
         }
 
+        // Autoloop presets carry loop-level policy (max_iterations,
+        // required_events) that the generic hats-overlay allowlist rightly
+        // rejects from user-authored YAML hats files. For `autoloop:` /
+        // autoloop-dir sources we inject those knobs directly into core
+        // BEFORE the generic overlay merge, which still filters
+        // user-editable event_loop keys defensively.
+        if let HatsSource::AutoloopDir(path) = source {
+            apply_autoloop_core_patch(&mut core_value, path)?;
+        }
+
         let hats_value = load_hats_value(source).await?;
         validate_hats_config_shape(&hats_value, &source.label())?;
         core_value = merge_hats_overlay(core_value, hats_value)?;
@@ -352,6 +363,51 @@ async fn load_core_value(
     Ok((merged, overrides, merged_label))
 }
 
+/// Merge loop-level fields an autoloop preset carries (`event_loop.max_iterations`,
+/// `event_loop.required_events`) directly into `core_value` before the generic
+/// hats overlay merge runs.
+///
+/// These knobs intentionally bypass [`merge_hats_overlay`]'s allowlist because
+/// they're loop-wide policy sourced from an imported preset, not from a
+/// user-authored hats YAML file.
+fn apply_autoloop_core_patch(core_value: &mut Value, preset_dir: &Path) -> Result<()> {
+    let registry = ralph_core::PresetRegistry::default();
+    let overlay = registry.load(preset_dir).with_context(|| {
+        format!(
+            "Failed to import autoloop preset from {}",
+            preset_dir.display()
+        )
+    })?;
+
+    let Some(overlay_map) = overlay.as_mapping() else {
+        return Ok(());
+    };
+    let Some(overlay_el) = mapping_get(overlay_map, "event_loop").and_then(Value::as_mapping)
+    else {
+        return Ok(());
+    };
+
+    let core_map = core_value
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("Core config must be a YAML mapping"))?;
+
+    let mut core_el_value = mapping_get(core_map, "event_loop")
+        .cloned()
+        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
+    let core_el_map = core_el_value
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("core.event_loop must be a mapping when provided"))?;
+
+    for key in ["max_iterations", "required_events"] {
+        if let Some(val) = mapping_get(overlay_el, key) {
+            mapping_insert(core_el_map, key, val.clone());
+        }
+    }
+
+    mapping_insert(core_map, "event_loop", core_el_value);
+    Ok(())
+}
+
 async fn load_hats_value(source: &HatsSource) -> Result<Value> {
     match source {
         HatsSource::File(path) => {
@@ -398,6 +454,21 @@ async fn load_hats_value(source: &HatsSource) -> Result<Value> {
             let preset_value =
                 config_resolution::parse_yaml_value(preset.content, &format!("builtin:{}", name))?;
             extract_hat_overlay_from_preset(preset_value)
+        }
+        HatsSource::AutoloopDir(path) => {
+            if !path.exists() {
+                anyhow::bail!(
+                    "Autoloop preset dir not found: {}. If this was an `autoloop:<name>` \
+                     lookup, check that `./presets/<name>/`, `$XDG_CONFIG_HOME/ralph/autoloop-presets/<name>/`, \
+                     or `$AUTOLOOP_PRESETS_DIR/<name>/` exists and contains `autoloops.toml` and `topology.toml`.",
+                    path.display()
+                );
+            }
+            let registry = ralph_core::PresetRegistry::default();
+            let value = registry
+                .load(path)
+                .with_context(|| format!("Failed to import autoloop preset from {}", path.display()))?;
+            extract_hat_overlay_from_preset(value)
         }
     }
 }

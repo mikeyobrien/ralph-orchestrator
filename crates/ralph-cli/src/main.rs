@@ -357,12 +357,20 @@ impl ConfigSource {
 /// Source for hat collection configuration.
 #[derive(Debug, Clone)]
 pub enum HatsSource {
-    /// Local file path
+    /// Local file path (YAML Ralph preset)
     File(PathBuf),
     /// Builtin hat collection name (e.g., "builtin:code-assist")
     Builtin(String),
     /// Remote URL (e.g., "http://example.com/hats.yml")
     Remote(String),
+    /// Autoloop multi-file preset directory.
+    ///
+    /// Source shape matches [@mobrienv/autoloop](https://github.com/mobrienv/autoloop)
+    /// presets: a directory containing `autoloops.toml`, `topology.toml`,
+    /// optional `harness.md`, and `roles/*.md`. Triggered by `-H autoloop:<name>`
+    /// (resolves via `resolve_autoloop_preset_dir`) or by `-H <path>` where
+    /// `<path>` is a directory with those TOML files.
+    AutoloopDir(PathBuf),
 }
 
 impl HatsSource {
@@ -370,10 +378,22 @@ impl HatsSource {
     fn parse(s: &str) -> Self {
         if let Some(name) = s.strip_prefix("builtin:") {
             HatsSource::Builtin(name.to_string())
+        } else if let Some(name) = s.strip_prefix("autoloop:") {
+            match resolve_autoloop_preset_dir(name) {
+                Some(path) => HatsSource::AutoloopDir(path),
+                // Unresolved names surface as File so downstream IO errors name
+                // the unresolved string cleanly instead of a cryptic parse crash.
+                None => HatsSource::File(PathBuf::from(format!("autoloop:{name}"))),
+            }
         } else if s.starts_with("http://") || s.starts_with("https://") {
             HatsSource::Remote(s.to_string())
         } else {
-            HatsSource::File(PathBuf::from(s))
+            let path = PathBuf::from(s);
+            if is_autoloop_preset_dir(&path) {
+                HatsSource::AutoloopDir(path)
+            } else {
+                HatsSource::File(path)
+            }
         }
     }
 
@@ -383,8 +403,48 @@ impl HatsSource {
             HatsSource::File(path) => path.display().to_string(),
             HatsSource::Builtin(name) => format!("builtin:{}", name),
             HatsSource::Remote(url) => url.clone(),
+            HatsSource::AutoloopDir(path) => format!("autoloop:{}", path.display()),
         }
     }
+}
+
+/// Returns true if `path` is a directory matching the autoloop preset shape.
+pub(crate) fn is_autoloop_preset_dir(path: &Path) -> bool {
+    path.is_dir()
+        && path.join("autoloops.toml").is_file()
+        && path.join("topology.toml").is_file()
+}
+
+/// Search for an autoloop preset dir named `name`.
+///
+/// Resolution order, first hit wins:
+/// 1. `./presets/<name>/` (project-local)
+/// 2. `$XDG_CONFIG_HOME/ralph/autoloop-presets/<name>/` (user)
+/// 3. `$HOME/.config/autoloop/presets/<name>/` (shared with autoloop itself)
+/// 4. `$AUTOLOOP_PRESETS_DIR/<name>/` (explicit override)
+///
+/// Returns `None` if no candidate directory exists and matches the preset
+/// shape.
+pub(crate) fn resolve_autoloop_preset_dir(name: &str) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    candidates.push(PathBuf::from("presets").join(name));
+
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        candidates.push(PathBuf::from(xdg).join("ralph/autoloop-presets").join(name));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(
+            PathBuf::from(home)
+                .join(".config/autoloop/presets")
+                .join(name),
+        );
+    }
+    if let Ok(explicit) = std::env::var("AUTOLOOP_PRESETS_DIR") {
+        candidates.push(PathBuf::from(explicit).join(name));
+    }
+
+    candidates.into_iter().find(|p| is_autoloop_preset_dir(p))
 }
 
 /// Known core fields that can be overridden via CLI.

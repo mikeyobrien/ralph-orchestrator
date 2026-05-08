@@ -38,6 +38,7 @@ mod memory_store;
 pub mod merge_queue;
 pub mod planning_session;
 pub mod preflight;
+pub mod preset_source;
 #[cfg(feature = "recording")]
 mod session_player;
 #[cfg(feature = "recording")]
@@ -114,6 +115,9 @@ pub use planning_session::{
 pub use preflight::{
     AcceptanceCriterion, CheckResult, CheckStatus, PreflightCheck, PreflightReport,
     PreflightRunner, extract_acceptance_criteria, extract_all_criteria, extract_criteria_from_file,
+};
+pub use preset_source::{
+    AutoloopPresetSource, PresetRegistry, PresetSource, PresetSourceError, YamlPresetSource,
 };
 #[cfg(feature = "recording")]
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};
