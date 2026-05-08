@@ -5,7 +5,7 @@
 //! implementations:
 //!
 //! - [`YamlPresetSource`] — the canonical Ralph single-file YAML shape.
-//! - [`AutoloopPresetSource`] — imports multi-file TOML presets authored for
+//! - [`TomlPresetSource`] — imports multi-file TOML presets authored for
 //!   the [`@mobrienv/autoloop`](https://github.com/mobrienv/autoloop) runtime
 //!   (directory containing `autoloops.toml` + `topology.toml` + `roles/*.md`
 //!   + optional `harness.md`).
@@ -80,7 +80,7 @@ impl PresetSourceError {
 /// without incurring the cost of a full parse.
 pub trait PresetSource: Send + Sync {
     /// Short identifier used in error messages and logs (e.g., `"yaml"`,
-    /// `"autoloop"`).
+    /// `"toml"`).
     fn id(&self) -> &'static str;
 
     /// Returns `true` iff this source can handle the preset at `path`.
@@ -101,7 +101,7 @@ pub trait PresetSource: Send + Sync {
 /// Ordered registry of [`PresetSource`] impls.
 ///
 /// Sources registered earlier win detection ties. The default registry is
-/// `[AutoloopPresetSource, YamlPresetSource]` — autoloop first because its
+/// `[TomlPresetSource, YamlPresetSource]` — TOML-dir first because its
 /// detection is strict (requires a directory with two specific TOML files),
 /// YAML second as the permissive fallback.
 pub struct PresetRegistry {
@@ -138,17 +138,14 @@ impl PresetRegistry {
     /// Peek which source handles `path` without loading. Returns the source's
     /// `id()` string, or `None` if no source matches.
     pub fn detect(&self, path: &Path) -> Option<&'static str> {
-        self.sources
-            .iter()
-            .find(|s| s.detect(path))
-            .map(|s| s.id())
+        self.sources.iter().find(|s| s.detect(path)).map(|s| s.id())
     }
 }
 
 impl Default for PresetRegistry {
     fn default() -> Self {
         Self::new()
-            .register(Box::new(AutoloopPresetSource::new()))
+            .register(Box::new(TomlPresetSource::new()))
             .register(Box::new(YamlPresetSource::new()))
     }
 }
@@ -192,17 +189,17 @@ impl PresetSource for YamlPresetSource {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct AutoloopPresetSource;
+pub struct TomlPresetSource;
 
-impl AutoloopPresetSource {
+impl TomlPresetSource {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl PresetSource for AutoloopPresetSource {
+impl PresetSource for TomlPresetSource {
     fn id(&self) -> &'static str {
-        "autoloop"
+        "toml"
     }
 
     fn detect(&self, path: &Path) -> bool {
@@ -273,12 +270,13 @@ fn build_overlay(
         insert_str(&mut hat, "name", &role.name);
         // Ralph requires non-empty `description`. Autoloop presets don't have
         // this field, so synthesize one from id+first emit.
-        let description = role.description.clone().unwrap_or_else(|| {
-            match role.emits.first() {
+        let description = role
+            .description
+            .clone()
+            .unwrap_or_else(|| match role.emits.first() {
                 Some(ev) => format!("Autoloop role `{}` — emits {}", role.id, ev),
                 None => format!("Autoloop role `{}`", role.id),
-            }
-        });
+            });
         insert_str(&mut hat, "description", &description);
         insert_str_list(
             &mut hat,
@@ -330,7 +328,10 @@ fn build_overlay(
             .iter()
             .filter_map(|v| v.as_str().map(|s| Value::String(s.to_string())))
             .collect();
-        event_loop.insert(Value::String("required_events".into()), Value::Sequence(items));
+        event_loop.insert(
+            Value::String("required_events".into()),
+            Value::Sequence(items),
+        );
     }
 
     // Starting event: autoloop preset convention is `loop.start`. If the
@@ -359,7 +360,10 @@ fn build_overlay(
     );
     overlay.insert(Value::String("hats".into()), Value::Mapping(hats));
     if !event_loop.is_empty() {
-        overlay.insert(Value::String("event_loop".into()), Value::Mapping(event_loop));
+        overlay.insert(
+            Value::String("event_loop".into()),
+            Value::Mapping(event_loop),
+        );
     }
 
     // Harness text goes into guardrails as a single entry prefixed with a
@@ -485,9 +489,10 @@ fn resolve_role_prompt(
     prompt_file: Option<&str>,
 ) -> Result<String, PresetSourceError> {
     if let Some(inline) = inline
-        && !inline.trim().is_empty() {
-            return Ok(inline);
-        }
+        && !inline.trim().is_empty()
+    {
+        return Ok(inline);
+    }
     let Some(rel) = prompt_file else {
         return Ok(String::new());
     };
@@ -505,9 +510,9 @@ fn extract_handoff(
     let Some(raw) = topology.get("handoff") else {
         return Ok(Vec::new());
     };
-    let table = raw.as_table().ok_or_else(|| {
-        PresetSourceError::malformed(preset_dir, "handoff must be a TOML table")
-    })?;
+    let table = raw
+        .as_table()
+        .ok_or_else(|| PresetSourceError::malformed(preset_dir, "handoff must be a TOML table"))?;
 
     let mut out = Vec::with_capacity(table.len());
     for (event, value) in table {
@@ -661,7 +666,7 @@ prompt_file = "roles/critic.md"
     fn autoloop_source_detects_valid_preset_dir() {
         let tmp = TempDir::new().unwrap();
         minimal_preset(tmp.path());
-        assert!(AutoloopPresetSource::new().detect(tmp.path()));
+        assert!(TomlPresetSource::new().detect(tmp.path()));
     }
 
     #[test]
@@ -669,14 +674,14 @@ prompt_file = "roles/critic.md"
         let tmp = TempDir::new().unwrap();
         let yml = tmp.path().join("x.yml");
         fs::write(&yml, "").unwrap();
-        assert!(!AutoloopPresetSource::new().detect(&yml));
+        assert!(!TomlPresetSource::new().detect(&yml));
     }
 
     #[test]
     fn autoloop_source_rejects_dir_missing_topology() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("autoloops.toml"), "").unwrap();
-        assert!(!AutoloopPresetSource::new().detect(tmp.path()));
+        assert!(!TomlPresetSource::new().detect(tmp.path()));
     }
 
     #[test]
@@ -684,7 +689,7 @@ prompt_file = "roles/critic.md"
         let tmp = TempDir::new().unwrap();
         minimal_preset(tmp.path());
 
-        let overlay = AutoloopPresetSource::new().load(tmp.path()).unwrap();
+        let overlay = TomlPresetSource::new().load(tmp.path()).unwrap();
         let map = overlay.as_mapping().unwrap();
 
         // Hats are populated for each role.
@@ -733,7 +738,7 @@ prompt_file = "roles/critic.md"
         let tmp = TempDir::new().unwrap();
         minimal_preset(tmp.path());
 
-        let overlay = AutoloopPresetSource::new().load(tmp.path()).unwrap();
+        let overlay = TomlPresetSource::new().load(tmp.path()).unwrap();
         let event_loop = overlay
             .as_mapping()
             .unwrap()
@@ -795,7 +800,7 @@ prompt = "be done"
             ],
         );
 
-        let overlay = AutoloopPresetSource::new().load(tmp.path()).unwrap();
+        let overlay = TomlPresetSource::new().load(tmp.path()).unwrap();
         let cp = overlay
             .as_mapping()
             .unwrap()
@@ -814,7 +819,7 @@ prompt = "be done"
 
         let tmp = TempDir::new().unwrap();
         minimal_preset(tmp.path());
-        assert_eq!(registry.detect(tmp.path()), Some("autoloop"));
+        assert_eq!(registry.detect(tmp.path()), Some("toml"));
 
         let yml = tmp.path().join("out.yml");
         fs::write(&yml, "event_loop: {}").unwrap();
@@ -836,7 +841,10 @@ prompt = "be done"
     fn handoff_inversion_preserves_event_order_per_role() {
         let handoff = vec![
             ("a.first".to_string(), vec!["r1".to_string()]),
-            ("a.second".to_string(), vec!["r1".to_string(), "r2".to_string()]),
+            (
+                "a.second".to_string(),
+                vec!["r1".to_string(), "r2".to_string()],
+            ),
             ("a.third".to_string(), vec!["r1".to_string()]),
         ];
         let inverted = invert_handoff(&handoff);
@@ -863,7 +871,7 @@ prompt = "be done"
             return;
         }
 
-        let overlay = AutoloopPresetSource::new()
+        let overlay = TomlPresetSource::new()
             .load(&fixture)
             .expect("real autocode preset must load");
 

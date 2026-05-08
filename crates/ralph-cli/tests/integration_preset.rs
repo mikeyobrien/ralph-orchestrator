@@ -1,9 +1,9 @@
-//! Integration tests for autoloop preset import via the `-H` flag.
+//! Integration tests for preset import via the `-H` flag.
 //!
 //! Covers:
-//! - `-H <dir>` where the directory is an autoloop preset (auto-detect).
-//! - `-H autoloop:<name>` where `<name>` resolves via cwd-local `presets/`.
-//! - Error messaging when an autoloop name fails to resolve.
+//! - `-H <dir>` where the directory is a TOML multi-file preset (auto-detect).
+//! - `-H <name>` where `<name>` resolves via cwd-local `presets/`.
+//! - Error messaging when a preset name fails to resolve.
 
 use std::fs;
 use std::path::Path;
@@ -41,7 +41,7 @@ prompt_file = "roles/critic.md"
 "review.ready" = ["critic"]
 "#;
 
-fn write_autoloop_preset(root: &Path, name: &str) -> std::path::PathBuf {
+fn write_toml_preset(root: &Path, name: &str) -> std::path::PathBuf {
     let dir = root.join("presets").join(name);
     fs::create_dir_all(dir.join("roles")).unwrap();
     fs::write(dir.join("autoloops.toml"), MIN_AUTOLOOPS_TOML).unwrap();
@@ -51,7 +51,7 @@ fn write_autoloop_preset(root: &Path, name: &str) -> std::path::PathBuf {
     fs::write(dir.join("roles/critic.md"), "Criticize.").unwrap();
     fs::write(
         dir.join("harness.md"),
-        "Autoloop harness: always verify before completing.",
+        "Harness: always verify before completing.",
     )
     .unwrap();
     dir
@@ -66,9 +66,9 @@ fn run_ralph(cwd: &Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn dry_run_detects_autoloop_preset_dir_passed_as_path() {
+fn dry_run_detects_toml_preset_dir_passed_as_path() {
     let tmp = TempDir::new().unwrap();
-    let preset = write_autoloop_preset(tmp.path(), "my-autoloop");
+    let preset = write_toml_preset(tmp.path(), "my-preset");
 
     let output = run_ralph(
         tmp.path(),
@@ -99,9 +99,9 @@ fn dry_run_detects_autoloop_preset_dir_passed_as_path() {
 }
 
 #[test]
-fn autoloop_name_prefix_resolves_from_cwd_presets_dir() {
+fn bare_preset_name_resolves_from_cwd_presets_dir() {
     let tmp = TempDir::new().unwrap();
-    write_autoloop_preset(tmp.path(), "my-autoloop");
+    write_toml_preset(tmp.path(), "my-preset");
 
     let output = run_ralph(
         tmp.path(),
@@ -109,7 +109,7 @@ fn autoloop_name_prefix_resolves_from_cwd_presets_dir() {
             "--color",
             "never",
             "--hats",
-            "autoloop:my-autoloop",
+            "my-preset",
             "run",
             "--dry-run",
             "--skip-preflight",
@@ -130,7 +130,7 @@ fn autoloop_name_prefix_resolves_from_cwd_presets_dir() {
 }
 
 #[test]
-fn unresolved_autoloop_name_fails_with_helpful_error() {
+fn unresolved_preset_name_fails_with_helpful_error() {
     let tmp = TempDir::new().unwrap();
 
     let output = run_ralph(
@@ -139,7 +139,7 @@ fn unresolved_autoloop_name_fails_with_helpful_error() {
             "--color",
             "never",
             "--hats",
-            "autoloop:definitely-not-here",
+            "definitely-not-here",
             "run",
             "--dry-run",
             "--skip-preflight",
@@ -151,14 +151,17 @@ fn unresolved_autoloop_name_fails_with_helpful_error() {
         ],
     );
 
-    assert!(!output.status.success(), "expected failure for missing preset");
+    assert!(
+        !output.status.success(),
+        "expected failure for missing preset"
+    );
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("definitely-not-here") || combined.contains("autoloop"),
+        combined.contains("definitely-not-here"),
         "error should mention the missing name: {combined}"
     );
 }

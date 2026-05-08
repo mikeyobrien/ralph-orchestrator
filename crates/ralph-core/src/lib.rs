@@ -117,7 +117,7 @@ pub use preflight::{
     PreflightRunner, extract_acceptance_criteria, extract_all_criteria, extract_criteria_from_file,
 };
 pub use preset_source::{
-    AutoloopPresetSource, PresetRegistry, PresetSource, PresetSourceError, YamlPresetSource,
+    PresetRegistry, PresetSource, PresetSourceError, TomlPresetSource, YamlPresetSource,
 };
 #[cfg(feature = "recording")]
 pub use session_player::{PlayerConfig, ReplayMode, SessionPlayer, TimestampedRecord};

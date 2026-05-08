@@ -49,35 +49,41 @@ Example workflow patterns now live in the docs rather than as shipped preset fil
 - `docs/examples/`
 - `presets/COLLECTION.md`
 
-## Importing Autoloop Presets
+## Importing External Presets
 
-Ralph can load hat collections authored for [`@mobrienv/autoloop`](https://github.com/mobrienv/autoloop) without translating them by hand. Autoloop presets are multi-file directories (`autoloops.toml` + `topology.toml` + `roles/*.md` + optional `harness.md`); Ralph's preset loader detects and imports them directly.
+Ralph loads hat collections in two formats:
 
-**Three ways to target an autoloop preset with `-H`:**
+- **YAML** — single-file `<name>.yml` (ralph's native shape, same as the builtins in `presets/*.yml`).
+- **TOML multi-file** — directory containing `autoloops.toml` + `topology.toml` + `roles/*.md` + optional `harness.md`. Originally the [`@mobrienv/autoloop`](https://github.com/mobrienv/autoloop) shape; ralph now treats it as first-class alongside YAML.
+
+**Three ways to target a preset with `-H`:**
 
 ```bash
-# 1. Explicit directory path
+# 1. Bare name — looked up via the resolver (see below)
+ralph run -c ralph.yml -H autocode -p "..."
+
+# 2. Explicit path (YAML file or TOML directory, auto-detected)
 ralph run -c ralph.yml -H ./path/to/autocode -p "..."
+ralph run -c ralph.yml -H ./presets/code-assist.yml -p "..."
 
-# 2. `autoloop:<name>` — resolves via lookup order below
-ralph run -c ralph.yml -H autoloop:autocode -p "..."
-
-# 3. Autoloop dir in the usual `./presets/<name>/` slot (auto-detected)
-ralph run -c ralph.yml -H ./presets/autocode -p "..."
+# 3. Shipped builtin
+ralph run -c ralph.yml -H builtin:code-assist -p "..."
 ```
 
-**Lookup order for `autoloop:<name>`:**
+**Lookup order for `-H <name>`:**
 
-1. `./presets/<name>/` (project-local)
-2. `$XDG_CONFIG_HOME/ralph/autoloop-presets/<name>/`
-3. `$HOME/.config/ralph/autoloop-presets/<name>/`
-4. `$AUTOLOOP_PRESETS_DIR/<name>/` (explicit override)
+1. `./presets/<name>(.yml|.yaml|/)` (project-local)
+2. `$XDG_CONFIG_HOME/ralph/presets/<name>/`
+3. `$HOME/.config/ralph/presets/<name>/`
+4. `$HOME/.config/autoloop/presets/<name>/` (shared with autoloop CLI)
+5. `$RALPH_PRESETS_DIR/<name>/`
+6. `$AUTOLOOP_PRESETS_DIR/<name>/` (deprecated alias for #5)
 
-First directory whose layout matches (`autoloops.toml` + `topology.toml` present) wins.
+First match wins. Use `ralph hats list-presets` to see everything discoverable on your system.
 
-**Mapping:**
+**TOML → Ralph mapping** (for TOML-dir presets):
 
-| Autoloop | Ralph |
+| TOML | Ralph |
 |---|---|
 | `topology.toml` `[[role]].id` | `hats.<id>` |
 | `role.prompt_file` contents | `hat.instructions` |
@@ -89,7 +95,7 @@ First directory whose layout matches (`autoloops.toml` + `topology.toml` present
 | `handoff["loop.start"]` route | `event_loop.starting_event = "loop.start"` |
 | `harness.md` (whole file) | prepended to every hat's `instructions` |
 
-Ralph fields autoloop doesn't populate (`cli.backend`, `core.specs_dir`, `core.guardrails`, etc.) still come from your `ralph.yml`, same as with a builtin hat collection.
+Ralph fields TOML presets don't populate (`cli.backend`, `core.specs_dir`, `core.guardrails`, etc.) still come from your `ralph.yml`, same as with a builtin hat collection.
 
 The importer is extensible — see `crates/ralph-core/src/preset_source.rs` for the `PresetSource` trait; new preset shapes plug in by implementing `detect` + `load`.
 

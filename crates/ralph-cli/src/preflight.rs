@@ -213,14 +213,14 @@ pub(crate) async fn load_config_for_preflight(
             );
         }
 
-        // Autoloop presets carry loop-level policy (max_iterations,
+        // TOML multi-file presets carry loop-level policy (max_iterations,
         // required_events) that the generic hats-overlay allowlist rightly
-        // rejects from user-authored YAML hats files. For `autoloop:` /
-        // autoloop-dir sources we inject those knobs directly into core
-        // BEFORE the generic overlay merge, which still filters
-        // user-editable event_loop keys defensively.
-        if let HatsSource::AutoloopDir(path) = source {
-            apply_autoloop_core_patch(&mut core_value, path)?;
+        // rejects from user-authored YAML hats files. For TOML preset
+        // sources we inject those knobs directly into core BEFORE the
+        // generic overlay merge, which still filters user-editable
+        // event_loop keys defensively.
+        if let HatsSource::PresetDir(path) = source {
+            apply_toml_preset_core_patch(&mut core_value, path)?;
         }
 
         let hats_value = load_hats_value(source).await?;
@@ -370,7 +370,7 @@ async fn load_core_value(
 /// These knobs intentionally bypass [`merge_hats_overlay`]'s allowlist because
 /// they're loop-wide policy sourced from an imported preset, not from a
 /// user-authored hats YAML file.
-fn apply_autoloop_core_patch(core_value: &mut Value, preset_dir: &Path) -> Result<()> {
+fn apply_toml_preset_core_patch(core_value: &mut Value, preset_dir: &Path) -> Result<()> {
     let registry = ralph_core::PresetRegistry::default();
     let overlay = registry.load(preset_dir).with_context(|| {
         format!(
@@ -455,19 +455,20 @@ async fn load_hats_value(source: &HatsSource) -> Result<Value> {
                 config_resolution::parse_yaml_value(preset.content, &format!("builtin:{}", name))?;
             extract_hat_overlay_from_preset(preset_value)
         }
-        HatsSource::AutoloopDir(path) => {
+        HatsSource::PresetDir(path) => {
             if !path.exists() {
                 anyhow::bail!(
-                    "Autoloop preset dir not found: {}. If this was an `autoloop:<name>` \
-                     lookup, check that `./presets/<name>/`, `$XDG_CONFIG_HOME/ralph/autoloop-presets/<name>/`, \
-                     or `$AUTOLOOP_PRESETS_DIR/<name>/` exists and contains `autoloops.toml` and `topology.toml`.",
+                    "Preset directory not found: {}. For `-H <name>` lookups, ensure the name resolves under \
+                     `./presets/<name>/`, `$XDG_CONFIG_HOME/ralph/presets/<name>/`, `$HOME/.config/ralph/presets/<name>/`, \
+                     `$HOME/.config/autoloop/presets/<name>/`, or `$RALPH_PRESETS_DIR/<name>/` \
+                     and contains `autoloops.toml` and `topology.toml`. Run `ralph hats list-presets` to see what is discoverable.",
                     path.display()
                 );
             }
             let registry = ralph_core::PresetRegistry::default();
             let value = registry
                 .load(path)
-                .with_context(|| format!("Failed to import autoloop preset from {}", path.display()))?;
+                .with_context(|| format!("Failed to import preset from {}", path.display()))?;
             extract_hat_overlay_from_preset(value)
         }
     }
