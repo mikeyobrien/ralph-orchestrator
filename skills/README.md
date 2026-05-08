@@ -3,12 +3,15 @@
 This directory is the canonical public skill package for external agent
 harnesses that operate Ralph.
 
-It ships two skills:
+It ships three skills:
 
 - `ralph-hats` for creating, inspecting, validating, and improving hat
   collections
 - `ralph-loop` for running, monitoring, resuming, merging, and debugging Ralph
   loops
+- `ralph-docs` for introspecting and improving Ralph itself via the
+  published `llms.txt` doc map — answering "how does Ralph do X?"
+  questions and scoping code changes to the ralph-orchestrator repo
 
 These are public agent skills. They are not part of Ralph's internal
 `ralph tools skill` registry.
@@ -31,12 +34,13 @@ List the skills in this repository:
 npx skills add mikeyobrien/ralph-orchestrator --list
 ```
 
-Install both skills for Claude Code:
+Install all skills for Claude Code:
 
 ```bash
 npx skills add mikeyobrien/ralph-orchestrator \
   --skill ralph-hats \
   --skill ralph-loop \
+  --skill ralph-docs \
   -a claude-code \
   -y
 ```
