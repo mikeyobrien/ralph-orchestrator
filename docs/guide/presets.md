@@ -166,6 +166,38 @@ Run it:
 ralph run -c ralph.yml -H .ralph/hats/my-workflow.yml
 ```
 
+## TOML-Shape Presets (multi-file directory)
+
+Ralph also loads the multi-file TOML preset format originally defined by [`@mobrienv/autoloop`](https://github.com/mikeyobrien/autoloop) — a directory containing `autoloops.toml`, `topology.toml`, `harness.md`, and per-role prompt files under `roles/`. This is treated as a first-class preset format alongside YAML; use `-H <name>` or `-H <path>` identically.
+
+```bash
+# Discoverable via the resolver (see "Preset Resolution" below)
+ralph run -H autocode -p "Add OAuth login"
+
+# Or point at the directory directly
+ralph run -H /path/to/autocode -p "Add OAuth login"
+```
+
+**Authoring a TOML preset** — follow the autoloop authoring guide:
+
+- **[Creating presets](https://mikeyobrien.github.io/autoloop/guides/creating-presets)** — directory layout, `autoloops.toml` + `topology.toml` fields, role prompt conventions, harness rules, fail-closed patterns.
+- **[Bundled preset examples](https://github.com/mikeyobrien/autoloop/tree/main/packages/presets/presets)** — 15+ reference implementations (autocode, autofix, autoreview, autodebug, autospec, etc.) you can copy as a starting point.
+
+The TOML shape is useful when each role needs its own prompt file, a separate harness, or more structure than a single YAML permits. Both shapes compile to the same internal representation, so nothing about the rest of ralph changes — the backend, CLI, event flow, and completion semantics work identically.
+
+## Preset Resolution
+
+`-H <name>` resolves a bare preset name against these paths in order (first hit wins):
+
+1. `./presets/<name>(.yml|.yaml|/)` — project-local
+2. `$XDG_CONFIG_HOME/ralph/presets/<name>/`
+3. `$HOME/.config/ralph/presets/<name>/` — user, canonical
+4. `$HOME/.config/autoloop/presets/<name>/` — shared with the autoloop CLI
+5. `$RALPH_PRESETS_DIR/<name>/` — explicit override
+6. `$AUTOLOOP_PRESETS_DIR/<name>/` — back-compat fallback
+
+Run `ralph hats list-presets` to see everything discoverable on your system (both YAML and TOML shapes in one table).
+
 ## Source of Truth and Sync
 
 - Canonical preset files: `presets/*.yml`

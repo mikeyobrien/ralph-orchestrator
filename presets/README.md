@@ -54,7 +54,12 @@ Example workflow patterns now live in the docs rather than as shipped preset fil
 Ralph loads hat collections in two formats:
 
 - **YAML** — single-file `<name>.yml` (ralph's native shape, same as the builtins in `presets/*.yml`).
-- **TOML multi-file** — directory containing `autoloops.toml` + `topology.toml` + `roles/*.md` + optional `harness.md`. Originally the [`@mobrienv/autoloop`](https://github.com/mobrienv/autoloop) shape; ralph now treats it as first-class alongside YAML.
+- **TOML multi-file** — directory containing `autoloops.toml` + `topology.toml` + `roles/*.md` + optional `harness.md`. Originally the [`@mobrienv/autoloop`](https://github.com/mikeyobrien/autoloop) shape; ralph now treats it as first-class alongside YAML.
+
+For the TOML shape, see the autoloop authoring guide:
+
+- **[Creating presets](https://mikeyobrien.github.io/autoloop/guides/creating-presets)** — directory layout, `autoloops.toml` + `topology.toml` fields, role prompts, harness rules, fail-closed patterns.
+- **[Bundled examples](https://github.com/mikeyobrien/autoloop/tree/main/packages/presets/presets)** — 15+ reference presets (autocode, autofix, autodebug, autospec, …) that work unchanged in ralph via `-H <name>`.
 
 **Three ways to target a preset with `-H`:**
 
