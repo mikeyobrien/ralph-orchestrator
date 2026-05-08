@@ -855,3 +855,10 @@ hats:
 - `<phase>.ready` / `<phase>.done` — Phase transitions
 - `<thing>.approved` / `<thing>.rejected` — Review gates
 - `<noun>.found` / `<noun>.missing` — Discovery events
+
+### Authoring a TOML multi-file preset
+
+For bigger presets where each role wants its own prompt file and a separate harness, use the multi-file TOML shape instead. See the autoloop authoring guide — ralph consumes that format directly via `-H <name>` or `-H <path>`:
+
+- **[Creating presets (autoloop docs)](https://mikeyobrien.github.io/autoloop/guides/creating-presets)** — directory layout, `autoloops.toml` + `topology.toml` fields, role prompts, fail-closed patterns.
+- **[Bundled examples](https://github.com/mikeyobrien/autoloop/tree/main/packages/presets/presets)** — working reference presets (autocode, autofix, autodebug, autospec, …).
