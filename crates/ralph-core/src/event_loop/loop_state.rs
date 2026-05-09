@@ -70,6 +70,15 @@ pub struct LoopState {
 
     /// Set to true when a loop.cancel event is detected.
     pub cancellation_requested: bool,
+
+    /// Session-scoped peak of `input + cache_read + cache_write` tokens across all iterations.
+    pub peak_input_tokens: u64,
+
+    /// Last iteration's `input + cache_read + cache_write` tokens (if any).
+    pub last_input_tokens: Option<u64>,
+
+    /// Per-hat session-scoped peak of `input + cache_read + cache_write` tokens.
+    pub hat_peak_input_tokens: HashMap<HatId, u64>,
 }
 
 impl Default for LoopState {
@@ -95,6 +104,9 @@ impl Default for LoopState {
             last_emitted_signature: None,
             consecutive_same_signature: 0,
             cancellation_requested: false,
+            peak_input_tokens: 0,
+            last_input_tokens: None,
+            hat_peak_input_tokens: HashMap::new(),
         }
     }
 }
@@ -135,6 +147,21 @@ impl LoopState {
         }
     }
 
+    /// Record this iteration's context-token usage for the hat that ran it.
+    ///
+    /// `tokens` is the iteration's `input + cache_read + cache_write` sum.
+    /// No-op when `tokens == 0` (ACP / non-token backends suppressed).
+    /// Peaks are session-scoped — they never reset on iteration boundaries.
+    pub fn record_iteration_tokens(&mut self, hat: &HatId, tokens: u64) {
+        if tokens == 0 {
+            return;
+        }
+        let entry = self.hat_peak_input_tokens.entry(hat.clone()).or_insert(0);
+        *entry = (*entry).max(tokens);
+        self.peak_input_tokens = self.peak_input_tokens.max(tokens);
+        self.last_input_tokens = Some(tokens);
+    }
+
     /// Check if all required topics have been seen.
     pub fn missing_required_events<'a>(&self, required: &'a [String]) -> Vec<&'a String> {
         required
@@ -163,7 +190,7 @@ fn fingerprint_payload(payload: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::LoopState;
-    use ralph_proto::Event;
+    use ralph_proto::{Event, HatId};
 
     #[test]
     fn repeated_task_complete_does_not_accumulate_stale_loop_count() {
@@ -182,6 +209,62 @@ mod tests {
                 .as_ref()
                 .map(|s| s.topic.as_str()),
             Some("task.complete")
+        );
+    }
+
+    #[test]
+    fn record_iteration_tokens_tracks_per_hat_and_global_peak() {
+        let mut state = LoopState::new();
+        let builder = HatId::new("builder");
+        let critic = HatId::new("critic");
+
+        state.record_iteration_tokens(&builder, 10_000);
+        assert_eq!(
+            state.hat_peak_input_tokens.get(&builder).copied(),
+            Some(10_000)
+        );
+        assert_eq!(state.peak_input_tokens, 10_000);
+        assert_eq!(state.last_input_tokens, Some(10_000));
+
+        state.record_iteration_tokens(&builder, 5_000);
+        assert_eq!(
+            state.hat_peak_input_tokens.get(&builder).copied(),
+            Some(10_000),
+            "per-hat peak must retain the max across iterations"
+        );
+        assert_eq!(
+            state.peak_input_tokens, 10_000,
+            "global peak must retain the overall max"
+        );
+        assert_eq!(
+            state.last_input_tokens,
+            Some(5_000),
+            "last_input_tokens tracks the most recent iteration, not the peak"
+        );
+
+        state.record_iteration_tokens(&critic, 25_000);
+        assert_eq!(
+            state.hat_peak_input_tokens.get(&builder).copied(),
+            Some(10_000)
+        );
+        assert_eq!(
+            state.hat_peak_input_tokens.get(&critic).copied(),
+            Some(25_000)
+        );
+        assert_eq!(state.peak_input_tokens, 25_000);
+        assert_eq!(state.last_input_tokens, Some(25_000));
+
+        state.record_iteration_tokens(&builder, 0);
+        assert_eq!(
+            state.hat_peak_input_tokens.get(&builder).copied(),
+            Some(10_000),
+            "zero-token iteration must be a no-op"
+        );
+        assert_eq!(state.peak_input_tokens, 25_000);
+        assert_eq!(
+            state.last_input_tokens,
+            Some(25_000),
+            "zero tokens must not overwrite last_input_tokens"
         );
     }
 

@@ -327,6 +327,9 @@ mod tests {
             last_emitted_signature: None,
             consecutive_same_signature: 0,
             cancellation_requested: false,
+            peak_input_tokens: 0,
+            last_input_tokens: None,
+            hat_peak_input_tokens: std::collections::HashMap::new(),
         }
     }
 
