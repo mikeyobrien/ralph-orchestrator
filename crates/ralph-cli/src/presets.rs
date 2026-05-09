@@ -42,6 +42,12 @@ const PRESETS: &[EmbeddedPreset] = &[
         public: true,
     },
     EmbeddedPreset {
+        name: "goal",
+        description: "Goal-driven implement-test-judge loop with adversarial user-style verification",
+        content: include_str!("../presets/goal.yml"),
+        public: true,
+    },
+    EmbeddedPreset {
         name: "hatless-baseline",
         description: "Baseline hatless mode for comparison",
         content: include_str!("../presets/hatless-baseline.yml"),
@@ -134,7 +140,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 6, "Expected 6 public presets");
+        assert_eq!(presets.len(), 7, "Expected 7 public presets");
     }
 
     #[test]
@@ -208,13 +214,14 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 7);
         assert!(names.contains(&"autoresearch"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"code-assist"));
         assert!(names.contains(&"research"));
         assert!(names.contains(&"review"));
         assert!(names.contains(&"pdd-to-code-assist"));
+        assert!(names.contains(&"goal"));
     }
 
     #[test]
@@ -229,6 +236,31 @@ mod tests {
         for preset in PRESETS.iter().filter(|preset| preset.public) {
             assert_public_preset_has_required_events(preset);
         }
+    }
+
+    #[test]
+    fn test_goal_driver_requires_user_style_verification_gate() {
+        let preset = get_preset("goal").expect("goal should exist");
+        let config =
+            RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+
+        assert_eq!(config.event_loop.completion_promise, "GOAL_COMPLETE");
+        assert_eq!(
+            config.event_loop.starting_event.as_deref(),
+            Some("goal.start")
+        );
+        assert!(config.hats.contains_key("planner"));
+        assert!(config.hats.contains_key("driver"));
+        assert!(config.hats.contains_key("judge"));
+        assert!(config.hats.contains_key("finalizer"));
+        assert!(preset.content.contains("Verification Readiness Probe"));
+        assert!(preset.content.contains("verification_unavailable"));
+        assert!(preset.content.contains("TUI"));
+        assert!(preset.content.contains("tmux"));
+        assert!(preset.content.contains("Web"));
+        assert!(preset.content.contains("Playwright CLI"));
+        assert!(preset.content.contains("0-100"));
+        assert!(preset.content.contains("Operator Summary"));
     }
 
     #[test]
