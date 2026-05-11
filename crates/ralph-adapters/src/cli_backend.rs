@@ -116,7 +116,7 @@ impl CliBackend {
                 "--output-format".to_string(),
                 "stream-json".to_string(),
                 "--setting-sources".to_string(),
-                "project,local".to_string(),
+                "user,project,local".to_string(),
                 "--print".to_string(),
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet".to_string(),
             ],
@@ -142,7 +142,7 @@ impl CliBackend {
             args: vec![
                 "--dangerously-skip-permissions".to_string(),
                 "--setting-sources".to_string(),
-                "project,local".to_string(),
+                "user,project,local".to_string(),
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
@@ -370,7 +370,7 @@ impl CliBackend {
             args: vec![
                 "--dangerously-skip-permissions".to_string(),
                 "--setting-sources".to_string(),
-                "project,local".to_string(),
+                "user,project,local".to_string(),
                 "--disallowedTools=TodoWrite".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
@@ -849,7 +849,7 @@ mod tests {
                 "--output-format",
                 "stream-json",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--print",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
             ]
@@ -873,7 +873,7 @@ mod tests {
             vec![
                 "--dangerously-skip-permissions",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 "test prompt"
             ]
@@ -1128,7 +1128,7 @@ mod tests {
                 "--output-format",
                 "stream-json",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
             ]
         );
@@ -1424,7 +1424,7 @@ mod tests {
             vec![
                 "--dangerously-skip-permissions",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 "test prompt"
             ]
@@ -1784,7 +1784,7 @@ mod tests {
             vec![
                 "--dangerously-skip-permissions",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite",
                 "test prompt"
             ]
@@ -1835,7 +1835,7 @@ mod tests {
                 .filter(|window| window[0] == "--setting-sources")
                 .map(|window| window[1].as_str());
 
-            assert_eq!(setting_sources.next(), Some("project,local"));
+            assert_eq!(setting_sources.next(), Some("user,project,local"));
             assert_eq!(setting_sources.next(), None);
         }
     }
