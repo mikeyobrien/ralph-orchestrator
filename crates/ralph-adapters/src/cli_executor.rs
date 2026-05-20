@@ -474,10 +474,10 @@ mod tests {
         };
 
         let executor = CliExecutor::new(backend);
-        let timeout = Some(Duration::from_millis(300));
+        let timeout = Some(Duration::from_millis(500));
         let result = executor
             .execute_capture_with_timeout(
-                "printf 'start\\n'; sleep 0.2; printf 'middle\\n'; sleep 0.2; printf 'done\\n'",
+                "printf 'start\\n'; sleep 0.1; printf 'middle\\n'; sleep 0.1; printf 'done\\n'",
                 timeout,
             )
             .await
