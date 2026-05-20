@@ -58,6 +58,10 @@ pub(crate) struct ExecutionOutcome {
     pub num_turns: u32,
 }
 
+fn context_tokens_from_pty_result(pty_result: &ralph_adapters::PtyExecutionResult) -> u64 {
+    pty_result.input_tokens
+}
+
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
 struct RpcSharedState {
     iteration: Arc<std::sync::atomic::AtomicU32>,
@@ -4232,6 +4236,7 @@ async fn execute_acp(
         }
     };
 
+    let context_tokens = context_tokens_from_pty_result(&pty_result);
     let output = if pty_result.extracted_text.is_empty() {
         pty_result.stripped_output
     } else {
@@ -4248,10 +4253,7 @@ async fn execute_acp(
         cache_read_tokens: pty_result.cache_read_tokens,
         cache_write_tokens: pty_result.cache_write_tokens,
         context_window: resolve_context_window(config),
-        context_tokens: pty_result
-            .input_tokens
-            .saturating_add(pty_result.cache_read_tokens)
-            .saturating_add(pty_result.cache_write_tokens),
+        context_tokens,
         num_turns: pty_result.num_turns,
     })
 }
@@ -4384,6 +4386,7 @@ async fn execute_pty(
 
     match result {
         Ok(pty_result) => {
+            let context_tokens = context_tokens_from_pty_result(&pty_result);
             let termination = convert_termination_type(pty_result.termination, interactive);
 
             // Use extracted_text for event parsing when available (NDJSON backends like Claude),
@@ -4405,10 +4408,7 @@ async fn execute_pty(
                 cache_read_tokens: pty_result.cache_read_tokens,
                 cache_write_tokens: pty_result.cache_write_tokens,
                 context_window: resolve_context_window(config),
-                context_tokens: pty_result
-                    .input_tokens
-                    .saturating_add(pty_result.cache_read_tokens)
-                    .saturating_add(pty_result.cache_write_tokens),
+                context_tokens,
                 num_turns: pty_result.num_turns,
             })
         }
@@ -6251,6 +6251,26 @@ mod tests {
     use std::ffi::OsStr;
     use std::sync::Arc;
     use std::sync::Mutex;
+
+    #[test]
+    fn test_context_tokens_from_pty_result_uses_live_peak_without_cache_double_count() {
+        let pty_result = ralph_adapters::PtyExecutionResult {
+            output: String::new(),
+            stripped_output: String::new(),
+            extracted_text: String::new(),
+            success: true,
+            exit_code: Some(0),
+            termination: ralph_adapters::TerminationType::Natural,
+            total_cost_usd: 0.0,
+            input_tokens: 90_000,
+            output_tokens: 1_200,
+            cache_read_tokens: 30_000,
+            cache_write_tokens: 10_000,
+            num_turns: 3,
+        };
+
+        assert_eq!(context_tokens_from_pty_result(&pty_result), 90_000);
+    }
 
     #[test]
     fn test_resolve_loop_id_fresh_generates_new() {

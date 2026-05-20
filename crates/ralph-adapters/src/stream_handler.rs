@@ -103,16 +103,15 @@ pub struct SessionResult {
 /// Builds the one-line session summary used by Pretty / Console / TUI on_complete.
 ///
 /// The `Context:` suffix is omitted when `context_window == 0` or when
-/// `used == 0` (used = input_tokens + cache_read_tokens + cache_write_tokens).
+/// `used == 0` (used = input_tokens). `SessionResult.input_tokens` is the
+/// live context peak and already includes cache tokens when the backend reports
+/// them separately.
 pub fn format_session_summary(r: &SessionResult) -> String {
     let base = format!(
         "Duration: {}ms | Est. cost: ${:.4} | Turns: {}",
         r.duration_ms, r.total_cost_usd, r.num_turns
     );
-    let used = r
-        .input_tokens
-        .saturating_add(r.cache_read_tokens)
-        .saturating_add(r.cache_write_tokens);
+    let used = r.input_tokens;
     if r.context_window > 0 && used > 0 {
         let pct = used.saturating_mul(100) / r.context_window;
         let used_k = (used + 500) / 1_000;
@@ -691,10 +690,12 @@ mod tests {
             (0, 42_000, 0, 0, ""),
             // Row 2: used = 0 → suffix omitted.
             (200_000, 0, 0, 0, ""),
-            // Row 3: 45% (sum across all three token buckets).
+            // Row 3: 45%. input_tokens is already the live-context peak;
+            // cache_read/cache_write are displayed separately and must not be
+            // added again.
             (
                 200_000,
-                50_000,
+                90_000,
                 30_000,
                 10_000,
                 " | Context: 45% (90K/200K)",

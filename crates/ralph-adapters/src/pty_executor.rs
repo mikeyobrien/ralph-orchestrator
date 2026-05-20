@@ -59,13 +59,16 @@ pub struct PtyExecutionResult {
     pub termination: TerminationType,
     /// Total session cost in USD, if available from stream metadata.
     pub total_cost_usd: f64,
-    /// Total input tokens in the session.
+    /// Peak live input tokens observed for the session. This already includes
+    /// backend-reported cache tokens when they occupy the live context window.
     pub input_tokens: u64,
     /// Total output tokens in the session.
     pub output_tokens: u64,
-    /// Total cache-read tokens in the session.
+    /// Cache-read tokens reported separately for display/cost diagnostics; do
+    /// not add to `input_tokens` when computing context utilization.
     pub cache_read_tokens: u64,
-    /// Total cache-write tokens in the session.
+    /// Cache-write tokens reported separately for display/cost diagnostics; do
+    /// not add to `input_tokens` when computing context utilization.
     pub cache_write_tokens: u64,
     /// Number of turns reported by the session (0 when unknown).
     pub num_turns: u32,
