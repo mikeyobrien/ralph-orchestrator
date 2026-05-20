@@ -298,6 +298,131 @@ event_loop:
 }
 
 #[test]
+fn test_persisted_loop_state_round_trips_iteration_cost_and_last_hat() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let state_path = temp_dir.path().join(".ralph/api/loop-state.json");
+
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop.state.iteration = 7;
+    event_loop.state.cumulative_cost = 1.23;
+    event_loop.state.last_hat = Some(HatId::new("builder"));
+    event_loop.save_loop_state(&state_path).unwrap();
+
+    let mut resumed = EventLoop::new(RalphConfig::default());
+    resumed.restore_loop_state(&state_path).unwrap();
+
+    assert_eq!(resumed.state.iteration, 7);
+    assert!((resumed.state.cumulative_cost - 1.23).abs() < f64::EPSILON);
+    assert_eq!(resumed.state.last_hat.as_ref().unwrap().as_str(), "builder");
+}
+
+#[test]
+fn test_fresh_run_clears_stale_persisted_loop_state() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let state_path = temp_dir.path().join(".ralph/api/loop-state.json");
+
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop.state.iteration = 3;
+    event_loop.state.cumulative_cost = 0.42;
+    event_loop.save_loop_state(&state_path).unwrap();
+    assert!(state_path.exists());
+
+    EventLoop::clear_loop_state(&state_path).unwrap();
+    assert!(!state_path.exists());
+}
+
+#[test]
+fn test_resume_replay_hydrates_seen_topics_without_republishing_pre_terminate_events() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let yaml = r#"
+hats:
+  monitor:
+    name: "Monitor"
+    triggers: ["build.monitoring.resume"]
+    publishes: ["build.monitoring.done"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    write_event_to_jsonl(&events_path, "task.start", "original objective");
+    write_event_to_jsonl(
+        &events_path,
+        "build.monitoring.park",
+        "park before shutdown",
+    );
+    write_event_to_jsonl(&events_path, "loop.terminate", "parked");
+
+    event_loop.replay_resume_events_from_jsonl().unwrap();
+
+    assert!(event_loop.state.seen_topics.contains("task.start"));
+    assert!(
+        event_loop
+            .state
+            .seen_topics
+            .contains("build.monitoring.park")
+    );
+    assert!(event_loop.state.seen_topics.contains("loop.terminate"));
+    assert!(
+        !event_loop.has_pending_events(),
+        "events before the last loop.terminate should hydrate state but not re-trigger hats"
+    );
+}
+
+#[test]
+fn test_resume_replay_publishes_events_after_last_terminate_to_bus() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let yaml = r#"
+hats:
+  monitor:
+    name: "Monitor"
+    triggers: ["build.monitoring.resume"]
+    publishes: ["build.monitoring.done"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    write_event_to_jsonl(&events_path, "task.start", "original objective");
+    write_event_to_jsonl(&events_path, "loop.terminate", "parked");
+    write_event_to_jsonl(
+        &events_path,
+        "build.monitoring.resume",
+        "watchdog says continue",
+    );
+
+    event_loop.replay_resume_events_from_jsonl().unwrap();
+
+    assert!(event_loop.state.seen_topics.contains("task.start"));
+    assert!(event_loop.state.seen_topics.contains("loop.terminate"));
+    assert!(
+        event_loop
+            .state
+            .seen_topics
+            .contains("build.monitoring.resume")
+    );
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+    assert!(
+        prompt.contains("build.monitoring.resume"),
+        "post-terminate resume event should be delivered to the in-memory bus"
+    );
+    assert!(prompt.contains("watchdog says continue"));
+}
+
+#[test]
 fn test_completion_promise_detection() {
     use std::fs;
     use tempfile::TempDir;
