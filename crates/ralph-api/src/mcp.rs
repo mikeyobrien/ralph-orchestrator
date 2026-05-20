@@ -843,6 +843,36 @@ mod tests {
         assert!(stream_next.tool.output_schema.is_some());
     }
 
+    #[test]
+    fn catalog_trims_per_tool_schema_defs() {
+        let root_schema: Value = serde_json::from_str(include_str!("../data/rpc-v1-schema.json"))
+            .expect("embedded rpc-v1 schema must parse");
+        let full_def_count = root_schema["$defs"]
+            .as_object()
+            .expect("root schema exposes $defs")
+            .len();
+        let catalog = tool_catalog();
+        let task_create = catalog.lookup("task_create").expect("task_create tool");
+        let task_create_def_count = task_create.tool.input_schema["$defs"]
+            .as_object()
+            .expect("task_create input schema exposes filtered $defs")
+            .len();
+
+        assert!(
+            task_create_def_count < full_def_count,
+            "task_create should not republish every root $defs entry ({task_create_def_count}/{full_def_count})"
+        );
+
+        let listed = catalog.list_tools(None).expect("tools should list");
+        let payload_size = serde_json::to_vec(&listed.tools)
+            .expect("tools/list payload should serialize")
+            .len();
+        assert!(
+            payload_size < 1_000_000,
+            "tools/list schema payload should stay under 1MB, got {payload_size} bytes"
+        );
+    }
+
     #[tokio::test]
     async fn stream_next_times_out_without_events() {
         let (server, _workspace) = test_server();
