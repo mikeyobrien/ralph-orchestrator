@@ -149,10 +149,10 @@ impl PtyConfig {
 /// (new tokens produced per turn never overlap).
 #[derive(Debug, Default)]
 struct ClaudeSessionState {
-    peak_input_tokens: u64,
-    total_output_tokens: u64,
-    peak_cache_read_tokens: u64,
-    peak_cache_write_tokens: u64,
+    peak_input: u64,
+    total_output: u64,
+    peak_cache_read: u64,
+    peak_cache_write: u64,
 }
 
 impl ClaudeSessionState {
@@ -1906,14 +1906,11 @@ fn dispatch_stream_event<H: StreamHandler>(
                     .input_tokens
                     .saturating_add(usage.cache_creation_input_tokens)
                     .saturating_add(usage.cache_read_input_tokens);
-                state.peak_input_tokens = state.peak_input_tokens.max(turn_input);
-                state.total_output_tokens =
-                    state.total_output_tokens.saturating_add(usage.output_tokens);
-                state.peak_cache_read_tokens = state
-                    .peak_cache_read_tokens
-                    .max(usage.cache_read_input_tokens);
-                state.peak_cache_write_tokens = state
-                    .peak_cache_write_tokens
+                state.peak_input = state.peak_input.max(turn_input);
+                state.total_output = state.total_output.saturating_add(usage.output_tokens);
+                state.peak_cache_read = state.peak_cache_read.max(usage.cache_read_input_tokens);
+                state.peak_cache_write = state
+                    .peak_cache_write
                     .max(usage.cache_creation_input_tokens);
             }
             for block in message.content {
@@ -1958,10 +1955,10 @@ fn dispatch_stream_event<H: StreamHandler>(
                 total_cost_usd,
                 num_turns,
                 is_error,
-                input_tokens: state.peak_input_tokens,
-                output_tokens: state.total_output_tokens,
-                cache_read_tokens: state.peak_cache_read_tokens,
-                cache_write_tokens: state.peak_cache_write_tokens,
+                input_tokens: state.peak_input,
+                output_tokens: state.total_output,
+                cache_read_tokens: state.peak_cache_read,
+                cache_write_tokens: state.peak_cache_write,
                 context_window,
             };
             handler.on_complete(&session_result);
@@ -2339,7 +2336,7 @@ mod tests {
         assert!(extracted_text.contains("Hello"));
         assert!(extracted_text.ends_with('\n'));
         // Usage=None means no aggregation.
-        assert_eq!(claude_state.peak_input_tokens, 0);
+        assert_eq!(claude_state.peak_input, 0);
     }
 
     #[test]
@@ -2439,11 +2436,17 @@ mod tests {
                 }),
             },
         };
-        dispatch_stream_event(turn1, &mut handler, &mut extracted_text, &mut claude_state, 0);
-        assert_eq!(claude_state.peak_input_tokens, 1150);
-        assert_eq!(claude_state.total_output_tokens, 20);
-        assert_eq!(claude_state.peak_cache_read_tokens, 1000);
-        assert_eq!(claude_state.peak_cache_write_tokens, 50);
+        dispatch_stream_event(
+            turn1,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+            0,
+        );
+        assert_eq!(claude_state.peak_input, 1150);
+        assert_eq!(claude_state.total_output, 20);
+        assert_eq!(claude_state.peak_cache_read, 1000);
+        assert_eq!(claude_state.peak_cache_write, 50);
 
         // Turn 2: larger footprint (300 + 4000 + 10 = 4310). Peaks grow.
         let turn2 = ClaudeStreamEvent::Assistant {
@@ -2457,12 +2460,18 @@ mod tests {
                 }),
             },
         };
-        dispatch_stream_event(turn2, &mut handler, &mut extracted_text, &mut claude_state, 0);
-        assert_eq!(claude_state.peak_input_tokens, 4310);
+        dispatch_stream_event(
+            turn2,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+            0,
+        );
+        assert_eq!(claude_state.peak_input, 4310);
         // Output sums; caches keep max.
-        assert_eq!(claude_state.total_output_tokens, 60);
-        assert_eq!(claude_state.peak_cache_read_tokens, 4000);
-        assert_eq!(claude_state.peak_cache_write_tokens, 50);
+        assert_eq!(claude_state.total_output, 60);
+        assert_eq!(claude_state.peak_cache_read, 4000);
+        assert_eq!(claude_state.peak_cache_write, 50);
 
         // Turn 3: smaller. Peaks must be retained (not replaced).
         let turn3 = ClaudeStreamEvent::Assistant {
@@ -2476,11 +2485,17 @@ mod tests {
                 }),
             },
         };
-        dispatch_stream_event(turn3, &mut handler, &mut extracted_text, &mut claude_state, 0);
-        assert_eq!(claude_state.peak_input_tokens, 4310);
-        assert_eq!(claude_state.total_output_tokens, 65);
-        assert_eq!(claude_state.peak_cache_read_tokens, 4000);
-        assert_eq!(claude_state.peak_cache_write_tokens, 50);
+        dispatch_stream_event(
+            turn3,
+            &mut handler,
+            &mut extracted_text,
+            &mut claude_state,
+            0,
+        );
+        assert_eq!(claude_state.peak_input, 4310);
+        assert_eq!(claude_state.total_output, 65);
+        assert_eq!(claude_state.peak_cache_read, 4000);
+        assert_eq!(claude_state.peak_cache_write, 50);
 
         // Result event emits a SessionResult populated from the aggregated state.
         let result = ClaudeStreamEvent::Result {

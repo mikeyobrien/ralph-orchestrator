@@ -266,9 +266,8 @@ pub fn dispatch_pi_stream_event<H: StreamHandler>(
                     state.output_tokens += usage.output;
                     state.cache_read_tokens += usage.cache_read;
                     state.cache_write_tokens += usage.cache_write;
-                    state.peak_input_tokens = state
-                        .peak_input_tokens
-                        .max(usage.input + usage.cache_read);
+                    state.peak_input_tokens =
+                        state.peak_input_tokens.max(usage.input + usage.cache_read);
                 }
             }
         }

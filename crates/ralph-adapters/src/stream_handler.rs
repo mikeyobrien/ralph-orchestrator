@@ -692,19 +692,19 @@ mod tests {
             // Row 2: used = 0 → suffix omitted.
             (200_000, 0, 0, 0, ""),
             // Row 3: 45% (sum across all three token buckets).
-            (200_000, 50_000, 30_000, 10_000, " | Context: 45% (90K/200K)"),
+            (
+                200_000,
+                50_000,
+                30_000,
+                10_000,
+                " | Context: 45% (90K/200K)",
+            ),
             // Row 4: integer-truncated pct = 0, used_k rounds 1_500 → 2K.
             (200_000, 1_500, 0, 0, " | Context: 0% (2K/200K)"),
             // Row 5: over the window — no clamp.
             (200_000, 250_000, 0, 0, " | Context: 125% (250K/200K)"),
             // Row 6: 1M window, mixed used.
-            (
-                1_000_000,
-                123_456,
-                0,
-                0,
-                " | Context: 12% (123K/1000K)",
-            ),
+            (1_000_000, 123_456, 0, 0, " | Context: 12% (123K/1000K)"),
         ];
 
         for (window, input, cache_read, cache_write, suffix) in cases {
@@ -724,7 +724,10 @@ mod tests {
                 format_session_summary(&r),
                 expected,
                 "row: window={} input={} cache_read={} cache_write={}",
-                window, input, cache_read, cache_write
+                window,
+                input,
+                cache_read,
+                cache_write
             );
         }
     }
