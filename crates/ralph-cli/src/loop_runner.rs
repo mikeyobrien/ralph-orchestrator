@@ -104,6 +104,7 @@ fn resolve_loop_id(
 ///   (equivalent to `--no-auto-merge`). If `None`, uses `config.features.auto_merge`.
 /// * `resume_loop_id` - Explicit loop ID to use when resuming (`--loop-id`).
 ///   If `None` and `resume` is true, reuses the existing `current-loop-id` marker.
+#[allow(clippy::fn_params_excessive_bools)]
 pub async fn run_loop_impl(
     config: RalphConfig,
     color_mode: ColorMode,
@@ -116,6 +117,7 @@ pub async fn run_loop_impl(
     custom_args: Vec<String>,
     auto_merge_override: Option<bool>,
     resume_loop_id: Option<String>,
+    approve: bool,
 ) -> Result<TerminationReason> {
     // Set up process group leadership per spec
     // "The orchestrator must run as a process group leader"
@@ -1920,7 +1922,7 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
-        let output = outcome.output;
+        let mut output = outcome.output;
         let success = outcome.success;
 
         // Note: TUI lines are now written directly to IterationBuffer during streaming,
@@ -1979,6 +1981,41 @@ pub async fn run_loop_impl(
 
         // Process output
         if let Some(reason) = event_loop.process_output(&hat_id, &output, success) {
+            // ─────────────────────────────────────────────────────────────────
+            // Human approval checkpoint on completion (--approve flag)
+            // When the agent says LOOP_COMPLETE, give the human a chance to
+            // provide feedback and force another iteration instead.
+            // ─────────────────────────────────────────────────────────────────
+            if approve
+                && !enable_tui
+                && !enable_rpc
+                && reason == TerminationReason::CompletionPromise
+            {
+                match prompt_human_approval(event_loop.state().iteration, &hat_id) {
+                    ApprovalDecision::Feedback(msg) => {
+                        // Inject as human.guidance so it gets prepended to next prompt
+                        event_loop.inject_human_guidance(std::iter::once(msg));
+                        info!("Feedback injected. Overriding completion — continuing loop.");
+                        // Clear output so the text-fallback completion check doesn't re-trigger
+                        output.clear();
+                        continue;
+                    }
+                    ApprovalDecision::Quit => {
+                        handle_termination(
+                            &TerminationReason::Stopped,
+                            event_loop.state(),
+                            &config.core.scratchpad.path,
+                            &loop_history,
+                            &loop_context,
+                            auto_merge,
+                            &prompt_content,
+                        );
+                        return Ok(TerminationReason::Stopped);
+                    }
+                    ApprovalDecision::Continue => {} // fall through to normal termination
+                }
+            }
+
             // Per spec: Log "All done! {promise} detected." when completion promise found
             if reason == TerminationReason::CompletionPromise {
                 info!(
@@ -2575,6 +2612,36 @@ pub async fn run_loop_impl(
         if EventParser::contains_promise(&output, &config.event_loop.completion_promise) {
             event_loop.request_completion_from_text_fallback();
             if let Some(reason) = event_loop.check_completion_event() {
+                // ─────────────────────────────────────────────────────────────
+                // Human approval checkpoint on text-fallback completion (--approve)
+                // ─────────────────────────────────────────────────────────────
+                if approve
+                    && !enable_tui
+                    && !enable_rpc
+                    && reason == TerminationReason::CompletionPromise
+                {
+                    match prompt_human_approval(event_loop.state().iteration, &hat_id) {
+                        ApprovalDecision::Feedback(msg) => {
+                            event_loop.inject_human_guidance(std::iter::once(msg));
+                            info!("Feedback injected. Overriding completion — continuing loop.");
+                            continue;
+                        }
+                        ApprovalDecision::Quit => {
+                            handle_termination(
+                                &TerminationReason::Stopped,
+                                event_loop.state(),
+                                &config.core.scratchpad.path,
+                                &loop_history,
+                                &loop_context,
+                                auto_merge,
+                                &prompt_content,
+                            );
+                            return Ok(TerminationReason::Stopped);
+                        }
+                        ApprovalDecision::Continue => {} // fall through to normal termination
+                    }
+                }
+
                 info!(
                     "Completion promise {} detected in output text.",
                     config.event_loop.completion_promise
@@ -4938,6 +5005,7 @@ pub async fn start_loop(
         Vec::new(),         // no custom args
         None,               // default auto-merge
         None,               // no explicit loop ID
+        false,              // no approval in worktree loops
     )
     .await
 }
@@ -6187,6 +6255,62 @@ fn merge_wave_results_to_events_file(
     file.write_all(buf.as_bytes())?;
 
     Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Human approval checkpoint (--approve flag)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Decision from the human approval prompt.
+enum ApprovalDecision {
+    /// Continue to next iteration.
+    Continue,
+    /// Inject feedback and continue.
+    Feedback(String),
+    /// Stop the loop.
+    Quit,
+}
+
+/// Prompts the user for approval after an iteration completes.
+fn prompt_human_approval(iteration: u32, hat_id: &ralph_proto::HatId) -> ApprovalDecision {
+    use std::io::{BufRead, Write};
+
+    eprintln!();
+    eprintln!("─────────────────────────────────────────────────────────");
+    eprintln!(
+        "  ✅ Iteration {} complete (hat: {})",
+        iteration,
+        hat_id.as_str()
+    );
+    eprintln!("  [a]pprove   [f]eedback   [q]uit");
+    eprintln!("─────────────────────────────────────────────────────────");
+    eprint!("> ");
+    let _ = std::io::stderr().flush();
+
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {
+        return ApprovalDecision::Continue;
+    }
+
+    match line.trim().to_lowercase().as_str() {
+        "q" | "quit" => ApprovalDecision::Quit,
+        "f" | "feedback" => {
+            eprint!("Your feedback: ");
+            let _ = std::io::stderr().flush();
+            let mut feedback = String::new();
+            if stdin.lock().read_line(&mut feedback).unwrap_or(0) == 0 {
+                return ApprovalDecision::Continue;
+            }
+            let feedback = feedback.trim().to_string();
+            if feedback.is_empty() {
+                ApprovalDecision::Continue
+            } else {
+                ApprovalDecision::Feedback(feedback)
+            }
+        }
+        _ => ApprovalDecision::Continue,
+    }
 }
 
 #[cfg(test)]

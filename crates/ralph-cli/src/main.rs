@@ -835,6 +835,14 @@ struct RunArgs {
     #[arg(long, value_name = "FILE")]
     record_session: Option<PathBuf>,
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Human-in-the-Loop Options
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Pause after each iteration for human approval/feedback.
+    /// Shows iteration summary and prompts: [a]pprove, [f]eedback, [q]uit.
+    #[arg(long)]
+    approve: bool,
+
     /// Custom backend command and arguments (use after --)
     #[arg(last = true)]
     custom_args: Vec<String>,
@@ -1295,6 +1303,7 @@ async fn main() -> Result<()> {
                 verbose: false,
                 quiet: false,
                 record_session: None,
+                approve: false,
                 custom_args: Vec::new(),
             };
             run_command(
@@ -1812,7 +1821,11 @@ async fn run_command(
 
     // Run the orchestration loop and exit with proper exit code
     // TUI is enabled by default (unless --no-tui, --autonomous, or --rpc is specified)
-    let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
+    // --approve forces no-TUI mode since the approval prompt needs stdin/stdout
+    let wants_tui = !args.no_tui && !args.autonomous && !args.rpc && !args.approve;
+    if args.approve && !args.no_tui && !args.autonomous && !args.rpc {
+        info!("--approve enabled: TUI disabled (approval prompt needs stdin/stdout)");
+    }
     let use_legacy_tui = args.legacy_tui;
     let enable_rpc = args.rpc;
     let verbosity = Verbosity::resolve(verbose || args.verbose, args.quiet);
@@ -1849,6 +1862,7 @@ async fn run_command(
             custom_args,
             auto_merge_override,
             args.loop_id,
+            args.approve,
         )
         .await?
     };
@@ -2252,6 +2266,7 @@ async fn resume_command(
         Vec::new(), // Resume command doesn't support custom args
         None,       // Use config.features.auto_merge (deprecated command)
         None,       // Deprecated resume command doesn't support --loop-id
+        false,      // Deprecated resume command doesn't support --approve
     )
     .await?;
     let exit_code = reason.exit_code();
@@ -3845,6 +3860,7 @@ core:
             verbose: false,
             quiet: false,
             record_session: None,
+            approve: false,
             custom_args: Vec::new(),
         }
     }
