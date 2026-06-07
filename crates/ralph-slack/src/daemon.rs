@@ -384,14 +384,30 @@ fn monitor_loop_completion<N>(
     N: ThreadNotifier,
 {
     tokio::spawn(async move {
+        let event_path = events_path(&workspace_root, &loop_id);
+        let mut last_reported_line_count = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Ok(contents) = std::fs::read_to_string(&event_path) {
+                if let Some(update) = latest_progress_update(&contents, last_reported_line_count) {
+                    last_reported_line_count = update.line_count;
+                    if let Err(error) = notifier
+                        .post_thread_message(
+                            &channel_id,
+                            &thread_ts,
+                            &format_progress_update(&loop_id, &update),
+                        )
+                        .await
+                    {
+                        tracing::warn!(%loop_id, ?error, "failed to post Slack loop progress update");
+                    }
+                }
+            }
             if !process_is_alive(process_id) {
                 break;
             }
         }
 
-        let event_path = events_path(&workspace_root, &loop_id);
         let contents = std::fs::read_to_string(&event_path).unwrap_or_default();
         let completed = contents.contains("\"topic\":\"LOOP_COMPLETE\"")
             || contents.contains("## Reason\\ncompleted")
@@ -429,6 +445,73 @@ fn process_is_alive(process_id: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SlackProgressUpdate {
+    line_count: usize,
+    iteration: Option<u64>,
+    hat: Option<String>,
+    topic: String,
+    payload: String,
+}
+
+fn latest_progress_update(
+    contents: &str,
+    last_reported_line_count: usize,
+) -> Option<SlackProgressUpdate> {
+    let mut latest = None;
+    for (idx, line) in contents.lines().enumerate() {
+        let line_count = idx + 1;
+        if line_count <= last_reported_line_count || line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let topic = value
+            .get("topic")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let payload = event_payload_text(value.get("payload"));
+        latest = Some(SlackProgressUpdate {
+            line_count,
+            iteration: value.get("iteration").and_then(|value| value.as_u64()),
+            hat: value
+                .get("hat")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            topic,
+            payload,
+        });
+    }
+    latest
+}
+
+fn event_payload_text(payload: Option<&serde_json::Value>) -> String {
+    match payload {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(value) => value.to_string(),
+        None => String::new(),
+    }
+}
+
+fn format_progress_update(loop_id: &str, update: &SlackProgressUpdate) -> String {
+    let iteration = update
+        .iteration
+        .map(|iteration| iteration.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let hat = update.hat.as_deref().unwrap_or("agent");
+    let mut payload = redact_secrets(&update.payload);
+    if payload.len() > 1000 {
+        payload.truncate(1000);
+        payload.push_str("…");
+    }
+    format!(
+        "Ralph update\nLoop: {loop_id}\nIteration: {iteration}\nHat: {hat}\nTopic: {}\nLast message:\n```\n{}\n```",
+        update.topic, payload
+    )
 }
 
 fn help_text() -> &'static str {
@@ -498,6 +581,42 @@ pub fn slack_loop_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_update_uses_iteration_hat_topic_and_last_message() {
+        let contents = concat!(
+            r#"{"ts":"2026-01-01T00:00:00Z","iteration":1,"hat":"planner","topic":"work.start","payload":"first"}"#,
+            "\n",
+            r#"{"ts":"2026-01-01T00:00:01Z","iteration":2,"hat":"executor","topic":"work.done","payload":"created token-secret-token-abc file"}"#,
+            "\n"
+        );
+
+        let update = latest_progress_update(contents, 1).expect("latest update");
+        assert_eq!(update.line_count, 2);
+        assert_eq!(update.iteration, Some(2));
+        assert_eq!(update.hat.as_deref(), Some("executor"));
+        assert_eq!(update.topic, "work.done");
+        assert_eq!(update.payload, "created token-secret-token-abc file");
+
+        let text = format_progress_update("loop-1", &update);
+        assert!(text.contains("Loop: loop-1"));
+        assert!(text.contains("Iteration: 2"));
+        assert!(text.contains("Hat: executor"));
+        assert!(text.contains("Topic: work.done"));
+        assert!(text.contains("created [redacted] file"));
+    }
+
+    #[test]
+    fn progress_update_handles_agent_written_events_without_hat() {
+        let contents =
+            r#"{"topic":"human.guidance","payload":{"note":"steer"},"ts":"2026-01-01T00:00:00Z"}"#;
+        let update = latest_progress_update(contents, 0).expect("latest update");
+        assert_eq!(update.iteration, None);
+        assert_eq!(update.hat, None);
+        assert_eq!(update.topic, "human.guidance");
+        assert_eq!(update.payload, r#"{"note":"steer"}"#);
+        assert!(format_progress_update("loop-2", &update).contains("Hat: agent"));
+    }
 
     #[test]
     fn slack_loop_env_does_not_force_workspace_root() {
