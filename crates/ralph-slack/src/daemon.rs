@@ -384,10 +384,10 @@ fn monitor_loop_completion<N>(
     N: ThreadNotifier,
 {
     tokio::spawn(async move {
-        let event_path = events_path(&workspace_root, &loop_id);
         let mut last_reported_line_count = 0;
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let event_path = events_path(&workspace_root, &loop_id);
             if let Ok(contents) = std::fs::read_to_string(&event_path) {
                 if let Some(update) = latest_progress_update(&contents, last_reported_line_count) {
                     last_reported_line_count = update.line_count;
@@ -408,6 +408,7 @@ fn monitor_loop_completion<N>(
             }
         }
 
+        let event_path = events_path(&workspace_root, &loop_id);
         let contents = std::fs::read_to_string(&event_path).unwrap_or_default();
         let completed = contents.contains("\"topic\":\"LOOP_COMPLETE\"")
             || contents.contains("## Reason\\ncompleted")

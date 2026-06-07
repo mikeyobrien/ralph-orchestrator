@@ -497,7 +497,7 @@ async fn known_thread_help_status_tail_are_replies_not_guidance_and_status_wins_
         notifier.clone(),
     );
 
-    for (idx, text) in ["help", "status", "tail 1"].iter().enumerate() {
+    for (idx, text) in ["help", "status", "!tail 1"].iter().enumerate() {
         daemon
             .handle_event(SlackMessageEvent {
                 event_id: Some(format!("EvCmd{idx}")),

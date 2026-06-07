@@ -162,7 +162,11 @@ pub fn handle_message_with_repo(
 }
 
 pub fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
-    let trimmed = text.trim().trim_start_matches('/').to_ascii_lowercase();
+    let trimmed = text
+        .trim()
+        .trim_start_matches('/')
+        .trim_start_matches('!')
+        .to_ascii_lowercase();
     let mut parts = trimmed.split_whitespace();
     match parts.next()? {
         "help" => Some(ThreadCommand::Help),
