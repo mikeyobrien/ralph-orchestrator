@@ -35,6 +35,7 @@ impl LoopSpawner for FakeSpawner {
 #[derive(Default, Clone)]
 struct FakeNotifier {
     messages: Arc<Mutex<Vec<(String, String, String)>>>,
+    updates: Arc<Mutex<Vec<(String, String, String)>>>,
 }
 
 #[async_trait]
@@ -52,6 +53,85 @@ impl ThreadNotifier for FakeNotifier {
         ));
         Ok("1780799999.000100".to_string())
     }
+
+    async fn update_thread_blocks(
+        &self,
+        channel_id: &str,
+        message_ts: &str,
+        message: &ralph_slack::SlackRenderedMessage,
+    ) -> ralph_slack::SlackResult<()> {
+        self.updates.lock().unwrap().push((
+            channel_id.to_string(),
+            message_ts.to_string(),
+            message.text.clone(),
+        ));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn progress_events_create_once_then_update_same_message_ts() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let first = r#"{"iteration":1,"hat":"planner","topic":"plan.ready","payload":"first"}"#;
+    let second = concat!(
+        r#"{"iteration":1,"hat":"planner","topic":"plan.ready","payload":"first"}"#,
+        "\n",
+        r#"{"iteration":2,"hat":"executor","topic":"agent.message","payload":"second"}"#,
+        "\n"
+    );
+
+    let mut checkpoint = ralph_slack::daemon::ProgressCheckpoint::default();
+    ralph_slack::daemon::sync_loop_progress_once(
+        &state,
+        notifier.clone(),
+        loop_id,
+        "C123",
+        "1780792150.138669",
+        first,
+        std::time::Duration::from_secs(0),
+        &mut checkpoint,
+    )
+    .await
+    .unwrap();
+    ralph_slack::daemon::sync_loop_progress_once(
+        &state,
+        notifier.clone(),
+        loop_id,
+        "C123",
+        "1780792150.138669",
+        second,
+        std::time::Duration::from_secs(61),
+        &mut checkpoint,
+    )
+    .await
+    .unwrap();
+
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].2.contains("plan.ready"));
+    drop(messages);
+    let updates = notifier.updates.lock().unwrap();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].1, "1780799999.000100");
+    assert!(updates[0].2.contains("agent.message"));
+    assert_eq!(
+        state.load_or_default().unwrap().threads[loop_id]
+            .progress_message_ts
+            .as_deref(),
+        Some("1780799999.000100")
+    );
 }
 
 #[tokio::test]

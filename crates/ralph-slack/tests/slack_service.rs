@@ -123,6 +123,34 @@ async fn post_blocks_sends_block_kit_payload_with_plain_text_fallback() {
 }
 
 #[tokio::test]
+async fn update_blocks_sends_chat_update_with_existing_message_ts() {
+    let (base_url, mut requests) = run_http_double(vec!["{\"ok\":true}"]).await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+    let blocks = SlackBlocks::progress_card(
+        "slack-C123-1780792150-138669",
+        Some(2),
+        Some("executor"),
+        "agent.message",
+        "working on Slack UX",
+        Some(12),
+    );
+
+    api.update_blocks("C123", "1780792160.000300", &blocks)
+        .await
+        .unwrap();
+
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/chat.update");
+    assert!(request.headers.to_lowercase().contains("authorization"));
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel"], "C123");
+    assert_eq!(body["ts"], "1780792160.000300");
+    assert!(body["thread_ts"].is_null());
+    assert!(body["text"].as_str().unwrap().contains("Ralph update"));
+    assert_eq!(body["blocks"][0]["type"], "header");
+}
+
+#[tokio::test]
 async fn slack_api_surfaces_slack_error_payloads() {
     let (base_url, _requests) =
         run_http_double(vec![r#"{"ok":false,"error":"channel_not_found"}"#]).await;

@@ -59,6 +59,41 @@ impl SlackApi {
         self.post_message_body(body).await
     }
 
+    pub async fn update_blocks(
+        &self,
+        channel: &str,
+        message_ts: &str,
+        message: &SlackRenderedMessage,
+    ) -> SlackResult<()> {
+        let body = self.update_body(
+            channel,
+            message_ts,
+            &message.text,
+            Some(message.blocks.clone()),
+        );
+        self.update_message_body(body).await
+    }
+
+    async fn update_message_body(&self, body: serde_json::Value) -> SlackResult<()> {
+        let response = self
+            .client
+            .post(self.api_url("/api/chat.update"))
+            .bearer_auth(&self.bot_token)
+            .json(&body)
+            .send()
+            .await?;
+        let envelope: UpdateMessageResponse = response.json().await?;
+        if envelope.ok {
+            Ok(())
+        } else {
+            Err(SlackError::Api(
+                envelope
+                    .error
+                    .unwrap_or_else(|| "unknown Slack API error".to_string()),
+            ))
+        }
+    }
+
     async fn post_message_body(&self, body: serde_json::Value) -> SlackResult<String> {
         let response = self
             .client
@@ -95,6 +130,24 @@ impl SlackApi {
         if let Some(thread_ts) = thread_ts {
             body["thread_ts"] = json!(thread_ts);
         }
+        if let Some(blocks) = blocks {
+            body["blocks"] = json!(blocks);
+        }
+        body
+    }
+
+    fn update_body(
+        &self,
+        channel: &str,
+        message_ts: &str,
+        text: &str,
+        blocks: Option<Vec<serde_json::Value>>,
+    ) -> serde_json::Value {
+        let mut body = json!({
+            "channel": channel,
+            "ts": message_ts,
+            "text": text,
+        });
         if let Some(blocks) = blocks {
             body["blocks"] = json!(blocks);
         }
@@ -219,6 +272,12 @@ impl SlackApi {
 struct PostMessageResponse {
     ok: bool,
     ts: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateMessageResponse {
+    ok: bool,
     error: Option<String>,
 }
 

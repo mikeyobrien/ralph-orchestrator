@@ -73,7 +73,7 @@ impl SlackBlocks {
             last_message.push('…');
         }
         let text = format!(
-            "Ralph update\nLoop: {loop_id}\nIteration: {iteration}\nHat: {hat}\nTopic: {topic}\nLast message:\n```\n{last_message}\n```"
+            "Ralph update\nLoop: {loop_id}\nIteration: {iteration}\nHat: {hat}\nElapsed: {elapsed}\nTopic: {topic}\nLast message:\n```\n{last_message}\n```"
         );
         SlackRenderedMessage {
             text,

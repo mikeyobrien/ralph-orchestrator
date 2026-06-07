@@ -56,6 +56,13 @@ pub trait ThreadNotifier: Send + Sync + Clone + 'static {
         self.post_thread_message(channel_id, thread_ts, &message.text)
             .await
     }
+
+    async fn update_thread_blocks(
+        &self,
+        channel_id: &str,
+        message_ts: &str,
+        message: &SlackRenderedMessage,
+    ) -> SlackResult<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +188,17 @@ impl ThreadNotifier for SlackApiNotifier {
     ) -> SlackResult<String> {
         self.api
             .post_blocks(channel_id, Some(thread_ts), message)
+            .await
+    }
+
+    async fn update_thread_blocks(
+        &self,
+        channel_id: &str,
+        message_ts: &str,
+        message: &SlackRenderedMessage,
+    ) -> SlackResult<()> {
+        self.api
+            .update_blocks(channel_id, message_ts, message)
             .await
     }
 }
@@ -419,27 +437,25 @@ fn monitor_loop_completion<N>(
     N: ThreadNotifier,
 {
     tokio::spawn(async move {
-        let mut last_reported_line_count = 0;
+        let started_at = std::time::Instant::now();
+        let mut checkpoint = ProgressCheckpoint::default();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let event_path = events_path(&workspace_root, &loop_id);
             if let Ok(contents) = std::fs::read_to_string(&event_path) {
-                if let Some(update) = latest_progress_update(&contents, last_reported_line_count) {
-                    last_reported_line_count = update.line_count;
-                    let message = SlackBlocks::progress_card(
-                        &loop_id,
-                        update.iteration,
-                        update.hat.as_deref(),
-                        &update.topic,
-                        &update.payload,
-                        None,
-                    );
-                    if let Err(error) = notifier
-                        .post_thread_blocks(&channel_id, &thread_ts, &message)
-                        .await
-                    {
-                        tracing::warn!(%loop_id, ?error, "failed to post Slack loop progress update");
-                    }
+                if let Err(error) = sync_loop_progress_once(
+                    &state_manager,
+                    notifier.clone(),
+                    &loop_id,
+                    &channel_id,
+                    &thread_ts,
+                    &contents,
+                    started_at.elapsed(),
+                    &mut checkpoint,
+                )
+                .await
+                {
+                    tracing::warn!(%loop_id, ?error, "failed to sync Slack loop progress update");
                 }
             }
             if !process_is_alive(process_id) {
@@ -482,6 +498,71 @@ fn monitor_loop_completion<N>(
             }
         }
     });
+}
+
+const MIN_PROGRESS_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ProgressCheckpoint {
+    last_reported_line_count: usize,
+    last_sent_at: Option<std::time::Duration>,
+}
+
+pub async fn sync_loop_progress_once<N>(
+    state_manager: &SlackStateManager,
+    notifier: N,
+    loop_id: &str,
+    channel_id: &str,
+    thread_ts: &str,
+    contents: &str,
+    elapsed: std::time::Duration,
+    checkpoint: &mut ProgressCheckpoint,
+) -> SlackResult<bool>
+where
+    N: ThreadNotifier,
+{
+    let Some(update) = latest_progress_update(contents, checkpoint.last_reported_line_count) else {
+        return Ok(false);
+    };
+    if let Some(last_sent_at) = checkpoint.last_sent_at {
+        if elapsed.saturating_sub(last_sent_at) < MIN_PROGRESS_UPDATE_INTERVAL {
+            return Ok(false);
+        }
+    }
+
+    let message = SlackBlocks::progress_card(
+        loop_id,
+        update.iteration,
+        update.hat.as_deref(),
+        &update.topic,
+        &update.payload,
+        Some(elapsed.as_secs()),
+    );
+    let progress_message_ts = state_manager
+        .load_or_default()?
+        .threads
+        .get(loop_id)
+        .and_then(|binding| binding.progress_message_ts.clone());
+
+    if let Some(progress_message_ts) = progress_message_ts {
+        notifier
+            .update_thread_blocks(channel_id, &progress_message_ts, &message)
+            .await?;
+    } else {
+        let progress_message_ts = notifier
+            .post_thread_blocks(channel_id, thread_ts, &message)
+            .await?;
+        state_manager.set_thread_message_timestamps(
+            loop_id,
+            None,
+            Some(&progress_message_ts),
+            None,
+            None,
+        )?;
+    }
+    checkpoint.last_reported_line_count = update.line_count;
+    checkpoint.last_sent_at = Some(elapsed);
+    Ok(true)
 }
 
 fn process_is_alive(process_id: u32) -> bool {
