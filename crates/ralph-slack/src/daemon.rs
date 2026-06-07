@@ -649,16 +649,89 @@ fn tail_text(path: &Path, n: usize) -> String {
             if lines.is_empty() {
                 return "No events yet.".to_string();
             }
-            let mut redacted = lines.into_iter().rev().collect::<Vec<_>>().join("\n");
-            redacted = redact_secrets(&redacted);
-            if redacted.len() > 3000 {
-                redacted.truncate(3000);
-                redacted.push_str("…");
+            let mut formatted = lines
+                .into_iter()
+                .rev()
+                .map(format_tail_event)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if formatted.len() > 3000 {
+                formatted.truncate(3000);
+                formatted.push_str("…");
             }
-            format!("Latest Ralph events:\n```\n{}\n```", redacted)
+            format!("Latest Ralph events (last {n}):\n{formatted}")
         }
         Err(_) => "No event file found for this loop yet.".to_string(),
     }
+}
+
+fn format_tail_event(line: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        let raw = truncate_tail_payload(&redact_secrets(line.trim()));
+        return format!("• raw event\n  {raw}");
+    };
+    let topic = value
+        .get("topic")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let actor = tail_actor(&value, topic);
+    let ts = tail_ts(value.get("ts").and_then(|value| value.as_str()));
+    let iteration = value
+        .get("iteration")
+        .and_then(|value| value.as_u64())
+        .map(|iteration| format!(" · iter {iteration}"))
+        .unwrap_or_default();
+    let payload = truncate_tail_payload(&redact_secrets(&event_payload_text(value.get("payload"))));
+    let payload = collapse_tail_whitespace(&payload);
+    if payload.is_empty() {
+        format!("• `{ts}`{iteration} · {actor} · `{topic}`")
+    } else {
+        format!("• `{ts}`{iteration} · {actor} · `{topic}`\n  {payload}")
+    }
+}
+
+fn tail_actor(value: &serde_json::Value, topic: &str) -> String {
+    if topic == "human.response" {
+        return "operator".to_string();
+    }
+    if topic.starts_with("human.") {
+        return "human-loop".to_string();
+    }
+    value
+        .get("hat")
+        .or_else(|| value.get("triggered"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("agent")
+        .to_string()
+}
+
+fn tail_ts(ts: Option<&str>) -> String {
+    let Some(ts) = ts else {
+        return "time unknown".to_string();
+    };
+    if let Some((_, time)) = ts.split_once('T') {
+        let short = time
+            .chars()
+            .take_while(|ch| *ch != '.' && *ch != '+' && *ch != 'Z')
+            .collect::<String>();
+        if !short.is_empty() {
+            return short;
+        }
+    }
+    ts.to_string()
+}
+
+fn truncate_tail_payload(payload: &str) -> String {
+    let mut payload = payload.to_string();
+    if payload.len() > 700 {
+        payload.truncate(700);
+        payload.push('…');
+    }
+    payload
+}
+
+fn collapse_tail_whitespace(payload: &str) -> String {
+    payload.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn slack_loop_env(
@@ -684,6 +757,35 @@ pub fn slack_loop_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tail_text_formats_jsonl_as_operator_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"ts":"2026-06-07T21:59:34.126921+00:00","iteration":0,"hat":"loop","topic":"plan.start","triggered":"planner","payload":"live smoke: create .ralph/live-slack-smoke.txt containing ok from slack and ask for approval."}"#,
+                "\n",
+                r#"{"payload":"Approval requested: created artifact .ralph/live-slack-smoke.txt with token-secret-token-abc. Options: approve or request changes.","topic":"human.interact","ts":"2026-06-07T22:00:35.327605+00:00"}"#,
+                "\n",
+                r#"{"payload":"Approve","topic":"human.response","ts":"2026-06-07T22:01:16.584587+00:00"}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+
+        let text = tail_text(&path, 10);
+
+        assert!(text.contains("Latest Ralph events (last 10):"));
+        assert!(text.contains("`21:59:34` · iter 0 · loop · `plan.start`"));
+        assert!(text.contains("human-loop · `human.interact`"));
+        assert!(text.contains("operator · `human.response`"));
+        assert!(text.contains("Approve"));
+        assert!(text.contains("[redacted]"));
+        assert!(!text.contains(r#"{"ts""#));
+        assert!(!text.contains("secret-token-abc"));
+    }
 
     #[test]
     fn progress_update_uses_iteration_hat_topic_and_last_message() {
