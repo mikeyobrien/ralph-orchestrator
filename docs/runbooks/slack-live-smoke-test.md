@@ -140,6 +140,7 @@ Expected:
 - Ralph replies in the root message's thread.
 - The reply includes a loop id/status.
 - A Slack state file appears under the mapped repo root, typically `.ralph/slack-state.json`.
+- A loop log file appears under the mapped repo root, typically `.ralph/slack-loop-logs/<loop-id>.log`.
 - The loop/thread binding uses the test channel id and root `thread_ts`.
 
 Inspect state locally without printing secrets:
