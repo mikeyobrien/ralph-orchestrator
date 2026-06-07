@@ -115,15 +115,7 @@ impl SlackBlocks {
                     format!("*Duration:* {}", escape_mrkdwn(&duration)),
                 ]),
                 section(escape_mrkdwn(note)),
-                actions(
-                    loop_id,
-                    &[
-                        ActionButton::tail(),
-                        ActionButton::status(),
-                        ActionButton::approve(),
-                        ActionButton::request_changes(),
-                    ],
-                ),
+                actions(loop_id, &[ActionButton::tail(), ActionButton::status()]),
             ],
         }
     }
@@ -206,24 +198,6 @@ impl ActionButton {
             action_id: "ralph_slack_stop",
             value: "stop",
             style: Some("danger"),
-        }
-    }
-
-    fn approve() -> Self {
-        Self {
-            text: "Approve",
-            action_id: "ralph_slack_approve",
-            value: "approve",
-            style: Some("primary"),
-        }
-    }
-
-    fn request_changes() -> Self {
-        Self {
-            text: "Request changes",
-            action_id: "ralph_slack_request_changes",
-            value: "request_changes",
-            style: None,
         }
     }
 }

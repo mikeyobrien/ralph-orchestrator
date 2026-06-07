@@ -38,6 +38,25 @@ fn block_action_tail_payload_maps_to_existing_thread_command_text() {
 }
 
 #[test]
+fn block_action_payload_without_thread_ts_uses_encoded_loop_id_value() {
+    let payload = serde_json::json!({
+        "type": "block_actions",
+        "trigger_id": "TrigTailReplyCard",
+        "user": {"id": "U123"},
+        "channel": {"id": "C123"},
+        "message": {"ts": "1780799999.000300"},
+        "container": {"message_ts": "1780799999.000300"},
+        "actions": [{"action_id": "ralph_slack_tail", "value": "tail:slack-C123-1780792150-138669"}],
+        "action_ts": "1780799999.000400"
+    });
+
+    let event = slack_message_event_from_payload(&payload).expect("block action should parse");
+
+    assert_eq!(event.thread_ts.as_deref(), Some("1780792150.138669"));
+    assert_eq!(event.text, "tail 10");
+}
+
+#[test]
 fn block_action_approve_payload_routes_as_human_response_on_pending_question() {
     let dir = tempfile::TempDir::new().unwrap();
     let manager = SlackStateManager::new(dir.path().join(".ralph/slack-state.json"));

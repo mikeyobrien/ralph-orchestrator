@@ -139,8 +139,9 @@ fn block_action_event(payload: &serde_json::Value) -> Option<SlackMessageEvent> 
                 .and_then(|container| container.get("thread_ts"))
         })
         .and_then(|value| value.as_str())
-        .unwrap_or(message_ts)
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| thread_ts_from_action_value(action, &channel_id))
+        .unwrap_or_else(|| message_ts.to_string());
     let ts = payload
         .get("action_ts")
         .and_then(|value| value.as_str())
@@ -162,6 +163,20 @@ fn block_action_event(payload: &serde_json::Value) -> Option<SlackMessageEvent> 
         bot_id: None,
         app_mention: false,
     })
+}
+
+fn thread_ts_from_action_value(action: &serde_json::Value, channel_id: &str) -> Option<String> {
+    let value = action.get("value")?.as_str()?;
+    let loop_id = value
+        .split_once(':')
+        .map(|(_, loop_id)| loop_id)
+        .unwrap_or(value);
+    let ts_slug = loop_id.strip_prefix(&format!("slack-{channel_id}-"))?;
+    let (seconds, micros) = ts_slug.split_once('-')?;
+    if seconds.chars().all(|c| c.is_ascii_digit()) && micros.chars().all(|c| c.is_ascii_digit()) {
+        return Some(format!("{seconds}.{micros}"));
+    }
+    None
 }
 
 fn block_action_text(action_id: &str) -> Option<&'static str> {

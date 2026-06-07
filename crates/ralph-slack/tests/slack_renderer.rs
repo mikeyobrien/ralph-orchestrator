@@ -71,9 +71,10 @@ fn final_status_and_help_cards_have_fallback_text() {
         .find(|block| block["type"] == "actions")
         .expect("final card should include interactive actions");
     assert!(final_actions.to_string().contains("ralph_slack_tail"));
-    assert!(final_actions.to_string().contains("ralph_slack_approve"));
+    assert!(final_actions.to_string().contains("ralph_slack_status"));
+    assert!(!final_actions.to_string().contains("ralph_slack_approve"));
     assert!(
-        final_actions
+        !final_actions
             .to_string()
             .contains("ralph_slack_request_changes")
     );
