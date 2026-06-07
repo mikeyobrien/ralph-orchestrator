@@ -14,6 +14,7 @@ Practical guides for using Ralph Orchestrator effectively.
 | [Cost Management](cost-management.md) | Controlling API costs |
 | [Telegram Integration](telegram.md) | Human-in-the-loop via Telegram |
 | [Slack Integration](slack.md) | Human-in-the-loop via Slack Socket Mode threads |
+| [Runbooks](../runbooks/README.md) | Operational review and smoke-test checklists |
 
 ## Quick Links
 
