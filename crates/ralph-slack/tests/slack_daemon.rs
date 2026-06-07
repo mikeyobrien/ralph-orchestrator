@@ -120,6 +120,50 @@ async fn socket_mode_ack_is_sent_before_slow_loop_spawn_work() {
     assert_eq!(spawner.requests.lock().unwrap().len(), 1);
 }
 
+#[tokio::test]
+async fn socket_mode_ignores_hello_envelopes_without_ack_id() {
+    use futures::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state,
+        spawner.clone(),
+        FakeNotifier::default(),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = accept_async(stream).await.unwrap();
+        ws.send(Message::Text(
+            serde_json::json!({"type":"hello","num_connections":1,"debug_info":{}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let no_ack = tokio::time::timeout(std::time::Duration::from_millis(100), ws.next()).await;
+        assert!(
+            no_ack.is_err(),
+            "hello messages without envelope_id should not be acked"
+        );
+        ws.close(None).await.unwrap();
+    });
+
+    ralph_slack::socket_mode::run_socket_mode(&url, daemon)
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert!(spawner.requests.lock().unwrap().is_empty());
+}
+
 fn app_mention(event_id: &str, text: &str) -> SlackMessageEvent {
     SlackMessageEvent {
         event_id: Some(event_id.to_string()),

@@ -10,7 +10,8 @@ use crate::handler::SlackMessageEvent;
 
 #[derive(Debug, Deserialize)]
 pub struct SocketEnvelope {
-    pub envelope_id: String,
+    #[serde(default)]
+    pub envelope_id: Option<String>,
     #[serde(default)]
     pub payload: serde_json::Value,
 }
@@ -27,12 +28,12 @@ where
             continue;
         };
         let envelope: SocketEnvelope = serde_json::from_str(&text)?;
-        ws.send(Message::Text(
-            json!({"envelope_id": envelope.envelope_id})
-                .to_string()
-                .into(),
-        ))
-        .await?;
+        if let Some(envelope_id) = envelope.envelope_id.as_deref() {
+            ws.send(Message::Text(
+                json!({"envelope_id": envelope_id}).to_string().into(),
+            ))
+            .await?;
+        }
         if let Some(event) = slack_message_event_from_payload(&envelope.payload) {
             daemon.handle_event(event).await?;
         }
