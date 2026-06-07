@@ -117,7 +117,7 @@ pub fn handle_message_with_repo(
                 user_id: user_id.to_string(),
             });
         }
-        if binding.status == SlackThreadStatus::Stopped {
+        if binding.status != SlackThreadStatus::Running {
             return Ok(HandlerAction::Ignored);
         }
         let topic = if state.pending_questions.contains_key(&loop_id) {

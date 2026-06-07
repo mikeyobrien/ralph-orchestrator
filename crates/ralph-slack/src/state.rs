@@ -12,6 +12,8 @@ const MAX_SEEN_EVENT_IDS: usize = 1024;
 #[serde(rename_all = "snake_case")]
 pub enum SlackThreadStatus {
     Running,
+    Completed,
+    Failed,
     Stopped,
 }
 
@@ -184,6 +186,16 @@ impl SlackStateManager {
         let mut state = self.load_or_default()?;
         if let Some(binding) = state.threads.get_mut(loop_id) {
             binding.status = status;
+        }
+        state.pending_questions.remove(loop_id);
+        self.save(&state)
+    }
+
+    pub fn finish_thread(&self, loop_id: &str, status: SlackThreadStatus) -> SlackResult<()> {
+        let mut state = self.load_or_default()?;
+        if let Some(binding) = state.threads.get_mut(loop_id) {
+            binding.status = status;
+            binding.process_id = None;
         }
         state.pending_questions.remove(loop_id);
         self.save(&state)

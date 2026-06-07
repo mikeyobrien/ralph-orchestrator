@@ -85,8 +85,12 @@ impl LoopSpawner for CommandLoopSpawner {
         if let Some(config_path) = &self.config_path {
             command.arg("-c").arg(config_path);
         }
-        let child = command.spawn().map_err(SlackError::Io)?;
-        Ok(Some(child.id()))
+        let mut child = command.spawn().map_err(SlackError::Io)?;
+        let process_id = child.id();
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(Some(process_id))
     }
 
     async fn stop_loop(&self, process_id: u32) -> SlackResult<()> {
@@ -235,6 +239,17 @@ where
                     .await?;
                 self.state_manager
                     .set_thread_process_id(loop_id, process_id)?;
+                if let Some(process_id) = process_id {
+                    monitor_loop_completion(
+                        self.state_manager.clone(),
+                        self.notifier.clone(),
+                        loop_id.clone(),
+                        channel_id.clone(),
+                        thread_ts.clone(),
+                        root_for_start.clone(),
+                        process_id,
+                    );
+                }
             }
             HandlerAction::Command {
                 command,
@@ -355,6 +370,65 @@ where
         }
         Ok(())
     }
+}
+
+fn monitor_loop_completion<N>(
+    state_manager: SlackStateManager,
+    notifier: N,
+    loop_id: String,
+    channel_id: String,
+    thread_ts: String,
+    workspace_root: PathBuf,
+    process_id: u32,
+) where
+    N: ThreadNotifier,
+{
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if !process_is_alive(process_id) {
+                break;
+            }
+        }
+
+        let event_path = events_path(&workspace_root, &loop_id);
+        let contents = std::fs::read_to_string(&event_path).unwrap_or_default();
+        let completed = contents.contains("\"topic\":\"LOOP_COMPLETE\"")
+            || contents.contains("## Reason\\ncompleted")
+            || contents.contains("\"payload\":\"## Reason\\ncompleted");
+        let status = if completed {
+            SlackThreadStatus::Completed
+        } else {
+            SlackThreadStatus::Failed
+        };
+        if let Err(error) = state_manager.finish_thread(&loop_id, status.clone()) {
+            tracing::warn!(%loop_id, ?error, "failed to mark Slack loop finished");
+        }
+        let status_label = match status {
+            SlackThreadStatus::Completed => "completed",
+            SlackThreadStatus::Failed => "failed",
+            SlackThreadStatus::Running => "running",
+            SlackThreadStatus::Stopped => "stopped",
+        };
+        let text = format!(
+            "Ralph loop {status_label}\nLoop: {loop_id}\nTry `tail 10` in this thread for recent events."
+        );
+        if let Err(error) = notifier
+            .post_thread_message(&channel_id, &thread_ts, &text)
+            .await
+        {
+            tracing::warn!(%loop_id, ?error, "failed to post Slack loop completion update");
+        }
+    });
+}
+
+fn process_is_alive(process_id: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(process_id.to_string())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn help_text() -> &'static str {
