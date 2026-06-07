@@ -14,7 +14,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
-use crate::{ConfigSource, HatsSource};
+use crate::{ConfigSource, HatsSource, default_config_path};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI STRUCTS
@@ -138,9 +138,11 @@ pub async fn execute(
             onboard_slack(onboard_args, use_colors).await
         }
         BotCommands::Onboard(onboard_args) => onboard_telegram(onboard_args, use_colors).await,
-        BotCommands::Status(status_args) if status_args.slack => bot_status_slack(use_colors),
+        BotCommands::Status(status_args) if status_args.slack => {
+            bot_status_slack(config_sources, use_colors)
+        }
         BotCommands::Status(_) => bot_status(use_colors).await,
-        BotCommands::Test(test_args) => bot_test(test_args, use_colors).await,
+        BotCommands::Test(test_args) => bot_test(test_args, config_sources, use_colors).await,
         BotCommands::Token(token_args) => bot_token(token_args, use_colors),
         BotCommands::Daemon(daemon_args) => {
             run_daemon(daemon_args, config_sources, hats_source, use_colors).await
@@ -517,7 +519,7 @@ async fn onboard_slack(args: OnboardArgs, use_colors: bool) -> Result<()> {
     Ok(())
 }
 
-fn bot_status_slack(use_colors: bool) -> Result<()> {
+fn bot_status_slack(config_sources: &[ConfigSource], use_colors: bool) -> Result<()> {
     println!();
     if use_colors {
         println!("\x1b[1mRalph Slack Bot Status\x1b[0m");
@@ -538,8 +540,12 @@ fn bot_status_slack(use_colors: bool) -> Result<()> {
         print_status(use_colors, "Env var: RALPH_SLACK_APP_TOKEN not set");
     }
 
-    if let Some(config) = load_slack_config_from(Path::new("ralph.yml")) {
-        print_success(use_colors, "Config: RObot.slack present in ralph.yml");
+    let config_path = slack_config_path_from_sources(config_sources);
+    if let Some(config) = load_slack_config_from(&config_path) {
+        print_success(
+            use_colors,
+            &format!("Config: RObot.slack present in {}", config_path.display()),
+        );
         if !config.channel_ids.is_empty() {
             print_success(
                 use_colors,
@@ -553,7 +559,10 @@ fn bot_status_slack(use_colors: bool) -> Result<()> {
             );
         }
     } else {
-        print_status(use_colors, "Config: no RObot.slack in ralph.yml");
+        print_status(
+            use_colors,
+            &format!("Config: no RObot.slack in {}", config_path.display()),
+        );
     }
 
     let state_path = Path::new(".ralph/slack-state.json");
@@ -573,9 +582,9 @@ fn bot_status_slack(use_colors: bool) -> Result<()> {
 // TEST COMMAND
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
+async fn bot_test(args: TestArgs, config_sources: &[ConfigSource], use_colors: bool) -> Result<()> {
     if args.slack {
-        return bot_test_slack(args, use_colors).await;
+        return bot_test_slack(args, config_sources, use_colors).await;
     }
 
     // Resolve token
@@ -605,15 +614,20 @@ async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
     Ok(())
 }
 
-async fn bot_test_slack(args: TestArgs, use_colors: bool) -> Result<()> {
+async fn bot_test_slack(
+    args: TestArgs,
+    config_sources: &[ConfigSource],
+    use_colors: bool,
+) -> Result<()> {
+    let config_path = slack_config_path_from_sources(config_sources);
     let token = std::env::var("RALPH_SLACK_BOT_TOKEN")
         .ok()
-        .or_else(|| load_slack_config_from(Path::new("ralph.yml")).and_then(|config| config.bot_token))
+        .or_else(|| load_slack_config_from(&config_path).and_then(|config| config.bot_token))
         .context("No Slack bot token available. Set RALPH_SLACK_BOT_TOKEN or run `ralph bot onboard --slack --token <token>`")?;
     let channel = args
         .channel
         .or_else(|| {
-            load_slack_config_from(Path::new("ralph.yml"))
+            load_slack_config_from(&config_path)
                 .and_then(|config| config.channel_ids.into_iter().next())
         })
         .context(
@@ -1172,6 +1186,18 @@ fn save_slack_robot_config(
         .context("Failed to serialize config")?;
     std::fs::write(config_path, yaml_str).context("Failed to write ralph.yml")?;
     Ok(())
+}
+
+fn slack_config_path_from_sources(config_sources: &[ConfigSource]) -> PathBuf {
+    config_sources
+        .iter()
+        .find_map(|source| match source {
+            ConfigSource::File(path) => Some(path.clone()),
+            ConfigSource::Builtin(_) | ConfigSource::Remote(_) | ConfigSource::Override { .. } => {
+                None
+            }
+        })
+        .unwrap_or_else(default_config_path)
 }
 
 fn load_slack_config_from(path: &Path) -> Option<ralph_core::SlackBotConfig> {
