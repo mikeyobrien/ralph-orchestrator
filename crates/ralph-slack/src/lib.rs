@@ -12,7 +12,7 @@ pub mod service;
 pub mod socket_mode;
 pub mod state;
 
-pub use api::SlackApi;
+pub use api::{SlackApi, SlackStreamChunk};
 pub use daemon::{CommandLoopSpawner, SlackApiNotifier, SlackDaemon, SlackDaemonConfig};
 pub use error::{SlackError, SlackResult};
 pub use handler::{HandlerAction, SlackMessageEvent, handle_message};

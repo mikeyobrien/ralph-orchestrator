@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use ralph_proto::RobotService;
-use ralph_slack::{SlackApi, SlackBlocks, SlackService};
+use ralph_slack::{SlackApi, SlackBlocks, SlackError, SlackService, SlackStreamChunk};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -159,6 +159,132 @@ async fn slack_api_surfaces_slack_error_payloads() {
     let err = api.post_message("C404", None, "hello").await.unwrap_err();
 
     assert!(err.to_string().contains("channel_not_found"));
+}
+
+#[tokio::test]
+async fn start_stream_sends_markdown_and_task_update_chunks_to_thread() {
+    let (base_url, mut requests) = run_http_double(vec![
+        serde_json::json!({"ok": true, "ts": "1780792160.000400"}).to_string(),
+    ])
+    .await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+
+    let ts = api
+        .start_stream(
+            "C123",
+            "1780792150.138669",
+            Some("U123"),
+            Some("T123"),
+            Some("*Starting Ralph loop*"),
+            vec![SlackStreamChunk::task_update(
+                "slack-C123-1780792150-138669",
+                "Run Ralph loop",
+                "in_progress",
+                Some("executor is inspecting the repo"),
+                None,
+            )],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(ts, "1780792160.000400");
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/chat.startStream");
+    assert!(request.headers.to_lowercase().contains("authorization"));
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel"], "C123");
+    assert_eq!(body["thread_ts"], "1780792150.138669");
+    assert_eq!(body["recipient_user_id"], "U123");
+    assert_eq!(body["recipient_team_id"], "T123");
+    assert_eq!(body["markdown_text"], "*Starting Ralph loop*");
+    assert_eq!(body["task_display_mode"], "timeline");
+    assert_eq!(body["chunks"][0]["type"], "task_update");
+    assert_eq!(body["chunks"][0]["status"], "in_progress");
+}
+
+#[tokio::test]
+async fn append_stream_sends_markdown_text_and_chunks_to_stream_ts() {
+    let (base_url, mut requests) =
+        run_http_double(vec![serde_json::json!({"ok": true}).to_string()]).await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+
+    api.append_stream(
+        "C123",
+        "1780792160.000400",
+        "Loop made progress",
+        vec![SlackStreamChunk::markdown_text("*executor* finished tests")],
+    )
+    .await
+    .unwrap();
+
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/chat.appendStream");
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel"], "C123");
+    assert_eq!(body["ts"], "1780792160.000400");
+    assert_eq!(body["markdown_text"], "Loop made progress");
+    assert_eq!(body["chunks"][0]["type"], "markdown_text");
+    assert_eq!(body["chunks"][0]["text"], "*executor* finished tests");
+}
+
+#[tokio::test]
+async fn stop_stream_sends_final_markdown_blocks_and_metadata() {
+    let (base_url, mut requests) =
+        run_http_double(vec![serde_json::json!({"ok": true}).to_string()]).await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+    let final_blocks = SlackBlocks::help_card();
+
+    api.stop_stream(
+        "C123",
+        "1780792160.000400",
+        Some("Loop complete"),
+        vec![SlackStreamChunk::task_update(
+            "final-review",
+            "Final review",
+            "complete",
+            None,
+            Some("accepted"),
+        )],
+        Some(final_blocks.blocks.clone()),
+        Some(serde_json::json!({
+            "event_type": "ralph_loop_completed",
+            "event_payload": {"loop_id": "slack-C123-1780792150-138669"}
+        })),
+    )
+    .await
+    .unwrap();
+
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/chat.stopStream");
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel"], "C123");
+    assert_eq!(body["ts"], "1780792160.000400");
+    assert_eq!(body["markdown_text"], "Loop complete");
+    assert_eq!(body["chunks"][0]["type"], "task_update");
+    assert_eq!(body["blocks"][0]["type"], "header");
+    assert_eq!(body["metadata"]["event_type"], "ralph_loop_completed");
+}
+
+#[tokio::test]
+async fn streaming_api_errors_can_be_classified_for_update_card_fallback() {
+    let (base_url, _requests) = run_http_double(vec![
+        serde_json::json!({"ok": false, "error": "unsupported_method"}).to_string(),
+    ])
+    .await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+
+    let err = api
+        .append_stream("C123", "1780792160.000400", "hello", vec![])
+        .await
+        .unwrap_err();
+
+    assert!(SlackApi::is_streaming_fallback_error(&err));
+    assert!(SlackApi::is_streaming_fallback_error(&SlackError::Api(
+        "missing_scope".to_string()
+    )));
+    assert!(!SlackApi::is_streaming_fallback_error(&SlackError::Api(
+        "channel_not_found".to_string()
+    )));
 }
 
 #[tokio::test]

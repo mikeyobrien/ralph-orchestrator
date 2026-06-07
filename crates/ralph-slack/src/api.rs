@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::error::{SlackError, SlackResult};
@@ -72,6 +72,126 @@ impl SlackApi {
             Some(message.blocks.clone()),
         );
         self.update_message_body(body).await
+    }
+
+    pub async fn start_stream(
+        &self,
+        channel: &str,
+        thread_ts: &str,
+        recipient_user_id: Option<&str>,
+        recipient_team_id: Option<&str>,
+        markdown_text: Option<&str>,
+        chunks: Vec<SlackStreamChunk>,
+    ) -> SlackResult<String> {
+        let mut body = json!({
+            "channel": channel,
+            "thread_ts": thread_ts,
+            "task_display_mode": "timeline",
+        });
+        if let Some(markdown_text) = markdown_text {
+            body["markdown_text"] = json!(markdown_text);
+        }
+        if let Some(recipient_user_id) = recipient_user_id {
+            body["recipient_user_id"] = json!(recipient_user_id);
+        }
+        if let Some(recipient_team_id) = recipient_team_id {
+            body["recipient_team_id"] = json!(recipient_team_id);
+        }
+        if !chunks.is_empty() {
+            body["chunks"] = json!(chunks);
+        }
+        let envelope: StreamMessageResponse =
+            self.post_api_json("/api/chat.startStream", body).await?;
+        if envelope.ok {
+            envelope
+                .ts
+                .ok_or_else(|| SlackError::Api("chat.startStream missing ts".to_string()))
+        } else {
+            Err(slack_api_error(envelope.error))
+        }
+    }
+
+    pub async fn append_stream(
+        &self,
+        channel: &str,
+        stream_ts: &str,
+        markdown_text: &str,
+        chunks: Vec<SlackStreamChunk>,
+    ) -> SlackResult<()> {
+        let mut body = json!({
+            "channel": channel,
+            "ts": stream_ts,
+            "markdown_text": markdown_text,
+        });
+        if !chunks.is_empty() {
+            body["chunks"] = json!(chunks);
+        }
+        self.post_stream_ack("/api/chat.appendStream", body).await
+    }
+
+    pub async fn stop_stream(
+        &self,
+        channel: &str,
+        stream_ts: &str,
+        markdown_text: Option<&str>,
+        chunks: Vec<SlackStreamChunk>,
+        blocks: Option<Vec<serde_json::Value>>,
+        metadata: Option<serde_json::Value>,
+    ) -> SlackResult<()> {
+        let mut body = json!({
+            "channel": channel,
+            "ts": stream_ts,
+        });
+        if let Some(markdown_text) = markdown_text {
+            body["markdown_text"] = json!(markdown_text);
+        }
+        if !chunks.is_empty() {
+            body["chunks"] = json!(chunks);
+        }
+        if let Some(blocks) = blocks {
+            body["blocks"] = json!(blocks);
+        }
+        if let Some(metadata) = metadata {
+            body["metadata"] = metadata;
+        }
+        self.post_stream_ack("/api/chat.stopStream", body).await
+    }
+
+    pub fn is_streaming_fallback_error(error: &SlackError) -> bool {
+        matches!(
+            error,
+            SlackError::Api(code)
+                if matches!(
+                    code.as_str(),
+                    "unsupported_method"
+                        | "missing_scope"
+                        | "method_not_supported_for_channel_type"
+                        | "not_allowed_token_type"
+                )
+        )
+    }
+
+    async fn post_stream_ack(&self, path: &str, body: serde_json::Value) -> SlackResult<()> {
+        let envelope: UpdateMessageResponse = self.post_api_json(path, body).await?;
+        if envelope.ok {
+            Ok(())
+        } else {
+            Err(slack_api_error(envelope.error))
+        }
+    }
+
+    async fn post_api_json<T>(&self, path: &str, body: serde_json::Value) -> SlackResult<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let response = self
+            .client
+            .post(self.api_url(path))
+            .bearer_auth(&self.bot_token)
+            .json(&body)
+            .send()
+            .await?;
+        Ok(response.json().await?)
     }
 
     async fn update_message_body(&self, body: serde_json::Value) -> SlackResult<()> {
@@ -268,6 +388,45 @@ impl SlackApi {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type")]
+pub enum SlackStreamChunk {
+    #[serde(rename = "markdown_text")]
+    MarkdownText { text: String },
+    #[serde(rename = "task_update")]
+    TaskUpdate {
+        id: String,
+        title: String,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
+}
+
+impl SlackStreamChunk {
+    pub fn markdown_text(text: impl Into<String>) -> Self {
+        Self::MarkdownText { text: text.into() }
+    }
+
+    pub fn task_update(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        status: impl Into<String>,
+        details: Option<&str>,
+        output: Option<&str>,
+    ) -> Self {
+        Self::TaskUpdate {
+            id: id.into(),
+            title: title.into(),
+            status: status.into(),
+            details: details.map(ToOwned::to_owned),
+            output: output.map(ToOwned::to_owned),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct PostMessageResponse {
     ok: bool,
@@ -279,6 +438,17 @@ struct PostMessageResponse {
 struct UpdateMessageResponse {
     ok: bool,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamMessageResponse {
+    ok: bool,
+    ts: Option<String>,
+    error: Option<String>,
+}
+
+fn slack_api_error(error: Option<String>) -> SlackError {
+    SlackError::Api(error.unwrap_or_else(|| "unknown Slack API error".to_string()))
 }
 
 #[derive(Debug, Deserialize)]

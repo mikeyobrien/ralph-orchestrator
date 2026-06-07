@@ -2145,6 +2145,11 @@ pub struct SlackBotConfig {
 
     /// How Slack should start Ralph loops.
     pub start_mode: Option<SlackStartMode>,
+
+    /// Opt in to Slack AI streaming APIs (`chat.startStream` / `chat.appendStream` / `chat.stopStream`).
+    /// When false or omitted, the Slack surface keeps using normal message/card update fallbacks.
+    #[serde(default)]
+    pub streaming: bool,
 }
 
 /// Telegram bot configuration.
@@ -2294,6 +2299,28 @@ features:
             config.features.preflight.skip,
             vec!["telegram".to_string(), "git".to_string()]
         );
+    }
+
+    #[test]
+    fn test_slack_streaming_capability_defaults_to_fallback_and_can_opt_in() {
+        let fallback_yaml = r#"
+RObot:
+  surface: slack
+  slack:
+    bot_token: token
+"#;
+        let fallback: RalphConfig = serde_yaml::from_str(fallback_yaml).unwrap();
+        assert!(!fallback.robot.slack.unwrap().streaming);
+
+        let streaming_yaml = r#"
+RObot:
+  surface: slack
+  slack:
+    bot_token: token
+    streaming: true
+"#;
+        let streaming: RalphConfig = serde_yaml::from_str(streaming_yaml).unwrap();
+        assert!(streaming.robot.slack.unwrap().streaming);
     }
 
     #[test]
