@@ -1,16 +1,17 @@
 # Slack live smoke test runbook
 
-Use this after the local review passes. This proves the real Slack app can drive one Ralph loop through one Slack thread.
+Use this after local review passes. It proves the real Slack app can drive one Ralph loop through one Slack thread with polished cards, low-noise progress, in-thread commands/buttons, optional streaming, file uploads, and completion closeout.
 
-Do not run this with the Hermes Slack app. Use a dedicated Ralph Slack app so its Socket Mode event stream, scopes, and tokens are isolated.
+Do not run this with the Hermes Slack app. Use a dedicated Ralph Slack app so Socket Mode events, scopes, tokens, and test channels are isolated.
 
 ## 0. Safety rules
 
 - Do not paste token values into Slack, commits, screenshots, Kanban comments, or review notes.
 - Do not run `set -x` while tokens are exported.
-- Do not commit the smoke config if it contains real IDs you do not want public, and never commit token values.
+- Do not commit smoke configs that contain real workspace/channel/user IDs you do not want public, and never commit token values.
 - Use a low-risk test channel and repo/worktree.
-- Invite only the reviewers who should be allowed to start/steer Ralph loops.
+- Invite only reviewers/operators who should be allowed to start or steer Ralph loops.
+- Run destructive controls only against a disposable smoke loop.
 
 ## 1. Slack app prerequisites
 
@@ -18,29 +19,41 @@ Create or open the dedicated Ralph Slack app in Slack app management.
 
 Required app setup:
 
-- Socket Mode: enabled.
-- App-level token: created with `connections:write` scope.
-- Bot token scopes:
-  - `app_mentions:read`
-  - `chat:write`
-  - `files:write` for artifact/file upload smoke
-  - `channels:history` for public-channel smoke
-  - `groups:history` only if smoking a private channel
-  - `im:history` only if intentionally smoking DMs
-- Event subscriptions:
-  - `app_mention`
-  - `message.channels` for public-channel smoke
-  - `message.groups` / `message.im` only for those surfaces
-- Bot installed to the workspace.
+- Socket Mode enabled.
+- App-level token created with `connections:write` scope.
+- Interactivity enabled so Block Kit buttons reach Socket Mode as `block_actions`.
+- Bot installed to the workspace after the final scope/event changes.
 - Bot invited to the allowlisted test channel.
+
+Required bot token scopes:
+
+- `chat:write` for cards, progress updates, command replies, final cards, and stream fallback messages.
+- `files:write` for artifact/file upload smoke.
+- `app_mentions:read` for root app mentions.
+- `channels:history` for public-channel smoke.
+- `groups:history` only if smoking private channels.
+- `im:history` only if intentionally smoking DMs.
+- `commands` only if smoking slash-command starts.
+- `assistant:write` only if smoking Slack AI streaming APIs (`chat.startStream`, `chat.appendStream`, `chat.stopStream`). Without it, verify the Block Kit fallback path instead.
+
+Required event subscriptions:
+
+- `app_mention`
+- `message.channels` for public-channel replies
+- `message.groups` / `message.im` only for those surfaces
+- `block_actions` through Slack Interactivity
+- `slash_commands` only if slash-command starts are configured
+- Optional AI events for future assistant entrypoint smoke: `assistant_thread_started`, `assistant_thread_context_changed`
+
+After adding scopes/events or enabling interactivity, reinstall the app to the workspace. If smoke returns `missing_scope`, add the exact missing scope, reinstall, and retry.
 
 Collect non-secret IDs:
 
-- team/workspace id, if your config/review wants it;
 - test channel id, e.g. `C...`;
-- reviewer Slack user id(s), e.g. `U...`;
+- reviewer/operator Slack user id(s), e.g. `U...`;
 - bot user id, if needed for self-message filtering review;
-- absolute repo path that channel should map to.
+- absolute repo path that the channel maps to;
+- optional team/workspace id if your streaming smoke requires it.
 
 ## 2. Export tokens without printing them
 
@@ -95,10 +108,22 @@ Rules:
 
 - `channel_repos` value must be an absolute existing path.
 - Every `channel_ids` entry must have a `channel_repos` entry.
-- Do not put token values in the YAML.
+- Do not put token values in YAML.
 - Do not add broad channel/user wildcards.
 
-## 4. Preflight status and test post
+## 4. Local preflight before live Slack
+
+```bash
+cargo +stable fmt --all --check
+cargo +stable check -p ralph-slack -p ralph-cli
+cargo +stable test -p ralph-slack
+cargo +stable test -p ralph-cli bot::tests
+git diff --check
+```
+
+Expected: all pass before the real Slack app is exercised.
+
+## 5. Slack status and test post
 
 ```bash
 cargo +stable run -p ralph-cli -- bot status --slack -c /tmp/ralph-slack-smoke.yml
@@ -110,9 +135,9 @@ Expected:
 - Status reports Slack config/token presence without revealing token values.
 - Test post appears in the target Slack channel.
 - If the test post fails with `not_in_channel`, invite the bot to the channel and retry.
-- If it fails with `missing_scope`, add the missing Slack scope, reinstall the app, and retry.
+- If it fails with `missing_scope`, add the missing scope, reinstall the app, and retry.
 
-## 5. Start daemon
+## 6. Start daemon
 
 In a dedicated terminal:
 
@@ -123,25 +148,27 @@ cargo +stable run -p ralph-cli -- bot daemon --slack -c /tmp/ralph-slack-smoke.y
 
 Expected:
 
-- Daemon connects to Socket Mode.
+- Daemon connects through Socket Mode.
 - It does not print token values.
+- It acks Socket Mode envelopes before slow loop work.
 - Leave this terminal running for the smoke.
 
-## 6. Start one Slack thread loop
+## 7. Start one Slack thread loop
 
 In the allowlisted Slack channel, send a root message that mentions the Ralph app:
 
 ```text
-@Ralph smoke: start a tiny loop and ask me one question before doing anything risky
+@Ralph smoke: start a tiny loop, report status, and ask me one question before doing anything risky
 ```
 
 Expected:
 
 - Ralph replies in the root message's thread.
-- The reply includes a loop id/status.
+- The first reply is a Block Kit start card with loop id, status, repo/branch, prompt summary, and Status / Tail 10 / Stop buttons.
 - A Slack state file appears under the mapped repo root, typically `.ralph/slack-state.json`.
-- A loop log file appears under the mapped repo root, typically `.ralph/slack-loop-logs/<loop-id>.log`.
-- The loop/thread binding uses the test channel id and root `thread_ts`.
+- The state binding contains `channel_id`, root `thread_ts`, `loop_id`, `workspace_root`, and `start_card_ts`.
+- A loop log appears under the mapped repo root, typically `.ralph/slack-loop-logs/<loop-id>.log`.
+- The loop runs in an isolated `.worktrees/<loop-id>` worktree when appropriate.
 
 Inspect state locally without printing secrets:
 
@@ -153,37 +180,55 @@ p = pathlib.Path('.ralph/slack-state.json')
 print('state exists:', p.exists())
 if p.exists():
     data = json.loads(p.read_text())
+    threads = data.get('threads', data.get('thread_bindings', {}))
     print('top-level keys:', sorted(data.keys()))
-    print('bindings:', len(data.get('threads', data.get('thread_bindings', {}))))
+    print('bindings:', len(threads))
+    for loop_id, binding in list(threads.items())[-2:]:
+        print('loop:', loop_id)
+        print('binding keys:', sorted(binding.keys()))
 PY
 ```
 
-## 7. Verify human-in-the-loop routing
+## 8. Verify polished progress UX
+
+Wait for the loop to emit progress, then verify:
+
+- A progress Block Kit card or streaming surface appears in the same root thread.
+- It shows Loop, Iteration, Hat, Topic, elapsed time, and Last message.
+- Progress updates coalesce through stored `progress_message_ts` / `stream_ts` rather than creating noisy event spam.
+- Token-shaped strings in tails/progress are redacted.
+- If Slack AI streaming is enabled, `chat.startStream`/`appendStream`/`stopStream` works; otherwise the fallback Block Kit messages remain usable and no auth gate is bypassed.
+
+## 9. Verify in-thread commands and buttons
 
 In the Slack thread:
 
 1. Reply with a normal answer/guidance sentence.
-2. Send `status`.
-3. Send `tail 10`.
-4. If safe, send `stop` / `cancel` from the original creator account.
+2. Send `status` and `!status`.
+3. Send `tail 10` and `!tail 10`.
+4. Click Status.
+5. Click Tail 10.
+6. If safe, click Stop/Cancel or send `stop` / `cancel` from the original creator account.
 
 Expected:
 
 - Plain reply is accepted only from an allowlisted user.
 - If a pending `human.interact` exists, plain reply becomes `human.response` and clears pending state.
 - If no pending question exists, plain reply becomes `human.guidance`.
-- `status` responds as a command and does not clear a pending question.
+- Commands win over pending questions and do not accidentally answer a question.
+- `status` responds with the bound loop/thread state.
 - `tail 10` redacts token-shaped strings.
-- `stop` / `cancel` works only from the thread creator.
+- Status/Tail buttons behave like their command equivalents.
+- Stop/Cancel works only for the thread creator and does not allow a different authorized user to kill someone else's loop.
 
 Inspect events from the mapped repo:
 
 ```bash
 cd /absolute/path/to/repo
-rg -n 'human\.response|human\.guidance|human\.interact' .ralph .worktrees 2>/dev/null || true
+rg -n 'human\.response|human\.guidance|human\.interact|approved|request changes' .ralph .worktrees 2>/dev/null || true
 ```
 
-## 8. Verify file upload routing
+## 10. Verify file upload routing
 
 From the mapped repo/workspace, create a harmless smoke artifact and have a loop emit a structured `human.interact` attachment payload for that path:
 
@@ -201,17 +246,30 @@ Expected:
 - Slack text/replies do not trigger arbitrary local file uploads.
 - Token values and file contents are not printed in daemon logs or review notes.
 
-## 9. Negative checks
+## 11. Verify completion card
+
+Let the loop complete naturally or stop the disposable smoke loop.
+
+Expected:
+
+- The final card appears in the same root thread.
+- It includes status, loop id, duration, and a short note.
+- Tail 10 / Status remain available.
+- Approve / Request changes buttons route as `approved` / `request changes` thread text through the pending-question or guidance path rather than mutating repo state directly.
+- The final state in `.ralph/slack-state.json` is `completed`, `failed`, or `stopped`, and `process_id` is cleared.
+
+## 12. Negative checks
 
 Perform only safe negative checks:
 
 - From a non-allowlisted Slack user, reply in the thread. Expected: no event append and no control action.
 - In a non-allowlisted channel, mention the Ralph app. Expected: no loop spawn and no thread binding.
 - Send `status` in unrelated channel chatter without a known thread binding. Expected: ignored unless it is an authorized start pattern.
+- Try Stop/Cancel from an allowlisted user who did not create the thread. Expected: denied/no process kill.
 
 Do not attempt destructive commands against a production repo.
 
-## 10. Cleanup
+## 13. Cleanup
 
 Stop the daemon with `Ctrl-C`.
 
@@ -221,33 +279,37 @@ Remove local smoke config if it contains environment-specific IDs you do not wan
 rm -f /tmp/ralph-slack-smoke.yml
 ```
 
-Optional cleanup in the mapped repo after collecting evidence:
+Review runtime artifacts before deleting them:
 
 ```bash
 cd /absolute/path/to/repo
-# Review before deleting; these are runtime artifacts.
 find .ralph .worktrees -maxdepth 3 -type f 2>/dev/null | sed -n '1,120p'
 ```
 
-## 11. Pass/fail criteria
+Do not commit `.ralph/slack-state.json`, `.ralph/slack-loop-logs/`, smoke artifacts, token-bearing configs, or `.worktrees/` runtime output.
+
+## 14. Pass/fail criteria
 
 Pass live smoke if:
 
 - daemon connects through Socket Mode;
 - root app mention in the allowlisted channel starts exactly one loop;
-- Ralph posts replies in the root Slack thread;
+- Ralph posts the start/progress/final surfaces in the root Slack thread;
+- Status / Tail buttons work;
+- `status` / `!status` and `tail 10` / `!tail 10` work in-thread;
+- completion card appears with Tail / Status / feedback controls;
 - structured loop-local file attachment upload appears in that same root thread;
 - thread reply routes to `human.response` or `human.guidance` as expected;
-- `status`/`tail` work in-thread;
-- unauthorized channel/user attempts do not create side effects;
+- unauthorized channel/user/stop attempts do not create side effects;
+- streaming works when `assistant:write` and workspace AI app support are available, or Block Kit fallback is confirmed when they are not;
 - tokens are never printed.
 
 If any item fails, capture:
 
 - command run;
 - sanitized error message;
-- Slack app scope/event/channel/user setup state;
-- whether bot was installed/invited;
+- Slack app scope/event/interactivity/channel/user setup state;
+- whether bot was installed/invited/reinstalled after the latest scope changes;
 - relevant file/function if it looks like code behavior.
 
 Then fill out [Slack review signoff template](slack-review-signoff-template.md) with `Decision: Blocked`.
