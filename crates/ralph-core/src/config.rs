@@ -1941,7 +1941,7 @@ impl HatConfig {
 /// Enables bidirectional communication between AI agents and humans
 /// during orchestration loops. When enabled, agents can emit `human.interact`
 /// events to request clarification (blocking the loop), and humans can
-/// send proactive guidance via Telegram.
+/// send proactive guidance through the configured RObot provider.
 ///
 /// Example configuration:
 /// ```yaml
@@ -1962,17 +1962,43 @@ pub struct RobotConfig {
     /// Required when enabled (no default — must be explicit).
     pub timeout_seconds: Option<u64>,
 
-    /// Interval in seconds between periodic check-in messages sent via Telegram.
+    /// Interval in seconds between periodic check-in messages sent via the configured provider.
     /// When set, Ralph sends a status message every N seconds so the human
     /// knows it's still working. If `None`, no check-ins are sent.
     pub checkin_interval_seconds: Option<u64>,
 
+    /// Explicit human-in-the-loop surface. If omitted, Ralph infers from the
+    /// configured provider subsection and preserves legacy Telegram behavior.
+    #[serde(default)]
+    pub surface: Option<RobotSurface>,
+
     /// Telegram bot configuration.
     #[serde(default)]
     pub telegram: Option<TelegramBotConfig>,
+
+    /// Slack bot configuration.
+    #[serde(default)]
+    pub slack: Option<SlackBotConfig>,
 }
 
 impl RobotConfig {
+    /// Returns the configured RObot surface, inferring legacy Telegram configs when omitted.
+    pub fn surface(&self) -> Result<RobotSurface, ConfigError> {
+        if let Some(surface) = self.surface {
+            return Ok(surface);
+        }
+
+        match (self.telegram.is_some(), self.slack.is_some()) {
+            (true, false) => Ok(RobotSurface::Telegram),
+            (false, true) => Ok(RobotSurface::Slack),
+            (true, true) => Err(ConfigError::RobotMissingField {
+                field: "RObot.surface".to_string(),
+                hint: "Both RObot.telegram and RObot.slack are configured; set RObot.surface to either 'telegram' or 'slack' explicitly".to_string(),
+            }),
+            (false, false) => Ok(RobotSurface::Telegram),
+        }
+    }
+
     /// Validates the RObot config. Returns an error if enabled but misconfigured.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if !self.enabled {
@@ -1986,13 +2012,25 @@ impl RobotConfig {
             });
         }
 
-        // Bot token must be available from config, keychain, or env var
-        if self.resolve_bot_token().is_none() {
-            return Err(ConfigError::RobotMissingField {
-                field: "RObot.telegram.bot_token".to_string(),
-                hint: "Run `ralph bot onboard --telegram`, set RALPH_TELEGRAM_BOT_TOKEN env var, or set RObot.telegram.bot_token in config"
-                    .to_string(),
-            });
+        match self.surface()? {
+            RobotSurface::Telegram => {
+                // Bot token must be available from config, keychain, or env var.
+                if self.resolve_bot_token().is_none() {
+                    return Err(ConfigError::RobotMissingField {
+                        field: "RObot.telegram.bot_token".to_string(),
+                        hint: "Run `ralph bot onboard`, set RALPH_TELEGRAM_BOT_TOKEN env var, or set RObot.telegram.bot_token in config"
+                            .to_string(),
+                    });
+                }
+            }
+            RobotSurface::Slack => {
+                if self.resolve_slack_bot_token().is_none() {
+                    return Err(ConfigError::RobotMissingField {
+                        field: "RObot.slack.bot_token".to_string(),
+                        hint: "Set RALPH_SLACK_BOT_TOKEN env var or set RObot.slack.bot_token in config".to_string(),
+                    });
+                }
+            }
         }
 
         Ok(())
@@ -2043,6 +2081,70 @@ impl RobotConfig {
                 .and_then(|telegram| telegram.api_url.clone())
         })
     }
+
+    /// Resolves the Slack bot token from `RALPH_SLACK_BOT_TOKEN` or config.
+    pub fn resolve_slack_bot_token(&self) -> Option<String> {
+        std::env::var("RALPH_SLACK_BOT_TOKEN").ok().or_else(|| {
+            self.slack
+                .as_ref()
+                .and_then(|slack| slack.bot_token.clone())
+        })
+    }
+
+    /// Resolves the Slack app token from `RALPH_SLACK_APP_TOKEN` or config.
+    pub fn resolve_slack_app_token(&self) -> Option<String> {
+        std::env::var("RALPH_SLACK_APP_TOKEN").ok().or_else(|| {
+            self.slack
+                .as_ref()
+                .and_then(|slack| slack.app_token.clone())
+        })
+    }
+}
+
+/// Human-in-the-loop surface provider for RObot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RobotSurface {
+    Telegram,
+    Slack,
+}
+
+/// Slack RObot start mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlackStartMode {
+    AppMention,
+    SlashCommand,
+    Both,
+}
+
+/// Slack bot configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SlackBotConfig {
+    /// Bot token. Optional if `RALPH_SLACK_BOT_TOKEN` env var is set.
+    pub bot_token: Option<String>,
+
+    /// Socket Mode app token. Optional for loop-local Slack service; required by daemon mode.
+    pub app_token: Option<String>,
+
+    /// Signing secret for Events API deployments.
+    pub signing_secret: Option<String>,
+
+    /// Allowed Slack channel IDs.
+    #[serde(default)]
+    pub channel_ids: Vec<String>,
+
+    /// Allowed Slack user IDs.
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+
+    /// Explicit Slack channel ID -> repo/workspace root mapping.
+    /// Slack-started loops use the repo root for the channel that owns the thread.
+    #[serde(default)]
+    pub channel_repos: HashMap<String, PathBuf>,
+
+    /// How Slack should start Ralph loops.
+    pub start_mode: Option<SlackStartMode>,
 }
 
 /// Telegram bot configuration.
@@ -3407,7 +3509,9 @@ hooks:
         let config = RalphConfig::default();
         assert!(!config.robot.enabled);
         assert!(config.robot.timeout_seconds.is_none());
+        assert!(config.robot.surface.is_none());
         assert!(config.robot.telegram.is_none());
+        assert!(config.robot.slack.is_none());
     }
 
     #[test]
@@ -3438,6 +3542,114 @@ RObot:
 
         // Validation should pass
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_legacy_telegram_infers_surface() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  timeout_seconds: 300
+  telegram:
+    bot_token: "123456:ABC-DEF"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        assert_eq!(config.robot.surface().unwrap(), RobotSurface::Telegram);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_slack_surface_validates_bot_token() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  surface: slack
+  timeout_seconds: 86400
+  slack:
+    bot_token: "***"
+    app_token: "xapp-test-token"
+    channel_ids: ["C0B79UQP117"]
+    allowed_users: ["U123456789"]
+    start_mode: both
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        assert_eq!(config.robot.surface().unwrap(), RobotSurface::Slack);
+        assert_eq!(
+            config.robot.resolve_slack_bot_token(),
+            Some("***".to_string())
+        );
+        assert_eq!(
+            config.robot.resolve_slack_app_token(),
+            Some("xapp-test-token".to_string())
+        );
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_both_surfaces_without_explicit_surface_is_ambiguous() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  timeout_seconds: 300
+  telegram:
+    bot_token: "123456:ABC-DEF"
+  slack:
+    bot_token: "***"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.surface"),
+            "Expected ambiguous surface validation failure, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_robot_config_slack_missing_timeout_fails_before_token() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  surface: slack
+  slack: {}
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.timeout_seconds"),
+            "Expected timeout validation failure first, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_robot_config_slack_missing_bot_token_fails() {
+        if std::env::var("RALPH_SLACK_BOT_TOKEN").is_ok() {
+            return;
+        }
+
+        let yaml = r#"
+RObot:
+  enabled: true
+  surface: slack
+  timeout_seconds: 300
+  slack: {}
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::RobotMissingField { field, .. }
+                if field == "RObot.slack.bot_token"),
+            "Expected Slack bot_token validation failure, got: {:?}",
+            err
+        );
     }
 
     #[test]
@@ -3479,7 +3691,9 @@ RObot:
             enabled: true,
             timeout_seconds: None,
             checkin_interval_seconds: None,
+            surface: None,
             telegram: None,
+            slack: None,
         };
         let result = robot.validate();
         assert!(result.is_err());
@@ -3501,10 +3715,12 @@ RObot:
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
+            surface: None,
             telegram: Some(TelegramBotConfig {
                 bot_token: Some("config-token".to_string()),
                 api_url: None,
             }),
+            slack: None,
         };
 
         // When RALPH_TELEGRAM_BOT_TOKEN is not set, config token is returned
@@ -3522,7 +3738,9 @@ RObot:
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
+            surface: None,
             telegram: None,
+            slack: None,
         };
 
         // Without env var AND without config token, resolve returns None
@@ -3540,10 +3758,12 @@ RObot:
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
+            surface: None,
             telegram: Some(TelegramBotConfig {
                 bot_token: Some("test-token".to_string()),
                 api_url: None,
             }),
+            slack: None,
         };
         assert!(robot.validate().is_ok());
     }
@@ -3560,7 +3780,9 @@ RObot:
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
+            surface: None,
             telegram: None,
+            slack: None,
         };
         let result = robot.validate();
         assert!(result.is_err());
@@ -3585,10 +3807,12 @@ RObot:
             enabled: true,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
+            surface: None,
             telegram: Some(TelegramBotConfig {
                 bot_token: None,
                 api_url: None,
             }),
+            slack: None,
         };
         let result = robot.validate();
         assert!(result.is_err());

@@ -232,9 +232,11 @@ pub async fn run_loop_impl(
     // Initialize event loop with context for proper path resolution
     let mut event_loop = EventLoop::with_context(config.clone(), ctx.clone());
 
-    // Inject robot service (Telegram) for human-in-the-loop communication
+    // Inject robot service for human-in-the-loop communication. Telegram owns inbound
+    // polling from the primary daemon; Slack worktree loops still need outbound access
+    // to the daemon-owned thread, so provider dispatch decides whether worktrees are eligible.
     if config.robot.enabled
-        && ctx.is_primary()
+        && should_inject_robot_service(&config, &ctx)
         && let Some(service) = create_robot_service(&config, &ctx)
     {
         event_loop.set_robot_service(service);
@@ -4942,11 +4944,37 @@ pub async fn start_loop(
     .await
 }
 
-/// Creates a robot service (Telegram) for human-in-the-loop communication.
+/// Creates a robot service for human-in-the-loop communication.
 ///
-/// Called by `run_loop_impl` when `robot.enabled` is true and this is the primary loop.
+/// Called by `run_loop_impl` when `robot.enabled` is true and provider rules allow
+/// this loop context to post outbound messages.
 /// Returns `None` if the service cannot be created or started.
 fn create_robot_service(
+    config: &RalphConfig,
+    context: &LoopContext,
+) -> Option<Box<dyn ralph_proto::RobotService>> {
+    match config.robot.surface() {
+        Ok(ralph_core::RobotSurface::Telegram) => create_telegram_robot_service(config, context),
+        Ok(ralph_core::RobotSurface::Slack) => create_slack_robot_service(config, context),
+        Err(e) => {
+            warn!(error = %e, "Failed to resolve robot surface");
+            None
+        }
+    }
+}
+
+fn should_inject_robot_service(config: &RalphConfig, context: &LoopContext) -> bool {
+    match config.robot.surface() {
+        Ok(ralph_core::RobotSurface::Telegram) => context.is_primary(),
+        Ok(ralph_core::RobotSurface::Slack) => true,
+        Err(e) => {
+            warn!(error = %e, "Failed to resolve robot surface");
+            false
+        }
+    }
+}
+
+fn create_telegram_robot_service(
     config: &RalphConfig,
     context: &LoopContext,
 ) -> Option<Box<dyn ralph_proto::RobotService>> {
@@ -4983,6 +5011,68 @@ fn create_robot_service(
             None
         }
     }
+}
+
+fn create_slack_robot_service(
+    config: &RalphConfig,
+    context: &LoopContext,
+) -> Option<Box<dyn ralph_proto::RobotService>> {
+    let loop_id = std::env::var("RALPH_LOOP_ID")
+        .ok()
+        .or_else(|| context.loop_id().map(String::from))
+        .unwrap_or_else(|| "main".to_string());
+    let timeout_secs = config.robot.timeout_seconds.unwrap_or(300);
+    let bot_token = config.robot.resolve_slack_bot_token();
+    let repo_root = context.repo_root().to_path_buf();
+    let binding = resolve_slack_thread_binding(&repo_root, &loop_id);
+    let channel_id = std::env::var("RALPH_SLACK_CHANNEL_ID")
+        .ok()
+        .or_else(|| binding.clone().map(|binding| binding.channel_id));
+    let thread_ts = std::env::var("RALPH_SLACK_THREAD_TS")
+        .ok()
+        .or_else(|| binding.map(|binding| binding.thread_ts));
+    let Some(channel_id) = channel_id else {
+        warn!(loop_id = %loop_id, "Slack robot surface configured but no Slack channel binding was found");
+        return None;
+    };
+    let Some(thread_ts) = thread_ts else {
+        warn!(loop_id = %loop_id, "Slack robot surface configured but no Slack thread binding was found");
+        return None;
+    };
+
+    match ralph_slack::SlackService::new(
+        repo_root,
+        bot_token,
+        timeout_secs,
+        loop_id,
+        channel_id,
+        thread_ts,
+        None,
+    ) {
+        Ok(service) => {
+            info!(
+                timeout_secs = service.timeout_secs(),
+                "Slack robot human-in-the-loop service active"
+            );
+            Some(Box::new(service))
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to create Slack robot service");
+            None
+        }
+    }
+}
+
+fn resolve_slack_thread_binding(
+    repo_root: &std::path::Path,
+    loop_id: &str,
+) -> Option<ralph_slack::SlackThreadBinding> {
+    let manager = ralph_slack::SlackStateManager::new(repo_root.join(".ralph/slack-state.json"));
+    manager
+        .load()
+        .ok()
+        .flatten()
+        .and_then(|state| state.threads.get(loop_id).cloned())
 }
 
 // ── Wave Execution ──────────────────────────────────────────────────────────

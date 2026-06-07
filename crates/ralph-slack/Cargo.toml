@@ -1,0 +1,29 @@
+[package]
+name = "ralph-slack"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Slack integration for human-in-the-loop orchestration in Ralph"
+
+[lints]
+workspace = true
+
+[dependencies]
+ralph-proto.workspace = true
+
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+tokio-tungstenite.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

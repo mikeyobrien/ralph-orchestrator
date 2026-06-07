@@ -2833,6 +2833,7 @@ dependencies = [
  "ralph-api",
  "ralph-core",
  "ralph-proto",
+ "ralph-slack",
  "ralph-telegram",
  "ralph-tui",
  "ratatui",
@@ -2904,6 +2905,25 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "ralph-slack"
+version = "2.9.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "ralph-proto",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-tungstenite 0.24.0",
+ "tracing",
 ]
 
 [[package]]

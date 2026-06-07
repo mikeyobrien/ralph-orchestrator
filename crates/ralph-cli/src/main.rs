@@ -767,7 +767,7 @@ struct RunArgs {
     /// Explicit loop ID to use with --continue.
     /// Reuses tasks from the specified loop instead of generating a new ID.
     /// If omitted with --continue, reuses the existing current-loop-id marker.
-    #[arg(long, requires = "continue_mode")]
+    #[arg(long)]
     loop_id: Option<String>,
 
     // ─────────────────────────────────────────────────────────────────────────

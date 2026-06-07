@@ -143,31 +143,46 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 
 ## RObot (Human-in-the-Loop)
 
-Ralph supports human interaction during orchestration via Telegram. Agents can ask questions and block until answered; humans can send proactive guidance at any time.
+Ralph supports human interaction during orchestration through provider-backed surfaces. Telegram remains the simple loop-local surface; Slack adds a Socket Mode daemon where one Slack thread maps to one Ralph loop.
 
-Quick onboarding (Telegram):
+Quick onboarding:
 
 ```bash
-ralph bot onboard --telegram   # guided setup (token + chat id)
-ralph bot status               # verify config
-ralph bot test                 # send a test message
-ralph run -c ralph.bot.yml -p  "Help the human"
+# Telegram
+ralph bot onboard              # guided setup (token + chat id)
+ralph bot status
+ralph bot test
+ralph run -c ralph.bot.yml -p "Help the human"
+
+# Slack
+export RALPH_SLACK_BOT_TOKEN=xoxb-...
+export RALPH_SLACK_APP_TOKEN=xapp-...
+ralph bot status --slack
+ralph bot test --slack --channel C0123456789 "Ralph Slack is wired"
+ralph bot daemon --slack -c ralph.slack.yml
 ```
 
 ```yaml
-# ralph.yml
+# ralph.yml / ralph.slack.yml
 RObot:
   enabled: true
-  telegram:
-    bot_token: "your-token"  # Or RALPH_TELEGRAM_BOT_TOKEN env var
+  surface: slack              # slack | telegram
+  timeout_seconds: 86400
+  slack:
+    bot_token: null           # Or RALPH_SLACK_BOT_TOKEN
+    app_token: null           # Or RALPH_SLACK_APP_TOKEN for daemon mode
+    channel_ids: [C0123456789]
+    allowed_users: [U0123456789]
+    channel_repos:
+      C0123456789: /absolute/path/to/repo
 ```
 
-- **Agent questions** — Agents emit `human.interact` events; the loop blocks until a response arrives or times out
-- **Proactive guidance** — Send messages anytime to steer the agent mid-loop
-- **Parallel loop routing** — Messages route via reply-to, `@loop-id` prefix, or default to primary
-- **Telegram commands** — `/status`, `/tasks`, `/restart` for real-time loop visibility
+- **Agent questions** — Agents emit `human.interact` events; the loop blocks until a response arrives or times out.
+- **Proactive guidance** — Plain human replies become `human.guidance` when no question is pending.
+- **Slack thread routing** — Channel maps to repo/workspace root; thread maps to loop. Slack text cannot choose arbitrary repos.
+- **Commands** — Slack thread text commands are `help`, `status`, `tail [n]`, and `stop` / `cancel`; Telegram keeps its provider-specific commands.
 
-See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) for setup instructions.
+See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) and [Slack guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/slack/) for setup instructions.
 
 ## Documentation
 
@@ -178,6 +193,7 @@ Full documentation is available at **[mikeyobrien.github.io/ralph-orchestrator](
 - [Configuration](https://mikeyobrien.github.io/ralph-orchestrator/guide/configuration/)
 - [CLI Reference](https://mikeyobrien.github.io/ralph-orchestrator/guide/cli-reference/)
 - [Presets](https://mikeyobrien.github.io/ralph-orchestrator/guide/presets/)
+- [Slack Integration](https://mikeyobrien.github.io/ralph-orchestrator/guide/slack/)
 - [Concepts: Hats & Events](https://mikeyobrien.github.io/ralph-orchestrator/concepts/hats-and-events/)
 - [Architecture](https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/)
 
@@ -225,13 +241,19 @@ Ralph uses specialized personas (hats) that coordinate through events. Each hat 
 ### RObot (Human-in-the-Loop)
 
 **What is RObot?**
-RObot enables human interaction during orchestration via Telegram. Agents can ask questions and block until answered; humans can send proactive guidance mid-loop.
+RObot enables human interaction during orchestration through Telegram or Slack. Agents can ask questions and block until answered; humans can send proactive guidance mid-loop.
 
-**How do I set up Telegram integration?**
+**How do I set up human-in-the-loop chat?**
 ```bash
-ralph bot onboard --telegram   # guided setup
-ralph bot status               # verify config
-ralph bot test                 # send a test message
+# Telegram
+ralph bot onboard
+ralph bot status
+ralph bot test
+
+# Slack
+ralph bot status --slack
+ralph bot test --slack --channel C0123456789 "Ralph Slack is wired"
+ralph bot daemon --slack -c ralph.slack.yml
 ```
 
 ### Web Dashboard

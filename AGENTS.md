@@ -35,6 +35,7 @@ ralph-cli      → CLI entry point, commands (run, plan, task, loops, web)
 ralph-core     → Orchestration logic, event loop, hats, memories, tasks
 ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, Roo, etc.)
 ralph-telegram → Telegram bot for human-in-the-loop communication
+ralph-slack    → Slack Socket Mode daemon, thread routing, and loop-local RObot service
 ralph-tui      → Terminal UI (ratatui-based)
 ralph-e2e      → End-to-end test framework
 ralph-proto    → Protocol definitions
@@ -54,6 +55,7 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 | `.ralph/loops.json` | Registry of all tracked loops |
 | `.ralph/merge-queue.jsonl` | Event-sourced merge queue |
 | `.ralph/telegram-state.json` | Telegram bot state (chat ID, pending questions) |
+| `.ralph/slack-state.json` | Slack thread bindings, pending questions, event dedupe, and loop process IDs |
 
 ### Code Locations
 
@@ -66,7 +68,8 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 - **Merge queue**: `crates/ralph-core/src/merge_queue.rs`
 - **CLI commands**: `crates/ralph-cli/src/loops.rs`, `task_cli.rs`
 - **Telegram integration**: `crates/ralph-telegram/src/` (bot, service, state, handler)
-- **RObot config**: `crates/ralph-core/src/config.rs` (`RobotConfig`, `TelegramBotConfig`)
+- **Slack integration**: `crates/ralph-slack/src/` (Socket Mode, daemon, state, handler, service)
+- **RObot config**: `crates/ralph-core/src/config.rs` (`RobotConfig`, `RobotSurface`, `TelegramBotConfig`, `SlackBotConfig`)
 - **Wave system**: `crates/ralph-core/src/wave_tracker.rs`, `wave_detection.rs`, `wave_prompt.rs`
 - **Wave CLI**: `crates/ralph-cli/src/wave.rs`
 - **Web server**: `backend/ralph-web-server/src/` (tRPC routes in `api/`, runners in `runner/`)
@@ -234,17 +237,33 @@ Reports generated in `.e2e-tests/`.
 
 ## RObot (Human-in-the-Loop)
 
-Ralph supports human interaction during orchestration via Telegram. Agents can ask questions and humans can send proactive guidance.
+Ralph supports human interaction during orchestration through provider-backed Telegram and Slack surfaces. Agents can ask questions and humans can send proactive guidance.
 
 ### Configuration
 
 ```yaml
-# ralph.yml
+# Telegram loop-local service
 RObot:
   enabled: true
-  timeout_seconds: 300    # How long to block waiting for a response
+  surface: telegram
+  timeout_seconds: 300
   telegram:
     bot_token: "your-token"  # Or set RALPH_TELEGRAM_BOT_TOKEN env var
+
+# Slack Socket Mode daemon + loop-local service
+RObot:
+  enabled: true
+  surface: slack
+  timeout_seconds: 86400
+  checkin_interval_seconds: 300
+  slack:
+    bot_token: null           # Prefer RALPH_SLACK_BOT_TOKEN
+    app_token: null           # Prefer RALPH_SLACK_APP_TOKEN for daemon --slack
+    channel_ids: [C0123456789]
+    allowed_users: [U0123456789]
+    channel_repos:
+      C0123456789: /absolute/path/to/repo
+    start_mode: app_mention
 ```
 
 ### Event Types
@@ -254,18 +273,20 @@ RObot:
 | `human.interact` | Agent to Human | Agent asks a question; loop blocks until response or timeout |
 | `human.response` | Human to Agent | Reply to a `human.interact` question |
 | `human.guidance` | Human to Agent | Proactive guidance injected as `## ROBOT GUIDANCE` in prompt |
-| `ralph tools interact progress` | Agent to Human | Non-blocking progress notification via Telegram (no event, direct send) |
+| `ralph tools interact progress` | Agent to Human | Non-blocking progress notification via the configured RObot provider (no event, direct send) |
 
 ### How It Works
 
-- The Telegram bot starts only on the **primary loop** (the one holding `.ralph/loop.lock`)
-- When an agent emits `human.interact`, the event loop sends the question via Telegram and **blocks**
-- Responses are published as `human.response` events on the bus
-- Proactive messages become `human.guidance` events, squashed into a numbered list in the prompt
-- Send failures retry with exponential backoff (3 attempts); if all fail, treated as timeout
-- Parallel loops route messages via reply-to, `@loop-id` prefix, or default to primary
+- Telegram uses the existing loop-local bot service and routes by reply/default loop semantics.
+- Slack uses one `ralph bot daemon --slack` Socket Mode process for inbound events; do not make every loop open its own Socket Mode connection.
+- Slack routing is locked: channel -> repo/workspace root, then thread -> loop binding. Slack text cannot choose arbitrary repos.
+- Slack daemon must gate allowed channel/user and dedupe event IDs before spawning loops or writing event files.
+- Slack in-thread commands are plain text/app-mention style (`help`, `status`, `tail [n]`, `stop`/`cancel`); slash commands generally do not work as native thread replies.
+- Responses are published as `human.response` events on the bus.
+- Proactive messages become `human.guidance` events, squashed into a numbered list in the prompt.
+- Send failures retry with exponential backoff (3 attempts); if all fail, treated as timeout.
 
-See `crates/ralph-telegram/README.md` for setup instructions.
+See `docs/guide/telegram.md` and `docs/guide/slack.md` for setup instructions.
 
 ## Diagnostics
 

@@ -1,0 +1,97 @@
+# Slack Human-in-the-Loop preset
+#
+# Usage:
+#   export RALPH_SLACK_BOT_TOKEN=xoxb-...
+#   export RALPH_SLACK_APP_TOKEN=xapp-...
+#   ralph bot daemon --slack -c ralph.slack.yml
+#
+# Replace channel/user IDs and repo roots before use. Slack text cannot pick
+# arbitrary repos; each channel is explicitly mapped to one workspace root.
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 2000
+  max_runtime_seconds: 999999999
+  cooldown_delay_seconds: 5
+  checkpoint_interval: 1
+  starting_event: "plan.start"
+
+cli:
+  backend: "claude"
+
+core:
+  specs_dir: "./specs/"
+  guardrails:
+    - "Use Slack thread replies for human.response and human.guidance."
+    - "Do not complete the loop unless the work satisfies the configured completion promise."
+
+RObot:
+  enabled: true
+  surface: slack
+  timeout_seconds: 86400
+  checkin_interval_seconds: 300
+  slack:
+    # Prefer env vars over checked-in secrets:
+    #   RALPH_SLACK_BOT_TOKEN=xoxb-...
+    #   RALPH_SLACK_APP_TOKEN=xapp-...
+    bot_token: null
+    app_token: null
+    signing_secret: null
+    channel_ids:
+      - C0123456789
+    allowed_users:
+      - U0123456789
+    channel_repos:
+      C0123456789: /absolute/path/to/repo
+    start_mode: app_mention
+
+tasks:
+  enabled: true
+
+memories:
+  enabled: true
+  inject: auto
+  budget: 2000
+
+hats:
+  planner:
+    name: "Planner"
+    description: "Plans work and asks Slack-thread questions when human input is required."
+    triggers: ["plan.start", "human.response"]
+    publishes: ["human.interact", "work.start"]
+    default_publishes: "work.start"
+    instructions: |
+      Read the starting prompt or human response. If you need a human decision,
+      emit human.interact with one clear question; otherwise emit work.start with
+      the concrete implementation request.
+
+  executor:
+    name: "Executor"
+    description: "Executes the requested task."
+    triggers: ["work.start", "human.guidance"]
+    publishes: ["work.done", "human.interact"]
+    default_publishes: "work.done"
+    backend:
+      type: "codex"
+    instructions: |
+      Implement the requested work. Treat human.guidance from the Slack thread as
+      live steering. If blocked, emit human.interact; otherwise emit work.done
+      with a concise summary and verification evidence.
+
+  reviewer:
+    name: "Reviewer"
+    description: "Reviews completed work and decides whether the loop is done."
+    triggers: ["work.done"]
+    publishes: ["plan.start", "human.interact"]
+    backend:
+      type: "codex"
+    instructions: |
+      Verify the work against the request. If it is complete, output LOOP_COMPLETE.
+      If it needs revision, emit plan.start with the specific follow-up. If human
+      signoff is required, emit human.interact in the bound Slack thread.
+
+skills:
+  enabled: true
+  dirs:
+    - ".claude/skills"

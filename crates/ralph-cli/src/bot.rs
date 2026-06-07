@@ -9,6 +9,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use ralph_core::RalphConfig;
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::warn;
@@ -30,7 +31,7 @@ pub enum BotCommands {
     /// Interactive setup wizard for Telegram bot
     Onboard(OnboardArgs),
     /// Check current bot configuration status
-    Status,
+    Status(StatusArgs),
     /// Send a test message to verify the bot works
     Test(TestArgs),
     /// Manage bot tokens
@@ -41,9 +42,25 @@ pub enum BotCommands {
 
 #[derive(Parser, Debug)]
 pub struct OnboardArgs {
+    /// Configure Slack instead of Telegram
+    #[arg(long)]
+    pub slack: bool,
+
     /// Skip interactive token prompt, provide token directly
     #[arg(long)]
     pub token: Option<String>,
+
+    /// Slack app-level token for Socket Mode (xapp-...); never printed
+    #[arg(long)]
+    pub app_token: Option<String>,
+
+    /// Allowed Slack channel ID (repeatable)
+    #[arg(long = "channel")]
+    pub channel_ids: Vec<String>,
+
+    /// Allowed Slack user ID (repeatable)
+    #[arg(long = "user")]
+    pub allowed_users: Vec<String>,
 
     /// Skip chat_id detection, provide chat_id directly
     #[arg(long)]
@@ -55,7 +72,22 @@ pub struct OnboardArgs {
 }
 
 #[derive(Parser, Debug)]
+pub struct StatusArgs {
+    /// Check Slack bot configuration instead of Telegram
+    #[arg(long)]
+    pub slack: bool,
+}
+
+#[derive(Parser, Debug)]
 pub struct TestArgs {
+    /// Send through Slack instead of Telegram
+    #[arg(long)]
+    pub slack: bool,
+
+    /// Slack channel ID for --slack test messages
+    #[arg(long)]
+    pub channel: Option<String>,
+
     /// Message to send (default: "Hello from Ralph!")
     #[arg(default_value = "Hello from Ralph!")]
     pub message: String,
@@ -85,7 +117,11 @@ pub struct SetTokenArgs {
 }
 
 #[derive(Parser, Debug)]
-pub struct DaemonArgs {}
+pub struct DaemonArgs {
+    /// Run Slack Socket Mode daemon instead of Telegram daemon
+    #[arg(long)]
+    pub slack: bool,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DISPATCHER
@@ -98,8 +134,12 @@ pub async fn execute(
     use_colors: bool,
 ) -> Result<()> {
     match args.command {
+        BotCommands::Onboard(onboard_args) if onboard_args.slack => {
+            onboard_slack(onboard_args, use_colors).await
+        }
         BotCommands::Onboard(onboard_args) => onboard_telegram(onboard_args, use_colors).await,
-        BotCommands::Status => bot_status(use_colors).await,
+        BotCommands::Status(status_args) if status_args.slack => bot_status_slack(use_colors),
+        BotCommands::Status(_) => bot_status(use_colors).await,
         BotCommands::Test(test_args) => bot_test(test_args, use_colors).await,
         BotCommands::Token(token_args) => bot_token(token_args, use_colors),
         BotCommands::Daemon(daemon_args) => {
@@ -440,11 +480,104 @@ async fn bot_status(use_colors: bool) -> Result<()> {
     Ok(())
 }
 
+async fn onboard_slack(args: OnboardArgs, use_colors: bool) -> Result<()> {
+    println!();
+    if use_colors {
+        println!("\x1b[1mRalph Slack Bot Setup\x1b[0m");
+        println!("\x1b[1m=====================\x1b[0m");
+    } else {
+        println!("Ralph Slack Bot Setup");
+        println!("=====================");
+    }
+    println!(
+        "Required Slack scopes: chat:write, app_mentions:read, commands (for slash commands), and channel history for thread replies."
+    );
+    println!("Socket Mode requires an xapp-... app token for `ralph bot daemon --slack`.");
+
+    save_slack_robot_config(
+        args.timeout,
+        args.token.as_deref(),
+        args.app_token.as_deref(),
+        &args.channel_ids,
+        &args.allowed_users,
+    )?;
+    print_success(use_colors, "Slack RObot config written to ralph.yml");
+    if args.token.is_none() {
+        print_status(
+            use_colors,
+            "Set RALPH_SLACK_BOT_TOKEN or add RObot.slack.bot_token before running Slack commands",
+        );
+    }
+    if args.app_token.is_none() {
+        print_status(
+            use_colors,
+            "Set RALPH_SLACK_APP_TOKEN or add RObot.slack.app_token before running daemon --slack",
+        );
+    }
+    Ok(())
+}
+
+fn bot_status_slack(use_colors: bool) -> Result<()> {
+    println!();
+    if use_colors {
+        println!("\x1b[1mRalph Slack Bot Status\x1b[0m");
+        println!("\x1b[1m======================\x1b[0m");
+    } else {
+        println!("Ralph Slack Bot Status");
+        println!("======================");
+    }
+
+    if std::env::var("RALPH_SLACK_BOT_TOKEN").is_ok() {
+        print_success(use_colors, "Env var: RALPH_SLACK_BOT_TOKEN set");
+    } else {
+        print_status(use_colors, "Env var: RALPH_SLACK_BOT_TOKEN not set");
+    }
+    if std::env::var("RALPH_SLACK_APP_TOKEN").is_ok() {
+        print_success(use_colors, "Env var: RALPH_SLACK_APP_TOKEN set");
+    } else {
+        print_status(use_colors, "Env var: RALPH_SLACK_APP_TOKEN not set");
+    }
+
+    if let Some(config) = load_slack_config_from(Path::new("ralph.yml")) {
+        print_success(use_colors, "Config: RObot.slack present in ralph.yml");
+        if !config.channel_ids.is_empty() {
+            print_success(
+                use_colors,
+                &format!("Allowed channels: {}", config.channel_ids.join(", ")),
+            );
+        }
+        if !config.allowed_users.is_empty() {
+            print_success(
+                use_colors,
+                &format!("Allowed users: {}", config.allowed_users.join(", ")),
+            );
+        }
+    } else {
+        print_status(use_colors, "Config: no RObot.slack in ralph.yml");
+    }
+
+    let state_path = Path::new(".ralph/slack-state.json");
+    if state_path.exists() {
+        let state = ralph_slack::SlackStateManager::new(state_path).load_or_default()?;
+        print_success(
+            use_colors,
+            &format!("Slack state: {} bound thread(s)", state.threads.len()),
+        );
+    } else {
+        print_status(use_colors, "Slack state: not found");
+    }
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TEST COMMAND
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
+    if args.slack {
+        return bot_test_slack(args, use_colors).await;
+    }
+
     // Resolve token
     let token = resolve_token().context(
         "No bot token available. Run `ralph bot onboard` or set RALPH_TELEGRAM_BOT_TOKEN",
@@ -472,16 +605,40 @@ async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
     Ok(())
 }
 
+async fn bot_test_slack(args: TestArgs, use_colors: bool) -> Result<()> {
+    let token = std::env::var("RALPH_SLACK_BOT_TOKEN")
+        .ok()
+        .or_else(|| load_slack_config_from(Path::new("ralph.yml")).and_then(|config| config.bot_token))
+        .context("No Slack bot token available. Set RALPH_SLACK_BOT_TOKEN or run `ralph bot onboard --slack --token <token>`")?;
+    let channel = args
+        .channel
+        .or_else(|| {
+            load_slack_config_from(Path::new("ralph.yml"))
+                .and_then(|config| config.channel_ids.into_iter().next())
+        })
+        .context(
+            "No Slack channel available. Pass --channel C... or configure RObot.slack.channel_ids",
+        )?;
+
+    print!("  Sending Slack message to channel {}...", channel);
+    io::stdout().flush()?;
+    let api = ralph_slack::SlackApi::new(token, None);
+    api.post_message(&channel, None, &args.message).await?;
+    println!();
+    print_success(use_colors, "Slack message sent!");
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DAEMON COMMAND
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Run the bot daemon — delegates to the configured communication adapter.
 ///
-/// Currently only Telegram is supported. The adapter implements
-/// [`DaemonAdapter`] and handles all platform-specific concerns.
+/// Telegram and Slack are supported. The adapter implements
+/// [`DaemonAdapter`] or the Slack daemon seam and handles platform-specific concerns.
 async fn run_daemon(
-    _args: DaemonArgs,
+    args: DaemonArgs,
     config_sources: &[ConfigSource],
     hats_source: Option<&HatsSource>,
     use_colors: bool,
@@ -551,6 +708,12 @@ async fn run_daemon(
         warn!("Using resolved runtime config: {}", config_path.display());
     }
 
+    let use_slack =
+        args.slack || matches!(config.robot.surface(), Ok(ralph_core::RobotSurface::Slack));
+    if use_slack {
+        return run_slack_daemon(config, config_path, workspace_root, use_colors).await;
+    }
+
     // Resolve bot token and chat_id for Telegram adapter
     let token = config.robot.resolve_bot_token().context(
         "No bot token available. Run `ralph bot onboard` or set RALPH_TELEGRAM_BOT_TOKEN",
@@ -584,6 +747,73 @@ async fn run_daemon(
 
     adapter.run_daemon(workspace_root, start_loop).await?;
 
+    Ok(())
+}
+
+async fn run_slack_daemon(
+    config: RalphConfig,
+    config_path: PathBuf,
+    workspace_root: PathBuf,
+    use_colors: bool,
+) -> Result<()> {
+    let bot_token = config.robot.resolve_slack_bot_token().context(
+        "No Slack bot token available. Set RALPH_SLACK_BOT_TOKEN or configure RObot.slack.bot_token",
+    )?;
+    let app_token = config.robot.resolve_slack_app_token().context(
+        "No Slack app token available. Set RALPH_SLACK_APP_TOKEN or configure RObot.slack.app_token",
+    )?;
+    let slack = config.robot.slack.clone().unwrap_or_default();
+    if slack.channel_ids.is_empty()
+        || slack.allowed_users.is_empty()
+        || slack.channel_repos.is_empty()
+    {
+        anyhow::bail!(
+            "Slack daemon requires explicit RObot.slack.channel_ids, RObot.slack.allowed_users, and RObot.slack.channel_repos"
+        );
+    }
+    let mut channel_repos = BTreeMap::new();
+    for channel_id in &slack.channel_ids {
+        let Some(repo_root) = slack.channel_repos.get(channel_id) else {
+            anyhow::bail!(
+                "Slack channel {channel_id} is missing RObot.slack.channel_repos mapping"
+            );
+        };
+        if !repo_root.is_absolute() {
+            anyhow::bail!(
+                "Slack repo root for channel {channel_id} must be absolute: {}",
+                repo_root.display()
+            );
+        }
+        let canonical = repo_root.canonicalize().with_context(|| {
+            format!(
+                "Slack repo root for channel {channel_id} does not exist: {}",
+                repo_root.display()
+            )
+        })?;
+        channel_repos.insert(channel_id.clone(), canonical);
+    }
+
+    if use_colors {
+        println!("\x1b[1mRalph Daemon\x1b[0m (Slack Socket Mode)");
+    } else {
+        println!("Ralph Daemon (Slack Socket Mode)");
+    }
+
+    let api = ralph_slack::SlackApi::new(bot_token, None);
+    let socket_url = api.open_socket_mode_url(&app_token).await?;
+    let state = ralph_slack::SlackStateManager::new(workspace_root.join(".ralph/slack-state.json"));
+    let daemon = ralph_slack::SlackDaemon::new(
+        ralph_slack::SlackDaemonConfig {
+            workspace_root: workspace_root.clone(),
+            allowed_channels: slack.channel_ids,
+            allowed_users: slack.allowed_users,
+            channel_repos,
+        },
+        state,
+        ralph_slack::CommandLoopSpawner::new(Some(config_path)),
+        ralph_slack::SlackApiNotifier::new(api),
+    );
+    ralph_slack::socket_mode::run_socket_mode(&socket_url, daemon).await?;
     Ok(())
 }
 
@@ -850,6 +1080,109 @@ fn save_robot_config(timeout: u64, bot_token: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn save_slack_robot_config(
+    timeout: u64,
+    bot_token: Option<&str>,
+    app_token: Option<&str>,
+    channel_ids: &[String],
+    allowed_users: &[String],
+) -> Result<()> {
+    let config_path = Path::new("ralph.yml");
+    let doc = if config_path.exists() {
+        let content = std::fs::read_to_string(config_path).context("Failed to read ralph.yml")?;
+        serde_yaml::from_str(&content).context("Failed to parse ralph.yml")?
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+    let mut root = match doc {
+        serde_yaml::Value::Mapping(map) => map,
+        _ => serde_yaml::Mapping::new(),
+    };
+
+    let mut slack_map = serde_yaml::Mapping::new();
+    if let Some(token) = bot_token {
+        slack_map.insert(
+            serde_yaml::Value::String("bot_token".to_string()),
+            serde_yaml::Value::String(token.to_string()),
+        );
+    }
+    if let Some(token) = app_token {
+        slack_map.insert(
+            serde_yaml::Value::String("app_token".to_string()),
+            serde_yaml::Value::String(token.to_string()),
+        );
+    }
+    slack_map.insert(
+        serde_yaml::Value::String("channel_ids".to_string()),
+        serde_yaml::Value::Sequence(
+            channel_ids
+                .iter()
+                .map(|id| serde_yaml::Value::String(id.clone()))
+                .collect(),
+        ),
+    );
+    slack_map.insert(
+        serde_yaml::Value::String("allowed_users".to_string()),
+        serde_yaml::Value::Sequence(
+            allowed_users
+                .iter()
+                .map(|id| serde_yaml::Value::String(id.clone()))
+                .collect(),
+        ),
+    );
+    let cwd = std::env::current_dir()
+        .context("Failed to resolve current directory for Slack channel_repos")?;
+    let mut channel_repos = serde_yaml::Mapping::new();
+    for channel_id in channel_ids {
+        channel_repos.insert(
+            serde_yaml::Value::String(channel_id.clone()),
+            serde_yaml::Value::String(cwd.to_string_lossy().to_string()),
+        );
+    }
+    slack_map.insert(
+        serde_yaml::Value::String("channel_repos".to_string()),
+        serde_yaml::Value::Mapping(channel_repos),
+    );
+
+    let mut robot_map = serde_yaml::Mapping::new();
+    robot_map.insert(
+        serde_yaml::Value::String("enabled".to_string()),
+        serde_yaml::Value::Bool(true),
+    );
+    robot_map.insert(
+        serde_yaml::Value::String("surface".to_string()),
+        serde_yaml::Value::String("slack".to_string()),
+    );
+    robot_map.insert(
+        serde_yaml::Value::String("timeout_seconds".to_string()),
+        serde_yaml::Value::Number(serde_yaml::Number::from(timeout)),
+    );
+    robot_map.insert(
+        serde_yaml::Value::String("slack".to_string()),
+        serde_yaml::Value::Mapping(slack_map),
+    );
+    root.insert(
+        serde_yaml::Value::String("RObot".to_string()),
+        serde_yaml::Value::Mapping(robot_map),
+    );
+
+    let yaml_str = serde_yaml::to_string(&serde_yaml::Value::Mapping(root))
+        .context("Failed to serialize config")?;
+    std::fs::write(config_path, yaml_str).context("Failed to write ralph.yml")?;
+    Ok(())
+}
+
+fn load_slack_config_from(path: &Path) -> Option<ralph_core::SlackBotConfig> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let config: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+    let slack = config
+        .get("RObot")
+        .or_else(|| config.get("robot"))
+        .and_then(|r| r.get("slack"))?
+        .clone();
+    serde_yaml::from_value(slack).ok()
 }
 
 /// Write resolved config to a temporary runtime file so loop_runner receives a config path.
@@ -1131,7 +1464,7 @@ mod tests {
     async fn test_run_daemon_rejects_builtin_config() {
         let sources = vec![ConfigSource::Builtin("tdd".to_string())];
 
-        let err = run_daemon(DaemonArgs {}, &sources, None, false)
+        let err = run_daemon(DaemonArgs { slack: false }, &sources, None, false)
             .await
             .expect_err("expected daemon setup error");
         assert!(
@@ -1147,7 +1480,7 @@ mod tests {
             "https://example.com/ralph.yml".to_string(),
         )];
 
-        let err = run_daemon(DaemonArgs {}, &sources, None, false)
+        let err = run_daemon(DaemonArgs { slack: false }, &sources, None, false)
             .await
             .expect_err("expected remote config error");
         assert!(
@@ -1163,7 +1496,7 @@ mod tests {
         let _cwd = CwdGuard::set(temp_dir.path());
 
         let sources = vec![ConfigSource::File(PathBuf::from("missing.yml"))];
-        let err = run_daemon(DaemonArgs {}, &sources, None, false)
+        let err = run_daemon(DaemonArgs { slack: false }, &sources, None, false)
             .await
             .expect_err("expected missing config error");
         assert!(
@@ -1589,6 +1922,60 @@ mod tests {
         std::fs::write(".ralph/telegram-state.json", "not-json").unwrap();
 
         assert_eq!(resolve_chat_id(), None);
+    }
+
+    #[test]
+    fn test_slack_cli_flags_parse() {
+        let args = BotArgs::try_parse_from([
+            "ralph",
+            "onboard",
+            "--slack",
+            "--token",
+            "xoxb-test",
+            "--app-token",
+            "xapp-test",
+            "--channel",
+            "C123",
+            "--user",
+            "U123",
+        ])
+        .unwrap();
+        let BotCommands::Onboard(onboard) = args.command else {
+            panic!("expected onboard command");
+        };
+        assert!(onboard.slack);
+        assert_eq!(onboard.channel_ids, vec!["C123"]);
+        assert_eq!(onboard.allowed_users, vec!["U123"]);
+    }
+
+    #[test]
+    fn test_save_slack_robot_config_writes_provider_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::set(temp_dir.path());
+
+        save_slack_robot_config(
+            600,
+            Some("xoxb-test"),
+            Some("xapp-test"),
+            &["C123".to_string()],
+            &["U123".to_string()],
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string("ralph.yml").unwrap();
+        let config: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+        let robot = config.get("RObot").unwrap();
+        assert_eq!(robot.get("surface").and_then(|v| v.as_str()), Some("slack"));
+        assert_eq!(
+            robot
+                .get("slack")
+                .and_then(|s| s.get("bot_token"))
+                .and_then(|v| v.as_str()),
+            Some("xoxb-test")
+        );
+        let loaded = load_slack_config_from(Path::new("ralph.yml")).unwrap();
+        assert_eq!(loaded.channel_ids, vec!["C123"]);
+        assert_eq!(loaded.allowed_users, vec!["U123"]);
     }
 
     #[test]
