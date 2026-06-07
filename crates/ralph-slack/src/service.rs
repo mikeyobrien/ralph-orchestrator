@@ -10,6 +10,7 @@ use crate::state::SlackStateManager;
 
 #[derive(Debug, Clone)]
 pub struct SlackService {
+    workspace_root: PathBuf,
     timeout_secs: u64,
     loop_id: String,
     channel_id: String,
@@ -35,6 +36,7 @@ impl SlackService {
             .ok_or(SlackError::MissingBotToken)?;
         let state_path = workspace_root.join(".ralph/slack-state.json");
         Ok(Self {
+            workspace_root,
             timeout_secs,
             loop_id,
             channel_id,
@@ -84,6 +86,24 @@ impl SlackService {
         Ok(1)
     }
 
+    pub fn send_file(&self, file_path: &Path, caption: Option<&str>) -> SlackResult<i32> {
+        let (canonical_path, filename, length) = self.validate_upload_path(file_path)?;
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            SlackError::Api("no tokio runtime available for Slack API call".to_string())
+        })?;
+        tokio::task::block_in_place(|| {
+            handle.block_on(self.api.upload_file_external(
+                &self.channel_id,
+                &self.thread_ts,
+                &canonical_path,
+                &filename,
+                length,
+                caption,
+            ))
+        })?;
+        Ok(1)
+    }
+
     pub fn wait_for_response(&self, events_path: &Path) -> SlackResult<Option<String>> {
         let deadline = Instant::now() + Duration::from_secs(self.timeout_secs);
         let mut file_pos = if events_path.exists() {
@@ -119,6 +139,31 @@ impl SlackService {
         self.shutdown.store(true, Ordering::Relaxed);
     }
 
+    fn validate_upload_path(&self, file_path: &Path) -> SlackResult<(PathBuf, String, u64)> {
+        let canonical_root = self.workspace_root.canonicalize()?;
+        let canonical_path = file_path.canonicalize()?;
+        if !canonical_path.starts_with(&canonical_root) {
+            return Err(SlackError::FilePath(format!(
+                "{} is outside workspace {}",
+                canonical_path.display(),
+                canonical_root.display()
+            )));
+        }
+        let metadata = std::fs::metadata(&canonical_path)?;
+        if !metadata.is_file() {
+            return Err(SlackError::FilePath(format!(
+                "{} is not a regular file",
+                canonical_path.display()
+            )));
+        }
+        let filename = canonical_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| SlackError::FilePath("file name is not valid UTF-8".to_string()))?
+            .to_string();
+        Ok((canonical_path, filename, metadata.len()))
+    }
+
     fn post_thread_message(&self, text: &str) -> SlackResult<String> {
         let handle = tokio::runtime::Handle::try_current().map_err(|_| {
             SlackError::Api("no tokio runtime available for Slack API call".to_string())
@@ -150,6 +195,10 @@ impl ralph_proto::RobotService for SlackService {
         Ok(SlackService::send_checkin(
             self, iteration, elapsed, context,
         )?)
+    }
+
+    fn send_file(&self, file_path: &Path, caption: Option<&str>) -> anyhow::Result<i32> {
+        Ok(SlackService::send_file(self, file_path, caption)?)
     }
 
     fn timeout_secs(&self) -> u64 {

@@ -16,16 +16,21 @@ struct CapturedRequest {
     body: String,
 }
 
-async fn run_http_double(
-    responses: Vec<&'static str>,
-) -> (String, mpsc::Receiver<CapturedRequest>) {
+async fn run_http_double<I, S>(responses: I) -> (String, mpsc::Receiver<CapturedRequest>)
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+    let response_base_url = base_url.clone();
     let (tx, rx) = mpsc::channel(8);
-    let responses: Vec<String> = responses.into_iter().map(ToString::to_string).collect();
+    let responses: Vec<String> = responses.into_iter().map(Into::into).collect();
 
     tokio::spawn(async move {
         for response in responses {
+            let response = response.replace("__BASE_URL__", &response_base_url);
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut buf = vec![0; 8192];
             let n = stream.read(&mut buf).await.unwrap();
@@ -53,7 +58,7 @@ async fn run_http_double(
         }
     });
 
-    (format!("http://{}", addr), rx)
+    (base_url, rx)
 }
 
 #[tokio::test]
@@ -100,6 +105,52 @@ async fn open_socket_mode_url_posts_to_apps_connections_open_with_app_token() {
     let request = requests.recv().await.unwrap();
     assert_eq!(request.path, "/api/apps.connections.open");
     assert!(request.headers.to_lowercase().contains("authorization"));
+}
+
+#[tokio::test]
+async fn upload_file_external_uses_current_slack_external_upload_flow() {
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("artifact.txt");
+    std::fs::write(&file_path, "hello artifact").unwrap();
+    let (base_url, mut requests) = run_http_double(vec![
+        r#"{"ok":true,"upload_url":"__BASE_URL__/upload/F123","file_id":"F123"}"#,
+        r#"{}"#,
+        r#"{"ok":true}"#,
+    ])
+    .await;
+    let upload_url = format!("{base_url}/upload/F123");
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url.clone()));
+
+    api.upload_file_external(
+        "C123",
+        "1780792150.138669",
+        &file_path,
+        "artifact.txt",
+        14,
+        Some("Artifact caption"),
+    )
+    .await
+    .unwrap();
+
+    let get_url = requests.recv().await.unwrap();
+    assert_eq!(get_url.path, "/api/files.getUploadURLExternal");
+    assert!(get_url.headers.to_lowercase().contains("authorization"));
+    assert!(get_url.body.contains("filename=artifact.txt"));
+    assert!(get_url.body.contains("length=14"));
+
+    let upload = requests.recv().await.unwrap();
+    assert_eq!(upload.path, "/upload/F123");
+    assert!(!upload.headers.to_lowercase().contains("authorization"));
+    assert_eq!(upload.body, "hello artifact");
+    assert_eq!(upload_url, format!("{base_url}/upload/F123"));
+
+    let complete = requests.recv().await.unwrap();
+    assert_eq!(complete.path, "/api/files.completeUploadExternal");
+    let body: serde_json::Value = serde_json::from_str(&complete.body).unwrap();
+    assert_eq!(body["channel_id"], "C123");
+    assert_eq!(body["thread_ts"], "1780792150.138669");
+    assert_eq!(body["files"][0]["id"], "F123");
+    assert_eq!(body["files"][0]["title"], "Artifact caption");
 }
 
 #[test]
@@ -200,6 +251,63 @@ async fn slack_service_posts_question_and_checkin_to_bound_thread() {
         state.pending_questions["slack-C123-1780792150-138669"].message_ts,
         "1780792160.000100"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn slack_service_uploads_files_only_to_bound_thread_and_workspace_paths() {
+    let (base_url, mut requests) = run_http_double(vec![
+        r#"{"ok":true,"upload_url":"__BASE_URL__/upload/F123","file_id":"F123"}"#,
+        r#"{}"#,
+        r#"{"ok":true}"#,
+    ])
+    .await;
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("artifact.txt");
+    std::fs::write(&file_path, "loop-local artifact").unwrap();
+    let service = SlackService::new(
+        dir.path().to_path_buf(),
+        Some("bot-token".to_string()),
+        5,
+        "slack-C123-1780792150-138669".to_string(),
+        "C123".to_string(),
+        "1780792150.138669".to_string(),
+        Some(base_url),
+    )
+    .unwrap();
+
+    let sent =
+        tokio::task::block_in_place(|| service.send_file(&file_path, Some("caption"))).unwrap();
+
+    assert_eq!(sent, 1);
+    let _get_url = requests.recv().await.unwrap();
+    let _upload = requests.recv().await.unwrap();
+    let complete = requests.recv().await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&complete.body).unwrap();
+    assert_eq!(body["channel_id"], "C123");
+    assert_eq!(body["thread_ts"], "1780792150.138669");
+}
+
+#[test]
+fn slack_service_rejects_non_workspace_files_and_redacts_token_debug() {
+    let dir = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let outside_file = outside.path().join("secret.txt");
+    std::fs::write(&outside_file, "do not upload").unwrap();
+    let service = SlackService::new(
+        dir.path().to_path_buf(),
+        Some("bot-token-secret".to_string()),
+        5,
+        "slack-C123-1780792150-138669".to_string(),
+        "C123".to_string(),
+        "1780792150.138669".to_string(),
+        Some("http://127.0.0.1:9".to_string()),
+    )
+    .unwrap();
+
+    let err = service.send_file(&outside_file, None).unwrap_err();
+    assert!(err.to_string().contains("outside workspace"));
+    let debug = format!("{service:?}");
+    assert!(!debug.contains("bot-token-secret"));
 }
 
 #[test]

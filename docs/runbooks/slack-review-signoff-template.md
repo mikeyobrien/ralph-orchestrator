@@ -42,6 +42,8 @@ Security checklist:
 - [ ] Commands do not accidentally answer pending questions
 - [ ] `stop`/`cancel` creator-only
 - [ ] Tail/status/token handling redacts secrets
+- [ ] File uploads require `files:write`, use Slack external upload flow, and stay bound to the root thread
+- [ ] File path validation rejects non-workspace paths before reading
 - [ ] Docs/examples do not contain real secrets
 
 Notes:
@@ -63,6 +65,7 @@ Smoke commands/results:
 - Root app mention starts one thread loop →
 - Thread reply routes to `human.response`/`human.guidance` →
 - `status` / `tail` work →
+- Structured file upload appears in root thread after `files:write` reinstall →
 - Unauthorized user/channel negative check →
 
 Live smoke result:

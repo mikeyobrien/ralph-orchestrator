@@ -490,7 +490,7 @@ async fn onboard_slack(args: OnboardArgs, use_colors: bool) -> Result<()> {
         println!("=====================");
     }
     println!(
-        "Required Slack scopes: chat:write, app_mentions:read, commands (for slash commands), and channel history for thread replies."
+        "Required Slack scopes: chat:write, files:write, app_mentions:read, commands (for slash commands), and channel history for thread replies."
     );
     println!("Socket Mode requires an xapp-... app token for `ralph bot daemon --slack`.");
 

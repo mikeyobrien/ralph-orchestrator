@@ -24,6 +24,9 @@ pub enum SlackError {
     #[error("Slack config error: {0}")]
     Config(String),
 
+    #[error("Slack file path rejected: {0}")]
+    FilePath(String),
+
     #[error("invalid Slack loop id: {0}")]
     InvalidLoopId(String),
 

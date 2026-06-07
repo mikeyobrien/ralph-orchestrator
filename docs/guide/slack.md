@@ -9,6 +9,7 @@ Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orche
 - Slack text cannot choose arbitrary repos. The daemon resolves the repo from the Slack `channel_id`; after a loop starts, the persisted thread binding supplies the repo root for every reply.
 - The external address is `channel_id + root thread_ts`; Slack timestamps are strings, not floats.
 - Loop-local outbound messages use `SlackService` through the shared `RobotService` trait.
+- Structured `human.interact` attachment payloads can upload local files; Slack inbound text never selects arbitrary local paths.
 
 ## Slack app setup
 
@@ -22,6 +23,7 @@ Required tokens:
 Required bot scopes for the MVP:
 
 - `chat:write` — post loop starts, questions, progress, command replies, and results.
+- `files:write` — upload loop-local artifacts through Slack's external file-upload flow into the bound thread.
 - `app_mentions:read` — receive root app mentions that start loops.
 - `channels:history` — receive replies in public channels.
 - `groups:history` — only if you allow private channels.
@@ -93,6 +95,19 @@ Inside a bound Ralph thread:
 - `stop` is limited to the Slack user who started the thread.
 
 Slack nuance: slash commands generally do not behave like native thread replies. For in-thread steering, use plain thread text (`status`, `tail 10`, `stop`) or app mention behavior. Treat slash commands as channel-level starts only unless Slack changes its threading behavior.
+
+## File attachments
+
+Ralph can attach loop-local files to a pending `human.interact` question when the event payload is structured JSON, for example:
+
+```json
+{
+  "question": "Review the generated report?",
+  "attachments": [{"path": "/absolute/path/to/repo/report.md", "caption": "Generated report"}]
+}
+```
+
+The file path must resolve under the configured repo/workspace root and be a regular file. Slack uploads use `files.getUploadURLExternal` followed by `files.completeUploadExternal`; deprecated `files.upload` is not used. The completion call targets the persisted `channel_id` and root thread `thread_ts` for the bound loop.
 
 ## Security model
 

@@ -23,6 +23,7 @@ Required app setup:
 - Bot token scopes:
   - `app_mentions:read`
   - `chat:write`
+  - `files:write` for artifact/file upload smoke
   - `channels:history` for public-channel smoke
   - `groups:history` only if smoking a private channel
   - `im:history` only if intentionally smoking DMs
@@ -181,7 +182,25 @@ cd /absolute/path/to/repo
 rg -n 'human\.response|human\.guidance|human\.interact' .ralph .worktrees 2>/dev/null || true
 ```
 
-## 8. Negative checks
+## 8. Verify file upload routing
+
+From the mapped repo/workspace, create a harmless smoke artifact and have a loop emit a structured `human.interact` attachment payload for that path:
+
+```bash
+cd /absolute/path/to/repo
+mkdir -p .ralph/smoke-artifacts
+printf 'Slack file upload smoke artifact\n' > .ralph/smoke-artifacts/slack-file-smoke.txt
+```
+
+Expected:
+
+- The file appears in the same Slack thread as the loop question, not in a new channel/root message.
+- The upload completes only after the app has `files:write` and has been reinstalled after adding the scope.
+- The upload uses the bound `channel_id` and root `thread_ts`; a reply timestamp must not become the file thread target.
+- Slack text/replies do not trigger arbitrary local file uploads.
+- Token values and file contents are not printed in daemon logs or review notes.
+
+## 9. Negative checks
 
 Perform only safe negative checks:
 
@@ -191,7 +210,7 @@ Perform only safe negative checks:
 
 Do not attempt destructive commands against a production repo.
 
-## 9. Cleanup
+## 10. Cleanup
 
 Stop the daemon with `Ctrl-C`.
 
@@ -209,13 +228,14 @@ cd /absolute/path/to/repo
 find .ralph .worktrees -maxdepth 3 -type f 2>/dev/null | sed -n '1,120p'
 ```
 
-## 10. Pass/fail criteria
+## 11. Pass/fail criteria
 
 Pass live smoke if:
 
 - daemon connects through Socket Mode;
 - root app mention in the allowlisted channel starts exactly one loop;
 - Ralph posts replies in the root Slack thread;
+- structured loop-local file attachment upload appears in that same root thread;
 - thread reply routes to `human.response` or `human.guidance` as expected;
 - `status`/`tail` work in-thread;
 - unauthorized channel/user attempts do not create side effects;

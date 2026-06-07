@@ -2157,6 +2157,31 @@ impl EventLoop {
         Value::Object(context)
     }
 
+    fn human_interact_attachments(context: &Map<String, Value>) -> Vec<(PathBuf, Option<String>)> {
+        let Some(Value::Array(attachments)) =
+            context.get("attachments").or_else(|| context.get("files"))
+        else {
+            return Vec::new();
+        };
+
+        attachments
+            .iter()
+            .filter_map(|attachment| {
+                let map = attachment.as_object()?;
+                let path = map
+                    .get("path")
+                    .or_else(|| map.get("file_path"))
+                    .and_then(Value::as_str)?;
+                let caption = map
+                    .get("caption")
+                    .or_else(|| map.get("title"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                Some((PathBuf::from(path), caption))
+            })
+            .collect()
+    }
+
     fn is_restart_request_payload(payload: &str) -> bool {
         let payload = payload.to_ascii_lowercase();
         payload.contains("restart yourself") || payload.contains("restart ralph")
@@ -2637,6 +2662,33 @@ impl EventLoop {
                 // Block: poll events file for human.response
                 // Per spec, even on send failure we treat as timeout (continue without blocking)
                 if send_ok {
+                    let attachments = Self::human_interact_attachments(&context);
+                    if !attachments.is_empty() {
+                        let mut uploaded = 0;
+                        let mut errors = Vec::new();
+                        for (file_path, caption) in attachments {
+                            match robot_service.send_file(&file_path, caption.as_deref()) {
+                                Ok(message_id) => {
+                                    if message_id > 0 {
+                                        uploaded += 1;
+                                    }
+                                }
+                                Err(error) => {
+                                    warn!(
+                                        error = %error,
+                                        path = %file_path.display(),
+                                        "Failed to send human.interact attachment via robot service"
+                                    );
+                                    errors.push(Value::String(error.to_string()));
+                                }
+                            }
+                        }
+                        context.insert("attachment_uploads".to_string(), Value::from(uploaded));
+                        if !errors.is_empty() {
+                            context.insert("attachment_errors".to_string(), Value::Array(errors));
+                        }
+                    }
+
                     // Read the active events path from the current-events marker,
                     // falling back to the default events.jsonl if not available.
                     let events_path = self

@@ -57,6 +57,15 @@ pub trait RobotService: Send + Sync {
         context: Option<&CheckinContext>,
     ) -> anyhow::Result<i32>;
 
+    /// Send a local file artifact to the human.
+    ///
+    /// The default is a safe no-op so non-file-capable surfaces do not gain an
+    /// implicit upload path. Implementations that support files are responsible
+    /// for validating the path before reading it.
+    fn send_file(&self, _file_path: &Path, _caption: Option<&str>) -> anyhow::Result<i32> {
+        Ok(0)
+    }
+
     /// Get the configured response timeout in seconds.
     fn timeout_secs(&self) -> u64;
 

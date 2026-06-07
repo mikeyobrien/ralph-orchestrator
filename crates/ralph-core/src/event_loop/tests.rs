@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn human_interact_attachments_extracts_structured_file_payloads_only() {
+    let context = EventLoop::parse_human_interact_context(
+        r#"{"question":"Review artifact?","attachments":[{"path":"/tmp/report.txt","caption":"Report"}],"ignored":"MEDIA:/tmp/raw-token.txt"}"#,
+    );
+    let Value::Object(map) = context else {
+        panic!("expected object context");
+    };
+
+    let attachments = EventLoop::human_interact_attachments(&map);
+
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0].0, PathBuf::from("/tmp/report.txt"));
+    assert_eq!(attachments[0].1.as_deref(), Some("Report"));
+}
+
+#[test]
 fn test_initialization_routes_to_ralph_in_multihat_mode() {
     // Per "Hatless Ralph" architecture: When custom hats are defined,
     // Ralph is always the executor. Custom hats define topology only.

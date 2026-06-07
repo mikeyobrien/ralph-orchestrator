@@ -784,6 +784,10 @@ impl ralph_proto::RobotService for TelegramService {
         )?)
     }
 
+    fn send_file(&self, file_path: &Path, caption: Option<&str>) -> anyhow::Result<i32> {
+        Ok(TelegramService::send_document(self, file_path, caption)?)
+    }
+
     fn timeout_secs(&self) -> u64 {
         self.timeout_secs
     }
