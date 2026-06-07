@@ -29,6 +29,14 @@ pub struct SlackThreadBinding {
     pub status: SlackThreadStatus,
     #[serde(default)]
     pub process_id: Option<u32>,
+    #[serde(default)]
+    pub start_card_ts: Option<String>,
+    #[serde(default)]
+    pub progress_message_ts: Option<String>,
+    #[serde(default)]
+    pub stream_ts: Option<String>,
+    #[serde(default)]
+    pub final_card_ts: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +129,10 @@ impl SlackStateManager {
                 workspace_root: workspace_root.as_ref().to_path_buf(),
                 status: SlackThreadStatus::Running,
                 process_id: None,
+                start_card_ts: None,
+                progress_message_ts: None,
+                stream_ts: None,
+                final_card_ts: None,
             },
         );
         state
@@ -178,6 +190,32 @@ impl SlackStateManager {
         let mut state = self.load_or_default()?;
         if let Some(binding) = state.threads.get_mut(loop_id) {
             binding.process_id = process_id;
+        }
+        self.save(&state)
+    }
+
+    pub fn set_thread_message_timestamps(
+        &self,
+        loop_id: &str,
+        start_card_ts: Option<&str>,
+        progress_message_ts: Option<&str>,
+        stream_ts: Option<&str>,
+        final_card_ts: Option<&str>,
+    ) -> SlackResult<()> {
+        let mut state = self.load_or_default()?;
+        if let Some(binding) = state.threads.get_mut(loop_id) {
+            if let Some(ts) = start_card_ts {
+                binding.start_card_ts = Some(ts.to_string());
+            }
+            if let Some(ts) = progress_message_ts {
+                binding.progress_message_ts = Some(ts.to_string());
+            }
+            if let Some(ts) = stream_ts {
+                binding.stream_ts = Some(ts.to_string());
+            }
+            if let Some(ts) = final_card_ts {
+                binding.final_card_ts = Some(ts.to_string());
+            }
         }
         self.save(&state)
     }

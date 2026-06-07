@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use ralph_proto::RobotService;
-use ralph_slack::{SlackApi, SlackService};
+use ralph_slack::{SlackApi, SlackBlocks, SlackService};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -80,6 +80,46 @@ async fn post_message_sends_expected_slack_payload_and_auth_header() {
     assert_eq!(body["channel"], "C123");
     assert_eq!(body["thread_ts"], "1780792150.138669");
     assert_eq!(body["text"], "hello slack");
+}
+
+#[tokio::test]
+async fn post_blocks_sends_block_kit_payload_with_plain_text_fallback() {
+    let (base_url, mut requests) =
+        run_http_double(vec![r#"{"ok":true,"ts":"1780792160.000200"}"#]).await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+    let blocks = SlackBlocks::start_card(
+        "slack-C123-1780792150-138669",
+        "polish Slack output",
+        Some("/repo/ralph"),
+        Some("feat/slack-thread-surface"),
+    );
+
+    let ts = api
+        .post_blocks("C123", Some("1780792150.138669"), &blocks)
+        .await
+        .unwrap();
+
+    assert_eq!(ts, "1780792160.000200");
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/chat.postMessage");
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel"], "C123");
+    assert_eq!(body["thread_ts"], "1780792150.138669");
+    assert!(
+        body["text"]
+            .as_str()
+            .unwrap()
+            .contains("Ralph loop started")
+    );
+    assert_eq!(body["blocks"][0]["type"], "header");
+    assert_eq!(body["blocks"][1]["type"], "context");
+    assert!(body["blocks"].as_array().unwrap().iter().any(|block| {
+        block["type"] == "actions"
+            && block["elements"].as_array().unwrap().iter().any(|element| {
+                element["action_id"] == "ralph_slack_status"
+                    && element["value"] == "slack-C123-1780792150-138669"
+            })
+    }));
 }
 
 #[tokio::test]

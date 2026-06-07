@@ -10,7 +10,8 @@ use crate::error::{SlackError, SlackResult};
 use crate::handler::{
     HandlerAction, SlackMessageEvent, ThreadCommand, events_path, handle_message,
 };
-use crate::state::{SlackStateManager, SlackThreadBinding, SlackThreadStatus};
+use crate::renderer::{SlackBlocks, SlackRenderedMessage, redact_secrets};
+use crate::state::{SlackStateManager, SlackThreadStatus};
 
 #[derive(Debug, Clone)]
 pub struct SlackDaemonConfig {
@@ -45,6 +46,16 @@ pub trait ThreadNotifier: Send + Sync + Clone + 'static {
         thread_ts: &str,
         text: &str,
     ) -> SlackResult<String>;
+
+    async fn post_thread_blocks(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        message: &SlackRenderedMessage,
+    ) -> SlackResult<String> {
+        self.post_thread_message(channel_id, thread_ts, &message.text)
+            .await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -161,6 +172,17 @@ impl ThreadNotifier for SlackApiNotifier {
             .post_message(channel_id, Some(thread_ts), text)
             .await
     }
+
+    async fn post_thread_blocks(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        message: &SlackRenderedMessage,
+    ) -> SlackResult<String> {
+        self.api
+            .post_blocks(channel_id, Some(thread_ts), message)
+            .await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -219,13 +241,23 @@ where
                 channel_id,
                 thread_ts,
             } => {
-                self.notifier
-                    .post_thread_message(
-                        channel_id,
-                        thread_ts,
-                        &format!("🤖 Ralph loop started\nLoop: {}\nStatus: running", loop_id),
-                    )
+                let start_message = SlackBlocks::start_card(
+                    loop_id,
+                    prompt,
+                    Some(&root_for_start.display().to_string()),
+                    None,
+                );
+                let start_card_ts = self
+                    .notifier
+                    .post_thread_blocks(channel_id, thread_ts, &start_message)
                     .await?;
+                self.state_manager.set_thread_message_timestamps(
+                    loop_id,
+                    Some(&start_card_ts),
+                    None,
+                    None,
+                    None,
+                )?;
                 let process_id = self
                     .spawner
                     .spawn_loop(StartLoopRequest {
@@ -322,16 +354,19 @@ where
         match command {
             ThreadCommand::Help => {
                 self.notifier
-                    .post_thread_message(channel_id, thread_ts, help_text())
+                    .post_thread_blocks(channel_id, thread_ts, &SlackBlocks::help_card())
                     .await?;
             }
             ThreadCommand::Status => {
+                let message = SlackBlocks::status_card(
+                    &binding.loop_id,
+                    binding.status.clone(),
+                    &binding.workspace_root.display().to_string(),
+                    state.pending_questions.contains_key(loop_id),
+                    binding.process_id,
+                );
                 self.notifier
-                    .post_thread_message(
-                        channel_id,
-                        thread_ts,
-                        &status_text(binding, state.pending_questions.contains_key(loop_id)),
-                    )
+                    .post_thread_blocks(channel_id, thread_ts, &message)
                     .await?;
             }
             ThreadCommand::Tail { n } => {
@@ -391,12 +426,16 @@ fn monitor_loop_completion<N>(
             if let Ok(contents) = std::fs::read_to_string(&event_path) {
                 if let Some(update) = latest_progress_update(&contents, last_reported_line_count) {
                     last_reported_line_count = update.line_count;
+                    let message = SlackBlocks::progress_card(
+                        &loop_id,
+                        update.iteration,
+                        update.hat.as_deref(),
+                        &update.topic,
+                        &update.payload,
+                        None,
+                    );
                     if let Err(error) = notifier
-                        .post_thread_message(
-                            &channel_id,
-                            &thread_ts,
-                            &format_progress_update(&loop_id, &update),
-                        )
+                        .post_thread_blocks(&channel_id, &thread_ts, &message)
                         .await
                     {
                         tracing::warn!(%loop_id, ?error, "failed to post Slack loop progress update");
@@ -421,20 +460,26 @@ fn monitor_loop_completion<N>(
         if let Err(error) = state_manager.finish_thread(&loop_id, status.clone()) {
             tracing::warn!(%loop_id, ?error, "failed to mark Slack loop finished");
         }
-        let status_label = match status {
-            SlackThreadStatus::Completed => "completed",
-            SlackThreadStatus::Failed => "failed",
-            SlackThreadStatus::Running => "running",
-            SlackThreadStatus::Stopped => "stopped",
-        };
-        let text = format!(
-            "Ralph loop {status_label}\nLoop: {loop_id}\nTry `tail 10` in this thread for recent events."
-        );
-        if let Err(error) = notifier
-            .post_thread_message(&channel_id, &thread_ts, &text)
+        let note = "Try `tail 10` in this thread for recent events.";
+        let message = SlackBlocks::final_card(&loop_id, status, None, Some(note));
+        match notifier
+            .post_thread_blocks(&channel_id, &thread_ts, &message)
             .await
         {
-            tracing::warn!(%loop_id, ?error, "failed to post Slack loop completion update");
+            Ok(final_card_ts) => {
+                if let Err(error) = state_manager.set_thread_message_timestamps(
+                    &loop_id,
+                    None,
+                    None,
+                    None,
+                    Some(&final_card_ts),
+                ) {
+                    tracing::warn!(%loop_id, ?error, "failed to save Slack final card timestamp");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%loop_id, ?error, "failed to post Slack loop completion update");
+            }
         }
     });
 }
@@ -498,6 +543,7 @@ fn event_payload_text(payload: Option<&serde_json::Value>) -> String {
     }
 }
 
+#[cfg(test)]
 fn format_progress_update(loop_id: &str, update: &SlackProgressUpdate) -> String {
     let iteration = update
         .iteration
@@ -512,24 +558,6 @@ fn format_progress_update(loop_id: &str, update: &SlackProgressUpdate) -> String
     format!(
         "Ralph update\nLoop: {loop_id}\nIteration: {iteration}\nHat: {hat}\nTopic: {}\nLast message:\n```\n{}\n```",
         update.topic, payload
-    )
-}
-
-fn help_text() -> &'static str {
-    "Ralph Slack commands: help, status, tail [n], stop/cancel. Plain replies become guidance, or answer the pending human question."
-}
-
-fn status_text(binding: &SlackThreadBinding, pending_question: bool) -> String {
-    format!(
-        "Ralph thread status\nloop: {}\nrepo: {}\nthread status: {:?}\npending question: {}\nprocess id: {}",
-        binding.loop_id,
-        binding.workspace_root.display(),
-        binding.status,
-        if pending_question { "yes" } else { "no" },
-        binding
-            .process_id
-            .map(|pid| pid.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
     )
 }
 
@@ -550,20 +578,6 @@ fn tail_text(path: &Path, n: usize) -> String {
         }
         Err(_) => "No event file found for this loop yet.".to_string(),
     }
-}
-
-fn redact_secrets(text: &str) -> String {
-    let mut out = text.to_string();
-    for marker in ["secret-token-", "token-", "xoxb-", "xapp-"] {
-        while let Some(start) = out.to_ascii_lowercase().find(marker) {
-            let end = out[start..]
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-                .map(|offset| start + offset)
-                .unwrap_or(out.len());
-            out.replace_range(start..end, "[redacted]");
-        }
-    }
-    out
 }
 
 pub fn slack_loop_env(

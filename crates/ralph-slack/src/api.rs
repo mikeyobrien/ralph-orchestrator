@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::{SlackError, SlackResult};
+use crate::renderer::SlackRenderedMessage;
 
 const DEFAULT_SLACK_API_BASE_URL: &str = "https://slack.com";
 
@@ -39,14 +40,26 @@ impl SlackApi {
         thread_ts: Option<&str>,
         text: &str,
     ) -> SlackResult<String> {
-        let mut body = json!({
-            "channel": channel,
-            "text": text,
-        });
-        if let Some(thread_ts) = thread_ts {
-            body["thread_ts"] = json!(thread_ts);
-        }
+        let body = self.message_body(channel, thread_ts, text, None);
+        self.post_message_body(body).await
+    }
 
+    pub async fn post_blocks(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        message: &SlackRenderedMessage,
+    ) -> SlackResult<String> {
+        let body = self.message_body(
+            channel,
+            thread_ts,
+            &message.text,
+            Some(message.blocks.clone()),
+        );
+        self.post_message_body(body).await
+    }
+
+    async fn post_message_body(&self, body: serde_json::Value) -> SlackResult<String> {
         let response = self
             .client
             .post(self.api_url("/api/chat.postMessage"))
@@ -66,6 +79,26 @@ impl SlackApi {
                     .unwrap_or_else(|| "unknown Slack API error".to_string()),
             ))
         }
+    }
+
+    fn message_body(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+        blocks: Option<Vec<serde_json::Value>>,
+    ) -> serde_json::Value {
+        let mut body = json!({
+            "channel": channel,
+            "text": text,
+        });
+        if let Some(thread_ts) = thread_ts {
+            body["thread_ts"] = json!(thread_ts);
+        }
+        if let Some(blocks) = blocks {
+            body["blocks"] = json!(blocks);
+        }
+        body
     }
 
     pub async fn open_socket_mode_url(&self, app_token: &str) -> SlackResult<String> {

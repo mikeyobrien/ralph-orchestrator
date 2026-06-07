@@ -36,6 +36,10 @@ fn slack_state_round_trips_thread_binding_pending_question_and_event_dedupe() {
     assert_eq!(binding.created_by, "U123");
     assert_eq!(binding.workspace_root, dir.path());
     assert_eq!(binding.status, SlackThreadStatus::Running);
+    assert_eq!(binding.start_card_ts.as_deref(), None);
+    assert_eq!(binding.progress_message_ts.as_deref(), None);
+    assert_eq!(binding.stream_ts.as_deref(), None);
+    assert_eq!(binding.final_card_ts.as_deref(), None);
     assert_eq!(
         loaded.thread_to_loop["C123:1780792150.138669"],
         "slack-C123-1780792150-138669"
@@ -45,6 +49,65 @@ fn slack_state_round_trips_thread_binding_pending_question_and_event_dedupe() {
         "1780792160.000100"
     );
     assert!(loaded.seen_event_ids.contains(&"Ev123".to_string()));
+}
+
+#[test]
+fn slack_state_loads_old_json_without_message_timestamps_and_can_set_card_timestamps() {
+    let dir = TempDir::new().unwrap();
+    let state_path = dir.path().join(".ralph/slack-state.json");
+    std::fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &state_path,
+        serde_json::json!({
+            "team_id": null,
+            "last_socket_envelope_id": null,
+            "threads": {
+                "slack-C123-1780792150-138669": {
+                    "loop_id": "slack-C123-1780792150-138669",
+                    "channel_id": "C123",
+                    "thread_ts": "1780792150.138669",
+                    "root_ts": "1780792150.138669",
+                    "created_by": "U123",
+                    "created_at": "2026-06-06T19:30:27Z",
+                    "workspace_root": dir.path(),
+                    "status": "running",
+                    "process_id": 4242
+                }
+            },
+            "thread_to_loop": {"C123:1780792150.138669": "slack-C123-1780792150-138669"},
+            "pending_questions": {},
+            "seen_event_ids": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let manager = SlackStateManager::new(&state_path);
+
+    let loaded = manager.load_or_default().unwrap();
+    let binding = loaded.threads.get("slack-C123-1780792150-138669").unwrap();
+    assert_eq!(binding.start_card_ts, None);
+    assert_eq!(binding.progress_message_ts, None);
+    assert_eq!(binding.stream_ts, None);
+    assert_eq!(binding.final_card_ts, None);
+
+    manager
+        .set_thread_message_timestamps(
+            "slack-C123-1780792150-138669",
+            Some("1780792160.000100"),
+            Some("1780792170.000100"),
+            Some("stream-1"),
+            Some("1780792180.000100"),
+        )
+        .unwrap();
+    let updated = manager.load_or_default().unwrap();
+    let binding = updated.threads.get("slack-C123-1780792150-138669").unwrap();
+    assert_eq!(binding.start_card_ts.as_deref(), Some("1780792160.000100"));
+    assert_eq!(
+        binding.progress_message_ts.as_deref(),
+        Some("1780792170.000100")
+    );
+    assert_eq!(binding.stream_ts.as_deref(), Some("stream-1"));
+    assert_eq!(binding.final_card_ts.as_deref(), Some("1780792180.000100"));
 }
 
 #[test]

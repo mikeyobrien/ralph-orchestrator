@@ -3576,14 +3576,14 @@ RObot:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
 
         assert_eq!(config.robot.surface().unwrap(), RobotSurface::Slack);
-        assert_eq!(
-            config.robot.resolve_slack_bot_token(),
-            Some("***".to_string())
-        );
-        assert_eq!(
-            config.robot.resolve_slack_app_token(),
-            Some("xapp-test-token".to_string())
-        );
+        let expected_bot_token = std::env::var("RALPH_SLACK_BOT_TOKEN")
+            .ok()
+            .or_else(|| Some("***".to_string()));
+        let expected_app_token = std::env::var("RALPH_SLACK_APP_TOKEN")
+            .ok()
+            .or_else(|| Some("xapp-test-token".to_string()));
+        assert_eq!(config.robot.resolve_slack_bot_token(), expected_bot_token);
+        assert_eq!(config.robot.resolve_slack_app_token(), expected_app_token);
         assert!(config.validate().is_ok());
     }
 
