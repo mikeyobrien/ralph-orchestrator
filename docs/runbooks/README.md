@@ -6,9 +6,10 @@ Operational checklists for reviewing and smoking Ralph features. These are meant
 
 Use these in order for `feat/slack-thread-surface`:
 
-1. [Slack final verification review](slack-final-verification-review.md) — local branch, code, docs, tests, and security review.
-2. [Slack live smoke test](slack-live-smoke-test.md) — dedicated Slack app setup and one real Slack thread-as-loop smoke.
-3. [Slack review signoff template](slack-review-signoff-template.md) — fill this out when closing the final review/Kanban/PR.
+1. [Slack app manifest](slack-app-manifest.yml) — least-privilege public-channel Slack app manifest to paste into Slack app creation.
+2. [Slack final verification review](slack-final-verification-review.md) — local branch, code, docs, tests, and security review.
+3. [Slack live smoke test](slack-live-smoke-test.md) — dedicated Slack app setup and one real Slack thread-as-loop smoke.
+4. [Slack review signoff template](slack-review-signoff-template.md) — fill this out when closing the final review/Kanban/PR.
 
 Safety defaults:
 
