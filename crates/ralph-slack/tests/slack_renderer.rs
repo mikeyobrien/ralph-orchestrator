@@ -65,11 +65,17 @@ fn final_status_and_help_cards_have_fallback_text() {
     assert!(final_card.text.contains("completed"));
     assert!(status_card.text.contains("pending question: no"));
     assert!(help_card.text.contains("Ralph Slack commands"));
+    let final_actions = final_card
+        .blocks
+        .iter()
+        .find(|block| block["type"] == "actions")
+        .expect("final card should include interactive actions");
+    assert!(final_actions.to_string().contains("ralph_slack_tail"));
+    assert!(final_actions.to_string().contains("ralph_slack_approve"));
     assert!(
-        final_card
-            .blocks
-            .iter()
-            .any(|block| block["type"] == "actions")
+        final_actions
+            .to_string()
+            .contains("ralph_slack_request_changes")
     );
     assert!(
         status_card

@@ -7,6 +7,7 @@ use ralph_slack::daemon::{
     LoopSpawner, SlackDaemon, SlackDaemonConfig, StartLoopRequest, ThreadNotifier,
 };
 use ralph_slack::handler::SlackMessageEvent;
+use ralph_slack::socket_mode::slack_message_event_from_payload;
 use ralph_slack::state::{SlackStateManager, SlackThreadStatus};
 
 #[derive(Default, Clone)]
@@ -763,5 +764,52 @@ async fn stop_cancel_is_creator_only_marks_stopped_and_blocks_future_guidance() 
             .unwrap()
             .iter()
             .any(|(_, _, text)| text.contains("stopped"))
+    );
+}
+
+#[tokio::test]
+async fn stop_button_is_creator_only_like_typed_stop() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    state.set_thread_process_id(loop_id, Some(4242)).unwrap();
+    let spawner = FakeSpawner::default();
+    let daemon = SlackDaemon::new(
+        SlackDaemonConfig {
+            workspace_root: temp_dir.path().to_path_buf(),
+            allowed_channels: vec!["C123".to_string()],
+            allowed_users: vec!["U123".to_string(), "U999".to_string()],
+            channel_repos: BTreeMap::from([("C123".to_string(), temp_dir.path().to_path_buf())]),
+        },
+        state.clone(),
+        spawner.clone(),
+        FakeNotifier::default(),
+    );
+    let payload = serde_json::json!({
+        "type": "block_actions",
+        "trigger_id": "TrigStopDenied",
+        "user": {"id": "U999"},
+        "channel": {"id": "C123"},
+        "message": {"ts": "1780792150.138669", "thread_ts": "1780792150.138669"},
+        "actions": [{"action_id": "ralph_slack_stop", "value": "stop:slack-C123-1780792150-138669"}],
+        "action_ts": "1780792160.000100"
+    });
+    let event = slack_message_event_from_payload(&payload).expect("stop button should parse");
+
+    daemon.handle_event(event).await.unwrap();
+
+    assert!(spawner.stopped.lock().unwrap().is_empty());
+    assert_eq!(
+        state.load_or_default().unwrap().threads[loop_id].status,
+        SlackThreadStatus::Running
     );
 }

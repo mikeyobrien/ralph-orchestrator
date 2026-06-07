@@ -42,8 +42,10 @@ where
 }
 
 pub fn slack_message_event_from_payload(payload: &serde_json::Value) -> Option<SlackMessageEvent> {
-    if payload.get("type").and_then(|value| value.as_str()) == Some("slash_commands") {
-        return slash_command_event(payload);
+    match payload.get("type").and_then(|value| value.as_str()) {
+        Some("slash_commands") => return slash_command_event(payload),
+        Some("block_actions") => return block_action_event(payload),
+        _ => {}
     }
 
     let event = payload.get("event")?;
@@ -119,6 +121,58 @@ fn slash_command_event(payload: &serde_json::Value) -> Option<SlackMessageEvent>
         bot_id: None,
         app_mention: true,
     })
+}
+
+fn block_action_event(payload: &serde_json::Value) -> Option<SlackMessageEvent> {
+    let channel_id = payload.get("channel")?.get("id")?.as_str()?.to_string();
+    let user_id = payload.get("user")?.get("id")?.as_str()?.to_string();
+    let action = payload.get("actions")?.as_array()?.first()?;
+    let action_id = action.get("action_id")?.as_str()?;
+    let text = block_action_text(action_id)?;
+    let message = payload.get("message")?;
+    let message_ts = message.get("ts")?.as_str()?;
+    let thread_ts = message
+        .get("thread_ts")
+        .or_else(|| {
+            payload
+                .get("container")
+                .and_then(|container| container.get("thread_ts"))
+        })
+        .and_then(|value| value.as_str())
+        .unwrap_or(message_ts)
+        .to_string();
+    let ts = payload
+        .get("action_ts")
+        .and_then(|value| value.as_str())
+        .unwrap_or(message_ts)
+        .to_string();
+    let event_id = payload
+        .get("trigger_id")
+        .or_else(|| payload.get("envelope_id"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+
+    Some(SlackMessageEvent {
+        event_id,
+        channel_id,
+        user_id: Some(user_id),
+        text: text.to_string(),
+        ts,
+        thread_ts: Some(thread_ts),
+        bot_id: None,
+        app_mention: false,
+    })
+}
+
+fn block_action_text(action_id: &str) -> Option<&'static str> {
+    match action_id {
+        "ralph_slack_status" => Some("status"),
+        "ralph_slack_tail" => Some("tail 10"),
+        "ralph_slack_stop" => Some("stop"),
+        "ralph_slack_approve" => Some("approved"),
+        "ralph_slack_request_changes" => Some("request changes"),
+        _ => None,
+    }
 }
 
 impl From<tokio_tungstenite::tungstenite::Error> for SlackError {
