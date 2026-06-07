@@ -349,9 +349,9 @@ async fn root_event_resolves_repo_from_channel_mapping_and_unknown_channel_does_
     let requests = spawner.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].workspace_root, repo_root.path());
-    assert_eq!(
-        requests[0].env.get("RALPH_WORKSPACE_ROOT").unwrap(),
-        &repo_root.path().to_string_lossy().to_string()
+    assert!(
+        !requests[0].env.contains_key("RALPH_WORKSPACE_ROOT"),
+        "Slack-spawned loops run from their worktree; do not force repo root via RALPH_WORKSPACE_ROOT"
     );
     drop(requests);
     let bound = state

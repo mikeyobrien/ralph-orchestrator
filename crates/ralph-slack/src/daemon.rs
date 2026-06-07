@@ -62,6 +62,7 @@ impl CommandLoopSpawner {
 impl LoopSpawner for CommandLoopSpawner {
     async fn spawn_loop(&self, request: StartLoopRequest) -> SlackResult<Option<u32>> {
         let executable = std::env::current_exe().map_err(SlackError::Io)?;
+        let worktree_path = ensure_slack_loop_worktree(&request.workspace_root, &request.loop_id)?;
         let log_dir = request.workspace_root.join(".ralph/slack-loop-logs");
         std::fs::create_dir_all(&log_dir).map_err(SlackError::Io)?;
         let log_path = log_dir.join(format!("{}.log", request.loop_id));
@@ -73,7 +74,7 @@ impl LoopSpawner for CommandLoopSpawner {
         let stderr = stdout.try_clone().map_err(SlackError::Io)?;
         let mut command = Command::new(executable);
         command
-            .current_dir(&request.workspace_root)
+            .current_dir(&worktree_path)
             .arg("run")
             .arg("-a")
             .arg("-p")
@@ -101,6 +102,36 @@ impl LoopSpawner for CommandLoopSpawner {
         }
         Ok(())
     }
+}
+
+fn ensure_slack_loop_worktree(workspace_root: &Path, loop_id: &str) -> SlackResult<PathBuf> {
+    let worktree_path = workspace_root.join(".worktrees").join(loop_id);
+    if worktree_path.exists() {
+        return Ok(worktree_path);
+    }
+    if let Some(parent) = worktree_path.parent() {
+        std::fs::create_dir_all(parent).map_err(SlackError::Io)?;
+    }
+    let branch = format!("ralph-slack-{loop_id}");
+    let status = Command::new("git")
+        .current_dir(workspace_root)
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            &branch,
+            &worktree_path.to_string_lossy(),
+            "HEAD",
+        ])
+        .status()
+        .map_err(SlackError::Io)?;
+    if !status.success() {
+        return Err(SlackError::EventWrite(format!(
+            "failed to create Slack loop worktree {}",
+            worktree_path.display()
+        )));
+    }
+    Ok(worktree_path)
 }
 
 #[derive(Debug, Clone)]
@@ -381,15 +412,63 @@ pub fn slack_loop_env(
     loop_id: &str,
     channel_id: &str,
     thread_ts: &str,
-    workspace_root: &Path,
+    _workspace_root: &Path,
 ) -> BTreeMap<String, String> {
     BTreeMap::from([
         ("RALPH_LOOP_ID".to_string(), loop_id.to_string()),
         ("RALPH_SLACK_CHANNEL_ID".to_string(), channel_id.to_string()),
         ("RALPH_SLACK_THREAD_TS".to_string(), thread_ts.to_string()),
-        (
-            "RALPH_WORKSPACE_ROOT".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-        ),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slack_loop_env_does_not_force_workspace_root() {
+        let env = slack_loop_env("loop-1", "C123", "1780.1", Path::new("/repo"));
+        assert_eq!(env.get("RALPH_LOOP_ID").unwrap(), "loop-1");
+        assert_eq!(env.get("RALPH_SLACK_CHANNEL_ID").unwrap(), "C123");
+        assert_eq!(env.get("RALPH_SLACK_THREAD_TS").unwrap(), "1780.1");
+        assert!(!env.contains_key("RALPH_WORKSPACE_ROOT"));
+    }
+
+    #[test]
+    fn ensure_slack_loop_worktree_creates_and_reuses_worktree() {
+        let repo = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+        std::fs::write(repo.path().join("README.md"), "smoke").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap();
+
+        let path = ensure_slack_loop_worktree(repo.path(), "slack-C123-1780-1").unwrap();
+        assert!(path.join("README.md").exists());
+        assert_eq!(
+            ensure_slack_loop_worktree(repo.path(), "slack-C123-1780-1").unwrap(),
+            path
+        );
+    }
 }
