@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use async_trait::async_trait;
 
@@ -61,16 +62,25 @@ impl CommandLoopSpawner {
 impl LoopSpawner for CommandLoopSpawner {
     async fn spawn_loop(&self, request: StartLoopRequest) -> SlackResult<Option<u32>> {
         let executable = std::env::current_exe().map_err(SlackError::Io)?;
+        let log_dir = request.workspace_root.join(".ralph/slack-loop-logs");
+        std::fs::create_dir_all(&log_dir).map_err(SlackError::Io)?;
+        let log_path = log_dir.join(format!("{}.log", request.loop_id));
+        let stdout = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(SlackError::Io)?;
+        let stderr = stdout.try_clone().map_err(SlackError::Io)?;
         let mut command = Command::new(executable);
         command
             .current_dir(&request.workspace_root)
             .arg("run")
-            .arg("--no-tui")
-            .arg("--loop-id")
-            .arg(&request.loop_id)
+            .arg("-a")
             .arg("-p")
             .arg(&request.prompt)
-            .envs(&request.env);
+            .envs(&request.env)
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
         if let Some(config_path) = &self.config_path {
             command.arg("-c").arg(config_path);
         }
