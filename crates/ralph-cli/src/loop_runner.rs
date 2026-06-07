@@ -5031,6 +5031,10 @@ fn create_slack_robot_service(
     let thread_ts = std::env::var("RALPH_SLACK_THREAD_TS")
         .ok()
         .or_else(|| binding.map(|binding| binding.thread_ts));
+    let state_path = std::env::var("RALPH_SLACK_STATE_PATH")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .map(std::path::PathBuf::from);
     let Some(channel_id) = channel_id else {
         warn!(loop_id = %loop_id, "Slack robot surface configured but no Slack channel binding was found");
         return None;
@@ -5040,7 +5044,7 @@ fn create_slack_robot_service(
         return None;
     };
 
-    match ralph_slack::SlackService::new(
+    match ralph_slack::SlackService::new_with_state_path(
         repo_root,
         bot_token,
         timeout_secs,
@@ -5048,6 +5052,7 @@ fn create_slack_robot_service(
         channel_id,
         thread_ts,
         None,
+        state_path,
     ) {
         Ok(service) => {
             info!(

@@ -448,6 +448,39 @@ async fn slack_service_posts_question_and_checkin_to_bound_thread() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn slack_service_can_write_pending_questions_to_shared_state_path() {
+    let (base_url, mut requests) =
+        run_http_double(vec![r#"{"ok":true,"ts":"1780792160.000100"}"#]).await;
+    let worktree = TempDir::new().unwrap();
+    let root = TempDir::new().unwrap();
+    let shared_state = root.path().join(".ralph/slack-state.json");
+    let service = SlackService::new_with_state_path(
+        worktree.path().to_path_buf(),
+        Some("bot-token".to_string()),
+        5,
+        "slack-C123-1780792150-138669".to_string(),
+        "C123".to_string(),
+        "1780792150.138669".to_string(),
+        Some(base_url),
+        Some(shared_state.clone()),
+    )
+    .unwrap();
+
+    tokio::task::block_in_place(|| service.send_question("Proceed?")).unwrap();
+    let _question = requests.recv().await.unwrap();
+
+    assert!(!worktree.path().join(".ralph/slack-state.json").exists());
+    let state = ralph_slack::SlackStateManager::new(shared_state)
+        .load_or_default()
+        .unwrap();
+    assert!(
+        state
+            .pending_questions
+            .contains_key("slack-C123-1780792150-138669")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn slack_service_uploads_files_only_to_bound_thread_and_workspace_paths() {
     let (base_url, mut requests) = run_http_double(vec![
         r#"{"ok":true,"upload_url":"__BASE_URL__/upload/F123","file_id":"F123"}"#,

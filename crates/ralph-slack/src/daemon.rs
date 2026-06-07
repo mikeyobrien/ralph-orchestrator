@@ -665,12 +665,19 @@ pub fn slack_loop_env(
     loop_id: &str,
     channel_id: &str,
     thread_ts: &str,
-    _workspace_root: &Path,
+    workspace_root: &Path,
 ) -> BTreeMap<String, String> {
     BTreeMap::from([
         ("RALPH_LOOP_ID".to_string(), loop_id.to_string()),
         ("RALPH_SLACK_CHANNEL_ID".to_string(), channel_id.to_string()),
         ("RALPH_SLACK_THREAD_TS".to_string(), thread_ts.to_string()),
+        (
+            "RALPH_SLACK_STATE_PATH".to_string(),
+            workspace_root
+                .join(".ralph/slack-state.json")
+                .to_string_lossy()
+                .to_string(),
+        ),
     ])
 }
 
@@ -715,11 +722,15 @@ mod tests {
     }
 
     #[test]
-    fn slack_loop_env_does_not_force_workspace_root() {
+    fn slack_loop_env_shares_root_state_without_forcing_workspace_root() {
         let env = slack_loop_env("loop-1", "C123", "1780.1", Path::new("/repo"));
         assert_eq!(env.get("RALPH_LOOP_ID").unwrap(), "loop-1");
         assert_eq!(env.get("RALPH_SLACK_CHANNEL_ID").unwrap(), "C123");
         assert_eq!(env.get("RALPH_SLACK_THREAD_TS").unwrap(), "1780.1");
+        assert_eq!(
+            env.get("RALPH_SLACK_STATE_PATH").unwrap(),
+            "/repo/.ralph/slack-state.json"
+        );
         assert!(!env.contains_key("RALPH_WORKSPACE_ROOT"));
     }
 

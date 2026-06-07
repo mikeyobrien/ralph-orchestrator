@@ -30,11 +30,34 @@ impl SlackService {
         thread_ts: String,
         api_base_url: Option<String>,
     ) -> SlackResult<Self> {
+        Self::new_with_state_path(
+            workspace_root,
+            bot_token,
+            timeout_secs,
+            loop_id,
+            channel_id,
+            thread_ts,
+            api_base_url,
+            None,
+        )
+    }
+
+    pub fn new_with_state_path(
+        workspace_root: PathBuf,
+        bot_token: Option<String>,
+        timeout_secs: u64,
+        loop_id: String,
+        channel_id: String,
+        thread_ts: String,
+        api_base_url: Option<String>,
+        state_path: Option<PathBuf>,
+    ) -> SlackResult<Self> {
         validate_loop_id(&loop_id)?;
         let resolved_token = bot_token
             .or_else(|| std::env::var("RALPH_SLACK_BOT_TOKEN").ok())
             .ok_or(SlackError::MissingBotToken)?;
-        let state_path = workspace_root.join(".ralph/slack-state.json");
+        let state_path =
+            state_path.unwrap_or_else(|| workspace_root.join(".ralph/slack-state.json"));
         Ok(Self {
             workspace_root,
             timeout_secs,
