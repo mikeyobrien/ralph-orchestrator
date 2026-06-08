@@ -65,6 +65,7 @@ fn final_status_and_help_cards_have_fallback_text() {
     assert!(final_card.text.contains("completed"));
     assert!(status_card.text.contains("pending question: no"));
     assert!(help_card.text.contains("Ralph Slack commands"));
+    assert!(help_card.text.contains("repo"));
     let final_actions = final_card
         .blocks
         .iter()

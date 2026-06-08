@@ -26,6 +26,10 @@ pub struct SlackThreadBinding {
     pub created_by: String,
     pub created_at: DateTime<Utc>,
     pub workspace_root: PathBuf,
+    #[serde(default)]
+    pub repo_alias: Option<String>,
+    #[serde(default)]
+    pub repo_dir: Option<PathBuf>,
     pub status: SlackThreadStatus,
     #[serde(default)]
     pub process_id: Option<u32>,
@@ -116,6 +120,27 @@ impl SlackStateManager {
         created_by: &str,
         workspace_root: impl AsRef<Path>,
     ) -> SlackResult<()> {
+        self.bind_thread_with_repo(
+            loop_id,
+            channel_id,
+            thread_ts,
+            created_by,
+            workspace_root,
+            None,
+            None::<&Path>,
+        )
+    }
+
+    pub fn bind_thread_with_repo(
+        &self,
+        loop_id: &str,
+        channel_id: &str,
+        thread_ts: &str,
+        created_by: &str,
+        workspace_root: impl AsRef<Path>,
+        repo_alias: Option<&str>,
+        repo_dir: Option<impl AsRef<Path>>,
+    ) -> SlackResult<()> {
         let mut state = self.load_or_default()?;
         state.threads.insert(
             loop_id.to_string(),
@@ -127,6 +152,8 @@ impl SlackStateManager {
                 created_by: created_by.to_string(),
                 created_at: Utc::now(),
                 workspace_root: workspace_root.as_ref().to_path_buf(),
+                repo_alias: repo_alias.map(ToOwned::to_owned),
+                repo_dir: repo_dir.map(|dir| dir.as_ref().to_path_buf()),
                 status: SlackThreadStatus::Running,
                 process_id: None,
                 start_card_ts: None,

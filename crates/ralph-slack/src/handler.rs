@@ -23,6 +23,7 @@ pub struct SlackMessageEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadCommand {
     Help,
+    Repo,
     Status,
     Tail { n: usize },
     Stop,
@@ -61,6 +62,8 @@ pub fn handle_message(
     handle_message_with_repo(
         manager,
         workspace_root,
+        None,
+        None,
         allowed_channels,
         allowed_users,
         event,
@@ -70,6 +73,8 @@ pub fn handle_message(
 pub fn handle_message_with_repo(
     manager: &SlackStateManager,
     workspace_root: &Path,
+    repo_alias: Option<&str>,
+    repo_dir: Option<&Path>,
     allowed_channels: &[String],
     allowed_users: &[String],
     event: SlackMessageEvent,
@@ -143,12 +148,14 @@ pub fn handle_message_with_repo(
         let loop_id = loop_id_for_slack_thread(&event.channel_id, &event.ts);
         validate_loop_id(&loop_id)?;
         let prompt = strip_app_mention(&event.text);
-        manager.bind_thread(
+        manager.bind_thread_with_repo(
             &loop_id,
             &event.channel_id,
             &event.ts,
             user_id,
             workspace_root,
+            repo_alias,
+            repo_dir,
         )?;
         return Ok(HandlerAction::StartLoop {
             loop_id,
@@ -170,6 +177,7 @@ pub fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
     let mut parts = trimmed.split_whitespace();
     match parts.next()? {
         "help" => Some(ThreadCommand::Help),
+        "repo" => Some(ThreadCommand::Repo),
         "status" => Some(ThreadCommand::Status),
         "stop" | "cancel" => Some(ThreadCommand::Stop),
         "tail" => {

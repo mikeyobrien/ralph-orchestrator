@@ -152,13 +152,13 @@ impl SlackBlocks {
     }
 
     pub fn help_card() -> SlackRenderedMessage {
-        let text = "Ralph Slack commands: help, status, tail [n], stop/cancel. Plain replies become guidance, or answer the pending human question.".to_string();
+        let text = "Ralph Slack commands: help, repo, status, tail [n], stop/cancel. Plain replies become guidance, or answer the pending human question.".to_string();
         SlackRenderedMessage {
             text: text.clone(),
             blocks: vec![
                 header("Ralph Slack help"),
                 section(
-                    "*Commands*\n• `help` — show this help\n• `status` — show loop status\n• `tail [n]` — show recent events\n• `stop` / `cancel` — stop the loop\n\nPlain replies become guidance, or answer the pending human question.",
+                    "*Commands*\n• `help` — show this help\n• `repo` — show bound repo and worktree\n• `status` — show loop status\n• `tail [n]` — show recent events\n• `stop` / `cancel` — stop the loop\n\nPlain replies become guidance, or answer the pending human question.",
                 ),
             ],
         }

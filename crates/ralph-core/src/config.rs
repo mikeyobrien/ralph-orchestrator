@@ -2138,10 +2138,15 @@ pub struct SlackBotConfig {
     #[serde(default)]
     pub allowed_users: Vec<String>,
 
-    /// Explicit Slack channel ID -> repo/workspace root mapping.
-    /// Slack-started loops use the repo root for the channel that owns the thread.
+    /// Safe Slack repo alias -> repo/workspace root mapping.
+    /// Slack users can select only these aliases, never arbitrary paths.
     #[serde(default)]
-    pub channel_repos: HashMap<String, PathBuf>,
+    pub repo_aliases: HashMap<String, PathBuf>,
+
+    /// Explicit Slack channel ID -> repo alias mapping.
+    /// Slack-started loops use the repo alias default for the channel that owns the thread.
+    #[serde(default)]
+    pub channel_repos: HashMap<String, String>,
 
     /// How Slack should start Ralph loops.
     pub start_mode: Option<SlackStartMode>,

@@ -173,14 +173,16 @@ RObot:
     app_token: null           # Or RALPH_SLACK_APP_TOKEN for daemon mode
     channel_ids: [C0123456789]
     allowed_users: [U0123456789]
+    repo_aliases:
+      ralph: /absolute/path/to/repo
     channel_repos:
-      C0123456789: /absolute/path/to/repo
+      C0123456789: ralph
 ```
 
 - **Agent questions** — Agents emit `human.interact` events; the loop blocks until a response arrives or times out.
 - **Proactive guidance** — Plain human replies become `human.guidance` when no question is pending.
-- **Slack thread routing** — Channel maps to repo/workspace root; thread maps to loop. Slack text cannot choose arbitrary repos.
-- **Commands** — Slack thread text commands are `help`, `status`, `tail [n]`, and `stop` / `cancel`; Telegram keeps its provider-specific commands.
+- **Slack thread routing** — `repo_aliases` maps safe aliases to repo roots; `channel_repos` maps channels to default aliases. Slack text can choose configured aliases and safe subdirectories, never arbitrary absolute paths.
+- **Commands** — Slack thread text commands are `help`, `repo`, `status`, `tail [n]`, and `stop` / `cancel`; Telegram keeps its provider-specific commands.
 
 See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) and [Slack guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/slack/) for setup instructions.
 

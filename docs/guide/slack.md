@@ -1,6 +1,6 @@
 # Slack RObot guide
 
-Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orchestration. One allowed Slack channel maps to one repo/workspace root, and one Slack root thread maps to one Ralph loop. Root app mentions start loops; replies in the bound thread answer pending questions, add guidance, or run thread-local commands.
+Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orchestration. One allowed Slack channel maps to one default repo alias, and one Slack root thread maps to one Ralph loop. Root app mentions start loops; replies in the bound thread answer pending questions, add guidance, or run thread-local commands.
 
 ## UX model
 
@@ -62,12 +62,23 @@ RObot:
       - C0123456789
     allowed_users:
       - U0123456789
+    repo_aliases:
+      ralph: /absolute/path/to/repo
     channel_repos:
-      C0123456789: /absolute/path/to/repo
+      C0123456789: ralph
     start_mode: app_mention
 ```
 
-Daemon mode requires every allowed channel to have a `channel_repos` entry, and every repo path must be absolute and exist. Authorization and repo routing happen before loop spawn, event-file writes, process stops, or file uploads.
+Daemon mode requires at least one `repo_aliases` entry and every allowed channel to have a `channel_repos` entry that references a configured alias. Repo alias paths must be absolute and exist. Authorization and repo routing happen before loop spawn, event-file writes, process stops, or file uploads.
+
+Slack starts can override the channel default with safe aliases and relative subdirectories:
+
+```text
+@Ralph in ralph: fix the Slack repo UX
+@Ralph repo=ralph dir=crates/ralph-slack test status command
+```
+
+Subdirectories must stay inside the repo root; absolute paths, `..`, and symlink escapes are rejected.
 
 ## Launch
 
@@ -100,6 +111,7 @@ Expected UX:
 Text commands are thread-local and accepted as `status`, `!status`, or `/status`:
 
 - `help` — show command help.
+- `repo` — show the bound repo alias, root, subdirectory, loop id, worktree, and branch.
 - `status` — show current thread binding, loop status, pending-question state, and process id.
 - `tail [n]` — show the last `n` events/log lines, clamped to 1..25 and redacted for token-shaped strings.
 - `stop` / `cancel` — terminate the loop process; only the Slack user who started the thread can stop it.
@@ -144,7 +156,7 @@ Ralph gates before side effects:
 2. Require an allowed channel.
 3. Require an allowed user.
 4. Dedupe Slack event IDs/envelope IDs.
-5. Require a configured `channel_id -> repo_root` mapping for starts.
+5. Require a configured repo alias, either from the channel default or a safe start-message override.
 6. Validate loop IDs before deriving `.worktrees/<loop_id>` paths.
 7. Route thread replies through the persisted binding, not daemon current working directory.
 8. Require loop creator authorization before Stop/Cancel.
@@ -156,7 +168,7 @@ Secrets are not printed by docs, status output, command tails, or Kanban reports
 
 - Socket Mode is the supported MVP path; HTTP Events API/signing-secret deployment is reserved for hosted deployments.
 - Slack is not end-to-end encrypted.
-- Slack text cannot select arbitrary repos or workspace roots.
+- Slack text can select only configured repo aliases and safe relative subdirectories.
 - Slack AI streaming requires workspace/app support and may need app reinstall after adding `assistant:write`.
 - Slash commands generally do not behave like native thread replies. Use in-thread text or Block Kit buttons for steering.
 - A live Slack smoke test requires a dedicated Slack app token set. Local/fake tests do not require Slack credentials.

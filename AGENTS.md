@@ -261,8 +261,10 @@ RObot:
     app_token: null           # Prefer RALPH_SLACK_APP_TOKEN for daemon --slack
     channel_ids: [C0123456789]
     allowed_users: [U0123456789]
+    repo_aliases:
+      ralph: /absolute/path/to/repo
     channel_repos:
-      C0123456789: /absolute/path/to/repo
+      C0123456789: ralph
     start_mode: app_mention
 ```
 
@@ -279,9 +281,9 @@ RObot:
 
 - Telegram uses the existing loop-local bot service and routes by reply/default loop semantics.
 - Slack uses one `ralph bot daemon --slack` Socket Mode process for inbound events; do not make every loop open its own Socket Mode connection.
-- Slack routing is locked: channel -> repo/workspace root, then thread -> loop binding. Slack text cannot choose arbitrary repos.
+- Slack routing is locked: channel -> default repo alias, then thread -> loop binding. Slack text can choose only configured aliases and safe relative subdirectories.
 - Slack daemon must gate allowed channel/user and dedupe event IDs before spawning loops or writing event files.
-- Slack in-thread commands are plain text/app-mention style (`help`, `status`, `tail [n]`, `stop`/`cancel`); slash commands generally do not work as native thread replies.
+- Slack in-thread commands are plain text/app-mention style (`help`, `repo`, `status`, `tail [n]`, `stop`/`cancel`); slash commands generally do not work as native thread replies.
 - Responses are published as `human.response` events on the bus.
 - Proactive messages become `human.guidance` events, squashed into a numbered list in the prompt.
 - Send failures retry with exponential backoff (3 attempts); if all fail, treated as timeout.

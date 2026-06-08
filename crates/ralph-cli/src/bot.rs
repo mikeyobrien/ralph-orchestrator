@@ -779,32 +779,40 @@ async fn run_slack_daemon(
     let slack = config.robot.slack.clone().unwrap_or_default();
     if slack.channel_ids.is_empty()
         || slack.allowed_users.is_empty()
+        || slack.repo_aliases.is_empty()
         || slack.channel_repos.is_empty()
     {
         anyhow::bail!(
-            "Slack daemon requires explicit RObot.slack.channel_ids, RObot.slack.allowed_users, and RObot.slack.channel_repos"
+            "Slack daemon requires explicit RObot.slack.channel_ids, RObot.slack.allowed_users, RObot.slack.repo_aliases, and RObot.slack.channel_repos"
         );
     }
-    let mut channel_repos = BTreeMap::new();
-    for channel_id in &slack.channel_ids {
-        let Some(repo_root) = slack.channel_repos.get(channel_id) else {
-            anyhow::bail!(
-                "Slack channel {channel_id} is missing RObot.slack.channel_repos mapping"
-            );
-        };
+    let mut repo_aliases = BTreeMap::new();
+    for (alias, repo_root) in &slack.repo_aliases {
         if !repo_root.is_absolute() {
             anyhow::bail!(
-                "Slack repo root for channel {channel_id} must be absolute: {}",
+                "Slack repo alias {alias} must be an absolute path: {}",
                 repo_root.display()
             );
         }
         let canonical = repo_root.canonicalize().with_context(|| {
             format!(
-                "Slack repo root for channel {channel_id} does not exist: {}",
+                "Slack repo alias {alias} does not exist: {}",
                 repo_root.display()
             )
         })?;
-        channel_repos.insert(channel_id.clone(), canonical);
+        repo_aliases.insert(alias.clone(), canonical);
+    }
+    let mut channel_repos = BTreeMap::new();
+    for channel_id in &slack.channel_ids {
+        let Some(alias) = slack.channel_repos.get(channel_id) else {
+            anyhow::bail!(
+                "Slack channel {channel_id} is missing RObot.slack.channel_repos mapping"
+            );
+        };
+        if !repo_aliases.contains_key(alias) {
+            anyhow::bail!("Slack channel {channel_id} references unknown repo alias {alias}");
+        }
+        channel_repos.insert(channel_id.clone(), alias.clone());
     }
 
     if use_colors {
@@ -821,6 +829,7 @@ async fn run_slack_daemon(
             workspace_root: workspace_root.clone(),
             allowed_channels: slack.channel_ids,
             allowed_users: slack.allowed_users,
+            repo_aliases,
             channel_repos,
         },
         state,
@@ -1148,11 +1157,20 @@ fn save_slack_robot_config(
     );
     let cwd = std::env::current_dir()
         .context("Failed to resolve current directory for Slack channel_repos")?;
+    let mut repo_aliases = serde_yaml::Mapping::new();
+    repo_aliases.insert(
+        serde_yaml::Value::String("ralph".to_string()),
+        serde_yaml::Value::String(cwd.to_string_lossy().to_string()),
+    );
+    slack_map.insert(
+        serde_yaml::Value::String("repo_aliases".to_string()),
+        serde_yaml::Value::Mapping(repo_aliases),
+    );
     let mut channel_repos = serde_yaml::Mapping::new();
     for channel_id in channel_ids {
         channel_repos.insert(
             serde_yaml::Value::String(channel_id.clone()),
-            serde_yaml::Value::String(cwd.to_string_lossy().to_string()),
+            serde_yaml::Value::String("ralph".to_string()),
         );
     }
     slack_map.insert(
