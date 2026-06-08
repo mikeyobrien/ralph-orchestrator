@@ -22,20 +22,40 @@ where
     N: ThreadNotifier,
 {
     let (mut ws, _) = connect_async(socket_url).await?;
-    while let Some(message) = ws.next().await {
-        let message = message?;
-        let Message::Text(text) = message else {
-            continue;
-        };
-        let envelope: SocketEnvelope = serde_json::from_str(&text)?;
-        if let Some(envelope_id) = envelope.envelope_id.as_deref() {
-            ws.send(Message::Text(
-                json!({"envelope_id": envelope_id}).to_string().into(),
-            ))
-            .await?;
-        }
-        if let Some(event) = slack_message_event_from_payload(&envelope.payload) {
-            daemon.handle_event(event).await?;
+    if let Err(error) = daemon.reconcile_stale_threads().await {
+        tracing::warn!(
+            ?error,
+            "failed to reconcile stale Slack threads on Socket Mode startup"
+        );
+    }
+    let mut reconcile_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    reconcile_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            message = ws.next() => {
+                let Some(message) = message else {
+                    break;
+                };
+                let message = message?;
+                let Message::Text(text) = message else {
+                    continue;
+                };
+                let envelope: SocketEnvelope = serde_json::from_str(&text)?;
+                if let Some(envelope_id) = envelope.envelope_id.as_deref() {
+                    ws.send(Message::Text(
+                        json!({"envelope_id": envelope_id}).to_string().into(),
+                    ))
+                    .await?;
+                }
+                if let Some(event) = slack_message_event_from_payload(&envelope.payload) {
+                    daemon.handle_event(event).await?;
+                }
+            }
+            _ = reconcile_interval.tick() => {
+                if let Err(error) = daemon.reconcile_stale_threads().await {
+                    tracing::warn!(?error, "failed to reconcile stale Slack threads");
+                }
+            }
         }
     }
     Ok(())

@@ -672,6 +672,153 @@ async fn pending_question_non_command_routes_response_and_command_does_not_clear
 }
 
 #[tokio::test]
+async fn startup_reconciliation_finishes_running_thread_with_dead_process() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let events_dir = temp_dir
+        .path()
+        .join(".worktrees")
+        .join(loop_id)
+        .join(".ralph");
+    std::fs::create_dir_all(&events_dir).unwrap();
+    std::fs::write(
+        events_dir.join("events.jsonl"),
+        "{\"topic\":\"LOOP_COMPLETE\",\"payload\":\"done\"}\n",
+    )
+    .unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    state
+        .set_thread_process_id(loop_id, Some(u32::MAX))
+        .unwrap();
+    state
+        .add_pending_question(loop_id, "C123", "1780792150.138669", "1780792200.000100")
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        FakeSpawner::default(),
+        notifier.clone(),
+    );
+
+    daemon.reconcile_stale_threads().await.unwrap();
+
+    let loaded = state.load_or_default().unwrap();
+    let binding = &loaded.threads[loop_id];
+    assert_eq!(binding.status, SlackThreadStatus::Completed);
+    assert_eq!(binding.process_id, None);
+    assert!(binding.final_card_ts.is_some());
+    assert!(!loaded.pending_questions.contains_key(loop_id));
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].0, "C123");
+    assert_eq!(messages[0].1, "1780792150.138669");
+    assert!(messages[0].2.contains("completed"));
+}
+
+#[tokio::test]
+async fn stale_reconciliation_updates_existing_final_card_for_failed_dead_process() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let events_dir = temp_dir
+        .path()
+        .join(".worktrees")
+        .join(loop_id)
+        .join(".ralph");
+    std::fs::create_dir_all(&events_dir).unwrap();
+    std::fs::write(
+        events_dir.join("events.jsonl"),
+        "{\"topic\":\"agent.message\",\"payload\":\"exited before completion\"}\n",
+    )
+    .unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    state
+        .set_thread_process_id(loop_id, Some(u32::MAX))
+        .unwrap();
+    state
+        .set_thread_message_timestamps(loop_id, None, None, None, Some("1780799999.000200"))
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        FakeSpawner::default(),
+        notifier.clone(),
+    );
+
+    daemon.reconcile_stale_threads().await.unwrap();
+
+    let loaded = state.load_or_default().unwrap();
+    let binding = &loaded.threads[loop_id];
+    assert_eq!(binding.status, SlackThreadStatus::Failed);
+    assert_eq!(binding.process_id, None);
+    assert_eq!(binding.final_card_ts.as_deref(), Some("1780799999.000200"));
+    assert!(notifier.messages.lock().unwrap().is_empty());
+    let updates = notifier.updates.lock().unwrap();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].0, "C123");
+    assert_eq!(updates[0].1, "1780799999.000200");
+    assert!(updates[0].2.contains("failed"));
+}
+
+#[tokio::test]
+async fn stale_reconciliation_marks_completed_from_loop_log_when_event_file_is_missing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let log_dir = temp_dir.path().join(".ralph/slack-loop-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(
+        log_dir.join(format!("{loop_id}.log")),
+        "Completion event detected in JSONL topic=LOOP_COMPLETE\n",
+    )
+    .unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    state
+        .set_thread_process_id(loop_id, Some(u32::MAX))
+        .unwrap();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        FakeSpawner::default(),
+        FakeNotifier::default(),
+    );
+
+    daemon.reconcile_stale_threads().await.unwrap();
+
+    assert_eq!(
+        state.load_or_default().unwrap().threads[loop_id].status,
+        SlackThreadStatus::Completed
+    );
+}
+
+#[tokio::test]
 async fn stop_cancel_is_creator_only_marks_stopped_and_blocks_future_guidance() {
     let temp_dir = tempfile::tempdir().unwrap();
     let loop_id = "slack-C123-1780792150-138669";

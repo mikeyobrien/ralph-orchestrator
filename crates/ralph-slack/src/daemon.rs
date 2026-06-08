@@ -11,7 +11,7 @@ use crate::handler::{
     HandlerAction, SlackMessageEvent, ThreadCommand, events_path, handle_message,
 };
 use crate::renderer::{SlackBlocks, SlackRenderedMessage, redact_secrets};
-use crate::state::{SlackStateManager, SlackThreadStatus};
+use crate::state::{SlackStateManager, SlackThreadBinding, SlackThreadStatus};
 
 #[derive(Debug, Clone)]
 pub struct SlackDaemonConfig {
@@ -94,7 +94,9 @@ impl LoopSpawner for CommandLoopSpawner {
         command
             .current_dir(&worktree_path)
             .arg("run")
-            .arg("-a")
+            .arg("--autonomous")
+            .arg("-b")
+            .arg("claude")
             .arg("-p")
             .arg(&request.prompt)
             .envs(&request.env)
@@ -228,6 +230,29 @@ where
             spawner,
             notifier,
         }
+    }
+
+    pub async fn reconcile_stale_threads(&self) -> SlackResult<usize> {
+        let state = self.state_manager.load_or_default()?;
+        let stale_bindings = state
+            .threads
+            .values()
+            .filter(|binding| binding.status == SlackThreadStatus::Running)
+            .filter(|binding| {
+                binding
+                    .process_id
+                    .map(|process_id| !process_is_alive(process_id))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        drop(state);
+
+        for binding in &stale_bindings {
+            finish_stale_thread(&self.state_manager, self.notifier.clone(), binding).await?;
+        }
+
+        Ok(stale_bindings.len())
     }
 
     pub async fn handle_event(&self, event: SlackMessageEvent) -> SlackResult<HandlerAction> {
@@ -463,16 +488,7 @@ fn monitor_loop_completion<N>(
             }
         }
 
-        let event_path = events_path(&workspace_root, &loop_id);
-        let contents = std::fs::read_to_string(&event_path).unwrap_or_default();
-        let completed = contents.contains("\"topic\":\"LOOP_COMPLETE\"")
-            || contents.contains("## Reason\\ncompleted")
-            || contents.contains("\"payload\":\"## Reason\\ncompleted");
-        let status = if completed {
-            SlackThreadStatus::Completed
-        } else {
-            SlackThreadStatus::Failed
-        };
+        let status = derive_final_status(&workspace_root, &loop_id);
         if let Err(error) = state_manager.finish_thread(&loop_id, status.clone()) {
             tracing::warn!(%loop_id, ?error, "failed to mark Slack loop finished");
         }
@@ -498,6 +514,76 @@ fn monitor_loop_completion<N>(
             }
         }
     });
+}
+
+async fn finish_stale_thread<N>(
+    state_manager: &SlackStateManager,
+    notifier: N,
+    binding: &SlackThreadBinding,
+) -> SlackResult<()>
+where
+    N: ThreadNotifier,
+{
+    let status = derive_final_status(&binding.workspace_root, &binding.loop_id);
+    state_manager.finish_thread(&binding.loop_id, status.clone())?;
+
+    let note = "Try `tail 10` in this thread for recent events.";
+    let message = SlackBlocks::final_card(&binding.loop_id, status, None, Some(note));
+    if let Some(final_card_ts) = binding.final_card_ts.as_deref() {
+        if let Err(error) = notifier
+            .update_thread_blocks(&binding.channel_id, final_card_ts, &message)
+            .await
+        {
+            tracing::warn!(loop_id = %binding.loop_id, ?error, "failed to update Slack stale loop final card");
+        }
+    } else {
+        match notifier
+            .post_thread_blocks(&binding.channel_id, &binding.thread_ts, &message)
+            .await
+        {
+            Ok(final_card_ts) => {
+                state_manager.set_thread_message_timestamps(
+                    &binding.loop_id,
+                    None,
+                    None,
+                    None,
+                    Some(&final_card_ts),
+                )?;
+            }
+            Err(error) => {
+                tracing::warn!(loop_id = %binding.loop_id, ?error, "failed to post Slack stale loop final card");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn derive_final_status(workspace_root: &Path, loop_id: &str) -> SlackThreadStatus {
+    let event_contents =
+        std::fs::read_to_string(events_path(workspace_root, loop_id)).unwrap_or_default();
+    let log_contents =
+        std::fs::read_to_string(slack_loop_log_path(workspace_root, loop_id)).unwrap_or_default();
+
+    if indicates_completed(&event_contents) || indicates_completed(&log_contents) {
+        SlackThreadStatus::Completed
+    } else {
+        SlackThreadStatus::Failed
+    }
+}
+
+fn indicates_completed(contents: &str) -> bool {
+    contents.contains("\"topic\":\"LOOP_COMPLETE\"")
+        || contents.contains("LOOP_COMPLETE")
+        || contents.contains("## Reason\\ncompleted")
+        || contents.contains("## Reason\ncompleted")
+        || contents.contains("\"payload\":\"## Reason\\ncompleted")
+}
+
+fn slack_loop_log_path(workspace_root: &Path, loop_id: &str) -> PathBuf {
+    workspace_root
+        .join(".ralph/slack-loop-logs")
+        .join(format!("{loop_id}.log"))
 }
 
 const MIN_PROGRESS_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -569,6 +655,7 @@ fn process_is_alive(process_id: u32) -> bool {
     Command::new("kill")
         .arg("-0")
         .arg(process_id.to_string())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
