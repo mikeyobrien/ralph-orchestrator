@@ -777,43 +777,7 @@ async fn run_slack_daemon(
         "No Slack app token available. Set RALPH_SLACK_APP_TOKEN or configure RObot.slack.app_token",
     )?;
     let slack = config.robot.slack.clone().unwrap_or_default();
-    if slack.channel_ids.is_empty()
-        || slack.allowed_users.is_empty()
-        || slack.repo_aliases.is_empty()
-        || slack.channel_repos.is_empty()
-    {
-        anyhow::bail!(
-            "Slack daemon requires explicit RObot.slack.channel_ids, RObot.slack.allowed_users, RObot.slack.repo_aliases, and RObot.slack.channel_repos"
-        );
-    }
-    let mut repo_aliases = BTreeMap::new();
-    for (alias, repo_root) in &slack.repo_aliases {
-        if !repo_root.is_absolute() {
-            anyhow::bail!(
-                "Slack repo alias {alias} must be an absolute path: {}",
-                repo_root.display()
-            );
-        }
-        let canonical = repo_root.canonicalize().with_context(|| {
-            format!(
-                "Slack repo alias {alias} does not exist: {}",
-                repo_root.display()
-            )
-        })?;
-        repo_aliases.insert(alias.clone(), canonical);
-    }
-    let mut channel_repos = BTreeMap::new();
-    for channel_id in &slack.channel_ids {
-        let Some(alias) = slack.channel_repos.get(channel_id) else {
-            anyhow::bail!(
-                "Slack channel {channel_id} is missing RObot.slack.channel_repos mapping"
-            );
-        };
-        if !repo_aliases.contains_key(alias) {
-            anyhow::bail!("Slack channel {channel_id} references unknown repo alias {alias}");
-        }
-        channel_repos.insert(channel_id.clone(), alias.clone());
-    }
+    let (repo_aliases, channel_repos) = resolve_slack_repo_routing(&slack)?;
 
     if use_colors {
         println!("\x1b[1mRalph Daemon\x1b[0m (Slack Socket Mode)");
@@ -838,6 +802,117 @@ async fn run_slack_daemon(
     );
     ralph_slack::socket_mode::run_socket_mode(&socket_url, daemon).await?;
     Ok(())
+}
+
+fn resolve_slack_repo_routing(
+    slack: &ralph_core::SlackBotConfig,
+) -> Result<(BTreeMap<String, PathBuf>, BTreeMap<String, String>)> {
+    if slack.channel_ids.is_empty()
+        || slack.allowed_users.is_empty()
+        || slack.channel_repos.is_empty()
+    {
+        anyhow::bail!(
+            "Slack daemon requires explicit RObot.slack.channel_ids, RObot.slack.allowed_users, and RObot.slack.channel_repos"
+        );
+    }
+
+    let mut repo_aliases = BTreeMap::new();
+    for (alias, repo_root) in &slack.repo_aliases {
+        if !is_safe_repo_alias(alias) {
+            anyhow::bail!(
+                "Slack repo alias {alias} is invalid; use only letters, numbers, hyphen, or underscore"
+            );
+        }
+        if !repo_root.is_absolute() {
+            anyhow::bail!(
+                "Slack repo alias {alias} must be an absolute path: {}",
+                repo_root.display()
+            );
+        }
+        let canonical = repo_root.canonicalize().with_context(|| {
+            format!(
+                "Slack repo alias {alias} does not exist: {}",
+                repo_root.display()
+            )
+        })?;
+        repo_aliases.insert(alias.clone(), canonical);
+    }
+
+    let mut channel_repos = BTreeMap::new();
+    for channel_id in &slack.channel_ids {
+        let Some(selector) = slack.channel_repos.get(channel_id) else {
+            anyhow::bail!(
+                "Slack channel {channel_id} is missing RObot.slack.channel_repos mapping"
+            );
+        };
+        if repo_aliases.contains_key(selector) {
+            channel_repos.insert(channel_id.clone(), selector.clone());
+            continue;
+        }
+
+        let legacy_repo_root = PathBuf::from(selector);
+        if !legacy_repo_root.is_absolute() {
+            anyhow::bail!("Slack channel {channel_id} references unknown repo alias {selector}");
+        }
+        let canonical = legacy_repo_root.canonicalize().with_context(|| {
+            format!(
+                "Slack legacy repo root for channel {channel_id} does not exist: {}",
+                legacy_repo_root.display()
+            )
+        })?;
+        let alias = insert_legacy_repo_alias(&mut repo_aliases, channel_id, canonical);
+        channel_repos.insert(channel_id.clone(), alias);
+    }
+
+    Ok((repo_aliases, channel_repos))
+}
+
+fn insert_legacy_repo_alias(
+    repo_aliases: &mut BTreeMap<String, PathBuf>,
+    channel_id: &str,
+    canonical_root: PathBuf,
+) -> String {
+    if let Some((alias, _)) = repo_aliases
+        .iter()
+        .find(|(_, root)| root.as_path() == canonical_root.as_path())
+    {
+        return alias.clone();
+    }
+
+    let base = format!("channel-{}", sanitize_repo_alias_component(channel_id));
+    let mut alias = base.clone();
+    let mut suffix = 2usize;
+    while repo_aliases.contains_key(&alias) {
+        alias = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    repo_aliases.insert(alias.clone(), canonical_root);
+    alias
+}
+
+fn sanitize_repo_alias_component(raw: &str) -> String {
+    let sanitized = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "legacy".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn is_safe_repo_alias(alias: &str) -> bool {
+    !alias.is_empty()
+        && alias
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1472,6 +1547,7 @@ fn print_status(use_colors: bool, msg: &str) {
 mod tests {
     use super::*;
     use crate::test_support::CwdGuard;
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     #[test]
@@ -1990,6 +2066,67 @@ mod tests {
         assert!(onboard.slack);
         assert_eq!(onboard.channel_ids, vec!["C123"]);
         assert_eq!(onboard.allowed_users, vec!["U123"]);
+    }
+
+    #[test]
+    fn test_resolve_slack_repo_routing_uses_safe_aliases() {
+        let repo = tempfile::tempdir().unwrap();
+        let slack = ralph_core::SlackBotConfig {
+            channel_ids: vec!["C123".to_string()],
+            allowed_users: vec!["U123".to_string()],
+            repo_aliases: HashMap::from([("ralph".to_string(), repo.path().to_path_buf())]),
+            channel_repos: HashMap::from([("C123".to_string(), "ralph".to_string())]),
+            ..Default::default()
+        };
+
+        let (repo_aliases, channel_repos) = resolve_slack_repo_routing(&slack).unwrap();
+
+        assert_eq!(channel_repos.get("C123").map(String::as_str), Some("ralph"));
+        assert_eq!(
+            repo_aliases.get("ralph"),
+            Some(&repo.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_resolve_slack_repo_routing_accepts_legacy_absolute_channel_repos() {
+        let repo = tempfile::tempdir().unwrap();
+        let slack = ralph_core::SlackBotConfig {
+            channel_ids: vec!["C123".to_string()],
+            allowed_users: vec!["U123".to_string()],
+            channel_repos: HashMap::from([(
+                "C123".to_string(),
+                repo.path().to_string_lossy().to_string(),
+            )]),
+            ..Default::default()
+        };
+
+        let (repo_aliases, channel_repos) = resolve_slack_repo_routing(&slack).unwrap();
+
+        let alias = channel_repos.get("C123").unwrap();
+        assert_eq!(alias, "channel-C123");
+        assert_eq!(
+            repo_aliases.get(alias),
+            Some(&repo.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_resolve_slack_repo_routing_rejects_unknown_non_absolute_selector() {
+        let slack = ralph_core::SlackBotConfig {
+            channel_ids: vec!["C123".to_string()],
+            allowed_users: vec!["U123".to_string()],
+            channel_repos: HashMap::from([("C123".to_string(), "missing".to_string())]),
+            ..Default::default()
+        };
+
+        let err = resolve_slack_repo_routing(&slack).expect_err("expected unknown alias error");
+
+        assert!(
+            err.to_string()
+                .contains("Slack channel C123 references unknown repo alias missing"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
