@@ -3789,6 +3789,48 @@ hats:
 }
 
 #[test]
+fn test_scope_enforcement_allows_reviewer_completion_after_human_approval() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let yaml = r#"
+event_loop:
+  enforce_hat_scope: true
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["plan.start", "human.response"]
+    publishes: ["human.interact", "work.start"]
+  executor:
+    name: "Executor"
+    triggers: ["work.start", "human.guidance"]
+    publishes: ["work.done", "human.interact"]
+  reviewer:
+    name: "Reviewer"
+    triggers: ["work.done"]
+    publishes: ["plan.start", "human.interact", "LOOP_COMPLETE"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    // This represents the reviewer turn after the Slack human has approved/signaled done.
+    event_loop.state.last_active_hat_ids = vec![HatId::new("reviewer")];
+
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "approved");
+    let _ = event_loop.process_events_from_jsonl();
+
+    assert_eq!(
+        event_loop.check_completion_event(),
+        Some(TerminationReason::CompletionPromise),
+        "reviewer must be allowed to terminate approved human-in-the-loop flows"
+    );
+}
+
+#[test]
 fn test_scope_enforcement_allows_authorized_event() {
     use tempfile::TempDir;
 

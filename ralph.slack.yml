@@ -18,7 +18,7 @@ event_loop:
   starting_event: "plan.start"
 
 cli:
-  backend: "claude"
+  backend: "codex"
 
 core:
   specs_dir: "./specs/"
@@ -83,11 +83,13 @@ hats:
     name: "Reviewer"
     description: "Reviews completed work and decides whether the loop is done."
     triggers: ["work.done"]
-    publishes: ["plan.start", "human.interact"]
+    publishes: ["plan.start", "human.interact", "LOOP_COMPLETE"]
     backend:
       type: "codex"
     instructions: |
-      Verify the work against the request. If it is complete, output LOOP_COMPLETE.
+      Verify the work against the request and any Slack-thread steering.
+      If it is complete and no further human decision is required, emit the completion
+      event exactly with `ralph emit "LOOP_COMPLETE" "approved"` and stop.
       If it needs revision, emit plan.start with the specific follow-up. If human
       signoff is required, emit human.interact in the bound Slack thread.
 

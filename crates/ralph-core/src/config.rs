@@ -2302,6 +2302,38 @@ features:
     }
 
     #[test]
+    fn slack_preset_reviewer_can_emit_completion_promise() {
+        let preset_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ralph.slack.yml");
+        let yaml = std::fs::read_to_string(&preset_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", preset_path.display()));
+        let config: RalphConfig = serde_yaml::from_str(&yaml).expect("parse ralph.slack.yml");
+        assert_eq!(
+            config.cli.backend, "codex",
+            "Slack preset default backend must match the live-smoke/runtime path"
+        );
+
+        let reviewer = config
+            .hats
+            .get("reviewer")
+            .expect("Slack preset must define a reviewer hat");
+        assert!(
+            reviewer
+                .publishes
+                .iter()
+                .any(|topic| topic == &config.event_loop.completion_promise),
+            "reviewer must be allowed to publish the completion promise so approved Slack loops can terminate cleanly"
+        );
+        assert!(
+            reviewer.instructions.contains("ralph emit")
+                && reviewer
+                    .instructions
+                    .contains(&config.event_loop.completion_promise),
+            "reviewer instructions must tell the agent to emit the completion event, not only print prose"
+        );
+    }
+
+    #[test]
     fn test_slack_streaming_capability_defaults_to_fallback_and_can_opt_in() {
         let fallback_yaml = r#"
 RObot:
@@ -2309,6 +2341,7 @@ RObot:
   slack:
     bot_token: token
 "#;
+
         let fallback: RalphConfig = serde_yaml::from_str(fallback_yaml).unwrap();
         assert!(!fallback.robot.slack.unwrap().streaming);
 
