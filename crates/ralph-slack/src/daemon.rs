@@ -91,20 +91,15 @@ impl LoopSpawner for CommandLoopSpawner {
             .map_err(SlackError::Io)?;
         let stderr = stdout.try_clone().map_err(SlackError::Io)?;
         let mut command = Command::new(executable);
+        configure_slack_loop_command(
+            &mut command,
+            &worktree_path,
+            &request,
+            self.config_path.as_deref(),
+        );
         command
-            .current_dir(&worktree_path)
-            .arg("run")
-            .arg("--autonomous")
-            .arg("-b")
-            .arg("claude")
-            .arg("-p")
-            .arg(&request.prompt)
-            .envs(&request.env)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        if let Some(config_path) = &self.config_path {
-            command.arg("-c").arg(config_path);
-        }
         let mut child = command.spawn().map_err(SlackError::Io)?;
         let process_id = child.id();
         std::thread::spawn(move || {
@@ -125,6 +120,24 @@ impl LoopSpawner for CommandLoopSpawner {
             )));
         }
         Ok(())
+    }
+}
+
+fn configure_slack_loop_command(
+    command: &mut Command,
+    worktree_path: &Path,
+    request: &StartLoopRequest,
+    config_path: Option<&Path>,
+) {
+    command
+        .current_dir(worktree_path)
+        .arg("run")
+        .arg("--autonomous")
+        .arg("-p")
+        .arg(&request.prompt)
+        .envs(&request.env);
+    if let Some(config_path) = config_path {
+        command.arg("-c").arg(config_path);
     }
 }
 
@@ -921,6 +934,42 @@ mod tests {
             "/repo/.ralph/slack-state.json"
         );
         assert!(!env.contains_key("RALPH_WORKSPACE_ROOT"));
+    }
+
+    #[test]
+    fn slack_loop_command_uses_config_backend_without_hardcoded_claude() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("worktree");
+        let config = dir.path().join("ralph.slack.yml");
+        let request = StartLoopRequest {
+            loop_id: "slack-C123-1780-1".to_string(),
+            prompt: "do the thing".to_string(),
+            channel_id: "C123".to_string(),
+            thread_ts: "1780.1".to_string(),
+            workspace_root: dir.path().to_path_buf(),
+            env: BTreeMap::new(),
+        };
+        let mut command = Command::new("ralph");
+
+        configure_slack_loop_command(&mut command, &worktree, &request, Some(&config));
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "--autonomous",
+                "-p",
+                "do the thing",
+                "-c",
+                config.to_str().unwrap(),
+            ]
+        );
+        assert!(!args.iter().any(|arg| arg == "-b" || arg == "claude"));
+        assert_eq!(command.get_current_dir(), Some(worktree.as_path()));
     }
 
     #[test]
