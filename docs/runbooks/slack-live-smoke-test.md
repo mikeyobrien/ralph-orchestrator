@@ -52,7 +52,7 @@ Collect non-secret IDs:
 - test channel id, e.g. `C...`;
 - reviewer/operator Slack user id(s), e.g. `U...`;
 - bot user id, if needed for self-message filtering review;
-- absolute repo path that the channel maps to;
+- repo alias and absolute repo path that the channel maps to;
 - optional team/workspace id if your streaming smoke requires it.
 
 ## 2. Export tokens without printing them
@@ -99,15 +99,18 @@ RObot:
       - C_REAL_TEST_CHANNEL
     allowed_users:
       - U_YOUR_USER_ID
+    repo_aliases:
+      ralph: /absolute/path/to/repo
     channel_repos:
-      C_REAL_TEST_CHANNEL: /absolute/path/to/repo
+      C_REAL_TEST_CHANNEL: ralph
     start_mode: app_mention
 ```
 
 Rules:
 
-- `channel_repos` value must be an absolute existing path.
+- `repo_aliases` values must be absolute existing paths.
 - Every `channel_ids` entry must have a `channel_repos` entry.
+- Every `channel_repos` value must reference a configured repo alias.
 - Do not put token values in YAML.
 - Do not add broad channel/user wildcards.
 
@@ -204,11 +207,12 @@ Wait for the loop to emit progress, then verify:
 In the Slack thread:
 
 1. Reply with a normal answer/guidance sentence.
-2. Send `status` and `!status`.
-3. Send `tail 10` and `!tail 10`.
-4. Click Status.
-5. Click Tail 10.
-6. If safe, click Stop/Cancel or send `stop` / `cancel` from the original creator account.
+2. Send `repo`.
+3. Send `status` and `!status`.
+4. Send `tail 10` and `!tail 10`.
+5. Click Status.
+6. Click Tail 10.
+7. If safe, click Stop/Cancel or send `stop` / `cancel` from the original creator account.
 
 Expected:
 
@@ -216,6 +220,7 @@ Expected:
 - If a pending `human.interact` exists, plain reply becomes `human.response` and clears pending state.
 - If no pending question exists, plain reply becomes `human.guidance`.
 - Commands win over pending questions and do not accidentally answer a question.
+- `repo` responds with the bound alias, root, subdirectory, loop id, worktree, and branch.
 - `status` responds with the bound loop/thread state.
 - `tail 10` redacts token-shaped strings.
 - Status/Tail buttons behave like their command equivalents.

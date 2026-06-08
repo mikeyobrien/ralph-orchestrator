@@ -5,8 +5,8 @@
 #   export RALPH_SLACK_APP_TOKEN=xapp-...
 #   ralph bot daemon --slack -c ralph.slack.yml
 #
-# Replace channel/user IDs and repo roots before use. Slack text cannot pick
-# arbitrary repos; each channel is explicitly mapped to one workspace root.
+# Replace channel/user IDs and repo alias roots before use. Slack text can pick
+# only configured aliases and safe relative subdirectories.
 
 event_loop:
   prompt_file: "PROMPT.md"
@@ -42,8 +42,10 @@ RObot:
       - C0123456789
     allowed_users:
       - U0123456789
+    repo_aliases:
+      ralph: /absolute/path/to/repo
     channel_repos:
-      C0123456789: /absolute/path/to/repo
+      C0123456789: ralph
     start_mode: app_mention
 
 tasks:

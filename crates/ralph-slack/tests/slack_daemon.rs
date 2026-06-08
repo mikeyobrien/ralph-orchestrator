@@ -263,7 +263,8 @@ fn daemon_config(root: &std::path::Path) -> SlackDaemonConfig {
         workspace_root: root.to_path_buf(),
         allowed_channels: vec!["C123".to_string()],
         allowed_users: vec!["U123".to_string()],
-        channel_repos: BTreeMap::from([("C123".to_string(), root.to_path_buf())]),
+        repo_aliases: BTreeMap::from([("ralph".to_string(), root.to_path_buf())]),
+        channel_repos: BTreeMap::from([("C123".to_string(), "ralph".to_string())]),
     }
 }
 
@@ -311,6 +312,315 @@ async fn fake_socket_root_event_starts_fake_loop_and_posts_thread_reply() {
     assert_eq!(messages[0].0, "C123");
     assert_eq!(messages[0].1, "1780792150.138669");
     assert!(messages[0].2.contains("Ralph loop started"));
+}
+
+#[tokio::test]
+async fn root_event_can_override_repo_alias_and_subdir_and_binds_thread_target() {
+    let daemon_root = tempfile::tempdir().unwrap();
+    let ralph_repo = tempfile::tempdir().unwrap();
+    let tonic_repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tonic_repo.path().join("crates/ralph-slack")).unwrap();
+    let state = SlackStateManager::new(daemon_root.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let daemon = SlackDaemon::new(
+        SlackDaemonConfig {
+            workspace_root: daemon_root.path().to_path_buf(),
+            allowed_channels: vec!["C123".to_string()],
+            allowed_users: vec!["U123".to_string()],
+            repo_aliases: BTreeMap::from([
+                ("ralph".to_string(), ralph_repo.path().to_path_buf()),
+                ("tonic".to_string(), tonic_repo.path().to_path_buf()),
+            ]),
+            channel_repos: BTreeMap::from([("C123".to_string(), "ralph".to_string())]),
+        },
+        state.clone(),
+        spawner.clone(),
+        FakeNotifier::default(),
+    );
+
+    let action = daemon
+        .handle_event(app_mention(
+            "EvRepoOverride",
+            "<@B123> repo=tonic dir=crates/ralph-slack test status command",
+        ))
+        .await
+        .unwrap();
+
+    let HandlerAction::StartLoop { prompt, .. } = action else {
+        panic!("expected StartLoop");
+    };
+    assert_eq!(prompt, "test status command");
+    let request = spawner.requests.lock().unwrap()[0].clone();
+    assert_eq!(
+        request.workspace_root,
+        tonic_repo.path().canonicalize().unwrap()
+    );
+    assert_eq!(
+        request.state_path,
+        daemon_root.path().join(".ralph/slack-state.json")
+    );
+    assert_eq!(
+        request.env.get("RALPH_SLACK_STATE_PATH").unwrap(),
+        &daemon_root
+            .path()
+            .join(".ralph/slack-state.json")
+            .to_string_lossy()
+            .to_string()
+    );
+    assert_eq!(request.repo_alias.as_deref(), Some("tonic"));
+    assert_eq!(
+        request.repo_dir.as_deref(),
+        Some(std::path::Path::new("crates/ralph-slack"))
+    );
+    let binding = state
+        .load_or_default()
+        .unwrap()
+        .threads
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    assert_eq!(binding.repo_alias.as_deref(), Some("tonic"));
+    assert_eq!(
+        binding.repo_dir.as_deref(),
+        Some(std::path::Path::new("crates/ralph-slack"))
+    );
+}
+
+#[tokio::test]
+async fn in_alias_colon_start_syntax_uses_alias_and_strips_prefix_from_prompt() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state,
+        spawner.clone(),
+        FakeNotifier::default(),
+    );
+
+    daemon
+        .handle_event(app_mention("EvInAlias", "<@B123> in ralph: fix the UX"))
+        .await
+        .unwrap();
+
+    let request = spawner.requests.lock().unwrap()[0].clone();
+    assert_eq!(request.prompt, "fix the UX");
+    assert_eq!(request.repo_alias.as_deref(), Some("ralph"));
+}
+
+#[tokio::test]
+async fn unsafe_repo_dir_is_rejected_before_thread_binding_or_spawn() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        spawner.clone(),
+        notifier.clone(),
+    );
+
+    let event = app_mention("EvBadDir", "<@B123> repo=ralph dir=../escape fix");
+    let action = daemon.handle_event(event.clone()).await.unwrap();
+    let duplicate = daemon.handle_event(event).await.unwrap();
+
+    assert_eq!(action, HandlerAction::Ignored);
+    assert_eq!(duplicate, HandlerAction::Ignored);
+    assert!(spawner.requests.lock().unwrap().is_empty());
+    assert!(
+        !state
+            .load_or_default()
+            .unwrap()
+            .thread_to_loop
+            .contains_key("C123:1780792150.138669")
+    );
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].2.contains("cannot contain"));
+}
+
+#[tokio::test]
+async fn invalid_explicit_repo_alias_is_rejected_without_falling_back_to_channel_default() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        spawner.clone(),
+        notifier.clone(),
+    );
+
+    let event = app_mention("EvBadAlias", "<@B123> repo=../ralph fix");
+    let action = daemon.handle_event(event.clone()).await.unwrap();
+    let duplicate = daemon.handle_event(event).await.unwrap();
+
+    assert_eq!(action, HandlerAction::Ignored);
+    assert_eq!(duplicate, HandlerAction::Ignored);
+    assert!(spawner.requests.lock().unwrap().is_empty());
+    assert!(
+        !state
+            .load_or_default()
+            .unwrap()
+            .thread_to_loop
+            .contains_key("C123:1780792150.138669")
+    );
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].2.contains("repo alias `../ralph` is invalid"));
+}
+
+#[tokio::test]
+async fn malformed_in_repo_selector_is_rejected_without_falling_back_to_channel_default() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        spawner.clone(),
+        notifier.clone(),
+    );
+
+    let event = app_mention("EvMalformedIn", "<@B123> in ralph fix this");
+    let action = daemon.handle_event(event.clone()).await.unwrap();
+    let duplicate = daemon.handle_event(event).await.unwrap();
+
+    assert_eq!(action, HandlerAction::Ignored);
+    assert_eq!(duplicate, HandlerAction::Ignored);
+    assert!(spawner.requests.lock().unwrap().is_empty());
+    assert!(
+        !state
+            .load_or_default()
+            .unwrap()
+            .thread_to_loop
+            .contains_key("C123:1780792150.138669")
+    );
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].2.contains("must include `:`"));
+}
+
+#[tokio::test]
+async fn empty_repo_dir_directive_is_rejected_without_falling_back_to_channel_default() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        spawner.clone(),
+        notifier.clone(),
+    );
+
+    let event = app_mention("EvEmptyDir", "<@B123> repo=ralph dir= fix this");
+    let action = daemon.handle_event(event.clone()).await.unwrap();
+    let duplicate = daemon.handle_event(event).await.unwrap();
+
+    assert_eq!(action, HandlerAction::Ignored);
+    assert_eq!(duplicate, HandlerAction::Ignored);
+    assert!(spawner.requests.lock().unwrap().is_empty());
+    assert!(
+        !state
+            .load_or_default()
+            .unwrap()
+            .thread_to_loop
+            .contains_key("C123:1780792150.138669")
+    );
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].2.contains("repo dir cannot be empty"));
+}
+
+#[tokio::test]
+async fn missing_repo_dir_is_rejected_before_thread_binding_or_spawn() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        spawner.clone(),
+        notifier.clone(),
+    );
+
+    let event = app_mention("EvMissingDir", "<@B123> repo=ralph dir=missing fix");
+    let action = daemon.handle_event(event.clone()).await.unwrap();
+    let duplicate = daemon.handle_event(event).await.unwrap();
+
+    assert_eq!(action, HandlerAction::Ignored);
+    assert_eq!(duplicate, HandlerAction::Ignored);
+    assert!(spawner.requests.lock().unwrap().is_empty());
+    assert!(
+        !state
+            .load_or_default()
+            .unwrap()
+            .thread_to_loop
+            .contains_key("C123:1780792150.138669")
+    );
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0]
+            .2
+            .contains("Slack repo dir `missing` is not usable")
+    );
+}
+
+#[test]
+fn repo_dir_validation_rejects_symlink_escape() {
+    let repo = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), repo.path().join("escape")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(outside.path(), repo.path().join("escape")).unwrap();
+
+    let err = ralph_slack::daemon::resolve_repo_target(
+        &BTreeMap::from([("ralph".to_string(), repo.path().to_path_buf())]),
+        Some("ralph"),
+        None,
+        Some(std::path::Path::new("escape")),
+    )
+    .unwrap_err();
+
+    assert!(err.contains("inside the configured repo root"));
+}
+
+#[tokio::test]
+async fn missing_repo_resolution_posts_human_interact_clarification_with_aliases() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        SlackDaemonConfig {
+            workspace_root: temp_dir.path().to_path_buf(),
+            allowed_channels: vec!["C123".to_string()],
+            allowed_users: vec!["U123".to_string()],
+            repo_aliases: BTreeMap::from([("ralph".to_string(), temp_dir.path().to_path_buf())]),
+            channel_repos: BTreeMap::new(),
+        },
+        state,
+        FakeSpawner::default(),
+        notifier.clone(),
+    );
+
+    let action = daemon
+        .handle_event(app_mention("EvClarify", "<@B123> build somewhere"))
+        .await
+        .unwrap();
+
+    assert_eq!(action, HandlerAction::Ignored);
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].2.contains("human.interact"));
+    assert!(messages[0].2.contains("`ralph`"));
 }
 
 #[tokio::test]
@@ -386,7 +696,8 @@ async fn unauthorized_root_event_does_not_spawn_or_bind_thread() {
             workspace_root: temp_dir.path().to_path_buf(),
             allowed_channels: vec!["C999".to_string()],
             allowed_users: vec!["U123".to_string()],
-            channel_repos: BTreeMap::from([("C999".to_string(), temp_dir.path().to_path_buf())]),
+            repo_aliases: BTreeMap::from([("ralph".to_string(), temp_dir.path().to_path_buf())]),
+            channel_repos: BTreeMap::from([("C999".to_string(), "ralph".to_string())]),
         },
         state.clone(),
         spawner.clone(),
@@ -415,7 +726,8 @@ async fn root_event_resolves_repo_from_channel_mapping_and_unknown_channel_does_
             workspace_root: daemon_root.path().to_path_buf(),
             allowed_channels: vec!["C123".to_string(), "C999".to_string()],
             allowed_users: vec!["U123".to_string()],
-            channel_repos: BTreeMap::from([("C123".to_string(), repo_root.path().to_path_buf())]),
+            repo_aliases: BTreeMap::from([("ralph".to_string(), repo_root.path().to_path_buf())]),
+            channel_repos: BTreeMap::from([("C123".to_string(), "ralph".to_string())]),
         },
         state.clone(),
         spawner.clone(),
@@ -429,7 +741,10 @@ async fn root_event_resolves_repo_from_channel_mapping_and_unknown_channel_does_
 
     let requests = spawner.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].workspace_root, repo_root.path());
+    assert_eq!(
+        requests[0].workspace_root,
+        repo_root.path().canonicalize().unwrap()
+    );
     assert!(
         !requests[0].env.contains_key("RALPH_WORKSPACE_ROOT"),
         "Slack-spawned loops run from their worktree; do not force repo root via RALPH_WORKSPACE_ROOT"
@@ -443,7 +758,10 @@ async fn root_event_resolves_repo_from_channel_mapping_and_unknown_channel_does_
         .next()
         .unwrap()
         .clone();
-    assert_eq!(bound.workspace_root, repo_root.path());
+    assert_eq!(
+        bound.workspace_root,
+        repo_root.path().canonicalize().unwrap()
+    );
 
     let denied = SlackMessageEvent {
         event_id: Some("EvUnknownRepo".to_string()),
@@ -462,7 +780,7 @@ async fn root_event_resolves_repo_from_channel_mapping_and_unknown_channel_does_
     assert!(
         notifier.messages.lock().unwrap()[1]
             .2
-            .contains("not configured")
+            .contains("human.interact")
     );
     let state_after_denial = state.load_or_default().unwrap();
     assert!(
@@ -504,7 +822,8 @@ async fn thread_reply_uses_persisted_repo_root_not_daemon_workspace_root() {
             workspace_root: daemon_root.path().to_path_buf(),
             allowed_channels: vec!["C123".to_string()],
             allowed_users: vec!["U123".to_string()],
-            channel_repos: BTreeMap::from([("C123".to_string(), repo_root.path().to_path_buf())]),
+            repo_aliases: BTreeMap::from([("ralph".to_string(), repo_root.path().to_path_buf())]),
+            channel_repos: BTreeMap::from([("C123".to_string(), "ralph".to_string())]),
         },
         state,
         FakeSpawner::default(),
@@ -559,12 +878,14 @@ async fn known_thread_help_status_tail_are_replies_not_guidance_and_status_wins_
     .unwrap();
     let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
     state
-        .bind_thread(
+        .bind_thread_with_repo(
             loop_id,
             "C123",
             "1780792150.138669",
             "U123",
             temp_dir.path(),
+            Some("ralph"),
+            Some(std::path::Path::new("crates/ralph-slack")),
         )
         .unwrap();
     state
@@ -578,7 +899,7 @@ async fn known_thread_help_status_tail_are_replies_not_guidance_and_status_wins_
         notifier.clone(),
     );
 
-    for (idx, text) in ["help", "status", "!tail 1"].iter().enumerate() {
+    for (idx, text) in ["help", "repo", "status", "!tail 1"].iter().enumerate() {
         daemon
             .handle_event(SlackMessageEvent {
                 event_id: Some(format!("EvCmd{idx}")),
@@ -595,12 +916,20 @@ async fn known_thread_help_status_tail_are_replies_not_guidance_and_status_wins_
     }
 
     let messages = notifier.messages.lock().unwrap();
-    assert_eq!(messages.len(), 3);
+    assert_eq!(messages.len(), 4);
     assert!(messages[0].2.contains("help"));
+    assert!(messages[1].2.contains("alias: `ralph`"));
+    assert!(messages[1].2.contains("dir: `crates/ralph-slack`"));
     assert!(messages[1].2.contains(loop_id));
-    assert!(messages[1].2.contains("pending question: yes"));
-    assert!(messages[2].2.contains("checkpoint"));
-    assert!(!messages[2].2.contains("secret-token-1234567890"));
+    assert!(
+        messages[1]
+            .2
+            .contains(&format!("branch: `ralph-slack-{loop_id}`"))
+    );
+    assert!(messages[2].2.contains(loop_id));
+    assert!(messages[2].2.contains("pending question: yes"));
+    assert!(messages[3].2.contains("checkpoint"));
+    assert!(!messages[3].2.contains("secret-token-1234567890"));
     assert!(state.has_pending_question(loop_id).unwrap());
     let events = std::fs::read_to_string(events_dir.join("events-live.jsonl")).unwrap();
     assert!(!events.contains("human.guidance"));
@@ -840,7 +1169,8 @@ async fn stop_cancel_is_creator_only_marks_stopped_and_blocks_future_guidance() 
             workspace_root: temp_dir.path().to_path_buf(),
             allowed_channels: vec!["C123".to_string()],
             allowed_users: vec!["U123".to_string(), "U999".to_string()],
-            channel_repos: BTreeMap::from([("C123".to_string(), temp_dir.path().to_path_buf())]),
+            repo_aliases: BTreeMap::from([("ralph".to_string(), temp_dir.path().to_path_buf())]),
+            channel_repos: BTreeMap::from([("C123".to_string(), "ralph".to_string())]),
         },
         state.clone(),
         spawner.clone(),
@@ -935,7 +1265,8 @@ async fn stop_button_is_creator_only_like_typed_stop() {
             workspace_root: temp_dir.path().to_path_buf(),
             allowed_channels: vec!["C123".to_string()],
             allowed_users: vec!["U123".to_string(), "U999".to_string()],
-            channel_repos: BTreeMap::from([("C123".to_string(), temp_dir.path().to_path_buf())]),
+            repo_aliases: BTreeMap::from([("ralph".to_string(), temp_dir.path().to_path_buf())]),
+            channel_repos: BTreeMap::from([("C123".to_string(), "ralph".to_string())]),
         },
         state.clone(),
         spawner.clone(),

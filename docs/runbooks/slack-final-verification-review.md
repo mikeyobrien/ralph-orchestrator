@@ -7,8 +7,8 @@ Use this to review `feat/slack-thread-surface` before accepting the final Kanban
 The feature is intended to provide:
 
 - one Slack thread per Ralph loop;
-- one Slack channel mapped to one repo/workspace root via `RObot.slack.channel_repos`;
-- Slack text cannot choose arbitrary repos;
+- one Slack channel mapped to one safe repo alias via `RObot.slack.channel_repos`;
+- Slack text can choose only configured repo aliases and safe relative subdirs;
 - root app mentions start/bind loops;
 - replies in running known threads become `human.response` when a question is pending, otherwise `human.guidance`;
 - completed/failed/stopped threads are archived read-only audit records;
@@ -99,9 +99,10 @@ Pass criteria:
 - [ ] Channel allowlist is checked before binding a thread, spawning a loop, handling commands, or appending events.
 - [ ] User allowlist is checked before binding a thread, spawning a loop, handling commands, or appending events.
 - [ ] Empty/missing allowlists fail closed for Slack daemon startup; there is no "trust first inbound Slack event" path.
-- [ ] `channel_repos` is required for allowed channels and maps to canonical absolute repo roots.
-- [ ] Slack text cannot select arbitrary repos or paths.
-- [ ] Thread replies route using the persisted `channel_id + root thread_ts -> loop_id + repo_root` binding, not daemon cwd.
+- [ ] `repo_aliases` maps safe aliases to canonical absolute repo roots.
+- [ ] `channel_repos` is required for allowed channels and references configured aliases.
+- [ ] Slack text cannot select arbitrary repos or unsafe paths.
+- [ ] Thread replies route using the persisted `channel_id + root thread_ts -> loop_id + repo_root + dir` binding, not daemon cwd.
 - [ ] Event/envelope dedupe occurs before loop spawn or event append.
 - [ ] Loop IDs used for worktree/event paths reject traversal, slash, empty, overly long, or control-character inputs.
 - [ ] Thread commands are handled before guidance/response routing; command text does not accidentally answer a pending question.
@@ -147,13 +148,13 @@ sed -n '1,180p' ralph.slack.yml
 Pass criteria:
 
 - [ ] Guide explains Socket Mode and required Slack scopes/events.
-- [ ] Guide states one channel maps to one repo/workspace root.
-- [ ] Guide states Slack text cannot choose arbitrary repos.
+- [ ] Guide states one channel maps to one default safe repo alias.
+- [ ] Guide states Slack text can choose only configured aliases and safe relative subdirs, never arbitrary repos.
 - [ ] Guide explains root app mention start and running-thread reply behavior.
 - [ ] Guide explains archived-thread lifecycle, explicit follow-up/fork, and cleanup retention policy.
 - [ ] Guide explains slash-command/thread nuance.
 - [ ] Example config uses env vars for secrets and placeholder IDs/paths only.
-- [ ] Example config includes `RObot.surface: slack`, `channel_ids`, `allowed_users`, and `channel_repos`.
+- [ ] Example config includes `RObot.surface: slack`, `channel_ids`, `allowed_users`, `repo_aliases`, and `channel_repos`.
 
 ## 7. Decision
 

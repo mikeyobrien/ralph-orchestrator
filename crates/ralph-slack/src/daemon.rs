@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::api::SlackApi;
 use crate::error::{SlackError, SlackResult};
 use crate::handler::{
-    HandlerAction, SlackMessageEvent, ThreadCommand, events_path, handle_message,
+    HandlerAction, SlackMessageEvent, ThreadCommand, events_path, handle_message_with_repo,
 };
 use crate::renderer::{SlackBlocks, SlackRenderedMessage, redact_secrets};
 use crate::state::{SlackStateManager, SlackThreadBinding, SlackThreadStatus};
@@ -18,7 +18,8 @@ pub struct SlackDaemonConfig {
     pub workspace_root: PathBuf,
     pub allowed_channels: Vec<String>,
     pub allowed_users: Vec<String>,
-    pub channel_repos: BTreeMap<String, PathBuf>,
+    pub repo_aliases: BTreeMap<String, PathBuf>,
+    pub channel_repos: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +29,9 @@ pub struct StartLoopRequest {
     pub channel_id: String,
     pub thread_ts: String,
     pub workspace_root: PathBuf,
+    pub state_path: PathBuf,
+    pub repo_alias: Option<String>,
+    pub repo_dir: Option<PathBuf>,
     pub env: BTreeMap<String, String>,
 }
 
@@ -81,6 +85,11 @@ impl LoopSpawner for CommandLoopSpawner {
     async fn spawn_loop(&self, request: StartLoopRequest) -> SlackResult<Option<u32>> {
         let executable = std::env::current_exe().map_err(SlackError::Io)?;
         let worktree_path = ensure_slack_loop_worktree(&request.workspace_root, &request.loop_id)?;
+        let workdir = request
+            .repo_dir
+            .as_deref()
+            .map(|repo_dir| worktree_path.join(repo_dir))
+            .unwrap_or_else(|| worktree_path.clone());
         let log_dir = request.workspace_root.join(".ralph/slack-loop-logs");
         std::fs::create_dir_all(&log_dir).map_err(SlackError::Io)?;
         let log_path = log_dir.join(format!("{}.log", request.loop_id));
@@ -93,7 +102,7 @@ impl LoopSpawner for CommandLoopSpawner {
         let mut command = Command::new(executable);
         configure_slack_loop_command(
             &mut command,
-            &worktree_path,
+            &workdir,
             &request,
             self.config_path.as_deref(),
         );
@@ -269,22 +278,21 @@ where
     }
 
     pub async fn handle_event(&self, event: SlackMessageEvent) -> SlackResult<HandlerAction> {
-        if event.thread_ts.is_none()
-            && event.app_mention
-            && !self.config.channel_repos.contains_key(&event.channel_id)
-        {
-            return self.handle_unmapped_start_event(event).await;
-        }
+        let mut event = event;
+        let target_for_start = if event.thread_ts.is_none() && event.app_mention {
+            match self.resolve_start_event(&mut event).await? {
+                Some(target) => target,
+                None => return Ok(HandlerAction::Ignored),
+            }
+        } else {
+            RepoTarget::default_root(self.config.workspace_root.clone())
+        };
 
-        let root_for_start = self
-            .config
-            .channel_repos
-            .get(&event.channel_id)
-            .cloned()
-            .unwrap_or_else(|| self.config.workspace_root.clone());
-        let action = handle_message(
+        let action = handle_message_with_repo(
             &self.state_manager,
-            &root_for_start,
+            &target_for_start.root,
+            target_for_start.alias.as_deref(),
+            target_for_start.dir.as_deref(),
             &self.config.allowed_channels,
             &self.config.allowed_users,
             event,
@@ -297,10 +305,21 @@ where
                 channel_id,
                 thread_ts,
             } => {
+                let target_for_action = self
+                    .state_manager
+                    .load_or_default()?
+                    .threads
+                    .get(loop_id)
+                    .map(|binding| RepoTarget {
+                        alias: binding.repo_alias.clone(),
+                        root: binding.workspace_root.clone(),
+                        dir: binding.repo_dir.clone(),
+                    })
+                    .unwrap_or_else(|| target_for_start.clone());
                 let start_message = SlackBlocks::start_card(
                     loop_id,
                     prompt,
-                    Some(&root_for_start.display().to_string()),
+                    Some(&target_for_action.summary()),
                     None,
                 );
                 let start_card_ts = self
@@ -321,8 +340,18 @@ where
                         prompt: prompt.clone(),
                         channel_id: channel_id.clone(),
                         thread_ts: thread_ts.clone(),
-                        workspace_root: root_for_start.clone(),
-                        env: slack_loop_env(loop_id, channel_id, thread_ts, &root_for_start),
+                        workspace_root: target_for_action.root.clone(),
+                        state_path: self.state_manager.path().to_path_buf(),
+                        repo_alias: target_for_action.alias.clone(),
+                        repo_dir: target_for_action.dir.clone(),
+                        env: slack_loop_env(
+                            loop_id,
+                            channel_id,
+                            thread_ts,
+                            self.state_manager.path(),
+                            target_for_action.alias.as_deref(),
+                            target_for_action.dir.as_deref(),
+                        ),
                     })
                     .await?;
                 self.state_manager
@@ -334,7 +363,7 @@ where
                         loop_id.clone(),
                         channel_id.clone(),
                         thread_ts.clone(),
-                        root_for_start.clone(),
+                        target_for_action.root.clone(),
                         process_id,
                     );
                 }
@@ -355,15 +384,15 @@ where
         Ok(action)
     }
 
-    async fn handle_unmapped_start_event(
+    async fn resolve_start_event(
         &self,
-        event: SlackMessageEvent,
-    ) -> SlackResult<HandlerAction> {
+        event: &mut SlackMessageEvent,
+    ) -> SlackResult<Option<RepoTarget>> {
         if event.bot_id.is_some() {
-            return Ok(HandlerAction::Ignored);
+            return Ok(None);
         }
         let Some(user_id) = event.user_id.as_deref() else {
-            return Ok(HandlerAction::Ignored);
+            return Ok(None);
         };
         if self.config.allowed_channels.is_empty()
             || !self
@@ -372,27 +401,78 @@ where
                 .iter()
                 .any(|channel| channel == &event.channel_id)
         {
-            return Ok(HandlerAction::Ignored);
+            return Ok(None);
         }
         if self.config.allowed_users.is_empty()
             || !self.config.allowed_users.iter().any(|user| user == user_id)
         {
-            return Ok(HandlerAction::Ignored);
-        }
-        if let Some(event_id) = event.event_id.as_deref() {
-            if !self.state_manager.mark_event_seen(event_id)? {
-                return Ok(HandlerAction::Duplicate);
-            }
+            return Ok(None);
         }
 
-        self.notifier
-            .post_thread_message(
-                &event.channel_id,
-                &event.ts,
-                "Ralph is not configured for this Slack channel; ask an operator to add RObot.slack.channel_repos for this channel.",
+        let prompt = strip_app_mention_for_start(&event.text);
+        let parsed = match parse_start_repo_directives(&prompt) {
+            Ok(parsed) => parsed,
+            Err(message) => {
+                if !self.mark_start_event_seen(event)? {
+                    return Ok(None);
+                }
+                self.notifier
+                    .post_thread_message(&event.channel_id, &event.ts, &message)
+                    .await?;
+                return Ok(None);
+            }
+        };
+        let target = match resolve_repo_target(
+            &self.config.repo_aliases,
+            self.config
+                .channel_repos
+                .get(&event.channel_id)
+                .map(String::as_str),
+            parsed.repo_alias.as_deref(),
+            parsed.dir.as_deref(),
+        ) {
+            Ok(Some(target)) => target,
+            Ok(None) => {
+                if !self.mark_start_event_seen(event)? {
+                    return Ok(None);
+                }
+                self.post_repo_clarification(event).await?;
+                return Ok(None);
+            }
+            Err(message) => {
+                if !self.mark_start_event_seen(event)? {
+                    return Ok(None);
+                }
+                self.notifier
+                    .post_thread_message(&event.channel_id, &event.ts, &message)
+                    .await?;
+                return Ok(None);
+            }
+        };
+        event.text = rewrite_start_text_with_prompt(&event.text, &parsed.prompt);
+        Ok(Some(target))
+    }
+
+    fn mark_start_event_seen(&self, event: &SlackMessageEvent) -> SlackResult<bool> {
+        match event.event_id.as_deref() {
+            Some(event_id) => self.state_manager.mark_event_seen(event_id),
+            None => Ok(true),
+        }
+    }
+
+    async fn post_repo_clarification(&self, event: &SlackMessageEvent) -> SlackResult<()> {
+        let aliases = configured_alias_list(&self.config.repo_aliases);
+        let message = if aliases.is_empty() {
+            "human.interact: Which repo should Ralph use? No safe repo aliases are configured; ask an operator to set RObot.slack.repo_aliases and channel_repos.".to_string()
+        } else {
+            format!(
+                "human.interact: Which repo should Ralph use? Reply with a new mention like `@Ralph repo=<alias> ...`. Configured aliases: {aliases}"
             )
+        };
+        self.notifier
+            .post_thread_message(&event.channel_id, &event.ts, &message)
             .await?;
-        Ok(HandlerAction::Ignored)
+        Ok(())
     }
 
     async fn handle_thread_command(
@@ -411,6 +491,11 @@ where
             ThreadCommand::Help => {
                 self.notifier
                     .post_thread_blocks(channel_id, thread_ts, &SlackBlocks::help_card())
+                    .await?;
+            }
+            ThreadCommand::Repo => {
+                self.notifier
+                    .post_thread_message(channel_id, thread_ts, &repo_command_text(binding))
                     .await?;
             }
             ThreadCommand::Status => {
@@ -451,11 +536,6 @@ where
                     .post_thread_message(channel_id, thread_ts, &handoff_text(binding))
                     .await?;
             }
-            ThreadCommand::Repo => {
-                self.notifier
-                    .post_thread_message(channel_id, thread_ts, &repo_text(binding))
-                    .await?;
-            }
             ThreadCommand::Artifacts => {
                 self.notifier
                     .post_thread_message(channel_id, thread_ts, &artifacts_text(binding))
@@ -488,6 +568,221 @@ where
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoTarget {
+    pub alias: Option<String>,
+    pub root: PathBuf,
+    pub dir: Option<PathBuf>,
+}
+
+impl RepoTarget {
+    fn default_root(root: PathBuf) -> Self {
+        Self {
+            alias: None,
+            root,
+            dir: None,
+        }
+    }
+
+    fn summary(&self) -> String {
+        match (&self.alias, &self.dir) {
+            (Some(alias), Some(dir)) => {
+                format!(
+                    "{alias}:{} ({})",
+                    dir.display(),
+                    self.root.join(dir).display()
+                )
+            }
+            (Some(alias), None) => format!("{alias} ({})", self.root.display()),
+            (None, Some(dir)) => format!("{} (dir {})", self.root.display(), dir.display()),
+            (None, None) => self.root.display().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedStartRepoDirectives {
+    pub repo_alias: Option<String>,
+    pub dir: Option<PathBuf>,
+    pub prompt: String,
+}
+
+pub fn parse_start_repo_directives(prompt: &str) -> Result<ParsedStartRepoDirectives, String> {
+    let mut remaining = prompt.trim();
+    let mut repo_alias = None;
+    let mut dir = None;
+
+    if let Some(after_in) = remaining.strip_prefix("in ") {
+        let Some((candidate, after_colon)) = after_in.split_once(':') else {
+            return Err("Slack repo selector `in <alias>:` must include `:`.".to_string());
+        };
+        let candidate = candidate.trim();
+        if is_valid_repo_alias(candidate) {
+            repo_alias = Some(candidate.to_string());
+            remaining = after_colon.trim_start();
+        } else {
+            return Err(invalid_repo_alias_message(candidate));
+        }
+    }
+
+    let mut prompt_parts = Vec::new();
+    let mut parsing_directives = true;
+    for part in remaining.split_whitespace() {
+        if parsing_directives {
+            if let Some(value) = part.strip_prefix("repo=") {
+                if is_valid_repo_alias(value) {
+                    repo_alias = Some(value.to_string());
+                    continue;
+                }
+                return Err(invalid_repo_alias_message(value));
+            }
+            if let Some(value) = part.strip_prefix("dir=") {
+                if !value.is_empty() {
+                    dir = Some(PathBuf::from(value));
+                    continue;
+                }
+                return Err("Slack repo dir cannot be empty.".to_string());
+            }
+            parsing_directives = false;
+        }
+        prompt_parts.push(part);
+    }
+
+    Ok(ParsedStartRepoDirectives {
+        repo_alias,
+        dir,
+        prompt: prompt_parts.join(" "),
+    })
+}
+
+pub fn resolve_repo_target(
+    repo_aliases: &BTreeMap<String, PathBuf>,
+    channel_default_alias: Option<&str>,
+    explicit_alias: Option<&str>,
+    dir: Option<&Path>,
+) -> Result<Option<RepoTarget>, String> {
+    let alias = explicit_alias.or(channel_default_alias);
+    let Some(alias) = alias else {
+        return Ok(None);
+    };
+    let Some(root) = repo_aliases.get(alias) else {
+        return Err(format!(
+            "Unknown repo alias `{alias}`. Configured aliases: {}",
+            configured_alias_list(repo_aliases)
+        ));
+    };
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("Repo alias `{alias}` is not usable: {error}"))?;
+    let safe_dir = match dir {
+        Some(dir) => Some(validate_repo_subdir(&canonical_root, dir)?),
+        None => None,
+    };
+    Ok(Some(RepoTarget {
+        alias: Some(alias.to_string()),
+        root: canonical_root,
+        dir: safe_dir,
+    }))
+}
+
+pub fn validate_repo_subdir(repo_root: &Path, dir: &Path) -> Result<PathBuf, String> {
+    if dir.as_os_str().is_empty() || dir == Path::new(".") {
+        return Ok(PathBuf::new());
+    }
+    if dir.is_absolute() {
+        return Err("Slack repo dir must be relative to the repo root.".to_string());
+    }
+    if dir.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("Slack repo dir cannot contain `..` or absolute path components.".to_string());
+    }
+    let full = repo_root.join(dir);
+    let canonical = full
+        .canonicalize()
+        .map_err(|error| format!("Slack repo dir `{}` is not usable: {error}", dir.display()))?;
+    if !canonical.starts_with(repo_root) {
+        return Err("Slack repo dir must stay inside the configured repo root.".to_string());
+    }
+    canonical
+        .strip_prefix(repo_root)
+        .map(Path::to_path_buf)
+        .map_err(|_| "Slack repo dir must stay inside the configured repo root.".to_string())
+}
+
+fn repo_command_text(binding: &SlackThreadBinding) -> String {
+    let alias = binding.repo_alias.as_deref().unwrap_or("unbound");
+    let dir = binding
+        .repo_dir
+        .as_deref()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    let worktree = binding
+        .workspace_root
+        .join(".worktrees")
+        .join(&binding.loop_id);
+    let branch = format!("ralph-slack-{}", binding.loop_id);
+    format!(
+        "Repo\nalias: `{alias}`\nroot: `{}`\ndir: `{dir}`\nloop: `{}`\nthread status: {:?}\nparent loop: `{}`\nworktree: `{}`\nbranch: `{branch}`",
+        binding.workspace_root.display(),
+        binding.loop_id,
+        binding.status,
+        binding.parent_loop_id.as_deref().unwrap_or("none"),
+        worktree.display()
+    )
+}
+
+fn configured_alias_list(repo_aliases: &BTreeMap<String, PathBuf>) -> String {
+    if repo_aliases.is_empty() {
+        return "none".to_string();
+    }
+    repo_aliases
+        .keys()
+        .map(|alias| format!("`{alias}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn is_valid_repo_alias(alias: &str) -> bool {
+    !alias.is_empty()
+        && alias
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn invalid_repo_alias_message(alias: &str) -> String {
+    if alias.is_empty() {
+        return "Slack repo alias cannot be empty.".to_string();
+    }
+    format!(
+        "Slack repo alias `{alias}` is invalid. Use only letters, numbers, hyphen, or underscore."
+    )
+}
+
+fn strip_app_mention_for_start(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed.strip_prefix("<@") {
+        if let Some((_, prompt)) = rest.split_once('>') {
+            return prompt.trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn rewrite_start_text_with_prompt(original: &str, prompt: &str) -> String {
+    let trimmed = original.trim();
+    if let Some(rest) = trimmed.strip_prefix("<@") {
+        if let Some((mention, _)) = rest.split_once('>') {
+            return format!("<@{mention}> {}", prompt.trim()).trim().to_string();
+        }
+    }
+    prompt.trim().to_string()
 }
 
 fn monitor_loop_completion<N>(
@@ -800,18 +1095,6 @@ fn handoff_text(binding: &SlackThreadBinding) -> String {
     }
 }
 
-fn repo_text(binding: &SlackThreadBinding) -> String {
-    format!(
-        "Loop `{}` repo: `{}`
-Thread status: {:?}
-Parent loop: {}",
-        binding.loop_id,
-        binding.workspace_root.display(),
-        binding.status,
-        binding.parent_loop_id.as_deref().unwrap_or("none")
-    )
-}
-
 fn artifacts_text(binding: &SlackThreadBinding) -> String {
     let artifacts_path = binding.artifacts_path.clone().unwrap_or_else(|| {
         binding
@@ -972,20 +1255,29 @@ pub fn slack_loop_env(
     loop_id: &str,
     channel_id: &str,
     thread_ts: &str,
-    workspace_root: &Path,
+    state_path: &Path,
+    repo_alias: Option<&str>,
+    repo_dir: Option<&Path>,
 ) -> BTreeMap<String, String> {
-    BTreeMap::from([
+    let mut env = BTreeMap::from([
         ("RALPH_LOOP_ID".to_string(), loop_id.to_string()),
         ("RALPH_SLACK_CHANNEL_ID".to_string(), channel_id.to_string()),
         ("RALPH_SLACK_THREAD_TS".to_string(), thread_ts.to_string()),
         (
             "RALPH_SLACK_STATE_PATH".to_string(),
-            workspace_root
-                .join(".ralph/slack-state.json")
-                .to_string_lossy()
-                .to_string(),
+            state_path.to_string_lossy().to_string(),
         ),
-    ])
+    ]);
+    if let Some(repo_alias) = repo_alias {
+        env.insert("RALPH_SLACK_REPO_ALIAS".to_string(), repo_alias.to_string());
+    }
+    if let Some(repo_dir) = repo_dir {
+        env.insert(
+            "RALPH_SLACK_REPO_DIR".to_string(),
+            repo_dir.to_string_lossy().to_string(),
+        );
+    }
+    env
 }
 
 #[cfg(test)]
@@ -1059,13 +1351,25 @@ mod tests {
 
     #[test]
     fn slack_loop_env_shares_root_state_without_forcing_workspace_root() {
-        let env = slack_loop_env("loop-1", "C123", "1780.1", Path::new("/repo"));
+        let env = slack_loop_env(
+            "loop-1",
+            "C123",
+            "1780.1",
+            Path::new("/daemon/.ralph/slack-state.json"),
+            Some("ralph"),
+            Some(Path::new("crates/ralph-slack")),
+        );
         assert_eq!(env.get("RALPH_LOOP_ID").unwrap(), "loop-1");
         assert_eq!(env.get("RALPH_SLACK_CHANNEL_ID").unwrap(), "C123");
         assert_eq!(env.get("RALPH_SLACK_THREAD_TS").unwrap(), "1780.1");
+        assert_eq!(env.get("RALPH_SLACK_REPO_ALIAS").unwrap(), "ralph");
+        assert_eq!(
+            env.get("RALPH_SLACK_REPO_DIR").unwrap(),
+            "crates/ralph-slack"
+        );
         assert_eq!(
             env.get("RALPH_SLACK_STATE_PATH").unwrap(),
-            "/repo/.ralph/slack-state.json"
+            "/daemon/.ralph/slack-state.json"
         );
         assert!(!env.contains_key("RALPH_WORKSPACE_ROOT"));
     }
@@ -1081,6 +1385,9 @@ mod tests {
             channel_id: "C123".to_string(),
             thread_ts: "1780.1".to_string(),
             workspace_root: dir.path().to_path_buf(),
+            state_path: dir.path().join(".ralph/slack-state.json"),
+            repo_alias: None,
+            repo_dir: None,
             env: BTreeMap::new(),
         };
         let mut command = Command::new("ralph");

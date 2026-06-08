@@ -34,9 +34,10 @@ Security checklist:
 - [ ] Auth before side effects
 - [ ] Explicit allowed users/channels
 - [ ] No first-inbound trust
-- [ ] Channel maps to repo via `RObot.slack.channel_repos`
-- [ ] Slack text cannot choose arbitrary repos
-- [ ] Thread replies use persisted repo binding
+- [ ] Safe repo aliases configured via `RObot.slack.repo_aliases`
+- [ ] Channel maps to repo alias via `RObot.slack.channel_repos`
+- [ ] Slack text can choose only configured aliases and safe relative subdirs
+- [ ] Thread replies use persisted repo/dir binding
 - [ ] Event/envelope dedupe before spawn/write
 - [ ] Loop/path traversal rejected
 - [ ] Commands do not accidentally answer pending questions
@@ -55,7 +56,8 @@ Bot installed and invited to channel: yes/no
 Tokens present locally without printing values: yes/no
 Allowlisted channel id configured: yes/no
 Allowlisted user id configured: yes/no
-`channel_repos` absolute repo mapping configured: yes/no
+`repo_aliases` absolute repo mapping configured: yes/no
+`channel_repos` channel-to-alias default configured: yes/no
 
 Smoke commands/results:
 
