@@ -236,6 +236,25 @@ fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
     }
 }
 
+fn resolve_emit_events_file(
+    workspace_root: &Path,
+    current_events_marker: &Path,
+    fallback_file: &Path,
+    env_events_file: Option<std::ffi::OsString>,
+    honor_env_events_file: bool,
+) -> PathBuf {
+    if honor_env_events_file
+        && let Some(path) = env_events_file
+        && !path.is_empty()
+    {
+        return PathBuf::from(path);
+    }
+
+    fs::read_to_string(current_events_marker)
+        .map(|s| resolve_marker_target(workspace_root, &s))
+        .unwrap_or_else(|_| fallback_file.to_path_buf())
+}
+
 /// Verbosity level for streaming output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Verbosity {
@@ -2571,17 +2590,17 @@ fn emit_command_with_root(
         record["wave_index"] = serde_json::Value::Number(wave_index.into());
     }
 
-    // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg
-    // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = std::env::var("RALPH_EVENTS_FILE")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            fs::read_to_string(&current_events_marker)
-                .map(|s| resolve_marker_target(&workspace_root, &s))
-                .unwrap_or_else(|_| args.file.clone())
-        });
+    // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg.
+    // When an explicit root is provided (internal/test helpers), do not honor the
+    // ambient RALPH_EVENTS_FILE from an active Ralph loop; otherwise unit tests
+    // that exercise `ralph emit` can leak demo events into the live loop JSONL.
+    let events_file = resolve_emit_events_file(
+        &workspace_root,
+        &current_events_marker,
+        &args.file,
+        std::env::var_os("RALPH_EVENTS_FILE"),
+        root.is_none(),
+    );
 
     // Ensure parent directory exists
     if let Some(parent) = events_file.parent()
@@ -3225,6 +3244,41 @@ mod tests {
             .expect("read events");
         assert!(events.contains("\"topic\":\"debug.step\""));
         assert!(events.contains("task_id=demo"));
+    }
+
+    #[test]
+    fn test_explicit_emit_root_ignores_ambient_events_file_override() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let workspace = temp_dir.path().to_path_buf();
+        std::fs::create_dir_all(workspace.join(".ralph")).expect("ralph dir");
+        std::fs::write(
+            workspace.join(".ralph/current-events"),
+            ".ralph/events-20260309-test.jsonl\n",
+        )
+        .expect("write marker");
+        let ambient_live_events = workspace.join("live-loop-events.jsonl");
+        let fallback = PathBuf::from(".ralph/events.jsonl");
+
+        let explicit_root_target = resolve_emit_events_file(
+            &workspace,
+            &workspace.join(".ralph/current-events"),
+            &fallback,
+            Some(ambient_live_events.clone().into_os_string()),
+            false,
+        );
+        assert_eq!(
+            explicit_root_target,
+            workspace.join(".ralph/events-20260309-test.jsonl")
+        );
+
+        let live_loop_target = resolve_emit_events_file(
+            &workspace,
+            &workspace.join(".ralph/current-events"),
+            &fallback,
+            Some(ambient_live_events.clone().into_os_string()),
+            true,
+        );
+        assert_eq!(live_loop_target, ambient_live_events);
     }
 
     #[test]
