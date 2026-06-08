@@ -211,6 +211,7 @@ pub(crate) fn resolve_path_from_workspace(
     resolve_workspace_root(root).join(path)
 }
 
+#[cfg(test)]
 fn urgent_steer_path_from_workspace(root: Option<&PathBuf>) -> PathBuf {
     resolve_workspace_root(root).join(".ralph/urgent-steer.json")
 }
@@ -227,6 +228,13 @@ pub(crate) fn discover_workspace_root(start: &Path) -> Option<PathBuf> {
     })
 }
 
+fn discover_ralph_workspace_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|dir| dir.join(".ralph").is_dir())
+        .map(Path::to_path_buf)
+}
+
 fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
     let path = PathBuf::from(marker_value.trim());
     if path.is_absolute() {
@@ -234,6 +242,29 @@ fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
     } else {
         workspace_root.join(path)
     }
+}
+
+fn resolve_emit_workspace_context(
+    root: Option<&PathBuf>,
+    cwd: &Path,
+    env_workspace_root: Option<std::ffi::OsString>,
+    force_honor_env_events_file: bool,
+) -> (PathBuf, bool) {
+    if let Some(root) = root {
+        return (root.clone(), force_honor_env_events_file);
+    }
+
+    if let Some(local_root) = discover_ralph_workspace_root(cwd) {
+        return (local_root, force_honor_env_events_file);
+    }
+
+    if let Some(value) = env_workspace_root
+        && !value.is_empty()
+    {
+        return (PathBuf::from(value), true);
+    }
+
+    (cwd.to_path_buf(), true)
 }
 
 fn resolve_emit_events_file(
@@ -252,7 +283,7 @@ fn resolve_emit_events_file(
 
     fs::read_to_string(current_events_marker)
         .map(|s| resolve_marker_target(workspace_root, &s))
-        .unwrap_or_else(|_| fallback_file.to_path_buf())
+        .unwrap_or_else(|_| workspace_root.join(fallback_file))
 }
 
 /// Verbosity level for streaming output.
@@ -2525,11 +2556,20 @@ fn emit_command_with_root(
     root: Option<&PathBuf>,
 ) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
-    let workspace_root = resolve_workspace_root(root);
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let is_wave_emit =
+        std::env::var("RALPH_WAVE_WORKER").is_ok() || std::env::var("RALPH_WAVE_ID").is_ok();
+    let (workspace_root, honor_env_events_file) = resolve_emit_workspace_context(
+        root,
+        &cwd,
+        std::env::var_os("RALPH_WORKSPACE_ROOT"),
+        is_wave_emit,
+    );
     let current_events_marker = workspace_root.join(".ralph/current-events");
 
     if std::env::var("RALPH_WAVE_ID").is_err() {
-        let urgent_steer_store = UrgentSteerStore::new(urgent_steer_path_from_workspace(root));
+        let urgent_steer_store =
+            UrgentSteerStore::new(workspace_root.join(".ralph/urgent-steer.json"));
         if let Some(record) = urgent_steer_store
             .take()
             .context("Failed to read urgent-steer marker")?
@@ -2590,16 +2630,16 @@ fn emit_command_with_root(
         record["wave_index"] = serde_json::Value::Number(wave_index.into());
     }
 
-    // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg.
-    // When an explicit root is provided (internal/test helpers), do not honor the
-    // ambient RALPH_EVENTS_FILE from an active Ralph loop; otherwise unit tests
-    // that exercise `ralph emit` can leak demo events into the live loop JSONL.
+    // Resolve events file. Plain `ralph emit` prefers a local `.ralph/current-events`
+    // marker over ambient loop env vars, so nested commands/tests cannot leak demo events
+    // into their parent loop. Wave workers opt back into `RALPH_EVENTS_FILE` because
+    // their per-worker events file is intentionally provided through env.
     let events_file = resolve_emit_events_file(
         &workspace_root,
         &current_events_marker,
         &args.file,
         std::env::var_os("RALPH_EVENTS_FILE"),
-        root.is_none(),
+        honor_env_events_file,
     );
 
     // Ensure parent directory exists
@@ -3279,6 +3319,96 @@ mod tests {
             true,
         );
         assert_eq!(live_loop_target, ambient_live_events);
+    }
+
+    #[test]
+    fn test_emit_context_prefers_local_ralph_marker_over_ambient_loop_env() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let live_workspace = temp_dir.path().join("live-loop");
+        let local_workspace = temp_dir.path().join("repo-worktree");
+        std::fs::create_dir_all(live_workspace.join(".ralph")).expect("live ralph dir");
+        std::fs::create_dir_all(local_workspace.join(".ralph")).expect("local ralph dir");
+        std::fs::write(
+            local_workspace.join(".ralph/current-events"),
+            ".ralph/events-local.jsonl\n",
+        )
+        .expect("write marker");
+        let ambient_live_events = live_workspace.join(".ralph/events-live.jsonl");
+
+        let (workspace_root, honor_env_events_file) = resolve_emit_workspace_context(
+            None,
+            &local_workspace,
+            Some(live_workspace.clone().into_os_string()),
+            false,
+        );
+        assert_eq!(workspace_root, local_workspace);
+        assert!(
+            !honor_env_events_file,
+            "plain ralph emit in a local workspace must ignore ambient loop RALPH_EVENTS_FILE"
+        );
+
+        let target = resolve_emit_events_file(
+            &workspace_root,
+            &workspace_root.join(".ralph/current-events"),
+            &PathBuf::from(".ralph/events.jsonl"),
+            Some(ambient_live_events.into_os_string()),
+            honor_env_events_file,
+        );
+        assert_eq!(target, workspace_root.join(".ralph/events-local.jsonl"));
+    }
+
+    #[test]
+    fn test_wave_emit_context_honors_worker_events_file_inside_local_workspace() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let live_workspace = temp_dir.path().join("live-loop");
+        let local_workspace = temp_dir.path().join("repo-worktree");
+        std::fs::create_dir_all(live_workspace.join(".ralph")).expect("live ralph dir");
+        std::fs::create_dir_all(local_workspace.join(".ralph")).expect("local ralph dir");
+        std::fs::write(
+            local_workspace.join(".ralph/current-events"),
+            ".ralph/events-local.jsonl\n",
+        )
+        .expect("write marker");
+        let worker_events = local_workspace.join(".ralph/wave-worker-0.jsonl");
+
+        let (workspace_root, honor_env_events_file) = resolve_emit_workspace_context(
+            None,
+            &local_workspace,
+            Some(live_workspace.into_os_string()),
+            true,
+        );
+        assert_eq!(workspace_root, local_workspace);
+        assert!(
+            honor_env_events_file,
+            "wave worker ralph emit must still honor RALPH_EVENTS_FILE"
+        );
+
+        let target = resolve_emit_events_file(
+            &workspace_root,
+            &workspace_root.join(".ralph/current-events"),
+            &PathBuf::from(".ralph/events.jsonl"),
+            Some(worker_events.clone().into_os_string()),
+            honor_env_events_file,
+        );
+        assert_eq!(target, worker_events);
+    }
+
+    #[test]
+    fn test_emit_context_uses_ambient_workspace_when_no_local_ralph_workspace() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let live_workspace = temp_dir.path().join("live-loop");
+        let unrelated_cwd = temp_dir.path().join("scratch");
+        std::fs::create_dir_all(live_workspace.join(".ralph")).expect("live ralph dir");
+        std::fs::create_dir_all(&unrelated_cwd).expect("scratch dir");
+
+        let (workspace_root, honor_env_events_file) = resolve_emit_workspace_context(
+            None,
+            &unrelated_cwd,
+            Some(live_workspace.clone().into_os_string()),
+            false,
+        );
+        assert_eq!(workspace_root, live_workspace);
+        assert!(honor_env_events_file);
     }
 
     #[test]
