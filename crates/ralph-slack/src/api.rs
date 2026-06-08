@@ -157,6 +157,27 @@ impl SlackApi {
         self.post_stream_ack("/api/chat.stopStream", body).await
     }
 
+    pub async fn set_assistant_thread_status(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        status: &str,
+    ) -> SlackResult<()> {
+        let body = json!({
+            "channel_id": channel_id,
+            "thread_ts": thread_ts,
+            "status": status,
+        });
+        let envelope: UpdateMessageResponse = self
+            .post_api_json("/api/assistant.threads.setStatus", body)
+            .await?;
+        if envelope.ok {
+            Ok(())
+        } else {
+            Err(slack_api_error(envelope.error))
+        }
+    }
+
     pub fn is_streaming_fallback_error(error: &SlackError) -> bool {
         matches!(
             error,

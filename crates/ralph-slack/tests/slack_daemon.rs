@@ -37,6 +37,7 @@ impl LoopSpawner for FakeSpawner {
 struct FakeNotifier {
     messages: Arc<Mutex<Vec<(String, String, String)>>>,
     updates: Arc<Mutex<Vec<(String, String, String)>>>,
+    statuses: Arc<Mutex<Vec<(String, String, String)>>>,
 }
 
 #[async_trait]
@@ -65,6 +66,20 @@ impl ThreadNotifier for FakeNotifier {
             channel_id.to_string(),
             message_ts.to_string(),
             message.text.clone(),
+        ));
+        Ok(())
+    }
+
+    async fn set_assistant_thread_status(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        status: &str,
+    ) -> ralph_slack::SlackResult<()> {
+        self.statuses.lock().unwrap().push((
+            channel_id.to_string(),
+            thread_ts.to_string(),
+            status.to_string(),
         ));
         Ok(())
     }
@@ -132,6 +147,157 @@ async fn progress_events_create_once_then_update_same_message_ts() {
             .progress_message_ts
             .as_deref(),
         Some("1780799999.000100")
+    );
+}
+
+#[tokio::test]
+async fn assistant_progress_status_uses_semantics_not_raw_payload_paths() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let progress = r#"{"topic":"unknown","payload":"running /Users/rook/projects/ralph-orchestrator/.ralph/slack-loop-logs/slack-C123.log && cat raw-output.txt"}"#;
+
+    let mut checkpoint = ralph_slack::daemon::ProgressCheckpoint::default();
+    ralph_slack::daemon::sync_loop_progress_once(
+        &state,
+        notifier.clone(),
+        loop_id,
+        "C123",
+        "1780792150.138669",
+        progress,
+        std::time::Duration::from_secs(0),
+        &mut checkpoint,
+    )
+    .await
+    .unwrap();
+
+    let statuses = notifier.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].2, "is working");
+    assert!(!statuses[0].2.contains("/Users/rook"));
+    assert!(!statuses[0].2.contains("slack-loop-logs"));
+    assert!(!statuses[0].2.contains("raw-output"));
+}
+
+#[tokio::test]
+async fn pending_human_status_is_not_overwritten_by_later_progress() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let human =
+        r#"{"iteration":3,"hat":"builder","topic":"human.interact","payload":"Need approval"}"#;
+    let later = concat!(
+        r#"{"iteration":3,"hat":"builder","topic":"human.interact","payload":"Need approval"}"#,
+        "\n",
+        r#"{"iteration":4,"hat":"builder","topic":"agent.message","payload":"Still running"}"#,
+        "\n"
+    );
+
+    let mut checkpoint = ralph_slack::daemon::ProgressCheckpoint::default();
+    ralph_slack::daemon::sync_loop_progress_once(
+        &state,
+        notifier.clone(),
+        loop_id,
+        "C123",
+        "1780792150.138669",
+        human,
+        std::time::Duration::from_secs(0),
+        &mut checkpoint,
+    )
+    .await
+    .unwrap();
+    state
+        .add_pending_question(loop_id, "C123", "1780792150.138669", "1780800000.000100")
+        .unwrap();
+    ralph_slack::daemon::sync_loop_progress_once(
+        &state,
+        notifier.clone(),
+        loop_id,
+        "C123",
+        "1780792150.138669",
+        later,
+        std::time::Duration::from_secs(11),
+        &mut checkpoint,
+    )
+    .await
+    .unwrap();
+
+    let statuses = notifier.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].2, "needs your answer");
+}
+
+#[tokio::test]
+async fn stop_command_clears_assistant_status_even_after_recent_status() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+        )
+        .unwrap();
+    state.set_thread_process_id(loop_id, Some(4242)).unwrap();
+    let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
+    notifier
+        .set_assistant_thread_status("C123", "1780792150.138669", "needs your answer")
+        .await
+        .unwrap();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        spawner.clone(),
+        notifier.clone(),
+    );
+
+    daemon
+        .handle_event(SlackMessageEvent {
+            event_id: Some("EvStopClear".to_string()),
+            channel_id: "C123".to_string(),
+            user_id: Some("U123".to_string()),
+            text: "stop".to_string(),
+            ts: "1780800000.000200".to_string(),
+            thread_ts: Some("1780792150.138669".to_string()),
+            bot_id: None,
+            app_mention: false,
+        })
+        .await
+        .unwrap();
+
+    let statuses = notifier.statuses.lock().unwrap();
+    assert_eq!(
+        statuses.last().map(|(_, _, status)| status.as_str()),
+        Some("")
+    );
+    assert_eq!(*spawner.stopped.lock().unwrap(), vec![4242]);
+    assert_eq!(
+        state.load_or_default().unwrap().threads[loop_id].status,
+        SlackThreadStatus::Stopped
     );
 }
 
@@ -312,6 +478,14 @@ async fn fake_socket_root_event_starts_fake_loop_and_posts_thread_reply() {
     assert_eq!(messages[0].0, "C123");
     assert_eq!(messages[0].1, "1780792150.138669");
     assert!(messages[0].2.contains("Ralph loop started"));
+    drop(messages);
+
+    let statuses = notifier.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 2);
+    assert_eq!(statuses[0].0, "C123");
+    assert_eq!(statuses[0].1, "1780792150.138669");
+    assert!(statuses[0].2.starts_with("is starting loop slack-C123"));
+    assert_eq!(statuses[1].2, "is working in ralph");
 }
 
 #[tokio::test]
@@ -322,6 +496,7 @@ async fn root_event_can_override_repo_alias_and_subdir_and_binds_thread_target()
     std::fs::create_dir_all(tonic_repo.path().join("crates/ralph-slack")).unwrap();
     let state = SlackStateManager::new(daemon_root.path().join(".ralph/slack-state.json"));
     let spawner = FakeSpawner::default();
+    let notifier = FakeNotifier::default();
     let daemon = SlackDaemon::new(
         SlackDaemonConfig {
             workspace_root: daemon_root.path().to_path_buf(),
@@ -335,7 +510,7 @@ async fn root_event_can_override_repo_alias_and_subdir_and_binds_thread_target()
         },
         state.clone(),
         spawner.clone(),
-        FakeNotifier::default(),
+        notifier.clone(),
     );
 
     let action = daemon
@@ -385,6 +560,19 @@ async fn root_event_can_override_repo_alias_and_subdir_and_binds_thread_target()
         binding.repo_dir.as_deref(),
         Some(std::path::Path::new("crates/ralph-slack"))
     );
+
+    let statuses = notifier.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 2);
+    assert_eq!(
+        statuses[0].2,
+        format!("is starting loop {} in tonic", binding.loop_id)
+    );
+    assert_eq!(statuses[1].2, "is working in tonic");
+    for (_, _, status) in statuses.iter() {
+        assert!(!status.contains("crates/ralph-slack"));
+        assert!(!status.contains('/'));
+        assert!(!status.contains(&tonic_repo.path().to_string_lossy().to_string()));
+    }
 }
 
 #[tokio::test]

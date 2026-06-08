@@ -6,7 +6,8 @@ Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orche
 
 - Root app mention starts exactly one loop in the mentioned message's thread.
 - Ralph posts a Block Kit start card with loop id, repo, branch, prompt summary, and Status / Obs / Tail 10 / Stop buttons.
-- Progress is low-noise: the daemon stores message timestamps and updates one progress surface with Loop, Iteration, Hat, Topic, elapsed time, and the latest redacted message instead of spamming every event.
+- Ralph also sets Slack's assistant thread status line as an ambient live pulse: start/spawn set a compact `is ...` status, progress/check-ins update it at low frequency, `human.interact` sets `needs your answer`, and terminal completed/failed/stopped states clear it.
+- Progress is low-noise: the daemon stores message timestamps and updates one durable progress surface with Loop, Iteration, Hat, Topic, elapsed time, and the latest redacted message instead of spamming every event.
 - Completion posts a final Block Kit card with status, duration, and Obs / Tail 10 / Status buttons; the binding is retained with loop id, channel/thread timestamps, repo root, final card timestamp, and local log/handoff/artifact paths when available.
 - Button payloads route through the same authorized command path as text commands.
 - Plain thread replies in running threads become `human.response` when a `human.interact` question is pending; otherwise they become `human.guidance` for the next loop iteration.
@@ -27,7 +28,7 @@ Required tokens:
 
 Required bot scopes for the shippable Slack thread surface:
 
-- `chat:write` — start cards, questions, progress updates, command replies, final cards, and Block Kit messages.
+- `chat:write` — start cards, questions, progress updates, assistant thread status-line updates (`assistant.threads.setStatus`), command replies, final cards, and Block Kit messages.
 - `files:write` — loop-local artifact uploads through Slack's external file-upload flow.
 - `app_mentions:read` — root app mentions that start loops.
 - `channels:history` — public channel root mentions and thread replies.
@@ -104,9 +105,10 @@ Expected UX:
 
 1. Ralph replies in the root message's thread with the start card.
 2. The loop runs in an isolated worktree for that Slack thread.
-3. Progress updates coalesce into the progress card/stream surface.
-4. Human questions appear in-thread; answer in the thread.
-5. Completion posts the final card and keeps read-only Tail / Status surfaces available. Follow-up work requires `followup <prompt>` or `fork <prompt>` and starts a new linked binding/worktree.
+3. The assistant thread status line shows the live ambient pulse (`is starting...`, `is iter N · hat X · topic`, or `needs your answer`) without raw logs or paths.
+4. Progress updates coalesce into the durable progress card/stream surface.
+5. Human questions appear in-thread; answer in the thread.
+6. Completion posts the final card, clears the assistant status line, and keeps read-only Tail / Status surfaces available. Follow-up work requires `followup <prompt>` or `fork <prompt>` and starts a new linked binding/worktree.
 
 ## Commands and buttons
 
@@ -130,6 +132,15 @@ Buttons:
 - Tail 10 — same as `tail 10`.
 - Stop/Cancel — same as `stop`, with creator authorization.
 - Final cards intentionally stay read-only; new work requires an explicit follow-up/fork command rather than recycling the completed thread.
+
+## Observability hierarchy
+
+- Assistant thread status line — ambient live pulse only. It is short, redacted, sanitized, throttled, and reads naturally after Slack prepends the app name (`is working in ralph`, `is iter 3 · hat executor · agent.message`, `needs your answer`). Start/spawn status may include only the repo alias, never repo roots, subdirs, or path fragments. It clears when the loop completes, fails, or is stopped.
+- Progress card/stream — durable state for normal monitoring: loop id, iteration, hat, topic, elapsed time, and the latest redacted message.
+- `obs` — compact debug snapshot when the ambient pulse is not enough: binding status, pending question, process id, repo/worktree, message timestamps, latest event, and latest log line.
+- `tail` / `log` — raw detail surfaces for troubleshooting, still clamped and redacted; do not treat them as the default observability UI.
+
+## Bot test
 
 Commands win over pending questions. For example, `status` does not accidentally answer a `human.interact` prompt. Terminal status also clears `process_id` and `pending_questions[loop_id]`, so archived threads cannot accidentally answer stale questions.
 

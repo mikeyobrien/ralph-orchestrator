@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use async_trait::async_trait;
 
@@ -67,6 +68,15 @@ pub trait ThreadNotifier: Send + Sync + Clone + 'static {
         message_ts: &str,
         message: &SlackRenderedMessage,
     ) -> SlackResult<()>;
+
+    async fn set_assistant_thread_status(
+        &self,
+        _channel_id: &str,
+        _thread_ts: &str,
+        _status: &str,
+    ) -> SlackResult<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +235,17 @@ impl ThreadNotifier for SlackApiNotifier {
             .update_blocks(channel_id, message_ts, message)
             .await
     }
+
+    async fn set_assistant_thread_status(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        status: &str,
+    ) -> SlackResult<()> {
+        self.api
+            .set_assistant_thread_status(channel_id, thread_ts, status)
+            .await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -333,6 +354,13 @@ where
                     None,
                     None,
                 )?;
+                self.notifier
+                    .set_assistant_thread_status(
+                        channel_id,
+                        thread_ts,
+                        &format_start_thread_status(&target_for_action, loop_id),
+                    )
+                    .await?;
                 let process_id = self
                     .spawner
                     .spawn_loop(StartLoopRequest {
@@ -356,6 +384,13 @@ where
                     .await?;
                 self.state_manager
                     .set_thread_process_id(loop_id, process_id)?;
+                self.notifier
+                    .set_assistant_thread_status(
+                        channel_id,
+                        thread_ts,
+                        &format_spawned_thread_status(&target_for_action),
+                    )
+                    .await?;
                 if let Some(process_id) = process_id {
                     monitor_loop_completion(
                         self.state_manager.clone(),
@@ -573,6 +608,9 @@ where
                         &format!("stopped Ralph loop {loop_id}. Further guidance in this thread is ignored."),
                     )
                     .await?;
+                self.notifier
+                    .set_assistant_thread_status(channel_id, thread_ts, "")
+                    .await?;
             }
         }
         Ok(())
@@ -609,6 +647,71 @@ impl RepoTarget {
             (None, None) => self.root.display().to_string(),
         }
     }
+
+    fn assistant_status_context(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+}
+
+fn format_start_thread_status(target: &RepoTarget, loop_id: &str) -> String {
+    let status = match target.assistant_status_context() {
+        Some(alias) => format!("is starting loop {loop_id} in {alias}"),
+        None => format!("is starting loop {loop_id}"),
+    };
+    format_assistant_thread_status(&status)
+}
+
+fn format_spawned_thread_status(target: &RepoTarget) -> String {
+    let status = match target.assistant_status_context() {
+        Some(alias) => format!("is working in {alias}"),
+        None => "is working".to_string(),
+    };
+    format_assistant_thread_status(&status)
+}
+
+const MAX_ASSISTANT_THREAD_STATUS_LEN: usize = 120;
+const MIN_ASSISTANT_STATUS_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
+
+fn format_assistant_thread_status(raw: &str) -> String {
+    let redacted = redact_secrets(raw);
+    let stripped = strip_ansi_and_control_chars(&redacted);
+    truncate_status(
+        &collapse_tail_whitespace(&stripped),
+        MAX_ASSISTANT_THREAD_STATUS_LEN,
+    )
+}
+
+fn strip_ansi_and_control_chars(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if matches!(chars.peek(), Some('[')) {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if ch.is_control() && !ch.is_whitespace() {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn truncate_status(value: &str, max_chars: usize) -> String {
+    let mut iter = value.chars();
+    let mut truncated = iter.by_ref().take(max_chars).collect::<String>();
+    if iter.next().is_some() {
+        truncated.pop();
+        truncated.push('…');
+    }
+    truncated
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -972,6 +1075,12 @@ fn monitor_loop_completion<N>(
                 tracing::warn!(%loop_id, ?error, "failed to post Slack loop completion update");
             }
         }
+        if let Err(error) = notifier
+            .set_assistant_thread_status(&channel_id, &thread_ts, "")
+            .await
+        {
+            tracing::warn!(%loop_id, ?error, "failed to clear Slack assistant thread status");
+        }
     });
 }
 
@@ -1015,6 +1124,9 @@ where
         }
     }
 
+    notifier
+        .set_assistant_thread_status(&binding.channel_id, &binding.thread_ts, "")
+        .await?;
     Ok(())
 }
 
@@ -1050,7 +1162,10 @@ const MIN_PROGRESS_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::f
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ProgressCheckpoint {
     last_reported_line_count: usize,
-    last_sent_at: Option<std::time::Duration>,
+    last_sent_at: Option<Duration>,
+    last_status: Option<String>,
+    last_status_sent_at: Option<Duration>,
+    human_needed_status_active: bool,
 }
 
 pub async fn sync_loop_progress_once<N>(
@@ -1069,9 +1184,28 @@ where
     let Some(update) = latest_progress_update(contents, checkpoint.last_reported_line_count) else {
         return Ok(false);
     };
+    let status = assistant_status_for_progress(&update);
+    let urgent_human_needed = update.topic == "human.interact";
+    let pending_human_needed = state_manager
+        .load_or_default()?
+        .pending_questions
+        .contains_key(loop_id);
+    let status_sent = sync_assistant_thread_status(
+        notifier.clone(),
+        channel_id,
+        thread_ts,
+        &status,
+        elapsed,
+        checkpoint,
+        urgent_human_needed,
+        pending_human_needed && !urgent_human_needed,
+    )
+    .await?;
     if let Some(last_sent_at) = checkpoint.last_sent_at {
-        if elapsed.saturating_sub(last_sent_at) < MIN_PROGRESS_UPDATE_INTERVAL {
-            return Ok(false);
+        if update.topic != "human.interact"
+            && elapsed.saturating_sub(last_sent_at) < MIN_PROGRESS_UPDATE_INTERVAL
+        {
+            return Ok(status_sent);
         }
     }
 
@@ -1108,6 +1242,78 @@ where
     checkpoint.last_reported_line_count = update.line_count;
     checkpoint.last_sent_at = Some(elapsed);
     Ok(true)
+}
+
+async fn sync_assistant_thread_status<N>(
+    notifier: N,
+    channel_id: &str,
+    thread_ts: &str,
+    status: &str,
+    elapsed: Duration,
+    checkpoint: &mut ProgressCheckpoint,
+    bypass_throttle: bool,
+    suppress_non_urgent: bool,
+) -> SlackResult<bool>
+where
+    N: ThreadNotifier,
+{
+    if status.is_empty() {
+        notifier
+            .set_assistant_thread_status(channel_id, thread_ts, status)
+            .await?;
+        checkpoint.last_status = Some(status.to_string());
+        checkpoint.last_status_sent_at = Some(elapsed);
+        checkpoint.human_needed_status_active = false;
+        return Ok(true);
+    }
+    if suppress_non_urgent {
+        return Ok(false);
+    }
+    if !bypass_throttle && checkpoint.last_status.as_deref() == Some(status) {
+        return Ok(false);
+    }
+    if !bypass_throttle {
+        if let Some(last_sent_at) = checkpoint.last_status_sent_at {
+            if elapsed.saturating_sub(last_sent_at) < MIN_ASSISTANT_STATUS_UPDATE_INTERVAL {
+                return Ok(false);
+            }
+        }
+    }
+    notifier
+        .set_assistant_thread_status(channel_id, thread_ts, status)
+        .await?;
+    checkpoint.last_status = Some(status.to_string());
+    checkpoint.last_status_sent_at = Some(elapsed);
+    checkpoint.human_needed_status_active = bypass_throttle && status == "needs your answer";
+    Ok(true)
+}
+
+fn assistant_status_for_progress(update: &SlackProgressUpdate) -> String {
+    if update.topic == "human.interact" {
+        return "needs your answer".to_string();
+    }
+
+    let mut parts = Vec::new();
+    if let Some(iteration) = update.iteration {
+        parts.push(format!("iter {iteration}"));
+    }
+    if let Some(hat) = update.hat.as_deref().filter(|hat| !hat.trim().is_empty()) {
+        parts.push(format!("hat {hat}"));
+    }
+    if !update.topic.trim().is_empty() && update.topic != "unknown" {
+        parts.push(update.topic.clone());
+    }
+
+    let semantic = if parts.is_empty() {
+        String::new()
+    } else {
+        format!("is {}", parts.join(" · "))
+    };
+    if !semantic.is_empty() {
+        return format_assistant_thread_status(&semantic);
+    }
+
+    "is working".to_string()
 }
 
 fn process_is_alive(process_id: u32) -> bool {

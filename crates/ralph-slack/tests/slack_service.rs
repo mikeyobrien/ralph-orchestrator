@@ -151,6 +151,41 @@ async fn update_blocks_sends_chat_update_with_existing_message_ts() {
 }
 
 #[tokio::test]
+async fn set_assistant_thread_status_sends_status_payload_and_auth_header() {
+    let (base_url, mut requests) = run_http_double(vec!["{\"ok\":true}"]).await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+
+    api.set_assistant_thread_status("C123", "1780792150.138669", "is working in ralph")
+        .await
+        .unwrap();
+
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/assistant.threads.setStatus");
+    assert!(request.headers.to_lowercase().contains("authorization"));
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel_id"], "C123");
+    assert_eq!(body["thread_ts"], "1780792150.138669");
+    assert_eq!(body["status"], "is working in ralph");
+}
+
+#[tokio::test]
+async fn set_assistant_thread_status_clears_with_empty_status() {
+    let (base_url, mut requests) = run_http_double(vec!["{\"ok\":true}"]).await;
+    let api = SlackApi::new("bot-token".to_string(), Some(base_url));
+
+    api.set_assistant_thread_status("C123", "1780792150.138669", "")
+        .await
+        .unwrap();
+
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request.path, "/api/assistant.threads.setStatus");
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    assert_eq!(body["channel_id"], "C123");
+    assert_eq!(body["thread_ts"], "1780792150.138669");
+    assert_eq!(body["status"], "");
+}
+
+#[tokio::test]
 async fn slack_api_surfaces_slack_error_payloads() {
     let (base_url, _requests) =
         run_http_double(vec![r#"{"ok":false,"error":"channel_not_found"}"#]).await;
