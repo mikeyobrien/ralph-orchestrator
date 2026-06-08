@@ -104,7 +104,7 @@ impl SlackBlocks {
         let duration = duration_secs
             .map(|secs| format!("{}s", secs))
             .unwrap_or_else(|| "unknown".to_string());
-        let note = note.unwrap_or("Try `tail 10` in this thread for recent events.");
+        let note = note.unwrap_or("This thread is now read-only. Try `status`, `tail 10`, `log 20`, `handoff`, `repo`, or `artifacts`; use `followup <prompt>` or `fork <prompt>` for new work.");
         SlackRenderedMessage {
             text: format!("Ralph loop {status_label}\nLoop: {loop_id}\n{note}"),
             blocks: vec![
@@ -152,13 +152,13 @@ impl SlackBlocks {
     }
 
     pub fn help_card() -> SlackRenderedMessage {
-        let text = "Ralph Slack commands: help, status, tail [n], stop/cancel. Plain replies become guidance, or answer the pending human question.".to_string();
+        let text = "Ralph Slack commands: help, status, tail [n], log [n], handoff, repo, artifacts, stop/cancel. Completed threads are read-only; use followup <prompt> or fork <prompt> for new work.".to_string();
         SlackRenderedMessage {
             text: text.clone(),
             blocks: vec![
                 header("Ralph Slack help"),
                 section(
-                    "*Commands*\n• `help` — show this help\n• `status` — show loop status\n• `tail [n]` — show recent events\n• `stop` / `cancel` — stop the loop\n\nPlain replies become guidance, or answer the pending human question.",
+                    "*Commands*\n• `help` — show this help\n• `status` — show loop status\n• `tail [n]` — show recent events\n• `log [n]` — show recent process log lines\n• `handoff` — show the loop summary when present\n• `repo` — show repo/worktree information\n• `artifacts` — list local artifacts\n• `stop` / `cancel` — stop the running loop\n\nPlain replies in running threads become guidance, or answer the pending human question. Completed, failed, and stopped threads are read-only audit records; use `followup <prompt>` or `fork <prompt>` to start new work linked to the archived loop.",
                 ),
             ],
         }

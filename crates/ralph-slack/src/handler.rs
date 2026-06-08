@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{SlackError, SlackResult};
-use crate::state::{SlackStateManager, SlackThreadStatus, thread_key};
+use crate::state::{SlackStateManager, thread_key};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlackMessageEvent {
@@ -25,6 +25,10 @@ pub enum ThreadCommand {
     Help,
     Status,
     Tail { n: usize },
+    Log { n: usize },
+    Handoff,
+    Repo,
+    Artifacts,
     Stop,
 }
 
@@ -108,6 +112,37 @@ pub fn handle_message_with_repo(
         let Some(binding) = state.threads.get(&loop_id) else {
             return Ok(HandlerAction::Ignored);
         };
+        if binding.status.is_terminal() {
+            if let Some(prompt) = parse_followup_command(&event.text) {
+                let followup_loop_id = loop_id_for_slack_thread(&event.channel_id, &event.ts);
+                validate_loop_id(&followup_loop_id)?;
+                manager.bind_followup_thread(
+                    &followup_loop_id,
+                    &event.channel_id,
+                    &event.ts,
+                    &event.ts,
+                    user_id,
+                    &binding.workspace_root,
+                    &loop_id,
+                )?;
+                return Ok(HandlerAction::StartLoop {
+                    loop_id: followup_loop_id,
+                    prompt,
+                    channel_id: event.channel_id,
+                    thread_ts: event.ts,
+                });
+            }
+            if let Some(command) = parse_thread_command(&event.text) {
+                return Ok(HandlerAction::Command {
+                    command,
+                    loop_id,
+                    channel_id: event.channel_id,
+                    thread_ts: thread_ts.to_string(),
+                    user_id: user_id.to_string(),
+                });
+            }
+            return Ok(HandlerAction::Ignored);
+        }
         if let Some(command) = parse_thread_command(&event.text) {
             return Ok(HandlerAction::Command {
                 command,
@@ -116,9 +151,6 @@ pub fn handle_message_with_repo(
                 thread_ts: thread_ts.to_string(),
                 user_id: user_id.to_string(),
             });
-        }
-        if binding.status != SlackThreadStatus::Running {
-            return Ok(HandlerAction::Ignored);
         }
         let topic = if state.pending_questions.contains_key(&loop_id) {
             "human.response"
@@ -172,6 +204,9 @@ pub fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
         "help" => Some(ThreadCommand::Help),
         "status" => Some(ThreadCommand::Status),
         "stop" | "cancel" => Some(ThreadCommand::Stop),
+        "repo" => Some(ThreadCommand::Repo),
+        "handoff" => Some(ThreadCommand::Handoff),
+        "artifacts" => Some(ThreadCommand::Artifacts),
         "tail" => {
             let n = parts
                 .next()
@@ -180,8 +215,30 @@ pub fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
                 .clamp(1, 25);
             Some(ThreadCommand::Tail { n })
         }
+        "log" => {
+            let n = parts
+                .next()
+                .and_then(|part| part.parse::<usize>().ok())
+                .unwrap_or(20)
+                .clamp(1, 50);
+            Some(ThreadCommand::Log { n })
+        }
         _ => None,
     }
+}
+
+pub fn parse_followup_command(text: &str) -> Option<String> {
+    let trimmed = text.trim().trim_start_matches('/').trim_start_matches('!');
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in ["followup ", "follow-up ", "fork ", "new work "] {
+        if lower.starts_with(prefix) {
+            let prompt = trimmed[prefix.len()..].trim();
+            if !prompt.is_empty() {
+                return Some(prompt.to_string());
+            }
+        }
+    }
+    None
 }
 
 pub fn loop_id_for_slack_thread(channel_id: &str, thread_ts: &str) -> String {
@@ -247,4 +304,141 @@ fn append_event(path: &Path, topic: &str, payload: &str) -> SlackResult<()> {
     });
     writeln!(file, "{}", serde_json::to_string(&event_json)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::SlackThreadStatus;
+
+    fn event(text: &str, ts: &str, thread_ts: Option<&str>) -> SlackMessageEvent {
+        SlackMessageEvent {
+            event_id: Some(format!("evt-{ts}")),
+            channel_id: "C123".to_string(),
+            user_id: Some("U123".to_string()),
+            text: text.to_string(),
+            ts: ts.to_string(),
+            thread_ts: thread_ts.map(str::to_string),
+            bot_id: None,
+            app_mention: false,
+        }
+    }
+
+    #[test]
+    fn completed_thread_plain_reply_does_not_append_old_loop_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = SlackStateManager::new(dir.path().join(".ralph/slack-state.json"));
+        manager
+            .bind_thread("slack-C123-1-0", "C123", "1.0", "U123", dir.path())
+            .unwrap();
+        manager
+            .add_pending_question("slack-C123-1-0", "C123", "1.0", "msg-1")
+            .unwrap();
+        manager
+            .finish_thread("slack-C123-1-0", SlackThreadStatus::Completed)
+            .unwrap();
+
+        let action = handle_message(
+            &manager,
+            dir.path(),
+            &["C123".to_string()],
+            &["U123".to_string()],
+            event("please keep going", "1.1", Some("1.0")),
+        )
+        .unwrap();
+
+        assert_eq!(action, HandlerAction::Ignored);
+        assert!(!events_path(dir.path(), "slack-C123-1-0").exists());
+        let state = manager.load_or_default().unwrap();
+        assert!(!state.pending_questions.contains_key("slack-C123-1-0"));
+        assert_eq!(
+            state.threads["slack-C123-1-0"].status,
+            SlackThreadStatus::Completed
+        );
+        assert!(state.threads["slack-C123-1-0"].process_id.is_none());
+    }
+
+    #[test]
+    fn completed_thread_followup_forks_new_bound_loop() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = SlackStateManager::new(dir.path().join(".ralph/slack-state.json"));
+        manager
+            .bind_thread("slack-C123-1-0", "C123", "1.0", "U123", dir.path())
+            .unwrap();
+        manager
+            .finish_thread("slack-C123-1-0", SlackThreadStatus::Completed)
+            .unwrap();
+
+        let action = handle_message(
+            &manager,
+            dir.path(),
+            &["C123".to_string()],
+            &["U123".to_string()],
+            event("fork add a regression test", "1.2", Some("1.0")),
+        )
+        .unwrap();
+
+        let HandlerAction::StartLoop {
+            loop_id,
+            prompt,
+            channel_id,
+            thread_ts,
+        } = action
+        else {
+            panic!("expected fork to start a new loop");
+        };
+        assert_eq!(loop_id, "slack-C123-1-2");
+        assert_eq!(prompt, "add a regression test");
+        assert_eq!(channel_id, "C123");
+        assert_eq!(thread_ts, "1.2");
+        let state = manager.load_or_default().unwrap();
+        assert_eq!(
+            state.thread_to_loop.get("C123:1.0").map(String::as_str),
+            Some("slack-C123-1-0")
+        );
+        assert_eq!(
+            state.thread_to_loop.get("C123:1.2").map(String::as_str),
+            Some("slack-C123-1-2")
+        );
+        assert_eq!(
+            state.threads["slack-C123-1-2"].parent_loop_id.as_deref(),
+            Some("slack-C123-1-0")
+        );
+        assert_eq!(
+            state.threads["slack-C123-1-2"].status,
+            SlackThreadStatus::Running
+        );
+    }
+
+    #[test]
+    fn completed_thread_read_only_commands_are_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = SlackStateManager::new(dir.path().join(".ralph/slack-state.json"));
+        manager
+            .bind_thread("slack-C123-1-0", "C123", "1.0", "U123", dir.path())
+            .unwrap();
+        manager
+            .finish_thread("slack-C123-1-0", SlackThreadStatus::Failed)
+            .unwrap();
+
+        let action = handle_message(
+            &manager,
+            dir.path(),
+            &["C123".to_string()],
+            &["U123".to_string()],
+            event("handoff", "1.3", Some("1.0")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            action,
+            HandlerAction::Command {
+                command: ThreadCommand::Handoff,
+                loop_id: "slack-C123-1-0".to_string(),
+                channel_id: "C123".to_string(),
+                thread_ts: "1.0".to_string(),
+                user_id: "U123".to_string(),
+            }
+        );
+    }
 }

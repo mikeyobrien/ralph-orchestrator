@@ -37,6 +37,16 @@ pub struct SlackThreadBinding {
     pub stream_ts: Option<String>,
     #[serde(default)]
     pub final_card_ts: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub parent_loop_id: Option<String>,
+    #[serde(default)]
+    pub log_path: Option<PathBuf>,
+    #[serde(default)]
+    pub handoff_path: Option<PathBuf>,
+    #[serde(default)]
+    pub artifacts_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +143,11 @@ impl SlackStateManager {
                 progress_message_ts: None,
                 stream_ts: None,
                 final_card_ts: None,
+                completed_at: None,
+                parent_loop_id: None,
+                log_path: Some(slack_loop_log_path(workspace_root.as_ref(), loop_id)),
+                handoff_path: Some(slack_loop_handoff_path(workspace_root.as_ref(), loop_id)),
+                artifacts_path: Some(slack_loop_artifacts_path(workspace_root.as_ref(), loop_id)),
             },
         );
         state
@@ -151,6 +166,46 @@ impl SlackStateManager {
             .thread_to_loop
             .get(&thread_key(channel_id, thread_ts))
             .cloned())
+    }
+
+    pub fn bind_followup_thread(
+        &self,
+        loop_id: &str,
+        channel_id: &str,
+        thread_ts: &str,
+        root_ts: &str,
+        created_by: &str,
+        workspace_root: impl AsRef<Path>,
+        parent_loop_id: &str,
+    ) -> SlackResult<()> {
+        let mut state = self.load_or_default()?;
+        state.threads.insert(
+            loop_id.to_string(),
+            SlackThreadBinding {
+                loop_id: loop_id.to_string(),
+                channel_id: channel_id.to_string(),
+                thread_ts: thread_ts.to_string(),
+                root_ts: root_ts.to_string(),
+                created_by: created_by.to_string(),
+                created_at: Utc::now(),
+                workspace_root: workspace_root.as_ref().to_path_buf(),
+                status: SlackThreadStatus::Running,
+                process_id: None,
+                start_card_ts: None,
+                progress_message_ts: None,
+                stream_ts: None,
+                final_card_ts: None,
+                completed_at: None,
+                parent_loop_id: Some(parent_loop_id.to_string()),
+                log_path: Some(slack_loop_log_path(workspace_root.as_ref(), loop_id)),
+                handoff_path: Some(slack_loop_handoff_path(workspace_root.as_ref(), loop_id)),
+                artifacts_path: Some(slack_loop_artifacts_path(workspace_root.as_ref(), loop_id)),
+            },
+        );
+        state
+            .thread_to_loop
+            .insert(thread_key(channel_id, thread_ts), loop_id.to_string());
+        self.save(&state)
     }
 
     pub fn add_pending_question(
@@ -223,7 +278,16 @@ impl SlackStateManager {
     pub fn set_thread_status(&self, loop_id: &str, status: SlackThreadStatus) -> SlackResult<()> {
         let mut state = self.load_or_default()?;
         if let Some(binding) = state.threads.get_mut(loop_id) {
-            binding.status = status;
+            binding.status = status.clone();
+            if status.is_terminal() {
+                binding.process_id = None;
+                binding.completed_at = Some(Utc::now());
+                binding.log_path = Some(slack_loop_log_path(&binding.workspace_root, loop_id));
+                binding.handoff_path =
+                    Some(slack_loop_handoff_path(&binding.workspace_root, loop_id));
+                binding.artifacts_path =
+                    Some(slack_loop_artifacts_path(&binding.workspace_root, loop_id));
+            }
         }
         state.pending_questions.remove(loop_id);
         self.save(&state)
@@ -234,9 +298,52 @@ impl SlackStateManager {
         if let Some(binding) = state.threads.get_mut(loop_id) {
             binding.status = status;
             binding.process_id = None;
+            binding.completed_at = Some(Utc::now());
+            binding.log_path = Some(slack_loop_log_path(&binding.workspace_root, loop_id));
+            binding.handoff_path = Some(slack_loop_handoff_path(&binding.workspace_root, loop_id));
+            binding.artifacts_path =
+                Some(slack_loop_artifacts_path(&binding.workspace_root, loop_id));
         }
         state.pending_questions.remove(loop_id);
         self.save(&state)
+    }
+
+    pub fn archived_threads(&self) -> SlackResult<Vec<SlackThreadBinding>> {
+        let mut bindings = self
+            .load_or_default()?
+            .threads
+            .values()
+            .filter(|binding| binding.status.is_terminal())
+            .cloned()
+            .collect::<Vec<_>>();
+        bindings.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(bindings)
+    }
+
+    pub fn prune_archived_older_than(&self, cutoff: DateTime<Utc>) -> SlackResult<Vec<String>> {
+        let mut state = self.load_or_default()?;
+        let loop_ids = state
+            .threads
+            .values()
+            .filter(|binding| binding.status.is_terminal())
+            .filter(|binding| binding.completed_at.unwrap_or(binding.created_at) < cutoff)
+            .map(|binding| binding.loop_id.clone())
+            .collect::<Vec<_>>();
+
+        for loop_id in &loop_ids {
+            if let Some(binding) = state.threads.remove(loop_id) {
+                state
+                    .thread_to_loop
+                    .remove(&thread_key(&binding.channel_id, &binding.thread_ts));
+                state.pending_questions.remove(loop_id);
+                let _ = std::fs::remove_dir_all(
+                    binding.workspace_root.join(".worktrees").join(loop_id),
+                );
+                let _ = std::fs::remove_file(slack_loop_log_path(&binding.workspace_root, loop_id));
+            }
+        }
+        self.save(&state)?;
+        Ok(loop_ids)
     }
 
     pub fn mark_event_seen(&self, event_id: &str) -> SlackResult<bool> {
@@ -253,6 +360,35 @@ impl SlackStateManager {
     }
 }
 
+impl SlackThreadStatus {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            SlackThreadStatus::Completed | SlackThreadStatus::Failed | SlackThreadStatus::Stopped
+        )
+    }
+}
+
 pub fn thread_key(channel_id: &str, thread_ts: &str) -> String {
     format!("{}:{}", channel_id, thread_ts)
+}
+
+pub fn slack_loop_log_path(workspace_root: &Path, loop_id: &str) -> PathBuf {
+    workspace_root
+        .join(".ralph/slack-loop-logs")
+        .join(format!("{loop_id}.log"))
+}
+
+pub fn slack_loop_handoff_path(workspace_root: &Path, loop_id: &str) -> PathBuf {
+    workspace_root
+        .join(".worktrees")
+        .join(loop_id)
+        .join(".ralph/agent/summary.md")
+}
+
+pub fn slack_loop_artifacts_path(workspace_root: &Path, loop_id: &str) -> PathBuf {
+    workspace_root
+        .join(".worktrees")
+        .join(loop_id)
+        .join(".ralph")
 }

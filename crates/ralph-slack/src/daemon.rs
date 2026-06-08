@@ -434,6 +434,33 @@ where
                     )
                     .await?;
             }
+            ThreadCommand::Log { n } => {
+                self.notifier
+                    .post_thread_message(
+                        channel_id,
+                        thread_ts,
+                        &plain_tail_text(
+                            &slack_loop_log_path(&binding.workspace_root, loop_id),
+                            *n,
+                        ),
+                    )
+                    .await?;
+            }
+            ThreadCommand::Handoff => {
+                self.notifier
+                    .post_thread_message(channel_id, thread_ts, &handoff_text(binding))
+                    .await?;
+            }
+            ThreadCommand::Repo => {
+                self.notifier
+                    .post_thread_message(channel_id, thread_ts, &repo_text(binding))
+                    .await?;
+            }
+            ThreadCommand::Artifacts => {
+                self.notifier
+                    .post_thread_message(channel_id, thread_ts, &artifacts_text(binding))
+                    .await?;
+            }
             ThreadCommand::Stop => {
                 if user_id != binding.created_by {
                     self.notifier
@@ -740,6 +767,113 @@ fn format_progress_update(loop_id: &str, update: &SlackProgressUpdate) -> String
         "Ralph update\nLoop: {loop_id}\nIteration: {iteration}\nHat: {hat}\nTopic: {}\nLast message:\n```\n{}\n```",
         update.topic, payload
     )
+}
+
+fn handoff_text(binding: &SlackThreadBinding) -> String {
+    let handoff_path = binding.handoff_path.clone().unwrap_or_else(|| {
+        binding
+            .workspace_root
+            .join(".worktrees")
+            .join(&binding.loop_id)
+            .join(".ralph/agent/summary.md")
+    });
+    match std::fs::read_to_string(&handoff_path) {
+        Ok(contents) if !contents.trim().is_empty() => {
+            let mut text = redact_secrets(contents.trim());
+            if text.len() > 3000 {
+                text.truncate(3000);
+                text.push_str("…");
+            }
+            format!(
+                "Handoff for {}:
+```
+{}
+```",
+                binding.loop_id, text
+            )
+        }
+        _ => format!(
+            "No handoff summary found for {} yet. Expected: {}",
+            binding.loop_id,
+            handoff_path.display()
+        ),
+    }
+}
+
+fn repo_text(binding: &SlackThreadBinding) -> String {
+    format!(
+        "Loop `{}` repo: `{}`
+Thread status: {:?}
+Parent loop: {}",
+        binding.loop_id,
+        binding.workspace_root.display(),
+        binding.status,
+        binding.parent_loop_id.as_deref().unwrap_or("none")
+    )
+}
+
+fn artifacts_text(binding: &SlackThreadBinding) -> String {
+    let artifacts_path = binding.artifacts_path.clone().unwrap_or_else(|| {
+        binding
+            .workspace_root
+            .join(".worktrees")
+            .join(&binding.loop_id)
+            .join(".ralph")
+    });
+    if !artifacts_path.exists() {
+        return format!(
+            "No local artifacts found for {} at {}",
+            binding.loop_id,
+            artifacts_path.display()
+        );
+    }
+    let mut entries = std::fs::read_dir(&artifacts_path)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) != Some("events.jsonl"))
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    entries.sort();
+    if entries.is_empty() {
+        return format!("No local artifacts found for {}.", binding.loop_id);
+    }
+    entries.truncate(20);
+    format!(
+        "Local artifacts for {}:
+{}",
+        binding.loop_id,
+        entries.join("\n")
+    )
+}
+
+fn plain_tail_text(path: &Path, n: usize) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            let lines = contents.lines().rev().take(n).collect::<Vec<_>>();
+            if lines.is_empty() {
+                return "No log lines yet.".to_string();
+            }
+            let mut formatted = lines
+                .into_iter()
+                .rev()
+                .map(redact_secrets)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if formatted.len() > 3000 {
+                formatted.truncate(3000);
+                formatted.push_str("…");
+            }
+            format!(
+                "Latest Ralph log lines (last {n}):
+```
+{formatted}
+```"
+            )
+        }
+        Err(_) => "No loop log found for this loop yet.".to_string(),
+    }
 }
 
 fn tail_text(path: &Path, n: usize) -> String {

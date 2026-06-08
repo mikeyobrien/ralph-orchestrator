@@ -10,8 +10,11 @@ The feature is intended to provide:
 - one Slack channel mapped to one repo/workspace root via `RObot.slack.channel_repos`;
 - Slack text cannot choose arbitrary repos;
 - root app mentions start/bind loops;
-- replies in known threads become `human.response` when a question is pending, otherwise `human.guidance`;
-- thread-local commands: `help`, `status`, `tail [n]`, `stop` / `cancel`;
+- replies in running known threads become `human.response` when a question is pending, otherwise `human.guidance`;
+- completed/failed/stopped threads are archived read-only audit records;
+- explicit `followup <prompt>` / `fork <prompt>` from an archived thread creates a new linked loop/worktree instead of steering the old loop;
+- thread-local commands: `help`, `status`, `tail [n]`, `log [n]`, `handoff`, `repo`, `artifacts`, `stop` / `cancel`;
+- operator cleanup commands list/prune archived local state without mutating Slack history;
 - authorization and dedupe before side effects.
 
 ## Prerequisites
@@ -103,7 +106,9 @@ Pass criteria:
 - [ ] Loop IDs used for worktree/event paths reject traversal, slash, empty, overly long, or control-character inputs.
 - [ ] Thread commands are handled before guidance/response routing; command text does not accidentally answer a pending question.
 - [ ] `stop` / `cancel` is restricted to the thread creator.
-- [ ] `tail` output redacts token-shaped strings before posting to Slack.
+- [ ] Completed/failed/stopped replies do not append `human.response` / `human.guidance` to old event files.
+- [ ] Explicit follow-up/fork from a terminal binding creates a separate binding with `parent_loop_id`.
+- [ ] `tail` and `log` output redact token-shaped strings before posting to Slack.
 - [ ] Examples use `null`/env placeholders and never commit real `xoxb-`, `xapp-`, signing-secret, or bearer token values.
 
 ## 5. Product behavior review checklist
@@ -125,7 +130,10 @@ Confirm test names cover these behaviors:
 - [ ] Bot/self messages are ignored.
 - [ ] Path traversal loop IDs are rejected.
 - [ ] Multi-channel routing uses the persisted repo root for replies.
-- [ ] `help`, `status`, `tail`, `stop` command semantics are covered.
+- [ ] `help`, `status`, `tail`, `log`, `handoff`, `repo`, `artifacts`, `stop` command semantics are covered.
+- [ ] Completed-thread plain replies are ignored, pending questions are cleared, and process ids are cleared.
+- [ ] Completed-thread `fork`/`followup` creates a new bound loop/worktree linked to the old loop.
+- [ ] `ralph bot slack-archives list/prune` parsing/cleanup behavior is covered.
 
 ## 6. Docs/config review checklist
 
@@ -141,7 +149,8 @@ Pass criteria:
 - [ ] Guide explains Socket Mode and required Slack scopes/events.
 - [ ] Guide states one channel maps to one repo/workspace root.
 - [ ] Guide states Slack text cannot choose arbitrary repos.
-- [ ] Guide explains root app mention start and thread reply behavior.
+- [ ] Guide explains root app mention start and running-thread reply behavior.
+- [ ] Guide explains archived-thread lifecycle, explicit follow-up/fork, and cleanup retention policy.
 - [ ] Guide explains slash-command/thread nuance.
 - [ ] Example config uses env vars for secrets and placeholder IDs/paths only.
 - [ ] Example config includes `RObot.surface: slack`, `channel_ids`, `allowed_users`, and `channel_repos`.

@@ -7,6 +7,7 @@
 //! - `ralph bot token set <token>` — Store/overwrite the bot token
 
 use anyhow::{Context, Result};
+use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use ralph_core::RalphConfig;
 use std::collections::BTreeMap;
@@ -38,6 +39,8 @@ pub enum BotCommands {
     Token(TokenArgs),
     /// Run as a persistent daemon, listening on Telegram and starting loops on demand
     Daemon(DaemonArgs),
+    /// List or prune archived Slack thread bindings
+    SlackArchives(SlackArchivesArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -123,6 +126,24 @@ pub struct DaemonArgs {
     pub slack: bool,
 }
 
+#[derive(Parser, Debug)]
+pub struct SlackArchivesArgs {
+    #[command(subcommand)]
+    pub command: SlackArchiveCommands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SlackArchiveCommands {
+    /// List completed/failed/stopped Slack loop thread bindings
+    List,
+    /// Prune local archived binding records, worktrees, and logs older than N days
+    Prune {
+        /// Retention window in days
+        #[arg(long, default_value_t = 30)]
+        older_than_days: i64,
+    },
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DISPATCHER
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,7 +168,52 @@ pub async fn execute(
         BotCommands::Daemon(daemon_args) => {
             run_daemon(daemon_args, config_sources, hats_source, use_colors).await
         }
+        BotCommands::SlackArchives(archives_args) => slack_archives(archives_args, use_colors),
     }
+}
+
+fn slack_archives(args: SlackArchivesArgs, _use_colors: bool) -> Result<()> {
+    let workspace_root = std::env::current_dir().context("Failed to resolve current directory")?;
+    let manager =
+        ralph_slack::SlackStateManager::new(workspace_root.join(".ralph/slack-state.json"));
+    match args.command {
+        SlackArchiveCommands::List => {
+            let bindings = manager.archived_threads()?;
+            if bindings.is_empty() {
+                println!("No archived Slack thread bindings found.");
+                return Ok(());
+            }
+            println!("Archived Slack thread bindings:");
+            for binding in bindings {
+                println!(
+                    "{}	{:?}	channel={}	thread={}	repo={}	final_card={}	parent={}",
+                    binding.loop_id,
+                    binding.status,
+                    binding.channel_id,
+                    binding.thread_ts,
+                    binding.workspace_root.display(),
+                    binding.final_card_ts.as_deref().unwrap_or("none"),
+                    binding.parent_loop_id.as_deref().unwrap_or("none")
+                );
+            }
+        }
+        SlackArchiveCommands::Prune { older_than_days } => {
+            if older_than_days < 0 {
+                anyhow::bail!("--older-than-days must be non-negative");
+            }
+            let cutoff = Utc::now() - Duration::days(older_than_days);
+            let pruned = manager.prune_archived_older_than(cutoff)?;
+            println!(
+                "Pruned {} archived Slack binding(s) older than {} day(s). Slack history was not mutated.",
+                pruned.len(),
+                older_than_days
+            );
+            for loop_id in pruned {
+                println!("  {loop_id}");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn bot_token(args: TokenArgs, use_colors: bool) -> Result<()> {
@@ -1972,6 +2038,25 @@ mod tests {
         assert!(onboard.slack);
         assert_eq!(onboard.channel_ids, vec!["C123"]);
         assert_eq!(onboard.allowed_users, vec!["U123"]);
+    }
+
+    #[test]
+    fn test_slack_archive_cli_flags_parse() {
+        let args = BotArgs::try_parse_from([
+            "ralph",
+            "slack-archives",
+            "prune",
+            "--older-than-days",
+            "14",
+        ])
+        .unwrap();
+        let BotCommands::SlackArchives(archives) = args.command else {
+            panic!("expected slack archives command");
+        };
+        let SlackArchiveCommands::Prune { older_than_days } = archives.command else {
+            panic!("expected prune command");
+        };
+        assert_eq!(older_than_days, 14);
     }
 
     #[test]

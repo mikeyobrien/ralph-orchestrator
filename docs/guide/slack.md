@@ -1,16 +1,18 @@
 # Slack RObot guide
 
-Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orchestration. One allowed Slack channel maps to one repo/workspace root, and one Slack root thread maps to one Ralph loop. Root app mentions start loops; replies in the bound thread answer pending questions, add guidance, or run thread-local commands.
+Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orchestration. One allowed Slack channel maps to one repo/workspace root, and one Slack root thread maps to one Ralph loop. Root app mentions start loops; replies in a running bound thread answer pending questions, add guidance, or run thread-local commands. Once a loop is completed, failed, or stopped, its bound thread becomes an archived read-only audit record, not a reusable steering target.
 
 ## UX model
 
 - Root app mention starts exactly one loop in the mentioned message's thread.
 - Ralph posts a Block Kit start card with loop id, repo, branch, prompt summary, and Status / Tail 10 / Stop buttons.
 - Progress is low-noise: the daemon stores message timestamps and updates one progress surface with Loop, Iteration, Hat, Topic, elapsed time, and the latest redacted message instead of spamming every event.
-- Completion posts a final Block Kit card with status, duration, note, and Tail 10 / Status / Approve / Request changes buttons.
+- Completion posts a final Block Kit card with status, duration, and Tail 10 / Status buttons; the binding is retained with loop id, channel/thread timestamps, repo root, final card timestamp, and local log/handoff/artifact paths when available.
 - Button payloads route through the same authorized command path as text commands.
-- Plain thread replies become `human.response` when a `human.interact` question is pending; otherwise they become `human.guidance` for the next loop iteration.
-- Thread commands are accepted with or without `!` or `/` prefixes: `help`, `status`, `tail [n]`, `stop`, `cancel`.
+- Plain thread replies in running threads become `human.response` when a `human.interact` question is pending; otherwise they become `human.guidance` for the next loop iteration.
+- Plain replies in completed/failed/stopped threads are ignored so they cannot append `human.response` or `human.guidance` to the old loop event file.
+- Thread commands are accepted with or without `!` or `/` prefixes: `help`, `status`, `tail [n]`, `log [n]`, `handoff`, `repo`, `artifacts`, `stop`, `cancel`.
+- New work from an archived thread must be explicit: `followup <prompt>`, `follow-up <prompt>`, `fork <prompt>`, or `new work <prompt>`. Ralph creates a new bound loop/worktree keyed to that follow-up message and records `parent_loop_id` on the new binding.
 
 Slack timestamps are strings, not floats. Treat the external address as `channel_id + root thread_ts`; never synthesize routing from display names or channel text.
 
@@ -93,7 +95,7 @@ Expected UX:
 2. The loop runs in an isolated worktree for that Slack thread.
 3. Progress updates coalesce into the progress card/stream surface.
 4. Human questions appear in-thread; answer in the thread.
-5. Completion posts the final card and keeps Tail / Status / feedback controls available.
+5. Completion posts the final card and keeps read-only Tail / Status surfaces available. Follow-up work requires `followup <prompt>` or `fork <prompt>` and starts a new linked binding/worktree.
 
 ## Commands and buttons
 
@@ -101,17 +103,33 @@ Text commands are thread-local and accepted as `status`, `!status`, or `/status`
 
 - `help` — show command help.
 - `status` — show current thread binding, loop status, pending-question state, and process id.
-- `tail [n]` — show the last `n` events/log lines, clamped to 1..25 and redacted for token-shaped strings.
-- `stop` / `cancel` — terminate the loop process; only the Slack user who started the thread can stop it.
+- `tail [n]` — show the last `n` loop events, clamped to 1..25 and redacted for token-shaped strings.
+- `log [n]` — show the last `n` process log lines, clamped to 1..50 and redacted.
+- `handoff` — show `.ralph/agent/summary.md` from the loop worktree when present.
+- `repo` — show the bound repo/workspace root, status, and parent loop id.
+- `artifacts` — list local loop artifact paths under the loop `.ralph` directory when present.
+- `followup <prompt>` / `fork <prompt>` — from an archived thread only, start new work in a new loop/worktree linked to the archived loop.
+- `stop` / `cancel` — terminate the running loop process; only the Slack user who started the thread can stop it.
 
 Buttons:
 
 - Status — same as `status`.
 - Tail 10 — same as `tail 10`.
 - Stop/Cancel — same as `stop`, with creator authorization.
-- Approve / Request changes — final-card feedback controls; they route as thread-local text (`approved` / `request changes`) through the same pending-question or guidance path rather than mutating repo state directly.
+- Final cards intentionally stay read-only; new work requires an explicit follow-up/fork command rather than recycling the completed thread.
 
-Commands win over pending questions. For example, `status` does not accidentally answer a `human.interact` prompt.
+Commands win over pending questions. For example, `status` does not accidentally answer a `human.interact` prompt. Terminal status also clears `process_id` and `pending_questions[loop_id]`, so archived threads cannot accidentally answer stale questions.
+
+## Archived thread cleanup
+
+Archived Slack bindings are local audit records; pruning them never mutates Slack history. Operators can list terminal bindings and prune local archived state/worktree/log artifacts older than a retention window from the bound repo root:
+
+```bash
+cargo +stable run -p ralph-cli -- bot slack-archives list
+cargo +stable run -p ralph-cli -- bot slack-archives prune --older-than-days 30
+```
+
+Prune removes matching local `.ralph/slack-state.json` binding entries, `.worktrees/<loop_id>` directories, and `.ralph/slack-loop-logs/<loop_id>.log` files after the retention window. Keep retention long enough for review and incident forensics.
 
 ## Streaming capability
 
@@ -149,6 +167,7 @@ Ralph gates before side effects:
 7. Route thread replies through the persisted binding, not daemon current working directory.
 8. Require loop creator authorization before Stop/Cancel.
 9. Require file attachments to stay inside the bound repo/workspace root.
+10. Treat completed/failed/stopped bindings as read-only: only status/log/handoff/repo/artifacts commands are allowed, and explicit follow-up/fork creates a separate linked loop.
 
 Secrets are not printed by docs, status output, command tails, or Kanban reports. Event tails are redacted for token-shaped strings before Slack replies.
 
@@ -171,4 +190,4 @@ cargo +stable test -p ralph-cli bot::tests
 git diff --check
 ```
 
-Coverage includes Socket Mode envelope parsing and ack-before-slow-work, Block Kit renderers, streaming API payloads/fallback errors, root app mention starts, thread binding, fake loop spawning, progress/final message timestamps, file uploads, question post/response flow, guidance routing, commands, interactive buttons, multi-repo channel routing, unauthorized user/channel rejection, duplicate events, bot-message ignore, stop auth, and traversal-shaped loop IDs.
+Coverage includes Socket Mode envelope parsing and ack-before-slow-work, Block Kit renderers, streaming API payloads/fallback errors, root app mention starts, thread binding, fake loop spawning, progress/final message timestamps, file uploads, question post/response flow, guidance routing, read-only archived-thread commands, follow-up/fork routing, cleanup command parsing, interactive buttons, multi-repo channel routing, unauthorized user/channel rejection, duplicate events, bot-message ignore, stop auth, and traversal-shaped loop IDs.
