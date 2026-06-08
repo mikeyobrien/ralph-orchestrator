@@ -936,6 +936,156 @@ async fn known_thread_help_status_tail_are_replies_not_guidance_and_status_wins_
 }
 
 #[tokio::test]
+async fn obs_command_reports_loop_snapshot_with_latest_event_and_log() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let events_dir = temp_dir
+        .path()
+        .join(".worktrees")
+        .join(loop_id)
+        .join(".ralph");
+    std::fs::create_dir_all(&events_dir).unwrap();
+    std::fs::write(
+        events_dir.join("current-events"),
+        ".ralph/events-live.jsonl",
+    )
+    .unwrap();
+    std::fs::write(
+        events_dir.join("events-live.jsonl"),
+        concat!(
+            r#"{"ts":"2026-06-07T23:01:01.000000+00:00","iteration":5,"hat":"executor","topic":"work.start","payload":"started"}"#,
+            "\n",
+            r#"{"ts":"2026-06-07T23:02:02.000000+00:00","iteration":6,"hat":"reviewer","topic":"agent.message","payload":"finished tests with secret-token-1234567890"}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let log_dir = temp_dir.path().join(".ralph/slack-loop-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(
+        log_dir.join(format!("{loop_id}.log")),
+        "booting\nreviewer saw xoxb-1234567890abcdef\n",
+    )
+    .unwrap();
+
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread_with_repo(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+            Some("ralph"),
+            Some(std::path::Path::new("crates/ralph-slack")),
+        )
+        .unwrap();
+    state.set_thread_process_id(loop_id, Some(4242)).unwrap();
+    state
+        .set_thread_message_timestamps(
+            loop_id,
+            Some("1780799999.000100"),
+            Some("1780799999.000200"),
+            Some("1780799999.000300"),
+            None,
+        )
+        .unwrap();
+    state
+        .add_pending_question(loop_id, "C123", "1780792150.138669", "1780792200.000100")
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state.clone(),
+        FakeSpawner::default(),
+        notifier.clone(),
+    );
+
+    daemon
+        .handle_event(SlackMessageEvent {
+            event_id: Some("EvObs".to_string()),
+            channel_id: "C123".to_string(),
+            user_id: Some("U123".to_string()),
+            text: "!obs".to_string(),
+            ts: "1780792164.000100".to_string(),
+            thread_ts: Some("1780792150.138669".to_string()),
+            bot_id: None,
+            app_mention: false,
+        })
+        .await
+        .unwrap();
+
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    let obs = &messages[0].2;
+    assert!(obs.contains("Ralph observable"));
+    assert!(obs.contains(loop_id));
+    assert!(obs.contains("status: `running`"));
+    assert!(obs.contains("pending question: `yes`"));
+    assert!(obs.contains("process id: `4242`"));
+    assert!(obs.contains("repo alias: `ralph`"));
+    assert!(obs.contains("repo dir: `crates/ralph-slack`"));
+    assert!(obs.contains("latest event: iter `6` · hat `reviewer` · topic `agent.message`"));
+    assert!(obs.contains("finished tests with [redacted]"));
+    assert!(obs.contains("latest log:"));
+    assert!(obs.contains("reviewer saw [redacted]"));
+    assert!(!obs.contains("secret-token-1234567890"));
+    assert!(!obs.contains("xoxb-1...cdef"));
+    assert!(state.has_pending_question(loop_id).unwrap());
+}
+
+#[tokio::test]
+async fn obs_command_on_archived_thread_reports_no_pending_and_missing_files() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let loop_id = "slack-C123-1780792150-138669";
+    let state = SlackStateManager::new(temp_dir.path().join(".ralph/slack-state.json"));
+    state
+        .bind_thread_with_repo(
+            loop_id,
+            "C123",
+            "1780792150.138669",
+            "U123",
+            temp_dir.path(),
+            Some("ralph"),
+            Some(std::path::Path::new("crates/ralph-slack")),
+        )
+        .unwrap();
+    state
+        .finish_thread(loop_id, SlackThreadStatus::Completed)
+        .unwrap();
+    let notifier = FakeNotifier::default();
+    let daemon = SlackDaemon::new(
+        daemon_config(temp_dir.path()),
+        state,
+        FakeSpawner::default(),
+        notifier.clone(),
+    );
+
+    daemon
+        .handle_event(SlackMessageEvent {
+            event_id: Some("EvObsArchived".to_string()),
+            channel_id: "C123".to_string(),
+            user_id: Some("U123".to_string()),
+            text: "observe".to_string(),
+            ts: "1780792165.000100".to_string(),
+            thread_ts: Some("1780792150.138669".to_string()),
+            bot_id: None,
+            app_mention: false,
+        })
+        .await
+        .unwrap();
+
+    let messages = notifier.messages.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    let obs = &messages[0].2;
+    assert!(obs.contains("status: `completed`"));
+    assert!(obs.contains("pending question: `no`"));
+    assert!(obs.contains("process id: `none`"));
+    assert!(obs.contains("latest event: none"));
+    assert!(obs.contains("latest log: none"));
+}
+
+#[tokio::test]
 async fn pending_question_non_command_routes_response_and_command_does_not_clear_pending() {
     let temp_dir = tempfile::tempdir().unwrap();
     let loop_id = "slack-C123-1780792150-138669";

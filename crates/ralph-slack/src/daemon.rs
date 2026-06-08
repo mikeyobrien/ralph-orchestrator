@@ -498,6 +498,15 @@ where
                     .post_thread_message(channel_id, thread_ts, &repo_command_text(binding))
                     .await?;
             }
+            ThreadCommand::Obs => {
+                self.notifier
+                    .post_thread_message(
+                        channel_id,
+                        thread_ts,
+                        &obs_text(binding, state.pending_questions.contains_key(loop_id)),
+                    )
+                    .await?;
+            }
             ThreadCommand::Status => {
                 let message = SlackBlocks::status_card(
                     &binding.loop_id,
@@ -736,6 +745,121 @@ fn repo_command_text(binding: &SlackThreadBinding) -> String {
         binding.parent_loop_id.as_deref().unwrap_or("none"),
         worktree.display()
     )
+}
+
+fn obs_text(binding: &SlackThreadBinding, pending_question: bool) -> String {
+    let alias = binding.repo_alias.as_deref().unwrap_or("unbound");
+    let dir = binding
+        .repo_dir
+        .as_deref()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    let process_id = binding
+        .process_id
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let pending = if pending_question { "yes" } else { "no" };
+    let worktree = binding
+        .workspace_root
+        .join(".worktrees")
+        .join(&binding.loop_id);
+    let branch = format!("ralph-slack-{}", binding.loop_id);
+    let event_path = events_path(&binding.workspace_root, &binding.loop_id);
+    let log_path = binding
+        .log_path
+        .clone()
+        .unwrap_or_else(|| slack_loop_log_path(&binding.workspace_root, &binding.loop_id));
+    let cards = format!(
+        "start=`{}` progress=`{}` stream=`{}` final=`{}`",
+        binding.start_card_ts.as_deref().unwrap_or("none"),
+        binding.progress_message_ts.as_deref().unwrap_or("none"),
+        binding.stream_ts.as_deref().unwrap_or("none"),
+        binding.final_card_ts.as_deref().unwrap_or("none")
+    );
+    format!(
+        "Ralph observable\nloop: `{}`\nstatus: `{}`\npending question: `{pending}`\nprocess id: `{process_id}`\nrepo alias: `{alias}`\nrepo root: `{}`\nrepo dir: `{dir}`\nworktree: `{}`\nbranch: `{branch}`\ncards: {cards}\n{}\n{}",
+        binding.loop_id,
+        status_observable_label(&binding.status),
+        binding.workspace_root.display(),
+        worktree.display(),
+        latest_event_observation(&event_path),
+        latest_log_observation(&log_path)
+    )
+}
+
+fn latest_event_observation(event_path: &Path) -> String {
+    match std::fs::read_to_string(event_path) {
+        Ok(contents) => {
+            let line_count = contents
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count();
+            let Some(update) = latest_progress_update(&contents, 0) else {
+                return format!(
+                    "events: `{}` ({line_count} line(s))\nlatest event: none parseable",
+                    event_path.display()
+                );
+            };
+            let iteration = update
+                .iteration
+                .map(|iteration| iteration.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let hat = update.hat.as_deref().unwrap_or("agent");
+            let topic = update.topic;
+            let payload =
+                collapse_tail_whitespace(&truncate_tail_payload(&redact_secrets(&update.payload)));
+            if payload.is_empty() {
+                format!(
+                    "events: `{}` ({line_count} line(s))\nlatest event: iter `{iteration}` · hat `{hat}` · topic `{topic}`",
+                    event_path.display()
+                )
+            } else {
+                format!(
+                    "events: `{}` ({line_count} line(s))\nlatest event: iter `{iteration}` · hat `{hat}` · topic `{topic}`\nlatest message: {payload}",
+                    event_path.display()
+                )
+            }
+        }
+        Err(error) => format!(
+            "events: `{}` (missing: {error})\nlatest event: none",
+            event_path.display()
+        ),
+    }
+}
+
+fn latest_log_observation(log_path: &Path) -> String {
+    match std::fs::read_to_string(log_path) {
+        Ok(contents) => {
+            let line_count = contents
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count();
+            let latest = contents
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .map(|line| collapse_tail_whitespace(&truncate_tail_payload(&redact_secrets(line))))
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                "log: `{}` ({line_count} line(s))\nlatest log: {latest}",
+                log_path.display()
+            )
+        }
+        Err(error) => format!(
+            "log: `{}` (missing: {error})\nlatest log: none",
+            log_path.display()
+        ),
+    }
+}
+
+fn status_observable_label(status: &SlackThreadStatus) -> &'static str {
+    match status {
+        SlackThreadStatus::Running => "running",
+        SlackThreadStatus::Completed => "completed",
+        SlackThreadStatus::Failed => "failed",
+        SlackThreadStatus::Stopped => "stopped",
+    }
 }
 
 fn configured_alias_list(repo_aliases: &BTreeMap<String, PathBuf>) -> String {

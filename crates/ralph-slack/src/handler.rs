@@ -24,6 +24,7 @@ pub struct SlackMessageEvent {
 pub enum ThreadCommand {
     Help,
     Repo,
+    Obs,
     Status,
     Tail { n: usize },
     Log { n: usize },
@@ -209,6 +210,7 @@ pub fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
     match parts.next()? {
         "help" => Some(ThreadCommand::Help),
         "repo" => Some(ThreadCommand::Repo),
+        "obs" | "observe" => Some(ThreadCommand::Obs),
         "status" => Some(ThreadCommand::Status),
         "stop" | "cancel" => Some(ThreadCommand::Stop),
         "handoff" => Some(ThreadCommand::Handoff),

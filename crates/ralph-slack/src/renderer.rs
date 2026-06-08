@@ -44,6 +44,7 @@ impl SlackBlocks {
                     loop_id,
                     &[
                         ActionButton::status(),
+                        ActionButton::obs(),
                         ActionButton::tail(),
                         ActionButton::stop(),
                     ],
@@ -104,7 +105,7 @@ impl SlackBlocks {
         let duration = duration_secs
             .map(|secs| format!("{}s", secs))
             .unwrap_or_else(|| "unknown".to_string());
-        let note = note.unwrap_or("This thread is now read-only. Try `status`, `tail 10`, `log 20`, `handoff`, `repo`, or `artifacts`; use `followup <prompt>` or `fork <prompt>` for new work.");
+        let note = note.unwrap_or("This thread is now read-only. Try `obs`, `status`, `tail 10`, `log 20`, `handoff`, `repo`, or `artifacts`; use `followup <prompt>` or `fork <prompt>` for new work.");
         SlackRenderedMessage {
             text: format!("Ralph loop {status_label}\nLoop: {loop_id}\n{note}"),
             blocks: vec![
@@ -115,7 +116,14 @@ impl SlackBlocks {
                     format!("*Duration:* {}", escape_mrkdwn(&duration)),
                 ]),
                 section(escape_mrkdwn(note)),
-                actions(loop_id, &[ActionButton::tail(), ActionButton::status()]),
+                actions(
+                    loop_id,
+                    &[
+                        ActionButton::obs(),
+                        ActionButton::tail(),
+                        ActionButton::status(),
+                    ],
+                ),
             ],
         }
     }
@@ -146,19 +154,26 @@ impl SlackBlocks {
                     pending,
                     escape_mrkdwn(&process)
                 )),
-                actions(loop_id, &[ActionButton::tail(), ActionButton::stop()]),
+                actions(
+                    loop_id,
+                    &[
+                        ActionButton::obs(),
+                        ActionButton::tail(),
+                        ActionButton::stop(),
+                    ],
+                ),
             ],
         }
     }
 
     pub fn help_card() -> SlackRenderedMessage {
-        let text = "Ralph Slack commands: help, repo, status, tail [n], log [n], handoff, artifacts, stop/cancel. Completed threads are read-only; use followup <prompt> or fork <prompt> for new work.".to_string();
+        let text = "Ralph Slack commands: help, repo, obs, status, tail [n], log [n], handoff, artifacts, stop/cancel. Completed threads are read-only; use followup <prompt> or fork <prompt> for new work.".to_string();
         SlackRenderedMessage {
             text: text.clone(),
             blocks: vec![
                 header("Ralph Slack help"),
                 section(
-                    "*Commands*\n• `help` — show this help\n• `repo` — show bound repo/worktree information\n• `status` — show loop status\n• `tail [n]` — show recent events\n• `log [n]` — show recent process log lines\n• `handoff` — show the loop summary when present\n• `artifacts` — list local artifacts\n• `stop` / `cancel` — stop the running loop\n\nPlain replies in running threads become guidance, or answer the pending human question. Completed, failed, and stopped threads are read-only audit records; use `followup <prompt>` or `fork <prompt>` to start new work linked to the archived loop.",
+                    "*Commands*\n• `help` — show this help\n• `repo` — show bound repo/worktree information\n• `obs` / `observe` — show the loop observability snapshot\n• `status` — show loop status\n• `tail [n]` — show recent events\n• `log [n]` — show recent process log lines\n• `handoff` — show the loop summary when present\n• `artifacts` — list local artifacts\n• `stop` / `cancel` — stop the running loop\n\nPlain replies in running threads become guidance, or answer the pending human question. Completed, failed, and stopped threads are read-only audit records; use `followup <prompt>` or `fork <prompt>` to start new work linked to the archived loop.",
                 ),
             ],
         }
@@ -188,6 +203,15 @@ impl ActionButton {
             text: "Tail 10",
             action_id: "ralph_slack_tail",
             value: "tail",
+            style: None,
+        }
+    }
+
+    fn obs() -> Self {
+        Self {
+            text: "Obs",
+            action_id: "ralph_slack_obs",
+            value: "obs",
             style: None,
         }
     }

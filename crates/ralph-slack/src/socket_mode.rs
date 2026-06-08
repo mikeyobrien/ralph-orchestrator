@@ -202,6 +202,7 @@ fn thread_ts_from_action_value(action: &serde_json::Value, channel_id: &str) -> 
 fn block_action_text(action_id: &str) -> Option<&'static str> {
     match action_id {
         "ralph_slack_status" => Some("status"),
+        "ralph_slack_obs" => Some("obs"),
         "ralph_slack_tail" => Some("tail 10"),
         "ralph_slack_stop" => Some("stop"),
         "ralph_slack_approve" => Some("approved"),

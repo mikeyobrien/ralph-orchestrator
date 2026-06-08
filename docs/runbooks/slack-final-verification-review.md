@@ -13,7 +13,7 @@ The feature is intended to provide:
 - replies in running known threads become `human.response` when a question is pending, otherwise `human.guidance`;
 - completed/failed/stopped threads are archived read-only audit records;
 - explicit `followup <prompt>` / `fork <prompt>` from an archived thread creates a new linked loop/worktree instead of steering the old loop;
-- thread-local commands: `help`, `status`, `tail [n]`, `log [n]`, `handoff`, `repo`, `artifacts`, `stop` / `cancel`;
+- thread-local commands: `help`, `repo`, `obs` / `observe`, `status`, `tail [n]`, `log [n]`, `handoff`, `artifacts`, `stop` / `cancel`;
 - operator cleanup commands list/prune archived local state without mutating Slack history;
 - authorization and dedupe before side effects.
 

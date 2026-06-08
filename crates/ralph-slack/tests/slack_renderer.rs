@@ -21,6 +21,12 @@ fn start_card_has_block_kit_actions_and_plain_text_fallback() {
     assert!(message.blocks.iter().any(|block| {
         block["type"] == "context" && block.to_string().contains("feat/slack-thread-surface")
     }));
+    assert!(
+        message
+            .blocks
+            .iter()
+            .any(|block| block.to_string().contains("ralph_slack_obs"))
+    );
 }
 
 #[test]
@@ -30,12 +36,13 @@ fn progress_card_is_concise_and_redacts_secret_shaped_tokens() {
         Some(3),
         Some("builder"),
         "work.progress",
-        "created xoxb-secret-token-123 in scratch",
+        "created xoxb-s...-123 and XAPP-UPPERSECRET in scratch",
         Some(125),
     );
 
     assert!(message.text.contains("Ralph update"));
-    assert!(!message.text.contains("xoxb-secret-token-123"));
+    assert!(!message.text.contains("xoxb-s...-123"));
+    assert!(!message.text.contains("XAPP-UPPERSECRET"));
     assert!(message.text.contains("[redacted]"));
     assert!(
         message
@@ -65,6 +72,7 @@ fn final_status_and_help_cards_have_fallback_text() {
     assert!(final_card.text.contains("completed"));
     assert!(status_card.text.contains("pending question: no"));
     assert!(help_card.text.contains("Ralph Slack commands"));
+    assert!(help_card.text.contains("obs"));
     assert!(help_card.text.contains("repo"));
     let final_actions = final_card
         .blocks
@@ -72,6 +80,7 @@ fn final_status_and_help_cards_have_fallback_text() {
         .find(|block| block["type"] == "actions")
         .expect("final card should include interactive actions");
     assert!(final_actions.to_string().contains("ralph_slack_tail"));
+    assert!(final_actions.to_string().contains("ralph_slack_obs"));
     assert!(final_actions.to_string().contains("ralph_slack_status"));
     assert!(!final_actions.to_string().contains("ralph_slack_approve"));
     assert!(

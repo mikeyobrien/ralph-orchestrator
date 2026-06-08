@@ -5,13 +5,13 @@ Ralph's Slack surface is a Socket Mode control plane for human-in-the-loop orche
 ## UX model
 
 - Root app mention starts exactly one loop in the mentioned message's thread.
-- Ralph posts a Block Kit start card with loop id, repo, branch, prompt summary, and Status / Tail 10 / Stop buttons.
+- Ralph posts a Block Kit start card with loop id, repo, branch, prompt summary, and Status / Obs / Tail 10 / Stop buttons.
 - Progress is low-noise: the daemon stores message timestamps and updates one progress surface with Loop, Iteration, Hat, Topic, elapsed time, and the latest redacted message instead of spamming every event.
-- Completion posts a final Block Kit card with status, duration, and Tail 10 / Status buttons; the binding is retained with loop id, channel/thread timestamps, repo root, final card timestamp, and local log/handoff/artifact paths when available.
+- Completion posts a final Block Kit card with status, duration, and Obs / Tail 10 / Status buttons; the binding is retained with loop id, channel/thread timestamps, repo root, final card timestamp, and local log/handoff/artifact paths when available.
 - Button payloads route through the same authorized command path as text commands.
 - Plain thread replies in running threads become `human.response` when a `human.interact` question is pending; otherwise they become `human.guidance` for the next loop iteration.
 - Plain replies in completed/failed/stopped threads are ignored so they cannot append `human.response` or `human.guidance` to the old loop event file.
-- Thread commands are accepted with or without `!` or `/` prefixes: `help`, `status`, `tail [n]`, `log [n]`, `handoff`, `repo`, `artifacts`, `stop`, `cancel`.
+- Thread commands are accepted with or without `!` or `/` prefixes: `help`, `repo`, `obs` / `observe`, `status`, `tail [n]`, `log [n]`, `handoff`, `artifacts`, `stop`, `cancel`.
 - New work from an archived thread must be explicit: `followup <prompt>`, `follow-up <prompt>`, `fork <prompt>`, or `new work <prompt>`. Ralph creates a new bound loop/worktree keyed to that follow-up message and records `parent_loop_id` on the new binding.
 
 Slack timestamps are strings, not floats. Treat the external address as `channel_id + root thread_ts`; never synthesize routing from display names or channel text.
@@ -41,7 +41,7 @@ Subscribe to events:
 - `app_mention` for root starts.
 - `message.channels` for public-channel thread replies.
 - `message.groups` / `message.im` only for enabled private-channel/DM surfaces.
-- `block_actions` interactivity for Status / Tail / Stop / Approve / Request changes buttons.
+- `block_actions` interactivity for Status / Obs / Tail / Stop / Approve / Request changes buttons.
 - `slash_commands` only if slash-command starts are enabled.
 - Optional Slack AI events for the later Assistant entrypoint: `assistant_thread_started` and `assistant_thread_context_changed`.
 
@@ -114,11 +114,11 @@ Text commands are thread-local and accepted as `status`, `!status`, or `/status`
 
 - `help` — show command help.
 - `repo` — show the bound repo alias, root, subdirectory, loop id, worktree, and branch.
+- `obs` / `observe` — show a compact observability snapshot: loop status, pending question, process id, repo/worktree, message timestamps, latest iter/hat/topic/message, and latest log line.
 - `status` — show current thread binding, loop status, pending-question state, and process id.
 - `tail [n]` — show the last `n` loop events, clamped to 1..25 and redacted for token-shaped strings.
 - `log [n]` — show the last `n` process log lines, clamped to 1..50 and redacted.
 - `handoff` — show `.ralph/agent/summary.md` from the loop worktree when present.
-- `repo` — show the bound repo/workspace root, status, and parent loop id.
 - `artifacts` — list local loop artifact paths under the loop `.ralph` directory when present.
 - `followup <prompt>` / `fork <prompt>` — from an archived thread only, start new work in a new loop/worktree linked to the archived loop.
 - `stop` / `cancel` — terminate the running loop process; only the Slack user who started the thread can stop it.
@@ -126,6 +126,7 @@ Text commands are thread-local and accepted as `status`, `!status`, or `/status`
 Buttons:
 
 - Status — same as `status`.
+- Obs — same as `obs`.
 - Tail 10 — same as `tail 10`.
 - Stop/Cancel — same as `stop`, with creator authorization.
 - Final cards intentionally stay read-only; new work requires an explicit follow-up/fork command rather than recycling the completed thread.

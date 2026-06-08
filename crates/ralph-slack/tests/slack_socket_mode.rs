@@ -14,6 +14,17 @@ fn typed_tail_command_variants_still_parse() {
 }
 
 #[test]
+fn typed_obs_command_variants_parse() {
+    for text in ["obs", "!obs", "/observe"] {
+        assert_eq!(
+            parse_thread_command(text),
+            Some(ThreadCommand::Obs),
+            "{text} should route through the observability command path"
+        );
+    }
+}
+
+#[test]
 fn block_action_tail_payload_maps_to_existing_thread_command_text() {
     let payload = serde_json::json!({
         "type": "block_actions",
@@ -35,6 +46,27 @@ fn block_action_tail_payload_maps_to_existing_thread_command_text() {
         parse_thread_command(&event.text),
         Some(ThreadCommand::Tail { n: 10 })
     );
+}
+
+#[test]
+fn block_action_obs_payload_maps_to_existing_thread_command_text() {
+    let payload = serde_json::json!({
+        "type": "block_actions",
+        "trigger_id": "TrigObs",
+        "user": {"id": "U123"},
+        "channel": {"id": "C123"},
+        "message": {"ts": "1780792150.138669", "thread_ts": "1780792150.138669"},
+        "actions": [{"action_id": "ralph_slack_obs", "value": "obs:slack-C123-1780792150-138669"}],
+        "action_ts": "1780792160.000100"
+    });
+
+    let event = slack_message_event_from_payload(&payload).expect("obs block action should parse");
+
+    assert_eq!(event.channel_id, "C123");
+    assert_eq!(event.user_id.as_deref(), Some("U123"));
+    assert_eq!(event.thread_ts.as_deref(), Some("1780792150.138669"));
+    assert_eq!(event.text, "obs");
+    assert_eq!(parse_thread_command(&event.text), Some(ThreadCommand::Obs));
 }
 
 #[test]
