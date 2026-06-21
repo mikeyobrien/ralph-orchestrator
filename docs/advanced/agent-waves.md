@@ -204,28 +204,39 @@ ralph run -c ralph.yml -H presets/wave-review.yml -p "Review the authentication 
 
 ## Diagnostics
 
-Wave execution emits structured diagnostics when `RALPH_DIAGNOSTICS=1`:
-
-| Event | Fields |
-|-------|--------|
-| `WaveStarted` | `wave_id`, `expected_total`, `worker_hat`, `concurrency` |
-| `WaveInstanceCompleted` | `wave_id`, `index`, `duration_ms`, `cost_usd` |
-| `WaveInstanceFailed` | `wave_id`, `index`, `error`, `duration_ms` |
-| `WaveCompleted` | `wave_id`, `total_results`, `total_failures`, `timed_out`, `duration_ms` |
+Wave progress is currently surfaced through the live RPC stream that feeds the
+terminal UI. `RALPH_DIAGNOSTICS=1` still writes standard orchestration
+diagnostics to `.ralph/diagnostics/*/orchestration.jsonl`, but per-worker wave
+progress is not persisted there yet.
 
 Wave IDs follow the format `w-<hex-nanos>-<pid>-<seq>` (e.g., `w-1a2b3c4d-12345-0`), combining a hex timestamp, process ID, and sequence number for uniqueness.
 
-```bash
-# View wave diagnostics
-jq 'select(.type | startswith("Wave"))' .ralph/diagnostics/*/orchestration.jsonl
-```
+## TUI Progress and Drill-Down
+
+The terminal UI now shows wave activity while a loop is running:
+
+- `WaveStarted` renders a wave banner with the target hat, worker count, and timeout
+- `WaveWorkerDone` appends per-worker completion lines with success/failure, duration, and payload preview
+- `WaveCompleted` records the aggregate success/failure count and duration
+- `WaveWorkerTextDelta` streams each worker's live output into that worker's own buffer
+
+Press `w` from an iteration with wave data to enter the wave worker drill-down view. In wave view, the header switches to `[WAVE]` / `[worker N/M]`, `h` and `l` cycle between worker buffers, normal scroll keys move within the selected worker output, and `Esc` exits back to the iteration view. Completed wave buffers are stored on their owning iteration, so you can navigate back to an older iteration and press `w` to inspect that wave after it finishes.
+
+## Waves vs. Parallel Loops
+
+Waves and parallel loops solve different parallelism problems:
+
+- **Waves** are intra-loop fan-out/fan-in. They let one hat split a single iteration into multiple bounded worker backends, then merge their emitted results back into the same event stream for an aggregator hat.
+- **Parallel loops** are inter-loop isolation. They run separate Ralph loops in separate git worktrees with isolated filesystem state and merge coordination.
+
+Use waves when independent work items share the same loop context and should synthesize immediately. Use parallel loops when the work needs separate worktrees, independent file mutations, or merge-queue isolation. A future convergence could let wave workers opt into stronger per-worker filesystem/worktree isolation, but today wave workers are backend-process isolation inside one loop.
 
 ## Current Limitations
 
-- **One wave per iteration** — If multiple waves are detected, only the lexicographically first `wave_id` is executed (deterministic tiebreak); remaining waves are deferred to subsequent iterations
+- **One wave per iteration** — If multiple waves are detected in the same event read, only the lexicographically first `wave_id` is executed (deterministic tiebreak), so emit one wave at a time
 - **No nested waves** — Workers cannot dispatch sub-waves
 - **Global backend fallback** — Workers use the global backend when the hat has no specific backend override
-- **No TUI progress** — Wave workers run headless; progress is logged but not shown in the TUI
+- **Limited non-TUI observability** — The TUI shows live wave progress and worker drill-down, but the web dashboard and `ralph loops` listing do not yet expose comparable wave-worker progress/drill-down views
 
 ## See Also
 
