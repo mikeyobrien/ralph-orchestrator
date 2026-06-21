@@ -423,6 +423,47 @@ hats:
 }
 
 #[test]
+fn test_resume_replay_ignores_malformed_events_before_last_terminate() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let yaml = r#"
+hats:
+  monitor:
+    name: "Monitor"
+    triggers: ["build.monitoring.resume"]
+    publishes: ["build.monitoring.done"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    write_raw_line_to_jsonl(&events_path, "{not json");
+    write_raw_line_to_jsonl(&events_path, "{\"topic\":");
+    write_raw_line_to_jsonl(&events_path, "still not json");
+    write_event_to_jsonl(&events_path, "task.start", "original objective");
+    write_event_to_jsonl(&events_path, "loop.terminate", "parked");
+    write_event_to_jsonl(
+        &events_path,
+        "build.monitoring.resume",
+        "watchdog says continue",
+    );
+
+    event_loop.replay_resume_events_from_jsonl().unwrap();
+
+    assert_eq!(
+        event_loop.state.consecutive_malformed_events, 0,
+        "malformed history before the last loop.terminate must not trip resume validation"
+    );
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+    assert!(prompt.contains("build.monitoring.resume"));
+    assert!(!prompt.contains("event.malformed"));
+}
+
+#[test]
 fn test_completion_promise_detection() {
     use std::fs;
     use tempfile::TempDir;
@@ -719,6 +760,16 @@ fn write_event_to_jsonl(path: &std::path::Path, topic: &str, payload: &str) {
         .open(path)
         .unwrap();
     writeln!(file, "{}", event_json).unwrap();
+}
+
+fn write_raw_line_to_jsonl(path: &std::path::Path, line: &str) {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    writeln!(file, "{line}").unwrap();
 }
 
 #[test]

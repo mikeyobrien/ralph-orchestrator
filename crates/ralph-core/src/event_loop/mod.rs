@@ -21,7 +21,8 @@ use crate::text::floor_char_boundary;
 use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::path::PathBuf;
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -876,14 +877,27 @@ impl EventLoop {
             .events
             .iter()
             .rposition(|event| event.topic == "loop.terminate");
+        let last_terminate_line = if result.malformed.is_empty() {
+            None
+        } else {
+            Self::last_terminate_line_number(&path)?
+        };
         let replay_events = match last_terminate_index {
             Some(index) => result.events.into_iter().skip(index + 1).collect(),
+            None => Vec::new(),
+        };
+        let replay_malformed = match last_terminate_line {
+            Some(line_number) => result
+                .malformed
+                .into_iter()
+                .filter(|malformed| malformed.line_number > line_number)
+                .collect(),
             None => Vec::new(),
         };
 
         let processed = self.process_parse_result(crate::event_reader::ParseResult {
             events: replay_events,
-            malformed: result.malformed,
+            malformed: replay_malformed,
         })?;
 
         if let Ok(metadata) = std::fs::metadata(&path) {
@@ -891,6 +905,30 @@ impl EventLoop {
         }
 
         Ok(processed)
+    }
+
+    fn last_terminate_line_number(path: &Path) -> std::io::Result<Option<u64>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        let mut last_terminate = None;
+
+        for (index, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<crate::event_reader::Event>(&line) {
+                if event.topic == "loop.terminate" {
+                    last_terminate = Some(index as u64 + 1);
+                }
+            }
+        }
+
+        Ok(last_terminate)
     }
 
     /// Advances the event reader to the current end of the events file.
