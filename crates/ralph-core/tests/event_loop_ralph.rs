@@ -441,21 +441,31 @@ fn test_reads_actual_events_jsonl_with_object_payloads() {
     // when reading events.jsonl containing object payloads from `ralph emit --json`
     use ralph_core::EventHistory;
 
-    let history = EventHistory::new(".ralph/events.jsonl");
-    if !history.exists() {
-        // Skip if no events file (CI environment)
-        return;
-    }
+    let temp_dir = TempDir::new().unwrap();
+    let ralph_dir = temp_dir.path().join(".ralph");
+    fs::create_dir_all(&ralph_dir).unwrap();
+
+    let events_file = ralph_dir.join("events.jsonl");
+    fs::write(
+        &events_file,
+        r#"{"topic":"build.task","payload":"plain text","ts":"2026-01-14T12:00:00Z"}
+{"topic":"build.result","payload":{"status":"ok","attempt":1},"ts":"2026-01-14T12:01:00Z"}
+"#,
+    )
+    .unwrap();
 
     // This should NOT produce any warnings about failed parsing
+    let history = EventHistory::new(events_file);
     let records = history.read_all().expect("Should read events.jsonl");
 
     // We expect at least some records
-    assert!(!records.is_empty(), "events.jsonl should have records");
+    assert_eq!(records.len(), 2, "events.jsonl should have records");
+    assert_eq!(records[0].payload, "plain text");
+    assert!(records[1].payload.starts_with('{'));
 
     // Verify all records were parsed (no silently dropped records)
     println!(
-        "\n✓ Successfully parsed {} records from .ralph/events.jsonl:\n",
+        "\n✓ Successfully parsed {} records from fixture events.jsonl:\n",
         records.len()
     );
     for (i, record) in records.iter().enumerate() {
