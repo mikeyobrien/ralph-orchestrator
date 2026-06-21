@@ -464,6 +464,32 @@ hats:
 }
 
 #[test]
+fn test_resume_replay_reports_malformed_events_after_last_terminate() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+
+    write_event_to_jsonl(&events_path, "task.start", "original objective");
+    write_event_to_jsonl(&events_path, "loop.terminate", "parked");
+    write_raw_line_to_jsonl(&events_path, "{not json");
+
+    event_loop.replay_resume_events_from_jsonl().unwrap();
+
+    assert_eq!(
+        event_loop.state.consecutive_malformed_events, 1,
+        "malformed lines after the last loop.terminate should still use normal backpressure"
+    );
+
+    let prompt = event_loop.build_prompt(&HatId::new("ralph")).unwrap();
+    assert!(prompt.contains("event.malformed"));
+}
+
+#[test]
 fn test_completion_promise_detection() {
     use std::fs;
     use tempfile::TempDir;
