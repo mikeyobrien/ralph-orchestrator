@@ -160,6 +160,9 @@ pub enum RpcEvent {
         max_iterations: Option<u32>,
         /// Backend being used.
         backend: String,
+        /// Workspace root for the loop emitting this event.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_root: Option<String>,
         /// Unix timestamp (milliseconds) when the loop started.
         started_at: u64,
     },
@@ -653,6 +656,7 @@ mod tests {
             prompt: "test prompt".to_string(),
             max_iterations: Some(10),
             backend: "claude".to_string(),
+            workspace_root: Some("/tmp/ralph-workspace".to_string()),
             started_at: 1_700_000_000_000,
         };
         let json = serde_json::to_string(&event).unwrap();

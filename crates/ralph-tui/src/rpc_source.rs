@@ -229,11 +229,15 @@ fn apply_rpc_event(event: &RpcEvent, state: &Arc<Mutex<TuiState>>, acc: &mut Tex
         RpcEvent::LoopStarted {
             max_iterations,
             backend,
+            workspace_root,
             ..
         } => {
             s.loop_started = Some(Instant::now());
             s.max_iterations = *max_iterations;
             s.pending_backend = Some(backend.clone());
+            if let Some(workspace_root) = workspace_root {
+                s.set_export_workspace_root(workspace_root);
+            }
         }
 
         RpcEvent::IterationStart {
@@ -599,6 +603,7 @@ mod tests {
             prompt: "test".to_string(),
             max_iterations: Some(10),
             backend: "claude".to_string(),
+            workspace_root: Some("/tmp/loop-workspace".to_string()),
             started_at: 0,
         };
         apply_rpc_event(&event, &state, &mut acc);
@@ -606,6 +611,10 @@ mod tests {
         let s = state.lock().unwrap();
         assert!(s.loop_started.is_some());
         assert_eq!(s.max_iterations, Some(10));
+        assert_eq!(
+            s.export_workspace_root(),
+            std::path::Path::new("/tmp/loop-workspace")
+        );
     }
 
     #[test]
@@ -1132,6 +1141,7 @@ mod tests {
             prompt: "test".to_string(),
             max_iterations: Some(10),
             backend: "claude".to_string(),
+            workspace_root: None,
             started_at: 0,
         };
         let line = format!("{}\n", serde_json::to_string(&event).unwrap());

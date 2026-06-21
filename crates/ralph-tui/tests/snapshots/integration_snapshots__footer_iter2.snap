@@ -2,4 +2,4 @@
 source: crates/ralph-tui/tests/integration_snapshots.rs
 expression: harness.render_footer()
 ---
-──────────────────────────────────────────────────────────────────────────────── Total Time Elapsed: 00:00                                          ◉ ACTIVE
+──────────────────────────────────────────────────────────────────────────────── Total Time Elapsed: 00:00 │ e export E all                         ◉ ACTIVE

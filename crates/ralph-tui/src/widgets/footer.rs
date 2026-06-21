@@ -1,4 +1,4 @@
-use crate::state::TuiState;
+use crate::state::{ExportOutcome, TuiState};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
@@ -54,6 +54,31 @@ impl Widget for Footer<'_> {
                 }
                 // Shouldn't happen, but degrade gracefully
                 _ => ("\u{2717} failed to send guidance", Color::Red),
+            };
+
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(msg, Style::default().fg(color)),
+            ]);
+            Paragraph::new(line).render(inner_area, buf);
+            return;
+        }
+
+        // Export flash (brief after writing iteration buffers)
+        if let Some(flash) = self.state.active_export_flash() {
+            let (msg, color) = match &flash.outcome {
+                ExportOutcome::Success { path } => (
+                    format!(
+                        "\u{2713} exported {}: {}",
+                        flash.scope.label(),
+                        self.state.display_export_path(path)
+                    ),
+                    Color::Green,
+                ),
+                ExportOutcome::Failed { message } => (
+                    format!("\u{2717} export {} failed: {message}", flash.scope.label()),
+                    Color::Red,
+                ),
             };
 
             let line = Line::from(vec![
@@ -129,6 +154,13 @@ impl Widget for Footer<'_> {
             "Total Time Elapsed: 00:00".to_string()
         };
         left_spans.push(Span::raw(elapsed_display));
+        if inner_area.width >= 58 {
+            left_spans.push(Span::raw(" │ "));
+            left_spans.push(Span::styled(
+                "e export E all",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
         if self.state.mouse_capture_enabled {
             left_spans.push(Span::raw(" │ "));
             left_spans.push(Span::styled(
@@ -376,6 +408,64 @@ mod tests {
             scroll_text.contains("Mouse: scroll (m)"),
             "should show scroll mode when mouse capture enabled, got: {}",
             scroll_text
+        );
+    }
+
+    #[test]
+    fn footer_shows_export_key_hint() {
+        let state = TuiState::new();
+        let text = render_to_string(&state);
+
+        assert!(
+            text.contains("e export E all"),
+            "should show export key hint, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn footer_shows_export_success_flash() {
+        let mut state = TuiState::new();
+        state.set_export_workspace_root("/tmp/workspace");
+        state.export_flash = Some(crate::state::ExportFlash {
+            scope: crate::export::ExportScope::Current,
+            outcome: ExportOutcome::Success {
+                path: "/tmp/workspace/.ralph/tui-exports/ralph-tui-current.txt".into(),
+            },
+            when: std::time::Instant::now(),
+        });
+
+        let text = render_to_string(&state);
+
+        assert!(
+            text.contains("exported current iteration"),
+            "should show export success, got: {}",
+            text
+        );
+        assert!(
+            text.contains(".ralph/tui-exports/ralph-tui-current.txt"),
+            "should show relative export path, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn footer_shows_export_failure_flash() {
+        let mut state = TuiState::new();
+        state.export_flash = Some(crate::state::ExportFlash {
+            scope: crate::export::ExportScope::All,
+            outcome: ExportOutcome::Failed {
+                message: "permission denied".to_string(),
+            },
+            when: std::time::Instant::now(),
+        });
+
+        let text = render_to_string(&state);
+
+        assert!(
+            text.contains("export all iterations failed: permission denied"),
+            "should show export failure, got: {}",
+            text
         );
     }
 }

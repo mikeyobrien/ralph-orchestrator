@@ -64,6 +64,16 @@ pub fn render(f: &mut Frame, area: Rect) {
             Span::raw("    Next/prev match"),
         ]),
         Line::from(""),
+        Line::from(Span::styled("Export:", Style::default().fg(Color::Yellow))),
+        Line::from(vec![
+            Span::styled("  e", Style::default().fg(Color::Cyan)),
+            Span::raw("      Export current iteration"),
+        ]),
+        Line::from(vec![
+            Span::styled("  E", Style::default().fg(Color::Cyan)),
+            Span::raw("      Export all iterations"),
+        ]),
+        Line::from(""),
         Line::from(Span::styled(
             "Guidance:",
             Style::default().fg(Color::Yellow),
@@ -118,7 +128,7 @@ pub fn render(f: &mut Frame, area: Rect) {
         .block(block)
         .alignment(Alignment::Left);
 
-    let popup_area = centered_rect(50, 60, area);
+    let popup_area = centered_rect(50, 75, area);
     f.render_widget(Clear, popup_area);
     f.render_widget(paragraph, popup_area);
 }

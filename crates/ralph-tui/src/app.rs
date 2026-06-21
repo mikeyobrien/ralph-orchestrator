@@ -121,6 +121,12 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
         Action::ToggleMouseMode => {
             state.mouse_capture_enabled = !state.mouse_capture_enabled;
         }
+        Action::ExportCurrentIteration => {
+            state.export_current_iteration_to_disk();
+        }
+        Action::ExportAllIterations => {
+            state.export_all_iterations_to_disk();
+        }
         Action::None => {}
     }
     false
@@ -391,6 +397,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
 
                     // Clear expired flash messages (e.g., guidance send confirmation)
                     state.clear_expired_guidance_flash();
+                    state.clear_expired_export_flash();
 
                     // Autoscroll: if user hasn't scrolled away, keep them at the bottom
                     // as new content arrives. This mimics standard terminal behavior.
@@ -456,7 +463,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
 mod tests {
     use super::*;
     use crate::input::{Action, map_key};
-    use crate::state::TuiState;
+    use crate::state::{ExportOutcome, TuiState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::text::Line;
 
@@ -662,6 +669,89 @@ mod tests {
 
         dispatch_action(Action::ToggleMouseMode, &mut state, 10);
         assert!(!state.mouse_capture_enabled);
+    }
+
+    #[test]
+    fn dispatch_action_export_current_writes_current_iteration_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut state = TuiState::new();
+        state.set_export_workspace_root(temp_dir.path());
+        state.start_new_iteration_with_metadata(Some("Builder".to_string()), Some("codex".into()));
+        state
+            .current_iteration_mut()
+            .unwrap()
+            .append_line(Line::from("current only"));
+
+        let should_quit = dispatch_action(Action::ExportCurrentIteration, &mut state, 10);
+
+        assert!(!should_quit);
+        let path = match &state.export_flash.as_ref().unwrap().outcome {
+            ExportOutcome::Success { path } => path.clone(),
+            ExportOutcome::Failed { message } => panic!("export failed: {message}"),
+        };
+        assert!(path.starts_with(temp_dir.path().join(".ralph/tui-exports")));
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("ralph-tui-current-"))
+        );
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("Iteration 1"));
+        assert!(text.contains("Hat: Builder"));
+        assert!(text.contains("Backend: codex"));
+        assert!(text.contains("current only"));
+    }
+
+    #[test]
+    fn dispatch_action_export_all_writes_single_file_with_all_iterations() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut state = TuiState::new();
+        state.set_export_workspace_root(temp_dir.path());
+        state.start_new_iteration();
+        state
+            .current_iteration_mut()
+            .unwrap()
+            .append_line(Line::from("iteration one"));
+        state.start_new_iteration();
+        state
+            .current_iteration_mut()
+            .unwrap()
+            .append_line(Line::from("iteration two"));
+
+        dispatch_action(Action::ExportAllIterations, &mut state, 10);
+
+        let path = match &state.export_flash.as_ref().unwrap().outcome {
+            ExportOutcome::Success { path } => path.clone(),
+            ExportOutcome::Failed { message } => panic!("export failed: {message}"),
+        };
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("ralph-tui-all-"))
+        );
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("Iterations: 2"));
+        assert!(text.contains("Iteration 1"));
+        assert!(text.contains("iteration one"));
+        assert!(text.contains("Iteration 2"));
+        assert!(text.contains("iteration two"));
+    }
+
+    #[test]
+    fn dispatch_action_export_all_without_iterations_sets_failure_status() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut state = TuiState::new();
+        state.set_export_workspace_root(temp_dir.path());
+
+        dispatch_action(Action::ExportAllIterations, &mut state, 10);
+
+        match &state.export_flash.as_ref().unwrap().outcome {
+            ExportOutcome::Success { path } => panic!("unexpected export at {}", path.display()),
+            ExportOutcome::Failed { message } => {
+                assert!(message.contains("no iteration buffers to export"));
+            }
+        }
+        assert!(!temp_dir.path().join(".ralph/tui-exports").exists());
     }
 
     // =========================================================================
