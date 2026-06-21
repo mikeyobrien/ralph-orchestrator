@@ -19,7 +19,7 @@ use ralph_core::{
     HookPayloadContextInput, HookPhaseEvent, HookRunRequest, HookRunResult, HookSuspendMode,
     LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record,
     SessionRecorder, SummaryWriter, SuspendStateRecord, SuspendStateStore, TerminationReason,
-    UrgentSteerStore, resolve_context_window,
+    UrgentSteerStore, resolve_context_window_for_backend,
 };
 use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
@@ -60,6 +60,10 @@ pub(crate) struct ExecutionOutcome {
 
 fn context_tokens_from_pty_result(pty_result: &ralph_adapters::PtyExecutionResult) -> u64 {
     pty_result.input_tokens
+}
+
+fn context_window_for_backend(config: &RalphConfig, backend_name: &str) -> u64 {
+    resolve_context_window_for_backend(config, backend_name)
 }
 
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
@@ -1833,7 +1837,7 @@ pub async fn run_loop_impl(
                     output_tokens: 0,
                     cache_read_tokens: 0,
                     cache_write_tokens: 0,
-                    context_window: resolve_context_window(&config),
+                    context_window: context_window_for_backend(&config, &backend_name_for_timeout),
                     context_tokens: 0,
                     num_turns: 0,
                 })
@@ -4276,7 +4280,8 @@ async fn execute_acp(
     backend_name: &str,
 ) -> Result<ExecutionOutcome> {
     let mut executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
-    executor.set_context_window(resolve_context_window(config));
+    let context_window = context_window_for_backend(config, backend_name);
+    executor.set_context_window(context_window);
 
     let pty_result = if let Some(lines) = tui_lines {
         let mut handler = TuiStreamHandler::with_lines(verbosity == Verbosity::Verbose, lines);
@@ -4322,7 +4327,7 @@ async fn execute_acp(
         output_tokens: pty_result.output_tokens,
         cache_read_tokens: pty_result.cache_read_tokens,
         cache_write_tokens: pty_result.cache_write_tokens,
-        context_window: resolve_context_window(config),
+        context_window,
         context_tokens,
         num_turns: pty_result.num_turns,
     })
@@ -4380,7 +4385,8 @@ async fn execute_pty(
     // downstream renderers can show `Context: NN% (KK/200K)`. Re-resolved each
     // call because the executor instance may be reused across iterations and
     // the user may flip `event_loop.context_window_tokens` between runs.
-    exec.set_context_window(resolve_context_window(config));
+    let context_window = context_window_for_backend(config, backend_name);
+    exec.set_context_window(context_window);
 
     // Enter raw mode for interactive mode to capture keystrokes
     // Skip if TUI is connected - TUI owns raw mode and will manage it
@@ -4477,7 +4483,7 @@ async fn execute_pty(
                 output_tokens: pty_result.output_tokens,
                 cache_read_tokens: pty_result.cache_read_tokens,
                 cache_write_tokens: pty_result.cache_write_tokens,
-                context_window: resolve_context_window(config),
+                context_window,
                 context_tokens,
                 num_turns: pty_result.num_turns,
             })
@@ -6340,6 +6346,17 @@ mod tests {
         };
 
         assert_eq!(context_tokens_from_pty_result(&pty_result), 90_000);
+    }
+
+    #[test]
+    fn test_context_window_for_backend_uses_effective_hat_backend() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "kiro".to_string();
+        config.event_loop.context_window_tokens = None;
+
+        assert_eq!(context_window_for_backend(&config, "kiro"), 0);
+        assert_eq!(context_window_for_backend(&config, "pi"), 200_000);
+        assert_eq!(context_window_for_backend(&config, "claude"), 200_000);
     }
 
     #[test]

@@ -107,7 +107,7 @@ Duration: 12345ms | Est. cost: $0.0526 | Turns: 3 | Context: 45% (90K/200K)
 
 Changes:
 - Add `context_window: u64` and `context_tokens: u64` to both structs (spec §7.5, §7.6).
-- `context_tokens` is computed once at `ExecutionOutcome` construction: `input_tokens + cache_read_tokens + cache_write_tokens`.
+- `context_tokens` is computed once at `ExecutionOutcome` construction from the adapter-reported live input peak (`input_tokens`). Do not add cache fields again; adapters fold cache occupancy into the reported peak where needed.
 - Update **all three** `ExecutionOutcome` construction sites in `loop_runner.rs` (grep confirms roughly lines 1782-1794, 4214-4223, 4359-4368 at time of spec authoring — find them via `ExecutionOutcome {` in current tree; do not trust the line numbers blindly).
 - `JsonRpcStreamHandler::on_complete` forwards both fields from `SessionResult` into `RpcEvent::IterationEnd`.
 

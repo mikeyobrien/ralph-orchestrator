@@ -26,7 +26,7 @@ The `Context:` column is appended only when `context_window > 0` and `used > 0`.
 3. Extend `SessionResult` with `context_window: u64`. Reinterpret `input_tokens` as **peak across turns** (not cumulative sum).
 4. Render `Context: NN% (USED_K/MAX_K)` in `PrettyStreamHandler`, `ConsoleStreamHandler` (verbose), and `TuiStreamHandler` via a shared `format_session_summary` helper.
 5. Add `context_window_tokens: Option<u64>` to `EventLoopConfig`; resolve to 200_000 default for claude/pi and 0 (suppress display) for other backends.
-6. Track per-hat peak `(input + cache_read + cache_write)` tokens in `LoopState` for future dashboarding. No rendering of per-hat data in this feature.
+6. Track per-hat peak live context tokens in `LoopState` for future dashboarding. No rendering of per-hat data in this feature.
 7. Emit a synthetic `iteration.summary` event to `events.jsonl` with a stable JSON payload. Extend `RpcEvent::IterationEnd` with `context_window` and `context_tokens` so RPC consumers see it.
 
 ## 3. Non-Goals
@@ -44,7 +44,7 @@ The `Context:` column is appended only when `context_window > 0` and `used > 0`.
 
 - **Canonical location:** `.ralph/specs/context-window-utilization.md` (this file) and `.ralph/tasks/context-window-utilization.code-task.md`, per CLAUDE.md which designates `.ralph/specs/` and `.ralph/tasks/` as authoritative. Replaces stale `docs/specs/context-window-utilization.md` — delete the stale file in the implementation commit.
 - **`input_tokens` semantics change from "cumulative sum" to "peak across turns"** for both Claude and Pi. Every Claude `Assistant` event's `message.usage.input_tokens` already represents the full prompt context for that turn; the maximum across turns is the high-water mark of context occupancy. Pi reports per-turn deltas — we take `max(peak, turn.input + turn.cache_read)`. Output tokens remain a cumulative sum (they're generated content).
-- **Cache tokens count toward context occupancy.** `cache_read_input_tokens` and `cache_creation_input_tokens` are included in the numerator of the utilization percentage — they occupy real prompt space.
+- **Cache tokens count toward context occupancy.** Adapters must report a live input peak that includes cache occupancy where the provider reports cache separately. Downstream consumers use `context_tokens` as reported and must not add cache fields again.
 - **Flat 200K default with per-config override, not per-model lookup.** YAML stays clean; users with Sonnet 4.x `[1m]` override by setting `event_loop.context_window_tokens: 1_000_000`. Model-aware defaults are explicitly out of scope.
 - **Synthetic `iteration.summary` events.jsonl row, not schema change.** Zero churn on `EventRecord`; `ralph events --topic iteration.summary` works without code changes; rows only appear once per iteration (no bloat on per-event rows).
 - **Integer percentages, no decimals.** `45%`, not `45.3%`. Fractional precision isn't actionable for users. Overflow (`>100%`) renders verbatim, not clamped — signals a misconfigured window.
@@ -177,11 +177,11 @@ pub struct ExecutionOutcome {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub context_window: u64,           // NEW
-    pub context_tokens: u64,           // NEW = input + cache_read + cache_write
+    pub context_tokens: u64,           // NEW = adapter-reported live input peak
 }
 ```
 
-`context_tokens` is computed once at construction; downstream consumers never recompute. All three construction sites (lines ~1782-1794, ~4214-4223, ~4359-4368 at time of spec writing; verify in current tree) must be updated in lockstep.
+`context_tokens` is computed once at construction from the adapter-reported live input peak; downstream consumers never recompute or add cache fields again. All three construction sites (lines ~1782-1794, ~4214-4223, ~4359-4368 at time of spec writing; verify in current tree) must be updated in lockstep.
 
 ### 7.6 `crates/ralph-proto/src/json_rpc.rs::RpcEvent::IterationEnd`
 
@@ -259,7 +259,7 @@ fn format_session_summary(r: &SessionResult) -> String {
 
 Example outputs:
 
-| context_window | used (sum of input+cache_read+cache_write) | Rendered suffix |
+| context_window | used (`context_tokens`) | Rendered suffix |
 |---|---|---|
 | `0` | any | *(suffix omitted — base line only)* |
 | `200_000` | `0` | *(suffix omitted)* |

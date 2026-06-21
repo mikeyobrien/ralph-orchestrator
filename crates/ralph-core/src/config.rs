@@ -958,10 +958,18 @@ pub struct EventLoopConfig {
 /// 2. Backend default: `claude` | `pi` → `200_000`.
 /// 3. Unknown backends → `0` (suppresses the `Context:` suffix downstream).
 pub fn resolve_context_window(cfg: &RalphConfig) -> u64 {
+    resolve_context_window_for_backend(cfg, cfg.cli.backend.as_str())
+}
+
+/// Resolves the context-window ceiling for an already-selected backend.
+///
+/// Use this in hat execution paths where the effective backend may differ from
+/// `cli.backend` because of per-hat backend configuration.
+pub fn resolve_context_window_for_backend(cfg: &RalphConfig, backend: &str) -> u64 {
     if let Some(n) = cfg.event_loop.context_window_tokens {
         return n;
     }
-    match cfg.cli.backend.as_str() {
+    match backend {
         "claude" | "pi" => 200_000,
         _ => 0,
     }
@@ -2214,6 +2222,27 @@ mod tests {
         config.cli.backend = "kiro".to_string();
         config.event_loop.context_window_tokens = Some(128_000);
         assert_eq!(resolve_context_window(&config), 128_000);
+    }
+
+    #[test]
+    fn test_resolve_context_window_for_effective_hat_backend() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "kiro".to_string();
+        config.event_loop.context_window_tokens = None;
+
+        assert_eq!(resolve_context_window(&config), 0);
+        assert_eq!(resolve_context_window_for_backend(&config, "pi"), 200_000);
+        assert_eq!(
+            resolve_context_window_for_backend(&config, "claude"),
+            200_000
+        );
+        assert_eq!(resolve_context_window_for_backend(&config, "gemini"), 0);
+
+        config.event_loop.context_window_tokens = Some(1_000_000);
+        assert_eq!(
+            resolve_context_window_for_backend(&config, "gemini"),
+            1_000_000
+        );
     }
 
     #[test]

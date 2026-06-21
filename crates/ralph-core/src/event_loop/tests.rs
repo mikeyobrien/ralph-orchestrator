@@ -308,6 +308,15 @@ fn test_persisted_loop_state_round_trips_iteration_cost_and_last_hat() {
     event_loop.state.iteration = 7;
     event_loop.state.cumulative_cost = 1.23;
     event_loop.state.last_hat = Some(HatId::new("builder"));
+    event_loop
+        .state
+        .record_iteration_tokens(&HatId::new("builder"), 12_000);
+    event_loop
+        .state
+        .record_iteration_tokens(&HatId::new("reviewer"), 30_000);
+    event_loop
+        .state
+        .record_iteration_tokens(&HatId::new("builder"), 7_000);
     event_loop.save_loop_state(&state_path).unwrap();
 
     let mut resumed = EventLoop::new(RalphConfig::default());
@@ -316,6 +325,24 @@ fn test_persisted_loop_state_round_trips_iteration_cost_and_last_hat() {
     assert_eq!(resumed.state.iteration, 7);
     assert!((resumed.state.cumulative_cost - 1.23).abs() < f64::EPSILON);
     assert_eq!(resumed.state.last_hat.as_ref().unwrap().as_str(), "builder");
+    assert_eq!(resumed.state.peak_input_tokens, 30_000);
+    assert_eq!(resumed.state.last_input_tokens, Some(7_000));
+    assert_eq!(
+        resumed
+            .state
+            .hat_peak_input_tokens
+            .get(&HatId::new("builder"))
+            .copied(),
+        Some(12_000)
+    );
+    assert_eq!(
+        resumed
+            .state
+            .hat_peak_input_tokens
+            .get(&HatId::new("reviewer"))
+            .copied(),
+        Some(30_000)
+    );
 }
 
 #[test]
@@ -4183,6 +4210,45 @@ hats:
     assert!(
         event_loop.state.completion_requested,
         "LOOP_COMPLETE should be accepted when no active hats (Ralph coordinating)"
+    );
+}
+
+#[test]
+fn test_iteration_summary_bypasses_scope_enforcement() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let yaml = r#"
+event_loop:
+  enforce_hat_scope: true
+hats:
+  builder:
+    name: "Builder"
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.state.last_active_hat_ids = vec![HatId::new("builder")];
+
+    write_event_to_jsonl(
+        &events_path,
+        "iteration.summary",
+        r#"{"context_window":200000,"context_tokens":88000}"#,
+    );
+
+    let processed = event_loop.process_events_from_jsonl().unwrap();
+
+    assert!(
+        !processed.had_events,
+        "iteration.summary is observer telemetry and should not route on the bus"
+    );
+    assert!(
+        !event_loop.has_pending_events(),
+        "iteration.summary must not produce a scope_violation event"
     );
 }
 

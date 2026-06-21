@@ -71,13 +71,13 @@ pub struct LoopState {
     /// Set to true when a loop.cancel event is detected.
     pub cancellation_requested: bool,
 
-    /// Session-scoped peak of `input + cache_read + cache_write` tokens across all iterations.
+    /// Session-scoped peak context-token count across all iterations.
     pub peak_input_tokens: u64,
 
-    /// Last iteration's `input + cache_read + cache_write` tokens (if any).
+    /// Last iteration's context-token count (if any).
     pub last_input_tokens: Option<u64>,
 
-    /// Per-hat session-scoped peak of `input + cache_read + cache_write` tokens.
+    /// Per-hat session-scoped peak context-token count.
     pub hat_peak_input_tokens: HashMap<HatId, u64>,
 
     /// Human guidance messages that must be acknowledged before completion.
@@ -153,7 +153,7 @@ impl LoopState {
 
     /// Record this iteration's context-token usage for the hat that ran it.
     ///
-    /// `tokens` is the iteration's `input + cache_read + cache_write` sum.
+    /// `tokens` is the iteration's adapter-reported live context occupancy.
     /// No-op when `tokens == 0` (ACP / non-token backends suppressed).
     /// Peaks are session-scoped — they never reset on iteration boundaries.
     pub fn record_iteration_tokens(&mut self, hat: &HatId, tokens: u64) {
