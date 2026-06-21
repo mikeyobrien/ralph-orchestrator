@@ -13,7 +13,10 @@
 //! - `prune`: Clean up stale loops
 //! - `attach`: Open shell in worktree
 //! - `diff`: Show changes from merge-base
+//! - `publish-review`: Push a loop branch for remote review
+//! - `rebase`: Rebase loop branches onto a base branch without merging
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -65,6 +68,12 @@ pub enum LoopsCommands {
 
     /// Show diff of loop's changes from merge-base
     Diff(DiffArgs),
+
+    /// Push a completed loop branch to a remote and write a review summary
+    PublishReview(PublishReviewArgs),
+
+    /// Rebase reviewable loop branches onto a base branch without merging
+    Rebase(RebaseArgs),
 
     /// Merge a completed loop (or force retry)
     Merge(MergeArgs),
@@ -157,6 +166,50 @@ pub struct DiffArgs {
 }
 
 #[derive(Parser, Debug)]
+pub struct PublishReviewArgs {
+    /// Loop ID
+    pub loop_id: String,
+
+    /// Remote to push to
+    #[arg(long, default_value = "origin")]
+    pub remote: String,
+
+    /// Remote branch name (default: ralph/<loop-id>)
+    #[arg(long)]
+    pub remote_branch: Option<String>,
+
+    /// Base branch/ref to summarize against (default: origin HEAD/main, then local main/master)
+    #[arg(long)]
+    pub base: Option<String>,
+
+    /// Review summary path (default: .ralph/reviews/<loop-id>.md)
+    #[arg(long, value_name = "PATH")]
+    pub summary: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+pub struct RebaseArgs {
+    /// Loop ID. If omitted, rebases queued/needs-review loops and non-running ralph/* worktrees.
+    pub loop_id: Option<String>,
+
+    /// Base branch/ref to rebase onto (default: origin HEAD/main, then local main/master)
+    #[arg(long)]
+    pub base: Option<String>,
+
+    /// Remote to fetch from and push to
+    #[arg(long, default_value = "origin")]
+    pub remote: String,
+
+    /// Skip `git fetch <remote>` before rebasing
+    #[arg(long)]
+    pub no_fetch: bool,
+
+    /// Push rebased loop branches back to the remote with --force-with-lease
+    #[arg(long)]
+    pub push: bool,
+}
+
+#[derive(Parser, Debug)]
 pub struct MergeArgs {
     /// Loop ID
     pub loop_id: String,
@@ -192,6 +245,8 @@ pub fn execute(args: LoopsArgs, use_colors: bool) -> Result<()> {
         Some(LoopsCommands::Prune) => prune_stale(),
         Some(LoopsCommands::Attach(attach_args)) => attach_to_loop(attach_args),
         Some(LoopsCommands::Diff(diff_args)) => show_diff(diff_args),
+        Some(LoopsCommands::PublishReview(args)) => publish_review(args),
+        Some(LoopsCommands::Rebase(args)) => rebase_loops(args),
         Some(LoopsCommands::Merge(merge_args)) => merge_loop(merge_args),
         Some(LoopsCommands::Process) => process_queue(),
         Some(LoopsCommands::MergeButtonState(args)) => get_merge_button_state(args),
@@ -982,7 +1037,7 @@ fn show_diff(args: DiffArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let (loop_id, _worktree_path) = resolve_loop(&cwd, &args.loop_id)?;
 
-    let branch = format!("ralph/{}", loop_id);
+    let branch = loop_branch(&loop_id);
 
     // Check that branch exists.
     if !git_ref_exists(&cwd, &branch) {
@@ -1019,25 +1074,453 @@ fn show_diff(args: DiffArgs) -> Result<()> {
     Ok(())
 }
 
-fn default_diff_base_branch(cwd: &std::path::Path) -> String {
-    if let Some(output) = git_output(
-        cwd,
-        ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"],
-    ) {
-        let value = output.trim();
-        if let Some(base) = value.split('/').next_back() {
-            let direct = base.to_string();
-            let with_remote = format!("origin/{}", direct);
-            if git_ref_exists(cwd, &direct) {
-                return direct;
-            }
-            if git_ref_exists(cwd, &with_remote) {
-                return with_remote;
+/// Push a loop branch for remote review and write a local summary artifact.
+fn publish_review(args: PublishReviewArgs) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let (loop_id, worktree_path) = resolve_loop(&cwd, &args.loop_id)?;
+    ensure_loop_not_running(&cwd, &loop_id)?;
+
+    let branch = loop_branch(&loop_id);
+    if !git_ref_exists(&cwd, &branch) {
+        bail!("Branch '{}' not found", branch);
+    }
+
+    let base_branch = args
+        .base
+        .unwrap_or_else(|| default_review_base_branch(&cwd, &args.remote));
+    if !git_ref_exists(&cwd, &base_branch) {
+        bail!(
+            "Base branch '{}' not found in this repository. Pass --base <ref> to select a review base.",
+            base_branch
+        );
+    }
+
+    let remote_branch = args
+        .remote_branch
+        .as_deref()
+        .map(normalize_remote_branch)
+        .unwrap_or_else(|| branch.clone());
+    let summary_path = args
+        .summary
+        .unwrap_or_else(|| PathBuf::from(format!(".ralph/reviews/{loop_id}.md")));
+    let summary_path = absolutize(&cwd, summary_path);
+
+    push_branch_for_review(&cwd, &args.remote, &branch, &remote_branch)?;
+    write_review_summary(
+        &cwd,
+        &loop_id,
+        &branch,
+        &args.remote,
+        &remote_branch,
+        &base_branch,
+        worktree_path.as_deref().map(Path::new),
+        &summary_path,
+    )?;
+
+    println!(
+        "Published loop '{}' for review: {}/{}",
+        loop_id, args.remote, remote_branch
+    );
+    println!("Review summary: {}", summary_path.display());
+    Ok(())
+}
+
+/// Rebase one or more reviewable loop branches without merging them into the base branch.
+fn rebase_loops(args: RebaseArgs) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+
+    if !args.no_fetch {
+        fetch_remote(&cwd, &args.remote)?;
+    }
+
+    let base_branch = args
+        .base
+        .unwrap_or_else(|| default_review_base_branch(&cwd, &args.remote));
+    if !git_ref_exists(&cwd, &base_branch) {
+        bail!(
+            "Base branch '{}' not found in this repository. Pass --base <ref> or fetch the remote first.",
+            base_branch
+        );
+    }
+
+    let targets = if let Some(loop_id) = args.loop_id.as_deref() {
+        vec![reviewable_loop_for_id(&cwd, loop_id)?]
+    } else {
+        collect_reviewable_loops(&cwd)?
+    };
+
+    if targets.is_empty() {
+        println!("No reviewable loop branches found.");
+        return Ok(());
+    }
+
+    for target in &targets {
+        ensure_loop_not_running(&cwd, &target.loop_id)?;
+        rebase_loop_branch(&cwd, target, &base_branch)?;
+        if args.push {
+            push_rebased_branch(&cwd, &args.remote, &target.branch)?;
+        }
+    }
+
+    println!(
+        "Rebased {} loop branch(es) onto {}.",
+        targets.len(),
+        base_branch
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ReviewableLoop {
+    loop_id: String,
+    branch: String,
+    worktree_path: Option<PathBuf>,
+}
+
+fn reviewable_loop_for_id(cwd: &Path, id: &str) -> Result<ReviewableLoop> {
+    let (loop_id, worktree_path) = resolve_loop(cwd, id)?;
+    let branch = loop_branch(&loop_id);
+    if !git_ref_exists(cwd, &branch) {
+        bail!("Branch '{}' not found", branch);
+    }
+
+    Ok(ReviewableLoop {
+        loop_id,
+        branch,
+        worktree_path: worktree_path.map(PathBuf::from),
+    })
+}
+
+fn collect_reviewable_loops(cwd: &Path) -> Result<Vec<ReviewableLoop>> {
+    let mut targets = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    let queue = MergeQueue::new(cwd);
+    if let Ok(entries) = queue.list() {
+        for entry in entries {
+            if matches!(entry.state, MergeState::Queued | MergeState::NeedsReview) {
+                let worktree_path = find_loop_worktree_path(cwd, &entry.loop_id);
+                add_reviewable_loop(cwd, &entry.loop_id, worktree_path, &mut targets, &mut seen);
             }
         }
     }
 
-    for candidate in ["origin/main", "main", "origin/master", "master"] {
+    let active_loop_ids: BTreeSet<String> = LoopRegistry::new(cwd)
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| entry.is_alive())
+        .map(|entry| entry.id)
+        .collect();
+
+    for worktree in list_ralph_worktrees(cwd).unwrap_or_default() {
+        if !worktree.branch.starts_with("ralph/") {
+            continue;
+        }
+
+        let loop_id = worktree.branch.trim_start_matches("ralph/");
+        if active_loop_ids.contains(loop_id) {
+            continue;
+        }
+
+        add_reviewable_loop(cwd, loop_id, Some(worktree.path), &mut targets, &mut seen);
+    }
+
+    Ok(targets)
+}
+
+fn find_loop_worktree_path(cwd: &Path, loop_id: &str) -> Option<PathBuf> {
+    let branch = loop_branch(loop_id);
+    list_ralph_worktrees(cwd)
+        .ok()?
+        .into_iter()
+        .find_map(|worktree| (worktree.branch == branch).then_some(worktree.path))
+}
+
+fn find_loop_worktree_path_string(cwd: &Path, loop_id: &str) -> Option<String> {
+    find_loop_worktree_path(cwd, loop_id).map(|path| path.to_string_lossy().to_string())
+}
+
+fn add_reviewable_loop(
+    cwd: &Path,
+    loop_id: &str,
+    worktree_path: Option<PathBuf>,
+    targets: &mut Vec<ReviewableLoop>,
+    seen: &mut BTreeSet<String>,
+) {
+    if !seen.insert(loop_id.to_string()) {
+        return;
+    }
+
+    let branch = loop_branch(loop_id);
+    if !git_ref_exists(cwd, &branch) {
+        return;
+    }
+
+    targets.push(ReviewableLoop {
+        loop_id: loop_id.to_string(),
+        branch,
+        worktree_path,
+    });
+}
+
+fn rebase_loop_branch(cwd: &Path, target: &ReviewableLoop, base_branch: &str) -> Result<()> {
+    println!(
+        "Rebasing loop '{}' ({}) onto {}...",
+        target.loop_id, target.branch, base_branch
+    );
+
+    if let Some(worktree_path) = &target.worktree_path {
+        let checked_out = current_branch(worktree_path);
+        if checked_out.as_deref() != Some(target.branch.as_str()) {
+            let actual = checked_out.unwrap_or_else(|| "<detached-or-unknown>".to_string());
+            bail!(
+                "Refusing to rebase loop '{}' in worktree {}: expected branch {}, found {}.",
+                target.loop_id,
+                worktree_path.display(),
+                target.branch,
+                actual
+            );
+        }
+
+        run_git_checked(
+            worktree_path,
+            &["rebase", base_branch],
+            &format!(
+                "Failed to rebase loop '{}' in worktree {}",
+                target.loop_id,
+                worktree_path.display()
+            ),
+        )
+    } else if current_branch(cwd).as_deref() == Some(target.branch.as_str()) {
+        run_git_checked(
+            cwd,
+            &["rebase", base_branch],
+            &format!("Failed to rebase loop '{}'", target.loop_id),
+        )
+    } else {
+        let rebase_root = cwd.join(".worktrees").join(".rebase");
+        std::fs::create_dir_all(&rebase_root)
+            .with_context(|| format!("Failed to create {}", rebase_root.display()))?;
+        let temp = tempfile::Builder::new()
+            .prefix(&format!("{}-", target.loop_id))
+            .tempdir_in(&rebase_root)
+            .context("Failed to create temporary rebase worktree directory")?;
+        let temp_path = temp.keep();
+        let temp_path_arg = temp_path.to_string_lossy().to_string();
+        run_git_checked(
+            cwd,
+            &["worktree", "add", &temp_path_arg, &target.branch],
+            &format!(
+                "Failed to create temporary worktree for loop '{}'",
+                target.loop_id
+            ),
+        )?;
+        if let Err(err) = run_git_checked(
+            &temp_path,
+            &["rebase", base_branch],
+            &format!("Failed to rebase loop '{}'", target.loop_id),
+        ) {
+            bail!(
+                "{err}\nTemporary rebase worktree left at {}. Resolve with `git rebase --continue` there or abort with `git rebase --abort`.",
+                temp_path.display()
+            );
+        }
+        run_git_checked(
+            cwd,
+            &["worktree", "remove", "--force", &temp_path_arg],
+            &format!(
+                "Failed to remove temporary worktree for loop '{}'",
+                target.loop_id
+            ),
+        )?;
+        Ok(())
+    }
+}
+
+fn fetch_remote(cwd: &Path, remote: &str) -> Result<()> {
+    if !git_remote_exists(cwd, remote) {
+        bail!(
+            "Remote '{}' not found. Pass --no-fetch for local-only rebase or --remote <name>.",
+            remote
+        );
+    }
+
+    run_git_checked(
+        cwd,
+        &["fetch", remote],
+        &format!("Failed to fetch remote '{}'", remote),
+    )
+}
+
+fn push_branch_for_review(
+    cwd: &Path,
+    remote: &str,
+    branch: &str,
+    remote_branch: &str,
+) -> Result<()> {
+    if !git_remote_exists(cwd, remote) {
+        bail!("Remote '{}' not found", remote);
+    }
+
+    let refspec = format!("{branch}:refs/heads/{remote_branch}");
+    run_git_checked(
+        cwd,
+        &["push", "--set-upstream", remote, &refspec],
+        &format!("Failed to push branch '{}' to remote '{}'", branch, remote),
+    )
+}
+
+fn push_rebased_branch(cwd: &Path, remote: &str, branch: &str) -> Result<()> {
+    if !git_remote_exists(cwd, remote) {
+        bail!("Remote '{}' not found", remote);
+    }
+
+    let remote_branch = rebased_push_remote_branch(cwd, remote, branch);
+    let refspec = format!("{branch}:refs/heads/{remote_branch}");
+    run_git_checked(
+        cwd,
+        &["push", "--force-with-lease", remote, &refspec],
+        &format!(
+            "Failed to push rebased branch '{}' to remote '{}/{}'",
+            branch, remote, remote_branch
+        ),
+    )
+}
+
+fn rebased_push_remote_branch(cwd: &Path, remote: &str, branch: &str) -> String {
+    let remote_key = format!("branch.{branch}.remote");
+    let merge_key = format!("branch.{branch}.merge");
+    let upstream_remote = git_output(cwd, &["config", "--get", &remote_key])
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if upstream_remote.as_deref() == Some(remote)
+        && let Some(merge_ref) = git_output(cwd, &["config", "--get", &merge_key])
+    {
+        let merge_ref = merge_ref.trim();
+        if let Some(remote_branch) = merge_ref.strip_prefix("refs/heads/") {
+            return normalize_remote_branch(remote_branch);
+        }
+    }
+
+    branch.to_string()
+}
+
+fn write_review_summary(
+    cwd: &Path,
+    loop_id: &str,
+    branch: &str,
+    remote: &str,
+    remote_branch: &str,
+    base_branch: &str,
+    worktree_path: Option<&Path>,
+    summary_path: &Path,
+) -> Result<()> {
+    if let Some(parent) = summary_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create review summary directory {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let range = format!("{base_branch}..{branch}");
+    let diff_range = format!("{base_branch}...{branch}");
+    let commits = git_output_checked(cwd, &["log", "--oneline", &range])
+        .unwrap_or_else(|err| format!("Unavailable: {err}\n"));
+    let diff_stat = git_output_checked(cwd, &["diff", "--stat", &diff_range])
+        .unwrap_or_else(|err| format!("Unavailable: {err}\n"));
+    let head = git_output_checked(cwd, &["rev-parse", "--short", branch])
+        .unwrap_or_else(|_| "unknown\n".to_string());
+    let handoff_path = worktree_path
+        .map(|path| path.join(".ralph/agent/handoff.md"))
+        .filter(|path| path.exists());
+    let loop_summary_path = worktree_path
+        .map(|path| path.join(".ralph/agent/summary.md"))
+        .filter(|path| path.exists());
+
+    let mut content = String::new();
+    content.push_str(&format!("# Remote Review: {loop_id}\n\n"));
+    content.push_str(&format!(
+        "- **Local branch:** `{branch}`\n- **Remote branch:** `{remote}/{remote_branch}`\n- **Base:** `{base_branch}`\n- **HEAD:** `{}`\n- **Published:** `{}`\n",
+        head.trim(),
+        chrono::Utc::now().to_rfc3339()
+    ));
+    if let Some(path) = worktree_path {
+        content.push_str(&format!("- **Worktree:** `{}`\n", path.display()));
+    }
+    if let Some(path) = handoff_path {
+        content.push_str(&format!("- **Handoff:** `{}`\n", path.display()));
+    }
+    if let Some(path) = loop_summary_path {
+        content.push_str(&format!("- **Loop summary:** `{}`\n", path.display()));
+    }
+
+    content.push_str("\n## Review Commands\n\n");
+    content.push_str("```bash\n");
+    content.push_str(&format!("git fetch {remote}\n"));
+    content.push_str(&format!(
+        "git diff {base_branch}...{remote}/{remote_branch}\n"
+    ));
+    content.push_str(&format!(
+        "git log --oneline {base_branch}..{remote}/{remote_branch}\n"
+    ));
+    content.push_str("```\n\n");
+
+    content.push_str("## Commits\n\n");
+    if commits.trim().is_empty() {
+        content.push_str("_No commits beyond the selected base._\n");
+    } else {
+        content.push_str("```text\n");
+        content.push_str(commits.trim_end());
+        content.push_str("\n```\n");
+    }
+
+    content.push_str("\n## Changed Files\n\n");
+    if diff_stat.trim().is_empty() {
+        content.push_str("_No diff from the selected base._\n");
+    } else {
+        content.push_str("```text\n");
+        content.push_str(diff_stat.trim_end());
+        content.push_str("\n```\n");
+    }
+
+    std::fs::write(summary_path, content)
+        .with_context(|| format!("Failed to write review summary {}", summary_path.display()))
+}
+
+fn default_diff_base_branch(cwd: &std::path::Path) -> String {
+    default_review_base_branch(cwd, "origin")
+}
+
+fn default_review_base_branch(cwd: &std::path::Path, remote: &str) -> String {
+    let remote_head = format!("refs/remotes/{remote}/HEAD");
+    if let Some(output) = git_output(cwd, &["symbolic-ref", "-q", "--short", &remote_head]) {
+        let value = output.trim();
+        if git_ref_exists(cwd, value) {
+            return value.to_string();
+        }
+        if let Some(base) = value.split('/').next_back() {
+            let with_remote = format!("{remote}/{base}");
+            if git_ref_exists(cwd, &with_remote) {
+                return with_remote;
+            }
+            if git_ref_exists(cwd, base) {
+                return base.to_string();
+            }
+        }
+    }
+
+    let remote_main = format!("{remote}/main");
+    let remote_master = format!("{remote}/master");
+    for candidate in [
+        remote_main.as_str(),
+        "main",
+        remote_master.as_str(),
+        "master",
+    ] {
         if git_ref_exists(cwd, candidate) {
             return candidate.to_string();
         }
@@ -1050,11 +1533,27 @@ fn git_ref_exists(cwd: &std::path::Path, reference: &str) -> bool {
     Command::new("git")
         .args(["rev-parse", "--verify", "--quiet", reference])
         .current_dir(cwd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
 }
 
-fn git_output(cwd: &std::path::Path, args: [&str; 4]) -> Option<String> {
+fn git_remote_exists(cwd: &std::path::Path, remote: &str) -> bool {
+    Command::new("git")
+        .args(["remote", "get-url", remote])
+        .current_dir(cwd)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn current_branch(cwd: &std::path::Path) -> Option<String> {
+    git_output(cwd, &["branch", "--show-current"])
+        .map(|output| output.trim().to_string())
+        .filter(|branch| !branch.is_empty())
+}
+
+fn git_output(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(cwd)
@@ -1066,6 +1565,71 @@ fn git_output(cwd: &std::path::Path, args: [&str; 4]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn git_output_checked(cwd: &std::path::Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .with_context(|| format!("Failed to run git {}", args.join(" ")))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git {} failed: {}", args.join(" "), stderr.trim());
+    }
+}
+
+fn run_git_checked(cwd: &std::path::Path, args: &[&str], context: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .with_context(|| format!("{}: failed to run git {}", context, args.join(" ")))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    bail!("{}: {}", context, detail);
+}
+
+fn loop_branch(loop_id: &str) -> String {
+    format!("ralph/{loop_id}")
+}
+
+fn normalize_remote_branch(branch: &str) -> String {
+    branch
+        .strip_prefix("refs/heads/")
+        .unwrap_or(branch)
+        .to_string()
+}
+
+fn absolutize(cwd: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn ensure_loop_not_running(cwd: &Path, loop_id: &str) -> Result<()> {
+    if let Ok(Some(entry)) = LoopRegistry::new(cwd).get(loop_id)
+        && entry.is_alive()
+    {
+        bail!("Loop '{}' is still running. Stop it first.", loop_id);
+    }
+
+    Ok(())
 }
 
 fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
@@ -1215,6 +1779,11 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
         return Ok((entry.id, entry.worktree_path));
     }
 
+    let exact_branch = loop_branch(id);
+    if git_ref_exists(cwd, &exact_branch) {
+        return Ok((id.to_string(), find_loop_worktree_path_string(cwd, id)));
+    }
+
     // Try partial match (e.g., "a3f2" matches "ralph-20250124-143052-a3f2")
     if let Ok(entries) = registry.list() {
         for entry in entries {
@@ -1226,31 +1795,29 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
 
     // Try merge queue
     if let Ok(Some(entry)) = merge_queue.get_entry(id) {
-        // Look up worktree from worktrees list
-        let worktrees = list_ralph_worktrees(cwd).unwrap_or_default();
-        let wt_path = worktrees
-            .iter()
-            .find(|wt| wt.branch.ends_with(&entry.loop_id))
-            .map(|wt| wt.path.to_string_lossy().to_string());
-
-        return Ok((entry.loop_id, wt_path));
+        return Ok((
+            entry.loop_id.clone(),
+            find_loop_worktree_path_string(cwd, &entry.loop_id),
+        ));
     }
 
     // Try partial match in merge queue
     if let Ok(entries) = merge_queue.list() {
         for entry in entries {
             if entry.loop_id.ends_with(id) || entry.loop_id.contains(id) {
-                let worktrees = list_ralph_worktrees(cwd).unwrap_or_default();
-                let wt_path = worktrees
-                    .iter()
-                    .find(|wt| wt.branch.ends_with(&entry.loop_id))
-                    .map(|wt| wt.path.to_string_lossy().to_string());
-                return Ok((entry.loop_id, wt_path));
+                return Ok((
+                    entry.loop_id.clone(),
+                    find_loop_worktree_path_string(cwd, &entry.loop_id),
+                ));
             }
         }
     }
 
     // Try worktrees directly
+    if let Some(path) = find_loop_worktree_path_string(cwd, id) {
+        return Ok((id.to_string(), Some(path)));
+    }
+
     let worktrees = list_ralph_worktrees(cwd).unwrap_or_default();
     for wt in worktrees {
         if wt.branch.ends_with(id) || wt.branch.contains(id) {

@@ -10,7 +10,7 @@ When you start a Ralph loop:
 2. **Additional loops** automatically spawn into `.worktrees/<loop-id>/`
 3. **Each loop** has isolated events, tasks, and scratchpad
 4. **Memories are shared** — symlinked back to the main repo's `.agent/memories.md`
-5. **On completion**, worktree loops automatically spawn a merge-ralph to integrate changes
+5. **On completion**, worktree loops are preserved for manual handling by default, or queued for merge-ralph when auto-merge is enabled
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@ When you start a Ralph loop:
 │           ↓                    │           ↓                       │
 │     Primary loop               │  .worktrees/ralph-20250124-a3f2/  │
 │           ↓                    │           ↓                       │
-│     LOOP_COMPLETE              │     LOOP_COMPLETE → auto-merge    │
+│     LOOP_COMPLETE              │     LOOP_COMPLETE → review/merge  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -98,6 +98,15 @@ ralph loops history <id> --json    # Raw JSONL
 ralph loops diff <id>              # Full diff
 ralph loops diff <id> --stat       # Summary only
 
+# Push branch for remote review and write .ralph/reviews/<id>.md
+ralph loops publish-review <id> --remote origin --base origin/main
+
+# Rebase one loop branch onto an updated base without merging
+ralph loops rebase <id> --base origin/main
+
+# Rebase all queued/needs-review and non-running ralph/* worktree branches
+ralph loops rebase --base origin/main
+
 # Open shell in worktree
 ralph loops attach <id>
 
@@ -153,6 +162,31 @@ The workflow handles conflicts intelligently:
 1. **No conflicts**: Merge → Run tests → Clean up → Done
 2. **With conflicts**: Detect → AI resolves → Run tests → Clean up → Done
 3. **Unresolvable**: Abort → Mark for review → Keep worktree for manual fix
+
+## Remote Review Workflow
+
+If you want humans or external automation to review completed worktree branches without merging them into the base branch, leave auto-merge disabled and publish the loop branch:
+
+```bash
+ralph loops publish-review <loop-id> --remote origin --base origin/main
+```
+
+This pushes `ralph/<loop-id>` to the remote and writes `.ralph/reviews/<loop-id>.md` with the remote branch, base ref, commits, changed files, and any local handoff/summary artifact paths.
+
+When the central branch advances, rebase pending review branches without merging them:
+
+```bash
+# One loop
+ralph loops rebase <loop-id> --base origin/main
+
+# All reviewable loop branches
+ralph loops rebase --base origin/main
+
+# Also update the remote review branches after rewriting history
+ralph loops rebase --base origin/main --push
+```
+
+`ralph loops rebase` skips running registry entries. If a conflict occurs, Git leaves the affected worktree in rebase state for manual resolution with `git rebase --continue` or `git rebase --abort`.
 
 ## Conflict Resolution
 

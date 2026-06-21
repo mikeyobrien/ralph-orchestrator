@@ -295,12 +295,16 @@ ralph loops [OPTIONS] [COMMAND]
 - `prune`
 - `attach <loop-id>`
 - `diff <loop-id> [--stat]`
+- `publish-review <loop-id> [--remote <remote>] [--remote-branch <branch>] [--base <ref>] [--summary <path>]`
+- `rebase [loop-id] [--base <ref>] [--remote <remote>] [--no-fetch] [--push]`
 - `merge <loop-id> [--force]`
 - `process`
 - `merge-button-state <loop-id>`
 
 `ralph loops resume <loop-id>` writes a resume signal for suspended loops. It is idempotent:
 re-running the command reports that resume was already requested (or that the loop is not suspended).
+
+`ralph loops publish-review <loop-id>` pushes `ralph/<loop-id>` to a remote review branch and writes a local `.ralph/reviews/<loop-id>.md` summary. `ralph loops rebase` rebases one loop branch, or all queued/needs-review and non-running `ralph/*` worktree branches, onto the selected base without merging to that base.
 
 ### ralph hats
 
