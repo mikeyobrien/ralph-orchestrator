@@ -1101,6 +1101,79 @@ hats:
 }
 
 #[test]
+fn test_custom_hat_generated_instructions_respect_disabled_scratchpad() {
+    let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "review.changes_requested"]
+    publishes: ["build.task"]
+    scratchpad:
+      enabled: false
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Plan this task");
+
+    let prompt = event_loop.build_prompt(&HatId::new("planner")).unwrap();
+
+    assert!(prompt.contains("Analyze the task and create a plan."));
+    assert!(prompt.contains("Add fix tasks with `ralph tools task` and dispatch."));
+    assert!(
+        !prompt.to_ascii_lowercase().contains("scratchpad"),
+        "Disabled per-hat scratchpad config should suppress generated scratchpad instructions"
+    );
+}
+
+#[test]
+fn test_custom_hat_generated_instructions_name_custom_scratchpad_path() {
+    let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "review.changes_requested"]
+    publishes: ["build.task"]
+    scratchpad: ".ralph/agent/planner.md"
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Plan this task");
+
+    let prompt = event_loop.build_prompt(&HatId::new("planner")).unwrap();
+
+    assert!(prompt.contains(
+        "Analyze the task and create a plan in the scratchpad at `.ralph/agent/planner.md`."
+    ));
+    assert!(
+        prompt
+            .contains("Add fix tasks to the scratchpad at `.ralph/agent/planner.md` and dispatch.")
+    );
+}
+
+#[test]
+fn test_custom_hat_generated_instructions_inherit_default_scratchpad_behavior() {
+    let yaml = r#"
+hats:
+  planner:
+    name: "Planner"
+    triggers: ["task.start", "review.changes_requested"]
+    publishes: ["build.task"]
+"#;
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Plan this task");
+
+    let prompt = event_loop.build_prompt(&HatId::new("planner")).unwrap();
+
+    assert!(prompt.contains("Analyze the task and create a plan in the scratchpad."));
+    assert!(prompt.contains("Add fix tasks to scratchpad and dispatch."));
+    assert!(
+        !prompt.contains(".ralph/agent/scratchpad.md"),
+        "Inherited default behavior should keep the old wording without injecting the default path"
+    );
+}
+
+#[test]
 fn test_custom_hat_without_instructions_gets_default_behavior() {
     // Test that custom hats without instructions still work with build_custom_hat
     let yaml = r#"
