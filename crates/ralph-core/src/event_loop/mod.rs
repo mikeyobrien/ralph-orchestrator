@@ -21,6 +21,7 @@ use crate::text::floor_char_boundary;
 use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,6 +58,12 @@ pub struct PersistedLoopState {
     pub iteration: u32,
     pub total_cost_usd: f64,
     pub last_hat: Option<String>,
+    #[serde(default)]
+    pub peak_input_tokens: u64,
+    #[serde(default)]
+    pub last_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub hat_peak_input_tokens: HashMap<String, u64>,
 }
 
 /// Reason the event loop terminated.
@@ -475,6 +482,14 @@ impl EventLoop {
         &self.state
     }
 
+    /// Record this iteration's context-token usage for `hat`.
+    ///
+    /// Passthrough to `LoopState::record_iteration_tokens` — preserves the
+    /// `record_event` encapsulation precedent (callers don't need `&mut LoopState`).
+    pub fn record_iteration_tokens(&mut self, hat: &HatId, tokens: u64) {
+        self.state.record_iteration_tokens(hat, tokens);
+    }
+
     /// Returns the path used for durable `--continue` loop state.
     pub fn loop_state_path(&self) -> PathBuf {
         self.loop_context
@@ -493,6 +508,14 @@ impl EventLoop {
                 .last_hat
                 .as_ref()
                 .map(|hat| hat.as_str().to_string()),
+            peak_input_tokens: self.state.peak_input_tokens,
+            last_input_tokens: self.state.last_input_tokens,
+            hat_peak_input_tokens: self
+                .state
+                .hat_peak_input_tokens
+                .iter()
+                .map(|(hat, tokens)| (hat.as_str().to_string(), *tokens))
+                .collect(),
         }
     }
 
@@ -509,6 +532,13 @@ impl EventLoop {
         self.state.iteration = persisted.iteration;
         self.state.cumulative_cost = persisted.total_cost_usd;
         self.state.last_hat = persisted.last_hat.map(HatId::new);
+        self.state.peak_input_tokens = persisted.peak_input_tokens;
+        self.state.last_input_tokens = persisted.last_input_tokens;
+        self.state.hat_peak_input_tokens = persisted
+            .hat_peak_input_tokens
+            .into_iter()
+            .map(|(hat, tokens)| (HatId::new(hat), tokens))
+            .collect();
         Ok(())
     }
 
@@ -2418,12 +2448,21 @@ impl EventLoop {
             });
         }
 
+        // Drop orchestrator-synthetic observer rows (spec §10) before scope
+        // enforcement so Ralph's own summary telemetry cannot be mistaken for
+        // an out-of-scope agent-authored event.
+        let events: Vec<_> = result
+            .events
+            .into_iter()
+            .filter(|event| event.topic.as_str() != "iteration.summary")
+            .collect();
+
         // --- Scope enforcement: filter events against active hat's publishes ---
         // Only active when enforce_hat_scope is true in config (opt-in).
         let events = if self.config.event_loop.enforce_hat_scope {
             let active_hats = self.state.last_active_hat_ids.clone();
             let (in_scope, out_of_scope): (Vec<_>, Vec<_>) =
-                result.events.into_iter().partition(|event| {
+                events.into_iter().partition(|event| {
                     if active_hats.is_empty() {
                         return true; // Ralph coordinating — no scope restriction
                     }
@@ -2451,7 +2490,7 @@ impl EventLoop {
 
             in_scope
         } else {
-            result.events
+            events
         };
         // --- End scope enforcement ---
 

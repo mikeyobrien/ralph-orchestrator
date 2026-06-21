@@ -19,7 +19,7 @@ use ralph_core::{
     HookPayloadContextInput, HookPhaseEvent, HookRunRequest, HookRunResult, HookSuspendMode,
     LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record,
     SessionRecorder, SummaryWriter, SuspendStateRecord, SuspendStateStore, TerminationReason,
-    UrgentSteerStore,
+    UrgentSteerStore, resolve_context_window_for_backend,
 };
 use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
@@ -53,6 +53,17 @@ pub(crate) struct ExecutionOutcome {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
+    pub context_window: u64,
+    pub context_tokens: u64,
+    pub num_turns: u32,
+}
+
+fn context_tokens_from_pty_result(pty_result: &ralph_adapters::PtyExecutionResult) -> u64 {
+    pty_result.input_tokens
+}
+
+fn context_window_for_backend(config: &RalphConfig, backend_name: &str) -> u64 {
+    resolve_context_window_for_backend(config, backend_name)
 }
 
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
@@ -1826,6 +1837,9 @@ pub async fn run_loop_impl(
                     output_tokens: 0,
                     cache_read_tokens: 0,
                     cache_write_tokens: 0,
+                    context_window: context_window_for_backend(&config, &backend_name_for_timeout),
+                    context_tokens: 0,
+                    num_turns: 0,
                 })
             }
         };
@@ -1937,6 +1951,19 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
+        let iteration_duration_ms = iteration_started_at.elapsed().as_millis() as u64;
+        let summary_metrics = IterationSummaryMetrics {
+            duration_ms: iteration_duration_ms,
+            total_cost_usd: outcome.total_cost_usd,
+            num_turns: outcome.num_turns,
+            input_tokens: outcome.input_tokens,
+            output_tokens: outcome.output_tokens,
+            cache_read_tokens: outcome.cache_read_tokens,
+            cache_write_tokens: outcome.cache_write_tokens,
+            context_window: outcome.context_window,
+            context_tokens: outcome.context_tokens,
+        };
+
         let output = outcome.output;
         let success = outcome.success;
 
@@ -1948,7 +1975,6 @@ pub async fn run_loop_impl(
 
         // Emit RPC iteration_end event
         if let Some(ref tx) = rpc_event_tx {
-            let duration_ms = iteration_started_at.elapsed().as_millis() as u64;
             // Check if this iteration's output contains LOOP_COMPLETE
             let loop_complete_triggered = output.contains(&config.event_loop.completion_promise);
             let iteration_cost_usd = outcome.total_cost_usd;
@@ -1959,12 +1985,14 @@ pub async fn run_loop_impl(
             }
             let end_event = RpcEvent::IterationEnd {
                 iteration,
-                duration_ms,
+                duration_ms: iteration_duration_ms,
                 cost_usd: iteration_cost_usd,
                 input_tokens: outcome.input_tokens,
                 output_tokens: outcome.output_tokens,
                 cache_read_tokens: outcome.cache_read_tokens,
                 cache_write_tokens: outcome.cache_write_tokens,
+                context_window: outcome.context_window,
+                context_tokens: outcome.context_tokens,
                 loop_complete_triggered,
             };
             let _ = tx.try_send(end_event);
@@ -1993,6 +2021,12 @@ pub async fn run_loop_impl(
             &output,
             event_loop.registry(),
         );
+
+        // Emit synthetic iteration.summary row to events.jsonl (spec §10).
+        log_iteration_summary(&mut event_logger, iteration, summary_metrics);
+
+        // Update LoopState peak context-token tracking (spec §11).
+        event_loop.record_iteration_tokens(&hat_id, outcome.context_tokens);
 
         // Process output; cost must be added before termination checks so
         // max_cost applies across iterations and across --continue resumes.
@@ -4245,7 +4279,9 @@ async fn execute_acp(
     hat: &str,
     backend_name: &str,
 ) -> Result<ExecutionOutcome> {
-    let executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
+    let mut executor = AcpExecutor::new(backend.clone(), config.core.workspace_root.clone());
+    let context_window = context_window_for_backend(config, backend_name);
+    executor.set_context_window(context_window);
 
     let pty_result = if let Some(lines) = tui_lines {
         let mut handler = TuiStreamHandler::with_lines(verbosity == Verbosity::Verbose, lines);
@@ -4275,6 +4311,7 @@ async fn execute_acp(
         }
     };
 
+    let context_tokens = context_tokens_from_pty_result(&pty_result);
     let output = if pty_result.extracted_text.is_empty() {
         pty_result.stripped_output
     } else {
@@ -4290,6 +4327,9 @@ async fn execute_acp(
         output_tokens: pty_result.output_tokens,
         cache_read_tokens: pty_result.cache_read_tokens,
         cache_write_tokens: pty_result.cache_write_tokens,
+        context_window,
+        context_tokens,
+        num_turns: pty_result.num_turns,
     })
 }
 
@@ -4340,6 +4380,13 @@ async fn execute_pty(
     if tui_lines.is_some() {
         exec.set_tui_mode(true);
     }
+
+    // Resolved context-window ceiling (tokens) is threaded into SessionResult so
+    // downstream renderers can show `Context: NN% (KK/200K)`. Re-resolved each
+    // call because the executor instance may be reused across iterations and
+    // the user may flip `event_loop.context_window_tokens` between runs.
+    let context_window = context_window_for_backend(config, backend_name);
+    exec.set_context_window(context_window);
 
     // Enter raw mode for interactive mode to capture keystrokes
     // Skip if TUI is connected - TUI owns raw mode and will manage it
@@ -4415,6 +4462,7 @@ async fn execute_pty(
 
     match result {
         Ok(pty_result) => {
+            let context_tokens = context_tokens_from_pty_result(&pty_result);
             let termination = convert_termination_type(pty_result.termination, interactive);
 
             // Use extracted_text for event parsing when available (NDJSON backends like Claude),
@@ -4435,6 +4483,9 @@ async fn execute_pty(
                 output_tokens: pty_result.output_tokens,
                 cache_read_tokens: pty_result.cache_read_tokens,
                 cache_write_tokens: pty_result.cache_write_tokens,
+                context_window,
+                context_tokens,
+                num_turns: pty_result.num_turns,
             })
         }
         Err(e) => {
@@ -4523,6 +4574,60 @@ fn log_terminate_event(logger: &mut EventLogger, iteration: u32, event: &Event) 
 
     if let Err(e) = logger.log(&record) {
         warn!("Failed to log loop.terminate event: {}", e);
+    }
+}
+
+/// Metrics captured once per iteration and emitted as the synthetic
+/// `iteration.summary` events.jsonl row.
+#[derive(Clone, Copy)]
+struct IterationSummaryMetrics {
+    duration_ms: u64,
+    total_cost_usd: f64,
+    num_turns: u32,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+    context_window: u64,
+    context_tokens: u64,
+}
+
+/// Emits a synthetic `iteration.summary` event to events.jsonl once per iteration.
+///
+/// Payload fields are stable per spec §10 so downstream consumers
+/// (`ralph events --topic iteration.summary`, dashboards) can rely on them.
+fn log_iteration_summary(
+    logger: &mut EventLogger,
+    iteration: u32,
+    metrics: IterationSummaryMetrics,
+) {
+    let context_pct = if metrics.context_window > 0 {
+        metrics
+            .context_tokens
+            .saturating_mul(100)
+            .saturating_div(metrics.context_window)
+    } else {
+        0
+    };
+    let payload = serde_json::json!({
+        "duration_ms": metrics.duration_ms,
+        "cost_usd": metrics.total_cost_usd,
+        "num_turns": metrics.num_turns,
+        "input_tokens": metrics.input_tokens,
+        "output_tokens": metrics.output_tokens,
+        "cache_read_tokens": metrics.cache_read_tokens,
+        "cache_write_tokens": metrics.cache_write_tokens,
+        "context_window": metrics.context_window,
+        "context_tokens": metrics.context_tokens,
+        "context_pct": context_pct,
+    });
+    let event = Event::new(
+        "iteration.summary",
+        serde_json::to_string(&payload).unwrap_or_default(),
+    );
+    let record = EventRecord::new(iteration, "loop", &event, None::<&HatId>);
+    if let Err(e) = logger.log(&record) {
+        warn!("Failed to log iteration.summary event: {}", e);
     }
 }
 
@@ -6222,6 +6327,37 @@ mod tests {
     use std::ffi::OsStr;
     use std::sync::Arc;
     use std::sync::Mutex;
+
+    #[test]
+    fn test_context_tokens_from_pty_result_uses_live_peak_without_cache_double_count() {
+        let pty_result = ralph_adapters::PtyExecutionResult {
+            output: String::new(),
+            stripped_output: String::new(),
+            extracted_text: String::new(),
+            success: true,
+            exit_code: Some(0),
+            termination: ralph_adapters::TerminationType::Natural,
+            total_cost_usd: 0.0,
+            input_tokens: 90_000,
+            output_tokens: 1_200,
+            cache_read_tokens: 30_000,
+            cache_write_tokens: 10_000,
+            num_turns: 3,
+        };
+
+        assert_eq!(context_tokens_from_pty_result(&pty_result), 90_000);
+    }
+
+    #[test]
+    fn test_context_window_for_backend_uses_effective_hat_backend() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "kiro".to_string();
+        config.event_loop.context_window_tokens = None;
+
+        assert_eq!(context_window_for_backend(&config, "kiro"), 0);
+        assert_eq!(context_window_for_backend(&config, "pi"), 200_000);
+        assert_eq!(context_window_for_backend(&config, "claude"), 200_000);
+    }
 
     #[test]
     fn test_resolve_loop_id_fresh_generates_new() {
@@ -12734,6 +12870,83 @@ EOF"#,
             .find(|record| record.topic == "task.start")
             .and_then(|record| record.triggered.clone());
         assert_eq!(triggered.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn test_log_iteration_summary_writes_payload() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("events.jsonl");
+        let mut logger = EventLogger::new(&log_path);
+
+        let metrics = IterationSummaryMetrics {
+            duration_ms: 12_345,
+            total_cost_usd: 0.0526,
+            num_turns: 3,
+            input_tokens: 88_000,
+            output_tokens: 1_200,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            context_window: 200_000,
+            context_tokens: 88_000,
+        };
+
+        log_iteration_summary(&mut logger, 42, metrics);
+
+        let content = std::fs::read_to_string(&log_path).expect("read events");
+        let records: Vec<EventRecord> = content
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record"))
+            .collect();
+
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.topic, "iteration.summary");
+        assert_eq!(record.hat, "loop");
+        assert_eq!(record.iteration, 42);
+        assert!(record.triggered.is_none());
+        assert!(record.blocked_count.is_none());
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&record.payload).expect("payload json");
+        assert_eq!(payload["duration_ms"], 12_345);
+        assert_eq!(payload["cost_usd"], 0.0526);
+        assert_eq!(payload["num_turns"], 3);
+        assert_eq!(payload["input_tokens"], 88_000);
+        assert_eq!(payload["output_tokens"], 1_200);
+        assert_eq!(payload["cache_read_tokens"], 0);
+        assert_eq!(payload["cache_write_tokens"], 0);
+        assert_eq!(payload["context_window"], 200_000);
+        assert_eq!(payload["context_tokens"], 88_000);
+        assert_eq!(payload["context_pct"], 44);
+    }
+
+    #[test]
+    fn test_log_iteration_summary_suppresses_pct_when_window_zero() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let log_path = temp_dir.path().join("events.jsonl");
+        let mut logger = EventLogger::new(&log_path);
+
+        let metrics = IterationSummaryMetrics {
+            duration_ms: 1,
+            total_cost_usd: 0.0,
+            num_turns: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            context_window: 0,
+            context_tokens: 0,
+        };
+
+        log_iteration_summary(&mut logger, 1, metrics);
+
+        let content = std::fs::read_to_string(&log_path).expect("read events");
+        let record: EventRecord =
+            serde_json::from_str(content.lines().next().expect("one line")).expect("record");
+        let payload: serde_json::Value =
+            serde_json::from_str(&record.payload).expect("payload json");
+        assert_eq!(payload["context_window"], 0);
+        assert_eq!(payload["context_pct"], 0);
     }
 
     #[test]

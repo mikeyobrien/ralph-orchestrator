@@ -143,6 +143,7 @@ impl<W: Write + Send> StreamHandler for JsonRpcStreamHandler<W> {
     }
 
     fn on_complete(&mut self, result: &SessionResult) {
+        let context_tokens = result.input_tokens;
         self.emit(RpcEvent::IterationEnd {
             iteration: self.iteration,
             duration_ms: result.duration_ms,
@@ -151,6 +152,8 @@ impl<W: Write + Send> StreamHandler for JsonRpcStreamHandler<W> {
             output_tokens: result.output_tokens,
             cache_read_tokens: result.cache_read_tokens,
             cache_write_tokens: result.cache_write_tokens,
+            context_window: result.context_window,
+            context_tokens,
             loop_complete_triggered: false, // Determined externally by orchestration
         });
     }
@@ -265,7 +268,11 @@ mod tests {
             total_cost_usd: 0.0054,
             num_turns: 3,
             is_error: false,
-            ..Default::default()
+            input_tokens: 90_000,
+            output_tokens: 1_200,
+            cache_read_tokens: 30_000,
+            cache_write_tokens: 10_000,
+            context_window: 200_000,
         };
         handler.on_complete(&result);
 
@@ -276,6 +283,12 @@ mod tests {
         assert_eq!(json["iteration"], 3);
         assert_eq!(json["duration_ms"], 5432);
         assert_eq!(json["cost_usd"], 0.0054);
+        assert_eq!(json["input_tokens"], 90_000);
+        assert_eq!(json["output_tokens"], 1_200);
+        assert_eq!(json["cache_read_tokens"], 30_000);
+        assert_eq!(json["cache_write_tokens"], 10_000);
+        assert_eq!(json["context_window"], 200_000);
+        assert_eq!(json["context_tokens"], 90_000);
     }
 
     #[test]

@@ -942,6 +942,37 @@ pub struct EventLoopConfig {
     /// `{hat_id}.scope_violation` diagnostic events. Defaults to false (permissive).
     #[serde(default)]
     pub enforce_hat_scope: bool,
+
+    /// Context window size in tokens. When `None`, resolved from backend
+    /// default (claude/pi = 200_000; other backends = 0, which suppresses the
+    /// `Context:` display suffix). Set explicitly to override the default
+    /// (e.g. Sonnet 4.x `[1m]` users: `1_000_000`).
+    #[serde(default)]
+    pub context_window_tokens: Option<u64>,
+}
+
+/// Resolves the context-window ceiling in tokens for this run.
+///
+/// Precedence:
+/// 1. `event_loop.context_window_tokens` (explicit user override).
+/// 2. Backend default: `claude` | `pi` → `200_000`.
+/// 3. Unknown backends → `0` (suppresses the `Context:` suffix downstream).
+pub fn resolve_context_window(cfg: &RalphConfig) -> u64 {
+    resolve_context_window_for_backend(cfg, cfg.cli.backend.as_str())
+}
+
+/// Resolves the context-window ceiling for an already-selected backend.
+///
+/// Use this in hat execution paths where the effective backend may differ from
+/// `cli.backend` because of per-hat backend configuration.
+pub fn resolve_context_window_for_backend(cfg: &RalphConfig, backend: &str) -> u64 {
+    if let Some(n) = cfg.event_loop.context_window_tokens {
+        return n;
+    }
+    match backend {
+        "claude" | "pi" => 200_000,
+        _ => 0,
+    }
 }
 
 fn default_prompt_file() -> String {
@@ -982,6 +1013,7 @@ impl Default for EventLoopConfig {
             required_events: Vec::new(),
             cancellation_promise: String::new(),
             enforce_hat_scope: false,
+            context_window_tokens: None,
         }
     }
 }
@@ -2149,6 +2181,68 @@ mod tests {
         assert!(!config.features.preflight.enabled);
         assert!(!config.features.preflight.strict);
         assert!(config.features.preflight.skip.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_context_window_explicit_override_wins() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "claude".to_string();
+        config.event_loop.context_window_tokens = Some(1_000_000);
+        assert_eq!(resolve_context_window(&config), 1_000_000);
+    }
+
+    #[test]
+    fn test_resolve_context_window_claude_default() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "claude".to_string();
+        config.event_loop.context_window_tokens = None;
+        assert_eq!(resolve_context_window(&config), 200_000);
+    }
+
+    #[test]
+    fn test_resolve_context_window_pi_default() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "pi".to_string();
+        config.event_loop.context_window_tokens = None;
+        assert_eq!(resolve_context_window(&config), 200_000);
+    }
+
+    #[test]
+    fn test_resolve_context_window_unknown_backend_is_zero() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "gemini".to_string();
+        config.event_loop.context_window_tokens = None;
+        assert_eq!(resolve_context_window(&config), 0);
+    }
+
+    #[test]
+    fn test_resolve_context_window_override_beats_unknown_backend() {
+        // Explicit override wins even for backends without a default window.
+        let mut config = RalphConfig::default();
+        config.cli.backend = "kiro".to_string();
+        config.event_loop.context_window_tokens = Some(128_000);
+        assert_eq!(resolve_context_window(&config), 128_000);
+    }
+
+    #[test]
+    fn test_resolve_context_window_for_effective_hat_backend() {
+        let mut config = RalphConfig::default();
+        config.cli.backend = "kiro".to_string();
+        config.event_loop.context_window_tokens = None;
+
+        assert_eq!(resolve_context_window(&config), 0);
+        assert_eq!(resolve_context_window_for_backend(&config, "pi"), 200_000);
+        assert_eq!(
+            resolve_context_window_for_backend(&config, "claude"),
+            200_000
+        );
+        assert_eq!(resolve_context_window_for_backend(&config, "gemini"), 0);
+
+        config.event_loop.context_window_tokens = Some(1_000_000);
+        assert_eq!(
+            resolve_context_window_for_backend(&config, "gemini"),
+            1_000_000
+        );
     }
 
     #[test]
