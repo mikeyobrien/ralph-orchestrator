@@ -4798,6 +4798,79 @@ impl ralph_proto::RobotService for RestartRequestRobotService {
     fn stop(self: Box<Self>) {}
 }
 
+struct DurableResponseRobotService {
+    write_guidance_after_response: bool,
+}
+
+impl ralph_proto::RobotService for DurableResponseRobotService {
+    fn send_question(&self, _payload: &str) -> anyhow::Result<i32> {
+        Ok(1)
+    }
+
+    fn wait_for_response(&self, events_path: &Path) -> anyhow::Result<Option<String>> {
+        write_event_to_jsonl(events_path, "human.response", "approved");
+        if self.write_guidance_after_response {
+            write_event_to_jsonl(events_path, "human.guidance", "keep going");
+        }
+        Ok(Some("approved".to_string()))
+    }
+
+    fn response_events_are_durable(&self) -> bool {
+        true
+    }
+
+    fn send_checkin(
+        &self,
+        _: u32,
+        _: Duration,
+        _: Option<&ralph_proto::CheckinContext>,
+    ) -> anyhow::Result<i32> {
+        Ok(0)
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        5
+    }
+
+    fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    fn stop(self: Box<Self>) {}
+}
+
+struct NonDurableResponseWithGuidanceRobotService;
+
+impl ralph_proto::RobotService for NonDurableResponseWithGuidanceRobotService {
+    fn send_question(&self, _payload: &str) -> anyhow::Result<i32> {
+        Ok(1)
+    }
+
+    fn wait_for_response(&self, events_path: &Path) -> anyhow::Result<Option<String>> {
+        write_event_to_jsonl(events_path, "human.guidance", "keep going");
+        Ok(Some("approved".to_string()))
+    }
+
+    fn send_checkin(
+        &self,
+        _: u32,
+        _: Duration,
+        _: Option<&ralph_proto::CheckinContext>,
+    ) -> anyhow::Result<i32> {
+        Ok(0)
+    }
+
+    fn timeout_secs(&self) -> u64 {
+        5
+    }
+
+    fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    fn stop(self: Box<Self>) {}
+}
+
 #[test]
 fn test_human_timeout_injects_timeout_event() {
     use tempfile::TempDir;
@@ -4822,6 +4895,193 @@ fn test_human_timeout_injects_timeout_event() {
     assert!(
         event_loop.has_pending_events(),
         "human.timeout event should be published on timeout"
+    );
+}
+
+#[test]
+fn test_robot_response_is_persisted_without_replay() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.set_robot_service(Box::new(MockRobotService {
+        timeout: 5,
+        should_timeout: false,
+    }));
+
+    write_event_to_jsonl(&events_path, "human.interact", "Please review this plan");
+    let _ = event_loop.process_events_from_jsonl();
+
+    let first_events = event_loop.bus().take_human_pending();
+    let response_events: Vec<_> = first_events
+        .iter()
+        .filter(|event| event.topic.as_str() == "human.response")
+        .collect();
+    assert_eq!(response_events.len(), 1);
+    assert_eq!(response_events[0].payload, "approved");
+
+    let persisted = std::fs::read_to_string(&events_path).expect("read events");
+    let persisted_responses = persisted
+        .lines()
+        .filter_map(|line| serde_json::from_str::<crate::event_reader::Event>(line).ok())
+        .filter(|event| event.topic.as_str() == "human.response")
+        .count();
+    assert_eq!(persisted_responses, 1);
+
+    let _ = event_loop.process_events_from_jsonl();
+    let replayed_events = event_loop.bus().take_human_pending();
+    assert!(
+        replayed_events.is_empty(),
+        "persisted robot response should not be replayed: {:?}",
+        replayed_events
+    );
+}
+
+#[test]
+fn test_non_durable_robot_response_skip_preserves_intervening_guidance() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.set_robot_service(Box::new(NonDurableResponseWithGuidanceRobotService));
+
+    write_event_to_jsonl(&events_path, "human.interact", "Please review this plan");
+    let _ = event_loop.process_events_from_jsonl();
+
+    let first_events = event_loop.bus().take_human_pending();
+    assert!(
+        first_events
+            .iter()
+            .any(|event| event.topic.as_str() == "human.guidance" && event.payload == "keep going"),
+        "guidance appended during robot wait should be published: {:?}",
+        first_events
+    );
+    assert_eq!(
+        first_events
+            .iter()
+            .filter(|event| event.topic.as_str() == "human.response")
+            .count(),
+        1,
+        "robot response should be published exactly once initially: {:?}",
+        first_events
+    );
+    assert_eq!(
+        event_loop.state.unacknowledged_guidance,
+        vec!["keep going".to_string()],
+        "guidance arriving during robot wait must enter guidance backpressure"
+    );
+
+    let _ = event_loop.process_events_from_jsonl();
+    let replayed_events = event_loop.bus().take_human_pending();
+    assert!(
+        !replayed_events
+            .iter()
+            .any(|event| event.topic.as_str() == "human.response"),
+        "orchestrator-appended response should not be replayed: {:?}",
+        replayed_events
+    );
+    assert!(
+        replayed_events.is_empty(),
+        "intervening guidance should have been consumed exactly once: {:?}",
+        replayed_events
+    );
+
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "done");
+    let _ = event_loop.process_events_from_jsonl();
+    assert_eq!(
+        event_loop.check_completion_event(),
+        None,
+        "completion must stay blocked until guidance from robot wait is acknowledged"
+    );
+}
+
+#[test]
+fn test_durable_robot_response_is_not_duplicated_or_replayed() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.set_robot_service(Box::new(DurableResponseRobotService {
+        write_guidance_after_response: false,
+    }));
+
+    write_event_to_jsonl(&events_path, "human.interact", "Please review this plan");
+    let _ = event_loop.process_events_from_jsonl();
+
+    let first_events = event_loop.bus().take_human_pending();
+    let response_events: Vec<_> = first_events
+        .iter()
+        .filter(|event| event.topic.as_str() == "human.response")
+        .collect();
+    assert_eq!(response_events.len(), 1);
+    assert_eq!(response_events[0].payload, "approved");
+
+    let persisted = std::fs::read_to_string(&events_path).expect("read events");
+    let persisted_responses = persisted
+        .lines()
+        .filter_map(|line| serde_json::from_str::<crate::event_reader::Event>(line).ok())
+        .filter(|event| event.topic.as_str() == "human.response")
+        .count();
+    assert_eq!(persisted_responses, 1);
+
+    let _ = event_loop.process_events_from_jsonl();
+    let replayed_events = event_loop.bus().take_human_pending();
+    assert!(
+        replayed_events.is_empty(),
+        "durably written robot response should not be replayed: {:?}",
+        replayed_events
+    );
+}
+
+#[test]
+fn test_durable_robot_response_skip_preserves_later_guidance() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let config = RalphConfig::default();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.set_robot_service(Box::new(DurableResponseRobotService {
+        write_guidance_after_response: true,
+    }));
+
+    write_event_to_jsonl(&events_path, "human.interact", "Please review this plan");
+    let _ = event_loop.process_events_from_jsonl();
+    let _ = event_loop.bus().take_human_pending();
+
+    let _ = event_loop.process_events_from_jsonl();
+    let later_events = event_loop.bus().take_human_pending();
+    assert!(
+        later_events
+            .iter()
+            .any(|event| event.topic.as_str() == "human.guidance" && event.payload == "keep going"),
+        "guidance appended after durable response should remain unread: {:?}",
+        later_events
+    );
+    assert!(
+        !later_events
+            .iter()
+            .any(|event| event.topic.as_str() == "human.response"),
+        "durable response should not be replayed: {:?}",
+        later_events
     );
 }
 

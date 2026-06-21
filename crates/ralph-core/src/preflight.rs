@@ -402,6 +402,10 @@ impl PreflightCheck for TelegramTokenCheck {
             return CheckResult::pass(self.name(), "RObot disabled (skipping)");
         }
 
+        if config.robot.mode.is_web() {
+            return CheckResult::pass(self.name(), "RObot web mode (skipping Telegram)");
+        }
+
         let Some(token) = config.robot.resolve_bot_token() else {
             return CheckResult::fail(
                 self.name(),
@@ -1306,6 +1310,20 @@ mod tests {
 
         assert_eq!(result.status, CheckStatus::Pass);
         assert!(result.label.contains("skipping"));
+    }
+
+    #[tokio::test]
+    async fn telegram_check_skips_in_web_mode() {
+        let mut config = RalphConfig::default();
+        config.robot.enabled = true;
+        config.robot.mode = crate::config::RobotMode::Web;
+        config.robot.timeout_seconds = Some(0);
+        let check = TelegramTokenCheck;
+
+        let result = check.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(result.label.contains("web mode"));
     }
 
     #[tokio::test]

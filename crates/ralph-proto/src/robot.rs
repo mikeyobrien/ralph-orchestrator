@@ -46,6 +46,12 @@ pub trait RobotService: Send + Sync {
     /// Returns `Ok(Some(response))` on response, `Ok(None)` on timeout.
     fn wait_for_response(&self, events_path: &Path) -> anyhow::Result<Option<String>>;
 
+    /// Whether `wait_for_response` consumes responses that are already durably
+    /// written to the active events file.
+    fn response_events_are_durable(&self) -> bool {
+        false
+    }
+
     /// Send a periodic check-in message.
     ///
     /// Returns `Ok(0)` if no recipient is configured (skipped silently),

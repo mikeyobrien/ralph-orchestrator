@@ -41,6 +41,7 @@ mod test_support;
 mod tools;
 mod wave;
 mod web;
+mod web_robot_service;
 
 use anyhow::{Context, Result};
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};

@@ -63,8 +63,9 @@ pub mod worktree;
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
     CliConfig, ConfigError, CoreConfig, EventLoopConfig, EventMetadata, FeaturesConfig, HatBackend,
-    HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig, ScratchpadConfig,
-    SkillOverride, SkillsConfig, resolve_context_window, resolve_context_window_for_backend,
+    HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig, RobotMode,
+    ScratchpadConfig, SkillOverride, SkillsConfig, resolve_context_window,
+    resolve_context_window_for_backend,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;

@@ -420,14 +420,15 @@ impl TelegramService {
     /// is configured (question is logged but not sent).
     pub fn send_question(&self, payload: &str) -> TelegramResult<i32> {
         let mut state = self.state_manager.load_or_default()?;
+        let question = display_question_payload(payload);
 
         let message_id = if let Some(chat_id) = state.chat_id {
-            self.send_with_retry(chat_id, payload)?
+            self.send_with_retry(chat_id, &question)?
         } else {
             warn!(
                 loop_id = %self.loop_id,
                 "No chat ID configured — human.interact question logged but not sent: {}",
-                payload
+                question
             );
             0
         };
@@ -626,9 +627,12 @@ impl TelegramService {
     /// returns the response message. On timeout, removes the pending question
     /// and returns `None`.
     pub fn wait_for_response(&self, events_path: &Path) -> TelegramResult<Option<String>> {
-        let timeout = Duration::from_secs(self.timeout_secs);
         let poll_interval = Duration::from_millis(250);
-        let deadline = Instant::now() + timeout;
+        let deadline = if self.timeout_secs == 0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_secs(self.timeout_secs))
+        };
 
         // Track file position to only read new lines
         let initial_pos = if events_path.exists() {
@@ -646,7 +650,9 @@ impl TelegramService {
         );
 
         loop {
-            if Instant::now() >= deadline {
+            if let Some(deadline) = deadline
+                && Instant::now() >= deadline
+            {
                 warn!(
                     loop_id = %self.loop_id,
                     timeout_secs = self.timeout_secs,
@@ -754,6 +760,30 @@ impl TelegramService {
     }
 }
 
+fn display_question_payload(payload: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return payload.to_string();
+    };
+
+    if let Some(text) = value.as_str() {
+        return text.to_string();
+    }
+
+    if let Some(map) = value.as_object() {
+        for key in ["question", "message", "text", "payload"] {
+            if let Some(value) = map.get(key) {
+                return match value {
+                    serde_json::Value::String(text) => text.clone(),
+                    serde_json::Value::Null => payload.to_string(),
+                    other => other.to_string(),
+                };
+            }
+        }
+    }
+
+    payload.to_string()
+}
+
 impl ralph_proto::RobotService for TelegramService {
     fn send_question(&self, payload: &str) -> anyhow::Result<i32> {
         Ok(TelegramService::send_question(self, payload)?)
@@ -761,6 +791,10 @@ impl ralph_proto::RobotService for TelegramService {
 
     fn wait_for_response(&self, events_path: &Path) -> anyhow::Result<Option<String>> {
         Ok(TelegramService::wait_for_response(self, events_path)?)
+    }
+
+    fn response_events_are_durable(&self) -> bool {
+        true
     }
 
     fn send_checkin(
@@ -838,6 +872,16 @@ mod tests {
     }
 
     #[test]
+    fn robot_service_reports_response_events_as_durable() {
+        let dir = TempDir::new().unwrap();
+        let service = test_service(&dir);
+
+        assert!(ralph_proto::RobotService::response_events_are_durable(
+            &service
+        ));
+    }
+
+    #[test]
     fn new_without_token_fails() {
         // Only run this test when the env var is not set,
         // to avoid needing unsafe remove_var
@@ -887,6 +931,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(service.loop_id(), "feature-auth");
+    }
+
+    #[test]
+    fn display_question_payload_extracts_structured_question() {
+        assert_eq!(
+            display_question_payload(r#"{"question":"Which plan?","hat":"planner"}"#),
+            "Which plan?"
+        );
+        assert_eq!(
+            display_question_payload("Plain question?"),
+            "Plain question?"
+        );
     }
 
     #[test]
@@ -1079,6 +1135,48 @@ mod tests {
         assert!(
             !state.pending_questions.contains_key("main"),
             "pending question should be removed after response"
+        );
+    }
+
+    #[test]
+    fn wait_for_response_zero_timeout_waits_until_response() {
+        let dir = TempDir::new().unwrap();
+        let service = TelegramService::new(
+            dir.path().to_path_buf(),
+            Some("token".to_string()),
+            None,
+            0,
+            "main".to_string(),
+        )
+        .unwrap();
+
+        let events_path = dir.path().join("events.jsonl");
+        std::fs::File::create(&events_path).unwrap();
+        service.send_question("Which plan?").unwrap();
+
+        let writer_path = events_path.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&writer_path)
+                .unwrap();
+            writeln!(
+                file,
+                r#"{{"topic":"human.response","payload":"Keep going","ts":"2026-01-30T00:00:00Z"}}"#
+            )
+            .unwrap();
+            file.flush().unwrap();
+        });
+
+        let start = Instant::now();
+        let result = service.wait_for_response(&events_path).unwrap();
+        writer.join().unwrap();
+
+        assert_eq!(result, Some("Keep going".to_string()));
+        assert!(
+            start.elapsed() >= Duration::from_millis(150),
+            "zero timeout should not return immediately"
         );
     }
 

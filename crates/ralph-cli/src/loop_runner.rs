@@ -41,6 +41,7 @@ use crate::display::{
 };
 use crate::process_management;
 use crate::rpc_stdin::{GuidanceMessage, RpcDispatcher, run_stdin_reader, run_stdout_emitter};
+use crate::web_robot_service::WebRobotService;
 use crate::{ColorMode, Verbosity};
 
 /// Outcome of executing a prompt via PTY or CLI executor.
@@ -5072,7 +5073,7 @@ pub async fn start_loop(
     .await
 }
 
-/// Creates a robot service (Telegram) for human-in-the-loop communication.
+/// Creates a robot service for human-in-the-loop communication.
 ///
 /// Called by `run_loop_impl` when `robot.enabled` is true and this is the primary loop.
 /// Returns `None` if the service cannot be created or started.
@@ -5081,13 +5082,27 @@ fn create_robot_service(
     context: &LoopContext,
 ) -> Option<Box<dyn ralph_proto::RobotService>> {
     let workspace_root = context.workspace().to_path_buf();
-    let bot_token = config.robot.resolve_bot_token();
-    let api_url = config.robot.resolve_api_url();
     let timeout_secs = config.robot.timeout_seconds.unwrap_or(300);
     let loop_id = context
         .loop_id()
         .map(String::from)
         .unwrap_or_else(|| "main".to_string());
+
+    if config.robot.mode.is_web() {
+        let service = WebRobotService::new(workspace_root, timeout_secs, loop_id);
+        if let Err(e) = service.start() {
+            warn!(error = %e, "Failed to start web robot service");
+            return None;
+        }
+        info!(
+            timeout_secs = service.timeout_secs(),
+            "Web robot human-in-the-loop service active"
+        );
+        return Some(Box::new(service));
+    }
+
+    let bot_token = config.robot.resolve_bot_token();
+    let api_url = config.robot.resolve_api_url();
 
     match ralph_telegram::TelegramService::new(
         workspace_root,
@@ -6427,6 +6442,29 @@ mod tests {
             "--continue without marker should fall back to generating new ID, got: {}",
             id
         );
+    }
+
+    #[test]
+    fn test_create_robot_service_uses_web_mode_without_telegram_token() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = ralph_core::LoopContext::primary(temp.path().to_path_buf());
+        let mut config = RalphConfig::default();
+        config.robot.enabled = true;
+        config.robot.mode = ralph_core::RobotMode::Web;
+        config.robot.timeout_seconds = Some(0);
+
+        let service = create_robot_service(&config, &ctx).expect("web robot service");
+        let question_id = service
+            .send_question("Need approval?")
+            .expect("send question through trait object");
+
+        assert_eq!(question_id, 1);
+        assert!(
+            temp.path().join(".ralph/api/robot-question.json").exists(),
+            "web mode should write question file"
+        );
+
+        service.stop();
     }
 
     #[test]

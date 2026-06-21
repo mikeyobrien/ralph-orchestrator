@@ -1973,17 +1973,41 @@ impl HatConfig {
     }
 }
 
+/// RObot communication channel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RobotMode {
+    /// Use the Telegram-backed RObot service.
+    #[default]
+    Telegram,
+    /// Use JSON files in `.ralph/api/` for API-driven interaction.
+    Web,
+}
+
+impl RobotMode {
+    /// Returns true when the Telegram service should be used.
+    pub fn is_telegram(self) -> bool {
+        matches!(self, Self::Telegram)
+    }
+
+    /// Returns true when the file-backed web service should be used.
+    pub fn is_web(self) -> bool {
+        matches!(self, Self::Web)
+    }
+}
+
 /// RObot (Ralph-Orchestrator bot) configuration.
 ///
 /// Enables bidirectional communication between AI agents and humans
 /// during orchestration loops. When enabled, agents can emit `human.interact`
 /// events to request clarification (blocking the loop), and humans can
-/// send proactive guidance via Telegram.
+/// send proactive guidance.
 ///
 /// Example configuration:
 /// ```yaml
 /// RObot:
 ///   enabled: true
+///   mode: telegram
 ///   timeout_seconds: 300
 ///   checkin_interval_seconds: 120  # Optional: send status every 2 min
 ///   telegram:
@@ -1995,8 +2019,13 @@ pub struct RobotConfig {
     #[serde(default)]
     pub enabled: bool,
 
+    /// Communication channel to use. Defaults to Telegram for existing configs.
+    #[serde(default)]
+    pub mode: RobotMode,
+
     /// Timeout in seconds for waiting on human responses.
     /// Required when enabled (no default — must be explicit).
+    /// A value of 0 means wait indefinitely.
     pub timeout_seconds: Option<u64>,
 
     /// Interval in seconds between periodic check-in messages sent via Telegram.
@@ -2023,8 +2052,8 @@ impl RobotConfig {
             });
         }
 
-        // Bot token must be available from config, keychain, or env var
-        if self.resolve_bot_token().is_none() {
+        // Telegram mode needs a bot token from config, keychain, or env var.
+        if self.mode.is_telegram() && self.resolve_bot_token().is_none() {
             return Err(ConfigError::RobotMissingField {
                 field: "RObot.telegram.bot_token".to_string(),
                 hint: "Run `ralph bot onboard --telegram`, set RALPH_TELEGRAM_BOT_TOKEN env var, or set RObot.telegram.bot_token in config"
@@ -3511,6 +3540,7 @@ hooks:
     fn test_robot_config_defaults_disabled() {
         let config = RalphConfig::default();
         assert!(!config.robot.enabled);
+        assert_eq!(config.robot.mode, RobotMode::Telegram);
         assert!(config.robot.timeout_seconds.is_none());
         assert!(config.robot.telegram.is_none());
     }
@@ -3523,6 +3553,7 @@ agent: claude
 ";
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(!config.robot.enabled);
+        assert_eq!(config.robot.mode, RobotMode::Telegram);
         assert!(config.robot.timeout_seconds.is_none());
     }
 
@@ -3537,11 +3568,28 @@ RObot:
 "#;
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(config.robot.enabled);
+        assert_eq!(config.robot.mode, RobotMode::Telegram);
         assert_eq!(config.robot.timeout_seconds, Some(300));
         let telegram = config.robot.telegram.as_ref().unwrap();
         assert_eq!(telegram.bot_token, Some("123456:ABC-DEF".to_string()));
 
         // Validation should pass
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_config_web_mode_does_not_require_telegram() {
+        let yaml = r"
+RObot:
+  enabled: true
+  mode: web
+  timeout_seconds: 0
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.robot.enabled);
+        assert_eq!(config.robot.mode, RobotMode::Web);
+        assert_eq!(config.robot.timeout_seconds, Some(0));
+        assert!(config.robot.telegram.is_none());
         assert!(config.validate().is_ok());
     }
 
@@ -3582,6 +3630,7 @@ RObot:
         // Both timeout and token are missing, but timeout is checked first
         let robot = RobotConfig {
             enabled: true,
+            mode: RobotMode::Telegram,
             timeout_seconds: None,
             checkin_interval_seconds: None,
             telegram: None,
@@ -3604,6 +3653,7 @@ RObot:
         // forbid(unsafe_code) prevents env var manipulation in unit tests)
         let config = RobotConfig {
             enabled: true,
+            mode: RobotMode::Telegram,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
             telegram: Some(TelegramBotConfig {
@@ -3625,6 +3675,7 @@ RObot:
         // No config token and no telegram section
         let config = RobotConfig {
             enabled: true,
+            mode: RobotMode::Telegram,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
             telegram: None,
@@ -3643,6 +3694,7 @@ RObot:
         // Validation passes when bot_token is in config
         let robot = RobotConfig {
             enabled: true,
+            mode: RobotMode::Telegram,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
             telegram: Some(TelegramBotConfig {
@@ -3663,6 +3715,7 @@ RObot:
 
         let robot = RobotConfig {
             enabled: true,
+            mode: RobotMode::Telegram,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
             telegram: None,
@@ -3688,6 +3741,7 @@ RObot:
 
         let robot = RobotConfig {
             enabled: true,
+            mode: RobotMode::Telegram,
             timeout_seconds: Some(300),
             checkin_interval_seconds: None,
             telegram: Some(TelegramBotConfig {

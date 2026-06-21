@@ -22,7 +22,7 @@ use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -2506,7 +2506,7 @@ impl EventLoop {
 
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();
-        let completion_topic = self.config.event_loop.completion_promise.as_str();
+        let completion_topic = self.config.event_loop.completion_promise.clone();
         let cancellation_topic = self.config.event_loop.cancellation_promise.clone();
         let total_events = events.len();
         for (index, event) in events.into_iter().enumerate() {
@@ -2523,13 +2523,13 @@ impl EventLoop {
                 continue;
             }
 
-            if event.topic == "human.guidance" {
+            if event.topic.as_str() == "human.guidance" {
                 self.state.unacknowledged_guidance.push(payload.clone());
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
                 continue;
             }
 
-            if event.topic == "human.guidance.ack" {
+            if event.topic.as_str() == "human.guidance.ack" {
                 info!(
                     payload = %payload,
                     guidance_count = self.state.unacknowledged_guidance.len(),
@@ -2540,7 +2540,7 @@ impl EventLoop {
                 continue;
             }
 
-            if event.topic == completion_topic {
+            if event.topic.as_str() == completion_topic {
                 if index + 1 == total_events {
                     self.state.completion_requested = true;
                     self.diagnostics.log_orchestration(
@@ -2817,6 +2817,7 @@ impl EventLoop {
         // send the question and block until human.response or timeout.
         let mut response_event = None;
         let mut human_interact_context = None;
+        let mut events_arrived_during_robot_wait = Vec::new();
         let ask_human_idx = validated_events
             .iter()
             .position(|e| e.topic == "human.interact".into());
@@ -2829,15 +2830,27 @@ impl EventLoop {
                 Value::Object(map) => map,
                 _ => Map::new(),
             };
+            context
+                .entry("iteration".to_string())
+                .or_insert_with(|| Value::from(self.state.iteration));
+            context.entry("hat".to_string()).or_insert_with(|| {
+                ask_event
+                    .source
+                    .as_ref()
+                    .or(ask_event.target.as_ref())
+                    .map(|hat| Value::String(hat.as_str().to_string()))
+                    .unwrap_or_else(|| Value::String(self.get_active_hat_id().as_str().to_string()))
+            });
 
             if let Some(ref robot_service) = self.robot_service {
+                let robot_payload = Value::Object(context.clone()).to_string();
                 info!(
                     payload = %payload,
                     "human.interact event detected — sending question via robot service"
                 );
 
                 // Send the question (includes retry with exponential backoff)
-                let send_ok = match robot_service.send_question(&payload) {
+                let send_ok = match robot_service.send_question(&robot_payload) {
                     Ok(_message_id) => true,
                     Err(e) => {
                         warn!(
@@ -2885,7 +2898,7 @@ impl EventLoop {
                             self.loop_context
                                 .as_ref()
                                 .map(|ctx| ctx.events_path())
-                                .unwrap_or_else(|| PathBuf::from(".ralph/events.jsonl"))
+                                .unwrap_or_else(|| self.event_reader.path().to_path_buf())
                         });
 
                     match robot_service.wait_for_response(&events_path) {
@@ -2899,8 +2912,29 @@ impl EventLoop {
                                 Value::String("response".to_string()),
                             );
                             context.insert("response".to_string(), Value::String(response.clone()));
-                            // Create a human.response event to inject into the bus
-                            response_event = Some(Event::new("human.response", &response));
+                            let event = Event::new("human.response", &response);
+                            if robot_service.response_events_are_durable() {
+                                events_arrived_during_robot_wait.extend(
+                                    self.skip_consumed_robot_response_event(
+                                        &events_path,
+                                        &response,
+                                    ),
+                                );
+                            } else {
+                                match self.append_robot_response_event(&events_path, &event) {
+                                    Ok(events) => {
+                                        events_arrived_during_robot_wait.extend(events);
+                                    }
+                                    Err(error) => {
+                                        warn!(
+                                            error = %error,
+                                            path = %events_path.display(),
+                                            "Failed to record human.response event"
+                                        );
+                                    }
+                                }
+                            }
+                            response_event = Some(event);
                         }
                         Ok(None) => {
                             warn!(
@@ -2957,6 +2991,64 @@ impl EventLoop {
             }
 
             human_interact_context = Some(Value::Object(context));
+        }
+
+        let intervening_count = events_arrived_during_robot_wait.len();
+        for (index, event) in events_arrived_during_robot_wait.into_iter().enumerate() {
+            let payload = event.payload.clone();
+
+            if !cancellation_topic.is_empty() && event.topic.as_str() == cancellation_topic {
+                info!(
+                    payload = %payload,
+                    "loop.cancel event detected during robot wait — scheduling graceful termination"
+                );
+                self.state.cancellation_requested = true;
+                continue;
+            }
+
+            if event.topic.as_str() == "human.guidance" {
+                self.state.unacknowledged_guidance.push(payload);
+                validated_events.push(event);
+                continue;
+            }
+
+            if event.topic.as_str() == "human.guidance.ack" {
+                info!(
+                    payload = %payload,
+                    guidance_count = self.state.unacknowledged_guidance.len(),
+                    "human.guidance acknowledged during robot wait"
+                );
+                self.state.unacknowledged_guidance.clear();
+                validated_events.push(event);
+                continue;
+            }
+
+            if event.topic.as_str() == completion_topic {
+                if index + 1 == intervening_count {
+                    self.state.completion_requested = true;
+                    self.diagnostics.log_orchestration(
+                        self.state.iteration,
+                        "jsonl",
+                        crate::diagnostics::OrchestrationEvent::EventPublished {
+                            topic: event.topic.to_string(),
+                        },
+                    );
+                    info!(
+                        topic = %event.topic,
+                        "Completion event detected during robot wait"
+                    );
+                } else {
+                    warn!(
+                        topic = %event.topic,
+                        index = index,
+                        total_events = intervening_count,
+                        "Completion event during robot wait ignored because it was not the last event"
+                    );
+                }
+                continue;
+            }
+
+            validated_events.push(event);
         }
 
         let restart_requested = validated_events.iter().any(Self::is_restart_request_event)
@@ -3016,6 +3108,131 @@ impl EventLoop {
             human_interact_context,
             has_orphans,
         })
+    }
+
+    fn append_robot_response_event(
+        &mut self,
+        events_path: &Path,
+        event: &Event,
+    ) -> std::io::Result<Vec<Event>> {
+        if let Some(parent) = events_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let reader_position = self.event_reader.position();
+        let before_len = std::fs::metadata(events_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let line = Self::serialize_jsonl_event(event)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(events_path)?;
+        writeln!(file, "{line}")?;
+        file.flush()?;
+        let after_len = std::fs::metadata(events_path)?.len();
+
+        if self.event_reader.path() == events_path && self.event_reader.position() == before_len {
+            self.event_reader.set_position(after_len);
+            return Ok(Vec::new());
+        }
+
+        if self.event_reader.path() == events_path && reader_position < before_len {
+            let intervening_events =
+                Self::read_jsonl_events_between(events_path, reader_position, before_len)?;
+            self.event_reader.set_position(after_len);
+            return Ok(intervening_events);
+        }
+
+        Ok(Vec::new())
+    }
+
+    fn serialize_jsonl_event(event: &Event) -> std::io::Result<String> {
+        let mut value = serde_json::json!({
+            "topic": event.topic.as_str(),
+            "payload": event.payload,
+            "ts": chrono::Utc::now().to_rfc3339(),
+        });
+
+        if let Some(wave_id) = &event.wave_id {
+            value["wave_id"] = Value::String(wave_id.clone());
+        }
+        if let Some(wave_index) = event.wave_index {
+            value["wave_index"] = Value::from(wave_index);
+        }
+        if let Some(wave_total) = event.wave_total {
+            value["wave_total"] = Value::from(wave_total);
+        }
+
+        serde_json::to_string(&value).map_err(std::io::Error::other)
+    }
+
+    fn skip_consumed_robot_response_event(
+        &mut self,
+        events_path: &Path,
+        response: &str,
+    ) -> Vec<Event> {
+        if self.event_reader.path() != events_path {
+            return Vec::new();
+        }
+
+        let Ok(mut file) = std::fs::File::open(events_path) else {
+            return Vec::new();
+        };
+        let mut current_pos = self.event_reader.position();
+        if file.seek(SeekFrom::Start(current_pos)).is_err() {
+            return Vec::new();
+        }
+
+        let mut intervening_events = Vec::new();
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let Ok(line) = line else {
+                return intervening_events;
+            };
+            current_pos += line.len() as u64 + 1;
+
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let Ok(event) = serde_json::from_str::<crate::event_reader::Event>(&line) else {
+                continue;
+            };
+            if event.topic == "human.response" && event.payload.as_deref() == Some(response) {
+                self.event_reader.set_position(current_pos);
+                return intervening_events;
+            }
+            intervening_events.push(event.into());
+        }
+        intervening_events
+    }
+
+    fn read_jsonl_events_between(
+        events_path: &Path,
+        start: u64,
+        end: u64,
+    ) -> std::io::Result<Vec<Event>> {
+        let mut file = std::fs::File::open(events_path)?;
+        file.seek(SeekFrom::Start(start))?;
+
+        let reader = BufReader::new(file);
+        let mut current_pos = start;
+        let mut events = Vec::new();
+        for line in reader.lines() {
+            let line = line?;
+            current_pos += line.len() as u64 + 1;
+            if current_pos > end {
+                break;
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<crate::event_reader::Event>(&line) {
+                events.push(event.into());
+            }
+        }
+        Ok(events)
     }
 
     /// Process events from JSONL, partitioning wave events from regular events.
