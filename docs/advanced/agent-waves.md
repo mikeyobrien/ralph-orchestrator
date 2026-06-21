@@ -204,21 +204,12 @@ ralph run -c ralph.yml -H presets/wave-review.yml -p "Review the authentication 
 
 ## Diagnostics
 
-Wave execution emits structured diagnostics when `RALPH_DIAGNOSTICS=1`:
-
-| Event | Fields |
-|-------|--------|
-| `WaveStarted` | `wave_id`, `expected_total`, `worker_hat`, `concurrency` |
-| `WaveInstanceCompleted` | `wave_id`, `index`, `duration_ms`, `cost_usd` |
-| `WaveInstanceFailed` | `wave_id`, `index`, `error`, `duration_ms` |
-| `WaveCompleted` | `wave_id`, `total_results`, `total_failures`, `timed_out`, `duration_ms` |
+Wave progress is currently surfaced through the live RPC stream that feeds the
+terminal UI. `RALPH_DIAGNOSTICS=1` still writes standard orchestration
+diagnostics to `.ralph/diagnostics/*/orchestration.jsonl`, but per-worker wave
+progress is not persisted there yet.
 
 Wave IDs follow the format `w-<hex-nanos>-<pid>-<seq>` (e.g., `w-1a2b3c4d-12345-0`), combining a hex timestamp, process ID, and sequence number for uniqueness.
-
-```bash
-# View wave diagnostics
-jq 'select(.type | startswith("Wave"))' .ralph/diagnostics/*/orchestration.jsonl
-```
 
 ## TUI Progress and Drill-Down
 
@@ -242,7 +233,7 @@ Use waves when independent work items share the same loop context and should syn
 
 ## Current Limitations
 
-- **One wave per iteration** — If multiple waves are detected, only the lexicographically first `wave_id` is executed (deterministic tiebreak); remaining waves are deferred to subsequent iterations
+- **One wave per iteration** — If multiple waves are detected in the same event read, only the lexicographically first `wave_id` is executed (deterministic tiebreak), so emit one wave at a time
 - **No nested waves** — Workers cannot dispatch sub-waves
 - **Global backend fallback** — Workers use the global backend when the hat has no specific backend override
 - **Limited non-TUI observability** — The TUI shows live wave progress and worker drill-down, but the web dashboard and `ralph loops` listing do not yet expose comparable wave-worker progress/drill-down views
