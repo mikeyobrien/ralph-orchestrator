@@ -19,8 +19,10 @@ use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, trun
 use crate::skill_registry::SkillRegistry;
 use crate::text::floor_char_boundary;
 use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::path::PathBuf;
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -47,6 +49,14 @@ pub struct ProcessedEventsWithWaves {
     pub processed: ProcessedEvents,
     /// Wave events extracted before normal processing (have wave_id set).
     pub wave_events: Vec<crate::event_reader::Event>,
+}
+
+/// Durable subset of loop runtime state restored by `ralph run --continue`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PersistedLoopState {
+    pub iteration: u32,
+    pub total_cost_usd: f64,
+    pub last_hat: Option<String>,
 }
 
 /// Reason the event loop terminated.
@@ -465,6 +475,61 @@ impl EventLoop {
         &self.state
     }
 
+    /// Returns the path used for durable `--continue` loop state.
+    pub fn loop_state_path(&self) -> PathBuf {
+        self.loop_context
+            .as_ref()
+            .map(|ctx| ctx.ralph_dir().join("api/loop-state.json"))
+            .unwrap_or_else(|| PathBuf::from(".ralph/api/loop-state.json"))
+    }
+
+    /// Serializes the durable subset of runtime state.
+    pub fn persisted_loop_state(&self) -> PersistedLoopState {
+        PersistedLoopState {
+            iteration: self.state.iteration,
+            total_cost_usd: self.state.cumulative_cost,
+            last_hat: self
+                .state
+                .last_hat
+                .as_ref()
+                .map(|hat| hat.as_str().to_string()),
+        }
+    }
+
+    /// Restores persisted `--continue` state from disk if present.
+    pub fn restore_loop_state(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let raw = std::fs::read_to_string(path)?;
+        let persisted: PersistedLoopState = serde_json::from_str(&raw).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+        })?;
+        self.state.iteration = persisted.iteration;
+        self.state.cumulative_cost = persisted.total_cost_usd;
+        self.state.last_hat = persisted.last_hat.map(HatId::new);
+        Ok(())
+    }
+
+    /// Saves persisted `--continue` state to disk.
+    pub fn save_loop_state(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let payload = serde_json::to_string_pretty(&self.persisted_loop_state())?;
+        std::fs::write(path, payload)
+    }
+
+    /// Removes stale persisted loop state for a fresh run.
+    pub fn clear_loop_state(path: &std::path::Path) -> std::io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Resets the stale-loop topic counter.
     ///
     /// Call after processing wave results — multiple events with the same topic
@@ -803,6 +868,83 @@ impl EventLoop {
             // Find ralph in the bus's registered hats
             self.bus.hat_ids().find(|id| id.as_str() == "ralph")
         }
+    }
+
+    /// Replays persisted events needed to resume an interrupted/parked loop.
+    ///
+    /// Resume has two separate needs:
+    /// - all historical topics hydrate `seen_topics` so event-chain validation
+    ///   knows what happened before the process restarted;
+    /// - events appended after the last `loop.terminate` are republished to the
+    ///   in-memory bus so watchdog/human resume events trigger hats naturally.
+    ///
+    /// Events at or before the last `loop.terminate` are state history only and
+    /// must not be republished, otherwise `--continue` would rerun old work.
+    pub fn replay_resume_events_from_jsonl(&mut self) -> std::io::Result<ProcessedEvents> {
+        let path = self.event_reader.path().to_path_buf();
+        let mut historical_reader = EventReader::new(&path);
+        let result = historical_reader.read_new_events()?;
+
+        for event in &result.events {
+            self.state.seen_topics.insert(event.topic.clone());
+        }
+
+        let last_terminate_index = result
+            .events
+            .iter()
+            .rposition(|event| event.topic == "loop.terminate");
+        let last_terminate_line = if result.malformed.is_empty() {
+            None
+        } else {
+            Self::last_terminate_line_number(&path)?
+        };
+        let replay_events = match last_terminate_index {
+            Some(index) => result.events.into_iter().skip(index + 1).collect(),
+            None => Vec::new(),
+        };
+        let replay_malformed = match last_terminate_line {
+            Some(line_number) => result
+                .malformed
+                .into_iter()
+                .filter(|malformed| malformed.line_number > line_number)
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let processed = self.process_parse_result(crate::event_reader::ParseResult {
+            events: replay_events,
+            malformed: replay_malformed,
+        })?;
+
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            self.event_reader.set_position(metadata.len());
+        }
+
+        Ok(processed)
+    }
+
+    fn last_terminate_line_number(path: &Path) -> std::io::Result<Option<u64>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        let mut last_terminate = None;
+
+        for (index, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<crate::event_reader::Event>(&line)
+                && event.topic == "loop.terminate"
+            {
+                last_terminate = Some(index as u64 + 1);
+            }
+        }
+
+        Ok(last_terminate)
     }
 
     /// Advances the event reader to the current end of the events file.

@@ -231,6 +231,14 @@ pub async fn run_loop_impl(
 
     // Initialize event loop with context for proper path resolution
     let mut event_loop = EventLoop::with_context(config.clone(), ctx.clone());
+    let loop_state_path = event_loop.loop_state_path();
+    if resume {
+        if let Err(e) = event_loop.restore_loop_state(&loop_state_path) {
+            warn!("Failed to restore persisted loop state: {}", e);
+        }
+    } else if let Err(e) = EventLoop::clear_loop_state(&loop_state_path) {
+        warn!("Failed to clear stale persisted loop state: {}", e);
+    }
 
     // Inject robot service (Telegram) for human-in-the-loop communication
     if config.robot.enabled
@@ -338,6 +346,14 @@ pub async fn run_loop_impl(
     // Initialize event logger for debugging (uses context for path resolution)
     let mut event_logger = EventLogger::from_context(&ctx);
 
+    // On --continue, hydrate runtime state from the existing events file before
+    // appending this process's task.resume record. This preserves historical
+    // seen_topics and republishes watchdog/human resume events appended after
+    // the last loop.terminate without double-delivering the fresh task.resume.
+    if resume && let Err(e) = event_loop.replay_resume_events_from_jsonl() {
+        warn!("Failed to replay resume events from JSONL: {}", e);
+    }
+
     // Log initial event (use configured starting_event or default to task.start/task.resume)
     let default_start_topic = if resume { "task.resume" } else { "task.start" };
     let start_topic = config
@@ -435,7 +451,8 @@ pub async fn run_loop_impl(
             std::sync::Mutex::new(("unknown".to_string(), "Unknown".to_string())),
         );
         let rpc_state_completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let rpc_state_total_cost: Arc<std::sync::Mutex<f64>> = Arc::new(std::sync::Mutex::new(0.0));
+        let rpc_state_total_cost: Arc<std::sync::Mutex<f64>> =
+            Arc::new(std::sync::Mutex::new(event_loop.state().cumulative_cost));
 
         let rpc_state_iteration_clone = rpc_state_iteration.clone();
         let rpc_state_hat_clone = rpc_state_hat.clone();
@@ -1977,8 +1994,14 @@ pub async fn run_loop_impl(
             event_loop.registry(),
         );
 
-        // Process output
-        if let Some(reason) = event_loop.process_output(&hat_id, &output, success) {
+        // Process output; cost must be added before termination checks so
+        // max_cost applies across iterations and across --continue resumes.
+        event_loop.add_cost(outcome.total_cost_usd);
+        let termination = event_loop.process_output(&hat_id, &output, success);
+        if let Err(e) = event_loop.save_loop_state(&loop_state_path) {
+            warn!("Failed to persist loop state: {}", e);
+        }
+        if let Some(reason) = termination {
             // Per spec: Log "All done! {promise} detected." when completion promise found
             if reason == TerminationReason::CompletionPromise {
                 info!(
