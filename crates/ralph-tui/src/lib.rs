@@ -23,6 +23,7 @@
 //!    communicates via JSON lines over stdin/stdout. Start with [`Tui::spawn`].
 
 mod app;
+pub mod export;
 pub mod input;
 pub mod rpc_bridge;
 pub mod rpc_client;
@@ -204,6 +205,15 @@ impl Tui {
     #[must_use]
     pub fn with_termination_signal(mut self, terminated_rx: watch::Receiver<bool>) -> Self {
         self.terminated_rx = Some(terminated_rx);
+        self
+    }
+
+    /// Sets the workspace root used for TUI export artifacts.
+    #[must_use]
+    pub fn with_export_workspace_root(self, root: std::path::PathBuf) -> Self {
+        if let Ok(mut state) = self.state.lock() {
+            state.set_export_workspace_root(root);
+        }
         self
     }
 

@@ -1,7 +1,9 @@
 //! State management for the TUI.
 
+use crate::export::{ExportScope, IterationExport};
 use ralph_proto::{Event, HatId};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 // ============================================================================
@@ -113,6 +115,26 @@ pub enum GuidanceResult {
     Failed,
 }
 
+/// Result of exporting iteration buffers to disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportOutcome {
+    /// Export completed and wrote the given path.
+    Success { path: PathBuf },
+    /// Export failed with a user-facing message.
+    Failed { message: String },
+}
+
+/// Brief status shown after an export action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportFlash {
+    /// Which export action produced this status.
+    pub scope: ExportScope,
+    /// Export success or failure details.
+    pub outcome: ExportOutcome,
+    /// When the flash was created.
+    pub when: Instant,
+}
+
 /// Status of the background update check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
@@ -209,6 +231,10 @@ pub struct TuiState {
     pub update_status: UpdateStatus,
     /// Git branch for the workspace the TUI was launched from.
     current_branch: Option<String>,
+    /// Workspace root used for `.ralph/tui-exports`.
+    export_workspace_root: PathBuf,
+    /// Brief flash message after attempting an export.
+    pub export_flash: Option<ExportFlash>,
     /// Map of event topics to hat display information (for custom hats).
     /// Key: event topic (e.g., "review.security")
     /// Value: (HatId, display name including emoji)
@@ -323,6 +349,8 @@ impl TuiState {
             idle_timeout_remaining: None,
             update_status: UpdateStatus::Unknown,
             current_branch: None,
+            export_workspace_root: default_export_workspace_root(),
+            export_flash: None,
             hat_map: HashMap::new(),
             // Iteration management
             iterations: Vec::new(),
@@ -376,6 +404,23 @@ impl TuiState {
         self.current_branch.as_deref()
     }
 
+    /// Sets the workspace root used by TUI exports.
+    pub fn set_export_workspace_root(&mut self, root: impl Into<PathBuf>) {
+        self.export_workspace_root = root.into();
+    }
+
+    /// Returns the workspace root used by TUI exports.
+    pub fn export_workspace_root(&self) -> &Path {
+        &self.export_workspace_root
+    }
+
+    /// Returns a compact display path for an export artifact.
+    pub fn display_export_path(&self, path: &Path) -> String {
+        path.strip_prefix(&self.export_workspace_root)
+            .map(|relative| relative.display().to_string())
+            .unwrap_or_else(|_| path.display().to_string())
+    }
+
     /// Replaces the dynamic topic-to-hat mapping without resetting the rest of the state.
     pub fn set_hat_map(&mut self, hat_map: HashMap<String, (HatId, String)>) {
         self.hat_map = hat_map;
@@ -412,6 +457,8 @@ impl TuiState {
                 let saved_new_iteration_alert = self.new_iteration_alert.take();
                 let saved_pending_backend = self.pending_backend.clone();
                 let saved_current_branch = self.current_branch.clone();
+                let saved_export_workspace_root = self.export_workspace_root.clone();
+                let saved_export_flash = self.export_flash.clone();
                 let saved_guidance_next_queue = Arc::clone(&self.guidance_next_queue);
                 let saved_events_path = self.events_path.clone();
                 let saved_urgent_steer_path = self.urgent_steer_path.clone();
@@ -425,6 +472,8 @@ impl TuiState {
                 self.new_iteration_alert = saved_new_iteration_alert;
                 self.pending_backend = saved_pending_backend;
                 self.current_branch = saved_current_branch;
+                self.export_workspace_root = saved_export_workspace_root;
+                self.export_flash = saved_export_flash;
                 self.guidance_next_queue = saved_guidance_next_queue;
                 self.events_path = saved_events_path;
                 self.urgent_steer_path = saved_urgent_steer_path;
@@ -822,6 +871,101 @@ impl TuiState {
     }
 
     // ========================================================================
+    // Export Methods
+    // ========================================================================
+
+    /// Exports the currently viewed iteration buffer to `.ralph/tui-exports`.
+    pub fn export_current_iteration_to_disk(&mut self) -> bool {
+        let result = self
+            .current_export_buffer()
+            .ok_or_else(|| anyhow::anyhow!("no current iteration buffer to export"))
+            .and_then(IterationExport::from_buffer)
+            .and_then(|snapshot| {
+                crate::export::write_export(
+                    &self.export_workspace_root,
+                    ExportScope::Current,
+                    &[snapshot],
+                )
+            });
+
+        self.record_export_result(ExportScope::Current, result)
+    }
+
+    /// Exports all in-memory iteration buffers to `.ralph/tui-exports`.
+    pub fn export_all_iterations_to_disk(&mut self) -> bool {
+        let result = self.all_export_snapshots().and_then(|snapshots| {
+            crate::export::write_export(&self.export_workspace_root, ExportScope::All, &snapshots)
+        });
+
+        self.record_export_result(ExportScope::All, result)
+    }
+
+    fn current_export_buffer(&self) -> Option<&IterationBuffer> {
+        if self.wave_view_active {
+            self.current_wave_worker_buffer()
+        } else {
+            self.current_iteration()
+        }
+    }
+
+    fn all_export_snapshots(&self) -> anyhow::Result<Vec<IterationExport>> {
+        let mut snapshots = Vec::new();
+        for iteration in &self.iterations {
+            snapshots.push(IterationExport::from_buffer(iteration)?);
+            if let Some(wave) = &iteration.wave_info {
+                for worker in &wave.worker_buffers {
+                    snapshots.push(IterationExport::from_buffer(worker)?);
+                }
+            }
+        }
+
+        if let Some(wave) = &self.wave_active {
+            for worker in &wave.worker_buffers {
+                snapshots.push(IterationExport::from_buffer(worker)?);
+            }
+        }
+
+        Ok(snapshots)
+    }
+
+    fn record_export_result(
+        &mut self,
+        scope: ExportScope,
+        result: anyhow::Result<PathBuf>,
+    ) -> bool {
+        let ok = result.is_ok();
+        let outcome = match result {
+            Ok(path) => ExportOutcome::Success { path },
+            Err(error) => ExportOutcome::Failed {
+                message: error.to_string(),
+            },
+        };
+
+        self.export_flash = Some(ExportFlash {
+            scope,
+            outcome,
+            when: Instant::now(),
+        });
+        ok
+    }
+
+    /// Clears export flash if it has expired.
+    pub fn clear_expired_export_flash(&mut self) {
+        if let Some(flash) = &self.export_flash
+            && flash.when.elapsed() >= Duration::from_secs(4)
+        {
+            self.export_flash = None;
+        }
+    }
+
+    /// Returns active export flash if still within the display window.
+    pub fn active_export_flash(&self) -> Option<&ExportFlash> {
+        self.export_flash
+            .as_ref()
+            .filter(|flash| flash.when.elapsed() < Duration::from_secs(4))
+    }
+
+    // ========================================================================
     // Guidance Methods
     // ========================================================================
 
@@ -1183,6 +1327,24 @@ impl IterationBuffer {
     }
 }
 
+fn default_export_workspace_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("RALPH_WORKSPACE_ROOT") {
+        return PathBuf::from(root);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    discover_workspace_root(&cwd).unwrap_or(cwd)
+}
+
+fn discover_workspace_root(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if candidate.join(".ralph").is_dir() {
+            return Some(candidate.to_path_buf());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1523,6 +1685,74 @@ mod tests {
         assert_eq!(state.iteration, 1);
         assert_eq!(state.prev_iteration, 0);
         assert!(state.iteration_changed(), "should detect iteration change");
+    }
+
+    #[test]
+    fn discover_workspace_root_finds_ancestor_ralph_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let workspace = temp_dir.path().join("workspace");
+        let nested = workspace.join("src/module");
+        std::fs::create_dir_all(workspace.join(".ralph")).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(discover_workspace_root(&nested), Some(workspace));
+    }
+
+    #[test]
+    fn export_current_uses_visible_wave_worker_buffer() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut state = TuiState::new();
+        state.set_export_workspace_root(temp_dir.path());
+        state.start_new_iteration();
+        state
+            .current_iteration_mut()
+            .unwrap()
+            .append_line(ratatui::text::Line::raw("main iteration output"));
+
+        let mut wave = WaveInfo::new("Reviewer".to_string(), 2);
+        wave.worker_buffers[1].append_line(ratatui::text::Line::raw("visible worker output"));
+        state.wave_active = Some(wave);
+        state.wave_active_iteration_idx = Some(0);
+        state.enter_wave_view();
+        state.wave_view_index = 1;
+
+        assert!(state.export_current_iteration_to_disk());
+        let text = only_export_text(temp_dir.path());
+        assert!(text.contains("visible worker output"));
+        assert!(!text.contains("main iteration output"));
+    }
+
+    #[test]
+    fn export_all_includes_wave_worker_buffers() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut state = TuiState::new();
+        state.set_export_workspace_root(temp_dir.path());
+        state.start_new_iteration();
+        state
+            .current_iteration_mut()
+            .unwrap()
+            .append_line(ratatui::text::Line::raw("main iteration output"));
+
+        let mut wave = WaveInfo::new("Reviewer".to_string(), 1);
+        wave.worker_buffers[0].append_line(ratatui::text::Line::raw("worker output"));
+        state.wave_active = Some(wave);
+        state.wave_active_iteration_idx = Some(0);
+
+        assert!(state.export_all_iterations_to_disk());
+        let text = only_export_text(temp_dir.path());
+        assert!(text.contains("Iterations: 2"));
+        assert!(text.contains("main iteration output"));
+        assert!(text.contains("worker output"));
+    }
+
+    fn only_export_text(workspace_root: &Path) -> String {
+        let dir = crate::export::export_dir(workspace_root);
+        let entries = std::fs::read_dir(&dir)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        std::fs::read_to_string(entries[0].path()).unwrap()
     }
 
     #[test]

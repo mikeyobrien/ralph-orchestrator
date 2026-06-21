@@ -525,6 +525,7 @@ pub async fn run_loop_impl(
                 prompt: prompt_content.clone(),
                 max_iterations: Some(config.event_loop.max_iterations),
                 backend: config.cli.backend.clone(),
+                workspace_root: Some(ctx.workspace().to_string_lossy().to_string()),
                 started_at: rpc_state_started_at,
             };
             let _ = tx.try_send(started_event);
@@ -548,6 +549,7 @@ pub async fn run_loop_impl(
         let tui = Tui::new()
             .with_hat_map(hat_map)
             .with_termination_signal(terminated_rx)
+            .with_export_workspace_root(ctx.workspace().to_path_buf())
             .with_events_path(resolve_current_events_path(&ctx))
             .with_urgent_steer_path(urgent_steer_path.clone());
 

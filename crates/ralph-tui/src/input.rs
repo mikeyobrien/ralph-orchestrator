@@ -44,6 +44,10 @@ pub enum Action {
     EnterWaveView,
     /// Toggle mouse capture for wheel scrolling vs native text selection
     ToggleMouseMode,
+    /// Export the currently viewed iteration buffer to disk
+    ExportCurrentIteration,
+    /// Export every iteration buffer to disk
+    ExportAllIterations,
     /// Key not mapped to any action
     None,
 }
@@ -62,6 +66,8 @@ pub enum Action {
 /// - `n`: Next search match
 /// - `N`: Previous search match
 /// - `m`: Toggle mouse mode
+/// - `e`: Export current iteration
+/// - `E`: Export all iterations
 /// - `?`: Show help
 /// - `Esc`: Dismiss help/cancel search
 pub fn map_key(key: KeyEvent) -> Action {
@@ -93,6 +99,10 @@ pub fn map_key(key: KeyEvent) -> Action {
 
         // Mouse mode
         KeyCode::Char('m') => Action::ToggleMouseMode,
+
+        // Export
+        KeyCode::Char('e') => Action::ExportCurrentIteration,
+        KeyCode::Char('E') => Action::ExportAllIterations,
 
         // Help
         KeyCode::Char('?') => Action::ShowHelp,
@@ -227,7 +237,21 @@ mod tests {
         assert_eq!(map_key(key), Action::ToggleMouseMode);
     }
 
-    // AC18: Unknown Key Returns None
+    // AC18: e Exports Current Iteration
+    #[test]
+    fn e_returns_export_current_iteration() {
+        let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
+        assert_eq!(map_key(key), Action::ExportCurrentIteration);
+    }
+
+    // AC19: E Exports All Iterations
+    #[test]
+    fn shift_e_returns_export_all_iterations() {
+        let key = KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT);
+        assert_eq!(map_key(key), Action::ExportAllIterations);
+    }
+
+    // AC20: Unknown Key Returns None
     #[test]
     fn unknown_key_returns_none() {
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
