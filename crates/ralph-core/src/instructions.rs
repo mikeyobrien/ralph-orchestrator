@@ -5,9 +5,13 @@
 //! - 1, 2, 3: Workflow phases
 //! - 999+: Guardrails (higher = more important)
 
-use crate::config::{CoreConfig, EventMetadata};
+use crate::config::{CoreConfig, EventMetadata, ScratchpadConfig};
 use ralph_proto::Hat;
 use std::collections::HashMap;
+
+const DEFAULT_SCRATCHPAD_GUARDRAIL: &str = "Fresh context each iteration - scratchpad is memory";
+const DISABLED_SCRATCHPAD_GUARDRAIL: &str =
+    "Fresh context each iteration - runtime tasks and events are memory";
 
 /// Builds instructions for custom hats.
 ///
@@ -42,7 +46,59 @@ impl InstructionBuilder {
     ///
     /// This allows users to define custom events with custom behaviors,
     /// while still getting sensible defaults for standard events.
-    fn derive_instructions_from_contract(&self, hat: &Hat) -> String {
+    fn task_planning_behavior(scratchpad: &ScratchpadConfig) -> String {
+        if !scratchpad.enabled {
+            return "Analyze the task and create a plan.".to_string();
+        }
+
+        if scratchpad.path == ScratchpadConfig::default().path {
+            "Analyze the task and create a plan in the scratchpad.".to_string()
+        } else {
+            format!(
+                "Analyze the task and create a plan in the scratchpad at `{}`.",
+                scratchpad.path
+            )
+        }
+    }
+
+    fn changes_requested_behavior(scratchpad: &ScratchpadConfig) -> String {
+        if !scratchpad.enabled {
+            return "Add fix tasks with `ralph tools task` and dispatch.".to_string();
+        }
+
+        if scratchpad.path == ScratchpadConfig::default().path {
+            "Add fix tasks to scratchpad and dispatch.".to_string()
+        } else {
+            format!(
+                "Add fix tasks to the scratchpad at `{}` and dispatch.",
+                scratchpad.path
+            )
+        }
+    }
+
+    fn guardrails(&self, scratchpad: &ScratchpadConfig) -> String {
+        self.core
+            .guardrails
+            .iter()
+            .enumerate()
+            .map(|(i, guardrail)| {
+                let guardrail = if !scratchpad.enabled && guardrail == DEFAULT_SCRATCHPAD_GUARDRAIL
+                {
+                    DISABLED_SCRATCHPAD_GUARDRAIL
+                } else {
+                    guardrail
+                };
+                format!("{}. {guardrail}", 999 + i)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn derive_instructions_from_contract(
+        &self,
+        hat: &Hat,
+        scratchpad: &ScratchpadConfig,
+    ) -> String {
         let mut behaviors: Vec<String> = Vec::new();
 
         // Derive behaviors from triggers (what this hat responds to)
@@ -59,21 +115,26 @@ impl InstructionBuilder {
 
             // Fall back to built-in defaults for well-known events
             let default_behavior = match trigger_str {
-                "task.start" | "task.resume" => {
-                    Some("Analyze the task and create a plan in the scratchpad.")
+                "task.start" | "task.resume" => Some(Self::task_planning_behavior(scratchpad)),
+                "build.done" => {
+                    Some("Review the completed work and decide next steps.".to_string())
                 }
-                "build.done" => Some("Review the completed work and decide next steps."),
                 "build.blocked" => Some(
-                    "Analyze the blocker and decide how to unblock (simplify task, gather info, or escalate).",
+                    "Analyze the blocker and decide how to unblock (simplify task, gather info, or escalate)."
+                        .to_string(),
                 ),
                 "build.task" => Some(
-                    "Implement the assigned task. Follow existing patterns. Run backpressure (tests/lint/typecheck/audit/coverage/specs; mutation testing when configured). Commit atomically when tests pass.",
+                    "Implement the assigned task. Follow existing patterns. Run backpressure (tests/lint/typecheck/audit/coverage/specs; mutation testing when configured). Commit atomically when tests pass."
+                        .to_string(),
                 ),
                 "review.request" => Some(
-                    "Review the recent changes for correctness, tests, patterns, errors, and security.",
+                    "Review the recent changes for correctness, tests, patterns, errors, and security."
+                        .to_string(),
                 ),
-                "review.approved" => Some("Mark the task complete `[x]` and proceed to next task."),
-                "review.changes_requested" => Some("Add fix tasks to scratchpad and dispatch."),
+                "review.approved" => {
+                    Some("Mark the task complete `[x]` and proceed to next task.".to_string())
+                }
+                "review.changes_requested" => Some(Self::changes_requested_behavior(scratchpad)),
                 _ => None,
             };
 
@@ -99,12 +160,20 @@ impl InstructionBuilder {
 
             // Fall back to built-in defaults for well-known events
             let default_behavior = match publish_str {
-                "build.task" => Some("Dispatch ONE AT A TIME for pending `[ ]` tasks."),
-                "build.done" => Some("When implementation is finished and tests pass."),
-                "build.blocked" => Some("When stuck - include what you tried and why it failed."),
-                "review.request" => Some("After build completion, before marking done."),
-                "review.approved" => Some("If changes look good and meet requirements."),
-                "review.changes_requested" => Some("If issues found - include specific feedback."),
+                "build.task" => Some("Dispatch ONE AT A TIME for pending `[ ]` tasks.".to_string()),
+                "build.done" => Some("When implementation is finished and tests pass.".to_string()),
+                "build.blocked" => {
+                    Some("When stuck - include what you tried and why it failed.".to_string())
+                }
+                "review.request" => {
+                    Some("After build completion, before marking done.".to_string())
+                }
+                "review.approved" => {
+                    Some("If changes look good and meet requirements.".to_string())
+                }
+                "review.changes_requested" => {
+                    Some("If issues found - include specific feedback.".to_string())
+                }
                 _ => None,
             };
 
@@ -133,18 +202,15 @@ impl InstructionBuilder {
     ///
     /// Use this for hats beyond the default Ralph.
     /// When instructions are empty, derives them from the pub/sub contract.
-    pub fn build_custom_hat(&self, hat: &Hat, events_context: &str) -> String {
-        let guardrails = self
-            .core
-            .guardrails
-            .iter()
-            .enumerate()
-            .map(|(i, g)| format!("{}. {g}", 999 + i))
-            .collect::<Vec<_>>()
-            .join("\n");
-
+    pub fn build_custom_hat(
+        &self,
+        hat: &Hat,
+        events_context: &str,
+        scratchpad: &ScratchpadConfig,
+    ) -> String {
+        let guardrails = self.guardrails(scratchpad);
         let role_instructions = if hat.instructions.is_empty() {
-            self.derive_instructions_from_contract(hat)
+            self.derive_instructions_from_contract(hat, scratchpad)
         } else {
             hat.instructions.clone()
         };
@@ -235,7 +301,11 @@ mod tests {
         let hat = Hat::new("reviewer", "Code Reviewer")
             .with_instructions("Review PRs for quality and correctness.");
 
-        let instructions = builder.build_custom_hat(&hat, "PR #123 ready for review");
+        let instructions = builder.build_custom_hat(
+            &hat,
+            "PR #123 ready for review",
+            &ScratchpadConfig::default(),
+        );
 
         // Custom role with RFC2119 style identity
         assert!(instructions.contains("Code Reviewer"));
@@ -285,11 +355,12 @@ mod tests {
 
     #[test]
     fn test_custom_guardrails_injected() {
+        let scratchpad = ScratchpadConfig {
+            enabled: true,
+            path: ".workspace/plan.md".to_string(),
+        };
         let custom_core = CoreConfig {
-            scratchpad: ScratchpadConfig {
-                enabled: true,
-                path: ".workspace/plan.md".to_string(),
-            },
+            scratchpad: scratchpad.clone(),
             specs_dir: "./specifications/".to_string(),
             guardrails: vec!["Custom rule one".to_string(), "Custom rule two".to_string()],
             workspace_root: std::path::PathBuf::from("."),
@@ -297,7 +368,7 @@ mod tests {
         let builder = InstructionBuilder::new(custom_core);
 
         let hat = Hat::new("worker", "Worker").with_instructions("Do the work.");
-        let instructions = builder.build_custom_hat(&hat, "context");
+        let instructions = builder.build_custom_hat(&hat, "context", &scratchpad);
 
         // Custom guardrails are injected with 999+ numbering
         assert!(instructions.contains("999. Custom rule one"));
@@ -316,7 +387,8 @@ mod tests {
                 Topic::new("review.changes_requested"),
             ]);
 
-        let instructions = builder.build_custom_hat(&hat, "PR #123 ready");
+        let instructions =
+            builder.build_custom_hat(&hat, "PR #123 ready", &ScratchpadConfig::default());
 
         // Must-publish rule should be injected even with explicit instructions (RFC2119)
         assert!(
@@ -338,7 +410,8 @@ mod tests {
         let hat = Hat::new("observer", "Silent Observer")
             .with_instructions("Observe and log, but do not emit events.");
 
-        let instructions = builder.build_custom_hat(&hat, "Observe this");
+        let instructions =
+            builder.build_custom_hat(&hat, "Observe this", &ScratchpadConfig::default());
 
         // No must-publish rule when hat has no publishes
         // Note: The prompt says "You MUST publish a result event" in the REPORT section,
@@ -358,10 +431,71 @@ mod tests {
             .subscribe("build.task")
             .with_publishes(vec![Topic::new("build.done"), Topic::new("build.blocked")]);
 
-        let instructions = builder.build_custom_hat(&hat, "Implement feature X");
+        let instructions =
+            builder.build_custom_hat(&hat, "Implement feature X", &ScratchpadConfig::default());
 
         // Should derive behaviors from pub/sub contract
         assert!(instructions.contains("Derived Behaviors"));
         assert!(instructions.contains("build.task"));
+    }
+
+    #[test]
+    fn test_derived_behaviors_keep_default_scratchpad_wording() {
+        let builder = default_builder();
+        let hat = Hat::new("planner", "Planner")
+            .subscribe("task.start")
+            .subscribe("review.changes_requested");
+
+        let instructions =
+            builder.build_custom_hat(&hat, "Plan the work", &ScratchpadConfig::default());
+
+        assert!(instructions.contains("Analyze the task and create a plan in the scratchpad."));
+        assert!(instructions.contains("Add fix tasks to scratchpad and dispatch."));
+        assert!(
+            !instructions.contains(".ralph/agent/scratchpad.md"),
+            "Default scratchpad path should not be newly injected into inherited defaults"
+        );
+    }
+
+    #[test]
+    fn test_derived_behaviors_omit_scratchpad_when_disabled() {
+        let builder = default_builder();
+        let scratchpad = ScratchpadConfig {
+            enabled: false,
+            path: ".ralph/agent/scratchpad.md".to_string(),
+        };
+        let hat = Hat::new("planner", "Planner")
+            .subscribe("task.start")
+            .subscribe("review.changes_requested");
+
+        let instructions = builder.build_custom_hat(&hat, "Plan the work", &scratchpad);
+
+        assert!(instructions.contains("Analyze the task and create a plan."));
+        assert!(instructions.contains("Add fix tasks with `ralph tools task` and dispatch."));
+        assert!(
+            !instructions.to_ascii_lowercase().contains("scratchpad"),
+            "Disabled hat prompts must not instruct agents to use scratchpad"
+        );
+    }
+
+    #[test]
+    fn test_derived_behaviors_name_custom_scratchpad_path() {
+        let builder = default_builder();
+        let scratchpad = ScratchpadConfig {
+            enabled: true,
+            path: ".ralph/agent/planner.md".to_string(),
+        };
+        let hat = Hat::new("planner", "Planner")
+            .subscribe("task.start")
+            .subscribe("review.changes_requested");
+
+        let instructions = builder.build_custom_hat(&hat, "Plan the work", &scratchpad);
+
+        assert!(instructions.contains(
+            "Analyze the task and create a plan in the scratchpad at `.ralph/agent/planner.md`."
+        ));
+        assert!(instructions.contains(
+            "Add fix tasks to the scratchpad at `.ralph/agent/planner.md` and dispatch."
+        ));
     }
 }

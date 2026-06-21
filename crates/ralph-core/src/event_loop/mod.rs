@@ -1285,9 +1285,17 @@ impl EventLoop {
             "build_prompt: routing to build_custom_hat() for '{}'",
             hat_id.as_str()
         );
+        let hat_scratchpad = self
+            .registry
+            .get_config(hat_id)
+            .and_then(|c| c.scratchpad.as_ref());
+        let resolved_scratchpad =
+            ScratchpadConfig::resolve(hat_scratchpad, &self.config.core.scratchpad);
+        self.ralph
+            .set_active_scratchpad(resolved_scratchpad.clone());
         Some(
             self.instruction_builder
-                .build_custom_hat(hat, &events_context),
+                .build_custom_hat(hat, &events_context, &resolved_scratchpad),
         )
     }
 
