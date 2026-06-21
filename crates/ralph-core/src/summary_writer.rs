@@ -330,6 +330,7 @@ mod tests {
             peak_input_tokens: 0,
             last_input_tokens: None,
             hat_peak_input_tokens: std::collections::HashMap::new(),
+            unacknowledged_guidance: Vec::new(),
         }
     }
 

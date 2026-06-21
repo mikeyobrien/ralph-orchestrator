@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ralph Docs"
+  short_description: "Introspect and improve Ralph via its published llms.txt doc map"
+  default_prompt: "Use $ralph-docs to answer this question or scope this improvement using Ralph's published documentation."
+
+policy:
+  allow_implicit_invocation: true

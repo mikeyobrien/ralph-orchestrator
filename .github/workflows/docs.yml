@@ -64,7 +64,9 @@ jobs:
 
       - name: Generate coverage summary
         if: github.event_name != 'pull_request'
-        run: cargo llvm-cov --all-features --workspace --json --summary-only --output-path coverage/summary.json
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --all-features --workspace --json --summary-only --output-path coverage/summary.json
 
       - name: Build documentation
         run: mkdocs build --strict --verbose

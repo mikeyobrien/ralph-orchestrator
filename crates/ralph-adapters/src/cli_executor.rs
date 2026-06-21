@@ -350,6 +350,14 @@ fn inject_ralph_runtime_env(command: &mut Command, workspace_root: &std::path::P
     }
     command.env("RALPH_BIN", &current_exe);
     command.env("RALPH_WORKSPACE_ROOT", workspace_root);
+
+    // Propagate RALPH_EVENTS_FILE so `ralph emit` from any CWD writes to the correct events file
+    let marker = workspace_root.join(".ralph/current-events");
+    if let Ok(relative) = std::fs::read_to_string(&marker) {
+        let abs = workspace_root.join(relative.trim());
+        command.env("RALPH_EVENTS_FILE", &abs);
+    }
+
     if std::path::Path::new("/var/tmp").is_dir() {
         command.env("TMPDIR", "/var/tmp");
         command.env("TMP", "/var/tmp");

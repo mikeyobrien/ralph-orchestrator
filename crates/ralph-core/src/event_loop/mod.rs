@@ -629,9 +629,21 @@ impl EventLoop {
         Some(TerminationReason::Cancelled)
     }
 
+    /// Request completion from the text fallback path.
+    ///
+    /// When a backend outputs a completion promise as plain text (without
+    /// using `ralph emit`), this sets `completion_requested = true` so that
+    /// `check_completion_event()` can apply all safety checks (persistent mode,
+    /// required events, runtime tasks) before terminating.
+    pub fn request_completion_from_text_fallback(&mut self) {
+        self.state.completion_requested = true;
+        info!("Completion requested via text fallback (output contained completion promise)");
+    }
+
     /// Checks if a completion event was received and returns termination reason.
     ///
-    /// Completion is only accepted via JSONL events (e.g., `ralph emit`).
+    /// Completion is accepted via JSONL events (e.g., `ralph emit`) or via
+    /// [`request_completion_from_text_fallback`].
     pub fn check_completion_event(&mut self) -> Option<TerminationReason> {
         if !self.state.completion_requested {
             return None;
@@ -658,6 +670,22 @@ impl EventLoop {
                 self.bus.publish(Event::new("task.resume", resume_payload));
                 return None;
             }
+        }
+
+        if !self.state.unacknowledged_guidance.is_empty() {
+            let guidance_count = self.state.unacknowledged_guidance.len();
+            warn!(
+                guidance_count,
+                "Rejecting LOOP_COMPLETE: human.guidance is unacknowledged"
+            );
+            self.state.completion_requested = false;
+            self.bus.publish(Event::new(
+                "task.resume",
+                format!(
+                    "Completion rejected: {guidance_count} human.guidance message(s) remain unacknowledged. Address the guidance, then emit human.guidance.ack with a summary before emitting the completion promise."
+                ),
+            ));
+            return None;
         }
 
         self.state.completion_requested = false;
@@ -1761,6 +1789,26 @@ impl EventLoop {
         if let Some(config) = self.registry.get_config(hat_id)
             && let Some(default_topic) = &config.default_publishes
         {
+            if default_topic.as_str() == self.config.event_loop.completion_promise {
+                warn!(
+                    hat = %hat_id.as_str(),
+                    topic = %default_topic,
+                    "default_publishes matches completion_promise — requiring explicit agent event"
+                );
+                let resume_event = Event::new(
+                    "task.resume",
+                    format!(
+                        "Recovery: hat `{}` produced no events, and its default_publishes is the completion promise `{}`. Ralph will not complete silently; emit explicit completion evidence or a valid non-terminal event.",
+                        hat_id.as_str(),
+                        default_topic
+                    ),
+                )
+                .with_target(hat_id.clone());
+                self.state.record_event(&resume_event);
+                self.bus.publish(resume_event);
+                return;
+            }
+
             let default_event = Event::new(default_topic.as_str(), "").with_source(hat_id.clone());
 
             debug!(
@@ -1770,19 +1818,6 @@ impl EventLoop {
             );
 
             self.state.record_event(&default_event);
-
-            // If the default topic is the completion promise, set the flag directly.
-            // The normal path (process_events_from_jsonl) sets this when reading from
-            // JSONL, but default_publishes bypasses JSONL entirely.
-            if default_topic.as_str() == self.config.event_loop.completion_promise {
-                info!(
-                    hat = %hat_id.as_str(),
-                    topic = %default_topic,
-                    "default_publishes matches completion_promise — requesting termination"
-                );
-                self.state.completion_requested = true;
-            }
-
             self.bus.publish(default_event);
         }
     }
@@ -2312,6 +2347,23 @@ impl EventLoop {
                 );
                 self.state.cancellation_requested = true;
                 // Continue processing remaining events (they may contain cleanup info)
+                continue;
+            }
+
+            if event.topic == "human.guidance" {
+                self.state.unacknowledged_guidance.push(payload.clone());
+                validated_events.push(Event::new(event.topic.as_str(), &payload));
+                continue;
+            }
+
+            if event.topic == "human.guidance.ack" {
+                info!(
+                    payload = %payload,
+                    guidance_count = self.state.unacknowledged_guidance.len(),
+                    "human.guidance acknowledged"
+                );
+                self.state.unacknowledged_guidance.clear();
+                validated_events.push(Event::new(event.topic.as_str(), &payload));
                 continue;
             }
 

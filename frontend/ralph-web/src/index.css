@@ -166,3 +166,29 @@
     margin: 1.5em 0;
   }
 }
+
+/* Edge pulse animation for live observation mode */
+@keyframes edgePulse {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Border pulse for active hat nodes during observation.
+   Animates only border-color (not opacity), so the node content stays stable. */
+@keyframes borderPulse {
+  0%, 100% { border-color: rgb(239 68 68); }
+  50% { border-color: rgb(239 68 68 / 0.3); }
+}
+
+.animate-border-pulse {
+  animation: borderPulse 2s ease-in-out infinite;
+}
+
+/* Smooth border-color transitions for hat node state changes. */
+[data-hat-key] {
+  transition: border-color 0.3s ease-in-out;
+}

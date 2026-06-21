@@ -404,7 +404,10 @@ impl CliBackend {
     pub fn for_interactive_prompt(backend_name: &str) -> Result<Self, CustomBackendError> {
         match backend_name {
             "claude" => Ok(Self::claude_interactive()),
-            "kiro" => Ok(Self::kiro_interactive()),
+            // kiro-acp is a headless JSON-RPC stdio protocol with no TUI.
+            // For interactive use (e.g. `ralph plan`) fall back to the
+            // `kiro-cli chat` TUI, same as the `kiro` backend.
+            "kiro" | "kiro-acp" => Ok(Self::kiro_interactive()),
             "gemini" => Ok(Self::gemini_interactive()),
             "codex" => Ok(Self::codex_interactive()),
             "amp" => Ok(Self::amp_interactive()),
@@ -1440,6 +1443,24 @@ mod tests {
         assert_eq!(args, vec!["chat", "--trust-all-tools", "test prompt"]);
         assert!(!args.contains(&"--no-interactive".to_string()));
         assert!(stdin.is_none());
+    }
+
+    /// kiro-acp has no interactive TUI; `for_interactive_prompt` must fall back
+    /// to the same `kiro-cli chat` configuration as the plain `kiro` backend so
+    /// `ralph plan --backend kiro-acp` works instead of erroring out.
+    #[test]
+    fn test_for_interactive_prompt_kiro_acp_falls_back_to_kiro_chat() {
+        let backend = CliBackend::for_interactive_prompt("kiro-acp").unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "kiro-cli");
+        // Should behave identically to the plain `kiro` interactive backend:
+        // `kiro-cli chat --trust-all-tools <prompt>` (no `acp`, no `--no-interactive`).
+        assert_eq!(args, vec!["chat", "--trust-all-tools", "test prompt"]);
+        assert!(!args.contains(&"acp".to_string()));
+        assert!(!args.contains(&"--no-interactive".to_string()));
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
     }
 
     #[test]

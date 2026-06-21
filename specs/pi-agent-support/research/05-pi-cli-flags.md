@@ -91,7 +91,7 @@ Binary name: `pi`
 
 Detection command: `pi --version` — outputs version string and exits 0.
 
-**Potential conflict**: `pi` could collide with other binaries (e.g., Raspberry Pi tools). The auto-detection should verify the output contains something pi-specific (e.g., check for `@mariozechner/pi-coding-agent` in the version output).
+**Potential conflict**: `pi` could collide with other binaries (e.g., Raspberry Pi tools). The auto-detection should verify the output contains something pi-specific (e.g., check for `@earendil-works/pi-coding-agent` in the version output).
 
 ## DisallowedTools Equivalent
 

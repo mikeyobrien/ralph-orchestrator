@@ -59,6 +59,10 @@ tempfile.workspace = true
 # For opening URLs in the default browser
 open.workspace = true
 
+# musl's default allocator is significantly slower than glibc's; mimalloc closes the gap.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
 # For Unix process group and signal handling
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }

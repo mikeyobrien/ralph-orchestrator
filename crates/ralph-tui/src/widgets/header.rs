@@ -839,7 +839,7 @@ mod tests {
         let event = Event::new("task.start", "");
         state.update(&event);
         if let Some(iteration) = state.iterations.get_mut(0) {
-            iteration.elapsed = Some(Duration::from_secs(300));
+            iteration.elapsed = Some(Duration::from_mins(5));
         }
 
         let text = render_to_string(&state);
@@ -984,7 +984,7 @@ mod tests {
         );
         // Mark iteration as finished (elapsed is set)
         if let Some(iteration) = state.iterations.first_mut() {
-            iteration.elapsed = Some(Duration::from_secs(60));
+            iteration.elapsed = Some(Duration::from_mins(1));
         }
         // current_view = 0 (still viewing the finished iteration, following latest)
         state.current_view = 0;

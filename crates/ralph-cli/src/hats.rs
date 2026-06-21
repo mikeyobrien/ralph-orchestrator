@@ -9,14 +9,15 @@
 use crate::backend_support;
 use crate::display::colors;
 use crate::preflight;
-use crate::{ConfigSource, HatsSource};
+use crate::{ConfigSource, HatsSource, is_toml_preset_dir};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use ralph_adapters::{CliBackend, detect_backend_default};
 use ralph_core::{HatRegistry, RalphConfig, truncate_with_ellipsis};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -48,6 +49,23 @@ pub enum HatsCommands {
     },
     /// Show detailed configuration for a specific hat
     Show(ShowArgs),
+    /// List all presets discoverable on this system (both YAML and TOML formats).
+    ///
+    /// Walks the same resolver paths used by `-H <name>`:
+    ///   1. `./presets/<name>/`
+    ///   2. `$XDG_CONFIG_HOME/ralph/presets/<name>/`
+    ///   3. `$HOME/.config/ralph/presets/<name>/`
+    ///   4. `$HOME/.config/autoloop/presets/<name>/` (shared with autoloop CLI)
+    ///   5. `$RALPH_PRESETS_DIR/<name>/`
+    ///   6. `$AUTOLOOP_PRESETS_DIR/<name>/` (deprecated alias for #5)
+    ///
+    /// A preset is either a `.yml`/`.yaml` file (ralph's native shape) or a
+    /// directory containing `autoloops.toml` + `topology.toml` (multi-file TOML shape).
+    ListPresets {
+        /// Output format (table, json)
+        #[arg(long, default_value = "table")]
+        format: ListFormat,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug, Default)]
@@ -83,12 +101,24 @@ pub async fn execute(
     args: HatsArgs,
     use_colors: bool,
 ) -> Result<()> {
+    let mut stdout = std::io::stdout();
+
+    // ListPresets doesn't need a loaded config; it's pure filesystem discovery.
+    // Short-circuit before preflight so users can run it outside any ralph
+    // workspace (matches `kubectl config get-contexts` style ergonomics).
+    if let Some(HatsCommands::ListPresets { format }) = &args.command {
+        let presets = discover_presets();
+        return match format {
+            ListFormat::Table => list_presets_table(&mut stdout, &presets, use_colors),
+            ListFormat::Json => list_presets_json(&mut stdout, &presets),
+        };
+    }
+
     let config = preflight::load_config_for_preflight(config_sources, hats_source)
         .await
         .context("Failed to load config for hats")?;
 
     let registry = HatRegistry::from_config(&config);
-    let mut stdout = std::io::stdout();
 
     match args.command {
         None
@@ -105,7 +135,249 @@ pub async fn execute(
         Some(HatsCommands::Graph { format, backend }) => {
             graph_hats(&mut stdout, &config, &registry, format, backend.as_deref())
         }
+        Some(HatsCommands::ListPresets { .. }) => unreachable!("handled above"),
     }
+}
+
+/// Preset file format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PresetFormat {
+    /// Native ralph shape: a single `.yml` / `.yaml` file.
+    Yaml,
+    /// Multi-file TOML shape: a directory with `autoloops.toml` + `topology.toml`.
+    Toml,
+}
+
+impl PresetFormat {
+    fn label(self) -> &'static str {
+        match self {
+            PresetFormat::Yaml => "yaml",
+            PresetFormat::Toml => "toml",
+        }
+    }
+}
+
+/// A single discovered preset (any format).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiscoveredPreset {
+    /// Preset name (file stem for YAML, directory basename for TOML).
+    pub name: String,
+    /// Absolute path to the preset file or directory.
+    pub path: PathBuf,
+    /// Which resolver path class matched (`project`, `xdg`, `home`, `autoloop`, `env`).
+    pub source: &'static str,
+    /// Format on disk.
+    pub format: PresetFormat,
+    /// One-line description if discoverable.
+    pub description: Option<String>,
+}
+
+/// Walk the preset resolver paths and return every preset found.
+///
+/// Covers BOTH preset formats:
+/// - YAML single-file presets (`<root>/*.yml`)
+/// - TOML multi-file preset directories (`<root>/<name>/autoloops.toml + topology.toml`)
+///
+/// Roots, in order:
+/// 1. `./presets/` (project-local)
+/// 2. `$XDG_CONFIG_HOME/ralph/presets/` (user, canonical)
+/// 3. `$HOME/.config/ralph/presets/` (user, fallback for #2)
+/// 4. `$HOME/.config/autoloop/presets/` (shared with autoloop CLI; back-compat)
+/// 5. `$RALPH_PRESETS_DIR/` (explicit override)
+/// 6. `$AUTOLOOP_PRESETS_DIR/` (deprecated alias for #5)
+///
+/// First-wins on name collisions.
+pub(crate) fn discover_presets() -> Vec<DiscoveredPreset> {
+    let mut roots: Vec<(&'static str, PathBuf)> = Vec::new();
+
+    roots.push(("project", PathBuf::from("presets")));
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        roots.push(("xdg", PathBuf::from(xdg).join("ralph/presets")));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        roots.push(("home", home.join(".config/ralph/presets")));
+        roots.push(("autoloop", home.join(".config/autoloop/presets")));
+    }
+    if let Ok(explicit) = std::env::var("RALPH_PRESETS_DIR") {
+        roots.push(("env", PathBuf::from(explicit)));
+    }
+    if let Ok(explicit) = std::env::var("AUTOLOOP_PRESETS_DIR") {
+        roots.push(("env", PathBuf::from(explicit)));
+    }
+
+    discover_in_roots(&roots)
+}
+
+/// Inner discovery that takes explicit roots so tests can exercise the logic
+/// without mutating process-wide environment variables (crate forbids unsafe,
+/// which `std::env::set_var` requires).
+fn discover_in_roots(roots: &[(&'static str, PathBuf)]) -> Vec<DiscoveredPreset> {
+    // Preserve first-wins semantics by keying on name and skipping duplicates.
+    let mut by_name: BTreeMap<String, DiscoveredPreset> = BTreeMap::new();
+    for (source, root) in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(discovered) = classify_entry(&path, source) else {
+                continue;
+            };
+            // Skip if already discovered in an earlier root (first-wins).
+            if by_name.contains_key(&discovered.name) {
+                continue;
+            }
+            by_name.insert(discovered.name.clone(), discovered);
+        }
+    }
+    by_name.into_values().collect()
+}
+
+/// Classify a filesystem entry as a YAML preset, TOML preset dir, or neither.
+fn classify_entry(path: &Path, source: &'static str) -> Option<DiscoveredPreset> {
+    if is_toml_preset_dir(path) {
+        let name = path.file_name()?.to_str()?.to_string();
+        return Some(DiscoveredPreset {
+            name,
+            path: path.to_path_buf(),
+            source,
+            format: PresetFormat::Toml,
+            description: read_toml_preset_description(path),
+        });
+    }
+    if is_yaml_preset_file(path) {
+        let name = path.file_stem()?.to_str()?.to_string();
+        return Some(DiscoveredPreset {
+            name,
+            path: path.to_path_buf(),
+            source,
+            format: PresetFormat::Yaml,
+            description: read_yaml_preset_description(path),
+        });
+    }
+    None
+}
+
+/// True if `path` is a readable `.yml` / `.yaml` file.
+fn is_yaml_preset_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("yml" | "yaml")
+    )
+}
+
+/// Read a one-line description from a TOML preset directory: `README.md`
+/// first prose line, falling back to the first `#` comment in `autoloops.toml`.
+fn read_toml_preset_description(preset_dir: &Path) -> Option<String> {
+    if let Some(desc) = first_readme_prose_line(&preset_dir.join("README.md")) {
+        return Some(desc);
+    }
+    let autoloops = preset_dir.join("autoloops.toml");
+    if let Ok(contents) = std::fs::read_to_string(&autoloops) {
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("# ") {
+                let rest = rest.trim();
+                if !rest.is_empty() {
+                    return Some(truncate_with_ellipsis(rest, 80));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Read a one-line description from a YAML preset: first `#` comment line
+/// in the file (skipping shebang / blank / ABOUTME preamble).
+fn read_yaml_preset_description(path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            let rest = rest.trim();
+            if rest.is_empty() || rest.eq_ignore_ascii_case("ralph.yml") {
+                continue;
+            }
+            return Some(truncate_with_ellipsis(rest, 80));
+        }
+        // First non-comment line means no header block — give up.
+        return None;
+    }
+    None
+}
+
+/// Return the first non-empty, non-heading line of `README.md`, or the first
+/// heading's text if no prose line exists.
+fn first_readme_prose_line(readme: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(readme).ok()?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        return Some(truncate_with_ellipsis(trimmed, 80));
+    }
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            return Some(truncate_with_ellipsis(rest.trim(), 80));
+        }
+    }
+    None
+}
+
+fn list_presets_table<W: Write>(
+    writer: &mut W,
+    presets: &[DiscoveredPreset],
+    _use_colors: bool,
+) -> Result<()> {
+    if presets.is_empty() {
+        writeln!(
+            writer,
+            "No presets found. Searched:\n  - ./presets/\n  - $XDG_CONFIG_HOME/ralph/presets/\n  - $HOME/.config/ralph/presets/\n  - $HOME/.config/autoloop/presets/\n  - $RALPH_PRESETS_DIR/\n  - $AUTOLOOP_PRESETS_DIR/ (deprecated)\n\nDrop a YAML preset or TOML-dir preset in any of the above. Example:\n  mkdir -p ~/.config/ralph/presets\n  ln -s /path/to/autoloop/packages/presets/presets/autocode ~/.config/ralph/presets/\n\nOr set:  export RALPH_PRESETS_DIR=/path/to/your/presets"
+        )?;
+        return Ok(());
+    }
+
+    writeln!(
+        writer,
+        "{:<22} {:<6} {:<9} DESCRIPTION",
+        "PRESET", "FORMAT", "SOURCE"
+    )?;
+    writeln!(writer, "{}", "-".repeat(80))?;
+
+    for p in presets {
+        let desc = p.description.as_deref().unwrap_or("-");
+        let desc = truncate_with_ellipsis(desc, 40);
+        writeln!(
+            writer,
+            "{:<22} {:<6} {:<9} {}",
+            p.name,
+            p.format.label(),
+            p.source,
+            desc
+        )?;
+    }
+    writeln!(writer)?;
+    writeln!(
+        writer,
+        "Run a preset with:  ralph run -H <PRESET> -P PROMPT.md"
+    )?;
+    Ok(())
+}
+
+fn list_presets_json<W: Write>(writer: &mut W, presets: &[DiscoveredPreset]) -> Result<()> {
+    serde_json::to_writer_pretty(&mut *writer, presets)?;
+    writeln!(writer)?;
+    Ok(())
 }
 
 fn list_hats_json<W: Write>(writer: &mut W, registry: &HatRegistry) -> Result<()> {
@@ -1011,5 +1283,161 @@ mod tests {
         let result = resolve_backend(None, &config);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "gemini");
+    }
+
+    /// Write a minimal autoloop preset skeleton under `parent/<name>/`.
+    fn write_preset_skeleton(parent: &std::path::Path, name: &str, readme: Option<&str>) {
+        let dir = parent.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("autoloops.toml"), "# test preset\n").unwrap();
+        std::fs::write(dir.join("topology.toml"), "name = \"test\"\n").unwrap();
+        if let Some(body) = readme {
+            std::fs::write(dir.join("README.md"), body).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_discover_in_roots_finds_presets_and_skips_nonpresets() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_preset_skeleton(
+            tmp.path(),
+            "autotest-fixture",
+            Some("Fixture preset for tests.\n"),
+        );
+        write_preset_skeleton(tmp.path(), "another-fixture", None);
+        // Non-preset dir should be skipped.
+        std::fs::create_dir_all(tmp.path().join("not-a-preset")).unwrap();
+
+        let roots: Vec<(&'static str, PathBuf)> = vec![("env", tmp.path().to_path_buf())];
+        let presets = discover_in_roots(&roots);
+        let names: Vec<_> = presets.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"autotest-fixture"), "got {:?}", names);
+        assert!(names.contains(&"another-fixture"), "got {:?}", names);
+        assert!(!names.contains(&"not-a-preset"), "got {:?}", names);
+
+        let with_readme = presets
+            .iter()
+            .find(|p| p.name == "autotest-fixture")
+            .unwrap();
+        assert_eq!(with_readme.source, "env");
+        assert_eq!(
+            with_readme.description.as_deref(),
+            Some("Fixture preset for tests.")
+        );
+
+        let without_readme = presets
+            .iter()
+            .find(|p| p.name == "another-fixture")
+            .unwrap();
+        // Fixture's autoloops.toml starts with `# test preset` — description should
+        // fall back to that when there's no README.md.
+        assert_eq!(without_readme.description.as_deref(), Some("test preset"));
+    }
+
+    #[test]
+    fn test_discover_in_roots_respects_first_wins_across_roots() {
+        let root_a = tempfile::tempdir().unwrap();
+        let root_b = tempfile::tempdir().unwrap();
+        write_preset_skeleton(root_a.path(), "shared", Some("From root A.\n"));
+        write_preset_skeleton(root_b.path(), "shared", Some("From root B.\n"));
+        write_preset_skeleton(root_b.path(), "b-only", None);
+
+        let roots: Vec<(&'static str, PathBuf)> = vec![
+            ("project", root_a.path().to_path_buf()),
+            ("env", root_b.path().to_path_buf()),
+        ];
+        let presets = discover_in_roots(&roots);
+        let shared = presets.iter().find(|p| p.name == "shared").unwrap();
+        assert_eq!(shared.source, "project", "first-wins should pick root A");
+        assert_eq!(shared.description.as_deref(), Some("From root A."));
+        assert!(presets.iter().any(|p| p.name == "b-only"));
+    }
+
+    #[test]
+    fn test_discover_in_roots_missing_roots_are_ignored() {
+        let roots: Vec<(&'static str, PathBuf)> = vec![
+            ("project", PathBuf::from("/nonexistent/ralph/presets-a")),
+            ("env", PathBuf::from("/nonexistent/ralph/presets-b")),
+        ];
+        let presets = discover_in_roots(&roots);
+        assert!(presets.is_empty());
+    }
+
+    #[test]
+    fn test_list_presets_table_empty_prints_search_paths() {
+        let mut buf = Vec::new();
+        list_presets_table(&mut buf, &[], false).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("No presets found"));
+        assert!(output.contains("./presets/"));
+        assert!(output.contains("XDG_CONFIG_HOME"));
+        assert!(output.contains("RALPH_PRESETS_DIR"));
+        assert!(output.contains("AUTOLOOP_PRESETS_DIR"));
+    }
+
+    #[test]
+    fn test_list_presets_json_is_valid_array() {
+        let sample = vec![DiscoveredPreset {
+            name: "demo".into(),
+            path: PathBuf::from("/tmp/demo"),
+            source: "env",
+            format: PresetFormat::Toml,
+            description: Some("demo preset".into()),
+        }];
+        let mut buf = Vec::new();
+        list_presets_json(&mut buf, &sample).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        assert!(parsed.is_array());
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["name"], "demo");
+        assert_eq!(arr[0]["source"], "env");
+        assert_eq!(arr[0]["format"], "toml");
+    }
+
+    #[test]
+    fn test_read_toml_preset_description_falls_back_to_toml_comment() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("p");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("autoloops.toml"),
+            "# This preset does a thing.\nevent_loop.max_iterations = 10\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("topology.toml"), "name = \"p\"\n").unwrap();
+        let desc = read_toml_preset_description(&dir);
+        assert_eq!(desc.as_deref(), Some("This preset does a thing."));
+    }
+
+    #[test]
+    fn test_discover_in_roots_finds_yaml_presets_alongside_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        // TOML preset dir
+        write_preset_skeleton(tmp.path(), "toml-preset", Some("A TOML preset.\n"));
+        // YAML file preset
+        std::fs::write(
+            tmp.path().join("yaml-preset.yml"),
+            "# A YAML preset for tests.\nhats: {}\n",
+        )
+        .unwrap();
+        // Random file that isn't a preset
+        std::fs::write(tmp.path().join("random.txt"), "ignore me").unwrap();
+
+        let roots: Vec<(&'static str, PathBuf)> = vec![("env", tmp.path().to_path_buf())];
+        let presets = discover_in_roots(&roots);
+
+        let toml_p = presets.iter().find(|p| p.name == "toml-preset").unwrap();
+        assert_eq!(toml_p.format, PresetFormat::Toml);
+        assert_eq!(toml_p.description.as_deref(), Some("A TOML preset."));
+
+        let yaml_p = presets.iter().find(|p| p.name == "yaml-preset").unwrap();
+        assert_eq!(yaml_p.format, PresetFormat::Yaml);
+        assert_eq!(
+            yaml_p.description.as_deref(),
+            Some("A YAML preset for tests.")
+        );
+
+        assert!(!presets.iter().any(|p| p.name == "random"));
     }
 }

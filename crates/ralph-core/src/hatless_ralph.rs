@@ -327,6 +327,10 @@ impl HatlessRalph {
         }
 
         let mut section = String::from("## ROBOT GUIDANCE\n\n");
+        section.push_str(
+            "This guidance is blocking. You MUST address it before declaring completion. \
+             After addressing it, emit `human.guidance.ack` with a brief summary.\n\n",
+        );
 
         if self.robot_guidance.len() == 1 {
             section.push_str(&self.robot_guidance[0]);

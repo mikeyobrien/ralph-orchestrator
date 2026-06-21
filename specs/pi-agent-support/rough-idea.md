@@ -2,12 +2,12 @@
 
 Add pi-coding-agent (pi) as a first-class backend in ralph-orchestrator, on par with Claude, Kiro, Gemini, Codex, Amp, Copilot, and OpenCode.
 
-Pi is a TypeScript-based coding agent CLI (`@mariozechner/pi-coding-agent`) that supports:
+Pi is a TypeScript-based coding agent CLI (`@earendil-works/pi-coding-agent`) that supports:
 - **Print mode** (`pi -p "prompt"`) — headless execution, outputs text or JSON
 - **JSON streaming** (`pi -p --mode json "prompt"`) — NDJSON event stream with pi-specific event types
 - **RPC mode** (`pi --mode rpc`) — bidirectional JSON protocol over stdin/stdout for rich integration
 - **Interactive mode** (`pi "prompt"`) — TUI with initial prompt injection
-- **SDK** (`@mariozechner/pi-coding-agent` npm package) — programmatic TypeScript API
+- **SDK** (`@earendil-works/pi-coding-agent` npm package) — programmatic TypeScript API
 
 Pi's NDJSON schema differs from Claude's `stream-json`: events are wrapped in pi-specific types (`agent_start`, `message_update` with `assistantMessageEvent`, `tool_execution_start/end`, etc.) rather than raw Anthropic Messages API events.
 

@@ -79,6 +79,9 @@ pub struct LoopState {
 
     /// Per-hat session-scoped peak of `input + cache_read + cache_write` tokens.
     pub hat_peak_input_tokens: HashMap<HatId, u64>,
+
+    /// Human guidance messages that must be acknowledged before completion.
+    pub unacknowledged_guidance: Vec<String>,
 }
 
 impl Default for LoopState {
@@ -107,6 +110,7 @@ impl Default for LoopState {
             peak_input_tokens: 0,
             last_input_tokens: None,
             hat_peak_input_tokens: HashMap::new(),
+            unacknowledged_guidance: Vec::new(),
         }
     }
 }

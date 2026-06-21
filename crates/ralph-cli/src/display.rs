@@ -7,6 +7,7 @@
 use ralph_core::{EventRecord, TerminationReason, floor_char_boundary, truncate_with_ellipsis};
 use ralph_proto::HatId;
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 
 /// ANSI color codes for terminal output.
@@ -29,6 +30,131 @@ pub fn hat_emoji(hat_id: &str) -> &'static str {
         "builder" => "?",
         "reviewer" => "?",
         _ => "?",
+    }
+}
+
+/// Prints a startup banner with loop discovery info for `--no-tui` runs.
+///
+/// Advertises the loop ID, key state files, and the tail / resume commands
+/// so agents tailing the stream can find structured state without reading
+/// docs. Kept to a handful of lines so it doesn't dominate scrollback.
+///
+/// Format:
+/// ```text
+/// ── ralph loop abc123 · backend=pi · prompt=PROMPT.md · 0/150 ──
+///   events:     .ralph/events.jsonl
+///   scratchpad: .ralph/agent/scratchpad.md
+///   tail:       ralph events --follow --loop-id abc123
+///   resume:     ralph run --continue --loop-id abc123
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn print_loop_banner(
+    loop_id: &str,
+    backend: &str,
+    prompt_file: &Path,
+    events_path: &Path,
+    scratchpad_path: &Path,
+    max_iterations: u32,
+    resumed: bool,
+    use_colors: bool,
+) {
+    use colors::*;
+
+    let prompt_display = prompt_file.display();
+    let events_display = events_path.display();
+    let scratchpad_display = scratchpad_path.display();
+    let mode = if resumed { "resume" } else { "start" };
+    let header = format!(
+        " ralph loop {} \u{00b7} {} \u{00b7} backend={} \u{00b7} prompt={} \u{00b7} 0/{} ",
+        loop_id, mode, backend, prompt_display, max_iterations
+    );
+
+    let tail_cmd = format!("ralph events --follow --loop-id {}", loop_id);
+    let resume_cmd = format!("ralph run --continue --loop-id {}", loop_id);
+
+    if use_colors {
+        println!("\n{BOLD}{CYAN}\u{2500}\u{2500}{header}\u{2500}\u{2500}{RESET}");
+        println!("  {DIM}events:    {RESET} {events_display}");
+        println!("  {DIM}scratchpad:{RESET} {scratchpad_display}");
+        println!("  {DIM}tail:      {RESET} {tail_cmd}");
+        println!("  {DIM}resume:    {RESET} {resume_cmd}");
+    } else {
+        println!("\n--{header}--");
+        println!("  events:     {events_display}");
+        println!("  scratchpad: {scratchpad_display}");
+        println!("  tail:       {tail_cmd}");
+        println!("  resume:     {resume_cmd}");
+    }
+}
+
+/// Prints a one-line summary at the end of each iteration.
+///
+/// Gives agents tailing the stream budget awareness (elapsed, cost, iteration
+/// progress) without having to parse `events.jsonl`. Emitted after the
+/// backend finishes each iteration but before the next separator.
+///
+/// Format:
+/// ```text
+/// [iter 3/150 done] dur=1m12s total=4m30s cost=+$0.14 (cum $0.42) budget=2%
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn print_iteration_footer(
+    iteration: u32,
+    max_iterations: u32,
+    iteration_duration: Duration,
+    cumulative_elapsed: Duration,
+    iteration_cost: f64,
+    cumulative_cost: f64,
+    use_colors: bool,
+) {
+    use colors::*;
+
+    let pct = if max_iterations > 0 {
+        (f64::from(iteration) / f64::from(max_iterations)) * 100.0
+    } else {
+        0.0
+    };
+
+    let iter_dur = format_elapsed(iteration_duration);
+    let total_dur = format_elapsed(cumulative_elapsed);
+
+    // Cost fragment: only emit when we actually have cost signal, otherwise
+    // noise accumulates for free / self-hosted backends.
+    let cost_fragment = if iteration_cost > 0.0 || cumulative_cost > 0.0 {
+        format!(
+            " cost=+${:.2} (cum ${:.2})",
+            iteration_cost, cumulative_cost
+        )
+    } else {
+        String::new()
+    };
+
+    if use_colors {
+        println!(
+            "{DIM}[iter {iteration}/{max_iterations} done]{RESET} dur={CYAN}{iter_dur}{RESET} total={CYAN}{total_dur}{RESET}{cost_fragment} budget={CYAN}{pct:.0}%{RESET}"
+        );
+    } else {
+        println!(
+            "[iter {iteration}/{max_iterations} done] dur={iter_dur} total={total_dur}{cost_fragment} budget={pct:.0}%"
+        );
+    }
+}
+
+/// Returns the resume command hint for a given termination reason, if the
+/// reason is recoverable by re-running with `--continue`.
+///
+/// Returns `None` when:
+/// - `CompletionPromise`: loop succeeded, nothing to resume.
+/// - `WorkspaceGone`: workspace removed, `--continue` would fail.
+/// - `Cancelled`: explicit human cancellation — resume hint would be misleading.
+/// - `RestartRequested`: `main` already auto-restarts the loop — hint is redundant.
+fn resume_hint_for(reason: &TerminationReason, loop_id: &str) -> Option<String> {
+    match reason {
+        TerminationReason::CompletionPromise
+        | TerminationReason::WorkspaceGone
+        | TerminationReason::Cancelled
+        | TerminationReason::RestartRequested => None,
+        _ => Some(format!("ralph run --continue --loop-id {loop_id}")),
     }
 }
 
@@ -98,10 +224,16 @@ pub fn truncate(s: &str, max_len: usize) -> String {
 }
 
 /// Prints termination message with status.
+///
+/// When `loop_id` is provided, also prints a `Resume:` hint line for
+/// recoverable termination reasons (budget exhausted, thrashing, interrupt,
+/// etc.) so an agent or user running `--no-tui` can recover without hunting
+/// through the scrollback.
 pub fn print_termination(
     reason: &TerminationReason,
     state: &ralph_core::LoopState,
     use_colors: bool,
+    loop_id: Option<&str>,
 ) {
     use colors::*;
 
@@ -155,6 +287,17 @@ pub fn print_termination(
             println!("|   Est. cost:   ${:.2}", state.cumulative_cost);
         }
         println!("+{}+", "-".repeat(58));
+    }
+
+    // Resume hint: only for recoverable reasons and when we know the loop id.
+    if let Some(id) = loop_id
+        && let Some(cmd) = resume_hint_for(reason, id)
+    {
+        if use_colors {
+            println!("  {DIM}Resume:{RESET} {CYAN}{cmd}{RESET}");
+        } else {
+            println!("  Resume: {cmd}");
+        }
     }
 }
 
@@ -402,6 +545,195 @@ mod tests {
     fn test_format_elapsed_seconds_only() {
         let d = Duration::from_secs(45);
         assert_eq!(format_elapsed(d), "45s");
+    }
+
+    #[test]
+    fn test_resume_hint_skipped_for_completion_promise() {
+        assert!(resume_hint_for(&TerminationReason::CompletionPromise, "abc").is_none());
+    }
+
+    #[test]
+    fn test_resume_hint_skipped_for_workspace_gone() {
+        assert!(resume_hint_for(&TerminationReason::WorkspaceGone, "abc").is_none());
+    }
+
+    #[test]
+    fn test_resume_hint_skipped_for_cancelled() {
+        // Explicit human cancellation — suggesting --continue would be misleading.
+        assert!(resume_hint_for(&TerminationReason::Cancelled, "abc").is_none());
+    }
+
+    #[test]
+    fn test_resume_hint_skipped_for_restart_requested() {
+        // Loop auto-restarts via main; hint would be redundant noise.
+        assert!(resume_hint_for(&TerminationReason::RestartRequested, "abc").is_none());
+    }
+
+    #[test]
+    fn test_resume_hint_present_for_max_iterations() {
+        let hint = resume_hint_for(&TerminationReason::MaxIterations, "loop-42").unwrap();
+        assert!(hint.contains("--continue"));
+        assert!(hint.contains("--loop-id loop-42"));
+    }
+
+    #[test]
+    #[ignore = "visual demo; run with: cargo test -- --ignored --nocapture zzz_visual_demo"]
+    fn zzz_visual_demo() {
+        use ralph_core::LoopState;
+        use std::path::PathBuf;
+        use std::time::Duration;
+
+        println!("\n===== --no-tui UX demo (plain / no color) =====\n");
+        print_loop_banner(
+            "lp-2026-05-01-abc123",
+            "pi",
+            &PathBuf::from("PROMPT.md"),
+            &PathBuf::from(".ralph/events-abc123.jsonl"),
+            &PathBuf::from(".ralph/agent/scratchpad.md"),
+            150,
+            false,
+            false,
+        );
+
+        println!();
+        print_iteration_separator(1, "planner", Duration::from_secs(0), 150, false);
+        println!("  (… backend streams tool calls and text here …)");
+        print_iteration_footer(
+            1,
+            150,
+            Duration::from_secs(42),
+            Duration::from_secs(42),
+            0.03,
+            0.03,
+            false,
+        );
+
+        print_iteration_separator(2, "builder", Duration::from_secs(42), 150, false);
+        println!("  (… builder output …)");
+        print_iteration_footer(
+            2,
+            150,
+            Duration::from_secs(68),
+            Duration::from_secs(110),
+            0.08,
+            0.11,
+            false,
+        );
+
+        print_iteration_separator(3, "reviewer", Duration::from_secs(110), 150, false);
+        println!("  (… reviewer output …)");
+        print_iteration_footer(
+            3,
+            150,
+            Duration::from_secs(72),
+            Duration::from_secs(182),
+            0.14,
+            0.25,
+            false,
+        );
+
+        let mut state = LoopState::new();
+        state.iteration = 150;
+        state.cumulative_cost = 7.42;
+        print_termination(
+            &TerminationReason::MaxIterations,
+            &state,
+            false,
+            Some("lp-2026-05-01-abc123"),
+        );
+
+        println!("\n\n===== alternate: completion promise (no resume hint) =====\n");
+        let mut state = LoopState::new();
+        state.iteration = 87;
+        state.cumulative_cost = 3.15;
+        print_termination(
+            &TerminationReason::CompletionPromise,
+            &state,
+            false,
+            Some("lp-2026-05-01-abc123"),
+        );
+
+        println!("\n===== alternate: cancelled (no resume hint — was C1 autosde fix) =====\n");
+        print_termination(
+            &TerminationReason::Cancelled,
+            &state,
+            false,
+            Some("lp-2026-05-01-abc123"),
+        );
+    }
+
+    #[test]
+    fn test_resume_hint_present_for_interrupted() {
+        assert!(resume_hint_for(&TerminationReason::Interrupted, "xy").is_some());
+    }
+
+    #[test]
+    fn test_print_loop_banner_does_not_panic() {
+        // Smoke test — printing should not panic for either color mode.
+        let prompt = std::path::PathBuf::from("PROMPT.md");
+        let events = std::path::PathBuf::from(".ralph/events.jsonl");
+        let scratchpad = std::path::PathBuf::from(".ralph/agent/scratchpad.md");
+        print_loop_banner(
+            "loop-42",
+            "pi",
+            &prompt,
+            &events,
+            &scratchpad,
+            150,
+            false,
+            false,
+        );
+        print_loop_banner(
+            "loop-42",
+            "pi",
+            &prompt,
+            &events,
+            &scratchpad,
+            150,
+            true,
+            true,
+        );
+    }
+
+    #[test]
+    fn test_print_iteration_footer_handles_zero_cost() {
+        // Zero cost path should omit the cost fragment without panicking.
+        print_iteration_footer(
+            3,
+            150,
+            Duration::from_secs(72),
+            Duration::from_secs(270),
+            0.0,
+            0.0,
+            false,
+        );
+    }
+
+    #[test]
+    fn test_print_iteration_footer_handles_nonzero_cost() {
+        print_iteration_footer(
+            3,
+            150,
+            Duration::from_secs(72),
+            Duration::from_secs(270),
+            0.14,
+            0.42,
+            true,
+        );
+    }
+
+    #[test]
+    fn test_print_iteration_footer_handles_zero_max_iterations() {
+        // Defensive: max_iterations == 0 should not divide-by-zero.
+        print_iteration_footer(
+            1,
+            0,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            0.0,
+            0.0,
+            false,
+        );
     }
 
     #[test]

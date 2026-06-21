@@ -11,21 +11,28 @@
  * This implements the n8n-style builder for hat collections.
  */
 
-import { useState, useCallback } from "react";
-import { trpc } from "../trpc";
-import { CollectionBuilder } from "@/components/builder";
+import { CollectionBuilder, ImportYamlDialog } from "@/components/builder";
+import { BLUEPRINTS, type Blueprint } from "@/components/builder/blueprints";
+import { RunPromptDialog } from "@/components/builder/RunPromptDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Plus,
-  FolderOpen,
-  Pencil,
-  Trash2,
-  ArrowLeft,
-  Clock,
-} from "lucide-react";
+import { useObservationStore } from "@/stores/observationStore";
+import type { Edge, Node } from "@xyflow/react";
 import { formatDistanceToNow } from "date-fns";
-import type { Node, Edge } from "@xyflow/react";
+import {
+    AlertCircle,
+    ArrowLeft,
+    Clock,
+    FolderOpen,
+    Pencil,
+    Play,
+    Plus,
+    Square,
+    Trash2,
+    Upload
+} from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { trpc } from "../trpc";
 
 type ViewMode = "list" | "edit" | "create";
 
@@ -35,9 +42,13 @@ type ViewMode = "list" | "edit" | "create";
 function CollectionList({
   onSelect,
   onCreate,
+  onImport,
+  onBlueprint,
 }: {
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onImport: () => void;
+  onBlueprint: (blueprint: Blueprint) => void;
 }) {
   const collectionsQuery = trpc.collection.list.useQuery();
   const deleteMutation = trpc.collection.delete.useMutation({
@@ -77,10 +88,43 @@ function CollectionList({
             Visual hat workflows you've created
           </p>
         </div>
-        <Button onClick={onCreate}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Collection
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={onImport}>
+            <Upload className="h-4 w-4 mr-2" />
+            Import YAML
+          </Button>
+          <Button onClick={onCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Collection
+          </Button>
+        </div>
+      </div>
+
+      {/* Blueprints — pre-built workflow templates */}
+      <div className="mb-6">
+        <h3 className="text-sm font-medium text-muted-foreground mb-2">Start from a blueprint</h3>
+        <div className="grid grid-cols-3 gap-3">
+          {BLUEPRINTS.map((bp) => (
+            <Card
+              key={bp.id}
+              className="cursor-pointer hover:border-primary/50 transition-colors"
+              onClick={() => onBlueprint(bp)}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">{bp.emoji}</span>
+                  <span className="font-medium text-sm">{bp.name}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">{bp.description}</p>
+                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                  <span>{bp.hats.length} hats</span>
+                  <span>·</span>
+                  <span>{bp.edges.length} connections</span>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
 
       {collections.length === 0 ? (
@@ -159,47 +203,139 @@ export function BuilderPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [isDirty, setIsDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "success" | "error">("idle");
+  const [showImport, setShowImport] = useState(false);
+  const justImportedId = useRef<string | null>(null);
 
   // Query for selected collection
   const collectionQuery = trpc.collection.get.useQuery(
     { id: selectedId! },
     { enabled: viewMode === "edit" && !!selectedId }
   );
+  const collectionsQuery = trpc.collection.list.useQuery();
 
   // Mutations
   const createMutation = trpc.collection.create.useMutation({
     onSuccess: (data: any) => {
       setSelectedId(data.id);
       setViewMode("edit");
+      setIsDirty(false);
+      setSaveStatus("success");
+      setTimeout(() => setSaveStatus("idle"), 3000);
+      collectionsQuery.refetch();
+    },
+    onError: () => {
+      setSaveStatus("error");
     },
   });
 
-  const updateMutation = trpc.collection.update.useMutation();
+  const updateMutation = trpc.collection.update.useMutation({
+    onSuccess: () => {
+      setIsDirty(false);
+      setSaveStatus("success");
+      justImportedId.current = null;
+      setTimeout(() => setSaveStatus("idle"), 3000);
+      collectionsQuery.refetch();
+    },
+    onError: () => {
+      setSaveStatus("error");
+    },
+  });
 
   const exportYamlQuery = trpc.collection.exportYaml.useQuery(
     { id: selectedId! },
     { enabled: false }
   );
 
+  const markDirty = useCallback(() => {
+    setIsDirty(true);
+    setSaveStatus("idle");
+  }, []);
+
   // Handlers
   const handleCreate = useCallback(() => {
     setName("New Collection");
     setDescription("");
     setSelectedId(null);
+    setIsDirty(false);
+    setSaveStatus("idle");
     setViewMode("create");
   }, []);
 
+  const handleBlueprint = useCallback((blueprint: Blueprint) => {
+    // Convert blueprint hats to graph nodes with temporary positions.
+    const nodes = blueprint.hats.map((hat, i) => ({
+      id: hat.key,
+      type: "hatNode",
+      position: { x: 250, y: 50 + i * 200 },
+      data: { ...hat },
+    }));
+
+    // Convert edge tuples to graph edges.
+    const edges = blueprint.edges.map(([source, target, event], i) => ({
+      id: `edge-${i}`,
+      source,
+      target,
+      sourceHandle: event,
+      targetHandle: event,
+      label: event,
+      type: "offset",
+    }));
+
+    // Create the collection with the blueprint graph.
+    const graph = {
+      nodes,
+      edges,
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+
+    setName(blueprint.name);
+    setDescription(blueprint.description);
+    createMutation.mutate({
+      name: blueprint.name,
+      description: blueprint.description,
+      graph,
+    });
+  }, [createMutation]);
+
   const handleSelect = useCallback((id: string) => {
     setSelectedId(id);
+    setIsDirty(false);
+    setSaveStatus("idle");
     setViewMode("edit");
   }, []);
 
+  const handleImported = useCallback((collection: { id: string; name: string }) => {
+    justImportedId.current = collection.id;
+    setShowImport(false);
+    setSelectedId(collection.id);
+    setIsDirty(false);
+    setSaveStatus("idle");
+    setViewMode("edit");
+    collectionsQuery.refetch();
+  }, [collectionsQuery]);
+
   const handleBack = useCallback(() => {
+    if (isDirty && !confirm("Discard unsaved changes?")) return;
     setViewMode("list");
     setSelectedId(null);
     setName("");
     setDescription("");
-  }, []);
+    setIsDirty(false);
+    setSaveStatus("idle");
+    justImportedId.current = null;
+  }, [isDirty]);
+
+  const handleNameChange = useCallback((value: string) => {
+    setName(value);
+    markDirty();
+  }, [markDirty]);
+
+  const handleDescriptionChange = useCallback((value: string) => {
+    setDescription(value);
+    markDirty();
+  }, [markDirty]);
 
   const handleSave = useCallback(
     (data: { nodes: Node[]; edges: Edge[]; name: string; description: string }) => {
@@ -265,8 +401,54 @@ export function BuilderPage() {
     }
   }, [selectedId, exportYamlQuery, name]);
 
-  // Sync name/description when collection loads
-  if (viewMode === "edit" && collectionQuery.data && name !== collectionQuery.data.name) {
+  // ── Run / Stop loop from the Builder ──────────────────────────────────
+  const observing = useObservationStore((s) => s.active);
+  const startObserving = useObservationStore((s) => s.startObserving);
+  const stopObserving = useObservationStore((s) => s.stopObserving);
+
+  const setHatActive = useObservationStore((s) => s.setHatActive);
+
+  const [showRunPrompt, setShowRunPrompt] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const collectionRunMutation = trpc.collection.run.useMutation();
+  const stopLoopMutation = trpc.loops.stop.useMutation();
+
+  const handleRunWithPrompt = useCallback(async (prompt: string) => {
+    if (!selectedId) return;
+    setShowRunPrompt(false);
+    setRunError(null);
+    try {
+      const result = await collectionRunMutation.mutateAsync({ id: selectedId, prompt });
+      startObserving(selectedId);
+      // Immediately highlight the entry hat so the user sees feedback
+      // before the first WebSocket event arrives (timing-race fix).
+      if (result.startingHat) {
+        setHatActive(result.startingHat);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to start loop";
+      setRunError(message);
+    }
+  }, [selectedId, collectionRunMutation, startObserving, setHatActive]);
+
+  const handleStop = useCallback(async () => {
+    stopObserving();
+    // loop.stop reads the PID from .ralph/loop.lock and kills the process.
+    try {
+      await stopLoopMutation.mutateAsync({ id: "primary" });
+    } catch {
+      // Best effort — loop may have already terminated.
+    }
+  }, [stopObserving, stopLoopMutation]);
+
+  // Sync name/description when collection loads. Only fire when we don't yet
+  // have the collection's name populated (avoids flipping dirty on every render).
+  if (
+    viewMode === "edit" &&
+    collectionQuery.data &&
+    name === "" &&
+    collectionQuery.data.name
+  ) {
     setName(collectionQuery.data.name);
     setDescription(collectionQuery.data.description || "");
   }
@@ -276,7 +458,7 @@ export function BuilderPage() {
       {/* Page header */}
       <header className="px-6 py-4 border-b flex items-center justify-between">
         <div className="flex items-center gap-4">
-          {viewMode !== "list" && (
+          {viewMode !== "list" && !observing && (
             <Button variant="ghost" size="sm" onClick={handleBack}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
@@ -289,17 +471,53 @@ export function BuilderPage() {
             <p className="text-muted-foreground text-sm">
               {viewMode === "list"
                 ? "Create visual workflows for hat collections"
-                : "Drag hats from the palette and connect them"}
+                : observing
+                  ? "Observing live loop execution"
+                  : "Drag hats from the palette and connect them"}
             </p>
           </div>
         </div>
+        {viewMode !== "list" && (
+          <div className="flex items-center gap-2">
+            {observing ? (
+              <Button variant="destructive" size="sm" onClick={handleStop}>
+                <Square className="h-4 w-4 mr-2" />
+                Stop
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => setShowRunPrompt(true)}
+                disabled={isDirty || !name.trim() || collectionRunMutation.isPending}
+                title={isDirty ? "Save the collection before running" : "Start a loop with this collection"}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {collectionRunMutation.isPending ? "Starting..." : "Run"}
+              </Button>
+            )}
+          </div>
+        )}
       </header>
+
+      {/* Run error banner */}
+      {runError && (
+        <div className="mx-6 mt-3 flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          <span className="flex-1">{runError}</span>
+          <button className="text-xs underline" onClick={() => setRunError(null)}>Dismiss</button>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
         {viewMode === "list" ? (
           <div className="p-6 max-w-4xl mx-auto">
-            <CollectionList onSelect={handleSelect} onCreate={handleCreate} />
+            <CollectionList
+              onSelect={handleSelect}
+              onCreate={handleCreate}
+              onImport={() => setShowImport(true)}
+              onBlueprint={handleBlueprint}
+            />
           </div>
         ) : viewMode === "edit" && collectionQuery.isLoading ? (
           <div className="flex items-center justify-center h-full">
@@ -325,15 +543,33 @@ export function BuilderPage() {
             }
             name={name}
             description={description}
-            onNameChange={setName}
-            onDescriptionChange={setDescription}
+            onNameChange={handleNameChange}
+            onDescriptionChange={handleDescriptionChange}
             onSave={handleSave}
             onExportYaml={selectedId ? handleExportYaml : undefined}
             isSaving={createMutation.isPending || updateMutation.isPending}
+            isDirty={isDirty}
+            onMarkDirty={markDirty}
+            saveStatus={saveStatus}
+            justImported={!!selectedId && justImportedId.current === selectedId}
             className="h-full"
           />
         )}
       </div>
+
+      <ImportYamlDialog
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onImported={handleImported}
+      />
+
+      <RunPromptDialog
+        open={showRunPrompt}
+        onClose={() => setShowRunPrompt(false)}
+        onRun={handleRunWithPrompt}
+        isRunning={collectionRunMutation.isPending}
+        collectionName={name}
+      />
     </div>
   );
 }

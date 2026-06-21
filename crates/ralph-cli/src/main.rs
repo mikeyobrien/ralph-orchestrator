@@ -13,6 +13,10 @@
 //! - Hook config validation via `ralph hooks validate`
 //! - Work item tracking via `ralph task`
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod backend_support;
 mod bot;
 mod config_resolution;
@@ -357,34 +361,111 @@ impl ConfigSource {
 /// Source for hat collection configuration.
 #[derive(Debug, Clone)]
 pub enum HatsSource {
-    /// Local file path
+    /// Local file path (YAML Ralph preset)
     File(PathBuf),
     /// Builtin hat collection name (e.g., "builtin:code-assist")
     Builtin(String),
     /// Remote URL (e.g., "http://example.com/hats.yml")
     Remote(String),
+    /// Autoloop multi-file preset directory.
+    ///
+    /// Source shape matches [@mobrienv/autoloop](https://github.com/mobrienv/autoloop)
+    /// presets: a directory containing `autoloops.toml`, `topology.toml`,
+    /// Multi-file TOML preset directory.
+    ///
+    /// Source shape: a directory containing `autoloops.toml`, `topology.toml`,
+    /// optional `harness.md`, and `roles/*.md`. Originally the native shape of
+    /// [@mobrienv/autoloop](https://github.com/mobrienv/autoloop); ralph now
+    /// treats it as a first-class preset format. Triggered by `-H <name>`
+    /// (via [`resolve_preset_dir`]) or by `-H <path>` when the path is a
+    /// directory with those TOML files.
+    PresetDir(PathBuf),
 }
 
 impl HatsSource {
     /// Parse a hats source string into its variant.
+    ///
+    /// Resolution order for a bare `-H <value>`:
+    /// 1. `builtin:<name>` — shipped ralph preset (back-compat, kept).
+    /// 2. `http(s)://...` — remote YAML URL.
+    /// 3. Any path that exists on disk — YAML file or TOML preset dir (auto-detect).
+    /// 4. Bare `<name>` — looked up via [`resolve_preset_dir`]; on miss,
+    ///    surfaced as a `File` so the downstream IO error names it cleanly.
     fn parse(s: &str) -> Self {
         if let Some(name) = s.strip_prefix("builtin:") {
-            HatsSource::Builtin(name.to_string())
-        } else if s.starts_with("http://") || s.starts_with("https://") {
-            HatsSource::Remote(s.to_string())
-        } else {
-            HatsSource::File(PathBuf::from(s))
+            return HatsSource::Builtin(name.to_string());
         }
+        if s.starts_with("http://") || s.starts_with("https://") {
+            return HatsSource::Remote(s.to_string());
+        }
+        let path = PathBuf::from(s);
+        if path.exists() {
+            if is_toml_preset_dir(&path) {
+                return HatsSource::PresetDir(path);
+            }
+            return HatsSource::File(path);
+        }
+        // Bare name — try preset lookup.
+        if let Some(resolved) = resolve_preset_dir(s) {
+            return HatsSource::PresetDir(resolved);
+        }
+        HatsSource::File(path)
     }
 
     /// Human-readable source label.
+    ///
+    /// The label must be round-trippable through [`HatsSource::parse`] — ralph
+    /// re-spawns subprocesses (e.g. TUI mode) by passing this label back as
+    /// `-H <label>`, which then runs through `parse()` again. Using a bare
+    /// path matches the `File` variant so the auto-detect branch picks up the
+    /// preset shape on reparse.
     pub fn label(&self) -> String {
         match self {
             HatsSource::File(path) => path.display().to_string(),
             HatsSource::Builtin(name) => format!("builtin:{}", name),
             HatsSource::Remote(url) => url.clone(),
+            HatsSource::PresetDir(path) => path.display().to_string(),
         }
     }
+}
+
+/// Returns true if `path` is a directory matching the TOML multi-file preset shape.
+pub(crate) fn is_toml_preset_dir(path: &Path) -> bool {
+    path.is_dir() && path.join("autoloops.toml").is_file() && path.join("topology.toml").is_file()
+}
+
+/// Search for a TOML preset dir named `name`.
+///
+/// Resolution order, first hit wins:
+/// 1. `./presets/<name>/` (project-local)
+/// 2. `$XDG_CONFIG_HOME/ralph/presets/<name>/` (user, canonical)
+/// 3. `$HOME/.config/ralph/presets/<name>/` (user, fallback for #2)
+/// 4. `$HOME/.config/autoloop/presets/<name>/` (shared with autoloop CLI)
+/// 5. `$RALPH_PRESETS_DIR/<name>/` (explicit override)
+/// 6. `$AUTOLOOP_PRESETS_DIR/<name>/` (deprecated alias for #5)
+///
+/// Returns `None` if no candidate directory exists and matches the preset shape.
+pub(crate) fn resolve_preset_dir(name: &str) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    candidates.push(PathBuf::from("presets").join(name));
+
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        candidates.push(PathBuf::from(xdg).join("ralph/presets").join(name));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(home.join(".config/ralph/presets").join(name));
+        candidates.push(home.join(".config/autoloop/presets").join(name));
+    }
+    if let Ok(explicit) = std::env::var("RALPH_PRESETS_DIR") {
+        candidates.push(PathBuf::from(explicit).join(name));
+    }
+    if let Ok(explicit) = std::env::var("AUTOLOOP_PRESETS_DIR") {
+        candidates.push(PathBuf::from(explicit).join(name));
+    }
+
+    candidates.into_iter().find(|p| is_toml_preset_dir(p))
 }
 
 /// Known core fields that can be overridden via CLI.
@@ -2492,13 +2573,15 @@ fn emit_command_with_root(
 
     // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg
     // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = if let Ok(path) = std::env::var("RALPH_EVENTS_FILE") {
-        PathBuf::from(path)
-    } else {
-        fs::read_to_string(&current_events_marker)
-            .map(|s| resolve_marker_target(&workspace_root, &s))
-            .unwrap_or_else(|_| args.file.clone())
-    };
+    let events_file = std::env::var("RALPH_EVENTS_FILE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            fs::read_to_string(&current_events_marker)
+                .map(|s| resolve_marker_target(&workspace_root, &s))
+                .unwrap_or_else(|_| args.file.clone())
+        });
 
     // Ensure parent directory exists
     if let Some(parent) = events_file.parent()
@@ -2905,6 +2988,58 @@ mod tests {
                 assert_eq!(path, std::path::PathBuf::from("hats/feature.yml"))
             }
             _ => panic!("Expected File variant"),
+        }
+    }
+
+    /// TUI mode re-spawns ralph via `ralph -H <label>` where `label` is the
+    /// output of [`HatsSource::label`]. That label MUST parse back into an
+    /// equivalent variant — otherwise the subprocess crashes with "Hats file
+    /// not found" on the second parse. Guard every variant here.
+    #[test]
+    fn test_hats_source_label_round_trips_through_parse() {
+        use std::path::PathBuf;
+
+        // Builtin
+        let original = HatsSource::Builtin("code-assist".to_string());
+        let label = original.label();
+        assert_eq!(label, "builtin:code-assist");
+        match HatsSource::parse(&label) {
+            HatsSource::Builtin(name) => assert_eq!(name, "code-assist"),
+            other => panic!("Builtin label didn't round-trip: got {:?}", other),
+        }
+
+        // File
+        let original = HatsSource::File(PathBuf::from("/some/file.yml"));
+        let label = original.label();
+        match HatsSource::parse(&label) {
+            HatsSource::File(path) => assert_eq!(path, PathBuf::from("/some/file.yml")),
+            other => panic!("File label didn't round-trip: got {:?}", other),
+        }
+
+        // Remote
+        let original = HatsSource::Remote("https://example.com/x.yml".to_string());
+        let label = original.label();
+        match HatsSource::parse(&label) {
+            HatsSource::Remote(url) => assert_eq!(url, "https://example.com/x.yml"),
+            other => panic!("Remote label didn't round-trip: got {:?}", other),
+        }
+
+        // PresetDir — label must NOT include a `preset:` prefix (parse only
+        // recognizes `builtin:`). A bare path goes through the existence
+        // check + is_toml_preset_dir auto-detect on reparse.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("autoloops.toml"), "# t\n").unwrap();
+        std::fs::write(tmp.path().join("topology.toml"), "name = \"t\"\n").unwrap();
+        let original = HatsSource::PresetDir(tmp.path().to_path_buf());
+        let label = original.label();
+        assert!(
+            !label.starts_with("preset:"),
+            "PresetDir label must be a bare path for round-trip; got {:?}",
+            label
+        );
+        match HatsSource::parse(&label) {
+            HatsSource::PresetDir(path) => assert_eq!(path, tmp.path().to_path_buf()),
+            other => panic!("PresetDir label didn't round-trip: got {:?}", other),
         }
     }
 

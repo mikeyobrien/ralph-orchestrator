@@ -276,7 +276,7 @@ Multi-provider AI coding assistant.
 
 ```bash
 # Install
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @earendil-works/pi-coding-agent
 
 # Verify
 pi --version

@@ -85,10 +85,23 @@ where
         .context("failed to read listener local_addr")?;
     info!(%local_addr, "ralph-api listening");
 
+    // Spawn the event-file watcher for live observation in the Builder.
+    let (watcher_shutdown_tx, watcher_shutdown_rx) = tokio::sync::watch::channel(());
+    let _watcher_handle = crate::event_watcher::spawn_watcher(
+        runtime.config.workspace_root.clone(),
+        runtime.stream_domain(),
+        watcher_shutdown_rx,
+    );
+
     axum::serve(listener, router(runtime))
         .with_graceful_shutdown(shutdown)
         .await
-        .context("axum server terminated with error")
+        .context("axum server terminated with error")?;
+
+    // Signal the watcher to stop after the HTTP server shuts down.
+    let _ = watcher_shutdown_tx.send(());
+
+    Ok(())
 }
 
 async fn health_handler(State(state): State<AppState>) -> Json<serde_json::Value> {

@@ -36,8 +36,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::display::{
-    build_tui_hat_map, print_iteration_separator, print_termination, print_wave_header,
-    print_wave_summary, print_wave_worker_done,
+    build_tui_hat_map, print_iteration_footer, print_iteration_separator, print_loop_banner,
+    print_termination, print_wave_header, print_wave_summary, print_wave_worker_done,
 };
 use crate::process_management;
 use crate::rpc_stdin::{GuidanceMessage, RpcDispatcher, run_stdin_reader, run_stdout_emitter};
@@ -880,7 +880,7 @@ pub async fn run_loop_impl(
         // Print termination info to console (skip in TUI mode - TUI handles display)
         // Skip in RPC mode - JSON events replace console output
         if !enable_tui && !enable_rpc {
-            print_termination(reason, state, use_colors);
+            print_termination(reason, state, use_colors, Some(&loop_id));
         }
 
         // Mark RPC state as completed so get_state reflects termination
@@ -978,6 +978,24 @@ pub async fn run_loop_impl(
         }
 
         return Ok(reason);
+    }
+
+    // Print startup banner for --no-tui runs. Gives agents/humans tailing
+    // the stream the loop-id, key state files, and tail/resume commands up
+    // front so they don't have to reverse-engineer them from scrollback.
+    if !enable_tui && !enable_rpc {
+        let events_path = resolve_current_events_path(&ctx);
+        let scratchpad_path = ctx.workspace().join(&config.core.scratchpad.path);
+        print_loop_banner(
+            &loop_id,
+            &config.cli.backend,
+            std::path::Path::new(&config.event_loop.prompt_file),
+            &events_path,
+            &scratchpad_path,
+            config.event_loop.max_iterations,
+            resume,
+            use_colors,
+        );
     }
 
     // Main orchestration loop
@@ -1959,6 +1977,21 @@ pub async fn run_loop_impl(
             let _ = tx.try_send(end_event);
         }
 
+        // Per-iteration footer for --no-tui: one line with budget/cost/elapsed
+        // so tailing agents can catch runaway loops without parsing events.
+        if tui_state.is_none() && !enable_rpc {
+            let iter_duration = iteration_started_at.elapsed();
+            print_iteration_footer(
+                iteration,
+                config.event_loop.max_iterations,
+                iter_duration,
+                event_loop.state().elapsed(),
+                outcome.total_cost_usd,
+                event_loop.state().cumulative_cost,
+                use_colors,
+            );
+        }
+
         // Log events from output before processing
         log_events_from_output(
             &mut event_logger,
@@ -2418,13 +2451,18 @@ pub async fn run_loop_impl(
             .map(|events| events.had_events)
             .unwrap_or(false);
 
+        let mut late_termination_reason: Option<TerminationReason> = None;
         if !agent_wrote_events && output_mentions_ralph_emit(&output) {
             match recover_expected_emit_after_output(&mut event_loop)
                 .inspect_err(|e| warn!(error = %e, "Failed to recover expected emit events"))
                 .ok()
             {
-                Some(LateEventRecovery::PendingWork | LateEventRecovery::Terminate(_)) => {
+                Some(LateEventRecovery::PendingWork) => {
                     agent_wrote_events = true;
+                }
+                Some(LateEventRecovery::Terminate(reason)) => {
+                    agent_wrote_events = true;
+                    late_termination_reason = Some(reason);
                 }
                 Some(LateEventRecovery::NoLateEvents) | None => {
                     warn!(
@@ -2497,7 +2535,9 @@ pub async fn run_loop_impl(
             return Ok(reason);
         }
 
-        if let Some(reason) = event_loop.check_completion_event() {
+        if let Some(reason) =
+            late_termination_reason.or_else(|| event_loop.check_completion_event())
+        {
             info!(
                 "Completion event {} detected.",
                 config.event_loop.completion_promise
@@ -2555,65 +2595,72 @@ pub async fn run_loop_impl(
 
         // Fallback: detect completion promise in output text.
         // Primary path is JSONL events (check_completion_event above).
-        // This catches backends (e.g. kiro-cli) that output LOOP_COMPLETE
-        // as text without using `ralph emit`.
-        if !agent_wrote_events
-            && EventParser::contains_promise(&output, &config.event_loop.completion_promise)
-        {
-            let reason = TerminationReason::CompletionPromise;
-            info!(
-                "All done! {} detected in output text (no JSONL events written).",
-                config.event_loop.completion_promise
-            );
+        // This catches backends that output LOOP_COMPLETE as text — either
+        // without `ralph emit` (e.g. kiro-cli) or alongside it (e.g. OpenCode
+        // which writes both a JSONL event and prints "Event emitted:" to stdout).
+        //
+        // We route through check_completion_event() to ensure all safety checks
+        // are applied (persistent mode suppression, required_events validation,
+        // runtime task verification). No parallel termination path.
+        if EventParser::contains_promise(&output, &config.event_loop.completion_promise) {
+            event_loop.request_completion_from_text_fallback();
+            if let Some(reason) = event_loop.check_completion_event() {
+                info!(
+                    "Completion promise {} detected in output text.",
+                    config.event_loop.completion_promise
+                );
 
-            let reason = dispatch_pre_loop_termination_hooks(
-                &event_loop,
-                hooks_dispatch_enabled,
-                &loop_id,
-                &hook_engine,
-                &hook_executor,
-                &suspend_state_store,
-                &ctx,
-                config.event_loop.max_iterations,
-                &mut accumulated_hook_metadata,
-                reason,
-            )
-            .await?;
+                let reason = dispatch_pre_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
 
-            let terminate_event = event_loop.publish_terminate_event(&reason);
-            log_terminate_event(
-                &mut event_logger,
-                event_loop.state().iteration,
-                &terminate_event,
-            );
+                let terminate_event = event_loop.publish_terminate_event(&reason);
+                log_terminate_event(
+                    &mut event_logger,
+                    event_loop.state().iteration,
+                    &terminate_event,
+                );
 
-            let reason = dispatch_post_loop_termination_hooks(
-                &event_loop,
-                hooks_dispatch_enabled,
-                &loop_id,
-                &hook_engine,
-                &hook_executor,
-                &suspend_state_store,
-                &ctx,
-                config.event_loop.max_iterations,
-                &mut accumulated_hook_metadata,
-                reason,
-            )
-            .await?;
+                let reason = dispatch_post_loop_termination_hooks(
+                    &event_loop,
+                    hooks_dispatch_enabled,
+                    &loop_id,
+                    &hook_engine,
+                    &hook_executor,
+                    &suspend_state_store,
+                    &ctx,
+                    config.event_loop.max_iterations,
+                    &mut accumulated_hook_metadata,
+                    reason,
+                )
+                .await?;
 
-            handle_termination(
-                &reason,
-                event_loop.state(),
-                &config.core.scratchpad.path,
-                &loop_history,
-                &loop_context,
-                auto_merge,
-                &prompt_content,
-            );
-            if let Some(handle) = tui_handle.take() {
-                let _ = handle.await;
+                handle_termination(
+                    &reason,
+                    event_loop.state(),
+                    &config.core.scratchpad.path,
+                    &loop_history,
+                    &loop_context,
+                    auto_merge,
+                    &prompt_content,
+                );
+                if let Some(handle) = tui_handle.take() {
+                    let _ = handle.await;
+                }
+                return Ok(reason);
             }
-            return Ok(reason);
+            // Safety check rejected completion (persistent mode, missing required
+            // events, open tasks, etc.) — continue the loop normally.
         }
 
         // Precheck validation: Warn if no pending events after processing output

@@ -366,7 +366,7 @@ mod tests {
         tracker.register_wave("w-fresh".into(), 3);
 
         // Just registered — should not be timed out with any reasonable timeout
-        let timed_out = tracker.timed_out_waves(Duration::from_secs(300));
+        let timed_out = tracker.timed_out_waves(Duration::from_mins(5));
         assert!(timed_out.is_empty());
     }
 

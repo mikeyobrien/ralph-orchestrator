@@ -472,6 +472,10 @@ export const trpc = {
       method: "collection.import",
       mapResult: (result) => result.collection,
     }),
+
+    run: createMutationProcedure<{ id: string; prompt: string }, { success: boolean; configPath: string; pid: number; startingHat?: string }, { success: boolean; configPath: string; pid: number; startingHat?: string }>({
+      method: "collection.run",
+    }),
   },
 };
 

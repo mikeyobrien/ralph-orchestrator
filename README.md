@@ -181,6 +181,88 @@ Full documentation is available at **[mikeyobrien.github.io/ralph-orchestrator](
 - [Concepts: Hats & Events](https://mikeyobrien.github.io/ralph-orchestrator/concepts/hats-and-events/)
 - [Architecture](https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/)
 
+
+## FAQ
+
+### General
+
+**What is Ralph Orchestrator?**
+Ralph is a hat-based orchestration framework that implements the Ralph Wiggum technique — autonomous task completion through continuous iteration. It keeps AI agents in a loop until the task is done, supporting multiple backends like Claude Code, Gemini CLI, Codex, and more.
+
+**How is Ralph different from other AI coding tools?**
+Unlike single-shot AI assistants, Ralph iterates until completion using a "hat system" with specialized personas. It includes backpressure gates (tests, lint, typecheck) that reject incomplete work, plus persistent memories and tasks for continuous learning.
+
+### Installation & Setup
+
+**What are the system requirements?**
+- Rust 1.75+ (for the `ralph-api` component)
+- Node.js >= 18 + npm (for the web dashboard frontend)
+- An AI coding assistant CLI (Claude Code, Codex, Gemini CLI, etc.)
+
+**Which installation method should I use?**
+- **npm** (recommended for most users): `npm install -g @ralph-orchestrator/ralph-cli`
+- **Cargo**: `cargo install ralph-cli` (best for Rust developers)
+- **GitHub Releases installer**: One-link install with `curl ... | sh`
+
+**Is Homebrew supported?**
+Homebrew is not currently published from this repository's automated release flow. Prefer npm, Cargo, or the GitHub Releases installer.
+
+### Usage
+
+**How do I start a new project with Ralph?**
+```bash
+ralph init --backend claude
+ralph plan "Add user authentication with JWT"
+ralph run -p "Implement the feature in specs/user-authentication/"
+```
+
+**What backends does Ralph support?**
+Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, and OpenCode.
+
+**What is the "hat system"?**
+Ralph uses specialized personas (hats) that coordinate through events. Each hat has a specific role — code-assist, debug, research, review, and pdd-to-code-assist — enabling structured multi-step task execution.
+
+### RObot (Human-in-the-Loop)
+
+**What is RObot?**
+RObot enables human interaction during orchestration via Telegram. Agents can ask questions and block until answered; humans can send proactive guidance mid-loop.
+
+**How do I set up Telegram integration?**
+```bash
+ralph bot onboard --telegram   # guided setup
+ralph bot status               # verify config
+ralph bot test                 # send a test message
+```
+
+### Web Dashboard
+
+**How do I access the web dashboard?**
+Run `ralph web` to start the Rust RPC API + frontend and open your browser. The dashboard is currently in Alpha — expect rough edges and breaking changes.
+
+**Can I customize the dashboard ports?**
+Yes: `ralph web --backend-port 4000 --frontend-port 8080`
+
+### MCP Server
+
+**How do I run Ralph as an MCP server?**
+```bash
+ralph mcp serve --workspace-root /path/to/repo
+```
+Each MCP server instance is scoped to a single workspace root. For multi-repo use, run one instance per workspace.
+
+### Troubleshooting
+
+**Ralph fails to start with "node_modules not found"**
+Run `npm install` in the project directory, or let `ralph web` auto-detect and install on first run.
+
+**How do I set up Node.js if not installed?**
+Use nvm (recommended): `nvm install` (reads `.nvmrc`), or install directly from https://nodejs.org/
+
+**Where can I get help?**
+- Join our [Discord server](https://discord.gg/XWUyeUNffh)
+- Report bugs on the [Issue Tracker](https://github.com/mikeyobrien/ralph-orchestrator/issues)
+- Read full documentation at [mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
