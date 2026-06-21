@@ -232,16 +232,40 @@ mod tests {
     }
 
     #[test]
+    fn test_embedded_presets_use_canonical_artifact_boundary() {
+        for preset in PRESETS {
+            let config =
+                RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
+
+            assert_eq!(
+                config.core.specs_dir, ".ralph/specs/",
+                "Preset '{}' should use the canonical committed specs boundary",
+                preset.name
+            );
+            assert!(
+                !preset.content.contains(".agents/scratchpad"),
+                "Preset '{}' should not direct artifacts to the legacy agents scratchpad",
+                preset.name
+            );
+            assert!(
+                !preset.content.contains("./specs/"),
+                "Preset '{}' should not direct artifacts to the legacy top-level specs directory",
+                preset.name
+            );
+        }
+    }
+
+    #[test]
     fn test_pdd_to_code_assist_uses_reviewed_increment_loop() {
         let preset = get_preset("pdd-to-code-assist").expect("pdd-to-code-assist should exist");
         let config =
             RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
 
-        assert_eq!(config.core.specs_dir, ".agents/scratchpad/");
+        assert_eq!(config.core.specs_dir, ".ralph/specs/");
         assert!(
             preset
                 .content
-                .contains(".agents/scratchpad/implementation/{spec_name}/idea-honing.md")
+                .contains(".ralph/specs/{spec_name}/idea-honing.md")
         );
         assert!(!preset.content.contains("requirements-interview.md"));
 
@@ -405,12 +429,12 @@ mod tests {
     }
 
     #[test]
-    fn test_code_assist_uses_upstream_artifact_layout_and_builder_workflow() {
+    fn test_code_assist_uses_canonical_artifact_layout_and_builder_workflow() {
         let preset = get_preset("code-assist").expect("code-assist should exist");
         let config =
             RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
 
-        assert_eq!(config.core.specs_dir, ".agents/scratchpad/");
+        assert_eq!(config.core.specs_dir, ".ralph/specs/");
         assert_eq!(
             config.event_loop.required_events,
             vec!["review.passed".to_string()]
@@ -420,11 +444,7 @@ mod tests {
             .hats
             .get("planner")
             .expect("planner hat should exist");
-        assert!(
-            planner
-                .instructions
-                .contains(".agents/scratchpad/implementation/{task_name}/")
-        );
+        assert!(planner.instructions.contains(".ralph/specs/{task_name}/"));
         assert!(
             planner
                 .instructions
@@ -557,11 +577,7 @@ mod tests {
                 .instructions
                 .contains("ralph tools task reopen <task_id>")
         );
-        assert!(
-            finalizer
-                .instructions
-                .contains(".agents/scratchpad/implementation/{task_name}/")
-        );
+        assert!(finalizer.instructions.contains(".ralph/specs/{task_name}/"));
         assert!(
             finalizer
                 .instructions
@@ -722,7 +738,7 @@ mod tests {
         let config =
             RalphConfig::parse_yaml(preset.content).expect("embedded preset YAML should parse");
 
-        assert_eq!(config.core.specs_dir, ".agents/scratchpad/");
+        assert_eq!(config.core.specs_dir, ".ralph/specs/");
         assert_eq!(
             config.event_loop.required_events,
             vec!["research.finding".to_string()]

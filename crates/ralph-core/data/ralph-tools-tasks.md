@@ -12,7 +12,7 @@ metadata:
 | System | Command | Purpose | Storage |
 |--------|---------|---------|---------|
 | **Runtime tasks** | `ralph tools task` | Track work items during runs | `.ralph/agent/tasks.jsonl` |
-| **Code tasks** | `ralph task` | Implementation planning | `tasks/*.code-task.md` |
+| **Code tasks** | `ralph task` | Implementation planning | `.ralph/tasks/*.code-task.md` |
 
 This skill covers **runtime tasks**. For code tasks, see `/code-task-generator`.
 

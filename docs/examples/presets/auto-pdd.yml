@@ -23,7 +23,7 @@ cli:
   prompt_mode: "arg"
 
 core:
-  specs_dir: ".agents/scratchpad/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration. Persist assumptions and decisions to disk."
     - "Stay in design mode only. Do not write production code or code-task files."
@@ -46,9 +46,9 @@ hats:
       ### Storage Layout
       On first trigger, establish the spec identity:
       1. Derive `spec_name` from the original prompt using kebab-case.
-      2. Create `.agents/scratchpad/implementation/{spec_name}/`.
-      3. Write the original prompt to `.agents/scratchpad/implementation/{spec_name}/rough-idea.md`.
-      4. Create or append to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`.
+      2. Create `.ralph/specs/{spec_name}/`.
+      3. Write the original prompt to `.ralph/specs/{spec_name}/rough-idea.md`.
+      4. Create or append to `.ralph/specs/{spec_name}/idea-honing.md`.
 
       ### Process
       1. Read the original prompt, prior idea-honing transcript, and any design-review feedback.
@@ -93,7 +93,7 @@ hats:
       Answer as a pragmatic product owner who wants a useful, defensible design from an imperfect brief.
 
       ### Storage Layout
-      Append every Q&A pair to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`.
+      Append every Q&A pair to `.ralph/specs/{spec_name}/idea-honing.md`.
 
       ### Process
       1. Read the original prompt, the latest question, and the existing interview transcript.
@@ -127,7 +127,7 @@ hats:
       The output should be strong enough for a later implementation workflow to consume.
 
       ### Storage Layout
-      Write artifacts in `.agents/scratchpad/implementation/{spec_name}/`:
+      Write artifacts in `.ralph/specs/{spec_name}/`:
       - `requirements.md` — Consolidated requirements and assumptions
       - `design.md` — Full design package
 
@@ -177,9 +177,9 @@ hats:
 
       ### Review Inputs
       Read:
-      - `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
-      - `.agents/scratchpad/implementation/{spec_name}/requirements.md`
-      - `.agents/scratchpad/implementation/{spec_name}/design.md`
+      - `.ralph/specs/{spec_name}/idea-honing.md`
+      - `.ralph/specs/{spec_name}/requirements.md`
+      - `.ralph/specs/{spec_name}/design.md`
 
       ### Review Checklist
       Reject the design if any of these are weak:

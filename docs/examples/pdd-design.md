@@ -15,7 +15,7 @@ Once the interview is complete, a `PDD Author` writes the design package and a `
 
 ## Output
 
-The workflow writes a PDD-style package under `.agents/scratchpad/implementation/{spec_name}/`:
+The workflow writes a PDD-style package under `.ralph/specs/{spec_name}/`:
 
 - `rough-idea.md`
 - `idea-honing.md`

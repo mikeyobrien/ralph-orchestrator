@@ -65,7 +65,7 @@ cli:
     - "medium"
 
 core:
-  specs_dir: "./specs/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration - save learnings to memories for next time"
     - "Don't assume 'not implemented' - search first"
@@ -134,7 +134,7 @@ cli:
     - "medium"
 
 core:
-  specs_dir: "./specs/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
     - "Verification is mandatory — tests/typecheck/lint/audit must pass"

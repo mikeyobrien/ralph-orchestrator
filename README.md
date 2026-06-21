@@ -46,10 +46,10 @@ ralph init --backend claude
 
 # 2. Plan your feature (interactive PDD session)
 ralph plan "Add user authentication with JWT"
-# Creates: specs/user-authentication/requirements.md, design.md, implementation-plan.md
+# Creates: .ralph/specs/user-authentication/requirements.md, design.md, implementation-plan.md
 
 # 3. Implement the feature
-ralph run -p "Implement the feature in specs/user-authentication/"
+ralph run -p "Implement the feature in .ralph/specs/user-authentication/"
 ```
 
 Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
@@ -213,7 +213,7 @@ Homebrew is not currently published from this repository's automated release flo
 ```bash
 ralph init --backend claude
 ralph plan "Add user authentication with JWT"
-ralph run -p "Implement the feature in specs/user-authentication/"
+ralph run -p "Implement the feature in .ralph/specs/user-authentication/"
 ```
 
 **What backends does Ralph support?**

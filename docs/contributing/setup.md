@@ -70,9 +70,10 @@ ralph-orchestrator/
 │   ├── ralph-cli/             # Binary entry point
 │   ├── ralph-e2e/             # E2E testing
 │   └── ralph-bench/           # Benchmarking
+├── .ralph/
+│   ├── specs/                 # Committed development specs and designs
+│   └── tasks/                 # Committed code task files
 ├── presets/                   # Hat collection presets
-├── specs/                     # Development specs
-├── tasks/                     # Code tasks
 ├── docs/                      # Documentation
 ├── scripts/                   # Utility scripts
 ├── Cargo.toml                 # Workspace config

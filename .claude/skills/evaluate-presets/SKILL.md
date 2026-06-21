@@ -209,7 +209,7 @@ For each issue, spawn a Task agent:
 
 ```
 "Use /code-task-generator to create a task for fixing: [issue from evaluation]
-Output to: tasks/preset-fixes/"
+Output to: .ralph/tasks/preset-fixes/"
 ```
 
 ### Step 3: Dispatch Implementation
@@ -217,7 +217,7 @@ Output to: tasks/preset-fixes/"
 For each created task:
 
 ```
-"Use /code-assist to implement: tasks/preset-fixes/[task-file].code-task.md
+"Use /code-assist to implement: .ralph/tasks/preset-fixes/[task-file].code-task.md
 Mode: auto"
 ```
 

@@ -13,7 +13,7 @@
 #
 # Usage:
 #   # From PDD output directory:
-#   ralph run --config presets/code-assist.yml --prompt ".agents/scratchpad/implementation/my-feature"
+#   ralph run --config presets/code-assist.yml --prompt ".ralph/specs/my-feature"
 #
 #   # From a single code task:
 #   ralph run --config presets/code-assist.yml --prompt ".ralph/tasks/my-task.code-task.md"
@@ -35,7 +35,7 @@ cli:
   prompt_mode: "arg"
 
 core:
-  specs_dir: ".agents/scratchpad/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
     - "Verification is mandatory — tests/typecheck/lint/audit must pass"
@@ -59,13 +59,13 @@ hats:
       The Builder only sees one task at a time, but you decide when a whole step's wave is exhausted and when the next step should exist.
 
       ### Shared Documentation Directory
-      Use the upstream code-assist documentation layout:
-      `.agents/scratchpad/implementation/{task_name}/`
+      Use the canonical Ralph spec artifact layout:
+      `.ralph/specs/{task_name}/`
 
       Determine the working directory like this:
       - Existing implementation directory in the prompt: use that directory directly
-      - Single `.code-task.md` file: derive `task_name` and use `.agents/scratchpad/implementation/{task_name}/`
-      - Rough description: derive `task_name` and use `.agents/scratchpad/implementation/{task_name}/`
+      - Single `.code-task.md` file: derive `task_name` and use `.ralph/specs/{task_name}/`
+      - Rough description: derive `task_name` and use `.ralph/specs/{task_name}/`
 
       The working directory MUST contain or create:
       - `context.md` — implementation context, repo patterns, dependencies, acceptance criteria
@@ -222,7 +222,7 @@ hats:
       The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" tools ...` and `"$RALPH_BIN" emit ...` for task/event commands.
       Read the shared documentation directory for this run:
       - Existing PDD directory from the prompt, or
-      - `.agents/scratchpad/implementation/{task_name}/` for code-task / rough-description runs
+      - `.ralph/specs/{task_name}/` for code-task / rough-description runs
 
       Read in this order:
       1. the runtime task from the event payload via `ralph tools task show <task_id> --format json`
@@ -349,7 +349,7 @@ hats:
       If `spec_dir` exists, read from `{spec_dir}/`:
       - `plan.md` — High-level strategy and E2E scenario
       - `design.md` — Requirements to validate against
-      - `tasks/*.code-task.md` — Understand task boundaries when present
+      - `.ralph/tasks/{task_name}/**/*.code-task.md` — Understand task boundaries, including PDD step subdirectories, when present
 
       ### Review Checklist
 
@@ -445,7 +445,7 @@ hats:
       ### Shared Documentation Directory
       Use the same shared docs directory as Planner and Builder:
       - existing implementation directory from the prompt, or
-      - `.agents/scratchpad/implementation/{task_name}/`
+      - `.ralph/specs/{task_name}/`
 
       Read `context.md`, `plan.md`, `progress.md`, and `logs/` from that shared docs directory.
       The implementation target under `.eval-sandbox/` is the runnable artifact area, not the location of `plan.md` or `progress.md`.
@@ -455,7 +455,7 @@ hats:
       Use the strongest source of truth available:
 
       **If operating from a PDD directory**
-      - Check every `*.code-task.md` file in `tasks/`
+      - Check every `.code-task.md` file under `.ralph/tasks/{task_name}/` recursively
       - If any remain `pending` or `in_progress`, close or reopen the reviewed runtime task as needed, then publish `queue.advance`
       - If all are completed, confirm the design, plan, and prompt are actually satisfied end-to-end
 

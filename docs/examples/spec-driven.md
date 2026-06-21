@@ -13,7 +13,7 @@ If you specifically want an example-only automated design workflow, see [Automat
 
 ## Workflow
 
-1. Create specification/design artifacts in `.agents/scratchpad/implementation/{spec_name}/`
+1. Create specification/design artifacts in `.ralph/specs/{spec_name}/`
 2. Review and approve spec
 3. Generate implementation tasks
 4. Execute with Ralph orchestration

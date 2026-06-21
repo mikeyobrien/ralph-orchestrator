@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-TASKS_DIR="${TASKS_DIR:-tasks}"
+TASKS_DIR="${TASKS_DIR:-.ralph/tasks}"
 FORMAT="table"
 FILTER_STATUS=""
 

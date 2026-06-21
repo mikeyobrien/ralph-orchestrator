@@ -40,7 +40,7 @@ cli:
   prompt_mode: "arg"
 
 core:
-  specs_dir: ".agents/scratchpad/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration — re-read autoresearch.md and git log every time"
     - "Primary metric is king — improved = keep, worse/equal = discard"

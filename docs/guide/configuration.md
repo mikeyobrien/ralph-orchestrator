@@ -132,7 +132,7 @@ core:
   scratchpad:                            # Scratchpad configuration
     enabled: true                        # Enable scratchpad (default: true)
     path: .ralph/agent/scratchpad.md     # Scratchpad file path
-  specs_dir: "./specs/"                  # Specifications directory
+  specs_dir: ".ralph/specs/"             # Committed specifications directory
   guardrails:                            # Rules injected into every prompt
     - "Fresh context each iteration"
     - "Never modify production database"
@@ -241,7 +241,7 @@ Core behaviors, scratchpad, and guardrails.
 | `scratchpad` | string or object | `{ enabled: true, path: ".ralph/agent/scratchpad.md" }` | Scratchpad configuration (see below) |
 | `scratchpad.enabled` | boolean | `true` | Enable the scratchpad |
 | `scratchpad.path` | string | `".ralph/agent/scratchpad.md"` | Scratchpad file path |
-| `specs_dir` | string | `"./specs/"` | Specifications directory |
+| `specs_dir` | string | `".ralph/specs/"` | Committed specifications directory |
 | `guardrails` | list | `[]` | Rules injected into every prompt |
 
 The `scratchpad` field accepts a plain string (shorthand for setting `path` with `enabled: true`) or a structured object with `enabled` and `path`:

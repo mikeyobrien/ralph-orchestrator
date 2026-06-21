@@ -21,7 +21,7 @@ cli:
 
 # Core behaviors
 core:
-  specs_dir: "./specs/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Document ALL findings - both successes and failures"
     - "Be specific about error messages and stack traces"

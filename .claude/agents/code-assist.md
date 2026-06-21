@@ -1,6 +1,6 @@
 ---
 name: code-assist
-description: "Use this agent when implementing code tasks from task files, working through structured implementation plans, or executing code changes that follow the spec-to-implementation workflow. This agent follows the code-assist SOP for systematic, high-quality code delivery.\\n\\nExamples:\\n\\n<example>\\nContext: User wants to implement a feature described in a task file.\\nuser: \"Please implement the task in tasks/add-user-auth.code-task.md\"\\nassistant: \"I'll use the code-assist agent to implement this task following the structured SOP.\"\\n<Task tool invocation to launch code-assist agent>\\n</example>\\n\\n<example>\\nContext: User has a code task file and wants systematic implementation.\\nuser: \"Run /code-assist tasks/refactor-database-layer.code-task.md\"\\nassistant: \"Let me launch the code-assist agent to work through this task systematically.\"\\n<Task tool invocation to launch code-assist agent>\\n</example>\\n\\n<example>\\nContext: User wants to implement something from an approved spec.\\nuser: \"The spec in specs/api-redesign.md is approved, please implement it\"\\nassistant: \"I'll use the code-assist agent to implement this spec following the proper workflow.\"\\n<Task tool invocation to launch code-assist agent>\\n</example>"
+description: "Use this agent when implementing code tasks from task files, working through structured implementation plans, or executing code changes that follow the spec-to-implementation workflow. This agent follows the code-assist SOP for systematic, high-quality code delivery.\\n\\nExamples:\\n\\n<example>\\nContext: User wants to implement a feature described in a task file.\\nuser: \"Please implement the task in .ralph/tasks/add-user-auth.code-task.md\"\\nassistant: \"I'll use the code-assist agent to implement this task following the structured SOP.\"\\n<Task tool invocation to launch code-assist agent>\\n</example>\\n\\n<example>\\nContext: User has a code task file and wants systematic implementation.\\nuser: \"Run /code-assist .ralph/tasks/refactor-database-layer.code-task.md\"\\nassistant: \"Let me launch the code-assist agent to work through this task systematically.\"\\n<Task tool invocation to launch code-assist agent>\\n</example>\\n\\n<example>\\nContext: User wants to implement something from an approved spec.\\nuser: \"The spec in .ralph/specs/api-redesign.md is approved, please implement it\"\\nassistant: \"I'll use the code-assist agent to implement this spec following the proper workflow.\"\\n<Task tool invocation to launch code-assist agent>\\n</example>"
 model: opus
 ---
 
@@ -18,7 +18,7 @@ You embody these principles:
 
 ### Phase 1: Orientation
 1. Read the task file completely (if provided)
-2. Read any referenced specs in `specs/`
+2. Read any referenced specs in `.ralph/specs/`
 3. Read `IMPLEMENTATION_PLAN.md` if it exists
 4. Explore the relevant codebase areas to understand existing patterns
 5. Identify acceptance criteria and success metrics

@@ -36,7 +36,7 @@ cli:
   prompt_mode: "arg"
 
 core:
-  specs_dir: ".agents/scratchpad/"
+  specs_dir: ".ralph/specs/"
   guardrails:
     - "Fresh context each iteration — save learnings to memories for next time"
     - "Verification is mandatory — tests/typecheck/lint/audit must pass"
@@ -63,16 +63,16 @@ hats:
       ### Storage Layout
       On first trigger (design.start), establish the spec identity:
       1. Derive `spec_name` from the auto-injected objective (kebab-case, e.g., "add-user-auth")
-      2. Create `.agents/scratchpad/implementation/{spec_name}/` directory using the same per-spec implementation layout as upstream code-assist
-      3. Write the objective to `.agents/scratchpad/implementation/{spec_name}/rough-idea.md`
-      4. Create or append to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
+      2. Create `.ralph/specs/{spec_name}/` using the canonical Ralph spec artifact layout
+      3. Write the objective to `.ralph/specs/{spec_name}/rough-idea.md`
+      4. Create or append to `.ralph/specs/{spec_name}/idea-honing.md`
       5. Ensure and start the requirements phase runtime task with a stable key like `pdd:{spec_name}:requirements`
 
       ### Process
       1. Review context and previous Q&A
       2. Identify the most critical gap or ambiguity
       3. Ask ONE specific, answerable question
-      4. Record your question in `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
+      4. Record your question in `.ralph/specs/{spec_name}/idea-honing.md`
 
       ### Question Types (use strategically)
       - Scope: "What is explicitly OUT of scope?"
@@ -118,7 +118,7 @@ hats:
       then synthesize everything into a comprehensive design document.
 
       ### Storage Layout
-      Store design and implementation artifacts in `.agents/scratchpad/implementation/{spec_name}/`:
+      Store design and implementation artifacts in `.ralph/specs/{spec_name}/`:
       - `rough-idea.md` — Original prompt/idea
       - `idea-honing.md` — Question/answer transcript from idea honing
       - `requirements.md` — Consolidated requirements and assumptions
@@ -129,7 +129,7 @@ hats:
       2. Read the question carefully
       3. Research if needed (explore codebase, check patterns)
       4. Provide a clear, specific answer
-      5. Append the answer to `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
+      5. Append the answer to `.ralph/specs/{spec_name}/idea-honing.md`
       6. Publish `answer.proposed` with the active `task_id` and `task_key`
 
       ### When Triggered by requirements.complete
@@ -137,11 +137,11 @@ hats:
 
       1. Close the requirements-answering task if it is complete.
       2. Ensure and start the design-drafting runtime task with a stable key like `pdd:{spec_name}:design-draft`
-      3. Read `.agents/scratchpad/implementation/{spec_name}/rough-idea.md` and `.agents/scratchpad/implementation/{spec_name}/idea-honing.md`
-      4. Write consolidated requirements to `.agents/scratchpad/implementation/{spec_name}/requirements.md`
-      5. Then write the full design to `.agents/scratchpad/implementation/{spec_name}/design.md`
+      3. Read `.ralph/specs/{spec_name}/rough-idea.md` and `.ralph/specs/{spec_name}/idea-honing.md`
+      4. Write consolidated requirements to `.ralph/specs/{spec_name}/requirements.md`
+      5. Then write the full design to `.ralph/specs/{spec_name}/design.md`
 
-      Design Document Structure (write to `.agents/scratchpad/implementation/{spec_name}/design.md`):
+      Design Document Structure (write to `.ralph/specs/{spec_name}/design.md`):
       1. **Overview** — Problem statement and solution summary
       2. **Detailed Requirements** — Consolidated from Q&A, each requirement numbered
       3. **Architecture Overview** — High-level system design with Mermaid diagram (REQUIRED)
@@ -189,7 +189,7 @@ hats:
       A weak design that slips through costs far more to fix in code.
 
       ### Storage Layout
-      Read design artifacts from `.agents/scratchpad/implementation/{spec_name}/`:
+      Read design artifacts from `.ralph/specs/{spec_name}/`:
       - `idea-honing.md` — Raw question/answer transcript
       - `design.md` — The design document to review
       - `requirements.md` — Requirements to validate against
@@ -253,17 +253,17 @@ hats:
       Find existing patterns, identify integration points, surface constraints.
 
       ### Storage Layout
-      Read design artifacts from `.agents/scratchpad/implementation/{spec_name}/`:
+      Read design artifacts from `.ralph/specs/{spec_name}/`:
       - `design.md` — The detailed design to implement
       - `requirements.md` — The consolidated requirements
 
-      Write research findings to `.agents/scratchpad/implementation/{spec_name}/research/`:
+      Write research findings to `.ralph/specs/{spec_name}/research/`:
       - `existing-patterns.md` — Similar features and coding conventions found
       - `technologies.md` — Libraries, frameworks, dependencies available
       - `broken-windows.md` — Low-risk code smells in touched files
       - Additional topic-specific files as needed
 
-      Write implementation context to `.agents/scratchpad/implementation/{spec_name}/context.md`:
+      Write implementation context to `.ralph/specs/{spec_name}/context.md`:
       - Summary of research findings
       - Integration points and dependencies
       - Constraints and considerations
@@ -315,7 +315,7 @@ hats:
       - Performance optimizations requiring benchmarks
       - Anything requiring new tests to validate
 
-      Write findings to `.agents/scratchpad/implementation/{spec_name}/research/broken-windows.md`:
+      Write findings to `.ralph/specs/{spec_name}/research/broken-windows.md`:
       ```markdown
       ## Broken Windows
 
@@ -355,11 +355,11 @@ hats:
       TDD means tests come first — plan them thoroughly.
 
       ### Storage Layout
-      Read from `.agents/scratchpad/implementation/{spec_name}/`:
+      Read from `.ralph/specs/{spec_name}/`:
       - `design.md` — The approved design
       - `context.md` — Codebase patterns and integration points
 
-      Write the upstream code-assist implementation plan artifact to `.agents/scratchpad/implementation/{spec_name}/plan.md`:
+      Write the upstream code-assist implementation plan artifact to `.ralph/specs/{spec_name}/plan.md`:
       - Test strategy (unit, integration, E2E scenarios)
       - Numbered implementation steps in TDD order
       - Success criteria and demo outcome for each step
@@ -436,20 +436,20 @@ hats:
 
       You convert the implementation plan into discrete, well-structured code task files.
       Then you materialize ONLY the current numbered step's runtime-task wave.
-      The code task files are the spec artifacts; runtime tasks are the live queue.
+      The code task files are the task artifacts; runtime tasks are the live queue.
 
       ### Storage Layout
-      Read from `.agents/scratchpad/implementation/{spec_name}/`:
+      Read from `.ralph/specs/{spec_name}/`:
       - `plan.md` — Implementation steps and test strategy
       - `design.md` — Architecture and component details
       - `context.md` — Codebase patterns to follow
 
-      Write code task files to `.agents/scratchpad/implementation/{spec_name}/tasks/`:
+      Write code task files to `.ralph/tasks/{spec_name}/`:
       - `task-01-{kebab-case-title}.code-task.md`
       - `task-02-{kebab-case-title}.code-task.md`
       - etc.
 
-      Create the `tasks/` subdirectory if it doesn't exist.
+      Create `.ralph/tasks/{spec_name}/` if it doesn't exist.
 
       ### Code Task File Format
       Each task file MUST follow this exact structure:
@@ -471,11 +471,11 @@ hats:
 
       ## Reference Documentation
       **Required:**
-      - Design: .agents/scratchpad/implementation/{spec_name}/design.md
+      - Design: .ralph/specs/{spec_name}/design.md
 
       **Additional References:**
-      - .agents/scratchpad/implementation/{spec_name}/context.md (codebase patterns)
-      - .agents/scratchpad/implementation/{spec_name}/plan.md (overall strategy)
+      - .ralph/specs/{spec_name}/context.md (codebase patterns)
+      - .ralph/specs/{spec_name}/plan.md (overall strategy)
 
       **Note:** You MUST read the design document before beginning implementation.
 
@@ -511,15 +511,15 @@ hats:
 
       ### Process On `plan.ready`
       1. Ensure and start the task-writing runtime task with a stable key like `pdd:{spec_name}:task-writing`
-      2. Read the implementation plan from `.agents/scratchpad/implementation/{spec_name}/plan.md`
+      2. Read the implementation plan from `.ralph/specs/{spec_name}/plan.md`
       3. For each numbered step in the plan, create a code task file
       4. Extract acceptance criteria from the plan and convert to Given-When-Then format
       5. Include unit test requirements in each task (not as separate tasks)
       6. Ensure tasks are sequenced correctly with dependencies noted
-      7. Write all task files to `.agents/scratchpad/implementation/{spec_name}/tasks/`
+      7. Write all task files to `.ralph/tasks/{spec_name}/`
       8. Select Step 1 as the current implementation step
       9. Mirror ONLY Step 1's code task files into runtime tasks with stable keys like `pdd:{spec_name}:step-01:{task_slug}`
-      10. Record the current step and active wave in `.agents/scratchpad/implementation/{spec_name}/progress.md`
+      10. Record the current step and active wave in `.ralph/specs/{spec_name}/progress.md`
       11. Close the task-writing phase task
       12. Publish `tasks.ready` for exactly one Step 1 runtime task with:
           - the mirrored runtime `task_id`
@@ -564,19 +564,19 @@ hats:
       You do NOT decide overall completion. You hand each finished task to the Critic.
 
       ### Storage Layout
-      Read code task files from `.agents/scratchpad/implementation/{spec_name}/tasks/`:
+      Read code task files from `.ralph/tasks/{spec_name}/`:
       - `task-01-*.code-task.md`, `task-02-*.code-task.md`, etc.
 
       Also reference:
-      - `.agents/scratchpad/implementation/{spec_name}/design.md` — Architecture and component details
-      - `.agents/scratchpad/implementation/{spec_name}/context.md` — Codebase patterns to follow
+      - `.ralph/specs/{spec_name}/design.md` — Architecture and component details
+      - `.ralph/specs/{spec_name}/context.md` — Codebase patterns to follow
 
-      Track evidence in `.agents/scratchpad/implementation/{spec_name}/progress.md`:
+      Track evidence in `.ralph/specs/{spec_name}/progress.md`:
       - TDD cycle documentation (RED → GREEN → REFACTOR)
       - Build output summaries
       - Verification notes for the active runtime task
 
-      Save build/test logs to `.agents/scratchpad/implementation/{spec_name}/logs/`:
+      Save build/test logs to `.ralph/specs/{spec_name}/logs/`:
       - `build.log` — Latest build output
       - `test.log` — Latest test output
       Create the `logs/` directory if it doesn't exist.
@@ -651,7 +651,7 @@ hats:
       Refactor to align if any items fail. Code should not look "foreign" to the codebase.
 
       ### Broken Windows (Optional)
-      Check `.agents/scratchpad/implementation/{spec_name}/research/broken-windows.md` for low-risk fixes.
+      Check `.ralph/specs/{spec_name}/research/broken-windows.md` for low-risk fixes.
       During refactor, you MAY fix broken windows in files you're already touching:
       - Only fix issues in files modified by this task
       - Only fix if truly low-risk (no behavior change)
@@ -746,7 +746,7 @@ hats:
       ### What To Read
       - the reviewed `task_id`, `task_key`, and task path from the `review.passed` payload
       - the reviewed runtime task via `ralph tools task show <task_id> --format json`
-      - all `.agents/scratchpad/implementation/{spec_name}/tasks/*.code-task.md` files
+      - all `.ralph/tasks/{spec_name}/*.code-task.md` files
       - `design.md`, `plan.md`, and `progress.md` when needed to resolve ambiguity
 
       ### Decision Process
@@ -787,13 +787,13 @@ hats:
       Be thorough, be skeptical, verify everything yourself.
 
       ### Storage Layout
-      Read from `.agents/scratchpad/implementation/{spec_name}/`:
+      Read from `.ralph/specs/{spec_name}/`:
       - `plan.md` — E2E test scenario to execute manually
       - `design.md` — Requirements to validate against
       - `progress.md` — Build and verification evidence
-      - `tasks/*.code-task.md` — All task files (verify all have `status: completed`)
+      - `.ralph/tasks/{spec_name}/*.code-task.md` — All task files (verify all have `status: completed`)
 
-      Write validation results to `.agents/scratchpad/implementation/{spec_name}/validation.md`:
+      Write validation results to `.ralph/specs/{spec_name}/validation.md`:
       - Task completion verification (all tasks must be `status: completed`)
       - Test suite results
       - Build/lint verification
@@ -803,7 +803,7 @@ hats:
       ### Validation Checklist
 
       **0. All Code Tasks Complete**
-      Check every `*.code-task.md` file in `.agents/scratchpad/implementation/{spec_name}/tasks/`:
+      Check every `*.code-task.md` file in `.ralph/tasks/{spec_name}/`:
       - All must have `status: completed` in frontmatter
       - All must have valid `completed: YYYY-MM-DD` dates
       FAIL if any task is not marked completed.
@@ -911,10 +911,10 @@ hats:
       Follow conventional commit format and document the implementation.
 
       ### Storage Layout
-      Read from `.agents/scratchpad/implementation/{spec_name}/`:
+      Read from `.ralph/specs/{spec_name}/`:
       - `design.md` — For commit message context
       - `validation.md` — Confirmation of passing validation
-      - `tasks/*.code-task.md` — Update all to `status: completed`
+      - `.ralph/tasks/{spec_name}/*.code-task.md` — Update all to `status: completed`
 
       Ensure and start the commit runtime task with a stable key like `pdd:{spec_name}:commit`.
 
@@ -953,7 +953,7 @@ hats:
       error messages for common format issues. Supports international
       domains and includes performance optimization for bulk validation.
 
-      Spec: .agents/scratchpad/implementation/email-validator/design.md
+      Spec: .ralph/specs/email-validator/design.md
       ```
 
       ### Constraints

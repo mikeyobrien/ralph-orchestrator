@@ -104,17 +104,21 @@ PROMPT.md
 .tmp-ralph-claude-code
 
 # Ralph orchestrator state
-# All state now consolidated under .ralph/
-.ralph/
+# Keep runtime state ignored while allowing committed text artifacts.
+.ralph/*
 
 # Track git-friendly content (negations must follow the ignore)
 !.ralph/specs/
 !.ralph/specs/**
 !.ralph/tasks/
-!.ralph/tasks/**
+.ralph/tasks/**
+!.ralph/tasks/**/
+!.ralph/tasks/*.code-task.md
+!.ralph/tasks/**/*.code-task.md
 !.ralph/agent/
+.ralph/agent/*
+!.ralph/agent/decisions.md
 !.ralph/agent/memories.md
-!.ralph/agent/tasks.jsonl
 
 # Codex local state
 .codex/

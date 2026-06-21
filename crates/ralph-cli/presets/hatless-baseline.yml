@@ -20,7 +20,7 @@ cli:
   backend: "claude"
 
 core:
-  specs_dir: "./specs/"
+  specs_dir: ".ralph/specs/"
 
 # NO HATS - Ralph works directly without delegation
 # This is intentional for baseline testing

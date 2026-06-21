@@ -48,7 +48,7 @@ Notes:
 
 ## Runtime Directories
 
-Ralph runtime artifacts are stored in `.ralph/` (for example `.ralph/agent`, `.ralph/tasks`, `.ralph/specs`), not `.agent/`.
+Ralph runtime state is stored under `.ralph/` and remains ignored by default. Committed planning artifacts live in `.ralph/specs/`, and committed code task files live in `.ralph/tasks/`; legacy `.agent/` paths are not used for new artifacts.
 
 ## Command Dispatch
 

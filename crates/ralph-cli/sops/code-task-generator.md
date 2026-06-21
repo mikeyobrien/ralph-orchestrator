@@ -25,7 +25,7 @@ These rules apply across ALL steps:
 
 - **input** (required): Task description, file path, or PDD plan path
 - **step_number** (optional, PDD only): Specific step to process. Auto-determines next uncompleted step if omitted.
-- **output_dir** (optional, default: `specs/{task_name}/tasks/`): Output directory for code task files
+- **output_dir** (optional, default: `.ralph/tasks/`): Output directory for code task files
 - **task_name** (optional, description mode only): Override auto-generated task name
 
 **Constraints:**
@@ -62,7 +62,7 @@ Present the proposed breakdown to the user:
 Create files following the Code Task Format below.
 
 **PDD mode specifics:**
-- Create `step{NN}/` folder (zero-padded: step01, step02, step10)
+- Create `.ralph/tasks/{task_name}/step{NN}/` folder by default (zero-padded: step01, step02, step10)
 - Name files sequentially: `task-01-{title}.code-task.md`, `task-02-{title}.code-task.md`
 - Break down by functional components, not testing phases
 
@@ -105,7 +105,7 @@ completed: null
 
 ## Reference Documentation
 **Required:**
-- Design: specs/{task_name}/design.md
+- Design: .ralph/specs/{task_name}/design.md
 
 **Additional References (if relevant to this task):**
 - [Specific research document or section]
@@ -139,11 +139,11 @@ completed: null
 
 **Description mode input:** `"I need a function that validates email addresses and returns detailed error messages"`
 
-**Description mode output:** `specs/email-validator/tasks/email-validator.code-task.md` — task with acceptance criteria for valid/invalid email handling, error messages, and unit tests.
+**Description mode output:** `.ralph/tasks/email-validator.code-task.md` — task with acceptance criteria for valid/invalid email handling, error messages, and unit tests.
 
-**PDD mode input:** `"specs/data-pipeline/plan.md"`
+**PDD mode input:** `".ralph/specs/data-pipeline/plan.md"`
 
-**PDD mode output:** `specs/data-pipeline/tasks/step02/` containing `task-01-create-data-models.code-task.md`, `task-02-implement-validation.code-task.md`, `task-03-add-serialization.code-task.md` — each with design.md reference, acceptance criteria, and demo requirements.
+**PDD mode output:** `.ralph/tasks/data-pipeline/step02/` containing `task-01-create-data-models.code-task.md`, `task-02-implement-validation.code-task.md`, `task-03-add-serialization.code-task.md` — each with design.md reference, acceptance criteria, and demo requirements.
 
 ## Troubleshooting
 
