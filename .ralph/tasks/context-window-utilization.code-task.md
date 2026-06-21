@@ -94,7 +94,7 @@ Duration: 12345ms | Est. cost: $0.0526 | Turns: 3 | Context: 45% (90K/200K)
 - Per spec §8 Option A: add a `context_window: u64` parameter to the executor's entry point (whichever `execute`-style function constructs `SessionResult`).
 - Populate `SessionResult.context_window` from that parameter at both the Claude `Result` branch and the two Pi construction sites (~`pty_executor.rs:1126-1138, 1182-1193`).
 - Replace Pi's `input_tokens` source with `pi_state.peak_input_tokens` (semantic change per spec §4).
-- Caller(s) in `loop_runner.rs` (and anywhere else) pass `resolve_context_window(&cfg)`.
+- Caller(s) in `loop_runner.rs` resolve the active hat's effective backend and pass `resolve_context_window_for_backend(&cfg, backend_name)`.
 
 **Gate:** `cargo build` green. `SessionResult.context_window` is non-zero when run against claude/pi.
 

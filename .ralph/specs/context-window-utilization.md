@@ -165,7 +165,7 @@ Used by `SessionResult` construction at `pty_executor.rs:1126-1138, 1182-1193` i
   }
   ```
 
-- In the Claude `Result` branch, replace `..Default::default()` with real values from `ClaudeSessionState`. Populate `context_window` from `resolve_context_window(&cfg)` threaded in via the executor's existing config access (see §8).
+- In the Claude `Result` branch, replace `..Default::default()` with real values from `ClaudeSessionState`. Populate `context_window` from the resolved value threaded in by `loop_runner.rs` after it chooses the effective backend for the active hat (see §8).
 
 ### 7.5 `crates/ralph-cli/src/loop_runner.rs::ExecutionOutcome`
 
@@ -225,7 +225,7 @@ pub fn resolve_context_window(cfg: &RalphConfig) -> u64 {
 
 `pty_executor.rs` does not currently accept a `RalphConfig`. Options:
 
-- **Option A (preferred):** Pass `resolved_context_window: u64` into the executor's entry point (`execute`-style function) alongside existing args. `loop_runner.rs` calls `resolve_context_window(&cfg)` once per iteration and passes the value through.
+- **Option A (preferred):** Pass `resolved_context_window: u64` into the executor's entry point (`execute`-style function) alongside existing args. `loop_runner.rs` resolves the active hat's effective backend, calls `resolve_context_window_for_backend(&cfg, backend_name)` once per iteration, and passes the value through.
 - **Option B:** Build the final `SessionResult` in `loop_runner.rs` (not the executor), injecting `context_window` at that boundary.
 
 Choose **Option A** — keeps the value attached to `SessionResult` at construction, so display handlers see it without any loop-runner coordination. One new `u64` parameter; no struct changes to existing executor inputs.
@@ -240,7 +240,7 @@ fn format_session_summary(r: &SessionResult) -> String {
         "Duration: {}ms | Est. cost: ${:.4} | Turns: {}",
         r.duration_ms, r.total_cost_usd, r.num_turns
     );
-    let used = r.input_tokens + r.cache_read_tokens + r.cache_write_tokens;
+    let used = r.input_tokens;
     if r.context_window > 0 && used > 0 {
         let pct = used.saturating_mul(100) / r.context_window;
         let used_k = (used + 500) / 1_000;
