@@ -921,10 +921,10 @@ impl EventLoop {
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(event) = serde_json::from_str::<crate::event_reader::Event>(&line) {
-                if event.topic == "loop.terminate" {
-                    last_terminate = Some(index as u64 + 1);
-                }
+            if let Ok(event) = serde_json::from_str::<crate::event_reader::Event>(&line)
+                && event.topic == "loop.terminate"
+            {
+                last_terminate = Some(index as u64 + 1);
             }
         }
 
