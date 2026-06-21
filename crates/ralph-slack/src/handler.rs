@@ -100,10 +100,10 @@ pub fn handle_message_with_repo(
         return Ok(HandlerAction::Ignored);
     }
 
-    if let Some(event_id) = event.event_id.as_deref() {
-        if !manager.mark_event_seen(event_id)? {
-            return Ok(HandlerAction::Duplicate);
-        }
+    if let Some(event_id) = event.event_id.as_deref()
+        && !manager.mark_event_seen(event_id)?
+    {
+        return Ok(HandlerAction::Duplicate);
     }
 
     let thread_ts = event.thread_ts.as_deref().unwrap_or(&event.ts);
@@ -267,10 +267,10 @@ pub fn validate_loop_id(loop_id: &str) -> SlackResult<()> {
 
 fn strip_app_mention(text: &str) -> String {
     let trimmed = text.trim();
-    if let Some(rest) = trimmed.strip_prefix("<@") {
-        if let Some((_, prompt)) = rest.split_once('>') {
-            return prompt.trim().to_string();
-        }
+    if let Some(rest) = trimmed.strip_prefix("<@")
+        && let Some((_, prompt)) = rest.split_once('>')
+    {
+        return prompt.trim().to_string();
     }
     trimmed.to_string()
 }

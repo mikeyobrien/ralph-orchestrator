@@ -994,20 +994,20 @@ fn invalid_repo_alias_message(alias: &str) -> String {
 
 fn strip_app_mention_for_start(text: &str) -> String {
     let trimmed = text.trim();
-    if let Some(rest) = trimmed.strip_prefix("<@") {
-        if let Some((_, prompt)) = rest.split_once('>') {
-            return prompt.trim().to_string();
-        }
+    if let Some(rest) = trimmed.strip_prefix("<@")
+        && let Some((_, prompt)) = rest.split_once('>')
+    {
+        return prompt.trim().to_string();
     }
     trimmed.to_string()
 }
 
 fn rewrite_start_text_with_prompt(original: &str, prompt: &str) -> String {
     let trimmed = original.trim();
-    if let Some(rest) = trimmed.strip_prefix("<@") {
-        if let Some((mention, _)) = rest.split_once('>') {
-            return format!("<@{mention}> {}", prompt.trim()).trim().to_string();
-        }
+    if let Some(rest) = trimmed.strip_prefix("<@")
+        && let Some((mention, _)) = rest.split_once('>')
+    {
+        return format!("<@{mention}> {}", prompt.trim()).trim().to_string();
     }
     prompt.trim().to_string()
 }
@@ -1029,8 +1029,8 @@ fn monitor_loop_completion<N>(
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let event_path = events_path(&workspace_root, &loop_id);
-            if let Ok(contents) = std::fs::read_to_string(&event_path) {
-                if let Err(error) = sync_loop_progress_once(
+            if let Ok(contents) = std::fs::read_to_string(&event_path)
+                && let Err(error) = sync_loop_progress_once(
                     &state_manager,
                     notifier.clone(),
                     &loop_id,
@@ -1041,9 +1041,8 @@ fn monitor_loop_completion<N>(
                     &mut checkpoint,
                 )
                 .await
-                {
-                    tracing::warn!(%loop_id, ?error, "failed to sync Slack loop progress update");
-                }
+            {
+                tracing::warn!(%loop_id, ?error, "failed to sync Slack loop progress update");
             }
             if !process_is_alive(process_id) {
                 break;
@@ -1201,12 +1200,11 @@ where
         pending_human_needed && !urgent_human_needed,
     )
     .await?;
-    if let Some(last_sent_at) = checkpoint.last_sent_at {
-        if update.topic != "human.interact"
-            && elapsed.saturating_sub(last_sent_at) < MIN_PROGRESS_UPDATE_INTERVAL
-        {
-            return Ok(status_sent);
-        }
+    if let Some(last_sent_at) = checkpoint.last_sent_at
+        && update.topic != "human.interact"
+        && elapsed.saturating_sub(last_sent_at) < MIN_PROGRESS_UPDATE_INTERVAL
+    {
+        return Ok(status_sent);
     }
 
     let message = SlackBlocks::progress_card(
@@ -1272,12 +1270,11 @@ where
     if !bypass_throttle && checkpoint.last_status.as_deref() == Some(status) {
         return Ok(false);
     }
-    if !bypass_throttle {
-        if let Some(last_sent_at) = checkpoint.last_status_sent_at {
-            if elapsed.saturating_sub(last_sent_at) < MIN_ASSISTANT_STATUS_UPDATE_INTERVAL {
-                return Ok(false);
-            }
-        }
+    if !bypass_throttle
+        && let Some(last_sent_at) = checkpoint.last_status_sent_at
+        && elapsed.saturating_sub(last_sent_at) < MIN_ASSISTANT_STATUS_UPDATE_INTERVAL
+    {
+        return Ok(false);
     }
     notifier
         .set_assistant_thread_status(channel_id, thread_ts, status)
@@ -1386,7 +1383,7 @@ fn format_progress_update(loop_id: &str, update: &SlackProgressUpdate) -> String
     let mut payload = redact_secrets(&update.payload);
     if payload.len() > 1000 {
         payload.truncate(1000);
-        payload.push_str("…");
+        payload.push('…');
     }
     format!(
         "Ralph update\nLoop: {loop_id}\nIteration: {iteration}\nHat: {hat}\nTopic: {}\nLast message:\n```\n{}\n```",
@@ -1407,7 +1404,7 @@ fn handoff_text(binding: &SlackThreadBinding) -> String {
             let mut text = redact_secrets(contents.trim());
             if text.len() > 3000 {
                 text.truncate(3000);
-                text.push_str("…");
+                text.push('…');
             }
             format!(
                 "Handoff for {}:
@@ -1476,7 +1473,7 @@ fn plain_tail_text(path: &Path, n: usize) -> String {
                 .join("\n");
             if formatted.len() > 3000 {
                 formatted.truncate(3000);
-                formatted.push_str("…");
+                formatted.push('…');
             }
             format!(
                 "Latest Ralph log lines (last {n}):
@@ -1504,7 +1501,7 @@ fn tail_text(path: &Path, n: usize) -> String {
                 .join("\n");
             if formatted.len() > 3000 {
                 formatted.truncate(3000);
-                formatted.push_str("…");
+                formatted.push('…');
             }
             format!("Latest Ralph events (last {n}):\n{formatted}")
         }

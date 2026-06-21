@@ -340,8 +340,7 @@ async fn socket_mode_ack_is_sent_before_slow_loop_spawn_work() {
                     }
                 }
             })
-            .to_string()
-            .into(),
+            .to_string(),
         ))
         .await
         .unwrap();
@@ -390,9 +389,7 @@ async fn socket_mode_ignores_hello_envelopes_without_ack_id() {
         let (stream, _) = listener.accept().await.unwrap();
         let mut ws = accept_async(stream).await.unwrap();
         ws.send(Message::Text(
-            serde_json::json!({"type":"hello","num_connections":1,"debug_info":{}})
-                .to_string()
-                .into(),
+            serde_json::json!({"type":"hello","num_connections":1,"debug_info":{}}).to_string(),
         ))
         .await
         .unwrap();
@@ -927,17 +924,18 @@ async fn root_event_resolves_repo_from_channel_mapping_and_unknown_channel_does_
         .await
         .unwrap();
 
-    let requests = spawner.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0].workspace_root,
-        repo_root.path().canonicalize().unwrap()
-    );
-    assert!(
-        !requests[0].env.contains_key("RALPH_WORKSPACE_ROOT"),
-        "Slack-spawned loops run from their worktree; do not force repo root via RALPH_WORKSPACE_ROOT"
-    );
-    drop(requests);
+    {
+        let requests = spawner.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].workspace_root,
+            repo_root.path().canonicalize().unwrap()
+        );
+        assert!(
+            !requests[0].env.contains_key("RALPH_WORKSPACE_ROOT"),
+            "Slack-spawned loops run from their worktree; do not force repo root via RALPH_WORKSPACE_ROOT"
+        );
+    }
     let bound = state
         .load_or_default()
         .unwrap()

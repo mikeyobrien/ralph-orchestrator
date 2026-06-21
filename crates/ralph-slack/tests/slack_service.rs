@@ -343,7 +343,7 @@ async fn upload_file_external_uses_current_slack_external_upload_flow() {
     std::fs::write(&file_path, "hello artifact").unwrap();
     let (base_url, mut requests) = run_http_double(vec![
         r#"{"ok":true,"upload_url":"__BASE_URL__/upload/F123","file_id":"F123"}"#,
-        r#"{}"#,
+        r"{}",
         r#"{"ok":true}"#,
     ])
     .await;
@@ -519,7 +519,7 @@ async fn slack_service_can_write_pending_questions_to_shared_state_path() {
 async fn slack_service_uploads_files_only_to_bound_thread_and_workspace_paths() {
     let (base_url, mut requests) = run_http_double(vec![
         r#"{"ok":true,"upload_url":"__BASE_URL__/upload/F123","file_id":"F123"}"#,
-        r#"{}"#,
+        r"{}",
         r#"{"ok":true}"#,
     ])
     .await;

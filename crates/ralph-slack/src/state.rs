@@ -61,7 +61,7 @@ pub struct PendingSlackQuestion {
     pub asked_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SlackState {
     pub team_id: Option<String>,
     pub last_socket_envelope_id: Option<String>,
@@ -69,19 +69,6 @@ pub struct SlackState {
     pub thread_to_loop: HashMap<String, String>,
     pub pending_questions: HashMap<String, PendingSlackQuestion>,
     pub seen_event_ids: VecDeque<String>,
-}
-
-impl Default for SlackState {
-    fn default() -> Self {
-        Self {
-            team_id: None,
-            last_socket_envelope_id: None,
-            threads: HashMap::new(),
-            thread_to_loop: HashMap::new(),
-            pending_questions: HashMap::new(),
-            seen_event_ids: VecDeque::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

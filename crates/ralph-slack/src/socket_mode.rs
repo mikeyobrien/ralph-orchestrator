@@ -43,7 +43,7 @@ where
                 let envelope: SocketEnvelope = serde_json::from_str(&text)?;
                 if let Some(envelope_id) = envelope.envelope_id.as_deref() {
                     ws.send(Message::Text(
-                        json!({"envelope_id": envelope_id}).to_string().into(),
+                        json!({"envelope_id": envelope_id}).to_string(),
                     ))
                     .await?;
                 }

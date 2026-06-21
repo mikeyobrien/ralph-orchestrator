@@ -252,16 +252,16 @@ fn check_for_response(events_path: &Path, file_pos: &mut u64) -> SlackResult<Opt
         if line.trim().is_empty() {
             continue;
         }
-        if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
-            if event.get("topic").and_then(|topic| topic.as_str()) == Some("human.response") {
-                return Ok(Some(
-                    event
-                        .get("payload")
-                        .and_then(|payload| payload.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                ));
-            }
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line)
+            && event.get("topic").and_then(|topic| topic.as_str()) == Some("human.response")
+        {
+            return Ok(Some(
+                event
+                    .get("payload")
+                    .and_then(|payload| payload.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            ));
         }
     }
     Ok(None)
