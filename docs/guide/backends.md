@@ -10,6 +10,7 @@ Ralph supports multiple AI CLI backends. This guide covers setup and selection.
 | Kiro | `kiro-cli` | Amazon/AWS |
 | Gemini CLI | `gemini` | Google |
 | Codex | `codex` | OpenAI |
+| Forge | `forge` | Multi-provider terminal agent |
 | Amp | `amp` | Sourcegraph |
 | Copilot CLI | `copilot` | GitHub |
 | OpenCode | `opencode` | Community |
@@ -29,10 +30,11 @@ Detection order (first available wins):
 2. Kiro
 3. Gemini
 4. Codex
-5. Amp
-6. Copilot
-7. OpenCode
-8. Pi
+5. Forge
+6. Amp
+7. Copilot
+8. OpenCode
+9. Pi
 
 ## Explicit Selection
 
@@ -57,7 +59,7 @@ Each backend below includes:
 - **Hat YAML** configuration
 - **`ralph doctor`** validation notes
 
-Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `pi`.
+Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `forge`, `amp`, `copilot`, `opencode`, `pi`.
 
 ### Claude Code (`claude`)
 
@@ -187,6 +189,48 @@ hats:
 **Doctor checks:**
 - `codex --version` must succeed
 - Warns if neither `OPENAI_API_KEY` nor `CODEX_API_KEY` is set
+
+### Forge (`forge`)
+
+Multi-provider terminal AI agent.
+
+```bash
+# Install
+curl -fsSL https://forgecode.dev/cli | sh
+
+# Authenticate
+forge provider login
+
+# Verify
+forge --version
+```
+
+**Auth & env vars:**
+- Configure providers through `forge provider login` or Forge's provider configuration
+- No auth env vars are checked by `ralph doctor` for Forge
+
+**Hat YAML:**
+```yaml
+hats:
+  coder:
+    backend: "forge"
+```
+
+**Forge agent selection (optional):**
+```yaml
+hats:
+  reviewer:
+    backend:
+      type: "forge"
+      args: ["--agent", "sage"]
+```
+
+**Doctor checks:**
+- `forge --version` must succeed
+
+**Execution modes:**
+- Headless Ralph runs call `forge -p "<prompt>"`
+- Interactive Forge is launched as `forge`; Forge does not support initial prompt injection in no-arg interactive mode
 
 ### Amp (`amp`)
 

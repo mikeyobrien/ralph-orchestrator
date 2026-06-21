@@ -52,6 +52,6 @@ ralph --version
 
 ## Next Steps
 
-- Install at least one supported AI backend CLI (Claude Code, Gemini CLI, Copilot CLI, etc.)
+- Install at least one supported AI backend CLI (Claude Code, Gemini CLI, Forge, Copilot CLI, etc.)
 - Configure your backend API keys or auth
 - Follow the quick start guide: `getting-started/quick-start.md`

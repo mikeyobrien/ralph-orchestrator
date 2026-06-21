@@ -33,7 +33,7 @@ Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — a
 
 -   :material-robot: **Multi-Backend Support**
 
-    Works with Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, and OpenCode
+    Works with Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, and OpenCode
 
 -   :material-hat-fedora: **Hat System**
 

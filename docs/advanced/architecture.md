@@ -72,6 +72,7 @@ CLI backend integrations.
 - Kiro
 - Gemini CLI
 - Codex
+- Forge
 - Amp
 - Copilot CLI
 - OpenCode

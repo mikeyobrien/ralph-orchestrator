@@ -135,7 +135,7 @@ Use this mode from an MCP client configuration rather than an interactive termin
 
 Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — autonomous task completion through continuous iteration. It supports:
 
-- **Multi-Backend Support** — Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, OpenCode
+- **Multi-Backend Support** — Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, OpenCode
 - **Hat System** — Specialized personas coordinating through events
 - **Backpressure** — Gates that reject incomplete work (tests, lint, typecheck)
 - **Memories & Tasks** — Persistent learning and runtime work tracking
@@ -217,7 +217,7 @@ ralph run -p "Implement the feature in specs/user-authentication/"
 ```
 
 **What backends does Ralph support?**
-Claude Code, Kiro, Gemini CLI, Codex, Amp, Copilot CLI, and OpenCode.
+Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, and OpenCode.
 
 **What is the "hat system"?**
 Ralph uses specialized personas (hats) that coordinate through events. Each hat has a specific role — code-assist, debug, research, review, and pdd-to-code-assist — enabling structured multi-step task execution.

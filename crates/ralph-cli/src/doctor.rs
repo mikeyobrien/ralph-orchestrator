@@ -440,6 +440,7 @@ fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
         "claude" => "claude".to_string(),
         "gemini" => "gemini".to_string(),
         "codex" => "codex".to_string(),
+        "forge" => "forge".to_string(),
         "amp" => "amp".to_string(),
         "copilot" => "copilot".to_string(),
         "opencode" => "opencode".to_string(),

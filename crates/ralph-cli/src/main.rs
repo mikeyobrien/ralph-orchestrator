@@ -709,7 +709,7 @@ enum Commands {
 /// Arguments for the init subcommand.
 #[derive(Parser, Debug)]
 struct InitArgs {
-    /// Backend to use (claude, kiro, gemini, codex, amp, copilot, opencode, pi, custom).
+    /// Backend to use (claude, kiro, gemini, codex, forge, amp, copilot, opencode, pi, custom).
     /// Generates core config only.
     #[arg(long, conflicts_with = "list_presets")]
     backend: Option<String>,

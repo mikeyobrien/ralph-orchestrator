@@ -182,7 +182,8 @@ pub struct RalphConfig {
     // These map to nested v2 fields for backwards compatibility.
     // ─────────────────────────────────────────────────────────────────────────
     /// V1 field: Backend CLI (maps to cli.backend).
-    /// Values: "claude", "kiro", "gemini", "codex", "amp", "pi", "auto", or "custom".
+    /// Values include "auto", "claude", "kiro", "kiro-acp", "gemini",
+    /// "codex", "forge", "amp", "copilot", "opencode", "pi", "roo", or "custom".
     #[serde(default)]
     pub agent: Option<String>,
 
@@ -816,7 +817,10 @@ impl RalphConfig {
     /// If empty, returns the default priority order.
     pub fn get_agent_priority(&self) -> Vec<&str> {
         if self.agent_priority.is_empty() {
-            vec!["claude", "kiro", "gemini", "codex", "amp"]
+            vec![
+                "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot",
+                "opencode", "pi", "roo",
+            ]
         } else {
             self.agent_priority.iter().map(String::as_str).collect()
         }
@@ -1104,7 +1108,8 @@ impl CoreConfig {
 /// CLI backend configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliConfig {
-    /// Backend to use: "claude", "kiro", "gemini", "codex", "amp", "pi", or "custom".
+    /// Backend to use: "auto", "claude", "kiro", "kiro-acp", "gemini",
+    /// "codex", "forge", "amp", "copilot", "opencode", "pi", "roo", or "custom".
     #[serde(default = "default_backend")]
     pub backend: String,
 
@@ -2334,7 +2339,13 @@ agent_priority: [gemini, claude, codex]
     fn test_default_agent_priority() {
         let config = RalphConfig::default();
         let priority = config.get_agent_priority();
-        assert_eq!(priority, vec!["claude", "kiro", "gemini", "codex", "amp"]);
+        assert_eq!(
+            priority,
+            vec![
+                "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot",
+                "opencode", "pi", "roo"
+            ]
+        );
     }
 
     #[test]

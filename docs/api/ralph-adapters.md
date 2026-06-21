@@ -19,6 +19,7 @@ CLI backend integrations for various AI tools.
 | Kiro | `kiro` | Full support |
 | Gemini CLI | `gemini` | Full support |
 | Codex | `codex` | Full support |
+| Forge | `forge` | Full support |
 | Amp | `amp` | Full support |
 | Copilot CLI | `copilot` | Full support |
 | OpenCode | `opencode` | Full support |
@@ -40,6 +41,7 @@ pub struct CliBackend {
 pub enum PromptMode {
     Arg,    // cli -p "prompt"
     Stdin,  // echo "prompt" | cli
+    NoPrompt, // interactive CLI without prompt injection
 }
 
 pub enum OutputFormat {
@@ -82,9 +84,10 @@ let available = auto_detect::is_available("claude");
 2. Kiro
 3. Gemini
 4. Codex
-5. Amp
-6. Copilot
-7. OpenCode
+5. Forge
+6. Amp
+7. Copilot
+8. OpenCode
 
 ### PtyExecutor
 

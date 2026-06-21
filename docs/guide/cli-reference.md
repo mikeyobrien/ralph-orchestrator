@@ -115,7 +115,7 @@ ralph init [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `amp`, `copilot`, `opencode`, `pi`, `custom` |
+| `--backend <NAME>` | Backend: `claude`, `kiro`, `gemini`, `codex`, `forge`, `amp`, `copilot`, `opencode`, `pi`, `custom` |
 | `--preset <NAME>` | Removed (monolithic presets no longer supported) |
 | `--list-presets` | List available built-in hat collections |
 | `--force` | Overwrite existing config |

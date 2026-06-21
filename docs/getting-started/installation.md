@@ -35,6 +35,12 @@ Ralph needs at least one AI CLI tool to function. Install one of the following:
     # Visit https://github.com/openai/codex
     ```
 
+=== "Forge"
+
+    ```bash
+    curl -fsSL https://forgecode.dev/cli | sh
+    ```
+
 === "Amp"
 
     ```bash

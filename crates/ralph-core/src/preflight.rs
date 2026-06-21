@@ -1009,7 +1009,7 @@ fn backend_command(backend: &str, override_cmd: Option<&str>) -> Option<String> 
     }
 
     match backend {
-        "kiro" => Some("kiro-cli".to_string()),
+        "kiro" | "kiro-acp" => Some("kiro-cli".to_string()),
         _ => Some(backend.to_string()),
     }
 }

@@ -43,6 +43,8 @@ pub enum PromptMode {
     Arg,
     /// Write prompt to stdin.
     Stdin,
+    /// Do not pass a prompt to the command.
+    NoPrompt,
 }
 
 /// A CLI backend configuration for executing prompts.
@@ -74,6 +76,7 @@ impl CliBackend {
             "kiro-acp" => Self::kiro_acp(),
             "gemini" => Self::gemini(),
             "codex" => Self::codex(),
+            "forge" => Self::forge(),
             "amp" => Self::amp(),
             "copilot" => Self::copilot(),
             "opencode" => Self::opencode(),
@@ -248,6 +251,7 @@ impl CliBackend {
             "kiro-acp" => Ok(Self::kiro_acp()),
             "gemini" => Ok(Self::gemini()),
             "codex" => Ok(Self::codex()),
+            "forge" => Ok(Self::forge()),
             "amp" => Ok(Self::amp()),
             "copilot" => Ok(Self::copilot()),
             "opencode" => Ok(Self::opencode()),
@@ -325,6 +329,23 @@ impl CliBackend {
         }
     }
 
+    /// Creates the Forge backend for autonomous mode.
+    ///
+    /// Uses Forge's one-shot prompt mode:
+    /// ```bash
+    /// forge -p "prompt text here"
+    /// ```
+    pub fn forge() -> Self {
+        Self {
+            command: "forge".to_string(),
+            args: vec![],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: Some("-p".to_string()),
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        }
+    }
+
     /// Creates the Copilot backend for autonomous mode.
     ///
     /// Uses GitHub Copilot CLI with `--allow-all-tools` for automated tool approval.
@@ -395,6 +416,7 @@ impl CliBackend {
     /// | Kiro    | removes `--no-interactive` |
     /// | Gemini  | uses `-i` instead of `-p` |
     /// | Codex   | no `exec` subcommand |
+    /// | Forge   | no-arg TUI; prompt injection unsupported |
     /// | Amp     | removes `--dangerously-allow-all` |
     /// | Copilot | removes `--allow-all-tools` |
     /// | OpenCode| `run` subcommand with positional prompt |
@@ -410,6 +432,7 @@ impl CliBackend {
             "kiro" | "kiro-acp" => Ok(Self::kiro_interactive()),
             "gemini" => Ok(Self::gemini_interactive()),
             "codex" => Ok(Self::codex_interactive()),
+            "forge" => Ok(Self::forge_interactive()),
             "amp" => Ok(Self::amp_interactive()),
             "copilot" => Ok(Self::copilot_interactive()),
             "opencode" => Ok(Self::opencode_interactive()),
@@ -474,6 +497,22 @@ impl CliBackend {
             args: vec![],
             prompt_mode: PromptMode::Arg,
             prompt_flag: Some("-x".to_string()),
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        }
+    }
+
+    /// Forge in interactive TUI mode.
+    ///
+    /// Forge's interactive mode is `forge` with no arguments. It does not have
+    /// a supported initial prompt injection mode, so Ralph must not append the
+    /// SOP prompt as a positional argument.
+    pub fn forge_interactive() -> Self {
+        Self {
+            command: "forge".to_string(),
+            args: vec![],
+            prompt_mode: PromptMode::NoPrompt,
+            prompt_flag: None,
             output_format: OutputFormat::Text,
             env_vars: vec![],
         }
@@ -749,6 +788,7 @@ impl CliBackend {
                 }
             }
             PromptMode::Stdin => (Some(prompt.to_string()), None),
+            PromptMode::NoPrompt => (None, None),
         };
 
         // Log the full command being built
@@ -977,6 +1017,18 @@ mod tests {
         assert_eq!(cmd, "codex");
         assert_eq!(args, vec!["exec", "--yolo", "test prompt"]);
         assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn test_forge_backend() {
+        let backend = CliBackend::forge();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "forge");
+        assert_eq!(args, vec!["-p", "test prompt"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, Some("-p".to_string()));
     }
 
     #[test]
@@ -1290,6 +1342,14 @@ mod tests {
     }
 
     #[test]
+    fn test_from_name_forge() {
+        let backend = CliBackend::from_name("forge").unwrap();
+        assert_eq!(backend.command, "forge");
+        assert_eq!(backend.prompt_mode, PromptMode::Arg);
+        assert_eq!(backend.prompt_flag, Some("-p".to_string()));
+    }
+
+    #[test]
     fn test_from_name_amp() {
         let backend = CliBackend::from_name("amp").unwrap();
         assert_eq!(backend.command, "amp");
@@ -1489,6 +1549,21 @@ mod tests {
     }
 
     #[test]
+    fn test_for_interactive_prompt_forge_uses_no_arg_tui() {
+        let backend = CliBackend::for_interactive_prompt("forge").unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
+
+        assert_eq!(cmd, "forge");
+        assert!(
+            args.is_empty(),
+            "Forge interactive mode is no-arg; prompt injection must not become positional args"
+        );
+        assert!(stdin.is_none());
+        assert_eq!(backend.prompt_mode, PromptMode::NoPrompt);
+        assert_eq!(backend.output_format, OutputFormat::Text);
+    }
+
+    #[test]
     fn test_for_interactive_prompt_amp() {
         let backend = CliBackend::for_interactive_prompt("amp").unwrap();
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
@@ -1516,6 +1591,23 @@ mod tests {
     fn test_for_interactive_prompt_invalid() {
         let result = CliBackend::for_interactive_prompt("invalid_backend");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_config_forge_with_agent_arg() {
+        let config = CliConfig {
+            backend: "forge".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            args: vec!["--agent".to_string(), "reviewer".to_string()],
+            ..Default::default()
+        };
+        let backend = CliBackend::from_config(&config).unwrap();
+        let (cmd, args, stdin, _temp) = backend.build_command("test prompt", false);
+
+        assert_eq!(cmd, "forge");
+        assert_eq!(args, vec!["--agent", "reviewer", "-p", "test prompt"]);
+        assert!(stdin.is_none());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1809,6 +1901,7 @@ mod tests {
         assert!(CliBackend::kiro().env_vars.is_empty());
         assert!(CliBackend::gemini().env_vars.is_empty());
         assert!(CliBackend::codex().env_vars.is_empty());
+        assert!(CliBackend::forge().env_vars.is_empty());
         assert!(CliBackend::amp().env_vars.is_empty());
         assert!(CliBackend::copilot().env_vars.is_empty());
         assert!(CliBackend::opencode().env_vars.is_empty());

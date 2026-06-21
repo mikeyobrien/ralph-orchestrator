@@ -18,6 +18,7 @@ Before you begin, ensure you have:
     - [Kiro](https://kiro.dev/)
     - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
     - [Codex](https://github.com/openai/codex)
+    - [Forge](https://github.com/tailcallhq/forgecode)
     - [Amp](https://github.com/sourcegraph/amp)
     - [Copilot CLI](https://docs.github.com/copilot)
     - [OpenCode](https://opencode.ai/)

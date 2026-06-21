@@ -2,12 +2,13 @@
 
 /// Supported LLM backend identifiers in ralph-cli.
 pub const VALID_BACKENDS: &[&str] = &[
-    "claude", "kiro", "kiro-acp", "gemini", "codex", "amp", "copilot", "opencode", "pi", "custom",
+    "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot", "opencode", "pi",
+    "custom",
 ];
 
 /// Human-readable list for CLI messages and docs.
 pub const VALID_BACKENDS_LABEL: &str =
-    "claude, kiro, kiro-acp, gemini, codex, amp, copilot, opencode, pi, custom";
+    "claude, kiro, kiro-acp, gemini, codex, forge, amp, copilot, opencode, pi, custom";
 
 /// Returns `true` if the backend identifier is known.
 pub fn is_known_backend(name: &str) -> bool {
@@ -20,4 +21,21 @@ pub fn unknown_backend_message(name: &str) -> String {
         "Unknown backend: {}\n\nValid backends: {}",
         name, VALID_BACKENDS_LABEL
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forge_is_known_backend() {
+        assert!(is_known_backend("forge"));
+        assert!(VALID_BACKENDS.contains(&"forge"));
+    }
+
+    #[test]
+    fn unknown_backend_message_lists_forge() {
+        let message = unknown_backend_message("bogus");
+        assert!(message.contains("forge"));
+    }
 }

@@ -122,6 +122,15 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
         );
     }
 
+    if backend_name == "forge" {
+        tracing::info!(
+            "forge interactive mode has no supported initial prompt injection; launching no-arg `forge`"
+        );
+        eprintln!(
+            "note: forge interactive mode does not support initial prompt injection; launching `forge`"
+        );
+    }
+
     let mut addendums: Vec<(&str, &str)> = Vec::new();
 
     if config.agent_teams {
@@ -359,6 +368,7 @@ mod tests {
         assert!(validate_backend_name("kiro").is_ok());
         assert!(validate_backend_name("gemini").is_ok());
         assert!(validate_backend_name("codex").is_ok());
+        assert!(validate_backend_name("forge").is_ok());
         assert!(validate_backend_name("amp").is_ok());
         assert!(validate_backend_name("copilot").is_ok());
         assert!(validate_backend_name("opencode").is_ok());

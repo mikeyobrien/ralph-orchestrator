@@ -6,6 +6,7 @@
 //! - Claude (Anthropic)
 //! - Gemini (Google)
 //! - Codex (OpenAI)
+//! - Forge
 //! - Pi (pi-coding-agent)
 //! - Roo (Roo Code)
 //! - Amp

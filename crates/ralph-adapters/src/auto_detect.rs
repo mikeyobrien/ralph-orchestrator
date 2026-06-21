@@ -9,7 +9,8 @@ use tracing::debug;
 
 /// Default priority order for backend detection.
 pub const DEFAULT_PRIORITY: &[&str] = &[
-    "claude", "kiro", "kiro-acp", "gemini", "codex", "amp", "copilot", "opencode", "pi", "roo",
+    "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot", "opencode", "pi",
+    "roo",
 ];
 
 /// Maps backend config names to their actual CLI command names.
@@ -53,6 +54,10 @@ impl std::fmt::Display for NoBackendError {
         writeln!(f, "  • Kiro CLI:     https://kiro.dev")?;
         writeln!(f, "  • Gemini CLI:   https://cloud.google.com/gemini")?;
         writeln!(f, "  • Codex CLI:    https://openai.com/codex")?;
+        writeln!(
+            f,
+            "  • Forge CLI:    https://github.com/tailcallhq/forgecode"
+        )?;
         writeln!(f, "  • Amp CLI:      https://amp.dev")?;
         writeln!(f, "  • Copilot CLI:  https://docs.github.com/copilot")?;
         writeln!(f, "  • OpenCode CLI: https://opencode.ai")?;
@@ -209,6 +214,7 @@ mod tests {
         assert_eq!(detection_command("claude"), "claude");
         assert_eq!(detection_command("gemini"), "gemini");
         assert_eq!(detection_command("codex"), "codex");
+        assert_eq!(detection_command("forge"), "forge");
         assert_eq!(detection_command("amp"), "amp");
         assert_eq!(detection_command("pi"), "pi");
         assert_eq!(detection_command("roo"), "roo");
@@ -219,6 +225,33 @@ mod tests {
         assert!(
             DEFAULT_PRIORITY.contains(&"pi"),
             "DEFAULT_PRIORITY should include 'pi'"
+        );
+    }
+
+    #[test]
+    fn test_default_priority_includes_forge_near_plain_text_backends() {
+        let codex_pos = DEFAULT_PRIORITY
+            .iter()
+            .position(|backend| *backend == "codex")
+            .expect("codex should be in DEFAULT_PRIORITY");
+        let forge_pos = DEFAULT_PRIORITY
+            .iter()
+            .position(|backend| *backend == "forge")
+            .expect("forge should be in DEFAULT_PRIORITY");
+        let amp_pos = DEFAULT_PRIORITY
+            .iter()
+            .position(|backend| *backend == "amp")
+            .expect("amp should be in DEFAULT_PRIORITY");
+
+        assert_eq!(
+            forge_pos,
+            codex_pos + 1,
+            "Forge should be immediately after Codex in DEFAULT_PRIORITY"
+        );
+        assert_eq!(
+            amp_pos,
+            forge_pos + 1,
+            "Amp should follow Forge in DEFAULT_PRIORITY"
         );
     }
 

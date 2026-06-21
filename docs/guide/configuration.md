@@ -222,6 +222,7 @@ Backend configuration.
 - `kiro` — Kiro
 - `gemini` — Gemini CLI
 - `codex` — Codex
+- `forge` — Forge
 - `amp` — Amp
 - `copilot` — Copilot CLI
 - `opencode` — OpenCode

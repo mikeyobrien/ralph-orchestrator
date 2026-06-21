@@ -91,7 +91,7 @@ fn check_file_exists(force: bool) -> Result<(), InitError> {
 /// Initializes ralph.yml from a minimal backend template.
 ///
 /// # Arguments
-/// * `backend` - The backend name (claude, kiro, gemini, codex, amp, copilot, opencode, custom)
+/// * `backend` - The backend name (claude, kiro, gemini, codex, forge, amp, copilot, opencode, pi, custom)
 /// * `force` - If true, overwrite existing ralph.yml
 ///
 /// # Errors
@@ -230,6 +230,12 @@ mod tests {
     fn test_generate_template_kiro() {
         let template = generate_template("kiro");
         assert!(template.contains("backend: \"kiro\""));
+    }
+
+    #[test]
+    fn test_generate_template_forge() {
+        let template = generate_template("forge");
+        assert!(template.contains("backend: \"forge\""));
     }
 
     #[test]
