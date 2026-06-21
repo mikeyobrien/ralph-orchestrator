@@ -70,6 +70,9 @@ pub struct LoopState {
 
     /// Set to true when a loop.cancel event is detected.
     pub cancellation_requested: bool,
+
+    /// Human guidance messages that must be acknowledged before completion.
+    pub unacknowledged_guidance: Vec<String>,
 }
 
 impl Default for LoopState {
@@ -95,6 +98,7 @@ impl Default for LoopState {
             last_emitted_signature: None,
             consecutive_same_signature: 0,
             cancellation_requested: false,
+            unacknowledged_guidance: Vec::new(),
         }
     }
 }
