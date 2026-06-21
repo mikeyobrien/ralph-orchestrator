@@ -1083,6 +1083,145 @@ fn test_default_publishes_injects_when_no_events() {
 }
 
 #[test]
+fn test_default_publishes_completion_promise_requires_explicit_agent_event() {
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut config = RalphConfig::default();
+    let mut hats = HashMap::new();
+    hats.insert(
+        "final-reviewer".to_string(),
+        crate::config::HatConfig {
+            name: "final-reviewer".to_string(),
+            description: Some("Final reviewer".to_string()),
+            triggers: vec!["review.ready".to_string()],
+            publishes: vec!["LOOP_COMPLETE".to_string()],
+            instructions: "Verify the objective is complete".to_string(),
+            extra_instructions: vec![],
+            backend_args: None,
+            backend: None,
+            default_publishes: Some("LOOP_COMPLETE".to_string()),
+            max_activations: None,
+            scratchpad: None,
+            disallowed_tools: vec![],
+            timeout: None,
+            concurrency: 1,
+            aggregate: None,
+        },
+    );
+    config.hats = hats;
+
+    let mut event_loop = EventLoop::new(config);
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("final-reviewer");
+    let result = event_loop.process_events_from_jsonl().unwrap();
+    assert!(!result.had_events, "No agent events should be found");
+
+    event_loop.check_default_publishes(&hat_id);
+
+    assert!(
+        !event_loop.state.completion_requested,
+        "agent silence must not request LOOP_COMPLETE via default_publishes"
+    );
+    assert_eq!(
+        event_loop.check_completion_event(),
+        None,
+        "default_publishes must not terminate the loop on agent silence"
+    );
+    assert!(
+        event_loop.state.seen_topics.contains("task.resume"),
+        "a recovery event should be recorded instead"
+    );
+    assert!(
+        !event_loop.state.seen_topics.contains("LOOP_COMPLETE"),
+        "completion promise should not be marked seen without an explicit agent event"
+    );
+}
+
+#[test]
+fn test_unacknowledged_human_guidance_blocks_completion() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    write_event_to_jsonl(
+        &events_path,
+        "human.guidance",
+        "Please do not use odd Node.js versions",
+    );
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "done");
+    let result = event_loop.process_events_from_jsonl().unwrap();
+
+    assert!(
+        result.had_events,
+        "guidance and completion events should parse"
+    );
+    assert_eq!(
+        event_loop.check_completion_event(),
+        None,
+        "completion must be rejected until human.guidance is acknowledged"
+    );
+    assert!(
+        event_loop.has_pending_events(),
+        "completion rejection should inject task.resume for recovery"
+    );
+    assert_eq!(
+        event_loop.state.unacknowledged_guidance.len(),
+        1,
+        "guidance remains blocking until human.guidance.ack"
+    );
+}
+
+#[test]
+fn test_human_guidance_ack_allows_completion() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let events_path = temp_dir.path().join("events.jsonl");
+
+    let mut event_loop = EventLoop::new(RalphConfig::default());
+    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
+    event_loop.initialize("Test");
+
+    write_event_to_jsonl(
+        &events_path,
+        "human.guidance",
+        "Please do not use odd Node.js versions",
+    );
+    write_event_to_jsonl(
+        &events_path,
+        "human.guidance.ack",
+        "Used Node.js 22 LTS instead",
+    );
+    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "done");
+    let result = event_loop.process_events_from_jsonl().unwrap();
+
+    assert!(
+        result.had_events,
+        "guidance, ack, and completion events should parse"
+    );
+    assert!(
+        event_loop.state.unacknowledged_guidance.is_empty(),
+        "human.guidance.ack should clear guidance backpressure"
+    );
+    assert_eq!(
+        event_loop.check_completion_event(),
+        Some(TerminationReason::CompletionPromise),
+        "acknowledged guidance should allow normal completion"
+    );
+}
+
+#[test]
 fn test_default_publishes_not_injected_when_events_written() {
     use std::collections::HashMap;
     use std::io::Write;
@@ -4110,7 +4249,7 @@ fn test_default_publishes_satisfies_required_events_for_completion() {
 }
 
 #[test]
-fn test_default_publishes_completion_promise_triggers_termination() {
+fn test_default_publishes_completion_promise_injects_recovery() {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -4159,14 +4298,24 @@ fn test_default_publishes_completion_promise_triggers_termination() {
     let hat_id = HatId::new("final_committer");
     event_loop.check_default_publishes(&hat_id);
 
-    // completion_requested should be set directly by check_default_publishes
-    // (not requiring a JSONL round-trip)
+    // Completion defaults are recovery-only: a silent final hat must not
+    // terminate the loop without an explicit agent-written completion event.
     let reason = event_loop.check_completion_event();
     assert_eq!(
-        reason,
-        Some(TerminationReason::CompletionPromise),
-        "default_publishes of completion_promise should trigger termination directly, \
-         not just publish to the bus where it would be lost"
+        reason, None,
+        "default_publishes of completion_promise must not silently terminate"
+    );
+    assert!(
+        !event_loop.state.completion_requested,
+        "completion should not be requested from agent silence"
+    );
+    assert!(
+        event_loop.state.seen_topics.contains("task.resume"),
+        "a recovery task.resume should be injected for the silent final hat"
+    );
+    assert!(
+        !event_loop.state.seen_topics.contains("LOOP_COMPLETE"),
+        "LOOP_COMPLETE should only be seen after an explicit event"
     );
 }
 
