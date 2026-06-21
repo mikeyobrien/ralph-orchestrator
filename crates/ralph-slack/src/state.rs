@@ -337,7 +337,7 @@ impl SlackStateManager {
             .filter(|binding| binding.status.is_terminal())
             .cloned()
             .collect::<Vec<_>>();
-        bindings.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        bindings.sort_by_key(|binding| binding.created_at);
         Ok(bindings)
     }
 
