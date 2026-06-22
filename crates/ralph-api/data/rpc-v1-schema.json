@@ -68,8 +68,7 @@
         "robot.checkin",
         "stream.subscribe",
         "stream.unsubscribe",
-        "stream.ack",
-        "_internal.publish"
+        "stream.ack"
       ]
     },
     "mutatingMethodName": {
@@ -768,22 +767,6 @@
         { "required": ["payload"] }
       ]
     },
-    "internalPublishParams": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "topic": { "type": "string", "minLength": 1 },
-        "resourceType": { "type": "string", "minLength": 1 },
-        "resourceId": { "type": "string", "minLength": 1 },
-        "payload": { "type": "object" }
-      },
-      "required": [
-        "topic",
-        "resourceType",
-        "resourceId",
-        "payload"
-      ]
-    },
     "requestByMethod": {
       "oneOf": [
         { "properties": { "method": { "const": "system.health" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
@@ -846,9 +829,7 @@
 
         { "properties": { "method": { "const": "stream.subscribe" }, "params": { "$ref": "#/$defs/streamSubscribeParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "params": { "$ref": "#/$defs/streamUnsubscribeParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "stream.ack" }, "params": { "$ref": "#/$defs/streamAckParams" } }, "required": ["method", "params"] },
-
-        { "properties": { "method": { "const": "_internal.publish" }, "params": { "$ref": "#/$defs/internalPublishParams" } }, "required": ["method", "params"] }
+        { "properties": { "method": { "const": "stream.ack" }, "params": { "$ref": "#/$defs/streamAckParams" } }, "required": ["method", "params"] }
       ]
     },
     "requestEnvelope": {
@@ -1215,9 +1196,7 @@
 
         { "properties": { "method": { "const": "stream.subscribe" }, "result": { "$ref": "#/$defs/streamSubscribeResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
-        { "properties": { "method": { "const": "stream.ack" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
-
-        { "properties": { "method": { "const": "_internal.publish" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] }
+        { "properties": { "method": { "const": "stream.ack" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] }
       ]
     },
     "responseEnvelope": {

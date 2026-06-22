@@ -397,3 +397,46 @@ async fn robot_stream_topics_accept_rpc_side_effects_and_internal_publish() -> R
     server.stop().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn robot_internal_publish_rejects_malformed_private_requests() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
+    let client = Client::new();
+
+    let cases = [
+        json!({
+            "topic": "robot.question.asked",
+            "resourceType": "robot",
+            "resourceId": "9",
+            "payload": "not-object"
+        }),
+        json!({
+            "topic": "robot.unknown",
+            "resourceType": "robot",
+            "resourceId": "9",
+            "payload": {}
+        }),
+        json!({
+            "topic": "robot.question.asked",
+            "resourceType": "robot",
+            "resourceId": "9",
+            "payload": {},
+            "extra": true
+        }),
+    ];
+
+    for (index, params) in cases.into_iter().enumerate() {
+        let request = rpc_request(
+            &format!("robot-stream-internal-invalid-{index}"),
+            "_internal.publish",
+            params,
+            None,
+        );
+        let (status, payload) = post_rpc(&client, &server, &request).await?;
+        assert_eq!(status, 400);
+        assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+    }
+
+    server.stop().await;
+    Ok(())
+}

@@ -280,6 +280,10 @@ impl RpcRuntime {
                 .with_context(request_id.clone(), None)
         })?;
 
+        if method == "_internal.publish" {
+            return self.parse_and_validate_internal_publish_request(raw, request_id, method);
+        }
+
         if !is_known_method(&method) {
             return Err(
                 ApiError::method_not_found(method.clone()).with_context(request_id, Some(method))
@@ -304,6 +308,30 @@ impl RpcRuntime {
             ))
             .with_context(request.id, Some(request.method)));
         }
+
+        Ok(request)
+    }
+
+    fn parse_and_validate_internal_publish_request(
+        &self,
+        raw: Value,
+        request_id: String,
+        method: String,
+    ) -> Result<RpcRequestEnvelope, ApiError> {
+        let request = parse_request(&raw)
+            .map_err(|error| error.with_context(request_id.clone(), Some(method.clone())))?;
+
+        if request.api_version != API_VERSION {
+            return Err(ApiError::invalid_request(format!(
+                "unsupported apiVersion '{}'; expected '{API_VERSION}'",
+                request.api_version
+            ))
+            .with_context(request.id, Some(request.method)));
+        }
+
+        validate_internal_publish_params(&request.params).map_err(|error| {
+            error.with_context(request.id.clone(), Some(request.method.clone()))
+        })?;
 
         Ok(request)
     }
@@ -422,4 +450,49 @@ impl RpcRuntime {
         error.status = StatusCode::from_u16(response.status).unwrap_or(error.status);
         Err(error)
     }
+}
+
+fn validate_internal_publish_params(params: &Value) -> Result<(), ApiError> {
+    let object = params
+        .as_object()
+        .ok_or_else(|| ApiError::invalid_params("_internal.publish params must be an object"))?;
+
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "topic" | "resourceType" | "resourceId" | "payload"
+        ) {
+            return Err(ApiError::invalid_params(format!(
+                "_internal.publish does not accept '{key}'"
+            )));
+        }
+    }
+
+    let topic = required_non_empty_string(object.get("topic"), "topic")?;
+    if !STREAM_TOPICS.contains(&topic) {
+        return Err(ApiError::invalid_params(format!(
+            "_internal.publish topic '{topic}' is not registered"
+        )));
+    }
+
+    required_non_empty_string(object.get("resourceType"), "resourceType")?;
+    required_non_empty_string(object.get("resourceId"), "resourceId")?;
+
+    if !matches!(object.get("payload"), Some(Value::Object(_))) {
+        return Err(ApiError::invalid_params(
+            "_internal.publish requires object 'payload'",
+        ));
+    }
+
+    Ok(())
+}
+
+fn required_non_empty_string<'a>(
+    value: Option<&'a Value>,
+    field: &str,
+) -> Result<&'a str, ApiError> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::invalid_params(format!("_internal.publish requires '{field}'")))
 }

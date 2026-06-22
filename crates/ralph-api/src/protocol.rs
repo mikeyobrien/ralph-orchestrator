@@ -64,7 +64,6 @@ pub const KNOWN_METHODS: &[&str] = &[
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",
-    "_internal.publish",
 ];
 
 pub const MUTATING_METHODS: &[&str] = &[

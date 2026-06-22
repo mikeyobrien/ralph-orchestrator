@@ -114,6 +114,7 @@ async fn system_capabilities_returns_expected_shape() -> Result<()> {
     assert!(methods.iter().any(|method| method == "robot.respond"));
     assert!(methods.iter().any(|method| method == "robot.guidance"));
     assert!(methods.iter().any(|method| method == "robot.checkin"));
+    assert!(!methods.iter().any(|method| method == "_internal.publish"));
     let topics = payload["result"]["streamTopics"].as_array().unwrap();
     assert!(topics.iter().any(|topic| topic == "robot.question.asked"));
     assert!(
