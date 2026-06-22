@@ -767,7 +767,10 @@ mod tests {
         for c in "reviewx".chars() {
             handle_search_input(&mut state, KeyCode::Char(c));
         }
-        assert!(state.search_state.matches.is_empty(), "'reviewx' has no match");
+        assert!(
+            state.search_state.matches.is_empty(),
+            "'reviewx' has no match"
+        );
 
         handle_search_input(&mut state, KeyCode::Backspace);
 
