@@ -262,6 +262,12 @@ impl RpcRuntime {
 
     fn parse_and_validate_request(&self, body: &[u8]) -> Result<RpcRequestEnvelope, ApiError> {
         let raw = parse_json_value(body)?;
+        let (request_id, method) = request_context(&raw);
+        if method.as_deref() == Some("_internal.publish") {
+            return Err(ApiError::method_not_found("_internal.publish")
+                .with_context(request_id, Some("_internal.publish".to_string())));
+        }
+
         self.parse_and_validate_request_value(raw)
     }
 

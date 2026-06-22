@@ -20,6 +20,7 @@ struct TestServer {
     base_url: String,
     shutdown: Option<oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<anyhow::Result<()>>,
+    runtime: RpcRuntime,
     workspace: TempDir,
 }
 
@@ -35,6 +36,7 @@ impl TestServer {
             .local_addr()
             .expect("listener local addr should exist");
         let runtime = RpcRuntime::new(config).expect("runtime should initialize");
+        let runtime_handle = runtime.clone();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let join = tokio::spawn(async move {
@@ -48,6 +50,7 @@ impl TestServer {
             base_url: format!("http://{local_addr}"),
             shutdown: Some(shutdown_tx),
             join,
+            runtime: runtime_handle,
             workspace,
         }
     }
@@ -370,24 +373,27 @@ async fn robot_stream_topics_accept_rpc_side_effects_and_internal_publish() -> R
     assert_eq!(response_event["payload"]["question_id"], 9);
     assert_eq!(response_event["resource"]["type"], "robot");
 
-    let publish = rpc_request(
-        "robot-stream-internal",
-        "_internal.publish",
-        json!({
-            "topic": "robot.question.asked",
-            "resourceType": "robot",
-            "resourceId": "9",
-            "payload": {
-                "question_id": 9,
-                "payload": "Need approval?",
-                "hat": "executor",
-                "iteration": 4
-            }
-        }),
-        None,
-    );
-    let (status, _) = post_rpc(&client, &server, &publish).await?;
-    assert_eq!(status, 200);
+    let publish_result = server
+        .runtime
+        .invoke_method(
+            "robot-stream-internal",
+            "_internal.publish",
+            json!({
+                "topic": "robot.question.asked",
+                "resourceType": "robot",
+                "resourceId": "9",
+                "payload": {
+                    "question_id": 9,
+                    "payload": "Need approval?",
+                    "hat": "executor",
+                    "iteration": 4
+                }
+            }),
+            "internal",
+            None,
+        )
+        .expect("private internal publish should succeed");
+    assert_eq!(publish_result["success"], true);
 
     let question_event = recv_topic_event(&mut stream, "robot.question.asked").await;
     assert_eq!(question_event["payload"]["question_id"], 9);
@@ -399,9 +405,33 @@ async fn robot_stream_topics_accept_rpc_side_effects_and_internal_publish() -> R
 }
 
 #[tokio::test]
-async fn robot_internal_publish_rejects_malformed_private_requests() -> Result<()> {
+async fn robot_internal_publish_is_not_public_http_method() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
+
+    let request = rpc_request(
+        "robot-stream-internal-public",
+        "_internal.publish",
+        json!({
+            "topic": "robot.question.asked",
+            "resourceType": "robot",
+            "resourceId": "9",
+            "payload": {}
+        }),
+        None,
+    );
+    let (status, payload) = post_rpc(&client, &server, &request).await?;
+
+    assert_eq!(status, 404);
+    assert_eq!(payload["error"]["code"], "METHOD_NOT_FOUND");
+
+    server.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn robot_internal_publish_rejects_malformed_private_requests() -> Result<()> {
+    let server = TestServer::start(ApiConfig::default()).await;
 
     let cases = [
         json!({
@@ -426,15 +456,17 @@ async fn robot_internal_publish_rejects_malformed_private_requests() -> Result<(
     ];
 
     for (index, params) in cases.into_iter().enumerate() {
-        let request = rpc_request(
-            &format!("robot-stream-internal-invalid-{index}"),
-            "_internal.publish",
-            params,
-            None,
-        );
-        let (status, payload) = post_rpc(&client, &server, &request).await?;
-        assert_eq!(status, 400);
-        assert_eq!(payload["error"]["code"], "INVALID_PARAMS");
+        let error = server
+            .runtime
+            .invoke_method(
+                format!("robot-stream-internal-invalid-{index}"),
+                "_internal.publish",
+                params,
+                "internal",
+                None,
+            )
+            .expect_err("malformed private publish should fail");
+        assert_eq!(error.code.as_str(), "INVALID_PARAMS");
     }
 
     server.stop().await;
