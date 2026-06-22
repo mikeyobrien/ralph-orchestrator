@@ -567,6 +567,9 @@ impl agent_client_protocol::Client for RalphAcpClient {
                         return Ok(WaitForTerminalExitResponse::new(status));
                     }
                     tokio::time::sleep(Duration::from_millis(25)).await;
+                    if let Some(status) = exit_rc.borrow().clone() {
+                        return Ok(WaitForTerminalExitResponse::new(status));
+                    }
                 }
                 WaitPlan::FinalizeExited {
                     terminal_id,
@@ -757,18 +760,18 @@ impl agent_client_protocol::Client for RalphAcpClient {
         let terminal_id = args.terminal_id.0.to_string();
         enum KillPlan {
             Done,
-            SignalOnly {
-                pid: Option<u32>,
-            },
-            Cleanup {
-                child: Option<tokio::process::Child>,
-                reader: Option<tokio::task::JoinHandle<()>>,
-                exit_rc: Rc<RefCell<Option<TerminalExitStatus>>>,
-                pending_exit_rc: Rc<RefCell<Option<TerminalExitStatus>>>,
-                cleanup_in_progress: Rc<RefCell<bool>>,
-                release_requested: Rc<RefCell<bool>>,
-                pid: Option<u32>,
-            },
+            SignalOnly { pid: Option<u32> },
+            Cleanup(Box<KillCleanupPlan>),
+        }
+
+        struct KillCleanupPlan {
+            child: Option<tokio::process::Child>,
+            reader: Option<tokio::task::JoinHandle<()>>,
+            exit_rc: Rc<RefCell<Option<TerminalExitStatus>>>,
+            pending_exit_rc: Rc<RefCell<Option<TerminalExitStatus>>>,
+            cleanup_in_progress: Rc<RefCell<bool>>,
+            release_requested: Rc<RefCell<bool>>,
+            pid: Option<u32>,
         }
 
         let plan = {
@@ -785,7 +788,7 @@ impl agent_client_protocol::Client for RalphAcpClient {
                 KillPlan::SignalOnly { pid: state.pid }
             } else if state.pending_exit_status.borrow().is_some() || state.child.is_some() {
                 *state.cleanup_in_progress.borrow_mut() = true;
-                KillPlan::Cleanup {
+                KillPlan::Cleanup(Box::new(KillCleanupPlan {
                     child: state.child.take(),
                     reader: state.reader.take(),
                     exit_rc: Rc::clone(&state.exit_status),
@@ -793,7 +796,7 @@ impl agent_client_protocol::Client for RalphAcpClient {
                     cleanup_in_progress: Rc::clone(&state.cleanup_in_progress),
                     release_requested: Rc::clone(&state.release_requested),
                     pid: state.pid,
-                }
+                }))
             } else {
                 KillPlan::SignalOnly { pid: state.pid }
             }
@@ -806,23 +809,26 @@ impl agent_client_protocol::Client for RalphAcpClient {
                     terminate_terminal_process_group(pid).await;
                     return Ok(KillTerminalCommandResponse::new());
                 }
-                KillPlan::Cleanup {
-                    child,
-                    reader,
-                    exit_rc,
-                    pending_exit_rc,
-                    cleanup_in_progress,
-                    release_requested,
-                    pid,
-                } => (
-                    child,
-                    reader,
-                    exit_rc,
-                    pending_exit_rc,
-                    cleanup_in_progress,
-                    release_requested,
-                    pid,
-                ),
+                KillPlan::Cleanup(cleanup) => {
+                    let KillCleanupPlan {
+                        child,
+                        reader,
+                        exit_rc,
+                        pending_exit_rc,
+                        cleanup_in_progress,
+                        release_requested,
+                        pid,
+                    } = *cleanup;
+                    (
+                        child,
+                        reader,
+                        exit_rc,
+                        pending_exit_rc,
+                        cleanup_in_progress,
+                        release_requested,
+                        pid,
+                    )
+                }
             };
 
         let mut pending = PendingTerminalWait {
@@ -1959,6 +1965,119 @@ mod tests {
                     !terminals.borrow().contains_key(tid.0.as_ref()),
                     "release should return only after terminal is removed"
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_waiters_return_status_after_release_removes_terminal() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (client, _rx, terminals) = test_client();
+                let client = Rc::new(client);
+                let terminal_id = TerminalId::new("term-waiters-release-race");
+                let output = Rc::new(RefCell::new(Vec::new()));
+                let output_truncated = Rc::new(RefCell::new(false));
+                let exit_status = Rc::new(RefCell::new(None));
+                let pending_exit_status = Rc::new(RefCell::new(Some(
+                    TerminalExitStatus::new().exit_code(Some(7)),
+                )));
+                let cleanup_in_progress = Rc::new(RefCell::new(false));
+                let release_requested = Rc::new(RefCell::new(false));
+                let reader_output = Rc::clone(&output);
+                let reader_truncated = Rc::clone(&output_truncated);
+                let reader = tokio::task::spawn_local(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    append_terminal_output(&reader_output, &reader_truncated, b"drained", None);
+                });
+
+                terminals.borrow_mut().insert(
+                    terminal_id.0.to_string(),
+                    TerminalState {
+                        child: None,
+                        pid: None,
+                        output,
+                        output_truncated,
+                        output_byte_limit: None,
+                        exit_status,
+                        pending_exit_status,
+                        cleanup_in_progress,
+                        release_requested,
+                        reader: Some(reader),
+                    },
+                );
+
+                let owner_client = Rc::clone(&client);
+                let owner_tid = terminal_id.clone();
+                let owner = tokio::task::spawn_local(async move {
+                    let wait_req = WaitForTerminalExitRequest::new("test-session", owner_tid);
+                    owner_client.wait_for_terminal_exit(wait_req).await
+                });
+
+                for _ in 0..100 {
+                    let cleanup_started = terminals
+                        .borrow()
+                        .get(terminal_id.0.as_ref())
+                        .map(|state| *state.cleanup_in_progress.borrow())
+                        .unwrap_or(false);
+                    if cleanup_started {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                assert!(
+                    terminals
+                        .borrow()
+                        .get(terminal_id.0.as_ref())
+                        .map(|state| *state.cleanup_in_progress.borrow())
+                        .unwrap_or(false),
+                    "owner should be draining before secondary waiters start"
+                );
+
+                let second_client = Rc::clone(&client);
+                let second_tid = terminal_id.clone();
+                let second_waiter = tokio::task::spawn_local(async move {
+                    let wait_req = WaitForTerminalExitRequest::new("test-session", second_tid);
+                    second_client.wait_for_terminal_exit(wait_req).await
+                });
+                let third_client = Rc::clone(&client);
+                let third_tid = terminal_id.clone();
+                let third_waiter = tokio::task::spawn_local(async move {
+                    let wait_req = WaitForTerminalExitRequest::new("test-session", third_tid);
+                    third_client.wait_for_terminal_exit(wait_req).await
+                });
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+
+                let release_client = Rc::clone(&client);
+                let release_tid = terminal_id.clone();
+                let releaser = tokio::task::spawn_local(async move {
+                    let release_req = ReleaseTerminalRequest::new("test-session", release_tid);
+                    release_client.release_terminal(release_req).await
+                });
+
+                let owner_resp = owner.await.unwrap().unwrap();
+                assert_eq!(owner_resp.exit_status.exit_code, Some(7));
+                releaser.await.unwrap().unwrap();
+                assert!(
+                    !terminals.borrow().contains_key(terminal_id.0.as_ref()),
+                    "release should remove terminal after owner cleanup"
+                );
+
+                let second_resp = tokio::time::timeout(Duration::from_secs(2), second_waiter)
+                    .await
+                    .expect("second waiter should return held exit status")
+                    .unwrap()
+                    .unwrap();
+                let third_resp = tokio::time::timeout(Duration::from_secs(2), third_waiter)
+                    .await
+                    .expect("third waiter should return held exit status")
+                    .unwrap()
+                    .unwrap();
+
+                assert_eq!(second_resp.exit_status.exit_code, Some(7));
+                assert_eq!(third_resp.exit_status.exit_code, Some(7));
             })
             .await;
     }
