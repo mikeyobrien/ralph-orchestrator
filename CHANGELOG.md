@@ -4,11 +4,61 @@ All notable changes to ralph-orchestrator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.10.0] - 2026-06-21
+
+### Added
+
+- Forge CLI backend integration.
+- RObot (human-in-the-loop) RPC domain in the control plane, plus a file-backed web mode that drives human interaction through files instead of a live socket.
+- Worktree loops can publish remote review branches, with rebase support.
+- Local file-based hat imports in preflight, including import resolution and schema validation with imported-file context.
+- On-demand export of TUI iteration buffers to disk: `e` exports the current iteration, `E` exports all iterations.
+- Context-window utilization telemetry, surfaced in the TUI.
+
+### Changed
+
+- Updated the Pi backend package reference to `@earendil-works/pi-coding-agent`.
+- Refreshed agent waves observability documentation and added the hat imports design spec.
+
+### Fixed
+
+- TUI search mode now captures typed query characters instead of leaking them to keybindings (e.g. an `e` in the query no longer triggers export); the `Search:` prompt, `N/M` match counter, and `n`/`N` navigation work again.
+- Runtime now requires an explicit completion signal after guidance, preventing premature loop termination.
+- Persist loop continue state across iterations.
+- Honor per-hat scratchpad configuration in generated instructions.
+- Drain ACP terminal output before exit so the final output is no longer truncated.
+- Canonicalize Ralph artifact paths to avoid path-mismatch errors.
+- Deduplicate MCP tool schemas exposed over the API.
+
+## [2.9.3] - 2026-05-08
+
+### Added
+
+- `ralph-docs` skill for `llms.txt`-driven introspection.
+- Unified preset mechanism under `-H <name>`, supporting both YAML and TOML presets.
+- `ralph plan` support for the kiro-acp backend, including a completion fallback.
+- Visual workflow editor (builder) with live agent observation.
+- Per-hat scratchpad configuration.
+- Hats can set a cancellation promise.
+- Improved `--no-tui` UX with a loop banner, per-iteration footer, and resume hint.
+
+### Changed
+
+- Switched Linux distribution targets to musl for Amazon Linux 2 / 2023 compatibility.
+- Documented global user config for hooks, added an FAQ section, and linked the autoloop authoring guide for the TOML preset format.
 
 ### Fixed
 
 - Claude child sessions now default to `--setting-sources project,local`, preventing host user-level `~/.claude/settings.json` hooks, plugins, and MCP servers from leaking into Ralph orchestration runs. Users who want the old behavior can opt back in with `cli.args: ["--setting-sources", "user,project,local"]`.
+- Route the text completion fallback through `check_completion_event()`.
+- Propagate the `RALPH_EVENTS_FILE` env var and preserve late termination reasons.
+- Prevent lingering text backends from stalling loop progression.
+- Resolve Rust 1.95 `duration_suboptimal_units` clippy warnings.
+
+### Security
+
+- Replaced `source` with a safe variable parser in `sync-embedded-files.sh`.
+- Use `npm ci` instead of `npm install` in `test-fresh-install.sh`.
 
 ## [2.9.2] - 2026-04-10
 
