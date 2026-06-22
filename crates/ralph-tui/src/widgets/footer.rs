@@ -91,7 +91,10 @@ impl Widget for Footer<'_> {
 
         // If search state has an active query, render search display
         if let Some(query) = &self.state.search_state.query {
-            let match_info = if self.state.search_state.matches.is_empty() {
+            let match_info = if query.is_empty() {
+                // Still typing the query; no count to show yet.
+                String::new()
+            } else if self.state.search_state.matches.is_empty() {
                 "no matches".to_string()
             } else {
                 format!(
