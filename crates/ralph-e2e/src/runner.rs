@@ -495,6 +495,10 @@ impl TestRunner {
                     serde_yaml::Value::String(mock_cli_binary.to_string_lossy().to_string()),
                 ),
                 (
+                    serde_yaml::Value::String("prompt_mode".to_string()),
+                    serde_yaml::Value::String("stdin".to_string()),
+                ),
+                (
                     serde_yaml::Value::String("args".to_string()),
                     serde_yaml::Value::Sequence(
                         mock_args
@@ -879,6 +883,47 @@ mod tests {
         let matching = runner.matching_scenarios(&config);
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].id(), "claude-test");
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn test_configure_mock_mode_uses_stdin_prompt_mode() {
+        let workspace = test_workspace_base("mock-mode-stdin");
+        cleanup_workspace(&workspace);
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(
+            workspace.join("ralph.yml"),
+            "cli:\n  backend: claude\nevent_loop:\n  max_iterations: 1\n",
+        )
+        .unwrap();
+
+        let cassette_dir = workspace.join("cassettes/e2e");
+        std::fs::create_dir_all(&cassette_dir).unwrap();
+        std::fs::write(
+            cassette_dir.join("connect.jsonl"),
+            r#"{"ts":1000,"event":"ux.terminal.write","data":{"bytes":"UE9ORw==","stdout":true,"offset_ms":0}}"#,
+        )
+        .unwrap();
+
+        let workspace_mgr = WorkspaceManager::new(workspace.clone());
+        let runner = TestRunner::new(workspace_mgr, vec![]);
+        let mock_config = MockConfig::new("cassettes/e2e").with_workspace_root(&workspace);
+
+        runner
+            .configure_mock_mode(&workspace, "connect", Backend::Claude, &mock_config)
+            .unwrap();
+
+        let updated = std::fs::read_to_string(workspace.join("ralph.yml")).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&updated).unwrap();
+
+        assert_eq!(parsed["cli"]["backend"].as_str(), Some("custom"));
+        assert_eq!(parsed["cli"]["prompt_mode"].as_str(), Some("stdin"));
+        assert_eq!(
+            parsed["cli"]["args"][0].as_str(),
+            Some("mock-cli"),
+            "mock CLI should still be selected as the custom backend"
+        );
 
         cleanup_workspace(&workspace);
     }
