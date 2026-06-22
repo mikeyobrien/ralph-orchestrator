@@ -25,6 +25,7 @@ use crate::protocol::{
     is_mutating_method, parse_json_value, parse_request, request_context, success_envelope,
     validate_request_schema,
 };
+use crate::robot_domain::RobotDomain;
 use crate::stream_domain::StreamDomain;
 use crate::task_domain::TaskDomain;
 
@@ -46,6 +47,7 @@ pub struct RpcRuntime {
     streams: StreamDomain,
     config_domain: ConfigDomain,
     preset_domain: PresetDomain,
+    robot_domain: RobotDomain,
 }
 
 enum ExecutionOutcome {
@@ -81,6 +83,7 @@ impl RpcRuntime {
         let streams = StreamDomain::new();
         let config_domain = ConfigDomain::new(&config.workspace_root);
         let preset_domain = PresetDomain::new(&config.workspace_root);
+        let robot_domain = RobotDomain::new(&config.workspace_root);
 
         Self {
             config,
@@ -93,6 +96,7 @@ impl RpcRuntime {
             streams,
             config_domain,
             preset_domain,
+            robot_domain,
         }
     }
 
@@ -238,6 +242,10 @@ impl RpcRuntime {
 
     pub(crate) fn preset_domain(&self) -> &PresetDomain {
         &self.preset_domain
+    }
+
+    pub(crate) fn robot_domain(&self) -> &RobotDomain {
+        &self.robot_domain
     }
 
     pub(crate) fn parse_params<T>(&self, request: &RpcRequestEnvelope) -> Result<T, ApiError>

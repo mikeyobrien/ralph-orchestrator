@@ -109,6 +109,20 @@ async fn system_capabilities_returns_expected_shape() -> Result<()> {
     assert_eq!(status, 200);
     assert!(payload["result"]["methods"].is_array());
     assert!(payload["result"]["streamTopics"].is_array());
+    let methods = payload["result"]["methods"].as_array().unwrap();
+    assert!(methods.iter().any(|method| method == "robot.question"));
+    assert!(methods.iter().any(|method| method == "robot.respond"));
+    assert!(methods.iter().any(|method| method == "robot.guidance"));
+    assert!(methods.iter().any(|method| method == "robot.checkin"));
+    let topics = payload["result"]["streamTopics"].as_array().unwrap();
+    assert!(topics.iter().any(|topic| topic == "robot.question.asked"));
+    assert!(
+        topics
+            .iter()
+            .any(|topic| topic == "robot.response.received")
+    );
+    assert!(topics.iter().any(|topic| topic == "robot.guidance.sent"));
+    assert!(topics.iter().any(|topic| topic == "robot.checkin.updated"));
     assert!(payload["result"]["auth"]["mode"].is_string());
     assert!(payload["result"]["auth"]["supportedModes"].is_array());
 

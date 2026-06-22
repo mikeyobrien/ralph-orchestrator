@@ -12,6 +12,7 @@ pub mod mcp;
 pub mod planning_domain;
 pub mod preset_domain;
 pub mod protocol;
+pub mod robot_domain;
 pub mod runtime;
 pub mod stream_domain;
 pub mod task_domain;

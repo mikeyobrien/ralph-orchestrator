@@ -57,9 +57,14 @@ pub const KNOWN_METHODS: &[&str] = &[
     "collection.import",
     "collection.export",
     "collection.run",
+    "robot.question",
+    "robot.respond",
+    "robot.guidance",
+    "robot.checkin",
     "stream.subscribe",
     "stream.unsubscribe",
     "stream.ack",
+    "_internal.publish",
 ];
 
 pub const MUTATING_METHODS: &[&str] = &[
@@ -91,6 +96,8 @@ pub const MUTATING_METHODS: &[&str] = &[
     "collection.delete",
     "collection.import",
     "collection.run",
+    "robot.respond",
+    "robot.guidance",
 ];
 
 pub const STREAM_TOPICS: &[&str] = &[
@@ -107,6 +114,10 @@ pub const STREAM_TOPICS: &[&str] = &[
     "config.updated",
     "collection.updated",
     "preset.refreshed",
+    "robot.question.asked",
+    "robot.response.received",
+    "robot.guidance.sent",
+    "robot.checkin.updated",
     "error.raised",
     "stream.keepalive",
 ];

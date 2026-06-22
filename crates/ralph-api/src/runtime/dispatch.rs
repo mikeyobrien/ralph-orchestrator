@@ -36,6 +36,7 @@ impl RpcRuntime {
             method if method.starts_with("config.") => self.dispatch_config(request),
             method if method.starts_with("preset.") => self.dispatch_preset(request),
             method if method.starts_with("collection.") => self.dispatch_collection(request),
+            method if method.starts_with("robot.") => self.dispatch_robot(request),
             method if method.starts_with("stream.") => self.dispatch_stream(request, principal),
             "_internal.publish" => self.dispatch_internal_publish(request),
             _ => {
@@ -347,6 +348,38 @@ impl RpcRuntime {
                 let params: StreamAckParams = self.parse_params(request)?;
                 self.stream_domain().ack(params)?;
                 Ok(json!({ "success": true }))
+            }
+            _ => Err(ApiError::service_unavailable(format!(
+                "method '{}' is recognized but not implemented",
+                request.method
+            ))),
+        }
+    }
+
+    fn dispatch_robot(&self, request: &RpcRequestEnvelope) -> Result<Value, ApiError> {
+        match request.method.as_str() {
+            "robot.question" => {
+                let question = self.robot_domain().question()?;
+                Ok(json!({ "question": question }))
+            }
+            "robot.respond" => {
+                let result = self.robot_domain().respond(&request.params)?;
+                Ok(json!({
+                    "success": true,
+                    "questionId": result.question_id,
+                    "response": result.response,
+                }))
+            }
+            "robot.guidance" => {
+                let result = self.robot_domain().guidance(&request.params)?;
+                Ok(json!({
+                    "success": true,
+                    "text": result.text,
+                }))
+            }
+            "robot.checkin" => {
+                let checkin = self.robot_domain().checkin()?;
+                Ok(json!({ "checkin": checkin }))
             }
             _ => Err(ApiError::service_unavailable(format!(
                 "method '{}' is recognized but not implemented",

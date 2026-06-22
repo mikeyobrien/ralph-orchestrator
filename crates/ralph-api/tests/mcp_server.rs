@@ -39,6 +39,10 @@ async fn mcp_lists_expected_tools() -> Result<()> {
     assert!(names.contains(&"loop_status"));
     assert!(names.contains(&"planning_start"));
     assert!(names.contains(&"config_get"));
+    assert!(names.contains(&"robot_question"));
+    assert!(names.contains(&"robot_respond"));
+    assert!(names.contains(&"robot_guidance"));
+    assert!(names.contains(&"robot_checkin"));
     assert!(names.contains(&"stream_next"));
 
     client.cancel().await?;

@@ -62,9 +62,14 @@
         "collection.import",
         "collection.export",
         "collection.run",
+        "robot.question",
+        "robot.respond",
+        "robot.guidance",
+        "robot.checkin",
         "stream.subscribe",
         "stream.unsubscribe",
-        "stream.ack"
+        "stream.ack",
+        "_internal.publish"
       ]
     },
     "mutatingMethodName": {
@@ -96,7 +101,9 @@
         "collection.create",
         "collection.update",
         "collection.delete",
-        "collection.import"
+        "collection.import",
+        "robot.respond",
+        "robot.guidance"
       ]
     },
     "authMeta": {
@@ -715,6 +722,68 @@
         "cursor"
       ]
     },
+    "robotRespondParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "questionId": { "type": "integer" },
+        "question_id": { "type": "integer" },
+        "id": { "type": "integer" },
+        "loopId": { "type": "string", "minLength": 1 },
+        "loop_id": { "type": "string", "minLength": 1 },
+        "responseToken": { "type": "string", "minLength": 1 },
+        "response_token": { "type": "string", "minLength": 1 },
+        "token": { "type": "string", "minLength": 1 },
+        "response": {
+          "type": ["string", "object", "array", "number", "boolean"]
+        },
+        "message": {
+          "type": ["string", "object", "array", "number", "boolean"]
+        },
+        "text": {
+          "type": ["string", "object", "array", "number", "boolean"]
+        },
+        "payload": {
+          "type": ["string", "object", "array", "number", "boolean"]
+        }
+      },
+      "allOf": [
+        { "anyOf": [ { "required": ["questionId"] }, { "required": ["question_id"] }, { "required": ["id"] } ] },
+        { "anyOf": [ { "required": ["loopId"] }, { "required": ["loop_id"] } ] },
+        { "anyOf": [ { "required": ["responseToken"] }, { "required": ["response_token"] }, { "required": ["token"] } ] },
+        { "anyOf": [ { "required": ["response"] }, { "required": ["message"] }, { "required": ["text"] }, { "required": ["payload"] } ] }
+      ]
+    },
+    "robotGuidanceParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "payload": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["text"] },
+        { "required": ["message"] },
+        { "required": ["payload"] }
+      ]
+    },
+    "internalPublishParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topic": { "type": "string", "minLength": 1 },
+        "resourceType": { "type": "string", "minLength": 1 },
+        "resourceId": { "type": "string", "minLength": 1 },
+        "payload": { "type": "object" }
+      },
+      "required": [
+        "topic",
+        "resourceType",
+        "resourceId",
+        "payload"
+      ]
+    },
     "requestByMethod": {
       "oneOf": [
         { "properties": { "method": { "const": "system.health" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
@@ -770,9 +839,16 @@
         { "properties": { "method": { "const": "collection.export" }, "params": { "$ref": "#/$defs/idOnlyParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "collection.run" }, "params": { "$ref": "#/$defs/collectionRunParams" } }, "required": ["method", "params"] },
 
+        { "properties": { "method": { "const": "robot.question" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "robot.respond" }, "params": { "$ref": "#/$defs/robotRespondParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "robot.guidance" }, "params": { "$ref": "#/$defs/robotGuidanceParams" } }, "required": ["method", "params"] },
+        { "properties": { "method": { "const": "robot.checkin" }, "params": { "$ref": "#/$defs/emptyParams" } }, "required": ["method", "params"] },
+
         { "properties": { "method": { "const": "stream.subscribe" }, "params": { "$ref": "#/$defs/streamSubscribeParams" } }, "required": ["method", "params"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "params": { "$ref": "#/$defs/streamUnsubscribeParams" } }, "required": ["method", "params"] },
-        { "properties": { "method": { "const": "stream.ack" }, "params": { "$ref": "#/$defs/streamAckParams" } }, "required": ["method", "params"] }
+        { "properties": { "method": { "const": "stream.ack" }, "params": { "$ref": "#/$defs/streamAckParams" } }, "required": ["method", "params"] },
+
+        { "properties": { "method": { "const": "_internal.publish" }, "params": { "$ref": "#/$defs/internalPublishParams" } }, "required": ["method", "params"] }
       ]
     },
     "requestEnvelope": {
@@ -1038,6 +1114,45 @@
       },
       "required": ["subscriptionId", "acceptedTopics", "cursor"]
     },
+    "robotQuestionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "type": ["object", "null"]
+        }
+      },
+      "required": ["question"]
+    },
+    "robotRespondResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" },
+        "questionId": { "type": "integer" },
+        "response": { "type": "string" }
+      },
+      "required": ["success", "questionId", "response"]
+    },
+    "robotGuidanceResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "type": "boolean" },
+        "text": { "type": "string" }
+      },
+      "required": ["success", "text"]
+    },
+    "robotCheckinResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkin": {
+          "type": ["object", "null"]
+        }
+      },
+      "required": ["checkin"]
+    },
     "responseByMethod": {
       "oneOf": [
         { "properties": { "method": { "const": "system.health" }, "result": { "$ref": "#/$defs/systemHealthResult" } }, "required": ["method", "result"] },
@@ -1093,9 +1208,16 @@
         { "properties": { "method": { "const": "collection.export" }, "result": { "$ref": "#/$defs/collectionExportResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "collection.run" }, "result": { "$ref": "#/$defs/collectionRunResult" } }, "required": ["method", "result"] },
 
+        { "properties": { "method": { "const": "robot.question" }, "result": { "$ref": "#/$defs/robotQuestionResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "robot.respond" }, "result": { "$ref": "#/$defs/robotRespondResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "robot.guidance" }, "result": { "$ref": "#/$defs/robotGuidanceResult" } }, "required": ["method", "result"] },
+        { "properties": { "method": { "const": "robot.checkin" }, "result": { "$ref": "#/$defs/robotCheckinResult" } }, "required": ["method", "result"] },
+
         { "properties": { "method": { "const": "stream.subscribe" }, "result": { "$ref": "#/$defs/streamSubscribeResult" } }, "required": ["method", "result"] },
         { "properties": { "method": { "const": "stream.unsubscribe" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
-        { "properties": { "method": { "const": "stream.ack" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] }
+        { "properties": { "method": { "const": "stream.ack" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] },
+
+        { "properties": { "method": { "const": "_internal.publish" }, "result": { "$ref": "#/$defs/successResult" } }, "required": ["method", "result"] }
       ]
     },
     "responseEnvelope": {

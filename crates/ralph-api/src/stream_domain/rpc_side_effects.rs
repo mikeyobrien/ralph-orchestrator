@@ -161,6 +161,29 @@ pub(super) fn publish_rpc_side_effect(
                 );
             }
         }
+        "robot.respond" => {
+            if let Some(question_id) = result.get("questionId").and_then(Value::as_i64) {
+                streams.publish(
+                    "robot.response.received",
+                    "robot",
+                    &question_id.to_string(),
+                    json!({
+                        "question_id": question_id,
+                        "response": result.get("response").cloned().unwrap_or(Value::Null)
+                    }),
+                );
+            }
+        }
+        "robot.guidance" => {
+            if let Some(text) = result.get("text").and_then(Value::as_str) {
+                streams.publish(
+                    "robot.guidance.sent",
+                    "robot",
+                    "guidance",
+                    json!({ "text": text }),
+                );
+            }
+        }
         _ => {}
     }
 }

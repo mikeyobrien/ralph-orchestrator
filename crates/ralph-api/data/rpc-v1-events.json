@@ -27,6 +27,10 @@
         "config.updated",
         "collection.updated",
         "preset.refreshed",
+        "robot.question.asked",
+        "robot.response.received",
+        "robot.guidance.sent",
+        "robot.checkin.updated",
         "error.raised",
         "stream.keepalive"
       ]
@@ -45,6 +49,7 @@
             "config",
             "collection",
             "preset",
+            "robot",
             "stream"
           ]
         },
@@ -301,6 +306,53 @@
         "count"
       ]
     },
+    "robotQuestionAskedPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "question_id": { "type": "integer" },
+        "payload": {},
+        "hat": {},
+        "iteration": {}
+      },
+      "required": [
+        "question_id",
+        "payload"
+      ]
+    },
+    "robotResponseReceivedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "question_id": { "type": "integer" },
+        "response": { "type": "string" }
+      },
+      "required": [
+        "question_id",
+        "response"
+      ]
+    },
+    "robotGuidanceSentPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string" }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "robotCheckinUpdatedPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "iteration": { "type": "integer" },
+        "elapsed_secs": { "type": "integer" },
+        "elapsed_seconds": { "type": "integer" },
+        "hat": {},
+        "current_hat": {}
+      }
+    },
     "errorRaisedPayload": {
       "type": "object",
       "additionalProperties": false,
@@ -348,6 +400,10 @@
         { "properties": { "topic": { "const": "config.updated" }, "payload": { "$ref": "#/$defs/configUpdatedPayload" } }, "required": ["topic", "payload"] },
         { "properties": { "topic": { "const": "collection.updated" }, "payload": { "$ref": "#/$defs/collectionUpdatedPayload" } }, "required": ["topic", "payload"] },
         { "properties": { "topic": { "const": "preset.refreshed" }, "payload": { "$ref": "#/$defs/presetRefreshedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "robot.question.asked" }, "payload": { "$ref": "#/$defs/robotQuestionAskedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "robot.response.received" }, "payload": { "$ref": "#/$defs/robotResponseReceivedPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "robot.guidance.sent" }, "payload": { "$ref": "#/$defs/robotGuidanceSentPayload" } }, "required": ["topic", "payload"] },
+        { "properties": { "topic": { "const": "robot.checkin.updated" }, "payload": { "$ref": "#/$defs/robotCheckinUpdatedPayload" } }, "required": ["topic", "payload"] },
         { "properties": { "topic": { "const": "error.raised" }, "payload": { "$ref": "#/$defs/errorRaisedPayload" } }, "required": ["topic", "payload"] },
         { "properties": { "topic": { "const": "stream.keepalive" }, "payload": { "$ref": "#/$defs/keepalivePayload" } }, "required": ["topic", "payload"] }
       ]
