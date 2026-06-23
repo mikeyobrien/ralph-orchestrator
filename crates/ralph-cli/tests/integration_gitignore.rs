@@ -15,6 +15,8 @@ fn workspace_root() -> Result<PathBuf> {
 
 fn git_check_ignore(repo: &Path, path: &str) -> Result<bool> {
     let output = Command::new("git")
+        .arg("-c")
+        .arg("core.excludesfile=/dev/null")
         .arg("check-ignore")
         .arg("--quiet")
         .arg("--no-index")

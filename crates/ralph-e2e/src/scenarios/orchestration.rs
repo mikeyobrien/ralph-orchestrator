@@ -22,7 +22,7 @@ use std::path::Path;
 /// - Configures max_iterations to 1
 /// - Sends a simple task that completes in one turn
 /// - Verifies exactly 1 iteration completed
-/// - Verifies scratchpad was updated
+/// - Verifies the completion signal was emitted
 ///
 /// # Example
 ///
@@ -48,7 +48,7 @@ impl SingleIterScenario {
     pub fn new() -> Self {
         Self {
             id: "single-iter".to_string(),
-            description: "Verifies single iteration completion with scratchpad update".to_string(),
+            description: "Verifies single iteration completion signal".to_string(),
             tier: "Tier 2: Orchestration Loop".to_string(),
         }
     }
@@ -104,11 +104,10 @@ event_loop:
         // Create a prompt that completes in a single iteration
         let prompt = r"You are testing Ralph orchestration.
 Complete this task in a single iteration:
-1. Create a simple task list in the scratchpad
-2. Mark the task as complete
-3. Output LOOP_COMPLETE to signal completion
+1. Do the requested work
+2. Output LOOP_COMPLETE to signal completion
 
-Write to the scratchpad first, then output LOOP_COMPLETE.";
+Output LOOP_COMPLETE when the work is complete.";
 
         Ok(ScenarioConfig {
             config_file: "ralph.yml".into(),
@@ -142,7 +141,7 @@ Write to the scratchpad first, then output LOOP_COMPLETE.";
             Assertions::exit_code_success_or_limit(&execution),
             Assertions::no_timeout(&execution),
             Assertions::iterations_within(&execution, 1),
-            self.scratchpad_updated(&execution),
+            self.completion_signal_emitted(&execution),
         ];
 
         let all_passed = assertions.iter().all(|a| a.passed);
@@ -160,24 +159,25 @@ Write to the scratchpad first, then output LOOP_COMPLETE.";
 }
 
 impl SingleIterScenario {
-    /// Asserts that the scratchpad was updated during execution.
-    fn scratchpad_updated(
+    /// Asserts that the backend emitted the configured completion signal.
+    fn completion_signal_emitted(
         &self,
         result: &crate::executor::ExecutionResult,
     ) -> crate::models::Assertion {
-        let updated = result
-            .scratchpad
-            .as_ref()
-            .is_some_and(|s| !s.trim().is_empty());
-        super::AssertionBuilder::new("Scratchpad updated")
-            .expected("Scratchpad contains content")
-            .actual(if updated {
-                "Scratchpad has content".to_string()
+        let emitted = result.stdout.contains("LOOP_COMPLETE")
+            || result.termination_reason.as_deref() == Some("LOOP_COMPLETE");
+        super::AssertionBuilder::new("Completion signal emitted")
+            .expected("Output or termination reason contains LOOP_COMPLETE")
+            .actual(if emitted {
+                "LOOP_COMPLETE observed".to_string()
             } else {
-                "Scratchpad empty or missing".to_string()
+                format!(
+                    "No LOOP_COMPLETE observed; termination reason: {:?}",
+                    result.termination_reason
+                )
             })
             .build()
-            .with_passed(updated)
+            .with_passed(emitted)
     }
 }
 
@@ -630,29 +630,41 @@ mod tests {
     }
 
     #[test]
-    fn test_single_iter_scratchpad_assertion_passed() {
+    fn test_single_iter_completion_signal_assertion_passed() {
         let scenario = SingleIterScenario::new();
-        let result = mock_execution_result();
-        let assertion = scenario.scratchpad_updated(&result);
-        assert!(assertion.passed, "Should pass when scratchpad has content");
+        let mut result = mock_execution_result();
+        result.stdout = "Work complete\nLOOP_COMPLETE".to_string();
+        let assertion = scenario.completion_signal_emitted(&result);
+        assert!(
+            assertion.passed,
+            "Should pass when LOOP_COMPLETE is emitted"
+        );
     }
 
     #[test]
-    fn test_single_iter_scratchpad_assertion_failed_empty() {
+    fn test_single_iter_completion_signal_assertion_passed_from_reason() {
         let scenario = SingleIterScenario::new();
         let mut result = mock_execution_result();
-        result.scratchpad = Some(String::new());
-        let assertion = scenario.scratchpad_updated(&result);
-        assert!(!assertion.passed, "Should fail when scratchpad is empty");
+        result.stdout = "Work complete".to_string();
+        result.termination_reason = Some("LOOP_COMPLETE".to_string());
+        let assertion = scenario.completion_signal_emitted(&result);
+        assert!(
+            assertion.passed,
+            "Should pass when LOOP_COMPLETE is the termination reason"
+        );
     }
 
     #[test]
-    fn test_single_iter_scratchpad_assertion_failed_none() {
+    fn test_single_iter_completion_signal_assertion_failed() {
         let scenario = SingleIterScenario::new();
         let mut result = mock_execution_result();
-        result.scratchpad = None;
-        let assertion = scenario.scratchpad_updated(&result);
-        assert!(!assertion.passed, "Should fail when scratchpad is missing");
+        result.stdout = "Work complete".to_string();
+        result.termination_reason = Some("MAX_ITERATIONS".to_string());
+        let assertion = scenario.completion_signal_emitted(&result);
+        assert!(
+            !assertion.passed,
+            "Should fail when no completion signal is observed"
+        );
     }
 
     #[test]
