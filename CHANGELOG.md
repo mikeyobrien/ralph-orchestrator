@@ -4,6 +4,14 @@ All notable changes to ralph-orchestrator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1] - 2026-06-22
+
+### Fixed
+
+- Restore e2e mock-mode verification by passing prompts to the cassette-backed custom backend over stdin.
+- Update the mock e2e single-iteration scenario to validate the completion signal instead of legacy scratchpad writes.
+- Isolate gitignore integration tests from user/global Git exclude files.
+
 ## [2.10.0] - 2026-06-21
 
 ### Added
@@ -258,7 +266,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Modularized codebase and fixed TUI mode
 
-[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.1...HEAD
+[2.10.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.0...v2.10.1
+[2.10.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.3...v2.10.0
+[2.9.3]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.2...v2.9.3
+[2.9.2]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.1...v2.9.2
+[2.9.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.0...v2.9.1
+[2.9.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.8.1...v2.9.0
+[2.8.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.1...v2.6.0
