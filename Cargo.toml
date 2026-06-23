@@ -18,7 +18,7 @@ exclude = [
 
 [workspace.package]
 edition = "2024"
-version = "2.10.0"
+version = "2.10.1"
 license = "MIT"
 repository = "https://github.com/mikeyobrien/ralph-orchestrator"
 homepage = "https://github.com/mikeyobrien/ralph-orchestrator"
@@ -140,15 +140,15 @@ scopeguard = "1"
 strip-ansi-escapes = "0.2"
 
 # Internal crates (version required for crates.io publishing)
-ralph-proto = { version = "2.10.0", path = "crates/ralph-proto" }
-ralph-core = { version = "2.10.0", path = "crates/ralph-core", features = ["recording"] }
-ralph-adapters = { version = "2.10.0", path = "crates/ralph-adapters" }
-ralph-tui = { version = "2.10.0", path = "crates/ralph-tui" }
-ralph-cli = { version = "2.10.0", path = "crates/ralph-cli" }
-ralph-bench = { version = "2.10.0", path = "crates/ralph-bench" }
-ralph-e2e = { version = "2.10.0", path = "crates/ralph-e2e" }
-ralph-telegram = { version = "2.10.0", path = "crates/ralph-telegram" }
-ralph-api = { version = "2.10.0", path = "crates/ralph-api" }
+ralph-proto = { version = "2.10.1", path = "crates/ralph-proto" }
+ralph-core = { version = "2.10.1", path = "crates/ralph-core", features = ["recording"] }
+ralph-adapters = { version = "2.10.1", path = "crates/ralph-adapters" }
+ralph-tui = { version = "2.10.1", path = "crates/ralph-tui" }
+ralph-cli = { version = "2.10.1", path = "crates/ralph-cli" }
+ralph-bench = { version = "2.10.1", path = "crates/ralph-bench" }
+ralph-e2e = { version = "2.10.1", path = "crates/ralph-e2e" }
+ralph-telegram = { version = "2.10.1", path = "crates/ralph-telegram" }
+ralph-api = { version = "2.10.1", path = "crates/ralph-api" }
 
 # Telegram bot framework
 teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
