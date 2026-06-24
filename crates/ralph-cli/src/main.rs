@@ -19,6 +19,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod autoloop_engine;
 mod autoloop_preset_gen;
+mod completion_coord;
 mod backend_support;
 mod bot;
 mod config_resolution;
@@ -1836,8 +1837,17 @@ async fn run_command(
     // Note: use_subprocess_tui is now determined earlier (before lock acquisition)
     let reason = if config.core.engine == "autoloop" {
         // v3 cutover: drive the autoloop runtime as a subprocess instead of the
-        // in-house event loop. Bypasses the TUI/RPC paths for now.
-        autoloop_engine::run_autoloop_engine(config).await?
+        // in-house event loop. Bypasses the TUI/RPC paths for now, but runs the
+        // same engine-agnostic completion coordination (merge queue, registry,
+        // landing) so parallel loops keep working.
+        autoloop_engine::run_autoloop_engine(
+            config,
+            Some(loop_context),
+            auto_merge_override,
+            args.loop_id.clone(),
+            color_mode.should_use_colors(),
+        )
+        .await?
     } else if use_subprocess_tui {
         // Subprocess TUI mode: spawn child with --rpc and attach TUI
         run_subprocess_tui(subprocess_tui_args, resume, custom_args).await?

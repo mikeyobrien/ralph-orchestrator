@@ -7,10 +7,13 @@
 //! at the heart of v3: autoloop owns loop execution; ralph coordinates.
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{AutoloopRunner, events_run_result, parse_events};
-use ralph_core::{RalphConfig, TerminationReason};
+use ralph_core::{LoopContext, LoopState, RalphConfig, TerminationReason};
+
+use crate::completion_coord::coordinate_completion;
 
 /// Map an autoloop `stopReason` onto ralph's [`TerminationReason`].
 fn map_stop_reason(reason: &str) -> TerminationReason {
@@ -39,9 +42,20 @@ fn resolve(workspace: &Path, p: &str) -> PathBuf {
 }
 
 /// Drive the configured autoloop preset as ralph's engine, returning the mapped
-/// [`TerminationReason`]. Requires `core.autoloop_preset` to point at an autoloop
-/// preset directory (containing `autoloops.toml`).
-pub async fn run_autoloop_engine(config: RalphConfig) -> Result<TerminationReason> {
+/// [`TerminationReason`].
+///
+/// After the subprocess terminates, runs the engine-agnostic completion
+/// coordination ([`coordinate_completion`]) so parallel-loop bookkeeping
+/// (merge queue, loop registry, landing, summary, history) matches the in-house
+/// engine. `context` carries the loop identity; `None` means an ad-hoc run with
+/// no merge-queue / registry participation.
+pub async fn run_autoloop_engine(
+    config: RalphConfig,
+    context: Option<LoopContext>,
+    auto_merge_override: Option<bool>,
+    loop_id: Option<String>,
+    use_colors: bool,
+) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
 
     // Use an explicit preset if configured; otherwise generate one from ralph's
@@ -91,10 +105,11 @@ pub async fn run_autoloop_engine(config: RalphConfig) -> Result<TerminationReaso
         "engine=autoloop: driving the autoloop runtime as a subprocess"
     );
 
-    let runner = AutoloopRunner::new(preset, prompt, workspace.clone())
+    let runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .events_path(events_path.clone());
 
     // AutoloopRunner::run blocks on the subprocess; keep the async runtime free.
+    let start = Instant::now();
     let summary = tokio::task::spawn_blocking(move || runner.run())
         .await
         .context("autoloop run task panicked")?
@@ -109,7 +124,37 @@ pub async fn run_autoloop_engine(config: RalphConfig) -> Result<TerminationReaso
         }
     }
 
-    Ok(map_stop_reason(&summary.stop_reason))
+    let reason = map_stop_reason(&summary.stop_reason);
+
+    // Mirror the in-house engine's completion bookkeeping so parallel-loop
+    // coordination (merge queue, registry, landing) works under the autoloop
+    // engine. autoloop owns iteration/timing; we surface what the summary gives.
+    let mut state = LoopState::new();
+    state.iteration = summary.iterations;
+    state.started_at = start;
+    state.completion_requested = matches!(reason, TerminationReason::CompletionPromise);
+
+    let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
+    let loop_id = loop_id
+        .or_else(|| {
+            context
+                .as_ref()
+                .and_then(|c| c.loop_id().map(|s| s.to_string()))
+        })
+        .unwrap_or_else(|| "primary".to_string());
+
+    coordinate_completion(
+        &reason,
+        &state,
+        context.as_ref(),
+        &config.core.scratchpad.path,
+        &prompt,
+        auto_merge,
+        &loop_id,
+        use_colors,
+    );
+
+    Ok(reason)
 }
 
 #[cfg(test)]
