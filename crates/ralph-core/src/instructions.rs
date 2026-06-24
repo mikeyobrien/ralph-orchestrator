@@ -364,6 +364,7 @@ mod tests {
             specs_dir: "./specifications/".to_string(),
             guardrails: vec!["Custom rule one".to_string(), "Custom rule two".to_string()],
             workspace_root: std::path::PathBuf::from("."),
+            ..Default::default()
         };
         let builder = InstructionBuilder::new(custom_core);
 
