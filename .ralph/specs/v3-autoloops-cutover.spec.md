@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: migrated
 created: 2026-06-23
 updated: 2026-06-24
 bead: ralph-orchestrator-v3-autoloops-backend-a7e
@@ -210,17 +210,17 @@ Each step must `cargo build`/`cargo test` green and be committed.
 - [x] `RunStats` (commit `4f80f21`) — `SummaryWriter`/`print_termination` take a tiny engine-agnostic stats struct instead of the engine `LoopState`; the keepers (`completion_coord`/`autoloop_engine`) no longer build a `LoopState`.
 - [x] Verified `completion_coord`/`autoloop_engine`/`autoloop_preset_gen`/`merge_processing` have **zero** `EventLoop`/`hatless_ralph`/`wave_*`/`event_bus` imports (only `config.event_loop.*` config fields + keeper coordination types). The autoloop engine path is fully decoupled from the in-house engine internals. (Deferred to Phase C: `TerminationReason` re-export currently lives in the `event_loop` module — a mechanical move when that module is deleted.)
 
-**B — rewire/descope the legacy-engine callers (the risky middle):**
-- [ ] `ralph run` (`main.rs:~1837`): make `run_autoloop_engine` the sole path; remove the `use_subprocess_tui` + `run_loop_impl` branches.
-- [ ] `ralph resume` (`main.rs:~2260`): wire to the autoloop engine path using `autoloop resume <run_id>` (autoloop#44); ralph must persist the autoloop run_id to resume it.
-- [ ] Bot daemon `start_loop` (`loop_runner:~5060`): route to the autoloop path.
-- [ ] RPC mode (`rpc_stdin`, `run_subprocess_tui`) + in-process TUI: port the `--events` stream to the TUI, or **descope to a GitHub issue** (autoloop `--events` → TUI renderer) per "flag missing functionality as issues".
-- [ ] `ralph-bench` (`EventLoop` direct use): rewire or drop the engine-coupled benchmark.
+**B — rewire/descope the legacy-engine callers: ✅ DONE (commit `21e6d89`)**
+- [x] `ralph run`: `run_autoloop_engine` is the sole path; TUI/RPC branches removed (descoped → #342/#343).
+- [x] `ralph resume`: routes to the autoloop engine (re-drives reading on-disk state; true run_id continue → #344).
+- [x] Bot daemon `start_loop` moved to `autoloop_engine.rs`, routes to the autoloop engine (in-loop RObot → #345).
+- [x] RPC + in-process/subprocess TUI: descoped → #342/#343.
+- [x] `ralph-bench`: EventLoop body stubbed (bails loudly) → #346. Backend forwarding → #347.
 
-**C — delete the dead engine + tests (mechanical, large):**
-- [ ] Delete `run_loop_impl` + `run_subprocess_tui` + helpers from `loop_runner.rs` (~13K lines).
-- [ ] Delete `event_loop/` (`mod.rs` + `tests.rs` ~5.3K), `hatless_ralph.rs`, `wave_tracker/detection/prompt.rs`, `hat_registry.rs`, `event_bus.rs`, the wave CLI.
-- [ ] Delete/rewrite legacy-only tests: `event_loop_ralph.rs`, `smoke_runner.rs`, diagnostics `integration_tests.rs`, and drop the `engine: "ralph"` pins in `integration_events_isolation`/`integration_resume` (or delete them as obsolete).
-- [ ] Remove the `engine` field's `ralph` option (`config.rs`) — autoloop becomes the only engine.
+**C — delete the dead engine + tests: ✅ DONE (commits `919024d`/`4c00366`/`7c32810`/`10455e5`)**
+- [x] Deleted `loop_runner.rs` (run_loop_impl + run_subprocess_tui), `wave.rs`, `rpc_stdin.rs` (ralph-cli).
+- [x] Deleted `event_loop/` (mod + tests + loop_state), `hatless_ralph.rs`, `wave_tracker/detection/prompt.rs`, `LoopState` (ralph-core). KEPT `hat_registry.rs` (live `ralph hats` consumer) and `event_bus.rs` (re-exported; orphaned dead code, low-priority cleanup).
+- [x] Deleted obsolete tests: `event_loop_ralph.rs`, `smoke_runner.rs`, the EventLoop diagnostics tests, `integration_events_isolation.rs`, `integration_resume.rs`, 5 legacy behavioral tests in `integration_run.rs`.
+- [x] `core.engine` is now inert (autoloop unconditional); field retained for config compatibility.
 
-This does NOT compile-depend on the autoloop PRs merging (the adapter spawns autoloop as a subprocess); it depends only on doing the rewire to-green. Descoped features (rich TUI, RPC, bot-on-autoloop) become tracked issues, not blockers.
+**STATUS: v3 is fully migrated.** The in-house engine is deleted (~31K lines); autoloop is the sole engine. Workspace builds clean (0 warnings); ralph-cli (21 test binaries), ralph-core (640 lib), ralph-tui/api/telegram/proto/bench all green. Adversarially reviewed (run/resume/bot/merge-loop verified correct); one HIGH bug (dropped backend) fixed → warn + #347. The autoloop-runtime live contract test (`ralph-adapters`) is the only red, gated on the local autoloop build having `--events` (autoloop PRs #40–#44), not a deletion regression. Descoped to tracked issues: TUI #342, RPC #343, native-resume #344, bot HITL #345, bench #346, backend mapping #347.
