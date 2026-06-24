@@ -1051,8 +1051,10 @@ pub struct CoreConfig {
     #[serde(skip)]
     pub workspace_root: std::path::PathBuf,
 
-    /// Orchestration engine: `"ralph"` (the in-house event loop, default) or
-    /// `"autoloop"` (drive the autoloop runtime as a subprocess — v3 cutover).
+    /// Orchestration engine selector. As of the v3 cutover the autoloop runtime
+    /// is the sole engine; the in-house event loop has been removed. This field
+    /// is retained for config compatibility but no longer switches engines —
+    /// every run drives autoloop regardless of its value.
     #[serde(default = "default_engine")]
     pub engine: String,
 

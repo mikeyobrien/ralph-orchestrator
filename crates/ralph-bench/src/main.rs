@@ -10,17 +10,13 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_adapters::{CliBackend, CliExecutor, detect_backend};
 use ralph_core::{
-    CleanupPolicy, CliCapture, EventLoop, PlayerConfig, RalphConfig, ReplayMode, SessionPlayer,
-    TaskSuite, TerminationReason, WorkspaceManager,
+    CleanupPolicy, PlayerConfig, ReplayMode, SessionPlayer, TaskSuite, WorkspaceManager,
 };
-use ralph_proto::FrameCapture;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
-use std::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Ralph Benchmark Harness - Record, replay, and benchmark orchestration loops
 #[derive(Parser, Debug)]
@@ -326,214 +322,22 @@ async fn cmd_run(
 /// Returns (iterations, termination_reason) tuple.
 async fn run_task_loop(
     task: &ralph_core::TaskDefinition,
-    workspace: &ralph_core::TaskWorkspace,
-    record_path: Option<&PathBuf>,
-    record_ux: bool,
+    _workspace: &ralph_core::TaskWorkspace,
+    _record_path: Option<&PathBuf>,
+    _record_ux: bool,
 ) -> Result<(u32, String)> {
-    use ralph_core::{Record, SessionRecorder};
-    use std::sync::Arc;
-
-    // Read the prompt file from the workspace (it was copied there during setup)
-    let prompt_path = workspace.path().join("PROMPT.md");
-    let prompt_content = std::fs::read_to_string(&prompt_path)
-        .with_context(|| format!("Failed to read prompt file: {:?}", prompt_path))?;
-
-    // Build config for this task from task definition
-    let mut config = RalphConfig::default();
-    config.event_loop.max_iterations = task.max_iterations;
-    config.event_loop.completion_promise = task.completion_promise.clone();
-    config.event_loop.max_runtime_seconds = task.timeout_seconds;
-
-    // Auto-detect backend
-    let priority = config.get_agent_priority();
-    let detected = detect_backend(&priority, |backend| {
-        config.adapter_settings(backend).enabled
-    });
-
-    match detected {
-        Ok(backend_name) => {
-            info!("Using backend: {}", backend_name);
-            config.cli.backend = backend_name;
-        }
-        Err(e) => {
-            // If no backend available, return NotRun
-            warn!("No backend available: {}", e);
-            return Ok((0, "NoBackend".to_string()));
-        }
-    }
-
-    // Initialize event loop
-    let mut event_loop = EventLoop::new(config.clone());
-    event_loop.initialize(&prompt_content);
-
-    // Create CLI executor
-    let backend = CliBackend::from_config(&config.cli).map_err(|e| anyhow::Error::new(e))?;
-    let executor = CliExecutor::new(backend);
-
-    // Setup session recording if requested
-    let recorder: Option<Arc<SessionRecorder<BufWriter<File>>>> =
-        if let Some(record_path) = record_path {
-            let file = File::create(record_path)
-                .with_context(|| format!("Failed to create recording file: {:?}", record_path))?;
-            let recorder = Arc::new(SessionRecorder::new(BufWriter::new(file)));
-            recorder.record_meta(Record::meta_loop_start(
-                &config.event_loop.prompt_file,
-                config.event_loop.max_iterations,
-                Some("cli"),
-            ));
-
-            // Wire observer to EventBus so events are recorded
-            let observer = SessionRecorder::make_observer(Arc::clone(&recorder));
-            event_loop.add_observer(observer);
-
-            Some(recorder)
-        } else {
-            None
-        };
-
-    // Determine if we should capture UX events (requires both flag and recorder)
-    let should_capture_ux = record_ux && recorder.is_some();
-
-    info!(
-        "Running task '{}' with max {} iterations",
-        task.name, config.event_loop.max_iterations
+    // v3 cutover: the in-house EventLoop engine has been removed. The bench
+    // harness previously drove `ralph_core::EventLoop` directly; porting it to
+    // the autoloop engine is descoped to #346. Until then, the task loop is a
+    // no-op stub so the workspace builds and the rest of the bench tooling
+    // (replay, reporting) keeps working.
+    //
+    // see #346 — re-implement bench task execution on the autoloop engine.
+    warn!(
+        task = %task.name,
+        "ralph-bench task execution is stubbed pending autoloop port (#346)"
     );
-
-    // Change to workspace directory for execution
-    let original_dir = std::env::current_dir()?;
-    std::env::set_current_dir(workspace.path())?;
-
-    // Main orchestration loop
-    let termination_reason: TerminationReason;
-    let mut consecutive_fallbacks: u32 = 0;
-    const MAX_FALLBACK_ATTEMPTS: u32 = 3;
-
-    loop {
-        // Check termination before execution
-        if let Some(reason) = event_loop.check_termination() {
-            termination_reason = reason;
-            break;
-        }
-
-        // Get next hat to execute, with fallback recovery if no pending events
-        let hat_id = match event_loop.next_hat() {
-            Some(id) => {
-                consecutive_fallbacks = 0;
-                id.clone()
-            }
-            None => {
-                // No pending events - try to recover by injecting a fallback event
-                consecutive_fallbacks += 1;
-
-                if consecutive_fallbacks > MAX_FALLBACK_ATTEMPTS {
-                    warn!(
-                        attempts = consecutive_fallbacks,
-                        "Fallback recovery exhausted after {} attempts, terminating",
-                        MAX_FALLBACK_ATTEMPTS
-                    );
-                    termination_reason = TerminationReason::Stopped;
-                    break;
-                }
-
-                if event_loop.inject_fallback_event() {
-                    continue;
-                }
-
-                warn!("No hats with pending events and fallback not available, terminating");
-                termination_reason = TerminationReason::Stopped;
-                break;
-            }
-        };
-
-        let iteration = event_loop.state().iteration + 1;
-        info!("Task '{}' iteration {}", task.name, iteration);
-
-        // Build prompt for this hat
-        let prompt = match event_loop.build_prompt(&hat_id) {
-            Some(p) => p,
-            None => {
-                warn!("Failed to build prompt for hat '{}'", hat_id);
-                continue;
-            }
-        };
-
-        // Execute the prompt (capture output but don't print to stdout)
-        // Get per-adapter timeout from config
-        let timeout_secs = config.adapter_settings(&config.cli.backend).timeout;
-        let timeout = Some(Duration::from_secs(timeout_secs));
-
-        // Execute with optional UX capture
-        let result = if should_capture_ux {
-            // Wrap output buffer with CliCapture to record terminal output
-            let mut output_buf = Vec::new();
-            let mut capture = CliCapture::new(&mut output_buf, true);
-            let result = executor
-                .execute(&prompt, &mut capture, timeout, false)
-                .await?;
-
-            // Extract and record UX events
-            let ux_events = capture.take_captures();
-            if let Some(ref rec) = recorder {
-                rec.record_ux_events(&ux_events);
-            }
-
-            result
-        } else {
-            let mut output_buf = Vec::new();
-            executor
-                .execute(&prompt, &mut output_buf, timeout, false)
-                .await?
-        };
-
-        // Process output
-        if let Some(reason) = event_loop.process_output(&hat_id, &result.output, result.success) {
-            termination_reason = reason;
-            break;
-        }
-
-        // Precheck validation: Warn if no pending events after processing output
-        if !event_loop.has_pending_events() {
-            let expected = event_loop.get_hat_publishes(&hat_id);
-            debug!(
-                hat = %hat_id.as_str(),
-                expected_topics = ?expected,
-                "No pending events after iteration. Agent may have failed to publish a valid event."
-            );
-        }
-    }
-
-    // Restore original directory
-    std::env::set_current_dir(original_dir)?;
-
-    let state = event_loop.state();
-    let iterations = state.iteration;
-    let reason_str = format_termination_reason(&termination_reason);
-
-    info!(
-        "Task '{}' completed: {} iterations, reason: {}",
-        task.name, iterations, reason_str
-    );
-
-    Ok((iterations, reason_str))
-}
-
-/// Format a TerminationReason into a human-readable string for results output.
-fn format_termination_reason(reason: &TerminationReason) -> String {
-    match reason {
-        TerminationReason::CompletionPromise => "CompletionPromise".to_string(),
-        TerminationReason::MaxIterations => "MaxIterations".to_string(),
-        TerminationReason::MaxRuntime => "MaxRuntime".to_string(),
-        TerminationReason::MaxCost => "MaxCost".to_string(),
-        TerminationReason::ConsecutiveFailures => "ConsecutiveFailures".to_string(),
-        TerminationReason::LoopThrashing => "LoopThrashing".to_string(),
-        TerminationReason::LoopStale => "LoopStale".to_string(),
-        TerminationReason::ValidationFailure => "ValidationFailure".to_string(),
-        TerminationReason::Stopped => "Stopped".to_string(),
-        TerminationReason::Interrupted => "Interrupted".to_string(),
-        TerminationReason::RestartRequested => "RestartRequested".to_string(),
-        TerminationReason::WorkspaceGone => "WorkspaceGone".to_string(),
-        TerminationReason::Cancelled => "Cancelled".to_string(),
-    }
+    Ok((0, "BenchEngineRemoved".to_string()))
 }
 
 /// Replay a recorded session

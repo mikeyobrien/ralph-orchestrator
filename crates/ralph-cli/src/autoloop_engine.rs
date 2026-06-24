@@ -158,6 +158,76 @@ pub async fn run_autoloop_engine(
     Ok(reason)
 }
 
+/// Start a headless orchestration loop for the Telegram bot daemon.
+///
+/// This is the daemon's [`ralph_proto::StartLoopFn`] target: it loads config,
+/// applies the supplied prompt, forces autonomous/headless mode, acquires the
+/// primary loop lock, and drives the autoloop engine.
+///
+/// Note: human-in-the-loop robot wiring under the autoloop engine is descoped
+/// to #345. The loop still runs; in-loop Telegram interaction is not yet routed.
+pub async fn start_loop(
+    prompt: String,
+    workspace_root: PathBuf,
+    config_path: Option<PathBuf>,
+) -> Result<TerminationReason> {
+    use crate::{ConfigSource, load_config_with_overrides};
+
+    // Load config from file or defaults.
+    let config_source = config_path.unwrap_or_else(|| workspace_root.join("ralph.yml"));
+    let sources = vec![ConfigSource::File(config_source)];
+    let mut config = load_config_with_overrides(&sources)?;
+
+    // Set workspace root to the provided path.
+    config.core.workspace_root = workspace_root.clone();
+
+    // Apply the prompt.
+    config.event_loop.prompt = Some(prompt);
+    config.event_loop.prompt_file = String::new();
+
+    // Force autonomous headless mode (no TUI, no interactive).
+    config.cli.default_mode = "autonomous".to_string();
+
+    // Normalize and validate.
+    config.normalize();
+    let warnings = config
+        .validate()
+        .context("Configuration validation failed")?;
+    for warning in &warnings {
+        tracing::warn!("{}", warning);
+    }
+
+    // Auto-detect backend if needed.
+    if config.cli.backend == "auto" {
+        let priority = config.get_agent_priority();
+        let detected = ralph_adapters::detect_backend(&priority, |backend| {
+            config.adapter_settings(backend).enabled
+        });
+        match detected {
+            Ok(backend) => {
+                tracing::info!("Auto-detected backend: {}", backend);
+                config.cli.backend = backend;
+            }
+            Err(e) => return Err(anyhow::Error::new(e)),
+        }
+    }
+
+    // Ensure scratchpad directory exists.
+    crate::ensure_scratchpad_directory(&config)?;
+
+    // Acquire the loop lock (primary loop).
+    let prompt_summary = config.event_loop.prompt.as_deref().unwrap_or("[daemon]");
+    let prompt_summary = ralph_core::truncate_with_ellipsis(prompt_summary, 100);
+
+    let _lock_guard = ralph_core::LoopLock::try_acquire(&workspace_root, &prompt_summary)
+        .context("Failed to acquire loop lock — another loop may be running")?;
+
+    let loop_context = ralph_core::LoopContext::primary(workspace_root);
+
+    // Drive the loop headlessly via the autoloop engine.
+    run_autoloop_engine(config, Some(loop_context), None, None, false).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

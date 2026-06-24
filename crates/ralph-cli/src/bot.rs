@@ -577,7 +577,7 @@ async fn run_daemon(
         let config_path = Some(config_path.clone());
         Box::pin(async move {
             let ws = std::env::current_dir()?;
-            let reason = crate::loop_runner::start_loop(prompt, ws, config_path).await?;
+            let reason = crate::autoloop_engine::start_loop(prompt, ws, config_path).await?;
             Ok(format!("{:?}", reason))
         })
     });
