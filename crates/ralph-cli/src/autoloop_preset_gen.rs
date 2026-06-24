@@ -46,14 +46,14 @@ fn arr(items: &[String]) -> String {
 ///
 /// Returns an error if the config has no hats (nothing to translate).
 pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
-    if config.hats.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "engine=autoloop needs either core.autoloop_preset or a hats topology to translate",
-        ));
-    }
-
     fs::create_dir_all(dir.join("roles"))?;
+
+    // Hatless / single-hat ralph configs have no hats map. Synthesize a single
+    // role that runs the objective and emits the completion event — the autoloop
+    // equivalent of ralph's hatless mode.
+    if config.hats.is_empty() {
+        return generate_hatless_preset(config, dir);
+    }
 
     // Deterministic ordering for stable output.
     let mut hats: Vec<(&String, &ralph_core::HatConfig)> = config.hats.iter().collect();
@@ -97,7 +97,48 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     }
     fs::write(dir.join("topology.toml"), topo.as_bytes())?;
 
-    // autoloops.toml
+    write_autoloops(config, dir)?;
+    write_harness(config, dir)?;
+    Ok(())
+}
+
+/// Synthesize a single-role preset for a hatless / single-hat ralph config.
+fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
+    let role_instructions = format!(
+        "You are the single autonomous worker for this loop. Work the objective \
+         through to completion, verifying with the strongest available harness \
+         before declaring done. When the work is complete and verified, emit the \
+         completion event (`<tool> emit {COMPLETION_EVENT} \"<summary>\"`) or end \
+         your output with the completion promise `{}`.\n",
+        config.event_loop.completion_promise
+    );
+    fs::write(dir.join("roles/ralph.md"), role_instructions.as_bytes())?;
+
+    let mut topo = String::new();
+    topo.push_str(&format!("name = {}\n", q("ralph")));
+    topo.push_str(&format!("completion = {}\n\n", q(COMPLETION_EVENT)));
+    topo.push_str("[[role]]\n");
+    topo.push_str(&format!("id = {}\n", q("ralph")));
+    topo.push_str(&format!(
+        "emits = {}\n",
+        arr(&[COMPLETION_EVENT.to_string()])
+    ));
+    topo.push_str(&format!("prompt_file = {}\n\n", q("roles/ralph.md")));
+    topo.push_str("[handoff]\n");
+    topo.push_str(&format!(
+        "{} = {}\n",
+        q("loop.start"),
+        arr(&["ralph".to_string()])
+    ));
+    fs::write(dir.join("topology.toml"), topo.as_bytes())?;
+
+    write_autoloops(config, dir)?;
+    write_harness(config, dir)?;
+    Ok(())
+}
+
+/// Write `autoloops.toml` from ralph's event-loop config.
+fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
     auto.push_str(&format!("event_loop.max_iterations = {}\n", el.max_iterations));
@@ -116,13 +157,15 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
         ));
     }
     auto.push_str("\nharness.instructions_file = \"harness.md\"\n");
-    fs::write(dir.join("autoloops.toml"), auto.as_bytes())?;
+    fs::write(dir.join("autoloops.toml"), auto.as_bytes())
+}
 
-    // harness.md — ralph's guardrails become the shared harness rules.
-    let harness = config.core.guardrails.join("\n");
-    fs::write(dir.join("harness.md"), harness.as_bytes())?;
-
-    Ok(())
+/// Write `harness.md` from ralph's guardrails.
+fn write_harness(config: &RalphConfig, dir: &Path) -> io::Result<()> {
+    fs::write(
+        dir.join("harness.md"),
+        config.core.guardrails.join("\n").as_bytes(),
+    )
 }
 
 /// Pick the role autoloop should start from: the hat triggered by ralph's start
@@ -168,10 +211,15 @@ hats:
     }
 
     #[test]
-    fn errors_when_no_hats() {
+    fn generates_a_single_role_preset_when_no_hats() {
         let cfg = RalphConfig::default();
         let dir = tempfile::tempdir().unwrap();
-        assert!(generate_preset(&cfg, dir.path()).is_err());
+        generate_preset(&cfg, dir.path()).unwrap();
+        assert!(dir.path().join("autoloops.toml").is_file());
+        assert!(dir.path().join("roles/ralph.md").is_file());
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(topo.contains("id = \"ralph\""));
+        assert!(topo.contains("\"loop.start\" = [\"ralph\"]"));
     }
 
     #[test]

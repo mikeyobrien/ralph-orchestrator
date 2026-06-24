@@ -1068,7 +1068,9 @@ fn default_specs_dir() -> String {
 }
 
 fn default_engine() -> String {
-    "ralph".to_string()
+    // v3: autoloop is the default orchestration engine. The in-house event loop
+    // remains available via `core.engine: ralph`.
+    "autoloop".to_string()
 }
 
 fn default_guardrails() -> Vec<String> {
