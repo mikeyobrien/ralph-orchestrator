@@ -719,6 +719,13 @@ pub async fn run_loop_impl(
                               context: &Option<LoopContext>,
                               auto_merge: bool,
                               prompt: &str| {
+        // Engine-agnostic stats for the summary file + termination banner.
+        let stats = ralph_core::RunStats {
+            iterations: state.iteration,
+            elapsed: state.elapsed(),
+            cost_usd: state.cumulative_cost,
+        };
+
         // Per spec: Write summary file on termination
         let summary_writer = SummaryWriter::default();
         let scratchpad_path = std::path::Path::new(scratchpad);
@@ -731,7 +738,7 @@ pub async fn run_loop_impl(
         // Get final commit SHA if available
         let final_commit = get_last_commit_info();
 
-        if let Err(e) = summary_writer.write(reason, state, scratchpad_opt, final_commit.as_deref())
+        if let Err(e) = summary_writer.write(reason, &stats, scratchpad_opt, final_commit.as_deref())
         {
             warn!("Failed to write summary file: {}", e);
         }
@@ -904,7 +911,7 @@ pub async fn run_loop_impl(
         // Print termination info to console (skip in TUI mode - TUI handles display)
         // Skip in RPC mode - JSON events replace console output
         if !enable_tui && !enable_rpc {
-            print_termination(reason, state, use_colors, Some(&loop_id));
+            print_termination(reason, &stats, use_colors, Some(&loop_id));
         }
 
         // Mark RPC state as completed so get_state reflects termination

@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ralph_core::{
-    CompletionAction, LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, LoopState,
-    MergeQueue, SummaryWriter, TerminationReason,
+    CompletionAction, LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue,
+    RunStats, SummaryWriter, TerminationReason,
 };
 use tracing::{debug, info, warn};
 
@@ -36,7 +36,7 @@ use crate::display::print_termination;
 #[allow(clippy::too_many_arguments)]
 pub fn coordinate_completion(
     reason: &TerminationReason,
-    state: &LoopState,
+    state: &RunStats,
     context: Option<&LoopContext>,
     scratchpad: &str,
     prompt: &str,
@@ -224,7 +224,7 @@ mod tests {
     fn coordinate_without_context_is_a_noop_for_merge_state() {
         // No loop context => no registry / merge-queue participation, just the
         // summary + banner. Should not panic.
-        let state = LoopState::new();
+        let state = RunStats::default();
         coordinate_completion(
             &TerminationReason::MaxIterations,
             &state,

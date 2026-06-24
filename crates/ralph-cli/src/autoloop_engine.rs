@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{AutoloopRunner, events_run_result, parse_events};
-use ralph_core::{LoopContext, LoopState, RalphConfig, TerminationReason};
+use ralph_core::{LoopContext, RalphConfig, RunStats, TerminationReason};
 
 use crate::completion_coord::coordinate_completion;
 
@@ -129,11 +129,11 @@ pub async fn run_autoloop_engine(
     // Mirror the in-house engine's completion bookkeeping so parallel-loop
     // coordination (merge queue, registry, landing) works under the autoloop
     // engine. autoloop owns iteration/timing; we surface what the summary gives.
-    let mut state = LoopState::new();
-    state.iteration = summary.iterations;
-    state.cumulative_cost = summary.cost_usd;
-    state.started_at = start;
-    state.completion_requested = matches!(reason, TerminationReason::CompletionPromise);
+    let state = RunStats {
+        iterations: summary.iterations,
+        elapsed: start.elapsed(),
+        cost_usd: summary.cost_usd,
+    };
 
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
     let loop_id = loop_id

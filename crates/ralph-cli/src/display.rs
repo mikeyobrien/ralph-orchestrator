@@ -231,7 +231,7 @@ pub fn truncate(s: &str, max_len: usize) -> String {
 /// through the scrollback.
 pub fn print_termination(
     reason: &TerminationReason,
-    state: &ralph_core::LoopState,
+    state: &ralph_core::RunStats,
     use_colors: bool,
     loop_id: Option<&str>,
 ) {
@@ -264,16 +264,16 @@ pub fn print_termination(
         println!("{BOLD}+{separator}+{RESET}");
         println!(
             "{BOLD}|{RESET}   Iterations:  {CYAN}{}{RESET}",
-            state.iteration
+            state.iterations
         );
         println!(
             "{BOLD}|{RESET}   Elapsed:     {CYAN}{:.1}s{RESET}",
-            state.elapsed().as_secs_f64()
+            state.elapsed.as_secs_f64()
         );
-        if state.cumulative_cost > 0.0 {
+        if state.cost_usd > 0.0 {
             println!(
                 "{BOLD}|{RESET}   Est. cost:   {CYAN}${:.2}{RESET}",
-                state.cumulative_cost
+                state.cost_usd
             );
         }
         println!("{BOLD}+{separator}+{RESET}");
@@ -281,10 +281,10 @@ pub fn print_termination(
         println!("\n+{}+", "-".repeat(58));
         println!("| {icon} Loop terminated: {label}");
         println!("+{}+", "-".repeat(58));
-        println!("|   Iterations:  {}", state.iteration);
-        println!("|   Elapsed:     {:.1}s", state.elapsed().as_secs_f64());
-        if state.cumulative_cost > 0.0 {
-            println!("|   Est. cost:   ${:.2}", state.cumulative_cost);
+        println!("|   Iterations:  {}", state.iterations);
+        println!("|   Elapsed:     {:.1}s", state.elapsed.as_secs_f64());
+        if state.cost_usd > 0.0 {
+            println!("|   Est. cost:   ${:.2}", state.cost_usd);
         }
         println!("+{}+", "-".repeat(58));
     }
@@ -579,7 +579,6 @@ mod tests {
     #[test]
     #[ignore = "visual demo; run with: cargo test -- --ignored --nocapture zzz_visual_demo"]
     fn zzz_visual_demo() {
-        use ralph_core::LoopState;
         use std::path::PathBuf;
         use std::time::Duration;
 
@@ -632,9 +631,11 @@ mod tests {
             false,
         );
 
-        let mut state = LoopState::new();
-        state.iteration = 150;
-        state.cumulative_cost = 7.42;
+        let state = ralph_core::RunStats {
+            iterations: 150,
+            cost_usd: 7.42,
+            ..Default::default()
+        };
         print_termination(
             &TerminationReason::MaxIterations,
             &state,
@@ -643,9 +644,11 @@ mod tests {
         );
 
         println!("\n\n===== alternate: completion promise (no resume hint) =====\n");
-        let mut state = LoopState::new();
-        state.iteration = 87;
-        state.cumulative_cost = 3.15;
+        let state = ralph_core::RunStats {
+            iterations: 87,
+            cost_usd: 3.15,
+            ..Default::default()
+        };
         print_termination(
             &TerminationReason::CompletionPromise,
             &state,

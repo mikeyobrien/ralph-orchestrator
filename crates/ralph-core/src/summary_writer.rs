@@ -4,7 +4,7 @@
 //! with status, iterations, duration, task list, events summary, and commit info.
 
 use crate::event_logger::EventHistory;
-use crate::event_loop::{LoopState, TerminationReason};
+use crate::event_loop::TerminationReason;
 use crate::landing::LandingResult;
 use crate::loop_context::LoopContext;
 use std::collections::HashMap;
@@ -12,6 +12,20 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// Engine-agnostic run statistics consumed by the summary file and the
+/// termination banner — the subset of loop state they actually render. Keeping
+/// this separate from the in-house engine's `LoopState` lets the summary path
+/// (and the autoloop engine) survive the engine's deletion.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunStats {
+    /// Iterations executed.
+    pub iterations: u32,
+    /// Wall-clock elapsed time.
+    pub elapsed: Duration,
+    /// Cumulative cost in USD (`0.0` if untracked).
+    pub cost_usd: f64,
+}
 
 /// Writes the loop summary file on termination.
 ///
@@ -78,11 +92,11 @@ impl SummaryWriter {
     pub fn write(
         &self,
         reason: &TerminationReason,
-        state: &LoopState,
+        stats: &RunStats,
         scratchpad_path: Option<&Path>,
         final_commit: Option<&str>,
     ) -> io::Result<()> {
-        self.write_with_landing(reason, state, scratchpad_path, final_commit, None)
+        self.write_with_landing(reason, stats, scratchpad_path, final_commit, None)
     }
 
     /// Writes the summary file with optional landing information.
@@ -91,7 +105,7 @@ impl SummaryWriter {
     pub fn write_with_landing(
         &self,
         reason: &TerminationReason,
-        state: &LoopState,
+        stats: &RunStats,
         scratchpad_path: Option<&Path>,
         final_commit: Option<&str>,
         landing: Option<&LandingResult>,
@@ -103,7 +117,7 @@ impl SummaryWriter {
 
         let content = self.generate_content_with_landing(
             reason,
-            state,
+            stats,
             scratchpad_path,
             final_commit,
             landing,
@@ -115,7 +129,7 @@ impl SummaryWriter {
     fn generate_content_with_landing(
         &self,
         reason: &TerminationReason,
-        state: &LoopState,
+        stats: &RunStats,
         scratchpad_path: Option<&Path>,
         final_commit: Option<&str>,
         landing: Option<&LandingResult>,
@@ -128,15 +142,15 @@ impl SummaryWriter {
         // Status
         let status = self.status_text(reason);
         content.push_str(&format!("**Status:** {status}\n"));
-        content.push_str(&format!("**Iterations:** {}\n", state.iteration));
+        content.push_str(&format!("**Iterations:** {}\n", stats.iterations));
         content.push_str(&format!(
             "**Duration:** {}\n",
-            format_duration(state.elapsed())
+            format_duration(stats.elapsed)
         ));
 
         // Cost (if tracked)
-        if state.cumulative_cost > 0.0 {
-            content.push_str(&format!("**Est. cost:** ${:.2}\n", state.cumulative_cost));
+        if stats.cost_usd > 0.0 {
+            content.push_str(&format!("**Est. cost:** ${:.2}\n", stats.cost_usd));
         }
 
         // Tasks section (read from scratchpad if available)
@@ -302,35 +316,13 @@ fn format_duration(d: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
     use tempfile::TempDir;
 
-    fn test_state() -> LoopState {
-        LoopState {
-            iteration: 12,
-            consecutive_failures: 0,
-            cumulative_cost: 1.50,
-            started_at: Instant::now(),
-            last_hat: None,
-            consecutive_blocked: 0,
-            last_blocked_hat: None,
-            task_block_counts: std::collections::HashMap::new(),
-            abandoned_tasks: Vec::new(),
-            abandoned_task_redispatches: 0,
-            consecutive_malformed_events: 0,
-            completion_requested: false,
-            hat_activation_counts: std::collections::HashMap::new(),
-            exhausted_hats: std::collections::HashSet::new(),
-            last_checkin_at: None,
-            last_active_hat_ids: Vec::new(),
-            seen_topics: std::collections::HashSet::new(),
-            last_emitted_signature: None,
-            consecutive_same_signature: 0,
-            cancellation_requested: false,
-            peak_input_tokens: 0,
-            last_input_tokens: None,
-            hat_peak_input_tokens: std::collections::HashMap::new(),
-            unacknowledged_guidance: Vec::new(),
+    fn test_state() -> RunStats {
+        RunStats {
+            iterations: 12,
+            elapsed: Duration::from_secs(0),
+            cost_usd: 1.50,
         }
     }
 
