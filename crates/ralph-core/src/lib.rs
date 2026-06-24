@@ -46,6 +46,7 @@ mod session_recorder;
 pub mod skill;
 pub mod skill_registry;
 mod summary_writer;
+mod termination;
 pub mod task;
 pub mod task_definition;
 pub mod task_store;
@@ -71,8 +72,9 @@ pub use config::{
 pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
 pub use event_loop::{
-    EventLoop, LoopState, ProcessedEvents, ProcessedEventsWithWaves, TerminationReason, UserPrompt,
+    EventLoop, LoopState, ProcessedEvents, ProcessedEventsWithWaves, UserPrompt,
 };
+pub use termination::TerminationReason;
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
 pub use file_lock::{FileLock, LockGuard as FileLockGuard, LockedFile};

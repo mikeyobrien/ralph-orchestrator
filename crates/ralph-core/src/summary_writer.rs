@@ -4,7 +4,7 @@
 //! with status, iterations, duration, task list, events summary, and commit info.
 
 use crate::event_logger::EventHistory;
-use crate::event_loop::TerminationReason;
+use crate::termination::TerminationReason;
 use crate::landing::LandingResult;
 use crate::loop_context::LoopContext;
 use std::collections::HashMap;
