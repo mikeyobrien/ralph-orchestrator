@@ -30,20 +30,17 @@ mod hats;
 mod hooks;
 mod init;
 mod interact;
-mod loop_runner;
 mod loops;
 mod mcp;
 mod memory;
 mod preflight;
 mod presets;
-mod rpc_stdin;
 mod skill_cli;
 mod sop_runner;
 mod task_cli;
 #[cfg(test)]
 mod test_support;
 mod tools;
-mod wave;
 mod web;
 mod web_robot_service;
 
@@ -686,9 +683,6 @@ enum Commands {
     /// Ralph's runtime tools (agent-facing)
     Tools(tools::ToolsArgs),
 
-    /// Dispatch wave events for parallel hat execution
-    Wave(wave::WaveArgs),
-
     /// Manage parallel loops
     Loops(loops::LoopsArgs),
 
@@ -1254,7 +1248,6 @@ async fn main() -> Result<()> {
             code_task_command(&config_sources, hats_source.as_ref(), cli.color, args).await
         }
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
-        Some(Commands::Wave(args)) => wave::execute(args, cli.color.should_use_colors()),
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
             hats::execute(
