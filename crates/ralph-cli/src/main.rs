@@ -17,6 +17,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod autoloop_engine;
 mod backend_support;
 mod bot;
 mod config_resolution;
@@ -1832,7 +1833,11 @@ async fn run_command(
     // 3. RPC mode: Headless JSON-lines output (--rpc)
     // 4. CLI mode: No TUI (--no-tui or --autonomous)
     // Note: use_subprocess_tui is now determined earlier (before lock acquisition)
-    let reason = if use_subprocess_tui {
+    let reason = if config.core.engine == "autoloop" {
+        // v3 cutover: drive the autoloop runtime as a subprocess instead of the
+        // in-house event loop. Bypasses the TUI/RPC paths for now.
+        autoloop_engine::run_autoloop_engine(config).await?
+    } else if use_subprocess_tui {
         // Subprocess TUI mode: spawn child with --rpc and attach TUI
         run_subprocess_tui(subprocess_tui_args, resume, custom_args).await?
     } else {
