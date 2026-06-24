@@ -28,6 +28,7 @@
 
 mod acp_executor;
 mod auto_detect;
+pub mod autoloop_events;
 pub mod autoloop_journal;
 mod autoloop_runner;
 mod claude_stream;
@@ -44,6 +45,10 @@ pub mod tool_preview;
 pub use acp_executor::AcpExecutor;
 pub use auto_detect::{
     DEFAULT_PRIORITY, NoBackendError, detect_backend, detect_backend_default, is_backend_available,
+};
+pub use autoloop_events::{
+    AutoloopEvent, PendingAsk, RunResult, first_pending_ask, parse_events,
+    run_result as events_run_result,
 };
 pub use autoloop_journal::{
     AutoloopJournalTailer, AutoloopRecord, JournalError, JournalReplay, LiveRunState, RunSummary,

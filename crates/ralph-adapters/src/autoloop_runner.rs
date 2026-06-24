@@ -103,6 +103,8 @@ pub struct AutoloopRunner {
     backend: Option<String>,
     /// Ordered `--set key=value` overrides.
     set_overrides: Vec<String>,
+    /// Optional `--events <path>` NDJSON LoopEvent stream sink.
+    events_path: Option<PathBuf>,
     /// Extra environment variables for the child process (inherited by its
     /// descendants, e.g. a backend wrapper script).
     env: Vec<(String, String)>,
@@ -125,8 +127,18 @@ impl AutoloopRunner {
             working_dir: working_dir.into(),
             backend: None,
             set_overrides: Vec::new(),
+            events_path: None,
             env: Vec::new(),
         }
+    }
+
+    /// Request the structured `--events <path>` NDJSON LoopEvent stream — the
+    /// preferred observability channel (carries the resolved `progress` event
+    /// and the machine-readable run result). Parse it with
+    /// [`crate::autoloop_events`].
+    pub fn events_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.events_path = Some(path.into());
+        self
     }
 
     /// Overrides how the `autoloop` binary is invoked.
@@ -190,6 +202,11 @@ impl AutoloopRunner {
         for kv in &self.set_overrides {
             args.push("--set".to_string());
             args.push(kv.clone());
+        }
+
+        if let Some(events) = &self.events_path {
+            args.push("--events".to_string());
+            args.push(events.to_string_lossy().into_owned());
         }
 
         args
