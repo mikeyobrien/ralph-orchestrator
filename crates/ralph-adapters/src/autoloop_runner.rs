@@ -456,7 +456,6 @@ journal: /j
     fn runs_real_autoloop_with_mock_backend_when_available() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
-        use std::path::Path;
         use std::process::Command as StdCommand;
 
         // Locate the autoloop checkout: AUTOLOOP_ROOT env override, else search

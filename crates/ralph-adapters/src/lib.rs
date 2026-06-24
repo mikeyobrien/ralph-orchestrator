@@ -46,7 +46,8 @@ pub use auto_detect::{
     DEFAULT_PRIORITY, NoBackendError, detect_backend, detect_backend_default, is_backend_available,
 };
 pub use autoloop_journal::{
-    AutoloopRecord, JournalError, JournalReplay, RunSummary, derive_run_summary, replay_journal,
+    AutoloopJournalTailer, AutoloopRecord, JournalError, JournalReplay, LiveRunState, RunSummary,
+    TailError, derive_run_summary, replay_journal,
 };
 pub use autoloop_runner::{
     AutoloopBin, AutoloopRunError, AutoloopRunSummary, AutoloopRunner, parse_summary,

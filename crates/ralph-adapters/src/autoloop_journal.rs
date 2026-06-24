@@ -28,6 +28,9 @@
 //! event set as reading the whole file at once.
 
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -169,7 +172,6 @@ pub struct JournalReplay {
     buffer: String,
     records: Vec<AutoloopRecord>,
     line_no: usize,
-    error: Option<JournalError>,
 }
 
 impl JournalReplay {
@@ -178,15 +180,20 @@ impl JournalReplay {
         Self::default()
     }
 
-    /// Feed the next chunk of journal bytes. Complete lines are parsed
-    /// immediately; an incomplete trailing line is buffered for the next push.
+    /// Feed the next chunk of journal bytes. Every complete (newline-terminated)
+    /// line in the buffer is parsed immediately; an incomplete trailing line is
+    /// buffered for the next push.
+    ///
+    /// A line that fails to parse is SKIPPED — the tailer is resilient to an
+    /// isolated corrupt line and keeps parsing the rest of the chunk, so valid
+    /// records before and after the bad line are all recovered (available via
+    /// [`records`](Self::records)). The first parse error encountered in the
+    /// chunk is returned so a caller can surface it; subsequent pushes start
+    /// clean.
     pub fn push(&mut self, chunk: &str) -> Result<(), JournalError> {
-        if self.error.is_some() {
-            // Once errored, stay errored deterministically.
-            return Err(self.take_error());
-        }
         self.buffer.push_str(chunk);
 
+        let mut first_err: Option<JournalError> = None;
         // Drain every complete (newline-terminated) line out of the buffer.
         while let Some(idx) = self.buffer.find('\n') {
             // Split off the line including the newline, keep the remainder.
@@ -203,37 +210,30 @@ impl JournalReplay {
             match parse_line(&line, self.line_no) {
                 Ok(rec) => self.records.push(rec),
                 Err(e) => {
-                    self.error = Some(e);
-                    return Err(self.take_error());
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
                 }
             }
         }
-        Ok(())
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Flush a buffered final line that has no trailing newline. Call this only
     /// when the stream is known to be complete (e.g. process exited). A snapshot
-    /// tailer that may still be receiving bytes should NOT call this.
+    /// tailer that may still be receiving bytes should NOT call this. Returns an
+    /// error if the leftover line is non-empty but unparseable.
     pub fn finish(&mut self) -> Result<(), JournalError> {
-        if self.error.is_some() {
-            return Err(self.take_error());
-        }
         let leftover = std::mem::take(&mut self.buffer);
         if !leftover.trim().is_empty() {
             self.line_no += 1;
-            match parse_line(leftover.trim_end_matches(['\r', '\n']), self.line_no) {
-                Ok(rec) => self.records.push(rec),
-                Err(e) => {
-                    self.error = Some(e);
-                    return Err(self.take_error());
-                }
-            }
+            let rec = parse_line(leftover.trim_end_matches(['\r', '\n']), self.line_no)?;
+            self.records.push(rec);
         }
         Ok(())
-    }
-
-    fn take_error(&mut self) -> JournalError {
-        self.error.take().expect("error present")
     }
 
     /// Records parsed so far.
@@ -284,9 +284,14 @@ pub fn derive_run_summary(records: &[AutoloopRecord]) -> RunSummary {
         records.iter().filter_map(|r| r.iteration).max().unwrap_or(0)
     };
 
+    // Terminal record: `loop.complete` for a successful finish, `loop.stop`
+    // for a forced termination (max_iterations/backend_failed/stalled/
+    // backend_timeout/cost_budget/max_runtime). Both carry a `reason`. Scan
+    // from the end so the last terminal record wins.
     let stop_reason = records
         .iter()
-        .find(|r| r.topic == "loop.stop")
+        .rev()
+        .find(|r| r.topic == "loop.complete" || r.topic == "loop.stop")
         .and_then(|r| r.field("reason"))
         .map(str::to_string);
 
@@ -294,6 +299,187 @@ pub fn derive_run_summary(records: &[AutoloopRecord]) -> RunSummary {
         run_id,
         iterations,
         stop_reason,
+    }
+}
+
+/// Live, incrementally-updated view of a run, folded from journal records as
+/// they arrive. This is the state Ralph surfaces to the TUI / loop registry
+/// while an `autoloop` subprocess is running, derived purely by tailing the
+/// journal (the only cross-process observability channel autoloop exposes).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveRunState {
+    /// Run id, taken from the first record observed.
+    pub run_id: Option<String>,
+    /// The most recent iteration index seen on any record.
+    pub current_iteration: Option<u32>,
+    /// Count of `iteration.start` records seen so far.
+    pub iteration_count: u32,
+    /// The topic of the most recent record.
+    pub last_topic: Option<String>,
+    /// Stop reason, set when a `loop.stop` record is observed.
+    pub stop_reason: Option<String>,
+    /// True once a `loop.stop` record has been observed.
+    pub completed: bool,
+}
+
+impl LiveRunState {
+    /// Fold a single record into the running state.
+    pub fn apply(&mut self, rec: &AutoloopRecord) {
+        // `loop.start` is authoritative for the run id; otherwise take the
+        // first record seen (matches [`derive_run_summary`]).
+        if rec.topic == "loop.start" || self.run_id.is_none() {
+            self.run_id = Some(rec.run.clone());
+        }
+        if let Some(it) = rec.iteration {
+            self.current_iteration = Some(it);
+        }
+        match rec.topic.as_str() {
+            "iteration.start" => self.iteration_count += 1,
+            // `loop.complete` = successful finish; `loop.stop` = forced
+            // termination. Both are terminal and carry a `reason`.
+            "loop.complete" | "loop.stop" => {
+                self.completed = true;
+                if let Some(reason) = rec.field("reason") {
+                    self.stop_reason = Some(reason.to_string());
+                }
+            }
+            _ => {}
+        }
+        self.last_topic = Some(rec.topic.clone());
+    }
+
+    /// Fold a batch of records in order.
+    pub fn apply_all(&mut self, recs: &[AutoloopRecord]) {
+        for rec in recs {
+            self.apply(rec);
+        }
+    }
+}
+
+/// Error produced while tailing a journal file on disk.
+#[derive(Debug, thiserror::Error)]
+pub enum TailError {
+    /// Filesystem error reading the journal.
+    #[error("i/o error tailing journal: {0}")]
+    Io(#[from] std::io::Error),
+    /// A journal line failed to parse.
+    #[error(transparent)]
+    Journal(#[from] JournalError),
+}
+
+/// Incremental, file-backed tailer for a live `autoloop` journal.
+///
+/// Each [`poll`](Self::poll) reads only the bytes appended since the previous
+/// poll, decodes the maximal valid UTF-8 prefix (buffering a trailing partial
+/// multibyte sequence), and feeds them to an internal [`JournalReplay`] so a
+/// half-written final *line* is buffered rather than mis-parsed or dropped. The
+/// file position advances monotonically; truncation/rotation (file shorter than
+/// the last position) resets the tailer to re-read from the start.
+#[derive(Debug)]
+pub struct AutoloopJournalTailer {
+    path: PathBuf,
+    position: u64,
+    /// Undecoded trailing bytes (a multibyte char split across a read boundary).
+    pending: Vec<u8>,
+    replay: JournalReplay,
+    state: LiveRunState,
+    errors: Vec<JournalError>,
+}
+
+impl AutoloopJournalTailer {
+    /// Create a tailer for the journal at `path`. The file need not exist yet.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            position: 0,
+            pending: Vec::new(),
+            replay: JournalReplay::new(),
+            state: LiveRunState::default(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// The journal path being tailed.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The live state folded from all records observed so far.
+    pub fn state(&self) -> &LiveRunState {
+        &self.state
+    }
+
+    /// All records parsed so far.
+    pub fn records(&self) -> &[AutoloopRecord] {
+        self.replay.records()
+    }
+
+    /// Parse errors encountered while tailing. Corrupt lines are skipped rather
+    /// than fatal, and recorded here; empty for a well-formed journal.
+    pub fn errors(&self) -> &[JournalError] {
+        &self.errors
+    }
+
+    fn reset(&mut self) {
+        self.position = 0;
+        self.pending.clear();
+        self.replay = JournalReplay::new();
+        self.state = LiveRunState::default();
+        self.errors.clear();
+    }
+
+    /// Read newly-appended journal bytes and return the records parsed since the
+    /// last poll. Returns an empty vec when nothing new is available. A partial
+    /// final line (or a torn multibyte char) is buffered internally and surfaces
+    /// on a later poll once completed.
+    pub fn poll(&mut self) -> Result<Vec<AutoloopRecord>, TailError> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        let mut file = File::open(&self.path)?;
+        let len = file.metadata()?.len();
+        if len < self.position {
+            // File truncated or rotated underneath us — restart from the top.
+            self.reset();
+        }
+        if len == self.position {
+            return Ok(Vec::new());
+        }
+
+        file.seek(SeekFrom::Start(self.position))?;
+        let mut raw = Vec::new();
+        let read = file.take(len - self.position).read_to_end(&mut raw)?;
+        self.position += read as u64;
+
+        // Prepend any bytes left undecoded from the previous poll.
+        if !self.pending.is_empty() {
+            let mut combined = std::mem::take(&mut self.pending);
+            combined.extend_from_slice(&raw);
+            raw = combined;
+        }
+
+        // Decode the maximal valid UTF-8 prefix; keep a trailing partial
+        // multibyte sequence for the next poll.
+        let text = match std::str::from_utf8(&raw) {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                let valid = e.valid_up_to();
+                let text = String::from_utf8(raw[..valid].to_vec())
+                    .expect("valid_up_to slice is valid utf-8");
+                self.pending = raw[valid..].to_vec();
+                text
+            }
+        };
+
+        let before = self.replay.records().len();
+        // A corrupt line is skipped, not fatal: record the error so a caller can
+        // surface it via `errors()` while still receiving the valid records.
+        if let Err(e) = self.replay.push(&text) {
+            self.errors.push(e);
+        }
+        let new: Vec<AutoloopRecord> = self.replay.records()[before..].to_vec();
+        self.state.apply_all(&new);
+        Ok(new)
     }
 }
 
@@ -413,5 +599,181 @@ mod tests {
         let mut replay = JournalReplay::new();
         replay.push(content).unwrap();
         assert!(replay.finish().is_err());
+    }
+
+    fn append(path: &Path, s: &str) {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        f.write_all(s.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn tailer_emits_complete_records_incrementally() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        let mut tailer = AutoloopJournalTailer::new(&path);
+
+        // Polling a not-yet-existent journal yields nothing, not an error.
+        assert!(tailer.poll().unwrap().is_empty());
+
+        append(&path, "{\"run\":\"r\",\"topic\":\"loop.start\",\"fields\":{}}\n");
+        let recs = tailer.poll().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].topic, "loop.start");
+
+        // Append a complete line plus the FIRST half of another (no newline).
+        append(
+            &path,
+            "{\"run\":\"r\",\"iteration\":\"1\",\"topic\":\"iteration.start\",\"fields\":{}}\n{\"run\":\"r\",\"iteration\":\"1\",\"topic\":\"ba",
+        );
+        let recs = tailer.poll().unwrap();
+        assert_eq!(recs.len(), 1, "only the complete line should surface");
+        assert_eq!(recs[0].topic, "iteration.start");
+
+        // Complete the half-written line; it must now surface, not be dropped.
+        append(&path, "ckend.start\",\"fields\":{}}\n");
+        let recs = tailer.poll().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].topic, "backend.start");
+
+        // Nothing new -> empty.
+        assert!(tailer.poll().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tailer_tracks_live_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        append(&path, sample());
+
+        let mut tailer = AutoloopJournalTailer::new(&path);
+        tailer.poll().unwrap();
+        let st = tailer.state();
+        assert_eq!(st.run_id.as_deref(), Some("r1"));
+        assert_eq!(st.iteration_count, 2);
+        assert_eq!(st.current_iteration, Some(2));
+        assert!(st.completed);
+        assert_eq!(st.stop_reason.as_deref(), Some("max_iterations"));
+        assert_eq!(st.last_topic.as_deref(), Some("loop.stop"));
+    }
+
+    #[test]
+    fn tailer_resets_on_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        append(&path, sample());
+        let mut tailer = AutoloopJournalTailer::new(&path);
+        tailer.poll().unwrap();
+        assert_eq!(tailer.state().run_id.as_deref(), Some("r1"));
+
+        // Truncate and write a fresh run (e.g. a new run reusing the path).
+        std::fs::write(&path, "").unwrap();
+        append(
+            &path,
+            concat!(
+                r#"{"run":"r9","topic":"loop.start","fields":{}}"#,
+                "\n",
+                r#"{"run":"r9","topic":"loop.stop","fields":{"reason":"completed"}}"#,
+                "\n",
+            ),
+        );
+        let recs = tailer.poll().unwrap();
+        assert_eq!(recs.len(), 2, "tailer should re-read from the top after truncation");
+        assert_eq!(tailer.state().run_id.as_deref(), Some("r9"));
+        assert_eq!(tailer.state().stop_reason.as_deref(), Some("completed"));
+        assert!(tailer.state().completed);
+    }
+
+    #[test]
+    fn tailer_handles_multibyte_split_across_reads() {
+        // A non-ASCII payload whose UTF-8 bytes are split across two appends must
+        // still decode correctly (the partial multibyte tail is buffered).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        let mut tailer = AutoloopJournalTailer::new(&path);
+
+        let line = "{\"run\":\"r\",\"iteration\":\"1\",\"topic\":\"tasks.ready\",\"payload\":\"café\",\"source\":\"agent\"}\n";
+        let bytes = line.as_bytes();
+        // Find a split index that lands inside the 'é' (2-byte) sequence.
+        let e_pos = line.find('é').unwrap();
+        let split = e_pos + 1; // mid-multibyte
+        assert!(!line.is_char_boundary(split));
+        append(&path, std::str::from_utf8(&bytes[..e_pos]).unwrap());
+        // Write the raw partial multibyte by bytes.
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(&bytes[e_pos..split]).unwrap();
+        }
+        // No complete UTF-8 line yet.
+        assert!(tailer.poll().unwrap().is_empty());
+        // Write the remainder.
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(&bytes[split..]).unwrap();
+        }
+        let recs = tailer.poll().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].field("payload"), Some("café"));
+    }
+
+    #[test]
+    fn loop_complete_is_terminal_on_the_happy_path() {
+        // A SUCCESSFUL autoloop run journals `loop.complete` (with reason),
+        // not `loop.stop`. Both derivation paths must treat it as terminal.
+        let content = concat!(
+            r#"{"run":"r","topic":"loop.start","fields":{}}"#,
+            "\n",
+            r#"{"run":"r","iteration":"1","topic":"iteration.start","fields":{}}"#,
+            "\n",
+            r#"{"run":"r","iteration":"1","topic":"loop.complete","fields":{"reason":"completed"}}"#,
+            "\n",
+        );
+
+        // derive_run_summary
+        let recs = replay_journal(content).unwrap();
+        let summary = derive_run_summary(&recs);
+        assert_eq!(summary.stop_reason.as_deref(), Some("completed"));
+        assert_eq!(summary.iterations, 1);
+
+        // LiveRunState via the file tailer
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        append(&path, content);
+        let mut tailer = AutoloopJournalTailer::new(&path);
+        tailer.poll().unwrap();
+        assert!(tailer.state().completed, "loop.complete must mark completion");
+        assert_eq!(tailer.state().stop_reason.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn tailer_skips_corrupt_line_and_continues() {
+        // An isolated corrupt line is skipped (recorded in errors()), not fatal;
+        // valid records before AND after it are still surfaced.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        append(
+            &path,
+            concat!(
+                r#"{"run":"r","topic":"loop.start","fields":{}}"#,
+                "\n",
+                "{not valid json}\n",
+                r#"{"run":"r","topic":"loop.complete","fields":{"reason":"completed"}}"#,
+                "\n",
+            ),
+        );
+        let mut tailer = AutoloopJournalTailer::new(&path);
+        let recs = tailer.poll().unwrap();
+        assert_eq!(recs.len(), 2, "valid records around the corrupt line survive");
+        assert_eq!(recs[0].topic, "loop.start");
+        assert_eq!(recs[1].topic, "loop.complete");
+        assert_eq!(tailer.errors().len(), 1, "the corrupt line is recorded as an error");
+        assert!(tailer.state().completed);
+        assert_eq!(tailer.state().stop_reason.as_deref(), Some("completed"));
     }
 }
