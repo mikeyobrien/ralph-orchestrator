@@ -185,6 +185,8 @@ This turns the integration-shape recommendation from analysis into a validated p
 
 1. ✅ **AutoloopBackend/AutoloopRunner** in `ralph-adapters` — spawn `autoloop run …`, capture `RunSummary` on exit; one e2e run with correct `stopReason`. *(done)*
 2. ✅ **Repurpose `event_reader.rs`** to tail the autoloop journal (partial-line fix landed); native `--events` consumption added. *(done)*
+2b. ✅ **Cost telemetry** — autoloop surfaces cumulative `cost_usd` in the summary block + structured `loop.finish`/`summary` events ([autoloop#43](https://github.com/mikeyobrien/autoloop/pull/43)); ralph parses both channels into `LoopState.cumulative_cost`. *(done)*
+2c. ✅ **Resume** — `autoloop resume <run-id>` continues a terminated run without redoing completed work ([autoloop#44](https://github.com/mikeyobrien/autoloop/pull/44), part of #38); adversarially reviewed. Unblocks ralph's `ralph resume` parity. *(done)*
 3. 🟡 **Live control bridge** — steer/interrupt → ControlRequest + SIGUSR1. *(autoloop control verbs exist via #32; ralph-side steer wiring on the autoloop path is deferred — depends on #34 for the `command` backend)*
 4. ✅ **HITL over subprocess** — ask detected, ralph layer blocks, Telegram delivers, response written back. *(proven via live round-trip; #32 implemented)*
 5. ✅ **Preset pass-through parity** — preset generated from hats (`autoloop_preset_gen`), routing/completion mapped. *(done; round-trip tested)*
