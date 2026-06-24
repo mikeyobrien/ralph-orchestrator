@@ -15,14 +15,12 @@ mod cli_capture;
 mod config;
 pub mod diagnostics;
 mod event_logger;
-mod event_loop;
 mod event_parser;
 mod event_reader;
 pub mod file_lock;
 mod git_ops;
 mod handoff;
 mod hat_registry;
-mod hatless_ralph;
 pub mod hooks;
 mod instructions;
 mod landing;
@@ -54,9 +52,6 @@ pub mod testing;
 mod text;
 mod urgent_steer;
 pub mod utils;
-pub mod wave_detection;
-pub mod wave_prompt;
-pub mod wave_tracker;
 pub mod workspace;
 pub mod worktree;
 
@@ -71,9 +66,6 @@ pub use config::{
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
-pub use event_loop::{
-    EventLoop, LoopState, ProcessedEvents, ProcessedEventsWithWaves, UserPrompt,
-};
 pub use termination::TerminationReason;
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
@@ -85,7 +77,6 @@ pub use git_ops::{
 };
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hat_registry::HatRegistry;
-pub use hatless_ralph::{HatInfo, HatTopology, HatlessRalph};
 pub use hooks::{
     HookDefaults, HookEngine, HookExecutor, HookExecutorContract, HookExecutorError,
     HookInvocationPayload, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
@@ -136,9 +127,6 @@ pub use task_definition::{
 pub use task_store::TaskStore;
 pub use text::{floor_char_boundary, truncate_with_ellipsis};
 pub use urgent_steer::{UrgentSteerRecord, UrgentSteerStore};
-pub use wave_detection::{DetectedWave, detect_wave_events};
-pub use wave_prompt::{WaveWorkerContext, build_wave_worker_prompt};
-pub use wave_tracker::{CompletedWave, WaveFailure, WaveProgress, WaveResult, WaveTracker};
 pub use workspace::{
     CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,
     WorkspaceManager,
