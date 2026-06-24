@@ -1070,8 +1070,8 @@ fn default_specs_dir() -> String {
 }
 
 fn default_engine() -> String {
-    // v3: autoloop is the default orchestration engine. The in-house event loop
-    // remains available via `core.engine: ralph`.
+    // v3: autoloop is the sole orchestration engine. The in-house event loop was
+    // deleted; this field is retained for config compatibility but is inert.
     "autoloop".to_string()
 }
 

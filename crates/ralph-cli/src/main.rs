@@ -2146,21 +2146,11 @@ fn emit_command_with_root(
         serde_json::Value::String(payload)
     };
 
-    let mut record = serde_json::json!({
+    let record = serde_json::json!({
         "topic": args.topic,
         "payload": payload_value,
         "ts": ts
     });
-
-    // Auto-tag with wave metadata from env vars (set by loop runner on wave workers)
-    if let (Ok(wave_id), Ok(wave_index_str)) = (
-        std::env::var("RALPH_WAVE_ID"),
-        std::env::var("RALPH_WAVE_INDEX"),
-    ) && let Ok(wave_index) = wave_index_str.parse::<u32>()
-    {
-        record["wave_id"] = serde_json::Value::String(wave_id);
-        record["wave_index"] = serde_json::Value::Number(wave_index.into());
-    }
 
     // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg
     // This ensures `ralph emit` writes to the same events file as the active run

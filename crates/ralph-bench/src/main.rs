@@ -16,7 +16,7 @@ use ralph_core::{
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Ralph Benchmark Harness - Record, replay, and benchmark orchestration loops
 #[derive(Parser, Debug)]
@@ -328,16 +328,16 @@ async fn run_task_loop(
 ) -> Result<(u32, String)> {
     // v3 cutover: the in-house EventLoop engine has been removed. The bench
     // harness previously drove `ralph_core::EventLoop` directly; porting it to
-    // the autoloop engine is descoped to #346. Until then, the task loop is a
-    // no-op stub so the workspace builds and the rest of the bench tooling
-    // (replay, reporting) keeps working.
+    // the autoloop engine is descoped to #346. Fail loudly rather than returning
+    // a misleading success — a no-op "pass" would run verification against an
+    // untouched workspace and report bogus verdicts.
     //
     // see #346 — re-implement bench task execution on the autoloop engine.
-    warn!(
-        task = %task.name,
-        "ralph-bench task execution is stubbed pending autoloop port (#346)"
-    );
-    Ok((0, "BenchEngineRemoved".to_string()))
+    anyhow::bail!(
+        "ralph-bench task execution requires the autoloop engine port (#346); \
+         task '{}' cannot run",
+        task.name
+    )
 }
 
 /// Replay a recorded session
