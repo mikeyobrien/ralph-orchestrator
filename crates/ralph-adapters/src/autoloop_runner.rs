@@ -36,7 +36,7 @@ use thiserror::Error;
 const STDERR_TAIL_BYTES: usize = 4096;
 
 /// A parsed `autoloops summary` block.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AutoloopRunSummary {
     /// The autoloop run identifier.
     pub run_id: String,
@@ -44,6 +44,10 @@ pub struct AutoloopRunSummary {
     pub iterations: u32,
     /// Why the loop stopped (e.g. `completed`, `max_iterations`, `stalled`).
     pub stop_reason: String,
+    /// Cumulative run cost in USD (summed from journaled `backend.usage`); `0.0`
+    /// when the backend reports no usage (e.g. `command`/`acp`) or the running
+    /// autoloop predates the summary `cost_usd` field.
+    pub cost_usd: f64,
     /// Absolute path to the run journal (`.autoloop/journal.jsonl`).
     pub journal: PathBuf,
     /// Absolute path to the run memory (`.autoloop/memory.jsonl`).
@@ -292,6 +296,7 @@ pub fn parse_summary(stdout: &str) -> Option<AutoloopRunSummary> {
     let mut run_id = None;
     let mut iterations = None;
     let mut stop_reason = None;
+    let mut cost_usd = None;
     let mut journal = None;
     let mut memory = None;
 
@@ -310,6 +315,7 @@ pub fn parse_summary(stdout: &str) -> Option<AutoloopRunSummary> {
             "run_id" => run_id = Some(value.to_string()),
             "iterations" => iterations = value.parse::<u32>().ok(),
             "stop_reason" => stop_reason = Some(value.to_string()),
+            "cost_usd" => cost_usd = value.parse::<f64>().ok(),
             "journal" => journal = Some(PathBuf::from(value)),
             "memory" => memory = Some(PathBuf::from(value)),
             _ => {}
@@ -320,6 +326,8 @@ pub fn parse_summary(stdout: &str) -> Option<AutoloopRunSummary> {
         run_id: run_id?,
         iterations: iterations?,
         stop_reason: stop_reason?,
+        // Older autoloop builds omit cost_usd; default to 0.0 rather than fail.
+        cost_usd: cost_usd.unwrap_or(0.0),
         journal: journal?,
         memory: memory?,
     })
@@ -350,6 +358,25 @@ memory: /tmp/work/.autoloop/memory.jsonl
             PathBuf::from("/tmp/work/.autoloop/journal.jsonl")
         );
         assert_eq!(s.memory, PathBuf::from("/tmp/work/.autoloop/memory.jsonl"));
+        // No cost_usd line (older autoloop / no usage) defaults to 0.0.
+        assert_eq!(s.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn parses_cumulative_cost_usd_when_present() {
+        let block = "\
+autoloops summary
+===================
+run_id: run-cost
+iterations: 2
+stop_reason: completed
+cost_usd: 0.080000
+journal: /j/journal.jsonl
+memory: /m/memory.jsonl
+";
+        let s = parse_summary(block).expect("must parse with cost");
+        assert_eq!(s.cost_usd, 0.08);
+        assert_eq!(s.iterations, 2);
     }
 
     #[test]

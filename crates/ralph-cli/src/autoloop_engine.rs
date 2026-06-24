@@ -131,6 +131,7 @@ pub async fn run_autoloop_engine(
     // engine. autoloop owns iteration/timing; we surface what the summary gives.
     let mut state = LoopState::new();
     state.iteration = summary.iterations;
+    state.cumulative_cost = summary.cost_usd;
     state.started_at = start;
     state.completion_requested = matches!(reason, TerminationReason::CompletionPromise);
 

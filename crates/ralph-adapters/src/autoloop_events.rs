@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 /// One decoded `LoopEvent` line. `kind` is the event `type`; the remaining
 /// fields are present only for the event types that carry them.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct AutoloopEvent {
     #[serde(rename = "type")]
     pub kind: String,
@@ -27,6 +27,9 @@ pub struct AutoloopEvent {
     pub iterations: Option<u32>,
     #[serde(rename = "stopReason", default)]
     pub stop_reason: Option<String>,
+    /// Cumulative run cost in USD; present on `loop.finish` / `summary`.
+    #[serde(rename = "costUsd", default)]
+    pub cost_usd: Option<f64>,
     /// Present on `progress`.
     #[serde(rename = "recentEvent", default)]
     pub recent_event: Option<String>,
@@ -65,6 +68,8 @@ impl AutoloopEvent {
             run_id: self.run_id.clone()?,
             iterations: self.iterations?,
             stop_reason: self.stop_reason.clone()?,
+            // Older autoloop builds omit costUsd; default to 0.0.
+            cost_usd: self.cost_usd.unwrap_or(0.0),
         })
     }
 }
@@ -78,11 +83,14 @@ pub struct PendingAsk {
 }
 
 /// The machine-readable run result carried by the terminal event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunResult {
     pub run_id: String,
     pub iterations: u32,
     pub stop_reason: String,
+    /// Cumulative run cost in USD (`0.0` if the backend reported no usage or the
+    /// running autoloop predates the `costUsd` event field).
+    pub cost_usd: f64,
 }
 
 /// Parse a `--events` NDJSON stream. Complete lines that fail to decode are
@@ -122,7 +130,7 @@ mod tests {
         "\n",
         r#"{"type":"summary","runId":"r1","iterations":2,"stopReason":"max_iterations","journalFile":"/j","memoryFile":"/m","reviewEvery":10,"toolPath":"/t"}"#,
         "\n",
-        r#"{"type":"loop.finish","iterations":2,"stopReason":"max_iterations","runId":"r1"}"#,
+        r#"{"type":"loop.finish","iterations":2,"stopReason":"max_iterations","runId":"r1","costUsd":0.08}"#,
         "\n",
     );
 
@@ -143,6 +151,7 @@ mod tests {
         assert_eq!(result.run_id, "r1");
         assert_eq!(result.iterations, 2);
         assert_eq!(result.stop_reason, "max_iterations");
+        assert_eq!(result.cost_usd, 0.08);
     }
 
     #[test]
