@@ -29,6 +29,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/agent/scratchpad.md"
 "#;
     fs::write(temp_path.join("ralph.yml"), config_content)?;
@@ -79,6 +80,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/agent/scratchpad.md"
 
 memories:
@@ -145,6 +147,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/agent/scratchpad.md"
 "#;
 
@@ -222,6 +225,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/agent/scratchpad.md"
 "#;
 
@@ -317,6 +321,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/agent/scratchpad.md"
 
 memories:

@@ -30,6 +30,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/agent/scratchpad.md"
 
 features:
@@ -629,6 +630,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad: ".ralph/debug/global.md"
 
 features:
@@ -683,6 +685,7 @@ cli:
   command: "true"
 
 core:
+  engine: "ralph"
   scratchpad:
     path: ".ralph/agent/scratchpad.md"
 
