@@ -391,7 +391,7 @@ fn list_hats<W: Write>(writer: &mut W, registry: &HatRegistry, _use_colors: bool
     if registry.is_empty() {
         writeln!(
             writer,
-            "No custom hats configured (using default HatlessRalph coordination)."
+            "No custom hats configured (solo mode)."
         )?;
         return Ok(());
     }
