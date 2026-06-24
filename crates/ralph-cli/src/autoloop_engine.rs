@@ -44,18 +44,28 @@ fn resolve(workspace: &Path, p: &str) -> PathBuf {
 pub async fn run_autoloop_engine(config: RalphConfig) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
 
-    let preset_rel = config
-        .core
-        .autoloop_preset
-        .as_deref()
-        .context("core.autoloop_preset is required when core.engine = \"autoloop\"")?;
-    let preset = resolve(&workspace, preset_rel);
-    if !preset.join("autoloops.toml").is_file() {
-        bail!(
-            "autoloop preset not found (no autoloops.toml): {}",
-            preset.display()
-        );
-    }
+    // Use an explicit preset if configured; otherwise generate one from ralph's
+    // native hats topology so existing ralph configs run on the autoloop engine
+    // without a hand-authored preset.
+    let preset = match config.core.autoloop_preset.as_deref() {
+        Some(p) => {
+            let preset = resolve(&workspace, p);
+            if !preset.join("autoloops.toml").is_file() {
+                bail!(
+                    "autoloop preset not found (no autoloops.toml): {}",
+                    preset.display()
+                );
+            }
+            preset
+        }
+        None => {
+            let preset = workspace.join(".ralph").join("autoloop-preset");
+            crate::autoloop_preset_gen::generate_preset(&config, &preset)
+                .context("generating an autoloop preset from the hats topology")?;
+            tracing::info!(preset = %preset.display(), "engine=autoloop: generated preset from hats config");
+            preset
+        }
+    };
 
     // The prompt comes from the canonical normalized field.
     let prompt = {
