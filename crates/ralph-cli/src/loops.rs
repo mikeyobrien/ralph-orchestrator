@@ -257,8 +257,8 @@ pub fn execute(args: LoopsArgs, use_colors: bool) -> Result<()> {
 fn process_queue() -> Result<()> {
     let cwd = std::env::current_dir()?;
 
-    // Delegate to the loop_runner's process_pending_merges function
-    crate::loop_runner::process_pending_merges_cli(&cwd);
+    // Delegate to the merge-processing module's queue drainer.
+    crate::merge_processing::process_pending_merges_cli(&cwd);
 
     Ok(())
 }

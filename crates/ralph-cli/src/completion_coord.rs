@@ -129,7 +129,7 @@ pub fn coordinate_completion(
 
         // Primary loop drains queued worktree merges on completion.
         if ctx.is_primary() && matches!(reason, TerminationReason::CompletionPromise) {
-            crate::loop_runner::process_pending_merges_cli(ctx.repo_root());
+            crate::merge_processing::process_pending_merges_cli(ctx.repo_root());
         }
 
         // Always deregister — the process is exiting regardless of reason.

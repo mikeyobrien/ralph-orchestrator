@@ -20,6 +20,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod autoloop_engine;
 mod autoloop_preset_gen;
 mod completion_coord;
+mod merge_processing;
 mod backend_support;
 mod bot;
 mod config_resolution;
