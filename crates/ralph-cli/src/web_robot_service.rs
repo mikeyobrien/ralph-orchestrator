@@ -1,3 +1,8 @@
+// v3 cutover: the in-house engine's `create_robot_service` was the only caller
+// of this web RObot service. Re-wiring human-in-the-loop RObot onto the autoloop
+// engine is tracked in #345; until then this module is retained but unused.
+#![allow(dead_code)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

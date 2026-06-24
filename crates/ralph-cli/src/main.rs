@@ -58,73 +58,6 @@ use std::io::{IsTerminal, Write, stdout};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-// Unix-specific process management for process group leadership
-#[cfg(unix)]
-mod process_management {
-    use nix::unistd::{Pid, getpgrp, setpgid, tcgetpgrp};
-    use std::io::{IsTerminal, stdin, stdout};
-    use tracing::debug;
-
-    /// Sets up process group leadership.
-    ///
-    /// Per spec: "The orchestrator must run as a process group leader. All spawned
-    /// CLI processes (Claude, Kiro, etc.) belong to this group. On termination,
-    /// the entire process group receives the signal, preventing orphans."
-    pub fn setup_process_group() {
-        // Make ourselves the process group leader when safe.
-        // If we're launched by a wrapper (e.g., `npx`), moving to a new process
-        // group can drop us out of the foreground TTY group and break TUI input.
-        let pid = Pid::this();
-        let pgrp = getpgrp();
-        if pgrp == pid {
-            debug!("Already process group leader: PID {}", pid);
-            return;
-        }
-
-        if is_foreground_tty_group(pgrp) {
-            debug!(
-                "Skipping setpgid: keeping foreground process group {}",
-                pgrp
-            );
-            return;
-        }
-
-        if let Err(e) = setpgid(pid, pid) {
-            // EPERM is OK - we're already a process group leader (e.g., started from shell)
-            if e != nix::errno::Errno::EPERM {
-                debug!(
-                    "Note: Could not set process group ({}), continuing anyway",
-                    e
-                );
-            }
-        }
-        debug!("Process group initialized: PID {}", pid);
-    }
-
-    fn is_foreground_tty_group(current_pgrp: Pid) -> bool {
-        // Prefer stdin for foreground checks, fall back to stdout.
-        if stdin().is_terminal()
-            && let Ok(fg) = tcgetpgrp(stdin())
-        {
-            return fg == current_pgrp;
-        }
-
-        if stdout().is_terminal()
-            && let Ok(fg) = tcgetpgrp(stdout())
-        {
-            return fg == current_pgrp;
-        }
-
-        false
-    }
-}
-
-#[cfg(not(unix))]
-mod process_management {
-    /// No-op on non-Unix platforms.
-    pub fn setup_process_group() {}
-}
-
 /// Installs a panic hook that restores terminal state before printing panic info.
 ///
 /// When a TUI application panics, the terminal can be left in a broken state:
@@ -238,58 +171,6 @@ fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
     }
 }
 
-/// Verbosity level for streaming output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Verbosity {
-    /// Suppress all streaming output (for CI/scripting)
-    Quiet,
-    /// Show assistant text and tool invocations (default)
-    #[default]
-    Normal,
-    /// Show everything including tool results and session summary
-    Verbose,
-}
-
-impl Verbosity {
-    /// Resolves verbosity from CLI args, env vars, and config.
-    ///
-    /// Precedence (highest to lowest):
-    /// 1. CLI flags: `--verbose`/`-v` or `--quiet`/`-q`
-    /// 2. Environment variables: `RALPH_VERBOSE=1` or `RALPH_QUIET=1`
-    /// 3. Config file: (if supported in future)
-    /// 4. Default: Normal
-    fn resolve(cli_verbose: bool, cli_quiet: bool) -> Self {
-        let env_quiet = std::env::var("RALPH_QUIET").is_ok();
-        let env_verbose = std::env::var("RALPH_VERBOSE").is_ok();
-        Self::resolve_with_env(cli_verbose, cli_quiet, env_quiet, env_verbose)
-    }
-
-    #[allow(clippy::fn_params_excessive_bools)]
-    fn resolve_with_env(
-        cli_verbose: bool,
-        cli_quiet: bool,
-        env_quiet: bool,
-        env_verbose: bool,
-    ) -> Self {
-        // CLI flags take precedence
-        if cli_quiet {
-            return Verbosity::Quiet;
-        }
-        if cli_verbose {
-            return Verbosity::Verbose;
-        }
-
-        // Environment variables
-        if env_quiet {
-            return Verbosity::Quiet;
-        }
-        if env_verbose {
-            return Verbosity::Verbose;
-        }
-
-        Verbosity::Normal
-    }
-}
 
 /// Output format for events command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -349,7 +230,10 @@ impl ConfigSource {
         }
     }
 
-    /// Convert back to CLI string representation for forwarding to subprocess.
+    /// Convert back to CLI string representation (e.g. for forwarding to a
+    /// subprocess). Retained as tested config plumbing; the in-house engine's
+    /// subprocess-forwarding caller was removed in the v3 cutover.
+    #[allow(dead_code)]
     fn to_cli_string(&self) -> String {
         match self {
             ConfigSource::File(path) => path.display().to_string(),
@@ -2627,37 +2511,6 @@ mod tests {
         assert!(
             !restart_path.exists(),
             "restart sentinel should be removed before restart command dispatch"
-        );
-    }
-
-    #[test]
-    fn test_verbosity_cli_quiet() {
-        assert_eq!(Verbosity::resolve(false, true), Verbosity::Quiet);
-    }
-
-    #[test]
-    fn test_verbosity_cli_verbose() {
-        assert_eq!(Verbosity::resolve(true, false), Verbosity::Verbose);
-    }
-
-    #[test]
-    fn test_verbosity_default() {
-        assert_eq!(Verbosity::resolve(false, false), Verbosity::Normal);
-    }
-
-    #[test]
-    fn test_verbosity_env_quiet() {
-        assert_eq!(
-            Verbosity::resolve_with_env(false, false, true, false),
-            Verbosity::Quiet
-        );
-    }
-
-    #[test]
-    fn test_verbosity_env_verbose() {
-        assert_eq!(
-            Verbosity::resolve_with_env(false, false, false, true),
-            Verbosity::Verbose
         );
     }
 
