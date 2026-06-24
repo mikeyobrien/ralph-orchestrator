@@ -195,3 +195,32 @@ This turns the integration-shape recommendation from analysis into a validated p
 8. 🔴 **Delete** the in-house engine + rewire `run_loop_impl`/`EventLoop` callers (run/resume/bot/rpc/bench/tui), then drop `engine: "ralph"`. **Blocked** on autoloop #34/#35/#37/#38/#39 + PRs #40–#42 merging (see *Deletion gating* above).
 
 Newly added this cutover (not in the original plan): **completion-coordination parity bridge** (`completion_coord.rs`) so the autoloop path keeps merge-queue/landing/registry parity *before* the engine is deleted — the precondition that makes slice 8 a pure deletion rather than a deletion+reimplementation.
+
+### Slice 8 deletion runbook (green-at-each-step)
+
+The in-house engine cannot be deleted piecemeal — every engine module (`event_loop`,
+`hatless_ralph`, `wave_*`, `hat_registry`, `event_bus`) is still consumed by
+`loop_runner::run_loop_impl`. So the order is: (A) lift engine-agnostic coordination
+*out* of `loop_runner` so the autoloop path doesn't depend on it, (B) rewire/descope the
+remaining `run_loop_impl` + `EventLoop` callers, (C) delete the now-dead engine + tests.
+Each step must `cargo build`/`cargo test` green and be committed.
+
+**A — decouple survivors from `loop_runner` (additive, low-risk): ✅ DONE**
+- [x] `merge_processing` extracted (commit `9e41d7c`) — queue draining no longer lives in `loop_runner`.
+- [x] `RunStats` (commit `4f80f21`) — `SummaryWriter`/`print_termination` take a tiny engine-agnostic stats struct instead of the engine `LoopState`; the keepers (`completion_coord`/`autoloop_engine`) no longer build a `LoopState`.
+- [x] Verified `completion_coord`/`autoloop_engine`/`autoloop_preset_gen`/`merge_processing` have **zero** `EventLoop`/`hatless_ralph`/`wave_*`/`event_bus` imports (only `config.event_loop.*` config fields + keeper coordination types). The autoloop engine path is fully decoupled from the in-house engine internals. (Deferred to Phase C: `TerminationReason` re-export currently lives in the `event_loop` module — a mechanical move when that module is deleted.)
+
+**B — rewire/descope the legacy-engine callers (the risky middle):**
+- [ ] `ralph run` (`main.rs:~1837`): make `run_autoloop_engine` the sole path; remove the `use_subprocess_tui` + `run_loop_impl` branches.
+- [ ] `ralph resume` (`main.rs:~2260`): wire to the autoloop engine path using `autoloop resume <run_id>` (autoloop#44); ralph must persist the autoloop run_id to resume it.
+- [ ] Bot daemon `start_loop` (`loop_runner:~5060`): route to the autoloop path.
+- [ ] RPC mode (`rpc_stdin`, `run_subprocess_tui`) + in-process TUI: port the `--events` stream to the TUI, or **descope to a GitHub issue** (autoloop `--events` → TUI renderer) per "flag missing functionality as issues".
+- [ ] `ralph-bench` (`EventLoop` direct use): rewire or drop the engine-coupled benchmark.
+
+**C — delete the dead engine + tests (mechanical, large):**
+- [ ] Delete `run_loop_impl` + `run_subprocess_tui` + helpers from `loop_runner.rs` (~13K lines).
+- [ ] Delete `event_loop/` (`mod.rs` + `tests.rs` ~5.3K), `hatless_ralph.rs`, `wave_tracker/detection/prompt.rs`, `hat_registry.rs`, `event_bus.rs`, the wave CLI.
+- [ ] Delete/rewrite legacy-only tests: `event_loop_ralph.rs`, `smoke_runner.rs`, diagnostics `integration_tests.rs`, and drop the `engine: "ralph"` pins in `integration_events_isolation`/`integration_resume` (or delete them as obsolete).
+- [ ] Remove the `engine` field's `ralph` option (`config.rs`) — autoloop becomes the only engine.
+
+This does NOT compile-depend on the autoloop PRs merging (the adapter spawns autoloop as a subprocess); it depends only on doing the rewire to-green. Descoped features (rich TUI, RPC, bot-on-autoloop) become tracked issues, not blockers.
