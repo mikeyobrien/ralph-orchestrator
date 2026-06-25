@@ -110,10 +110,17 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
             state.prev_match();
         }
         Action::GuidanceNext => {
-            state.start_guidance(crate::state::GuidanceMode::Next);
+            // Under the autoloop source there is no back-channel to the
+            // subprocess, so guidance/steer would no-op. Suppress it entirely
+            // rather than opening a dead-end input (FIX gap#6; HITL is #345).
+            if !state.autoloop_source {
+                state.start_guidance(crate::state::GuidanceMode::Next);
+            }
         }
         Action::GuidanceNow => {
-            state.start_guidance(crate::state::GuidanceMode::Now);
+            if !state.autoloop_source {
+                state.start_guidance(crate::state::GuidanceMode::Now);
+            }
         }
         Action::EnterWaveView => {
             state.enter_wave_view();
@@ -439,7 +446,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
 
                         // Render help overlay if active
                         if state.show_help {
-                            help::render(f, f.area());
+                            help::render(f, f.area(), state.autoloop_source);
                         }
                     })?;
                 }
@@ -595,6 +602,33 @@ mod tests {
         dispatch_action(Action::ShowHelp, &mut state, 10);
 
         assert!(state.show_help);
+    }
+
+    #[test]
+    fn dispatch_guidance_opens_input_in_normal_mode() {
+        let mut state = TuiState::new();
+        dispatch_action(Action::GuidanceNext, &mut state, 10);
+        assert!(state.is_guidance_active(), "guidance should open normally");
+    }
+
+    #[test]
+    fn dispatch_guidance_suppressed_under_autoloop_source() {
+        // Under the autoloop source there is no back-channel, so guidance keys
+        // must NOT open a dead-end input (FIX gap#6).
+        let mut state = TuiState::new();
+        state.autoloop_source = true;
+
+        dispatch_action(Action::GuidanceNext, &mut state, 10);
+        assert!(
+            !state.is_guidance_active(),
+            "GuidanceNext should be a no-op under autoloop source"
+        );
+
+        dispatch_action(Action::GuidanceNow, &mut state, 10);
+        assert!(
+            !state.is_guidance_active(),
+            "GuidanceNow should be a no-op under autoloop source"
+        );
     }
 
     #[test]

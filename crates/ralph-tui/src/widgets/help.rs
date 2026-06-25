@@ -9,11 +9,31 @@ use ratatui::{
 };
 
 /// Renders help overlay centered on screen.
-pub fn render(f: &mut Frame, area: Rect) {
+///
+/// When `autoloop_source` is true the TUI is fed by the autoloop `--events`
+/// stream, which has no back-channel to the subprocess — guidance/steer keys
+/// no-op, so their help rows are greyed out and annotated (FIX gap#6).
+pub fn render(f: &mut Frame, area: Rect, autoloop_source: bool) {
     let block = Block::default()
         .title(" Help ")
         .borders(Borders::ALL)
         .style(Style::default().bg(Color::Black).fg(Color::White));
+
+    // Guidance keys (`:` / `!`) have no effect under the autoloop source; grey
+    // them out instead of advertising live bindings that do nothing.
+    let (guidance_heading_style, guidance_key_style, guidance_suffix) = if autoloop_source {
+        (
+            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::DarkGray),
+            " (unavailable in this mode)",
+        )
+    } else {
+        (
+            Style::default().fg(Color::Yellow),
+            Style::default().fg(Color::Cyan),
+            "",
+        )
+    };
 
     let help_text = vec![
         Line::from(Span::styled(
@@ -75,16 +95,19 @@ pub fn render(f: &mut Frame, area: Rect) {
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "Guidance:",
-            Style::default().fg(Color::Yellow),
+            format!("Guidance:{guidance_suffix}"),
+            guidance_heading_style,
         )),
         Line::from(vec![
-            Span::styled("  :", Style::default().fg(Color::Cyan)),
-            Span::raw("      Send guidance (next prompt)"),
+            Span::styled("  :", guidance_key_style),
+            Span::styled("      Send guidance (next prompt)", guidance_heading_style),
         ]),
         Line::from(vec![
-            Span::styled("  !", Style::default().fg(Color::Cyan)),
-            Span::raw("      Urgent steer (blocks handoff until seen)"),
+            Span::styled("  !", guidance_key_style),
+            Span::styled(
+                "      Urgent steer (blocks handoff until seen)",
+                guidance_heading_style,
+            ),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -151,4 +174,45 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn render_to_string(autoloop_source: bool) -> String {
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render(f, f.area(), autoloop_source))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn guidance_section_plain_in_normal_mode() {
+        let text = render_to_string(false);
+        assert!(text.contains("Guidance:"), "should show guidance section");
+        assert!(
+            !text.contains("unavailable in this mode"),
+            "normal mode should not mark guidance unavailable, got: {text}"
+        );
+    }
+
+    #[test]
+    fn guidance_section_marked_unavailable_under_autoloop_source() {
+        let text = render_to_string(true);
+        assert!(
+            text.contains("unavailable in this mode"),
+            "autoloop source should mark guidance unavailable, got: {text}"
+        );
+    }
 }

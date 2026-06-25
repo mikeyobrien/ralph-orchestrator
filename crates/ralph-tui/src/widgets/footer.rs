@@ -24,6 +24,21 @@ impl Widget for Footer<'_> {
         let inner_area = block.inner(area);
         block.render(area, buf);
 
+        // A pending human ask (autoloop HITL) is the most important thing to
+        // surface — the run is blocked on it. Display only; answering is #345.
+        if let Some(question) = &self.state.pending_ask {
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    "\u{26A0} HUMAN ASK: ",
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw(question.as_str()),
+            ]);
+            Paragraph::new(line).render(inner_area, buf);
+            return;
+        }
+
         // Guidance input mode takes priority
         if let Some(mode) = self.state.guidance_mode {
             let label = match mode {
@@ -154,6 +169,18 @@ impl Widget for Footer<'_> {
             "Total Time Elapsed: 00:00".to_string()
         };
         left_spans.push(Span::raw(elapsed_display));
+        // Surface the final run cost once the loop has completed (autoloop
+        // reports costUsd on its terminal event).
+        if self.state.loop_completed
+            && let Some(cost) = self.state.final_cost_usd
+            && cost > 0.0
+        {
+            left_spans.push(Span::raw(" │ "));
+            left_spans.push(Span::styled(
+                format!("Cost: ${cost:.2}"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
         if inner_area.width >= 58 {
             left_spans.push(Span::raw(" │ "));
             left_spans.push(Span::styled(
@@ -445,6 +472,57 @@ mod tests {
         assert!(
             text.contains(".ralph/tui-exports/ralph-tui-current.txt"),
             "should show relative export path, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn footer_shows_pending_ask() {
+        // Given a pending human ask (autoloop HITL)
+        let mut state = TuiState::new();
+        state.pending_ask = Some("Delete the table?".to_string());
+
+        // When footer renders
+        let text = render_to_string(&state);
+
+        // Then it surfaces the question prominently
+        assert!(
+            text.contains("HUMAN ASK") && text.contains("Delete the table?"),
+            "should surface pending ask, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn footer_shows_final_cost_when_complete() {
+        // Given a completed run with a known cost
+        let mut state = TuiState::new();
+        state.loop_completed = true;
+        state.final_cost_usd = Some(0.42);
+
+        // When footer renders
+        let text = render_to_string(&state);
+
+        // Then the cost is surfaced
+        assert!(
+            text.contains("Cost: $0.42"),
+            "should surface final cost, got: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn footer_hides_cost_while_running() {
+        // Given a running loop (not complete) even if cost happens to be set
+        let mut state = TuiState::new();
+        state.loop_completed = false;
+        state.final_cost_usd = Some(0.42);
+
+        let text = render_to_string(&state);
+
+        assert!(
+            !text.contains("Cost:"),
+            "should NOT show cost while running, got: {}",
             text
         );
     }
