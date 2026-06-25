@@ -28,7 +28,7 @@
 //! ```
 
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 use thiserror::Error;
 
@@ -234,14 +234,58 @@ impl AutoloopRunner {
     /// - [`AutoloopRunError::UnparseableSummary`] if the summary block is absent
     ///   or malformed.
     pub fn run(&self) -> Result<AutoloopRunSummary, AutoloopRunError> {
+        let child = self.spawn()?;
+        self.wait_with_summary(child)
+    }
+
+    /// Spawns `autoloop run` with piped stdout/stderr and returns the live
+    /// [`Child`] handle without waiting.
+    ///
+    /// This is the interruptible counterpart to [`Self::run`]: the caller owns
+    /// the [`Child`] and can `kill()` it on Ctrl+C, then drop it (or hand it to
+    /// [`Self::wait_with_summary`] for the success path). stdout/stderr are
+    /// piped (NOT inherited) so a ratatui TUI driving the parent's tty is never
+    /// corrupted by the subprocess's output.
+    ///
+    /// # Errors
+    ///
+    /// - [`AutoloopRunError::Spawn`] if the process cannot be launched.
+    pub fn spawn(&self) -> Result<Child, AutoloopRunError> {
         let (program, _) = self.program_and_prefix();
         let args = self.build_args();
 
-        let output = Command::new(&program)
+        Command::new(&program)
             .args(&args)
             .current_dir(&self.working_dir)
             .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source,
+            })
+    }
+
+    /// Waits for a [`Child`] spawned by [`Self::spawn`] to finish, then parses
+    /// the `autoloops summary` block from its captured stdout.
+    ///
+    /// Mirrors the post-wait handling of [`Self::run`] exactly, so the two share
+    /// one success/error contract.
+    ///
+    /// # Errors
+    ///
+    /// - [`AutoloopRunError::Spawn`] if the output cannot be collected.
+    /// - [`AutoloopRunError::NonZeroExit`] if autoloop exited non-zero.
+    /// - [`AutoloopRunError::UnparseableSummary`] if the summary block is absent
+    ///   or malformed.
+    pub fn wait_with_summary(
+        &self,
+        child: Child,
+    ) -> Result<AutoloopRunSummary, AutoloopRunError> {
+        let output = child
+            .wait_with_output()
             .map_err(|source| AutoloopRunError::Spawn {
                 command: self.command_display(),
                 source,

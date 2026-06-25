@@ -59,9 +59,6 @@ pub async fn run_autoloop_engine(
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
 
-    // S3: the `tui` branch lands in S4; headless path is unchanged.
-    let _ = tui;
-
     // Use an explicit preset if configured; otherwise generate one from ralph's
     // native hats topology so existing ralph configs run on the autoloop engine
     // without a hand-authored preset.
@@ -122,12 +119,22 @@ pub async fn run_autoloop_engine(
     let runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .events_path(events_path.clone());
 
-    // AutoloopRunner::run blocks on the subprocess; keep the async runtime free.
     let start = Instant::now();
-    let summary = tokio::task::spawn_blocking(move || runner.run())
-        .await
-        .context("autoloop run task panicked")?
-        .context("autoloop run failed")?;
+    let summary = if tui {
+        // In-process TUI: render the autoloop run live by tailing its --events
+        // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
+        // child (see run_autoloop_with_tui).
+        run_autoloop_with_tui(runner, events_path.clone(), workspace.clone())
+            .await
+            .context("autoloop TUI run failed")?
+    } else {
+        // Headless: AutoloopRunner::run blocks on the subprocess; keep the async
+        // runtime free. Unchanged from the pre-TUI path.
+        tokio::task::spawn_blocking(move || runner.run())
+            .await
+            .context("autoloop run task panicked")?
+            .context("autoloop run failed")?
+    };
 
     if let Ok(content) = std::fs::read_to_string(&events_path) {
         if let Some(result) = events_run_result(&parse_events(&content)) {
@@ -170,6 +177,123 @@ pub async fn run_autoloop_engine(
     );
 
     Ok(reason)
+}
+
+/// Run the autoloop subprocess with the in-process live TUI.
+///
+/// The TUI renders inside this (parent) process, concurrent with the `autoloop
+/// run` subprocess, fed by live-tailing the `--events` file. tokio is
+/// multi-threaded (`#[tokio::main]`), so the blocking subprocess wait
+/// (`spawn_blocking`), the async TUI render loop, and the async event-reader
+/// poll task coexist. The subprocess's stdout/stderr are piped (see
+/// `AutoloopRunner::spawn`), so they never corrupt the ratatui tty.
+///
+/// ## Ctrl+C behavior (FIX gap#2)
+///
+/// `AutoloopRunner` exposes [`AutoloopRunner::spawn`], so on Ctrl+C the TUI
+/// signals via its interrupt channel and we **kill the autoloop child**
+/// (SIGTERM, then SIGKILL) — a clean teardown, NOT a blank-terminal hang. The
+/// blocking wait then returns the child's (killed) result and we fall through
+/// to the shared post-run path. This is the proper refactor the design calls
+/// for, not the `exit(130)` fallback.
+async fn run_autoloop_with_tui(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+    workspace: PathBuf,
+) -> Result<ralph_adapters::AutoloopRunSummary> {
+    use ralph_tui::Tui;
+    use tokio::sync::watch;
+
+    // Termination drives BOTH the TUI shutdown and the event reader's final
+    // drain; interrupt is the TUI -> parent Ctrl+C signal.
+    let (terminated_tx, terminated_rx) = watch::channel(false);
+    let (interrupt_tx, mut interrupt_rx) = watch::channel(false);
+
+    let tui = Tui::new()
+        .with_termination_signal(terminated_rx.clone())
+        .with_interrupt_tx(interrupt_tx)
+        .with_export_workspace_root(workspace);
+    let state = tui.state();
+
+    // Mark the source so the footer suppresses guidance/steer affordances that
+    // have no back-channel to the autoloop child (FIX gap#6).
+    if let Ok(mut s) = state.lock() {
+        s.autoloop_source = true;
+    }
+
+    // Live-tail the --events file into the TUI state until cancelled.
+    let reader_handle = {
+        let reader_state = std::sync::Arc::clone(&state);
+        let cancel_rx = terminated_rx.clone();
+        tokio::spawn(async move {
+            ralph_tui::run_autoloop_event_reader(events_path, reader_state, cancel_rx).await;
+        })
+    };
+
+    // Spawn the autoloop subprocess (piped stdio) and capture its pid so the
+    // interrupt watcher can signal it.
+    let child = runner
+        .spawn()
+        .context("spawning the autoloop subprocess")?;
+    let child_pid = child.id();
+
+    // Block on the subprocess in a worker thread, freeing the async runtime for
+    // the TUI + reader. wait_with_summary mirrors run()'s success/error contract.
+    // When it returns (natural exit OR interrupt kill), signal the TUI to drop —
+    // this is what unblocks `tui.run()` on natural completion.
+    let wait_handle = {
+        let terminated_tx = terminated_tx.clone();
+        tokio::spawn(async move {
+            let summary = tokio::task::spawn_blocking(move || runner.wait_with_summary(child))
+                .await
+                .context("autoloop wait task panicked")?;
+            // Subprocess finished: tear the TUI down (no-op if already exiting).
+            let _ = terminated_tx.send(true);
+            summary.context("autoloop run failed")
+        })
+    };
+
+    // Interrupt watcher: on Ctrl+C (TUI signals interrupt_tx), kill the child.
+    // wait_with_summary then returns, signals termination, and we tear down.
+    let interrupt_watcher = tokio::spawn(async move {
+        if interrupt_rx.changed().await.is_ok() && *interrupt_rx.borrow() {
+            kill_autoloop_child(child_pid);
+        }
+    });
+
+    // Run the TUI render/input loop concurrently with the subprocess. The TUI
+    // exits when terminated_tx fires (subprocess done) or on q / Ctrl+C.
+    let tui_result = tui.run().await;
+
+    // Ensure the reader does its final drain even if the TUI exited first (q).
+    let _ = terminated_tx.send(true);
+
+    // Collect the subprocess result, then tear down the auxiliary tasks.
+    let summary = wait_handle.await.context("autoloop wait join failed")?;
+    interrupt_watcher.abort();
+    let _ = reader_handle.await;
+    tui_result.context("TUI render loop failed")?;
+
+    summary
+}
+
+/// Terminate the autoloop child: SIGTERM, then SIGKILL. No-op off Unix.
+fn kill_autoloop_child(pid: u32) {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{Signal, kill};
+        use nix::unistd::Pid;
+        let pid = Pid::from_raw(pid as i32);
+        let _ = kill(pid, Signal::SIGTERM);
+        // autoloop is a node process; give it no grace here — the blocking wait
+        // reaps it. A follow-up SIGKILL guarantees teardown if SIGTERM is
+        // ignored.
+        let _ = kill(pid, Signal::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+    }
 }
 
 /// Start a headless orchestration loop for the Telegram bot daemon.
