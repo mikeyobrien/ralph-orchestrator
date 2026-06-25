@@ -25,6 +25,9 @@ pub struct AutoloopEvent {
     /// Present on `loop.finish` / `summary`.
     #[serde(default)]
     pub iterations: Option<u32>,
+    /// Iteration budget; present on `iteration.start`. Drives the header `N/M`.
+    #[serde(rename = "maxIterations", default)]
+    pub max_iterations: Option<u32>,
     #[serde(rename = "stopReason", default)]
     pub stop_reason: Option<String>,
     /// Cumulative run cost in USD; present on `loop.finish` / `summary`.
@@ -37,6 +40,14 @@ pub struct AutoloopEvent {
     pub emitted_topic: Option<String>,
     #[serde(default)]
     pub outcome: Option<String>,
+    /// Roles allowed to act this iteration; present on `progress`. The first is
+    /// the active role, used to label the iteration (autoloop's role ≈ ralph's hat).
+    #[serde(rename = "allowedRoles", default)]
+    pub allowed_roles: Option<Vec<String>>,
+    /// Full agent output for the iteration; present on `backend.output`. The one
+    /// piece of real per-iteration content the coarse `--events` stream carries.
+    #[serde(default)]
+    pub output: Option<String>,
     /// Present on `ask.pending` / `ask.answered`.
     #[serde(rename = "questionId", default)]
     pub question_id: Option<String>,

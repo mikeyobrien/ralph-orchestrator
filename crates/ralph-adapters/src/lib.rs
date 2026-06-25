@@ -28,6 +28,7 @@
 
 mod acp_executor;
 mod auto_detect;
+pub mod autoloop_event_tailer;
 pub mod autoloop_events;
 pub mod autoloop_journal;
 mod autoloop_runner;
@@ -46,6 +47,7 @@ pub use acp_executor::AcpExecutor;
 pub use auto_detect::{
     DEFAULT_PRIORITY, NoBackendError, detect_backend, detect_backend_default, is_backend_available,
 };
+pub use autoloop_event_tailer::AutoloopEventTailer;
 pub use autoloop_events::{
     AutoloopEvent, PendingAsk, RunResult, first_pending_ask, parse_events,
     run_result as events_run_result,
