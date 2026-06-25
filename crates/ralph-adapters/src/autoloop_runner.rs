@@ -112,6 +112,12 @@ pub struct AutoloopRunner {
     /// Extra environment variables for the child process (inherited by its
     /// descendants, e.g. a backend wrapper script).
     env: Vec<(String, String)>,
+    /// When set, spawn the child as the leader of a new process group so the
+    /// whole subprocess tree (autoloop + its backend agent) can be signalled as
+    /// a unit. Used by the TUI path to avoid orphaning the backend on Ctrl+C;
+    /// left off for headless so the child stays in ralph's foreground group and
+    /// receives terminal SIGINT normally.
+    own_process_group: bool,
 }
 
 impl AutoloopRunner {
@@ -133,7 +139,15 @@ impl AutoloopRunner {
             set_overrides: Vec::new(),
             events_path: None,
             env: Vec::new(),
+            own_process_group: false,
         }
+    }
+
+    /// Spawn the child as the leader of a new process group (Unix only), so its
+    /// whole subprocess tree can be killed together via `killpg`. Off by default.
+    pub fn own_process_group(mut self, yes: bool) -> Self {
+        self.own_process_group = yes;
+        self
     }
 
     /// Request the structured `--events <path>` NDJSON LoopEvent stream — the
@@ -254,18 +268,27 @@ impl AutoloopRunner {
         let (program, _) = self.program_and_prefix();
         let args = self.build_args();
 
-        Command::new(&program)
-            .args(&args)
+        let mut cmd = Command::new(&program);
+        cmd.args(&args)
             .current_dir(&self.working_dir)
             .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| AutoloopRunError::Spawn {
-                command: self.command_display(),
-                source,
-            })
+            .stderr(Stdio::piped());
+
+        // Make the child its own process-group leader so the caller can kill the
+        // whole tree (autoloop + backend agent) with killpg. Only when requested
+        // (the TUI path) — headless leaves the child in ralph's group.
+        #[cfg(unix)]
+        if self.own_process_group {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        cmd.spawn().map_err(|source| AutoloopRunError::Spawn {
+            command: self.command_display(),
+            source,
+        })
     }
 
     /// Waits for a [`Child`] spawned by [`Self::spawn`] to finish, then parses

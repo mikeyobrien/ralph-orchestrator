@@ -204,10 +204,14 @@ async fn run_autoloop_with_tui(
     use ralph_tui::Tui;
     use tokio::sync::watch;
 
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     // Termination drives BOTH the TUI shutdown and the event reader's final
-    // drain; interrupt is the TUI -> parent Ctrl+C signal.
+    // drain. App needs an interrupt sink (Ctrl+C), but we don't watch it — the
+    // TUI returning (on q OR Ctrl+C) is what triggers the kill below.
     let (terminated_tx, terminated_rx) = watch::channel(false);
-    let (interrupt_tx, mut interrupt_rx) = watch::channel(false);
+    let (interrupt_tx, _interrupt_rx) = watch::channel(false);
 
     let tui = Tui::new()
         .with_termination_signal(terminated_rx.clone())
@@ -223,72 +227,77 @@ async fn run_autoloop_with_tui(
 
     // Live-tail the --events file into the TUI state until cancelled.
     let reader_handle = {
-        let reader_state = std::sync::Arc::clone(&state);
+        let reader_state = Arc::clone(&state);
         let cancel_rx = terminated_rx.clone();
         tokio::spawn(async move {
             ralph_tui::run_autoloop_event_reader(events_path, reader_state, cancel_rx).await;
         })
     };
 
-    // Spawn the autoloop subprocess (piped stdio) and capture its pid so the
-    // interrupt watcher can signal it.
-    let child = runner
-        .spawn()
-        .context("spawning the autoloop subprocess")?;
+    // Spawn autoloop as its OWN process-group leader (piped stdio) so that on a
+    // user quit we can kill the whole tree (autoloop + its backend agent) and
+    // not orphan the agent. Headless keeps the child in ralph's group.
+    let runner = runner.own_process_group(true);
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
     let child_pid = child.id();
 
     // Block on the subprocess in a worker thread, freeing the async runtime for
     // the TUI + reader. wait_with_summary mirrors run()'s success/error contract.
-    // When it returns (natural exit OR interrupt kill), signal the TUI to drop —
-    // this is what unblocks `tui.run()` on natural completion.
+    // On natural exit set `completed` and signal the TUI to drop — this is what
+    // unblocks `tui.run()` when the run finishes on its own.
+    let completed = Arc::new(AtomicBool::new(false));
     let wait_handle = {
         let terminated_tx = terminated_tx.clone();
+        let completed = Arc::clone(&completed);
         tokio::spawn(async move {
             let summary = tokio::task::spawn_blocking(move || runner.wait_with_summary(child))
                 .await
                 .context("autoloop wait task panicked")?;
-            // Subprocess finished: tear the TUI down (no-op if already exiting).
+            completed.store(true, Ordering::SeqCst);
             let _ = terminated_tx.send(true);
             summary.context("autoloop run failed")
         })
     };
 
-    // Interrupt watcher: on Ctrl+C (TUI signals interrupt_tx), kill the child.
-    // wait_with_summary then returns, signals termination, and we tear down.
-    let interrupt_watcher = tokio::spawn(async move {
-        if interrupt_rx.changed().await.is_ok() && *interrupt_rx.borrow() {
-            kill_autoloop_child(child_pid);
-        }
-    });
-
-    // Run the TUI render/input loop concurrently with the subprocess. The TUI
-    // exits when terminated_tx fires (subprocess done) or on q / Ctrl+C.
+    // Run the TUI render/input loop concurrently with the subprocess. It returns
+    // on natural completion (terminated_tx) OR on q / Ctrl+C.
     let tui_result = tui.run().await;
 
+    // If the subprocess is still running (user quit via q or Ctrl+C — neither
+    // exits autoloop), stop the whole process group so the backend isn't
+    // orphaned. No-op if the run already completed naturally.
+    if !completed.load(Ordering::SeqCst) {
+        kill_autoloop_group(child_pid);
+    }
     // Ensure the reader does its final drain even if the TUI exited first (q).
     let _ = terminated_tx.send(true);
 
     // Collect the subprocess result, then tear down the auxiliary tasks.
     let summary = wait_handle.await.context("autoloop wait join failed")?;
-    interrupt_watcher.abort();
     let _ = reader_handle.await;
     tui_result.context("TUI render loop failed")?;
 
     summary
 }
 
-/// Terminate the autoloop child: SIGTERM, then SIGKILL. No-op off Unix.
-fn kill_autoloop_child(pid: u32) {
+/// Stop the autoloop subprocess tree: SIGTERM the whole process group, then
+/// escalate to SIGKILL after a short grace so autoloop and its backend agent can
+/// exit cleanly (flush, release locks) first. `pid` is the group leader's pid
+/// (the child was spawned with [`AutoloopRunner::own_process_group`]). Off Unix
+/// this is a best-effort no-op. The blocking wait reaps the child once it exits.
+fn kill_autoloop_group(pid: u32) {
     #[cfg(unix)]
     {
-        use nix::sys::signal::{Signal, kill};
+        use nix::sys::signal::{Signal, killpg};
         use nix::unistd::Pid;
-        let pid = Pid::from_raw(pid as i32);
-        let _ = kill(pid, Signal::SIGTERM);
-        // autoloop is a node process; give it no grace here — the blocking wait
-        // reaps it. A follow-up SIGKILL guarantees teardown if SIGTERM is
-        // ignored.
-        let _ = kill(pid, Signal::SIGKILL);
+        let pgid = Pid::from_raw(pid as i32);
+        let _ = killpg(pgid, Signal::SIGTERM);
+        // Detached escalation: hard-kill the group if it ignores SIGTERM. A
+        // SIGKILL to an already-dead group is ESRCH and harmless.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let _ = killpg(pgid, Signal::SIGKILL);
+        });
     }
     #[cfg(not(unix))]
     {
