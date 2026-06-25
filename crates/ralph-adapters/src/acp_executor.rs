@@ -2209,7 +2209,7 @@ mod tests {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let (client, _rx, _terminals) = test_client();
+                let (client, _rx, terminals) = test_client();
                 let client = Rc::new(client);
 
                 let req = CreateTerminalRequest::new("test-session", "sh")
@@ -2217,7 +2217,27 @@ mod tests {
                 let resp = client.create_terminal(req).await.unwrap();
                 let tid = resp.terminal_id.clone();
 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                // Synchronize on the child actually emitting "ready" (and the
+                // background reader capturing it) before starting the kill,
+                // rather than assuming a fixed wall-clock delay is enough. Under
+                // CPU contention the child may not run `echo ready` within a
+                // fixed window — and the kill could then reach the process
+                // before any output is produced — which made this test flaky.
+                let mut captured = false;
+                for _ in 0..500 {
+                    if client
+                        .terminal_output(TerminalOutputRequest::new("test-session", tid.clone()))
+                        .await
+                        .unwrap()
+                        .output
+                        .contains("ready")
+                    {
+                        captured = true;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                assert!(captured, "child should emit 'ready' before kill starts");
 
                 let kill_client = Rc::clone(&client);
                 let kill_tid = tid.clone();
@@ -2226,7 +2246,23 @@ mod tests {
                     kill_client.kill_terminal_command(kill_req).await
                 });
 
-                tokio::time::sleep(Duration::from_millis(25)).await;
+                // Wait until the kill is genuinely in progress (cleanup flag
+                // set on the terminal state) instead of guessing with a sleep,
+                // so the read below actually races the in-flight cleanup.
+                let mut kill_in_progress = false;
+                for _ in 0..500 {
+                    let in_progress = terminals
+                        .borrow()
+                        .get(tid.0.as_ref())
+                        .map(|state| *state.cleanup_in_progress.borrow())
+                        .unwrap_or(false);
+                    if in_progress {
+                        kill_in_progress = true;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                assert!(kill_in_progress, "kill should be in progress before read");
 
                 let out_req = TerminalOutputRequest::new("test-session", tid.clone());
                 let out_resp = client.terminal_output(out_req).await.unwrap();

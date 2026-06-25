@@ -37,6 +37,36 @@ fn which(program: &str) -> Option<PathBuf> {
     })
 }
 
+/// Probe whether the resolved autoloop build implements the `--events` NDJSON
+/// stream (contract #30). Conforming builds list the flag in `run --help`;
+/// builds that predate the contract silently ignore it and advertise nothing.
+/// Invoked as `node <bin>` to match how the tests drive the binary.
+fn autoloop_supports_events(bin: &Path) -> bool {
+    Command::new("node")
+        .arg(bin)
+        .args(["run", "--help"])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("--events"))
+        .unwrap_or(false)
+}
+
+/// Probe whether the resolved autoloop build implements the human-ask /
+/// `control respond` HITL round-trip (contract #32). Conforming builds expose a
+/// `respond` verb in `control --help`; builds that predate it reject the
+/// `human.ask` event and never surface `ask.pending`, so the round-trip can't be
+/// exercised. Invoked as `node <bin>` to match how the tests drive the binary.
+fn autoloop_supports_control_respond(bin: &Path) -> bool {
+    Command::new("node")
+        .arg(bin)
+        .args(["control", "--help"])
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout).contains("respond")
+                || String::from_utf8_lossy(&out.stderr).contains("respond")
+        })
+        .unwrap_or(false)
+}
+
 struct Env {
     work: tempfile::TempDir,
     bin: PathBuf,
@@ -65,6 +95,21 @@ fn setup(fixture_name: &str) -> Option<Env> {
             eprintln!("skip: {} not present", p.display());
             return None;
         }
+    }
+
+    // The `--events` NDJSON stream (contract #30) is an opt-in autoloop
+    // capability. An older/non-conforming build silently ignores the flag and
+    // writes no file, which would make these tests hard-fail on a stale sibling
+    // checkout. Both tests exist solely to exercise that stream, so skip (rather
+    // than fail) when the resolved build doesn't advertise `--events` — matching
+    // the skip-on-missing-prereq pattern above. The gate reopens automatically
+    // once a conforming autoloop is present.
+    if !autoloop_supports_events(&bin) {
+        eprintln!(
+            "skip: autoloop at {} does not implement the --events contract (#30)",
+            bin.display()
+        );
+        return None;
     }
 
     let work = tempfile::tempdir().expect("tempdir");
@@ -152,6 +197,17 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
     let Some(env) = setup("human-ask.json") else {
         return;
     };
+    // The HITL round-trip needs the `control respond` verb (contract #32) on top
+    // of the `--events` stream gated in setup(). A build without it rejects
+    // `human.ask` and never emits `ask.pending`, so skip rather than hard-fail —
+    // the gate reopens once a conforming autoloop is present.
+    if !autoloop_supports_control_respond(&env.bin) {
+        eprintln!(
+            "skip: autoloop at {} does not implement the `control respond` HITL contract (#32)",
+            env.bin.display()
+        );
+        return;
+    }
     let events_path = env.work.path().join("hitl-events.ndjson");
     let work = env.work.path().to_path_buf();
     let answer = "go with approach B";
