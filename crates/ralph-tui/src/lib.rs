@@ -23,6 +23,7 @@
 //!    communicates via JSON lines over stdin/stdout. Start with [`Tui::spawn`].
 
 mod app;
+pub mod autoloop_source;
 pub mod export;
 pub mod input;
 pub mod rpc_bridge;
@@ -44,6 +45,7 @@ use tokio::sync::watch;
 use tracing::info;
 
 pub use app::{App, dispatch_action};
+pub use autoloop_source::run_autoloop_event_reader;
 pub use rpc_client::RpcClient;
 pub use rpc_source::run_rpc_event_reader;
 pub use rpc_writer::RpcWriter;

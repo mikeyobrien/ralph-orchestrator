@@ -316,6 +316,21 @@ pub struct TuiState {
     pub subprocess_error: Option<String>,
 
     // ========================================================================
+    // Autoloop Source State
+    // ========================================================================
+    /// Pending human ask surfaced in the footer (autoloop `ask.pending`). Display
+    /// only: there is no back-channel to answer through the autoloop subprocess
+    /// here (HITL answering is #345).
+    pub pending_ask: Option<String>,
+    /// True when the TUI is driven by the autoloop `--events` source rather than
+    /// the in-house event bus. Suppresses guidance/steer affordances that have no
+    /// back-channel to the autoloop subprocess (FIX gap#6).
+    pub autoloop_source: bool,
+    /// Cumulative run cost in USD, from the terminal `loop.finish` / `summary`
+    /// event's `costUsd`. Surfaced in the footer once the run completes.
+    pub final_cost_usd: Option<f64>,
+
+    // ========================================================================
     // RPC Text Accumulation State
     // ========================================================================
     /// Buffer for accumulating streaming text deltas received via RPC.
@@ -380,6 +395,10 @@ impl TuiState {
             guidance_flash: None,
             // Subprocess error state
             subprocess_error: None,
+            // Autoloop source state
+            pending_ask: None,
+            autoloop_source: false,
+            final_cost_usd: None,
             // RPC text accumulation state
             rpc_text_buffer: String::new(),
             rpc_text_line_count: 0,
