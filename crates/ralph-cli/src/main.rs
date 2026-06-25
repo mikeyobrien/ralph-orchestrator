@@ -1691,13 +1691,16 @@ async fn run_command(
     //
     // The legacy in-house engine paths (subprocess TUI, --rpc, --legacy-tui) are
     // descoped: see #342 (TUI) and #343 (RPC).
+    // TUI is the default unless --no-tui, --autonomous, or --rpc was given
+    // (same predicate the logging setup uses at startup).
+    let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
     let reason = autoloop_engine::run_autoloop_engine(
         config,
         Some(loop_context),
         auto_merge_override,
         args.loop_id.clone(),
         color_mode.should_use_colors(),
-        false, // S3: TUI wired in S5
+        wants_tui,
     )
     .await?;
 
@@ -1838,13 +1841,14 @@ async fn resume_command(
     // v3 cutover: resume re-drives the autoloop engine. A true run_id continue
     // (resuming autoloop's own loop state) is tracked separately in #344; for now
     // this restarts the loop reading the existing scratchpad/memories on disk.
+    let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
     let reason = autoloop_engine::run_autoloop_engine(
         config,
         None, // Deprecated resume command doesn't carry a loop_context
         None, // Use config.features.auto_merge (deprecated command)
         None, // Deprecated resume command doesn't support --loop-id
         color_mode.should_use_colors(),
-        false, // S3: TUI wired in S5
+        wants_tui,
     )
     .await?;
     let exit_code = reason.exit_code();
