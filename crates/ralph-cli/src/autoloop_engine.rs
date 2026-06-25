@@ -55,8 +55,12 @@ pub async fn run_autoloop_engine(
     auto_merge_override: Option<bool>,
     loop_id: Option<String>,
     use_colors: bool,
+    tui: bool,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
+
+    // S3: the `tui` branch lands in S4; headless path is unchanged.
+    let _ = tui;
 
     // Use an explicit preset if configured; otherwise generate one from ralph's
     // native hats topology so existing ralph configs run on the autoloop engine
@@ -234,8 +238,8 @@ pub async fn start_loop(
 
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
-    // Drive the loop headlessly via the autoloop engine.
-    run_autoloop_engine(config, Some(loop_context), None, None, false).await
+    // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
+    run_autoloop_engine(config, Some(loop_context), None, None, false, false).await
 }
 
 #[cfg(test)]

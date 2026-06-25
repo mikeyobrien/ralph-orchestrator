@@ -1697,6 +1697,7 @@ async fn run_command(
         auto_merge_override,
         args.loop_id.clone(),
         color_mode.should_use_colors(),
+        false, // S3: TUI wired in S5
     )
     .await?;
 
@@ -1843,6 +1844,7 @@ async fn resume_command(
         None, // Use config.features.auto_merge (deprecated command)
         None, // Deprecated resume command doesn't support --loop-id
         color_mode.should_use_colors(),
+        false, // S3: TUI wired in S5
     )
     .await?;
     let exit_code = reason.exit_code();
