@@ -351,25 +351,7 @@ fn resolve_hook_command(
     Err(format!("was not found in {path_source}."))
 }
 
-fn is_executable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
+use crate::utils::{executable_extensions, is_executable_file};
 
 struct BackendAvailableCheck;
 
@@ -1073,17 +1055,6 @@ fn find_executable(command: &str) -> Option<PathBuf> {
     None
 }
 
-fn executable_extensions() -> Vec<OsString> {
-    if cfg!(windows) {
-        let exts = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-        exts.split(';')
-            .filter(|ext| !ext.trim().is_empty())
-            .map(|ext| OsString::from(ext.trim().to_string()))
-            .collect()
-    } else {
-        vec![OsString::new()]
-    }
-}
 
 fn is_git_workspace(path: &Path) -> bool {
     let git_dir = path.join(".git");
