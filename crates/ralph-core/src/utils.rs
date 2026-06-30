@@ -3,6 +3,7 @@
 //! This module provides shared utilities used across the Ralph orchestrator.
 
 use std::ffi::OsString;
+use std::io;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -56,6 +57,36 @@ pub fn format_elapsed(duration: Duration) -> String {
     format!("{mins:02}:{secs:02}")
 }
 
+/// Formats a duration as a human-readable string (e.g., "45s", "2m 5s", "1h 2m 5s").
+///
+/// Useful for summary files, status messages, and user-facing output where
+/// a natural-language duration is preferred over MM:SS format.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use ralph_core::utils::format_duration;
+///
+/// assert_eq!(format_duration(Duration::from_secs(45)), "45s");
+/// assert_eq!(format_duration(Duration::from_secs(125)), "2m 5s");
+/// assert_eq!(format_duration(Duration::from_secs(3725)), "1h 2m 5s");
+/// ```
+pub fn format_duration(duration: Duration) -> String {
+    let total_secs = duration.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
+}
+
 /// Returns the list of executable file extensions for the current platform.
 ///
 /// On Windows, reads `PATHEXT` (falling back to `.COM;.EXE;.BAT;.CMD`).
@@ -94,6 +125,21 @@ pub fn is_executable_file(path: &Path) -> bool {
     {
         true
     }
+}
+
+/// Clones a usable `File` handle from a `nix::fcntl::Flock`.
+///
+/// `Flock` doesn't expose the inner `File` directly, so we duplicate the
+/// file descriptor to obtain an independent handle that can be seeked and
+/// read/written while the lock is held.
+#[cfg(unix)]
+pub fn clone_file_from_flock(flock: &nix::fcntl::Flock<std::fs::File>) -> io::Result<std::fs::File> {
+    use std::os::fd::AsFd;
+    let owned_fd = flock
+        .as_fd()
+        .try_clone_to_owned()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    Ok(owned_fd.into())
 }
 
 #[cfg(test)]
@@ -150,6 +196,26 @@ mod tests {
     #[test]
     fn is_process_alive_bogus_pid() {
         assert!(!is_process_alive(u32::MAX - 1));
+    }
+
+    #[test]
+    fn format_duration_seconds_only() {
+        assert_eq!(format_duration(Duration::from_secs(45)), "45s");
+    }
+
+    #[test]
+    fn format_duration_minutes_and_seconds() {
+        assert_eq!(format_duration(Duration::from_secs(125)), "2m 5s");
+    }
+
+    #[test]
+    fn format_duration_hours_minutes_seconds() {
+        assert_eq!(format_duration(Duration::from_secs(3725)), "1h 2m 5s");
+    }
+
+    #[test]
+    fn format_duration_zero() {
+        assert_eq!(format_duration(Duration::from_secs(0)), "0s");
     }
 
     #[test]

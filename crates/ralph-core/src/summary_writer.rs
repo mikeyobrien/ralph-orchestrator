@@ -4,9 +4,10 @@
 //! with status, iterations, duration, task list, events summary, and commit info.
 
 use crate::event_logger::EventHistory;
-use crate::termination::TerminationReason;
 use crate::landing::LandingResult;
 use crate::loop_context::LoopContext;
+use crate::termination::TerminationReason;
+use crate::utils::format_duration;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -297,22 +298,6 @@ impl SummaryWriter {
     }
 }
 
-/// Formats a duration as human-readable string (e.g., "23m 45s" or "1h 5m 30s").
-fn format_duration(d: Duration) -> String {
-    let total_secs = d.as_secs();
-    let hours = total_secs / 3600;
-    let minutes = (total_secs % 3600) / 60;
-    let seconds = total_secs % 60;
-
-    if hours > 0 {
-        format!("{}h {}m {}s", hours, minutes, seconds)
-    } else if minutes > 0 {
-        format!("{}m {}s", minutes, seconds)
-    } else {
-        format!("{}s", seconds)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,13 +331,6 @@ mod tests {
             writer.status_text(&TerminationReason::Interrupted),
             "Interrupted by signal"
         );
-    }
-
-    #[test]
-    fn test_format_duration() {
-        assert_eq!(format_duration(Duration::from_secs(45)), "45s");
-        assert_eq!(format_duration(Duration::from_secs(125)), "2m 5s");
-        assert_eq!(format_duration(Duration::from_secs(3725)), "1h 2m 5s");
     }
 
     #[test]
