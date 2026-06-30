@@ -378,117 +378,68 @@ impl LoopContext {
         Ok(())
     }
 
-    /// Creates the memory symlink in a worktree pointing to main repo.
+    /// Creates a symlink from `local` to `target` for worktree loops.
     ///
-    /// This is only relevant for worktree loops. For primary loops,
-    /// this is a no-op.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(true)` - Symlink was created
-    /// - `Ok(false)` - Already exists or is primary loop
-    /// - `Err(_)` - Symlink creation failed
+    /// Returns `Ok(false)` for primary loops or if `local` already exists.
+    /// Ensures `parent_dir` exists before creating the symlink.
     #[cfg(unix)]
-    pub fn setup_memory_symlink(&self) -> std::io::Result<bool> {
+    fn create_worktree_symlink(
+        &self,
+        local: &std::path::Path,
+        target: &std::path::Path,
+        parent_dir: &std::path::Path,
+    ) -> std::io::Result<bool> {
         if self.is_primary {
             return Ok(false);
         }
-
-        let memories_path = self.memories_path();
-        let main_memories = self.main_memories_path();
-
-        // Skip if already exists (symlink or file)
-        if memories_path.exists() || memories_path.is_symlink() {
+        if local.exists() || local.is_symlink() {
             return Ok(false);
         }
-
-        // Ensure parent directory exists
-        self.ensure_agent_dir()?;
-
-        // Create symlink
-        std::os::unix::fs::symlink(&main_memories, &memories_path)?;
+        std::fs::create_dir_all(parent_dir)?;
+        std::os::unix::fs::symlink(target, local)?;
         Ok(true)
     }
 
-    /// Creates the memory symlink in a worktree (non-Unix stub).
+    /// Creates the memory symlink in a worktree pointing to main repo.
+    #[cfg(unix)]
+    pub fn setup_memory_symlink(&self) -> std::io::Result<bool> {
+        self.create_worktree_symlink(
+            &self.memories_path(),
+            &self.main_memories_path(),
+            &self.agent_dir(),
+        )
+    }
+
     #[cfg(not(unix))]
     pub fn setup_memory_symlink(&self) -> std::io::Result<bool> {
-        // On non-Unix platforms, we don't create symlinks
-        // (worktree mode not supported)
         Ok(false)
     }
 
     /// Creates the specs symlink in a worktree pointing to main repo.
-    ///
-    /// This allows worktree loops to access specs from the main repo,
-    /// even when they are untracked (not committed to git).
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(true)` - Symlink was created
-    /// - `Ok(false)` - Already exists or is primary loop
-    /// - `Err(_)` - Symlink creation failed
     #[cfg(unix)]
     pub fn setup_specs_symlink(&self) -> std::io::Result<bool> {
-        if self.is_primary {
-            return Ok(false);
-        }
-
-        let specs_path = self.specs_dir();
-        let main_specs = self.main_specs_dir();
-
-        // Skip if already exists (symlink or directory)
-        if specs_path.exists() || specs_path.is_symlink() {
-            return Ok(false);
-        }
-
-        // Ensure parent directory exists
-        self.ensure_ralph_dir()?;
-
-        // Create symlink
-        std::os::unix::fs::symlink(&main_specs, &specs_path)?;
-        Ok(true)
+        self.create_worktree_symlink(
+            &self.specs_dir(),
+            &self.main_specs_dir(),
+            &self.ralph_dir(),
+        )
     }
 
-    /// Creates the specs symlink in a worktree (non-Unix stub).
     #[cfg(not(unix))]
     pub fn setup_specs_symlink(&self) -> std::io::Result<bool> {
         Ok(false)
     }
 
     /// Creates the code tasks symlink in a worktree pointing to main repo.
-    ///
-    /// This allows worktree loops to access code task files from the main repo,
-    /// even when they are untracked (not committed to git).
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(true)` - Symlink was created
-    /// - `Ok(false)` - Already exists or is primary loop
-    /// - `Err(_)` - Symlink creation failed
     #[cfg(unix)]
     pub fn setup_code_tasks_symlink(&self) -> std::io::Result<bool> {
-        if self.is_primary {
-            return Ok(false);
-        }
-
-        let tasks_path = self.code_tasks_dir();
-        let main_tasks = self.main_code_tasks_dir();
-
-        // Skip if already exists (symlink or directory)
-        if tasks_path.exists() || tasks_path.is_symlink() {
-            return Ok(false);
-        }
-
-        // Ensure parent directory exists
-        self.ensure_ralph_dir()?;
-
-        // Create symlink
-        std::os::unix::fs::symlink(&main_tasks, &tasks_path)?;
-        Ok(true)
+        self.create_worktree_symlink(
+            &self.code_tasks_dir(),
+            &self.main_code_tasks_dir(),
+            &self.ralph_dir(),
+        )
     }
 
-    /// Creates the code tasks symlink in a worktree (non-Unix stub).
     #[cfg(not(unix))]
     pub fn setup_code_tasks_symlink(&self) -> std::io::Result<bool> {
         Ok(false)
