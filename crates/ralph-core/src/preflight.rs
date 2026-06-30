@@ -693,53 +693,8 @@ fn check_spec_completeness(path: &Path, content: &str) -> Option<String> {
     None
 }
 
-/// Detect whether content contains Given/When/Then acceptance criteria.
-///
-/// Matches common spec patterns:
-/// - `**Given**` / `**When**` / `**Then**` (bold markdown)
-/// - `Given ` / `When ` / `Then ` at line start (plain text)
-/// - `- Given ` / `- When ` / `- Then ` (list items)
 fn has_acceptance_criteria(content: &str) -> bool {
-    let mut has_given = false;
-    let mut has_when = false;
-    let mut has_then = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        let lower = trimmed.to_lowercase();
-
-        // Bold markdown: **Given**, **When**, **Then**
-        // Plain text at line start: Given, When, Then
-        // List items: - Given, - When, - Then
-        if lower.starts_with("**given**")
-            || lower.starts_with("given ")
-            || lower.starts_with("- given ")
-            || lower.starts_with("- **given**")
-        {
-            has_given = true;
-        }
-        if lower.starts_with("**when**")
-            || lower.starts_with("when ")
-            || lower.starts_with("- when ")
-            || lower.starts_with("- **when**")
-        {
-            has_when = true;
-        }
-        if lower.starts_with("**then**")
-            || lower.starts_with("then ")
-            || lower.starts_with("- then ")
-            || lower.starts_with("- **then**")
-        {
-            has_then = true;
-        }
-
-        if has_given && has_when && has_then {
-            return true;
-        }
-    }
-
-    // Require at least Given+Then (When is sometimes implicit)
-    has_given && has_then
+    !extract_acceptance_criteria(content).is_empty()
 }
 
 /// A single acceptance criterion extracted from a spec file.
