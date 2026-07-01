@@ -1842,15 +1842,7 @@ enum OutputEvent {
     Error(String),
 }
 
-/// Strips ANSI escape sequences from raw bytes.
-///
-/// Uses `strip-ansi-escapes` for direct byte-level ANSI removal without terminal
-/// emulation. This ensures ALL content is preserved regardless of output size,
-/// unlike vt100's terminal simulation which can lose content that scrolls off.
-fn strip_ansi(bytes: &[u8]) -> String {
-    let stripped = strip_ansi_escapes::strip(bytes);
-    String::from_utf8_lossy(&stripped).into_owned()
-}
+use ralph_core::utils::strip_ansi_from_bytes as strip_ansi;
 
 /// Determines the final termination type, accounting for SIGINT exit code.
 ///

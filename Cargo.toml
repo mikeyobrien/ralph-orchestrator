@@ -137,7 +137,6 @@ portable-pty = "0.9"
 nix = { version = "0.29", features = ["signal", "term", "fs"] }
 vt100 = "0.15"
 scopeguard = "1"
-strip-ansi-escapes = "0.2"
 
 # Internal crates (version required for crates.io publishing)
 ralph-proto = { version = "2.9.3", path = "crates/ralph-proto" }

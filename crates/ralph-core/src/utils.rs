@@ -196,9 +196,14 @@ pub fn strip_ansi_bytes(bytes: &[u8]) -> Vec<u8> {
     result
 }
 
+/// Strips ANSI escape sequences from raw bytes, returning a `String`.
+pub fn strip_ansi_from_bytes(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(&strip_ansi_bytes(bytes)).into_owned()
+}
+
 /// Strips ANSI escape sequences from a string.
 pub fn strip_ansi(s: &str) -> String {
-    String::from_utf8_lossy(&strip_ansi_bytes(s.as_bytes())).into_owned()
+    strip_ansi_from_bytes(s.as_bytes())
 }
 
 #[cfg(test)]
