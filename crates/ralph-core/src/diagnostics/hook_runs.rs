@@ -1,7 +1,7 @@
 use crate::hooks::{HookRunResult, HookStreamOutput, HookSuspendMode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -76,10 +76,7 @@ pub struct HookRunLogger {
 impl HookRunLogger {
     pub fn new(session_dir: &Path) -> std::io::Result<Self> {
         let log_file = session_dir.join("hook-runs.jsonl");
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_file)?;
+        let file = crate::utils::open_append(log_file)?;
 
         Ok(Self {
             writer: BufWriter::new(file),
@@ -87,8 +84,7 @@ impl HookRunLogger {
     }
 
     pub fn log(&mut self, entry: &HookRunTelemetryEntry) -> std::io::Result<()> {
-        serde_json::to_writer(&mut self.writer, entry)?;
-        self.writer.write_all(b"\n")?;
+        crate::utils::write_jsonl_line(&mut self.writer, entry)?;
         self.writer.flush()?;
         Ok(())
     }
