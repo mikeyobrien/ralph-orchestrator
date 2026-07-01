@@ -9,6 +9,7 @@ use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
 use crate::session_recorder::Record;
+use crate::utils::strip_ansi_bytes;
 
 /// Replay mode for session playback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,7 +263,7 @@ impl SessionPlayer {
             }
             ReplayMode::Text => {
                 // Strip ANSI sequences
-                let stripped = strip_ansi(&bytes);
+                let stripped = strip_ansi_bytes(&bytes);
                 writer.write_all(&stripped)?;
             }
         }
@@ -308,7 +309,7 @@ impl SessionPlayer {
     /// Collects terminal output with ANSI codes stripped (for text snapshot testing).
     pub fn collect_text_output(&self) -> io::Result<String> {
         let raw = self.collect_terminal_output()?;
-        Ok(String::from_utf8_lossy(&strip_ansi(raw.as_bytes())).into_owned())
+        Ok(String::from_utf8_lossy(&strip_ansi_bytes(raw.as_bytes())).into_owned())
     }
 
     /// Collects terminal output with ANSI codes escaped (for ANSI snapshot testing).
@@ -316,62 +317,6 @@ impl SessionPlayer {
         let raw = self.collect_terminal_output()?;
         Ok(escape_ansi(&raw))
     }
-}
-
-/// Strips ANSI escape sequences from bytes.
-///
-/// Handles CSI sequences (\x1b[...m), OSC sequences (\x1b]...\x07),
-/// and simple escape sequences (\x1b followed by a single char).
-fn strip_ansi(bytes: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-
-    while i < bytes.len() {
-        if bytes[i] == 0x1b {
-            // ESC character - start of escape sequence
-            i += 1;
-            if i >= bytes.len() {
-                break;
-            }
-
-            match bytes[i] {
-                b'[' => {
-                    // CSI sequence: ESC [ ... (final byte in 0x40-0x7E range)
-                    i += 1;
-                    while i < bytes.len() && !(0x40..=0x7E).contains(&bytes[i]) {
-                        i += 1;
-                    }
-                    if i < bytes.len() {
-                        i += 1; // Skip final byte
-                    }
-                }
-                b']' => {
-                    // OSC sequence: ESC ] ... (terminated by BEL or ST)
-                    i += 1;
-                    while i < bytes.len() {
-                        if bytes[i] == 0x07 {
-                            i += 1;
-                            break;
-                        }
-                        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                }
-                _ => {
-                    // Simple escape sequence: ESC + single char
-                    i += 1;
-                }
-            }
-        } else {
-            result.push(bytes[i]);
-            i += 1;
-        }
-    }
-
-    result
 }
 
 /// Escapes ANSI sequences for visibility in snapshots.
@@ -432,21 +377,6 @@ mod tests {
         let output = player.collect_terminal_output().unwrap();
 
         assert_eq!(output, "Hello, World!");
-    }
-
-    #[test]
-    fn test_strip_ansi() {
-        let input = b"Hello, \x1b[32mWorld\x1b[0m!";
-        let stripped = strip_ansi(input);
-        assert_eq!(stripped, b"Hello, World!");
-    }
-
-    #[test]
-    fn test_strip_ansi_complex() {
-        // Multiple CSI sequences
-        let input = b"\x1b[1m\x1b[32mBold Green\x1b[0m Normal";
-        let stripped = strip_ansi(input);
-        assert_eq!(stripped, b"Bold Green Normal");
     }
 
     #[test]

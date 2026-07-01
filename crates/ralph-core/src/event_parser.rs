@@ -6,64 +6,8 @@
 //! <event topic="handoff" target="reviewer">payload</event>
 //! ```
 
+use crate::utils::strip_ansi;
 use ralph_proto::{Event, HatId};
-
-/// Strips ANSI escape sequences from a string.
-///
-/// Handles CSI sequences (\x1b[...m), OSC sequences (\x1b]...\x07),
-/// and simple escape sequences (\x1b followed by a single char).
-fn strip_ansi(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut result = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-
-    while i < bytes.len() {
-        if bytes[i] == 0x1b {
-            // ESC character - start of escape sequence
-            i += 1;
-            if i >= bytes.len() {
-                break;
-            }
-
-            match bytes[i] {
-                b'[' => {
-                    // CSI sequence: ESC [ ... (final byte in 0x40-0x7E range)
-                    i += 1;
-                    while i < bytes.len() && !(0x40..=0x7E).contains(&bytes[i]) {
-                        i += 1;
-                    }
-                    if i < bytes.len() {
-                        i += 1; // Skip final byte
-                    }
-                }
-                b']' => {
-                    // OSC sequence: ESC ] ... (terminated by BEL or ST)
-                    i += 1;
-                    while i < bytes.len() {
-                        if bytes[i] == 0x07 {
-                            i += 1;
-                            break;
-                        }
-                        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                }
-                _ => {
-                    // Simple escape sequence: ESC + single char
-                    i += 1;
-                }
-            }
-        } else {
-            result.push(bytes[i]);
-            i += 1;
-        }
-    }
-
-    String::from_utf8_lossy(&result).into_owned()
-}
 
 /// Evidence of backpressure checks for build.done events.
 #[derive(Debug, Clone, PartialEq)]
@@ -364,11 +308,15 @@ impl EventParser {
         }
     }
 
-    fn parse_mutation_evidence(clean_payload: &str) -> Option<MutationEvidence> {
-        let segment = clean_payload
+    fn find_segment<'a>(payload: &'a str, predicate: impl Fn(&str) -> bool) -> Option<&'a str> {
+        payload
             .split(|c| c == '\n' || c == ',')
             .map(str::trim)
-            .find(|segment| segment.contains("mutants:"))?;
+            .find(|s| predicate(s))
+    }
+
+    fn parse_mutation_evidence(clean_payload: &str) -> Option<MutationEvidence> {
+        let segment = Self::find_segment(clean_payload, |s| s.contains("mutants:"))?;
 
         let normalized = segment.to_lowercase();
         let status = if normalized.contains("mutants: pass") {
@@ -390,38 +338,30 @@ impl EventParser {
     }
 
     fn parse_complexity_evidence(clean_payload: &str) -> Option<f64> {
-        let segment = clean_payload
-            .split(|c| c == '\n' || c == ',')
-            .map(str::trim)
-            .find(|segment| segment.to_lowercase().starts_with("complexity:"))?;
-
+        let segment =
+            Self::find_segment(clean_payload, |s| s.to_lowercase().starts_with("complexity:"))?;
         Self::extract_first_number(segment)
     }
 
-    fn parse_duplication_evidence(clean_payload: &str) -> Option<bool> {
-        let segment = clean_payload
-            .split(|c| c == '\n' || c == ',')
-            .map(str::trim)
-            .find(|segment| segment.to_lowercase().starts_with("duplication:"))?;
+    fn find_pass_fail_segment(
+        clean_payload: &str,
+        predicate: impl Fn(&str) -> bool,
+    ) -> Option<bool> {
+        let segment = Self::find_segment(clean_payload, predicate)?;
+        Self::parse_quality_pass_fail(&segment.to_lowercase())
+    }
 
-        let normalized = segment.to_lowercase();
-        if normalized.contains("duplication: pass") {
-            Some(true)
-        } else if normalized.contains("duplication: fail") {
-            Some(false)
-        } else {
-            None
-        }
+    fn parse_duplication_evidence(clean_payload: &str) -> Option<bool> {
+        Self::find_pass_fail_segment(clean_payload, |s| {
+            s.to_lowercase().starts_with("duplication:")
+        })
     }
 
     fn parse_performance_regression(clean_payload: &str) -> Option<bool> {
-        let segment = clean_payload
-            .split(|c| c == '\n' || c == ',')
-            .map(str::trim)
-            .find(|segment| {
-                let normalized = segment.to_lowercase();
-                normalized.starts_with("performance:") || normalized.starts_with("perf:")
-            })?;
+        let segment = Self::find_segment(clean_payload, |s| {
+            let normalized = s.to_lowercase();
+            normalized.starts_with("performance:") || normalized.starts_with("perf:")
+        })?;
 
         let normalized = segment.to_lowercase();
         if normalized.contains("regression") || normalized.contains("fail") {
@@ -436,24 +376,10 @@ impl EventParser {
         }
     }
 
-    /// Parses spec acceptance criteria verification evidence.
-    ///
-    /// Returns `Some(true)` for `specs: pass`, `Some(false)` for `specs: fail`,
-    /// and `None` if no specs evidence is present.
     fn parse_specs_evidence(clean_payload: &str) -> Option<bool> {
-        let segment = clean_payload
-            .split(|c| c == '\n' || c == ',')
-            .map(str::trim)
-            .find(|segment| segment.to_lowercase().starts_with("specs:"))?;
-
-        let normalized = segment.to_lowercase();
-        if normalized.contains("specs: pass") {
-            Some(true)
-        } else if normalized.contains("specs: fail") {
-            Some(false)
-        } else {
-            None
-        }
+        Self::find_pass_fail_segment(clean_payload, |s| {
+            s.to_lowercase().starts_with("specs:")
+        })
     }
 
     fn extract_percentage(segment: &str) -> Option<f64> {
@@ -563,10 +489,7 @@ impl EventParser {
         };
         let mut seen = false;
 
-        for segment in clean_payload
-            .split(|c| c == '\n' || c == ',')
-            .map(str::trim)
-        {
+        for segment in clean_payload.split(|c| c == '\n' || c == ',').map(str::trim) {
             if segment.is_empty() {
                 continue;
             }

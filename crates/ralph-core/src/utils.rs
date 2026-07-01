@@ -142,6 +142,65 @@ pub fn clone_file_from_flock(flock: &nix::fcntl::Flock<std::fs::File>) -> io::Re
     Ok(owned_fd.into())
 }
 
+/// Strips ANSI escape sequences from raw bytes.
+///
+/// Handles CSI sequences (`\x1b[...`), OSC sequences (`\x1b]...BEL/ST`),
+/// and simple escape sequences (`\x1b` + single char).
+pub fn strip_ansi_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i >= bytes.len() {
+                break;
+            }
+
+            match bytes[i] {
+                b'[' => {
+                    // CSI sequence: ESC [ ... (final byte in 0x40-0x7E range)
+                    i += 1;
+                    while i < bytes.len() && !(0x40..=0x7E).contains(&bytes[i]) {
+                        i += 1;
+                    }
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                }
+                b']' => {
+                    // OSC sequence: ESC ] ... (terminated by BEL or ST)
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == 0x07 {
+                            i += 1;
+                            break;
+                        }
+                        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        } else {
+            result.push(bytes[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Strips ANSI escape sequences from a string.
+pub fn strip_ansi(s: &str) -> String {
+    String::from_utf8_lossy(&strip_ansi_bytes(s.as_bytes())).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +275,23 @@ mod tests {
     #[test]
     fn format_duration_zero() {
         assert_eq!(format_duration(Duration::from_secs(0)), "0s");
+    }
+
+    #[test]
+    fn strip_ansi_bytes_removes_csi() {
+        let input = b"Hello, \x1b[32mWorld\x1b[0m!";
+        assert_eq!(strip_ansi_bytes(input), b"Hello, World!");
+    }
+
+    #[test]
+    fn strip_ansi_bytes_removes_multiple_csi() {
+        let input = b"\x1b[1m\x1b[32mBold Green\x1b[0m Normal";
+        assert_eq!(strip_ansi_bytes(input), b"Bold Green Normal");
+    }
+
+    #[test]
+    fn strip_ansi_str_wrapper() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
     }
 
     #[test]
