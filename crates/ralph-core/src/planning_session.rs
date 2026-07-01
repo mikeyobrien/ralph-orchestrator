@@ -252,8 +252,7 @@ impl PlanningSession {
             .open(&self.conversation_path)?;
 
         // Write entry as JSONL
-        let json = serde_json::to_string(entry)?;
-        writeln!(file, "{}", json)?;
+        crate::utils::write_jsonl_line(&mut file, entry)?;
 
         Ok(())
     }

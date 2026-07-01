@@ -188,8 +188,7 @@ impl<W: Write> SessionRecorder<W> {
     fn write_record(&self, record: &Record) {
         if let Ok(mut writer) = self.writer.lock() {
             // Ignore write errors - recording should not interrupt execution
-            if let Ok(json) = serde_json::to_string(record) {
-                let _ = writeln!(writer, "{}", json);
+            if crate::utils::write_jsonl_line(&mut *writer, record).is_ok() {
                 let _ = writer.flush();
             }
         }

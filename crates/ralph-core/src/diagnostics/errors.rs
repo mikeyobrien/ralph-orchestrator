@@ -150,8 +150,7 @@ impl ErrorLogger {
             context: error.context(),
         };
 
-        if let Ok(json) = serde_json::to_string(&entry) {
-            let _ = writeln!(self.file, "{}", json);
+        if crate::utils::write_jsonl_line(&mut self.file, &entry).is_ok() {
             let _ = self.file.flush();
         }
     }

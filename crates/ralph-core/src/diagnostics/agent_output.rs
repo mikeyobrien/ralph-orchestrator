@@ -78,8 +78,7 @@ impl AgentOutputLogger {
             content,
         };
 
-        let json = serde_json::to_string(&entry)?;
-        writeln!(self.file, "{}", json)?;
+        crate::utils::write_jsonl_line(&mut self.file, &entry)?;
         self.file.flush()?;
 
         Ok(())

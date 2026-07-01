@@ -76,8 +76,7 @@ impl<S: Subscriber> Layer<S> for DiagnosticTraceLayer {
 
         // Write to file
         let mut writer = self.writer.lock().unwrap();
-        if let Ok(json) = serde_json::to_string(&entry) {
-            let _ = writeln!(writer, "{}", json);
+        if crate::utils::write_jsonl_line(&mut *writer, &entry).is_ok() {
             let _ = writer.flush();
         }
     }

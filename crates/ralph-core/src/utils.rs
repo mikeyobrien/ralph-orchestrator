@@ -150,6 +150,13 @@ pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Serializes a value as JSON and writes it as a single JSONL line.
+pub fn write_jsonl_line(writer: &mut impl std::io::Write, value: &impl serde::Serialize) -> io::Result<()> {
+    let json = serde_json::to_string(value)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    writeln!(writer, "{}", json)
+}
+
 /// Strips ANSI escape sequences from raw bytes.
 ///
 /// Handles CSI sequences (`\x1b[...`), OSC sequences (`\x1b]...BEL/ST`),

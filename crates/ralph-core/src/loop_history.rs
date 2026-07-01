@@ -146,8 +146,7 @@ impl LoopHistory {
             .open(&self.path)?;
 
         // Serialize and write
-        let json = serde_json::to_string(&event)?;
-        writeln!(file, "{}", json)?;
+        crate::utils::write_jsonl_line(&mut file, &event)?;
         file.flush()?;
 
         Ok(())
