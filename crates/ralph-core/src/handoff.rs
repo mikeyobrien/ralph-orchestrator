@@ -64,10 +64,7 @@ impl HandoffWriter {
     pub fn write(&self, original_prompt: &str) -> Result<HandoffResult, HandoffError> {
         let path = self.context.handoff_path();
 
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&path)?;
 
         let content = self.generate_content(original_prompt);
 

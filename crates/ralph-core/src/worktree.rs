@@ -33,6 +33,21 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::git_ops;
+
+/// The branch prefix used for Ralph worktree branches (e.g., `ralph/loop-id`).
+pub const BRANCH_PREFIX: &str = "ralph/";
+
+/// Returns the branch name for a given loop ID (e.g., `"ralph/my-loop"`).
+pub fn branch_name(loop_id: &str) -> String {
+    format!("{BRANCH_PREFIX}{loop_id}")
+}
+
+/// Extracts the loop ID from a Ralph branch name, if the branch has the prefix.
+pub fn loop_id_from_branch(branch: &str) -> Option<&str> {
+    branch.strip_prefix(BRANCH_PREFIX)
+}
+
 /// Configuration for worktree operations.
 #[derive(Debug, Clone)]
 pub struct WorktreeConfig {
@@ -153,7 +168,7 @@ pub fn create_worktree(
 
     let worktree_base = config.worktree_path(repo_root);
     let worktree_path = worktree_base.join(loop_id);
-    let branch_name = format!("ralph/{loop_id}");
+    let branch_name = branch_name(loop_id);
 
     // Check if worktree already exists
     if worktree_path.exists() {
@@ -200,7 +215,7 @@ pub fn create_worktree(
     }
 
     // Get the HEAD commit
-    let head = get_head_commit(&worktree_path).ok();
+    let head = git_ops::get_head_sha(&worktree_path).ok();
 
     tracing::debug!(
         "Created worktree at {} on branch {} (synced {} untracked, {} modified files)",
@@ -258,7 +273,7 @@ pub fn remove_worktree(
 
     // Delete the branch if it was a ralph/* branch
     if let Some(branch) = branch
-        && branch.starts_with("ralph/")
+        && branch.starts_with(BRANCH_PREFIX)
     {
         let output = Command::new("git")
             .args(["branch", "-D", &branch])
@@ -445,27 +460,12 @@ fn get_worktree_branch(worktree_path: &Path) -> Option<String> {
     None
 }
 
-/// Get the HEAD commit SHA for a worktree.
-fn get_head_commit(worktree_path: &Path) -> Result<String, WorktreeError> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(worktree_path)
-        .output()?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(WorktreeError::Git(stderr.to_string()))
-    }
-}
-
 /// Get the list of Ralph-specific worktrees (those with `ralph/` branches).
 pub fn list_ralph_worktrees(repo_root: impl AsRef<Path>) -> Result<Vec<Worktree>, WorktreeError> {
     let all = list_worktrees(repo_root)?;
     Ok(all
         .into_iter()
-        .filter(|wt| wt.branch.starts_with("ralph/"))
+        .filter(|wt| wt.branch.starts_with(BRANCH_PREFIX))
         .collect())
 }
 
@@ -543,10 +543,7 @@ fn copy_file_with_structure(
         return Ok(false);
     }
 
-    // Create parent directories
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    crate::utils::ensure_parent_dir(&dest)?;
 
     // Handle symlinks on Unix
     #[cfg(unix)]
@@ -801,7 +798,7 @@ mod tests {
         assert!(
             ralph_worktrees
                 .iter()
-                .all(|wt| wt.branch.starts_with("ralph/"))
+                .all(|wt| wt.branch.starts_with(BRANCH_PREFIX))
         );
     }
 

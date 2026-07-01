@@ -42,6 +42,19 @@ fn parse_task_line(line: &str) -> Option<Task> {
     }
 }
 
+fn load_tasks_from_path(path: &Path) -> io::Result<Vec<Task>> {
+    if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        Ok(content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(parse_task_line)
+            .collect())
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 impl TaskStore {
     /// Loads tasks from the JSONL file at the given path.
     ///
@@ -53,16 +66,7 @@ impl TaskStore {
         let lock = FileLock::new(path)?;
         let _guard = lock.shared()?;
 
-        let tasks = if path.exists() {
-            let content = std::fs::read_to_string(path)?;
-            content
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .filter_map(|line| parse_task_line(line))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let tasks = load_tasks_from_path(path)?;
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -71,16 +75,8 @@ impl TaskStore {
         })
     }
 
-    /// Saves all tasks to the JSONL file.
-    ///
-    /// Creates parent directories if they don't exist.
-    /// Uses an exclusive lock to prevent concurrent writes.
-    pub fn save(&self) -> io::Result<()> {
-        let _guard = self.lock.exclusive()?;
-
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+    fn write_tasks_to_disk(&self) -> io::Result<()> {
+        crate::utils::ensure_parent_dir(&self.path)?;
         let content: String = self
             .tasks
             .iter()
@@ -104,6 +100,15 @@ impl TaskStore {
         )
     }
 
+    /// Saves all tasks to the JSONL file.
+    ///
+    /// Creates parent directories if they don't exist.
+    /// Uses an exclusive lock to prevent concurrent writes.
+    pub fn save(&self) -> io::Result<()> {
+        let _guard = self.lock.exclusive()?;
+        self.write_tasks_to_disk()
+    }
+
     /// Reloads tasks from disk, useful after external modifications.
     ///
     /// Logs warnings for malformed JSON lines and skips them.
@@ -111,16 +116,7 @@ impl TaskStore {
     pub fn reload(&mut self) -> io::Result<()> {
         let _guard = self.lock.shared()?;
 
-        self.tasks = if self.path.exists() {
-            let content = std::fs::read_to_string(&self.path)?;
-            content
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .filter_map(|line| parse_task_line(line))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        self.tasks = load_tasks_from_path(&self.path)?;
 
         Ok(())
     }
@@ -146,45 +142,13 @@ impl TaskStore {
         let _guard = self.lock.exclusive()?;
 
         // Reload to get latest changes from other loops
-        self.tasks = if self.path.exists() {
-            let content = std::fs::read_to_string(&self.path)?;
-            content
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .filter_map(|line| parse_task_line(line))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        self.tasks = load_tasks_from_path(&self.path)?;
 
         // Execute the user function
         let result = f(self);
 
         // Save changes
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content: String = self
-            .tasks
-            .iter()
-            .map(|t| {
-                serde_json::to_string(t).map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("task serialization failed: {e}"),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .join("\n");
-        std::fs::write(
-            &self.path,
-            if content.is_empty() {
-                String::new()
-            } else {
-                content + "\n"
-            },
-        )?;
+        self.write_tasks_to_disk()?;
 
         Ok(result)
     }
@@ -217,42 +181,31 @@ impl TaskStore {
             .find(|t| t.key.as_deref() == Some(key))
     }
 
+    /// Applies a mutation to the task with the given ID, returning a reference to it.
+    fn mutate_task(&mut self, id: &str, f: impl FnOnce(&mut Task)) -> Option<&Task> {
+        let idx = self.tasks.iter().position(|t| t.id == id)?;
+        f(&mut self.tasks[idx]);
+        Some(&self.tasks[idx])
+    }
+
     /// Closes a task by ID and returns a reference to it.
     pub fn close(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.status = TaskStatus::Closed;
-            task.closed = Some(chrono::Utc::now().to_rfc3339());
-            return self.get(id);
-        }
-        None
+        self.mutate_task(id, Task::close)
     }
 
     /// Starts a task by ID and returns a reference to it.
     pub fn start(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.start();
-            return self.get(id);
-        }
-        None
+        self.mutate_task(id, Task::start)
     }
 
     /// Fails a task by ID and returns a reference to it.
     pub fn fail(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.status = TaskStatus::Failed;
-            task.closed = Some(chrono::Utc::now().to_rfc3339());
-            return self.get(id);
-        }
-        None
+        self.mutate_task(id, Task::fail)
     }
 
     /// Reopens a task by ID and returns a reference to it.
     pub fn reopen(&mut self, id: &str) -> Option<&Task> {
-        if let Some(task) = self.get_mut(id) {
-            task.reopen();
-            return self.get(id);
-        }
-        None
+        self.mutate_task(id, Task::reopen)
     }
 
     /// Ensures a task exists for a stable key, returning the existing or created task.

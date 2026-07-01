@@ -142,6 +142,14 @@ pub fn clone_file_from_flock(flock: &nix::fcntl::Flock<std::fs::File>) -> io::Re
     Ok(owned_fd.into())
 }
 
+/// Creates parent directories for the given path if they don't exist.
+pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
 /// Strips ANSI escape sequences from raw bytes.
 ///
 /// Handles CSI sequences (`\x1b[...`), OSC sequences (`\x1b]...BEL/ST`),

@@ -133,10 +133,7 @@ impl LoopHistory {
     ///
     /// This is thread-safe via file locking.
     pub fn append(&self, event: HistoryEvent) -> Result<(), HistoryError> {
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.path)?;
 
         // Acquire exclusive lock
         let file_lock = FileLock::new(&self.path)?;

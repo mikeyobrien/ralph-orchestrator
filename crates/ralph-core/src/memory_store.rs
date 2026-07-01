@@ -87,10 +87,7 @@ impl MarkdownMemoryStore {
             ));
         }
 
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.path)?;
 
         fs::write(&self.path, self.template())
     }
@@ -123,10 +120,7 @@ impl MarkdownMemoryStore {
         let content = if self.exists() {
             fs::read_to_string(&self.path)?
         } else {
-            // Ensure parent directory exists
-            if let Some(parent) = self.path.parent() {
-                fs::create_dir_all(parent)?;
-            }
+            crate::utils::ensure_parent_dir(&self.path)?;
             self.template()
         };
 
@@ -210,10 +204,7 @@ impl MarkdownMemoryStore {
     /// This is used internally for operations like delete that need
     /// to rewrite the entire file. The caller must hold the exclusive lock.
     fn write_all_internal(&self, memories: &[Memory]) -> io::Result<()> {
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.path)?;
 
         let mut content = String::from("# Memories\n");
 

@@ -58,9 +58,7 @@ impl UrgentSteerStore {
     }
 
     pub fn write(&self, record: &UrgentSteerRecord) -> io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.path)?;
 
         let payload = serde_json::to_string(record)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;

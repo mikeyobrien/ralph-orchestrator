@@ -187,9 +187,7 @@ impl EventLogger {
     /// Ensures the parent directory exists and opens the file.
     fn ensure_open(&mut self) -> std::io::Result<&mut File> {
         if self.file.is_none() {
-            if let Some(parent) = self.path.parent() {
-                fs::create_dir_all(parent)?;
-            }
+            crate::utils::ensure_parent_dir(&self.path)?;
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)

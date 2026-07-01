@@ -111,10 +111,7 @@ impl SummaryWriter {
         final_commit: Option<&str>,
         landing: Option<&LandingResult>,
     ) -> io::Result<()> {
-        // Ensure parent directory exists
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.path)?;
 
         let content = self.generate_content_with_landing(
             reason,

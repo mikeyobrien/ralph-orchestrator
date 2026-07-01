@@ -59,10 +59,7 @@ impl FileLock {
                 .unwrap_or_default()
         ));
 
-        // Ensure parent directory exists
-        if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&lock_path)?;
 
         Ok(Self { lock_path })
     }
@@ -238,10 +235,7 @@ impl LockedFile {
     /// Writes content to the file with an exclusive lock.
     pub fn write(&self, path: &Path, content: &str) -> io::Result<()> {
         let _guard = self.lock.exclusive()?;
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(path)?;
         std::fs::write(path, content)
     }
 

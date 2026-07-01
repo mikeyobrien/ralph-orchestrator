@@ -38,9 +38,10 @@
 
 use crate::loop_lock::LoopLock;
 use crate::text::truncate_with_ellipsis;
+use crate::utils::is_process_alive;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -235,125 +236,66 @@ impl MergeQueue {
     }
 
     /// Marks a loop as being merged.
-    ///
-    /// # Arguments
-    ///
-    /// * `loop_id` - The loop identifier
-    /// * `pid` - PID of the merge-ralph process
     pub fn mark_merging(&self, loop_id: &str, pid: u32) -> Result<(), MergeQueueError> {
-        // Verify loop is in queued or needs_review state
-        let entry = self.get_entry(loop_id)?;
-        match entry {
-            Some(e) if e.state == MergeState::Queued || e.state == MergeState::NeedsReview => {}
-            Some(e) => {
-                return Err(MergeQueueError::InvalidTransition(
-                    loop_id.to_string(),
-                    e.state,
-                    MergeState::Merging,
-                ));
-            }
-            None => return Err(MergeQueueError::NotFound(loop_id.to_string())),
-        }
-
-        let event = MergeEvent {
+        self.validate_transition(loop_id, MergeState::Merging, &[MergeState::Queued, MergeState::NeedsReview])?;
+        self.append_event(&MergeEvent {
             ts: Utc::now(),
             loop_id: loop_id.to_string(),
             event: MergeEventType::Merging { pid },
-        };
-        self.append_event(&event)
+        })
     }
 
     /// Marks a loop as successfully merged.
-    ///
-    /// # Arguments
-    ///
-    /// * `loop_id` - The loop identifier
-    /// * `commit` - The merge commit SHA
     pub fn mark_merged(&self, loop_id: &str, commit: &str) -> Result<(), MergeQueueError> {
-        // Verify loop is in merging state
-        let entry = self.get_entry(loop_id)?;
-        match entry {
-            Some(e) if e.state == MergeState::Merging => {}
-            Some(e) => {
-                return Err(MergeQueueError::InvalidTransition(
-                    loop_id.to_string(),
-                    e.state,
-                    MergeState::Merged,
-                ));
-            }
-            None => return Err(MergeQueueError::NotFound(loop_id.to_string())),
-        }
-
-        let event = MergeEvent {
+        self.validate_transition(loop_id, MergeState::Merged, &[MergeState::Merging])?;
+        self.append_event(&MergeEvent {
             ts: Utc::now(),
             loop_id: loop_id.to_string(),
             event: MergeEventType::Merged {
                 commit: commit.to_string(),
             },
-        };
-        self.append_event(&event)
+        })
     }
 
     /// Marks a loop as needing manual review.
-    ///
-    /// # Arguments
-    ///
-    /// * `loop_id` - The loop identifier
-    /// * `reason` - Reason for the failure
     pub fn mark_needs_review(&self, loop_id: &str, reason: &str) -> Result<(), MergeQueueError> {
-        // Verify loop is in merging state
-        let entry = self.get_entry(loop_id)?;
-        match entry {
-            Some(e) if e.state == MergeState::Merging => {}
-            Some(e) => {
-                return Err(MergeQueueError::InvalidTransition(
-                    loop_id.to_string(),
-                    e.state,
-                    MergeState::NeedsReview,
-                ));
-            }
-            None => return Err(MergeQueueError::NotFound(loop_id.to_string())),
-        }
-
-        let event = MergeEvent {
+        self.validate_transition(loop_id, MergeState::NeedsReview, &[MergeState::Merging])?;
+        self.append_event(&MergeEvent {
             ts: Utc::now(),
             loop_id: loop_id.to_string(),
             event: MergeEventType::NeedsReview {
                 reason: reason.to_string(),
             },
-        };
-        self.append_event(&event)
+        })
     }
 
     /// Marks a loop as discarded.
-    ///
-    /// # Arguments
-    ///
-    /// * `loop_id` - The loop identifier
-    /// * `reason` - Optional reason for discarding
     pub fn discard(&self, loop_id: &str, reason: Option<&str>) -> Result<(), MergeQueueError> {
-        // Can discard from queued or needs_review states
-        let entry = self.get_entry(loop_id)?;
-        match entry {
-            Some(e) if e.state == MergeState::Queued || e.state == MergeState::NeedsReview => {}
-            Some(e) => {
-                return Err(MergeQueueError::InvalidTransition(
-                    loop_id.to_string(),
-                    e.state,
-                    MergeState::Discarded,
-                ));
-            }
-            None => return Err(MergeQueueError::NotFound(loop_id.to_string())),
-        }
-
-        let event = MergeEvent {
+        self.validate_transition(loop_id, MergeState::Discarded, &[MergeState::Queued, MergeState::NeedsReview])?;
+        self.append_event(&MergeEvent {
             ts: Utc::now(),
             loop_id: loop_id.to_string(),
             event: MergeEventType::Discarded {
                 reason: reason.map(String::from),
             },
-        };
-        self.append_event(&event)
+        })
+    }
+
+    fn validate_transition(
+        &self,
+        loop_id: &str,
+        target: MergeState,
+        valid_from: &[MergeState],
+    ) -> Result<(), MergeQueueError> {
+        match self.get_entry(loop_id)? {
+            Some(e) if valid_from.contains(&e.state) => Ok(()),
+            Some(e) => Err(MergeQueueError::InvalidTransition(
+                loop_id.to_string(),
+                e.state,
+                target,
+            )),
+            None => Err(MergeQueueError::NotFound(loop_id.to_string())),
+        }
     }
 
     /// Gets the next pending loop ready for merge (FIFO order).
@@ -488,7 +430,6 @@ impl MergeQueue {
 
         let file = File::open(&self.queue_path)?;
 
-        // Acquire shared lock (blocking)
         let flock = Flock::lock(file, FlockArg::LockShared).map_err(|(_, errno)| {
             MergeQueueError::Io(io::Error::new(
                 io::ErrorKind::Other,
@@ -496,13 +437,7 @@ impl MergeQueue {
             ))
         })?;
 
-        // Get a reference to the inner file
-        use std::os::fd::AsFd;
-        let borrowed_fd = flock.as_fd();
-        let owned_fd = borrowed_fd.try_clone_to_owned()?;
-        let file: File = owned_fd.into();
-
-        f(&file)
+        f(&crate::utils::clone_file_from_flock(&flock)?)
     }
 
     #[cfg(not(unix))]
@@ -521,12 +456,8 @@ impl MergeQueue {
     {
         use nix::fcntl::{Flock, FlockArg};
 
-        // Ensure .ralph directory exists
-        if let Some(parent) = self.queue_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.queue_path)?;
 
-        // Open or create the file
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -534,7 +465,6 @@ impl MergeQueue {
             .truncate(false)
             .open(&self.queue_path)?;
 
-        // Acquire exclusive lock (blocking)
         let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
             MergeQueueError::Io(io::Error::new(
                 io::ErrorKind::Other,
@@ -542,13 +472,7 @@ impl MergeQueue {
             ))
         })?;
 
-        // Get a clone of the underlying file
-        use std::os::fd::AsFd;
-        let borrowed_fd = flock.as_fd();
-        let owned_fd = borrowed_fd.try_clone_to_owned()?;
-        let file: File = owned_fd.into();
-
-        f(file)
+        f(crate::utils::clone_file_from_flock(&flock)?)
     }
 
     #[cfg(not(unix))]
@@ -585,7 +509,7 @@ pub fn merge_button_state(
     // 2. PID in the file is still alive
     if let Ok(Some(metadata)) = LoopLock::read_existing(workspace) {
         // Check if the PID is still running
-        if is_pid_alive(metadata.pid) {
+        if is_process_alive(metadata.pid) {
             return Ok(MergeButtonState::Blocked {
                 reason: format!("primary loop running: {}", metadata.prompt),
             });
@@ -595,30 +519,13 @@ pub fn merge_button_state(
     Ok(MergeButtonState::Active)
 }
 
-/// Check if a process with the given PID is still running.
-fn is_pid_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::kill;
-        use nix::unistd::Pid;
-        // Signal 0 (None) doesn't send any signal but checks if the process exists
-        kill(Pid::from_raw(pid as i32), None).is_ok()
-    }
-
-    #[cfg(not(unix))]
-    {
-        // On non-Unix, assume the process is alive if we can't check
-        true
-    }
-}
-
 /// Generate a smart merge summary from worktree commits.
 ///
 /// Reads the commit history and generates a concise summary suitable for
 /// the merge commit message (single line, respects 72-char limit when combined
 /// with the loop ID prefix).
 pub fn smart_merge_summary(workspace: &Path, loop_id: &str) -> Result<String, MergeQueueError> {
-    let branch_name = format!("ralph/{}", loop_id);
+    let branch_name = crate::worktree::branch_name(loop_id);
 
     // Get commit messages from the branch
     let output = Command::new("git")
@@ -675,7 +582,7 @@ pub fn merge_needs_steering(
     workspace: &Path,
     loop_id: &str,
 ) -> Result<SteeringDecision, MergeQueueError> {
-    let branch_name = format!("ralph/{}", loop_id);
+    let branch_name = crate::worktree::branch_name(loop_id);
 
     // Check for potential conflicts by doing a dry-run merge
     let output = Command::new("git")
@@ -731,7 +638,7 @@ pub fn merge_needs_steering(
 ///
 /// Describes what was merged including commit count and key changes.
 pub fn merge_execution_summary(workspace: &Path, loop_id: &str) -> Result<String, MergeQueueError> {
-    let branch_name = format!("ralph/{}", loop_id);
+    let branch_name = crate::worktree::branch_name(loop_id);
 
     // Get commit count
     let count_output = Command::new("git")

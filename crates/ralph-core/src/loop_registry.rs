@@ -65,32 +65,10 @@ pub struct LoopEntry {
 impl LoopEntry {
     /// Creates a new loop entry for the current process.
     pub fn new(prompt: impl Into<String>, worktree_path: Option<impl Into<String>>) -> Self {
-        Self {
-            id: Self::generate_id(),
-            pid: process::id(),
-            started: Utc::now(),
-            prompt: prompt.into(),
-            worktree_path: worktree_path.map(Into::into),
-            workspace: std::env::current_dir()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default(),
-        }
-    }
-
-    /// Creates a new loop entry with a specific workspace.
-    pub fn with_workspace(
-        prompt: impl Into<String>,
-        worktree_path: Option<impl Into<String>>,
-        workspace: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: Self::generate_id(),
-            pid: process::id(),
-            started: Utc::now(),
-            prompt: prompt.into(),
-            worktree_path: worktree_path.map(Into::into),
-            workspace: workspace.into(),
-        }
+        let workspace = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        Self::with_id(Self::generate_id(), prompt, worktree_path, workspace)
     }
 
     /// Creates a new loop entry with a specific ID.
@@ -115,13 +93,7 @@ impl LoopEntry {
 
     /// Generates a unique loop ID: loop-{timestamp}-{hex_suffix}
     fn generate_id() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let duration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-        let timestamp = duration.as_secs();
-        let hex_suffix = format!("{:04x}", duration.subsec_micros() % 0x10000);
-        format!("loop-{}-{}", timestamp, hex_suffix)
+        crate::utils::generate_prefixed_id("loop")
     }
 
     /// Checks if the process for this loop is still running.
@@ -129,54 +101,21 @@ impl LoopEntry {
     /// For worktree loops, also verifies the worktree directory still exists.
     /// A process whose worktree has been removed externally is considered dead
     /// (zombie) even if the PID is still alive.
-    #[cfg(unix)]
     pub fn is_alive(&self) -> bool {
-        use nix::sys::signal::kill;
-        use nix::unistd::Pid;
-
-        // Signal 0 (None) checks if process exists without sending a signal
-        let pid_alive = kill(Pid::from_raw(self.pid as i32), None)
-            .map(|_| true)
-            .unwrap_or(false);
-
-        if !pid_alive {
+        if !crate::utils::is_process_alive(self.pid) {
             return false;
         }
 
-        // If this is a worktree loop, verify the directory still exists
         if let Some(ref wt_path) = self.worktree_path {
             return std::path::Path::new(wt_path).is_dir();
         }
 
-        true
-    }
-
-    #[cfg(not(unix))]
-    pub fn is_alive(&self) -> bool {
-        // On non-Unix platforms, check worktree existence at minimum
-        if let Some(ref wt_path) = self.worktree_path {
-            return std::path::Path::new(wt_path).is_dir();
-        }
         true
     }
 
     /// Checks if the PID is alive (regardless of worktree state).
-    ///
-    /// Use this when you need to know if the process itself is running,
-    /// e.g. to decide whether to send a signal.
-    #[cfg(unix)]
     pub fn is_pid_alive(&self) -> bool {
-        use nix::sys::signal::kill;
-        use nix::unistd::Pid;
-
-        kill(Pid::from_raw(self.pid as i32), None)
-            .map(|_| true)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    pub fn is_pid_alive(&self) -> bool {
-        true
+        crate::utils::is_process_alive(self.pid)
     }
 }
 
@@ -231,7 +170,6 @@ impl LoopRegistry {
     pub fn register(&self, entry: LoopEntry) -> Result<String, RegistryError> {
         let id = entry.id.clone();
         self.with_lock(|data| {
-            // Remove any existing entry with the same PID (stale from crash)
             data.loops.retain(|e| e.pid != entry.pid);
             data.loops.push(entry);
         })?;
@@ -240,11 +178,10 @@ impl LoopRegistry {
 
     /// Deregisters a loop by ID.
     pub fn deregister(&self, id: &str) -> Result<(), RegistryError> {
-        let mut found = false;
-        self.with_lock(|data| {
+        let found = self.with_lock(|data| {
             let original_len = data.loops.len();
             data.loops.retain(|e| e.id != id);
-            found = data.loops.len() != original_len;
+            data.loops.len() != original_len
         })?;
         if !found {
             return Err(RegistryError::NotFound(id.to_string()));
@@ -254,31 +191,23 @@ impl LoopRegistry {
 
     /// Gets a loop entry by ID.
     pub fn get(&self, id: &str) -> Result<Option<LoopEntry>, RegistryError> {
-        let mut result = None;
         self.with_lock(|data| {
-            result = data.loops.iter().find(|e| e.id == id).cloned();
-        })?;
-        Ok(result)
+            data.loops.iter().find(|e| e.id == id).cloned()
+        })
     }
 
     /// Lists all active loops (after cleaning stale entries).
     pub fn list(&self) -> Result<Vec<LoopEntry>, RegistryError> {
-        let mut result = Vec::new();
-        self.with_lock(|data| {
-            result = data.loops.clone();
-        })?;
-        Ok(result)
+        self.with_lock(|data| data.loops.clone())
     }
 
     /// Cleans stale entries (dead PIDs) and returns the number removed.
     pub fn clean_stale(&self) -> Result<usize, RegistryError> {
-        let mut removed = 0;
         self.with_lock(|data| {
             let original_len = data.loops.len();
             data.loops.retain(|e| e.is_alive());
-            removed = original_len - data.loops.len();
-        })?;
-        Ok(removed)
+            original_len - data.loops.len()
+        })
     }
 
     /// Deregisters all entries for the current process.
@@ -287,29 +216,23 @@ impl LoopRegistry {
     /// can only have one active loop entry.
     pub fn deregister_current_process(&self) -> Result<bool, RegistryError> {
         let pid = std::process::id();
-        let mut found = false;
         self.with_lock(|data| {
             let original_len = data.loops.len();
             data.loops.retain(|e| e.pid != pid);
-            found = data.loops.len() != original_len;
-        })?;
-        Ok(found)
+            data.loops.len() != original_len
+        })
     }
 
-    /// Executes an operation with the registry file locked.
+    /// Executes an operation with the registry file locked, returning its result.
     #[cfg(unix)]
-    fn with_lock<F>(&self, f: F) -> Result<(), RegistryError>
+    fn with_lock<F, R>(&self, f: F) -> Result<R, RegistryError>
     where
-        F: FnOnce(&mut RegistryData),
+        F: FnOnce(&mut RegistryData) -> R,
     {
         use nix::fcntl::{Flock, FlockArg};
 
-        // Ensure .ralph directory exists
-        if let Some(parent) = self.registry_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        crate::utils::ensure_parent_dir(&self.registry_path)?;
 
-        // Open or create the file
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -317,7 +240,6 @@ impl LoopRegistry {
             .truncate(false)
             .open(&self.registry_path)?;
 
-        // Acquire exclusive lock (blocking)
         let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
             RegistryError::Io(io::Error::new(
                 io::ErrorKind::Other,
@@ -325,28 +247,24 @@ impl LoopRegistry {
             ))
         })?;
 
-        // Read existing data using the locked file
         let mut data = self.read_data_from_file(&flock)?;
 
         // Clean stale entries before any operation (dead PIDs only).
-        //
         // Keep zombie worktree entries (PID alive, worktree gone) so callers can
         // still discover and explicitly stop/clean them.
         data.loops.retain(|e| e.is_pid_alive());
 
-        // Execute the user function
-        f(&mut data);
+        let result = f(&mut data);
 
-        // Write back the data
         self.write_data_to_file(&flock, &data)?;
 
-        Ok(())
+        Ok(result)
     }
 
     #[cfg(not(unix))]
-    fn with_lock<F>(&self, _f: F) -> Result<(), RegistryError>
+    fn with_lock<F, R>(&self, _f: F) -> Result<R, RegistryError>
     where
-        F: FnOnce(&mut RegistryData),
+        F: FnOnce(&mut RegistryData) -> R,
     {
         Err(RegistryError::UnsupportedPlatform)
     }
@@ -357,13 +275,7 @@ impl LoopRegistry {
         &self,
         flock: &nix::fcntl::Flock<File>,
     ) -> Result<RegistryData, RegistryError> {
-        use std::os::fd::AsFd;
-
-        // Get a clone of the underlying file via BorrowedFd
-        let borrowed_fd = flock.as_fd();
-        let owned_fd = borrowed_fd.try_clone_to_owned()?;
-        let mut file: File = owned_fd.into();
-
+        let mut file = crate::utils::clone_file_from_flock(flock)?;
         file.seek(SeekFrom::Start(0))?;
 
         let mut contents = String::new();
@@ -383,13 +295,7 @@ impl LoopRegistry {
         flock: &nix::fcntl::Flock<File>,
         data: &RegistryData,
     ) -> Result<(), RegistryError> {
-        use std::os::fd::AsFd;
-
-        // Get a clone of the underlying file via BorrowedFd
-        let borrowed_fd = flock.as_fd();
-        let owned_fd = borrowed_fd.try_clone_to_owned()?;
-        let mut file: File = owned_fd.into();
-
+        let mut file = crate::utils::clone_file_from_flock(flock)?;
         file.set_len(0)?;
         file.seek(SeekFrom::Start(0))?;
 
