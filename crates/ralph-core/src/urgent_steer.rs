@@ -1,3 +1,4 @@
+use crate::utils::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -13,7 +14,7 @@ impl UrgentSteerRecord {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             messages: vec![message.into()],
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: now_rfc3339(),
         }
     }
 }

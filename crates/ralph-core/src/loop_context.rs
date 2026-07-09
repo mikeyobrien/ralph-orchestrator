@@ -55,6 +55,7 @@
 //! ```
 
 use crate::text::truncate_with_ellipsis;
+use crate::utils::now_rfc3339;
 use std::path::{Path, PathBuf};
 
 /// Context for resolving paths within a Ralph loop.
@@ -476,7 +477,7 @@ impl LoopContext {
         self.ensure_agent_dir()?;
 
         let loop_id = self.loop_id().unwrap_or("unknown");
-        let created = chrono::Utc::now().to_rfc3339();
+        let created = now_rfc3339();
 
         // Truncate prompt for readability
         let prompt_preview = truncate_with_ellipsis(prompt, 200);

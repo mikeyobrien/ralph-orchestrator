@@ -143,6 +143,11 @@ pub fn clone_file_from_flock(flock: &nix::fcntl::Flock<std::fs::File>) -> io::Re
     Ok(owned_fd.into())
 }
 
+/// Returns the current UTC time as an RFC 3339 string.
+pub fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 /// Creates parent directories for the given path if they don't exist.
 pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
