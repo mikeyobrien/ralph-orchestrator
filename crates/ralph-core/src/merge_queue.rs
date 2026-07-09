@@ -59,6 +59,16 @@ pub struct MergeEvent {
     pub event: MergeEventType,
 }
 
+impl MergeEvent {
+    fn new(loop_id: &str, event: MergeEventType) -> Self {
+        Self {
+            ts: Utc::now(),
+            loop_id: loop_id.to_string(),
+            event,
+        }
+    }
+}
+
 /// Types of merge events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -225,60 +235,51 @@ impl MergeQueue {
     /// * `loop_id` - The loop identifier
     /// * `prompt` - The prompt that was executed
     pub fn enqueue(&self, loop_id: &str, prompt: &str) -> Result<(), MergeQueueError> {
-        let event = MergeEvent {
-            ts: Utc::now(),
-            loop_id: loop_id.to_string(),
-            event: MergeEventType::Queued {
+        self.append_event(&MergeEvent::new(
+            loop_id,
+            MergeEventType::Queued {
                 prompt: prompt.to_string(),
             },
-        };
-        self.append_event(&event)
+        ))
     }
 
     /// Marks a loop as being merged.
     pub fn mark_merging(&self, loop_id: &str, pid: u32) -> Result<(), MergeQueueError> {
         self.validate_transition(loop_id, MergeState::Merging, &[MergeState::Queued, MergeState::NeedsReview])?;
-        self.append_event(&MergeEvent {
-            ts: Utc::now(),
-            loop_id: loop_id.to_string(),
-            event: MergeEventType::Merging { pid },
-        })
+        self.append_event(&MergeEvent::new(loop_id, MergeEventType::Merging { pid }))
     }
 
     /// Marks a loop as successfully merged.
     pub fn mark_merged(&self, loop_id: &str, commit: &str) -> Result<(), MergeQueueError> {
         self.validate_transition(loop_id, MergeState::Merged, &[MergeState::Merging])?;
-        self.append_event(&MergeEvent {
-            ts: Utc::now(),
-            loop_id: loop_id.to_string(),
-            event: MergeEventType::Merged {
+        self.append_event(&MergeEvent::new(
+            loop_id,
+            MergeEventType::Merged {
                 commit: commit.to_string(),
             },
-        })
+        ))
     }
 
     /// Marks a loop as needing manual review.
     pub fn mark_needs_review(&self, loop_id: &str, reason: &str) -> Result<(), MergeQueueError> {
         self.validate_transition(loop_id, MergeState::NeedsReview, &[MergeState::Merging])?;
-        self.append_event(&MergeEvent {
-            ts: Utc::now(),
-            loop_id: loop_id.to_string(),
-            event: MergeEventType::NeedsReview {
+        self.append_event(&MergeEvent::new(
+            loop_id,
+            MergeEventType::NeedsReview {
                 reason: reason.to_string(),
             },
-        })
+        ))
     }
 
     /// Marks a loop as discarded.
     pub fn discard(&self, loop_id: &str, reason: Option<&str>) -> Result<(), MergeQueueError> {
         self.validate_transition(loop_id, MergeState::Discarded, &[MergeState::Queued, MergeState::NeedsReview])?;
-        self.append_event(&MergeEvent {
-            ts: Utc::now(),
-            loop_id: loop_id.to_string(),
-            event: MergeEventType::Discarded {
+        self.append_event(&MergeEvent::new(
+            loop_id,
+            MergeEventType::Discarded {
                 reason: reason.map(String::from),
             },
-        })
+        ))
     }
 
     fn validate_transition(
