@@ -18,6 +18,54 @@ pub mod colors {
     pub const MAGENTA: &str = "\x1b[35m";
 }
 
+/// Color palette that returns either real ANSI codes or empty strings.
+///
+/// Eliminates `if use_colors { … } else { … }` branches at call sites.
+/// Use `Palette::new(use_colors)` and then reference fields like `p.green`, `p.reset`, etc.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub struct Palette {
+    pub reset: &'static str,
+    pub bold: &'static str,
+    pub dim: &'static str,
+    pub green: &'static str,
+    pub yellow: &'static str,
+    pub red: &'static str,
+    pub cyan: &'static str,
+    pub blue: &'static str,
+    pub magenta: &'static str,
+}
+
+impl Palette {
+    pub fn new(use_colors: bool) -> Self {
+        if use_colors {
+            Self {
+                reset: colors::RESET,
+                bold: colors::BOLD,
+                dim: colors::DIM,
+                green: colors::GREEN,
+                yellow: colors::YELLOW,
+                red: colors::RED,
+                cyan: colors::CYAN,
+                blue: colors::BLUE,
+                magenta: colors::MAGENTA,
+            }
+        } else {
+            Self {
+                reset: "",
+                bold: "",
+                dim: "",
+                green: "",
+                yellow: "",
+                red: "",
+                cyan: "",
+                blue: "",
+                magenta: "",
+            }
+        }
+    }
+}
+
 /// Returns the resume command hint for a given termination reason, if the
 /// reason is recoverable by re-running with `--continue`.
 ///

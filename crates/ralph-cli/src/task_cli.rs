@@ -10,12 +10,29 @@
 //! - `reopen`: Reopen a closed/failed task
 //! - `show`: Show a single task by ID
 
-use crate::{display::colors, resolve_path_from_workspace, resolve_workspace_root};
+use crate::{display::Palette, resolve_path_from_workspace, resolve_workspace_root};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use ralph_core::{Task, TaskStatus, TaskStore};
 use std::path::PathBuf;
+
+fn status_color_for(status: TaskStatus, p: &Palette) -> &'static str {
+    match status {
+        TaskStatus::Open => p.green,
+        TaskStatus::InProgress => p.blue,
+        TaskStatus::Closed => p.dim,
+        TaskStatus::Failed => p.red,
+    }
+}
+
+fn priority_color_for(priority: u8, p: &Palette) -> &'static str {
+    match priority {
+        1 => p.red,
+        2 => p.yellow,
+        _ => p.reset,
+    }
+}
 
 /// Output format for task commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -356,6 +373,7 @@ pub fn execute(args: TaskArgs, use_colors: bool) -> Result<()> {
 fn execute_add(args: AddArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task = add_common_task_fields(
         Task::new(args.title, args.priority),
@@ -370,11 +388,7 @@ fn execute_add(args: AddArgs, root: Option<&PathBuf>, use_colors: bool) -> Resul
 
     match args.format {
         OutputFormat::Table => {
-            if use_colors {
-                println!("{}Created task {}{}", colors::GREEN, task_id, colors::RESET);
-            } else {
-                println!("Created task {}", task_id);
-            }
+            println!("{}Created task {}{}", p.green, task_id, p.reset);
             println!("  Title: {}", task.title);
             println!("  Priority: {}", task.priority);
             if let Some(key) = &task.key {
@@ -398,6 +412,7 @@ fn execute_add(args: AddArgs, root: Option<&PathBuf>, use_colors: bool) -> Resul
 fn execute_ensure(args: EnsureArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task = add_common_task_fields(
         Task::new(args.title, args.priority).with_key(Some(args.key.clone())),
@@ -415,17 +430,7 @@ fn execute_ensure(args: EnsureArgs, root: Option<&PathBuf>, use_colors: bool) ->
     match args.format {
         OutputFormat::Table => {
             let verb = if existed { "Reused" } else { "Ensured" };
-            if use_colors {
-                println!(
-                    "{}{} task {}{}",
-                    colors::GREEN,
-                    verb,
-                    ensured.id,
-                    colors::RESET
-                );
-            } else {
-                println!("{} task {}", verb, ensured.id);
-            }
+            println!("{}{} task {}{}", p.green, verb, ensured.id, p.reset);
             println!("  Title: {}", ensured.title);
             println!("  Key: {}", key);
             println!("  Priority: {}", ensured.priority);
@@ -447,6 +452,7 @@ fn execute_ensure(args: EnsureArgs, root: Option<&PathBuf>, use_colors: bool) ->
 fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let tasks = filter_tasks_for_list(&store, &args);
 
@@ -455,39 +461,16 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
             if tasks.is_empty() {
                 println!("No tasks found");
             } else {
-                if use_colors {
-                    println!(
-                        "{}{:<20} {:<15} {:<8} {:<60} {:<24}{}",
-                        colors::DIM,
-                        "ID",
-                        "Status",
-                        "Priority",
-                        "Title",
-                        "Key",
-                        colors::RESET
-                    );
-                    println!("{}{}{}", colors::DIM, "-".repeat(131), colors::RESET);
-                } else {
-                    println!(
-                        "{:<20} {:<15} {:<8} {:<60} {:<24}",
-                        "ID", "Status", "Priority", "Title", "Key"
-                    );
-                    println!("{}", "-".repeat(131));
-                }
+                println!(
+                    "{}{:<20} {:<15} {:<8} {:<60} {:<24}{}",
+                    p.dim, "ID", "Status", "Priority", "Title", "Key", p.reset
+                );
+                println!("{}{}{}", p.dim, "-".repeat(131), p.reset);
 
                 for task in &tasks {
-                    let (status_str, status_color) = match task.status {
-                        TaskStatus::Open => ("open", colors::GREEN),
-                        TaskStatus::InProgress => ("in_progress", colors::BLUE),
-                        TaskStatus::Closed => ("closed", colors::DIM),
-                        TaskStatus::Failed => ("failed", colors::RED),
-                    };
-
-                    let priority_color = match task.priority {
-                        1 => colors::RED,
-                        2 => colors::YELLOW,
-                        _ => colors::RESET,
-                    };
+                    let status_str = task.status.to_string();
+                    let sc = status_color_for(task.status, &p);
+                    let pc = priority_color_for(task.priority, &p);
 
                     let title_truncated = if task.title.len() > 60 {
                         crate::display::truncate(&task.title, 60)
@@ -495,31 +478,20 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                         task.title.clone()
                     };
 
-                    if use_colors {
-                        println!(
-                            "{}{:<20}{} {}{:<15}{} {}{:<8}{} {:<60} {:<24}",
-                            colors::DIM,
-                            task.id,
-                            colors::RESET,
-                            status_color,
-                            status_str,
-                            colors::RESET,
-                            priority_color,
-                            task.priority,
-                            colors::RESET,
-                            title_truncated,
-                            task.key.as_deref().unwrap_or("-")
-                        );
-                    } else {
-                        println!(
-                            "{:<20} {:<15} {:<8} {:<60} {:<24}",
-                            task.id,
-                            status_str,
-                            task.priority,
-                            title_truncated,
-                            task.key.as_deref().unwrap_or("-")
-                        );
-                    }
+                    println!(
+                        "{}{:<20}{} {}{:<15}{} {}{:<8}{} {:<60} {:<24}",
+                        p.dim,
+                        task.id,
+                        p.reset,
+                        sc,
+                        status_str,
+                        p.reset,
+                        pc,
+                        task.priority,
+                        p.reset,
+                        title_truncated,
+                        task.key.as_deref().unwrap_or("-")
+                    );
                 }
             }
         }
@@ -539,6 +511,7 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let ready = filter_tasks_for_ready(&store, &args, root);
 
@@ -547,24 +520,11 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
             if ready.is_empty() {
                 println!("No ready tasks");
             } else {
-                if use_colors {
-                    println!(
-                        "{}{:<20} {:<8} {:<60} {:<24}{}",
-                        colors::DIM,
-                        "ID",
-                        "Priority",
-                        "Title",
-                        "Key",
-                        colors::RESET
-                    );
-                    println!("{}{}{}", colors::DIM, "-".repeat(115), colors::RESET);
-                } else {
-                    println!(
-                        "{:<20} {:<8} {:<60} {:<24}",
-                        "ID", "Priority", "Title", "Key"
-                    );
-                    println!("{}", "-".repeat(115));
-                }
+                println!(
+                    "{}{:<20} {:<8} {:<60} {:<24}{}",
+                    p.dim, "ID", "Priority", "Title", "Key", p.reset
+                );
+                println!("{}{}{}", p.dim, "-".repeat(115), p.reset);
 
                 for task in &ready {
                     let title_truncated = if task.title.len() > 60 {
@@ -573,33 +533,19 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
                         task.title.clone()
                     };
 
-                    let priority_color = match task.priority {
-                        1 => colors::RED,
-                        2 => colors::YELLOW,
-                        _ => colors::RESET,
-                    };
+                    let pc = priority_color_for(task.priority, &p);
 
-                    if use_colors {
-                        println!(
-                            "{}{:<20}{} {}{:<8}{} {:<60} {:<24}",
-                            colors::DIM,
-                            task.id,
-                            colors::RESET,
-                            priority_color,
-                            task.priority,
-                            colors::RESET,
-                            title_truncated,
-                            task.key.as_deref().unwrap_or("-")
-                        );
-                    } else {
-                        println!(
-                            "{:<20} {:<8} {:<60} {:<24}",
-                            task.id,
-                            task.priority,
-                            title_truncated,
-                            task.key.as_deref().unwrap_or("-")
-                        );
-                    }
+                    println!(
+                        "{}{:<20}{} {}{:<8}{} {:<60} {:<24}",
+                        p.dim,
+                        task.id,
+                        p.reset,
+                        pc,
+                        task.priority,
+                        p.reset,
+                        title_truncated,
+                        task.key.as_deref().unwrap_or("-")
+                    );
                 }
             }
         }
@@ -619,6 +565,7 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
 fn execute_start(args: StartArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task_id = args.id;
     let started = store
@@ -626,17 +573,10 @@ fn execute_start(args: StartArgs, root: Option<&PathBuf>, use_colors: bool) -> R
         .context("Failed to save tasks")?
         .context(format!("Task {} not found", task_id))?;
 
-    if use_colors {
-        println!(
-            "{}Started task: {} - {}{}",
-            colors::BLUE,
-            task_id,
-            started.title,
-            colors::RESET
-        );
-    } else {
-        println!("Started task: {} - {}", task_id, started.title);
-    }
+    println!(
+        "{}Started task: {} - {}{}",
+        p.blue, task_id, started.title, p.reset
+    );
 
     Ok(())
 }
@@ -644,6 +584,7 @@ fn execute_start(args: StartArgs, root: Option<&PathBuf>, use_colors: bool) -> R
 fn execute_close(args: CloseArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task_id = args.id;
     let title = store
@@ -654,17 +595,10 @@ fn execute_close(args: CloseArgs, root: Option<&PathBuf>, use_colors: bool) -> R
 
     store.save().context("Failed to save tasks")?;
 
-    if use_colors {
-        println!(
-            "{}Closed task: {} - {}{}",
-            colors::GREEN,
-            task_id,
-            title,
-            colors::RESET
-        );
-    } else {
-        println!("Closed task: {} - {}", task_id, title);
-    }
+    println!(
+        "{}Closed task: {} - {}{}",
+        p.green, task_id, title, p.reset
+    );
 
     Ok(())
 }
@@ -672,6 +606,7 @@ fn execute_close(args: CloseArgs, root: Option<&PathBuf>, use_colors: bool) -> R
 fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task_id = args.id;
     let title = store
@@ -682,17 +617,10 @@ fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 
     store.save().context("Failed to save tasks")?;
 
-    if use_colors {
-        println!(
-            "{}Failed task: {} - {}{}",
-            colors::RED,
-            task_id,
-            title,
-            colors::RESET
-        );
-    } else {
-        println!("Failed task: {} - {}", task_id, title);
-    }
+    println!(
+        "{}Failed task: {} - {}{}",
+        p.red, task_id, title, p.reset
+    );
 
     Ok(())
 }
@@ -700,6 +628,7 @@ fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task = store
         .get(&args.id)
@@ -707,77 +636,29 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 
     match args.format {
         OutputFormat::Table => {
-            let status_str = match task.status {
-                TaskStatus::Open => "open",
-                TaskStatus::InProgress => "in_progress",
-                TaskStatus::Closed => "closed",
-                TaskStatus::Failed => "failed",
-            };
+            let status_str = task.status.to_string();
+            let sc = status_color_for(task.status, &p);
+            let pc = priority_color_for(task.priority, &p);
 
-            if use_colors {
-                let status_color = match task.status {
-                    TaskStatus::Open => colors::GREEN,
-                    TaskStatus::InProgress => colors::BLUE,
-                    TaskStatus::Closed => colors::DIM,
-                    TaskStatus::Failed => colors::RED,
-                };
-                let priority_color = match task.priority {
-                    1 => colors::RED,
-                    2 => colors::YELLOW,
-                    _ => colors::RESET,
-                };
-
-                println!("{}ID:          {}{}", colors::DIM, task.id, colors::RESET);
-                println!("Title:       {}", task.title);
-                if let Some(desc) = &task.description {
-                    println!("Description: {}", desc);
-                }
-                println!(
-                    "Status:      {}{}{}",
-                    status_color,
-                    status_str,
-                    colors::RESET
-                );
-                println!(
-                    "Priority:    {}{}{}",
-                    priority_color,
-                    task.priority,
-                    colors::RESET
-                );
-                if let Some(key) = &task.key {
-                    println!("Key:         {}", key);
-                }
-                if !task.blocked_by.is_empty() {
-                    println!("Blocked by:  {}", task.blocked_by.join(", "));
-                }
-                println!("Created:     {}", task.created);
-                if let Some(started) = &task.started {
-                    println!("Started:     {}", started);
-                }
-                if let Some(closed) = &task.closed {
-                    println!("Closed:      {}", closed);
-                }
-            } else {
-                println!("ID:          {}", task.id);
-                println!("Title:       {}", task.title);
-                if let Some(desc) = &task.description {
-                    println!("Description: {}", desc);
-                }
-                println!("Status:      {}", status_str);
-                println!("Priority:    {}", task.priority);
-                if let Some(key) = &task.key {
-                    println!("Key:         {}", key);
-                }
-                if !task.blocked_by.is_empty() {
-                    println!("Blocked by:  {}", task.blocked_by.join(", "));
-                }
-                println!("Created:     {}", task.created);
-                if let Some(started) = &task.started {
-                    println!("Started:     {}", started);
-                }
-                if let Some(closed) = &task.closed {
-                    println!("Closed:      {}", closed);
-                }
+            println!("{}ID:          {}{}", p.dim, task.id, p.reset);
+            println!("Title:       {}", task.title);
+            if let Some(desc) = &task.description {
+                println!("Description: {}", desc);
+            }
+            println!("Status:      {}{}{}", sc, status_str, p.reset);
+            println!("Priority:    {}{}{}", pc, task.priority, p.reset);
+            if let Some(key) = &task.key {
+                println!("Key:         {}", key);
+            }
+            if !task.blocked_by.is_empty() {
+                println!("Blocked by:  {}", task.blocked_by.join(", "));
+            }
+            println!("Created:     {}", task.created);
+            if let Some(started) = &task.started {
+                println!("Started:     {}", started);
+            }
+            if let Some(closed) = &task.closed {
+                println!("Closed:      {}", closed);
             }
         }
         OutputFormat::Json => {
@@ -794,6 +675,7 @@ fn execute_show(args: ShowArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 fn execute_reopen(args: ReopenArgs, root: Option<&PathBuf>, use_colors: bool) -> Result<()> {
     let path = get_tasks_path(root);
     let mut store = TaskStore::load(&path).context("Failed to load tasks")?;
+    let p = Palette::new(use_colors);
 
     let task_id = args.id;
     let reopened = store
@@ -801,17 +683,10 @@ fn execute_reopen(args: ReopenArgs, root: Option<&PathBuf>, use_colors: bool) ->
         .context("Failed to save tasks")?
         .context(format!("Task {} not found", task_id))?;
 
-    if use_colors {
-        println!(
-            "{}Reopened task: {} - {}{}",
-            colors::YELLOW,
-            task_id,
-            reopened.title,
-            colors::RESET
-        );
-    } else {
-        println!("Reopened task: {} - {}", task_id, reopened.title);
-    }
+    println!(
+        "{}Reopened task: {} - {}{}",
+        p.yellow, task_id, reopened.title, p.reset
+    );
 
     Ok(())
 }
