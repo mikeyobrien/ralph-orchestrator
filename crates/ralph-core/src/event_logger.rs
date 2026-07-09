@@ -5,43 +5,13 @@
 
 use crate::loop_context::LoopContext;
 use crate::text::floor_char_boundary;
+use crate::utils::{deserialize_flexible_payload_required, now_rfc3339};
 use ralph_proto::{Event, HatId};
-use serde::{Deserialize, Deserializer, Serialize};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use serde::{Deserialize, Serialize};
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use tracing::{debug, warn};
-
-/// Custom deserializer that accepts both String and structured JSON payloads.
-///
-/// Agents sometimes write structured data as JSON objects instead of strings.
-/// This deserializer accepts both formats:
-/// - `"payload": "string"` → `"string"`
-/// - `"payload": {...}` → `"{...}"` (serialized to JSON string)
-/// - `"payload": null` or missing → `""` (empty string)
-fn deserialize_flexible_payload<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum FlexiblePayload {
-        String(String),
-        Object(serde_json::Value),
-    }
-
-    let opt = Option::<FlexiblePayload>::deserialize(deserializer)?;
-    Ok(opt
-        .map(|flex| match flex {
-            FlexiblePayload::String(s) => s,
-            FlexiblePayload::Object(serde_json::Value::Null) => String::new(),
-            FlexiblePayload::Object(obj) => {
-                // Serialize the object back to a JSON string
-                serde_json::to_string(&obj).unwrap_or_else(|_| obj.to_string())
-            }
-        })
-        .unwrap_or_default())
-}
+use tracing::debug;
 
 /// A logged event record for debugging.
 ///
@@ -74,7 +44,7 @@ pub struct EventRecord {
 
     /// Event content (truncated if large). Defaults to empty string for agent events without payload.
     /// Accepts both string and object payloads - objects are serialized to JSON strings.
-    #[serde(default, deserialize_with = "deserialize_flexible_payload")]
+    #[serde(default, deserialize_with = "deserialize_flexible_payload_required")]
     pub payload: String,
 
     /// How many times this task has blocked (optional).
@@ -118,7 +88,7 @@ impl EventRecord {
         };
 
         Self {
-            ts: chrono::Utc::now().to_rfc3339(),
+            ts: now_rfc3339(),
             iteration,
             hat: hat.into(),
             topic: event.topic.to_string(),
@@ -188,10 +158,7 @@ impl EventLogger {
     fn ensure_open(&mut self) -> std::io::Result<&mut File> {
         if self.file.is_none() {
             crate::utils::ensure_parent_dir(&self.path)?;
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.path)?;
+            let file = crate::utils::open_append(&self.path)?;
             self.file = Some(file);
         }
         Ok(self.file.as_mut().unwrap())
@@ -262,28 +229,7 @@ impl EventHistory {
 
     /// Reads all event records from the file.
     pub fn read_all(&self) -> std::io::Result<Vec<EventRecord>> {
-        if !self.exists() {
-            return Ok(Vec::new());
-        }
-
-        let file = File::open(&self.path)?;
-        let reader = BufReader::new(file);
-        let mut records = Vec::new();
-
-        for (line_num, line) in reader.lines().enumerate() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            match serde_json::from_str(&line) {
-                Ok(record) => records.push(record),
-                Err(e) => {
-                    warn!(line = line_num + 1, error = %e, "Failed to parse event record");
-                }
-            }
-        }
-
-        Ok(records)
+        crate::utils::read_jsonl_lenient(&self.path)
     }
 
     /// Reads the last N event records.

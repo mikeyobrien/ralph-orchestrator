@@ -2,11 +2,51 @@
 //!
 //! This module provides shared utilities used across the Ralph orchestrator.
 
+use serde::{Deserialize, Deserializer};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FlexiblePayload {
+    String(String),
+    Object(serde_json::Value),
+}
+
+fn flexible_payload_to_string(flex: FlexiblePayload) -> String {
+    match flex {
+        FlexiblePayload::String(s) => s,
+        FlexiblePayload::Object(serde_json::Value::Null) => String::new(),
+        FlexiblePayload::Object(obj) => {
+            serde_json::to_string(&obj).unwrap_or_else(|_| obj.to_string())
+        }
+    }
+}
+
+/// Deserializes a payload that may be a string or JSON object into a required `String`.
+/// Null or missing values become an empty string.
+pub fn deserialize_flexible_payload_required<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::<FlexiblePayload>::deserialize(deserializer)?;
+    Ok(opt.map(flexible_payload_to_string).unwrap_or_default())
+}
+
+/// Deserializes a payload that may be a string or JSON object into an `Option<String>`.
+/// Null or missing values become `None`.
+pub fn deserialize_flexible_payload_optional<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::<FlexiblePayload>::deserialize(deserializer)?;
+    Ok(opt.map(flexible_payload_to_string))
+}
 
 /// Generates a unique ID with the given prefix: `{prefix}-{unix_secs}-{4_hex_chars}`.
 pub fn generate_prefixed_id(prefix: &str) -> String {

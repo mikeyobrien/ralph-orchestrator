@@ -1,6 +1,7 @@
 //! Event reader for consuming events from `.ralph/events.jsonl`.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use crate::utils::deserialize_flexible_payload_optional;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -55,35 +56,6 @@ impl MalformedLine {
     }
 }
 
-/// Custom deserializer that accepts both String and structured JSON payloads.
-///
-/// Agents sometimes write structured data as JSON objects instead of strings.
-/// This deserializer accepts both formats:
-/// - `"payload": "string"` → `Some("string")`
-/// - `"payload": {...}` → `Some("{...}")` (serialized to JSON string)
-/// - `"payload": null` → `None`
-/// - missing field → `None`
-fn deserialize_flexible_payload<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum FlexiblePayload {
-        String(String),
-        Object(serde_json::Value),
-    }
-
-    let opt = Option::<FlexiblePayload>::deserialize(deserializer)?;
-    Ok(opt.map(|flex| match flex {
-        FlexiblePayload::String(s) => s,
-        FlexiblePayload::Object(obj) => {
-            // Serialize the object back to a JSON string
-            serde_json::to_string(&obj).unwrap_or_else(|_| obj.to_string())
-        }
-    }))
-}
-
 /// A simplified event for reading from JSONL.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Event {
@@ -91,7 +63,7 @@ pub struct Event {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_flexible_payload"
+        deserialize_with = "deserialize_flexible_payload_optional"
     )]
     pub payload: Option<String>,
     pub ts: String,
