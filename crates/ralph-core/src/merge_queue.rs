@@ -41,7 +41,7 @@ use crate::text::truncate_with_ellipsis;
 use crate::utils::is_process_alive;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -458,12 +458,7 @@ impl MergeQueue {
 
         crate::utils::ensure_parent_dir(&self.queue_path)?;
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&self.queue_path)?;
+        let file = crate::utils::open_read_write(&self.queue_path)?;
 
         let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
             MergeQueueError::Io(io::Error::new(

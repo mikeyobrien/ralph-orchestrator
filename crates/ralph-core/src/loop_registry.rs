@@ -34,7 +34,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -233,12 +233,7 @@ impl LoopRegistry {
 
         crate::utils::ensure_parent_dir(&self.registry_path)?;
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&self.registry_path)?;
+        let file = crate::utils::open_read_write(&self.registry_path)?;
 
         let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
             RegistryError::Io(io::Error::new(
@@ -312,6 +307,7 @@ impl LoopRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]

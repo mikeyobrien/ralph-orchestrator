@@ -3,6 +3,7 @@
 //! This module provides shared utilities used across the Ralph orchestrator.
 
 use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -155,6 +156,44 @@ pub fn write_jsonl_line(writer: &mut impl std::io::Write, value: &impl serde::Se
     let json = serde_json::to_string(value)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     writeln!(writer, "{}", json)
+}
+
+/// Parses JSONL content leniently: skips empty lines and malformed JSON, collecting only valid records.
+pub fn parse_jsonl_lenient<T: serde::de::DeserializeOwned>(content: &str) -> Vec<T> {
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// Reads a JSONL file leniently, skipping empty and malformed lines.
+///
+/// Returns an empty `Vec` if the file does not exist.
+pub fn read_jsonl_lenient<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Vec<T>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(path)?;
+    Ok(parse_jsonl_lenient(&content))
+}
+
+/// Opens a file in create + append mode.
+pub fn open_append(path: impl AsRef<Path>) -> io::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.as_ref())
+}
+
+/// Opens (or creates) a file for read + write without truncating.
+pub fn open_read_write(path: impl AsRef<Path>) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.as_ref())
 }
 
 /// Strips ANSI escape sequences from raw bytes.
@@ -312,6 +351,52 @@ mod tests {
     #[test]
     fn strip_ansi_str_wrapper() {
         assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+    }
+
+    #[test]
+    fn parse_jsonl_lenient_basic() {
+        #[derive(serde::Deserialize, PartialEq, Debug)]
+        struct Item {
+            id: u32,
+        }
+
+        let content = "{\"id\":1}\n{\"id\":2}\n";
+        let items: Vec<Item> = parse_jsonl_lenient(content);
+        assert_eq!(items, vec![Item { id: 1 }, Item { id: 2 }]);
+    }
+
+    #[test]
+    fn parse_jsonl_lenient_skips_bad_lines() {
+        #[derive(serde::Deserialize, PartialEq, Debug)]
+        struct Item {
+            id: u32,
+        }
+
+        let content = "{\"id\":1}\nnot json\n\n{\"id\":3}\n";
+        let items: Vec<Item> = parse_jsonl_lenient(content);
+        assert_eq!(items, vec![Item { id: 1 }, Item { id: 3 }]);
+    }
+
+    #[test]
+    fn parse_jsonl_lenient_empty_input() {
+        #[derive(serde::Deserialize, PartialEq, Debug)]
+        struct Item {
+            id: u32,
+        }
+
+        let items: Vec<Item> = parse_jsonl_lenient("");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn read_jsonl_lenient_missing_file() {
+        #[derive(serde::Deserialize)]
+        struct Item {
+            _id: u32,
+        }
+
+        let items: Vec<Item> = read_jsonl_lenient(Path::new("/nonexistent/file.jsonl")).unwrap();
+        assert!(items.is_empty());
     }
 
     #[test]

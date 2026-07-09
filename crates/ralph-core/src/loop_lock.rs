@@ -28,7 +28,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -109,12 +109,7 @@ impl LoopLock {
     fn prepare_lock_file(workspace_root: impl AsRef<Path>) -> Result<(PathBuf, File), LockError> {
         let lock_path = workspace_root.as_ref().join(Self::LOCK_FILE);
         crate::utils::ensure_parent_dir(&lock_path)?;
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)?;
+        let file = crate::utils::open_read_write(&lock_path)?;
         Ok((lock_path, file))
     }
 
@@ -334,6 +329,7 @@ impl LoopLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]

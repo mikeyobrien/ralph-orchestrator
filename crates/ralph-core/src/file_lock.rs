@@ -30,7 +30,7 @@
 //! }
 //! ```
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -170,12 +170,7 @@ impl FileLock {
 
     /// Opens or creates the lock file.
     fn open_lock_file(&self) -> io::Result<File> {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&self.lock_path)
+        crate::utils::open_read_write(&self.lock_path)
     }
 
     /// Returns the path to the lock file.
