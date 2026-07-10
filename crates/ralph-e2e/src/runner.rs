@@ -529,9 +529,9 @@ mod tests {
     use super::*;
     use crate::executor::ScenarioConfig;
     use crate::models::Assertion;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use async_trait::async_trait;
-    use std::env;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -626,22 +626,6 @@ mod tests {
                 }],
                 duration: Duration::from_millis(100),
             })
-        }
-    }
-
-    /// Creates a unique test workspace path.
-    fn test_workspace_base(test_name: &str) -> PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-runner-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    /// Cleans up a test workspace.
-    fn cleanup_workspace(path: &PathBuf) {
-        if path.exists() {
-            std::fs::remove_dir_all(path).ok();
         }
     }
 
@@ -803,7 +787,7 @@ mod tests {
 
     #[test]
     fn test_runner_scenario_count() {
-        let workspace = test_workspace_base("scenario-count");
+        let workspace = test_workspace("runner", "scenario-count");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
             Box::new(MockScenario::new("mock-1", true)),
@@ -818,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_runner_matching_scenarios_no_filter() {
-        let workspace = test_workspace_base("matching-no-filter");
+        let workspace = test_workspace("runner", "matching-no-filter");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
             Box::new(MockScenario::new("mock-1", true)),
@@ -836,7 +820,7 @@ mod tests {
 
     #[test]
     fn test_runner_matching_scenarios_with_filter() {
-        let workspace = test_workspace_base("matching-filter");
+        let workspace = test_workspace("runner", "matching-filter");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
             Box::new(MockScenario::new("claude-connect", true)),
@@ -866,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_runner_matching_scenarios_with_backend() {
-        let workspace = test_workspace_base("matching-backend");
+        let workspace = test_workspace("runner", "matching-backend");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
             Box::new(MockScenario::new("claude-test", true).with_backend(Backend::Claude)),
@@ -885,7 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_run_all_empty() {
-        let workspace = test_workspace_base("run-empty");
+        let workspace = test_workspace("runner", "run-empty");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![];
 
@@ -900,7 +884,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_run_single_passing() {
-        let workspace = test_workspace_base("run-single-pass");
+        let workspace = test_workspace("runner", "run-single-pass");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
             MockScenario::new("mock-1", true).with_backend(Backend::Claude),
@@ -918,7 +902,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_run_single_failing() {
-        let workspace = test_workspace_base("run-single-fail");
+        let workspace = test_workspace("runner", "run-single-fail");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
             MockScenario::new("mock-1", false).with_backend(Backend::Claude),
@@ -936,7 +920,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_run_multiple_mixed() {
-        let workspace = test_workspace_base("run-mixed");
+        let workspace = test_workspace("runner", "run-mixed");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
             Box::new(MockScenario::new("pass-1", true).with_backend(Backend::Claude)),
@@ -957,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_run_with_filter() {
-        let workspace = test_workspace_base("run-filter");
+        let workspace = test_workspace("runner", "run-filter");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![
             Box::new(MockScenario::new("connect-1", true).with_backend(Backend::Claude)),
@@ -977,7 +961,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_no_matching_scenarios_error() {
-        let workspace = test_workspace_base("run-no-match");
+        let workspace = test_workspace("runner", "run-no-match");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> =
             vec![Box::new(MockScenario::new("mock-1", true))];
@@ -993,7 +977,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_progress_callback() {
-        let workspace = test_workspace_base("run-progress");
+        let workspace = test_workspace("runner", "run-progress");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
             MockScenario::new("mock-1", true).with_backend(Backend::Claude),
@@ -1016,7 +1000,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_keep_workspaces() {
-        let workspace = test_workspace_base("run-keep");
+        let workspace = test_workspace("runner", "run-keep");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
             MockScenario::new("mock-1", true).with_backend(Backend::Claude),
@@ -1035,7 +1019,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_cleanup_workspaces() {
-        let workspace = test_workspace_base("run-cleanup");
+        let workspace = test_workspace("runner", "run-cleanup");
         let workspace_mgr = WorkspaceManager::new(workspace.clone());
         let scenarios: Vec<Box<dyn TestScenario>> = vec![Box::new(
             MockScenario::new("mock-1", true).with_backend(Backend::Claude),

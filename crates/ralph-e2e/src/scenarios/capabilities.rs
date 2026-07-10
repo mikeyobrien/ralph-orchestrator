@@ -410,7 +410,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::time::Duration;
 
@@ -419,20 +419,6 @@ mod tests {
         let s = format!("{}✅{}", "x".repeat(99), "y".repeat(10));
         let out = truncate(&s, 100);
         for _ in out.chars() {}
-    }
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-caps-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     fn mock_tool_use_result() -> crate::executor::ExecutionResult {
@@ -489,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_tool_use_setup_creates_config() {
-        let workspace = test_workspace("tool-use-setup");
+        let workspace = test_workspace("caps", "tool-use-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ToolUseScenario::new();
@@ -573,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_streaming_setup_creates_config() {
-        let workspace = test_workspace("streaming-setup");
+        let workspace = test_workspace("caps", "streaming-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = StreamingScenario::new();
@@ -643,7 +629,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_tool_use_full_run() {
-        let workspace = test_workspace("tool-use-full");
+        let workspace = test_workspace("caps", "tool-use-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ToolUseScenario::new();
@@ -670,7 +656,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_streaming_full_run() {
-        let workspace = test_workspace("streaming-full");
+        let workspace = test_workspace("caps", "streaming-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = StreamingScenario::new();

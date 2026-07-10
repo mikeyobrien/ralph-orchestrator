@@ -28,7 +28,7 @@
 //! }
 //! ```
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -423,10 +423,7 @@ pub fn ensure_gitignore(
     }
 
     // Append the pattern
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&gitignore_path)?;
+    let mut file = crate::utils::open_append(&gitignore_path)?;
 
     // Add newline before if file exists and doesn't end with newline
     if gitignore_path.exists() {

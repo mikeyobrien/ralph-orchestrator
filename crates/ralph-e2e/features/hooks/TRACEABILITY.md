@@ -44,21 +44,21 @@ These checks run from the workspace root and produce command artifacts under
 | AC ID | Runtime checks executed by hooks BDD harness |
 |---|---|
 | AC-01 | `cargo test -p ralph-core test_hooks_config_boundary_accepts_valid_file`, `cargo test -p ralph-core test_hooks_config_boundary_rejects_non_v1_scope_field` |
-| AC-02 | `cargo test -p ralph-cli test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order` |
-| AC-03 | `cargo test -p ralph-cli test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order` |
-| AC-04 | `cargo test -p ralph-core resolve_phase_event_preserves_declaration_order`, `cargo test -p ralph-cli test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order` |
+| AC-02 | `cargo test -p ralph-core test_hooks_config_valid_yaml_parses_and_validates` |
+| AC-03 | `cargo test -p ralph-core build_payload_maps_loop_iteration_and_context_fields` |
+| AC-04 | `cargo test -p ralph-core resolve_phase_event_preserves_declaration_order` |
 | AC-05 | `cargo test -p ralph-core run_writes_json_payload_to_hook_stdin` |
 | AC-06 | `cargo test -p ralph-core run_marks_timed_out_when_command_exceeds_timeout` |
 | AC-07 | `cargo test -p ralph-core run_truncates_stdout_and_stderr_at_max_output_bytes` |
-| AC-08 | `cargo test -p ralph-cli test_loop_start_dispatch_warn_continues_and_block_aborts` |
-| AC-09 | `cargo test -p ralph-cli test_loop_start_dispatch_warn_continues_and_block_aborts` |
-| AC-10 | `cargo test -p ralph-cli test_iteration_start_suspend_waits_for_resume_and_clears_artifacts_before_continuing` |
-| AC-11 | `cargo test -p ralph-cli test_wait_for_resume_if_suspended_resumes_and_clears_suspend_artifacts` |
-| AC-12 | `cargo test -p ralph-cli test_wait_for_resume_if_suspended_is_noop_without_suspend_dispositions` |
-| AC-13 | `cargo test -p ralph-cli test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads` |
-| AC-14 | `cargo test -p ralph-cli test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads`, `cargo test -p ralph-cli test_parse_hook_mutation_stdout_accepts_metadata_only_payload_and_namespaces_by_hook` |
-| AC-15 | `cargo test -p ralph-cli test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate`, `cargo test -p ralph-cli test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason`, `cargo test -p ralph-cli test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate` |
-| AC-16 | `cargo test -p ralph-cli test_dispatch_phase_event_hooks_retry_backoff_recovers_before_exhaustion`, `cargo test -p ralph-core test_diagnostics_collector_logs_hook_run_telemetry` |
+| AC-08 | `cargo test -p ralph-e2e test_v3_ac08_autoloop_hook_warn_policy_evidence` |
+| AC-09 | `cargo test -p ralph-e2e test_v3_ac09_autoloop_hook_block_policy_evidence` |
+| AC-10 | `cargo test -p ralph-core test_suspend_state_record_serializes_v1_schema_shape` |
+| AC-11 | `cargo test -p ralph-cli test_resume_loop_writes_resume_signal_for_in_place_loop` |
+| AC-12 | `cargo test -p ralph-core test_resume_signal_is_single_use`, `cargo test -p ralph-cli test_resume_loop_is_idempotent_when_resume_already_requested` |
+| AC-13 | `cargo test -p ralph-e2e test_v3_ac13_autoloop_hooks_do_not_parse_metadata_mutations` |
+| AC-14 | `cargo test -p ralph-e2e test_v3_ac14_metadata_mutation_surface_is_descoped_to_autoloop_hook_contract` |
+| AC-15 | `cargo test -p ralph-e2e test_v3_ac15_json_mutation_format_is_descoped_with_old_runtime` |
+| AC-16 | `cargo test -p ralph-e2e test_v3_ac16_autoloop_hook_telemetry_evidence`, `cargo test -p ralph-core test_diagnostics_collector_logs_hook_run_telemetry` |
 | AC-17 | `cargo test -p ralph-cli test_hooks_validate_json_success_report_and_exit_code` |
 | AC-18 | `cargo test -p ralph-cli test_preflight_check_config_json`, `cargo test -p ralph-core default_checks_include_hooks_check_name` |
 

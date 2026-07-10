@@ -121,7 +121,7 @@ fn flush_memory(
             tags: std::mem::take(current_tags),
             created: current_created
                 .take()
-                .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string()),
+                .unwrap_or_else(crate::utils::today_ymd),
         });
     }
     current_content.clear();
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(mem.content, "Some content without metadata");
         assert!(mem.tags.is_empty());
         // Created should default to today's date
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let today = crate::utils::today_ymd();
         assert_eq!(mem.created, today);
     }
 

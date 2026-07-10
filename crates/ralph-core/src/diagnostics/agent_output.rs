@@ -1,6 +1,6 @@
 //! Agent output logger for diagnostic capture.
 
-use chrono::Utc;
+use crate::utils::now_rfc3339;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -72,7 +72,7 @@ impl AgentOutputLogger {
     /// Logs an agent output event.
     pub fn log(&mut self, content: AgentOutputContent) -> std::io::Result<()> {
         let entry = AgentOutputEntry {
-            ts: Utc::now().to_rfc3339(),
+            ts: now_rfc3339(),
             iteration: self.iteration,
             hat: self.hat.clone(),
             content,

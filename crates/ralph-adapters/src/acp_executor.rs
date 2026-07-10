@@ -1285,7 +1285,7 @@ mod tests {
 
     #[cfg(unix)]
     fn test_process_alive(pid: u32) -> bool {
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+        ralph_core::utils::is_process_alive(pid)
     }
 
     #[cfg(unix)]

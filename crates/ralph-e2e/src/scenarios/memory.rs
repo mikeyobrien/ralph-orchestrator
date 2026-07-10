@@ -1716,7 +1716,7 @@ impl MemoryLargeContentScenario {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::time::Duration;
 
@@ -1725,20 +1725,6 @@ mod tests {
         let s = format!("{}✅{}", "x".repeat(99), "y".repeat(10));
         let out = truncate(&s, 100);
         for _ in out.chars() {}
-    }
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-memory-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     fn mock_execution_result() -> ExecutionResult {
@@ -1782,7 +1768,7 @@ mod tests {
 
     #[test]
     fn test_memory_add_setup_creates_config() {
-        let workspace = test_workspace("memory-add-setup");
+        let workspace = test_workspace("memory", "memory-add-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryAddScenario::new();
@@ -1911,7 +1897,7 @@ mod tests {
 
     #[test]
     fn test_memory_search_setup_creates_memories() {
-        let workspace = test_workspace("memory-search-setup");
+        let workspace = test_workspace("memory", "memory-search-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemorySearchScenario::new();
@@ -1982,7 +1968,7 @@ mod tests {
 
     #[test]
     fn test_memory_injection_setup_with_auto() {
-        let workspace = test_workspace("memory-injection-setup");
+        let workspace = test_workspace("memory", "memory-injection-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryInjectionScenario::new();
@@ -2078,7 +2064,7 @@ mod tests {
 
     #[test]
     fn test_memory_persistence_setup() {
-        let workspace = test_workspace("memory-persistence-setup");
+        let workspace = test_workspace("memory", "memory-persistence-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryPersistenceScenario::new();
@@ -2176,7 +2162,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_memory_add_full_run() {
-        let workspace = test_workspace("memory-add-full");
+        let workspace = test_workspace("memory", "memory-add-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryAddScenario::new();
@@ -2203,7 +2189,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_memory_search_full_run() {
-        let workspace = test_workspace("memory-search-full");
+        let workspace = test_workspace("memory", "memory-search-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemorySearchScenario::new();
@@ -2230,7 +2216,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_memory_injection_full_run() {
-        let workspace = test_workspace("memory-injection-full");
+        let workspace = test_workspace("memory", "memory-injection-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryInjectionScenario::new();
@@ -2257,7 +2243,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_memory_persistence_full_run() {
-        let workspace = test_workspace("memory-persistence-full");
+        let workspace = test_workspace("memory", "memory-persistence-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MemoryPersistenceScenario::new();

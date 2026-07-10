@@ -188,6 +188,11 @@ pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+/// Returns today's UTC date as a `YYYY-MM-DD` string.
+pub fn today_ymd() -> String {
+    chrono::Utc::now().format("%Y-%m-%d").to_string()
+}
+
 /// Creates parent directories for the given path if they don't exist.
 pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {

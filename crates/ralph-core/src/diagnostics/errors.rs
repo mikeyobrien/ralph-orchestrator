@@ -1,6 +1,6 @@
-use chrono::Utc;
+use crate::utils::now_rfc3339;
 use serde::Serialize;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
@@ -116,47 +116,36 @@ impl DiagnosticError {
 
 pub struct ErrorLogger {
     file: BufWriter<File>,
-    iteration: u32,
-    hat: String,
 }
 
 impl ErrorLogger {
     pub fn new(session_dir: &Path) -> io::Result<Self> {
         let file_path = session_dir.join("errors.jsonl");
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(file_path)?;
+        let file = crate::utils::open_append(file_path)?;
 
         Ok(Self {
             file: BufWriter::new(file),
-            iteration: 0,
-            hat: String::from("unknown"),
         })
     }
 
-    pub fn set_context(&mut self, iteration: u32, hat: &str) {
-        self.iteration = iteration;
-        self.hat = hat.to_string();
-    }
-
-    pub fn log(&mut self, error: DiagnosticError) {
+    pub fn log(
+        &mut self,
+        iteration: u32,
+        hat: &str,
+        error: DiagnosticError,
+    ) -> io::Result<()> {
         let entry = ErrorEntry {
-            ts: Utc::now().to_rfc3339(),
-            iteration: self.iteration,
-            hat: self.hat.clone(),
+            ts: now_rfc3339(),
+            iteration,
+            hat: hat.to_string(),
             error_type: error.error_type().to_string(),
             message: error.message(),
             context: error.context(),
         };
 
-        if crate::utils::write_jsonl_line(&mut self.file, &entry).is_ok() {
-            let _ = self.file.flush();
-        }
-    }
-
-    pub fn flush(&mut self) {
-        let _ = self.file.flush();
+        crate::utils::write_jsonl_line(&mut self.file, &entry)?;
+        self.file.flush()?;
+        Ok(())
     }
 }
 
@@ -183,7 +172,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let session_dir = temp_dir.path();
         let mut logger = ErrorLogger::new(session_dir).unwrap();
-        logger.set_context(1, "ralph");
 
         let errors = vec![
             DiagnosticError::ParseError {
@@ -211,7 +199,7 @@ mod tests {
         ];
 
         for error in errors {
-            logger.log(error);
+            logger.log(1, "ralph", error).unwrap();
         }
 
         let file_path = session_dir.join("errors.jsonl");
@@ -238,19 +226,29 @@ mod tests {
         let session_dir = temp_dir.path();
         let mut logger = ErrorLogger::new(session_dir).unwrap();
 
-        logger.set_context(1, "builder");
-        logger.log(DiagnosticError::ValidationFailure {
-            rule: "lint_pass".to_string(),
-            message: "Lint failed".to_string(),
-            evidence: "lint: fail".to_string(),
-        });
+        logger
+            .log(
+                1,
+                "builder",
+                DiagnosticError::ValidationFailure {
+                    rule: "lint_pass".to_string(),
+                    message: "Lint failed".to_string(),
+                    evidence: "lint: fail".to_string(),
+                },
+            )
+            .unwrap();
 
-        logger.set_context(2, "validator");
-        logger.log(DiagnosticError::ParseError {
-            source: "event_parser".to_string(),
-            message: "Malformed event".to_string(),
-            input: "<event>".to_string(),
-        });
+        logger
+            .log(
+                2,
+                "validator",
+                DiagnosticError::ParseError {
+                    source: "event_parser".to_string(),
+                    message: "Malformed event".to_string(),
+                    input: "<event>".to_string(),
+                },
+            )
+            .unwrap();
 
         let file_path = session_dir.join("errors.jsonl");
         let content = fs::read_to_string(file_path).unwrap();

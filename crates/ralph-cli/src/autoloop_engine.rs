@@ -18,7 +18,9 @@ use crate::completion_coord::coordinate_completion;
 /// Map an autoloop `stopReason` onto ralph's [`TerminationReason`].
 fn map_stop_reason(reason: &str) -> TerminationReason {
     match reason {
-        "completed" | "verdict_exit" => TerminationReason::CompletionPromise,
+        "completed" | "completion_event" | "completion_promise" | "verdict_exit" => {
+            TerminationReason::CompletionPromise
+        }
         "max_iterations" => TerminationReason::MaxIterations,
         "max_runtime" => TerminationReason::MaxRuntime,
         "cost_budget" => TerminationReason::MaxCost,
@@ -383,6 +385,14 @@ mod tests {
     fn maps_autoloop_stop_reasons_to_termination() {
         assert!(matches!(
             map_stop_reason("completed"),
+            TerminationReason::CompletionPromise
+        ));
+        assert!(matches!(
+            map_stop_reason("completion_event"),
+            TerminationReason::CompletionPromise
+        ));
+        assert!(matches!(
+            map_stop_reason("completion_promise"),
             TerminationReason::CompletionPromise
         ));
         assert!(matches!(

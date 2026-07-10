@@ -158,8 +158,7 @@ impl DiagnosticsCollector {
         if let Some(logger) = &self.error_logger
             && let Ok(mut logger) = logger.lock()
         {
-            logger.set_context(iteration, hat);
-            logger.log(error);
+            let _ = logger.log(iteration, hat, error);
         }
     }
 
@@ -181,7 +180,7 @@ impl DiagnosticsCollector {
         if let Some(session_dir) = &self.session_dir {
             use std::io::Write;
             let path = session_dir.join("prompt-log.md");
-            if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+            if let Ok(mut file) = crate::utils::open_append(&path) {
                 let _ = writeln!(
                     file,
                     "# Iteration {} — {}\n\n{}\n\n---\n",

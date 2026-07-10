@@ -141,7 +141,7 @@ impl Memory {
             memory_type,
             content,
             tags,
-            created: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            created: crate::utils::today_ymd(),
         }
     }
 
@@ -149,23 +149,9 @@ impl Memory {
     ///
     /// Format: `mem-{unix_timestamp}-{4_hex_chars}`
     /// Example: `mem-1737372000-a1b2`
-    ///
-    /// The hex suffix is derived from the microsecond component of the timestamp,
-    /// providing sufficient uniqueness for typical usage without external dependencies.
     #[must_use]
     pub fn generate_id() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let duration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-
-        let timestamp = duration.as_secs();
-        // Use microseconds as the hex suffix for uniqueness
-        let micros = duration.subsec_micros();
-        let hex_suffix = format!("{:04x}", micros % 0x10000);
-
-        format!("mem-{}-{}", timestamp, hex_suffix)
+        crate::utils::generate_prefixed_id("mem")
     }
 
     /// Returns true if this memory matches the given search query.
@@ -268,7 +254,7 @@ mod tests {
         assert_eq!(memory.content, "Uses barrel exports");
         assert_eq!(memory.tags, vec!["imports", "structure"]);
         // Created date should be today
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let today = crate::utils::today_ymd();
         assert_eq!(memory.created, today);
     }
 

@@ -374,6 +374,26 @@ fn truncate(s: &str, max_len: usize) -> String {
 }
 
 #[cfg(test)]
+pub(crate) mod test_helpers {
+    use std::path::PathBuf;
+
+    pub fn test_workspace(prefix: &str, test_name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ralph-e2e-{}-{}-{}",
+            prefix,
+            test_name,
+            std::process::id()
+        ))
+    }
+
+    pub fn cleanup_workspace(path: &PathBuf) {
+        if path.exists() {
+            std::fs::remove_dir_all(path).ok();
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::executor::EventRecord;

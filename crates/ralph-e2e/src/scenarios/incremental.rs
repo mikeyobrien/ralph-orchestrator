@@ -685,22 +685,8 @@ impl ChainedLoopScenario {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-incr-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
-    }
 
     // ========== IncrementalFeatureScenario Tests ==========
 
@@ -729,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_incremental_feature_setup_creates_structure() {
-        let workspace = test_workspace("incr-setup");
+        let workspace = test_workspace("incr", "incr-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = IncrementalFeatureScenario::new();
@@ -894,7 +880,7 @@ mod tests {
 
     #[test]
     fn test_chained_loop_setup_creates_structure() {
-        let workspace = test_workspace("chained-setup");
+        let workspace = test_workspace("incr", "chained-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ChainedLoopScenario::new();
@@ -963,7 +949,7 @@ def multiply(a, b):
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_incremental_feature_full_run() {
-        let workspace = test_workspace("incr-full");
+        let workspace = test_workspace("incr", "incr-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = IncrementalFeatureScenario::new();
@@ -990,7 +976,7 @@ def multiply(a, b):
     #[tokio::test]
     #[ignore = "requires live backend - long running"]
     async fn test_chained_loops_full_run() {
-        let workspace = test_workspace("chained-full");
+        let workspace = test_workspace("incr", "chained-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ChainedLoopScenario::new();

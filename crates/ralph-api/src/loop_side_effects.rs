@@ -96,9 +96,7 @@ fn find_worktree_path(workspace_root: &Path, loop_id: &str) -> Result<Option<Pat
         .map_err(|error| ApiError::internal(format!("failed listing worktrees: {error}")))?;
 
     Ok(worktrees.into_iter().find_map(|worktree| {
-        worktree
-            .branch
-            .strip_prefix("ralph/")
+        ralph_core::worktree::loop_id_from_branch(&worktree.branch)
             .is_some_and(|branch_loop_id| branch_loop_id == loop_id)
             .then_some(worktree.path)
     }))

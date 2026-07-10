@@ -8,9 +8,9 @@
 //! - Artifacts directory (generated design docs, plans)
 
 use crate::loop_context::LoopContext;
-use chrono::Utc;
+use crate::utils::now_rfc3339;
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -120,7 +120,7 @@ impl PlanningSession {
         let artifacts_dir = context.planning_artifacts_dir(&session_id);
         std::fs::create_dir_all(&artifacts_dir)?;
 
-        let now = Utc::now().to_rfc3339();
+        let now = now_rfc3339();
         let metadata = SessionMetadata {
             id: session_id.clone(),
             prompt: prompt.to_string(),
@@ -175,7 +175,7 @@ impl PlanningSession {
 
     /// Generate a unique session ID based on timestamp.
     fn generate_session_id() -> String {
-        let now = Utc::now();
+        let now = chrono::Utc::now();
         let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
         // Use nanoseconds for uniqueness (take last 4 hex chars)
         let nano_suffix = format!("{:x}", now.timestamp_subsec_nanos());
@@ -191,14 +191,14 @@ impl PlanningSession {
     /// Update the session status.
     pub fn set_status(&mut self, status: SessionStatus) -> Result<(), PlanningSessionError> {
         self.metadata.status = status;
-        self.metadata.updated_at = Utc::now().to_rfc3339();
+        self.metadata.updated_at = now_rfc3339();
         self.save_metadata()
     }
 
     /// Increment the iteration counter.
     pub fn increment_iterations(&mut self) -> Result<(), PlanningSessionError> {
         self.metadata.iterations += 1;
-        self.metadata.updated_at = Utc::now().to_rfc3339();
+        self.metadata.updated_at = now_rfc3339();
         self.save_metadata()
     }
 
@@ -222,7 +222,7 @@ impl PlanningSession {
             entry_type: ConversationType::UserPrompt,
             id: id.to_string(),
             text: text.to_string(),
-            ts: Utc::now().to_rfc3339(),
+            ts: now_rfc3339(),
         };
         self.append_entry(&entry)
     }
@@ -238,7 +238,7 @@ impl PlanningSession {
             entry_type: ConversationType::UserResponse,
             id: id.to_string(),
             text: text.to_string(),
-            ts: Utc::now().to_rfc3339(),
+            ts: now_rfc3339(),
         };
         self.append_entry(&entry)
     }
@@ -246,10 +246,7 @@ impl PlanningSession {
     /// Append an entry to the conversation file.
     fn append_entry(&self, entry: &ConversationEntry) -> Result<(), PlanningSessionError> {
         // Open file in append mode
-        let mut file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&self.conversation_path)?;
+        let mut file = crate::utils::open_append(&self.conversation_path)?;
 
         // Write entry as JSONL
         crate::utils::write_jsonl_line(&mut file, entry)?;
@@ -285,20 +282,7 @@ impl PlanningSession {
 
     /// Load all conversation entries.
     pub fn load_conversation(&self) -> Result<Vec<ConversationEntry>, PlanningSessionError> {
-        if !self.conversation_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let content = std::fs::read_to_string(&self.conversation_path)?;
-        let mut entries = Vec::new();
-
-        for line in content.lines() {
-            if let Ok(entry) = serde_json::from_str::<ConversationEntry>(line) {
-                entries.push(entry);
-            }
-        }
-
-        Ok(entries)
+        Ok(crate::utils::read_jsonl_lenient(&self.conversation_path)?)
     }
 }
 

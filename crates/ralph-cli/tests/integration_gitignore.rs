@@ -14,7 +14,16 @@ fn workspace_root() -> Result<PathBuf> {
 }
 
 fn git_check_ignore(repo: &Path, path: &str) -> Result<bool> {
+    // Pin the excludes file to an empty source so this assertion depends only on
+    // the repo's own `.gitignore`. Without this, a developer's global ignore
+    // (`~/.config/git/ignore` or `core.excludesfile`) containing `.ralph/`
+    // would shadow the repo's `!.ralph/specs/**` negations and fail the test on
+    // their machine while passing in CI (which has no global ignore). `-c`
+    // overrides both the configured `core.excludesfile` and the default
+    // `~/.config/git/ignore` path.
     let output = Command::new("git")
+        .arg("-c")
+        .arg("core.excludesfile=/dev/null")
         .arg("check-ignore")
         .arg("--quiet")
         .arg("--no-index")

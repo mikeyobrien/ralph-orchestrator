@@ -15,14 +15,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ralph_core::{MarkdownMemoryStore, Memory, MemoryType, truncate_with_ellipsis};
 use std::path::PathBuf;
 
-/// ANSI color codes for terminal output.
-mod colors {
-    pub const RESET: &str = "\x1b[0m";
-    pub const BOLD: &str = "\x1b[1m";
-    pub const DIM: &str = "\x1b[2m";
-    pub const GREEN: &str = "\x1b[32m";
-    pub const CYAN: &str = "\x1b[36m";
-}
+use crate::display::colors;
 
 /// Format a date string as a human-readable relative time.
 fn format_relative_date(date_str: &str) -> String {

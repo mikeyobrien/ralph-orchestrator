@@ -5,7 +5,7 @@
 
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Result of an auto-commit operation.
 #[derive(Debug, Clone)]
@@ -47,6 +47,25 @@ pub enum GitOpsError {
     ConfigMissing(String),
 }
 
+impl GitOpsError {
+    fn with_context(self, context: &str) -> Self {
+        match self {
+            GitOpsError::Git(msg) => GitOpsError::Git(format!("{}: {}", context, msg)),
+            other => other,
+        }
+    }
+}
+
+fn git_ok(output: Output) -> Result<Output, GitOpsError> {
+    if output.status.success() {
+        Ok(output)
+    } else {
+        Err(GitOpsError::Git(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
+    }
+}
+
 /// Check if the working directory has uncommitted changes.
 ///
 /// Returns true if there are:
@@ -60,15 +79,12 @@ pub enum GitOpsError {
 pub fn has_uncommitted_changes(path: impl AsRef<Path>) -> Result<bool, GitOpsError> {
     let path = path.as_ref();
 
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(!stdout.trim().is_empty())
@@ -105,18 +121,13 @@ pub fn auto_commit_changes(
     }
 
     // Stage all changes (including untracked files)
-    let output = Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(format!(
-            "Failed to stage changes: {}",
-            stderr
-        )));
-    }
+    git_ok(
+        Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(path)
+            .output()?,
+    )
+    .map_err(|e| e.with_context("Failed to stage changes"))?;
 
     // Count staged files
     let files_staged = count_staged_files(path)?;
@@ -159,15 +170,12 @@ pub fn auto_commit_changes(
 
 /// Count the number of files staged for commit.
 fn count_staged_files(path: &Path) -> Result<usize, GitOpsError> {
-    let output = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.lines().filter(|line| !line.is_empty()).count())
@@ -176,15 +184,12 @@ fn count_staged_files(path: &Path) -> Result<usize, GitOpsError> {
 /// Get the HEAD commit SHA.
 pub fn get_head_sha(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
     let path = path.as_ref();
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -199,15 +204,12 @@ pub fn get_head_sha(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
 /// * `path` - Path to the git repository (or worktree)
 pub fn get_current_branch(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
     let path = path.as_ref();
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -235,15 +237,12 @@ pub fn clean_stashes(path: impl AsRef<Path>) -> Result<usize, GitOpsError> {
     let path = path.as_ref();
 
     // First, count existing stashes
-    let output = Command::new("git")
-        .args(["stash", "list"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["stash", "list"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     let stash_count = String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -255,18 +254,13 @@ pub fn clean_stashes(path: impl AsRef<Path>) -> Result<usize, GitOpsError> {
     }
 
     // Clear all stashes
-    let output = Command::new("git")
-        .args(["stash", "clear"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(format!(
-            "Failed to clear stashes: {}",
-            stderr
-        )));
-    }
+    git_ok(
+        Command::new("git")
+            .args(["stash", "clear"])
+            .current_dir(path)
+            .output()?,
+    )
+    .map_err(|e| e.with_context("Failed to clear stashes"))?;
 
     Ok(stash_count)
 }
@@ -283,15 +277,12 @@ pub fn prune_remote_refs(path: impl AsRef<Path>) -> Result<(), GitOpsError> {
     let path = path.as_ref();
 
     // Check if 'origin' remote exists before pruning
-    let output = Command::new("git")
-        .args(["remote"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["remote"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     let remotes = String::from_utf8_lossy(&output.stdout);
     if !remotes.lines().any(|r| r.trim() == "origin") {
@@ -299,18 +290,13 @@ pub fn prune_remote_refs(path: impl AsRef<Path>) -> Result<(), GitOpsError> {
         return Ok(());
     }
 
-    let output = Command::new("git")
-        .args(["remote", "prune", "origin"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(format!(
-            "Failed to prune remote refs: {}",
-            stderr
-        )));
-    }
+    git_ok(
+        Command::new("git")
+            .args(["remote", "prune", "origin"])
+            .current_dir(path)
+            .output()?,
+    )
+    .map_err(|e| e.with_context("Failed to prune remote refs"))?;
 
     Ok(())
 }
@@ -339,15 +325,12 @@ pub fn is_working_tree_clean(path: impl AsRef<Path>) -> Result<bool, GitOpsError
 /// * `path` - Path to the git repository (or worktree)
 pub fn get_commit_summary(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
     let path = path.as_ref();
-    let output = Command::new("git")
-        .args(["log", "-1", "--format=%h: %s"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(stderr.to_string()));
-    }
+    let output = git_ok(
+        Command::new("git")
+            .args(["log", "-1", "--format=%h: %s"])
+            .current_dir(path)
+            .output()?,
+    )?;
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

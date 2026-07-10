@@ -6,7 +6,7 @@
 //! 2. Build a prompt with the SOP content wrapped in XML tags
 //! 3. Spawn an interactive session with the backend
 
-use ralph_adapters::{CliBackend, CustomBackendError, NoBackendError, detect_backend_default};
+use ralph_adapters::{CliBackend, CustomBackendError, NoBackendError};
 use ralph_core::RalphConfig;
 
 use crate::backend_support;
@@ -202,52 +202,13 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
     Ok(())
 }
 
-/// Resolves which backend to use.
-///
-/// Precedence (highest to lowest):
-/// 1. CLI flag (`--backend`)
-/// 2. Config file (`cli.backend` in ralph.yml)
-/// 3. Auto-detect (first available from claude → kiro → gemini → codex → amp)
 fn resolve_backend(
     flag_override: Option<&str>,
     config: Option<&RalphConfig>,
     config_path: Option<&PathBuf>,
 ) -> Result<String, SopRunError> {
-    // 1. CLI flag takes precedence
-    if let Some(backend) = flag_override {
-        validate_backend_name(backend)?;
-        return Ok(backend.to_string());
-    }
-
-    // 2. Check provided config object
-    if let Some(config) = config
-        && config.cli.backend != "auto"
-    {
-        return Ok(config.cli.backend.clone());
-    }
-
-    // 3. Check config file
-    if let Some(path) = config_path
-        && path.exists()
-        && let Ok(config) = RalphConfig::from_file(path)
-        && config.cli.backend != "auto"
-    {
-        return Ok(config.cli.backend);
-    }
-
-    // 4. Auto-detect
-    detect_backend_default().map_err(SopRunError::NoBackend)
-}
-
-/// Validates a backend name.
-fn validate_backend_name(name: &str) -> Result<(), SopRunError> {
-    if backend_support::is_known_backend(name) {
-        Ok(())
-    } else {
-        Err(SopRunError::UnknownBackend(
-            backend_support::unknown_backend_message(name),
-        ))
-    }
+    backend_support::resolve_backend(flag_override, config, config_path.map(|p| p.as_path()))
+        .map_err(SopRunError::UnknownBackend)
 }
 
 /// Builds the combined SOP + addendums + user input prompt.
@@ -360,31 +321,6 @@ mod tests {
 
         // Empty input should be treated like None
         assert!(!prompt.contains("<user-content>"));
-    }
-
-    #[test]
-    fn test_validate_backend_name_valid() {
-        assert!(validate_backend_name("claude").is_ok());
-        assert!(validate_backend_name("kiro").is_ok());
-        assert!(validate_backend_name("gemini").is_ok());
-        assert!(validate_backend_name("codex").is_ok());
-        assert!(validate_backend_name("forge").is_ok());
-        assert!(validate_backend_name("amp").is_ok());
-        assert!(validate_backend_name("copilot").is_ok());
-        assert!(validate_backend_name("opencode").is_ok());
-        assert!(validate_backend_name("custom").is_ok());
-    }
-
-    #[test]
-    fn test_validate_backend_name_invalid() {
-        let result = validate_backend_name("invalid_backend");
-        assert!(result.is_err());
-
-        if let Err(SopRunError::UnknownBackend(msg)) = result {
-            assert!(msg.contains("invalid_backend"));
-        } else {
-            panic!("Expected UnknownBackend error");
-        }
     }
 
     #[test]

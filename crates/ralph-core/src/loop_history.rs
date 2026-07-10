@@ -7,8 +7,7 @@
 //! - **Auditing**: Complete trace of what happened and when
 //! - **Source of truth**: Registry state can be derived from history
 
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -140,10 +139,7 @@ impl LoopHistory {
         let _lock = file_lock.exclusive()?;
 
         // Open file in append mode
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut file = crate::utils::open_append(&self.path)?;
 
         // Serialize and write
         crate::utils::write_jsonl_line(&mut file, &event)?;
@@ -158,27 +154,11 @@ impl LoopHistory {
             return Ok(Vec::new());
         }
 
-        // Acquire shared lock
         let file_lock = FileLock::new(&self.path)?;
         let _lock = file_lock.shared()?;
 
-        let file = File::open(&self.path)?;
-        let reader = BufReader::new(file);
-
-        let mut events = Vec::new();
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            // Skip malformed lines (best-effort parsing)
-            if let Ok(event) = serde_json::from_str::<HistoryEvent>(&line) {
-                events.push(event);
-            }
-        }
-
-        Ok(events)
+        let content = std::fs::read_to_string(&self.path)?;
+        Ok(crate::utils::parse_jsonl_lenient(&content))
     }
 
     /// Find the last completed iteration number.

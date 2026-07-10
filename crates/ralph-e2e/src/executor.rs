@@ -465,18 +465,9 @@ mod duration_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::path::Path;
-
-    /// Creates a unique test workspace path.
-    fn test_workspace(test_name: &str) -> PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-executor-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
 
     /// Sets up a test workspace with a minimal ralph.yml.
     fn setup_workspace(path: &Path) {
@@ -489,13 +480,6 @@ mod tests {
 ",
         )
         .unwrap();
-    }
-
-    /// Cleans up a test workspace.
-    fn cleanup_workspace(path: &PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     #[test]
@@ -602,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_config_not_found() {
-        let workspace = test_workspace("config-not-found");
+        let workspace = test_workspace("executor", "config-not-found");
         fs::create_dir_all(&workspace).unwrap();
 
         let executor = RalphExecutor::new(workspace.clone());
@@ -648,7 +632,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires ralph binary"]
     async fn test_run_real_ralph() {
-        let workspace = test_workspace("real-ralph");
+        let workspace = test_workspace("executor", "real-ralph");
         setup_workspace(&workspace);
 
         let executor = RalphExecutor::new(workspace.clone());

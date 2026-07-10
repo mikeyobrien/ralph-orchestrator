@@ -1120,7 +1120,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::executor::EventRecord;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::time::Duration;
 
@@ -1129,20 +1129,6 @@ mod tests {
         let s = format!("{}✅{}", "x".repeat(99), "y".repeat(10));
         let out = truncate(&s, 100);
         for _ in out.chars() {}
-    }
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-hats-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     fn mock_execution_result() -> ExecutionResult {
@@ -1188,7 +1174,7 @@ mod tests {
 
     #[test]
     fn test_hat_single_setup_creates_config() {
-        let workspace = test_workspace("hat-single-setup");
+        let workspace = test_workspace("hats", "hat-single-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatSingleScenario::new();
@@ -1274,7 +1260,7 @@ mod tests {
 
     #[test]
     fn test_hat_multi_workflow_setup() {
-        let workspace = test_workspace("hat-multi-setup");
+        let workspace = test_workspace("hats", "hat-multi-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatMultiWorkflowScenario::new();
@@ -1360,7 +1346,7 @@ mod tests {
 
     #[test]
     fn test_hat_instructions_setup() {
-        let workspace = test_workspace("hat-instructions-setup");
+        let workspace = test_workspace("hats", "hat-instructions-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatInstructionsScenario::new();
@@ -1436,7 +1422,7 @@ mod tests {
 
     #[test]
     fn test_hat_event_routing_setup() {
-        let workspace = test_workspace("hat-routing-setup");
+        let workspace = test_workspace("hats", "hat-routing-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatEventRoutingScenario::new();
@@ -1518,7 +1504,7 @@ mod tests {
 
     #[test]
     fn test_hat_backend_override_setup() {
-        let workspace = test_workspace("hat-backend-setup");
+        let workspace = test_workspace("hats", "hat-backend-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatBackendOverrideScenario::new();
@@ -1605,7 +1591,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_hat_single_full_run() {
-        let workspace = test_workspace("hat-single-full");
+        let workspace = test_workspace("hats", "hat-single-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatSingleScenario::new();
@@ -1632,7 +1618,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_hat_multi_workflow_full_run() {
-        let workspace = test_workspace("hat-multi-full");
+        let workspace = test_workspace("hats", "hat-multi-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatMultiWorkflowScenario::new();
@@ -1659,7 +1645,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_hat_instructions_full_run() {
-        let workspace = test_workspace("hat-instructions-full");
+        let workspace = test_workspace("hats", "hat-instructions-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatInstructionsScenario::new();
@@ -1686,7 +1672,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_hat_event_routing_full_run() {
-        let workspace = test_workspace("hat-routing-full");
+        let workspace = test_workspace("hats", "hat-routing-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatEventRoutingScenario::new();
@@ -1713,7 +1699,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_hat_backend_override_full_run() {
-        let workspace = test_workspace("hat-backend-full");
+        let workspace = test_workspace("hats", "hat-backend-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = HatBackendOverrideScenario::new();

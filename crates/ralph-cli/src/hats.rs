@@ -9,11 +9,11 @@
 use crate::backend_support;
 use crate::display::colors;
 use crate::preflight;
-use crate::{ConfigSource, HatsSource, is_toml_preset_dir};
+use crate::{ConfigSource, HatsSource, is_toml_preset_dir, preset_search_roots};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use ralph_adapters::{CliBackend, detect_backend_default};
+use ralph_adapters::CliBackend;
 use ralph_core::{HatRegistry, RalphConfig, truncate_with_ellipsis};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
@@ -173,41 +173,15 @@ pub struct DiscoveredPreset {
     pub description: Option<String>,
 }
 
-/// Walk the preset resolver paths and return every preset found.
+/// Walk [`preset_search_roots`] and return every preset found.
 ///
 /// Covers BOTH preset formats:
 /// - YAML single-file presets (`<root>/*.yml`)
 /// - TOML multi-file preset directories (`<root>/<name>/autoloops.toml + topology.toml`)
 ///
-/// Roots, in order:
-/// 1. `./presets/` (project-local)
-/// 2. `$XDG_CONFIG_HOME/ralph/presets/` (user, canonical)
-/// 3. `$HOME/.config/ralph/presets/` (user, fallback for #2)
-/// 4. `$HOME/.config/autoloop/presets/` (shared with autoloop CLI; back-compat)
-/// 5. `$RALPH_PRESETS_DIR/` (explicit override)
-/// 6. `$AUTOLOOP_PRESETS_DIR/` (deprecated alias for #5)
-///
 /// First-wins on name collisions.
 pub(crate) fn discover_presets() -> Vec<DiscoveredPreset> {
-    let mut roots: Vec<(&'static str, PathBuf)> = Vec::new();
-
-    roots.push(("project", PathBuf::from("presets")));
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        roots.push(("xdg", PathBuf::from(xdg).join("ralph/presets")));
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
-        roots.push(("home", home.join(".config/ralph/presets")));
-        roots.push(("autoloop", home.join(".config/autoloop/presets")));
-    }
-    if let Ok(explicit) = std::env::var("RALPH_PRESETS_DIR") {
-        roots.push(("env", PathBuf::from(explicit)));
-    }
-    if let Ok(explicit) = std::env::var("AUTOLOOP_PRESETS_DIR") {
-        roots.push(("env", PathBuf::from(explicit)));
-    }
-
-    discover_in_roots(&roots)
+    discover_in_roots(&preset_search_roots())
 }
 
 /// Inner discovery that takes explicit roots so tests can exercise the logic
@@ -674,37 +648,9 @@ fn render_hat_dag_via_ai(
 }
 
 /// Resolves which backend to use for diagram generation.
-///
-/// Precedence (highest to lowest):
-/// 1. CLI flag (`--backend`)
-/// 2. Config file (`cli.backend` in ralph.yml)
-/// 3. Auto-detect (first available from claude → kiro → gemini → codex → amp)
 fn resolve_backend(flag_override: Option<&str>, config: &RalphConfig) -> Result<String> {
-    // 1. CLI flag takes precedence
-    if let Some(backend) = flag_override {
-        validate_backend_name(backend)?;
-        return Ok(backend.to_string());
-    }
-
-    // 2. Check config (if not "auto")
-    if config.cli.backend != "auto" {
-        return Ok(config.cli.backend.clone());
-    }
-
-    // 3. Auto-detect
-    detect_backend_default().map_err(|e| anyhow::anyhow!("{}", e))
-}
-
-/// Validates a backend name.
-fn validate_backend_name(name: &str) -> Result<()> {
-    if !backend_support::is_known_backend(name) {
-        return Err(anyhow::anyhow!(
-            "{}",
-            backend_support::unknown_backend_message(name)
-        ));
-    }
-
-    Ok(())
+    backend_support::resolve_backend(flag_override, Some(config), None)
+        .map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Builds the prompt for diagram generation.
@@ -1246,43 +1192,6 @@ mod tests {
         let diagram = extract_diagram(response);
         assert!(diagram.contains("Ralph"));
         assert!(!diagram.to_lowercase().contains("here"));
-    }
-
-    #[test]
-    fn test_validate_backend_name_valid() {
-        assert!(validate_backend_name("claude").is_ok());
-        assert!(validate_backend_name("kiro").is_ok());
-        assert!(validate_backend_name("gemini").is_ok());
-        assert!(validate_backend_name("codex").is_ok());
-        assert!(validate_backend_name("amp").is_ok());
-        assert!(validate_backend_name("custom").is_ok());
-    }
-
-    #[test]
-    fn test_validate_backend_name_invalid() {
-        let result = validate_backend_name("unknown-backend");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Unknown backend"));
-        assert!(err.contains("Valid backends"));
-    }
-
-    #[test]
-    fn test_resolve_backend_flag_override() {
-        let config = RalphConfig::default();
-        let result = resolve_backend(Some("kiro"), &config);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "kiro");
-    }
-
-    #[test]
-    fn test_resolve_backend_from_config() {
-        let mut config = RalphConfig::default();
-        config.cli.backend = "gemini".to_string();
-
-        let result = resolve_backend(None, &config);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "gemini");
     }
 
     /// Write a minimal autoloop preset skeleton under `parent/<name>/`.

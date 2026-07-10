@@ -31,8 +31,7 @@ impl StreamHandler for NullHandler {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    // kill(pid, 0) checks if process exists without sending a signal
-    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+    ralph_core::utils::is_process_alive(pid)
 }
 
 /// Create a mock script that behaves like `kiro-cli acp` but spawns a

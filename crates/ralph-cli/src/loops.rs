@@ -279,23 +279,7 @@ fn get_merge_button_state(args: MergeButtonStateArgs) -> Result<()> {
     Ok(())
 }
 
-/// Check if a process is alive.
-fn is_process_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::kill;
-        use nix::unistd::Pid;
-
-        // Signal 0 checks if process exists without sending a signal
-        kill(Pid::from_raw(pid as i32), None).is_ok()
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        false
-    }
-}
+use ralph_core::utils::is_process_alive;
 
 /// Format duration as relative age (e.g., "5m", "2h", "1d").
 fn format_age(duration: chrono::Duration) -> String {
@@ -440,8 +424,7 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
 
     // Add orphan worktrees (not in registry or merge queue)
     for wt in &worktrees {
-        if wt.branch.starts_with("ralph/") {
-            let loop_id = wt.branch.trim_start_matches("ralph/");
+        if let Some(loop_id) = ralph_core::worktree::loop_id_from_branch(&wt.branch) {
             let already_listed = rows.iter().any(|r| r.id.contains(loop_id));
             if !already_listed {
                 rows.push(LoopRow {
@@ -563,11 +546,9 @@ fn colorize_status(status: &str) -> String {
         "running" => format!("\x1b[32m{}\x1b[0m", status), // green
         "merging" => format!("\x1b[33m{}\x1b[0m", status), // yellow
         "merged" => format!("\x1b[34m{}\x1b[0m", status),  // blue
-        "needs-review" => format!("\x1b[31m{}\x1b[0m", status), // red
-        "crashed" => format!("\x1b[31m{}\x1b[0m", status), // red
-        "orphan" => format!("\x1b[90m{}\x1b[0m", status),  // gray
-        "queued" => format!("\x1b[36m{}\x1b[0m", status),  // cyan
-        "discarded" => format!("\x1b[90m{}\x1b[0m", status), // gray
+        "needs-review" | "crashed" => format!("\x1b[31m{}\x1b[0m", status), // red
+        "orphan" | "discarded" => format!("\x1b[90m{}\x1b[0m", status), // gray
+        "queued" => format!("\x1b[36m{}\x1b[0m", status), // cyan
         _ => status.to_string(),
     }
 }
@@ -984,8 +965,7 @@ fn prune_stale() -> Result<()> {
 
     let mut orphan_count = 0;
     for wt in worktrees {
-        if wt.branch.starts_with("ralph/") {
-            let loop_id = wt.branch.trim_start_matches("ralph/");
+        if let Some(loop_id) = ralph_core::worktree::loop_id_from_branch(&wt.branch) {
             let in_registry = loop_entries.iter().any(|e| e.id.contains(loop_id));
             if !in_registry {
                 println!(
@@ -1214,11 +1194,9 @@ fn collect_reviewable_loops(cwd: &Path) -> Result<Vec<ReviewableLoop>> {
         .collect();
 
     for worktree in list_ralph_worktrees(cwd).unwrap_or_default() {
-        if !worktree.branch.starts_with("ralph/") {
+        let Some(loop_id) = ralph_core::worktree::loop_id_from_branch(&worktree.branch) else {
             continue;
-        }
-
-        let loop_id = worktree.branch.trim_start_matches("ralph/");
+        };
         if active_loop_ids.contains(loop_id) {
             continue;
         }
@@ -1693,7 +1671,7 @@ fn merge_loop(args: MergeArgs) -> Result<()> {
         let worktrees = list_ralph_worktrees(&cwd).unwrap_or_default();
         let is_orphan = worktrees
             .iter()
-            .any(|wt| wt.branch == format!("ralph/{}", loop_id));
+            .any(|wt| wt.branch == ralph_core::worktree::branch_name(&loop_id));
 
         if is_orphan {
             println!(
@@ -1821,7 +1799,9 @@ fn resolve_loop(cwd: &std::path::Path, id: &str) -> Result<(String, Option<Strin
     let worktrees = list_ralph_worktrees(cwd).unwrap_or_default();
     for wt in worktrees {
         if wt.branch.ends_with(id) || wt.branch.contains(id) {
-            let loop_id = wt.branch.trim_start_matches("ralph/").to_string();
+            let loop_id = ralph_core::worktree::loop_id_from_branch(&wt.branch)
+                .unwrap_or(&wt.branch)
+                .to_string();
             return Ok((loop_id, Some(wt.path.to_string_lossy().to_string())));
         }
     }

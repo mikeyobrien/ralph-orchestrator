@@ -80,10 +80,7 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
             state.get_iteration_elapsed()
         };
         if let Some(elapsed) = elapsed {
-            let total_secs = elapsed.as_secs();
-            let mins = total_secs / 60;
-            let secs = total_secs % 60;
-            left_spans.push(Span::raw(format!(" {mins:02}:{secs:02}")));
+            left_spans.push(Span::raw(format!(" {}", ralph_core::utils::format_elapsed(elapsed))));
         }
     }
 
@@ -441,10 +438,7 @@ mod tests {
         state.current_view = 0;
         state.following_latest = false;
 
-        let total_secs = elapsed.as_secs();
-        let mins = total_secs / 60;
-        let secs = total_secs % 60;
-        let expected_time = format!("{mins:02}:{secs:02}");
+        let expected_time = ralph_core::utils::format_elapsed(elapsed);
 
         let text = render_to_string(&state);
         assert!(

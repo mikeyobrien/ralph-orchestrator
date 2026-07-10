@@ -320,38 +320,45 @@ pub(crate) fn is_toml_preset_dir(path: &Path) -> bool {
     path.is_dir() && path.join("autoloops.toml").is_file() && path.join("topology.toml").is_file()
 }
 
-/// Search for a TOML preset dir named `name`.
+/// Ordered preset root directories resolved from the environment.
 ///
-/// Resolution order, first hit wins:
-/// 1. `./presets/<name>/` (project-local)
-/// 2. `$XDG_CONFIG_HOME/ralph/presets/<name>/` (user, canonical)
-/// 3. `$HOME/.config/ralph/presets/<name>/` (user, fallback for #2)
-/// 4. `$HOME/.config/autoloop/presets/<name>/` (shared with autoloop CLI)
-/// 5. `$RALPH_PRESETS_DIR/<name>/` (explicit override)
-/// 6. `$AUTOLOOP_PRESETS_DIR/<name>/` (deprecated alias for #5)
-///
-/// Returns `None` if no candidate directory exists and matches the preset shape.
-pub(crate) fn resolve_preset_dir(name: &str) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
+/// 1. `./presets/` (project-local)
+/// 2. `$XDG_CONFIG_HOME/ralph/presets/` (user, canonical)
+/// 3. `$HOME/.config/ralph/presets/` (user, fallback for #2)
+/// 4. `$HOME/.config/autoloop/presets/` (shared with autoloop CLI; back-compat)
+/// 5. `$RALPH_PRESETS_DIR/` (explicit override)
+/// 6. `$AUTOLOOP_PRESETS_DIR/` (deprecated alias for #5)
+pub(crate) fn preset_search_roots() -> Vec<(&'static str, PathBuf)> {
+    let mut roots: Vec<(&'static str, PathBuf)> = Vec::new();
 
-    candidates.push(PathBuf::from("presets").join(name));
-
+    roots.push(("project", PathBuf::from("presets")));
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        candidates.push(PathBuf::from(xdg).join("ralph/presets").join(name));
+        roots.push(("xdg", PathBuf::from(xdg).join("ralph/presets")));
     }
     if let Ok(home) = std::env::var("HOME") {
         let home = PathBuf::from(home);
-        candidates.push(home.join(".config/ralph/presets").join(name));
-        candidates.push(home.join(".config/autoloop/presets").join(name));
+        roots.push(("home", home.join(".config/ralph/presets")));
+        roots.push(("autoloop", home.join(".config/autoloop/presets")));
     }
     if let Ok(explicit) = std::env::var("RALPH_PRESETS_DIR") {
-        candidates.push(PathBuf::from(explicit).join(name));
+        roots.push(("env", PathBuf::from(explicit)));
     }
     if let Ok(explicit) = std::env::var("AUTOLOOP_PRESETS_DIR") {
-        candidates.push(PathBuf::from(explicit).join(name));
+        roots.push(("env", PathBuf::from(explicit)));
     }
 
-    candidates.into_iter().find(|p| is_toml_preset_dir(p))
+    roots
+}
+
+/// Search for a TOML preset dir named `name`.
+///
+/// First hit across [`preset_search_roots`] wins.
+/// Returns `None` if no candidate directory matches the preset shape.
+pub(crate) fn resolve_preset_dir(name: &str) -> Option<PathBuf> {
+    preset_search_roots()
+        .into_iter()
+        .map(|(_, root)| root.join(name))
+        .find(|p| is_toml_preset_dir(p))
 }
 
 /// Known core fields that can be overridden via CLI.
@@ -1911,7 +1918,7 @@ fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
     println!("Usage:");
     println!("  ralph init --backend <backend>   Generate core config (ralph.yml)");
     println!("  ralph init --list-presets        Show builtin hat collections\n");
-    println!("Backends: {}", backend_support::VALID_BACKENDS_LABEL);
+    println!("Backends: {}", backend_support::valid_backends_label());
     println!("\nThen run with hats, e.g.: ralph run -c ralph.yml -H builtin:code-assist");
 
     Ok(())
@@ -2186,8 +2193,7 @@ fn emit_command_with_root(
         .with_context(|| format!("Failed to open events file: {}", events_file.display()))?;
 
     // Write as single-line JSON (JSONL format)
-    let json_line = serde_json::to_string(&record)?;
-    writeln!(file, "{}", json_line)?;
+    ralph_core::utils::write_jsonl_line(&mut file, &record)?;
 
     // Success message
     if use_colors {

@@ -392,7 +392,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::executor::EventRecord;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::time::Duration;
 
@@ -401,20 +401,6 @@ mod tests {
         let s = format!("{}✅{}", "x".repeat(49), "y".repeat(10));
         let out = truncate(&s, 50);
         for _ in out.chars() {}
-    }
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-events-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     fn mock_execution_result() -> crate::executor::ExecutionResult {
@@ -477,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_events_setup_creates_config() {
-        let workspace = test_workspace("events-setup");
+        let workspace = test_workspace("events", "events-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = EventsScenario::new();
@@ -564,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_backpressure_setup_creates_config() {
-        let workspace = test_workspace("backpressure-setup");
+        let workspace = test_workspace("events", "backpressure-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = BackpressureScenario::new();
@@ -667,7 +653,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_events_full_run() {
-        let workspace = test_workspace("events-full");
+        let workspace = test_workspace("events", "events-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = EventsScenario::new();
@@ -694,7 +680,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_backpressure_full_run() {
-        let workspace = test_workspace("backpressure-full");
+        let workspace = test_workspace("events", "backpressure-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = BackpressureScenario::new();

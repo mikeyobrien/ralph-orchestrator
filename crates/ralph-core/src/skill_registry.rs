@@ -41,27 +41,7 @@ impl SkillRegistry {
 
     /// Register a built-in skill from raw content (with frontmatter).
     pub fn register_builtin(&mut self, fallback_name: &str, raw_content: &str) -> Result<()> {
-        let (fm, content) = parse_frontmatter(raw_content);
-        let fm = fm.unwrap_or_default();
-
-        let name = fm.name.unwrap_or_else(|| fallback_name.to_string());
-        let description = fm.description.unwrap_or_default();
-
-        self.skills.insert(
-            name.clone(),
-            SkillEntry {
-                name,
-                description,
-                content,
-                source: SkillSource::BuiltIn,
-                hats: fm.hats,
-                backends: fm.backends,
-                tags: fm.tags,
-                auto_inject: false, // Built-ins default to false; overridden by config
-            },
-        );
-
-        Ok(())
+        self.register_raw(fallback_name, raw_content, SkillSource::BuiltIn)
     }
 
     /// Register built-in skills (ralph-tools, ralph-tools-tasks, ralph-tools-memories, robot-interaction).
@@ -131,19 +111,28 @@ impl SkillRegistry {
             }
         };
 
-        let (fm, content) = parse_frontmatter(&raw);
+        self.register_raw(fallback_name, &raw, SkillSource::File(path.to_path_buf()))
+    }
+
+    /// Shared registration logic: parse frontmatter and insert into the registry.
+    fn register_raw(
+        &mut self,
+        fallback_name: &str,
+        raw_content: &str,
+        source: SkillSource,
+    ) -> Result<()> {
+        let (fm, content) = parse_frontmatter(raw_content);
         let fm = fm.unwrap_or_default();
 
         let name = fm.name.unwrap_or_else(|| fallback_name.to_string());
-        let description = fm.description.unwrap_or_default();
 
         self.skills.insert(
             name.clone(),
             SkillEntry {
                 name,
-                description,
+                description: fm.description.unwrap_or_default(),
                 content,
-                source: SkillSource::File(path.to_path_buf()),
+                source,
                 hats: fm.hats,
                 backends: fm.backends,
                 tags: fm.tags,

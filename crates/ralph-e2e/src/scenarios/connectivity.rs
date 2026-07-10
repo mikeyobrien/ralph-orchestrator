@@ -198,7 +198,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::time::Duration;
 
@@ -207,20 +207,6 @@ mod tests {
         let s = format!("{}✅{}", "x".repeat(99), "y".repeat(10));
         let out = truncate(&s, 100);
         for _ in out.chars() {}
-    }
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-connectivity-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     fn mock_execution_result(has_pong: bool) -> crate::executor::ExecutionResult {
@@ -265,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_connectivity_setup_claude() {
-        let workspace = test_workspace("setup-claude");
+        let workspace = test_workspace("connectivity", "setup-claude");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ConnectivityScenario::new();
@@ -284,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_connectivity_setup_kiro() {
-        let workspace = test_workspace("setup-kiro");
+        let workspace = test_workspace("connectivity", "setup-kiro");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ConnectivityScenario::new();
@@ -301,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_connectivity_setup_opencode() {
-        let workspace = test_workspace("setup-opencode");
+        let workspace = test_workspace("connectivity", "setup-opencode");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ConnectivityScenario::new();
@@ -335,7 +321,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_connectivity_full_run_claude() {
-        let workspace = test_workspace("full-claude");
+        let workspace = test_workspace("connectivity", "full-claude");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = ConnectivityScenario::new();

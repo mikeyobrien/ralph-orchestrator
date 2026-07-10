@@ -60,7 +60,7 @@ fn create_worktree_with_commits(
     num_commits: usize,
 ) -> Result<std::path::PathBuf> {
     let worktree_path = temp_path.join(".worktrees").join(loop_id);
-    let branch_name = format!("ralph/{}", loop_id);
+    let branch_name = ralph_core::worktree::branch_name(loop_id);
 
     // Create worktree
     Command::new("git")

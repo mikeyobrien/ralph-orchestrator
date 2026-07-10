@@ -371,6 +371,7 @@ impl HooksBddIntegrationHarness {
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
+        configure_bounded_command(&mut command);
 
         let mut child = command.spawn().map_err(|source| {
             format!(
@@ -391,7 +392,7 @@ impl HooksBddIntegrationHarness {
                 Ok(None) => {
                     if start.elapsed() >= timeout {
                         timed_out = true;
-                        if let Err(source) = child.kill()
+                        if let Err(source) = terminate_bounded_child(&mut child)
                             && source.kind() != std::io::ErrorKind::InvalidInput
                         {
                             return Err(format!(
@@ -460,6 +461,33 @@ impl HooksBddIntegrationHarness {
     pub fn into_artifacts(self) -> HooksBddScenarioArtifacts {
         self.artifacts
     }
+}
+
+#[cfg(unix)]
+fn configure_bounded_command(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_bounded_command(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_bounded_child(child: &mut std::process::Child) -> std::io::Result<()> {
+    let process_group = format!("-{}", child.id());
+    match Command::new("kill")
+        .args(["-KILL", &process_group])
+        .status()
+    {
+        Ok(status) if status.success() => Ok(()),
+        _ => child.kill(),
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_bounded_child(child: &mut std::process::Child) -> std::io::Result<()> {
+    child.kill()
 }
 
 /// Result of executing one hooks BDD scenario.
@@ -746,23 +774,17 @@ fn runtime_test_cases_for_ac(ac_id: &str) -> Vec<RuntimeTestCase> {
             },
         ],
         "AC-02" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order",
+            package: "ralph-core",
+            filter: "test_hooks_config_valid_yaml_parses_and_validates",
         }],
         "AC-03" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order",
+            package: "ralph-core",
+            filter: "build_payload_maps_loop_iteration_and_context_fields",
         }],
-        "AC-04" => vec![
-            RuntimeTestCase {
-                package: "ralph-core",
-                filter: "resolve_phase_event_preserves_declaration_order",
-            },
-            RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_dispatch_phase_event_hooks_routes_by_phase_and_preserves_order",
-            },
-        ],
+        "AC-04" => vec![RuntimeTestCase {
+            package: "ralph-core",
+            filter: "resolve_phase_event_preserves_declaration_order",
+        }],
         "AC-05" => vec![RuntimeTestCase {
             package: "ralph-core",
             filter: "run_writes_json_payload_to_hook_stdin",
@@ -776,57 +798,47 @@ fn runtime_test_cases_for_ac(ac_id: &str) -> Vec<RuntimeTestCase> {
             filter: "run_truncates_stdout_and_stderr_at_max_output_bytes",
         }],
         "AC-08" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_loop_start_dispatch_warn_continues_and_block_aborts",
+            package: "ralph-e2e",
+            filter: "test_v3_ac08_autoloop_hook_warn_policy_evidence",
         }],
         "AC-09" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_loop_start_dispatch_warn_continues_and_block_aborts",
+            package: "ralph-e2e",
+            filter: "test_v3_ac09_autoloop_hook_block_policy_evidence",
         }],
         "AC-10" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_iteration_start_suspend_waits_for_resume_and_clears_artifacts_before_continuing",
+            package: "ralph-core",
+            filter: "test_suspend_state_record_serializes_v1_schema_shape",
         }],
         "AC-11" => vec![RuntimeTestCase {
             package: "ralph-cli",
-            filter: "test_wait_for_resume_if_suspended_resumes_and_clears_suspend_artifacts",
+            filter: "test_resume_loop_writes_resume_signal_for_in_place_loop",
         }],
-        "AC-12" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_wait_for_resume_if_suspended_is_noop_without_suspend_dispositions",
-        }],
+        "AC-12" => vec![
+            RuntimeTestCase {
+                package: "ralph-core",
+                filter: "test_resume_signal_is_single_use",
+            },
+            RuntimeTestCase {
+                package: "ralph-cli",
+                filter: "test_resume_loop_is_idempotent_when_resume_already_requested",
+            },
+        ],
         "AC-13" => vec![RuntimeTestCase {
-            package: "ralph-cli",
-            filter: "test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads",
+            package: "ralph-e2e",
+            filter: "test_v3_ac13_autoloop_hooks_do_not_parse_metadata_mutations",
         }],
-        "AC-14" => vec![
-            RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads",
-            },
-            RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_parse_hook_mutation_stdout_accepts_metadata_only_payload_and_namespaces_by_hook",
-            },
-        ],
-        "AC-15" => vec![
-            RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate",
-            },
-            RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason",
-            },
-            RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate",
-            },
-        ],
+        "AC-14" => vec![RuntimeTestCase {
+            package: "ralph-e2e",
+            filter: "test_v3_ac14_metadata_mutation_surface_is_descoped_to_autoloop_hook_contract",
+        }],
+        "AC-15" => vec![RuntimeTestCase {
+            package: "ralph-e2e",
+            filter: "test_v3_ac15_json_mutation_format_is_descoped_with_old_runtime",
+        }],
         "AC-16" => vec![
             RuntimeTestCase {
-                package: "ralph-cli",
-                filter: "test_dispatch_phase_event_hooks_retry_backoff_recovers_before_exhaustion",
+                package: "ralph-e2e",
+                filter: "test_v3_ac16_autoloop_hook_telemetry_evidence",
             },
             RuntimeTestCase {
                 package: "ralph-core",
@@ -936,9 +948,25 @@ fn assert_runtime_integration_coverage(
                 stderr_tail
             ));
         }
+
+        let stdout = read_artifact_excerpt(&artifact.stdout_path, 4_000);
+        let stderr = read_artifact_excerpt(&artifact.stderr_path, 4_000);
+        if !cargo_test_output_reports_executed_test(&stdout, &stderr) {
+            return Err(format!(
+                "{ac_id}: runtime integration filter matched zero tests ({}/{})\nstdout: {}\nstderr: {}",
+                runtime_test.package, runtime_test.filter, stdout, stderr
+            ));
+        }
     }
 
     Ok(())
+}
+
+fn cargo_test_output_reports_executed_test(stdout: &str, stderr: &str) -> bool {
+    stdout
+        .lines()
+        .chain(stderr.lines())
+        .any(|line| line.contains("test result: ok.") && !line.contains("0 passed;"))
 }
 
 /// Fallback evaluator for unmapped acceptance IDs.
@@ -1041,6 +1069,30 @@ fn assert_workspace_source_contains(
 ) -> Result<(), String> {
     let source_content = load_workspace_source_file(relative_path)?;
     assert_required_source_snippets(relative_path, &source_content, required_snippets)
+}
+
+fn assert_workspace_source_not_contains(
+    relative_path: &str,
+    forbidden_snippets: &[(&str, &str)],
+) -> Result<(), String> {
+    let source_content = load_workspace_source_file(relative_path)?;
+    let present: Vec<String> = forbidden_snippets
+        .iter()
+        .filter_map(|(description, snippet)| {
+            source_content
+                .contains(snippet)
+                .then_some(format!("{description} (snippet: `{snippet}`)"))
+        })
+        .collect();
+
+    if present.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "source evidence assertion failed for {relative_path}: unexpected {}",
+        present.join(", ")
+    ))
 }
 
 // =============================================================================
@@ -1536,29 +1588,33 @@ fn evaluate_ac_08(
             )?;
 
             assert_workspace_source_contains(
-                "crates/ralph-cli/src/loop_runner.rs",
+                "../autoloop/packages/harness/src/hooks.ts",
                 &[
                     (
-                        "warn policy maps to warn disposition",
-                        "HookOnError::Warn => HookDisposition::Warn,",
+                        "autoloop hook failures are detected from exit status or spawn error",
+                        "const failed = result.status !== 0 || result.error;",
                     ),
                     (
-                        "warn/non-pass outcomes are logged as continuing",
-                        "\"Lifecycle hook returned non-pass disposition; continuing\"",
+                        "non-strict hook failures are logged as warnings",
+                        "log(loop, \"warn\", msg);",
                     ),
                     (
-                        "hook dispatch logs telemetry entries with computed disposition",
-                        "event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(",
+                        "only strict pre-run hook failures abort the run",
+                        "if (loop.hooks.strict && name === \"pre_run\") {",
                     ),
                     (
-                        "lifecycle integration test asserts warn continues across boundary",
-                        "warn disposition should continue across loop.start boundary",
-                    ),
-                    (
-                        "blocking gate helper allows non-blocking dispositions",
-                        "fn test_fail_if_blocking_loop_start_outcomes_allows_non_blocking_dispositions() {",
+                        "non-strict hook failures fall through without throwing",
+                        "log(loop, \"debug\", `hook ${name} ok`);",
                     ),
                 ],
+            )?;
+
+            assert_workspace_source_contains(
+                "../autoloop/packages/harness/src/config-helpers.ts",
+                &[(
+                    "autoloop strict mode defaults to non-blocking hook failures",
+                    "strict: config.get(cfg, \"hooks.strict\", \"false\") === \"true\",",
+                )],
             )?;
 
             Ok(())
@@ -1597,33 +1653,37 @@ fn evaluate_ac_09(
             )?;
 
             assert_workspace_source_contains(
-                "crates/ralph-cli/src/loop_runner.rs",
+                "../autoloop/packages/harness/src/hooks.ts",
                 &[
                     (
-                        "block policy maps to block disposition",
-                        "HookOnError::Block => HookDisposition::Block,",
+                        "autoloop hook failures are detected from exit status or spawn error",
+                        "const failed = result.status !== 0 || result.error;",
                     ),
                     (
-                        "blocking gate detects block dispositions",
-                        ".find(|outcome| outcome.disposition == HookDisposition::Block)",
+                        "strict pre-run failures abort the run",
+                        "if (loop.hooks.strict && name === \"pre_run\") {",
                     ),
                     (
-                        "blocking gate fails lifecycle boundary when block is present",
-                        "Err(anyhow::anyhow!(reason))",
-                    ),
-                    (
-                        "blocking failure reason includes hook, phase-event, and failure detail",
-                        "\"Lifecycle hook '{}' blocked orchestration at '{}': {}\"",
-                    ),
-                    (
-                        "loop-start integration test asserts block disposition aborts boundary",
-                        "expect_err(\"block disposition should abort loop.start boundary\")",
-                    ),
-                    (
-                        "failure-context test asserts surfaced block reason",
-                        "expect_err(\"block disposition should fail loop.start boundary\")",
+                        "strict pre-run failure raises an aborting error",
+                        "throw new Error(`Aborting run: ${msg}`);",
                     ),
                 ],
+            )?;
+
+            assert_workspace_source_contains(
+                "../autoloop/packages/harness/src/config-helpers.ts",
+                &[(
+                    "autoloop exposes strict hook policy in runtime config",
+                    "strict: config.get(cfg, \"hooks.strict\", \"false\") === \"true\",",
+                )],
+            )?;
+
+            assert_workspace_source_contains(
+                "../autoloop/packages/core/src/config-schema.ts",
+                &[(
+                    "strict hook policy is part of the autoloop config schema",
+                    "strict: \"false\",",
+                )],
             )?;
 
             Ok(())
@@ -1804,35 +1864,37 @@ fn evaluate_ac_13(
         validate_acceptance_context,
         |_harness| {
             assert_workspace_source_contains(
-                "crates/ralph-cli/src/loop_runner.rs",
+                "../autoloop/packages/harness/src/hooks.ts",
                 &[
                     (
-                        "mutation parser short-circuits when mutate.enabled is false",
-                        "if !mutate.enabled {",
+                        "autoloop hook output is captured as output telemetry",
+                        "(result.stdout ?? \"\") +",
                     ),
                     (
-                        "disabled mutation path yields explicit disabled parse outcome",
-                        "return HookMutationParseOutcome::Disabled;",
+                        "autoloop hook output is appended to journal as hook.output",
+                        "\"hook.output\",",
                     ),
                     (
-                        "metadata merge processes only parsed mutation outcomes",
-                        "} = &outcome.mutation_parse_outcome",
+                        "hook output records hook identifier",
+                        "\"hook\": ${JSON.stringify(name)}, \"exit_code\": ${result.status ?? -1}, \"output\": ${JSON.stringify(combined.trim())}",
+                    ),
+                ],
+            )?;
+
+            assert_workspace_source_not_contains(
+                "../autoloop/packages/harness/src/hooks.ts",
+                &[
+                    (
+                        "autoloop hooks must not parse stdout as a metadata mutation payload",
+                        "JSON.parse",
                     ),
                     (
-                        "non-parsed mutation outcomes are skipped during metadata merge",
-                        "else {\n            continue;\n        };",
+                        "autoloop hooks must not merge stdout into hook_metadata",
+                        "hook_metadata",
                     ),
                     (
-                        "AC-13 integration test verifies disabled mutations stay inert",
-                        "fn test_ac13_mutation_disabled_json_output_is_inert_for_accumulator_and_downstream_payloads() {",
-                    ),
-                    (
-                        "AC-13 integration test asserts downstream payload excludes hook_metadata namespace",
-                        "assert!(!payload_accumulated.contains_key(\"hook_metadata\"));",
-                    ),
-                    (
-                        "unit test verifies parser skips mutation parsing when disabled",
-                        "fn test_parse_hook_mutation_stdout_skips_when_disabled() {",
+                        "autoloop hooks must not expose the old mutation parser type",
+                        "HookMutationParseOutcome",
                     ),
                 ],
             )?;
@@ -1858,39 +1920,33 @@ fn evaluate_ac_14(
         validate_acceptance_context,
         |_harness| {
             assert_workspace_source_contains(
-                "crates/ralph-cli/src/loop_runner.rs",
+                ".ralph/specs/v3-autoloops-cutover.spec.md",
                 &[
                     (
-                        "mutation payload parser enforces metadata-only top-level schema",
-                        "if payload_object.len() != 1 || !payload_object.contains_key(HOOK_MUTATION_PAYLOAD_METADATA_KEY)",
+                        "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
+                        "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
                     ),
                     (
-                        "schema error message documents metadata-only mutation contract",
-                        "mutation payload supports only '{{\\\"{HOOK_MUTATION_PAYLOAD_METADATA_KEY}\\\": {{...}}}}'; found keys: {keys:?}",
+                        "old hook engine disposition points to autoloop parity work",
+                        "**Blocker** — acts inside the iteration; → **#38**",
+                    ),
+                ],
+            )?;
+
+            assert_workspace_source_contains(
+                "../autoloop/packages/harness/src/hooks.ts",
+                &[
+                    (
+                        "current autoloop hook surface passes environment, not mutable payloads",
+                        "export interface HookEnv {",
                     ),
                     (
-                        "metadata payload value must be a JSON object",
-                        "message: \"mutation payload key 'metadata' must contain a JSON object\".to_string(),",
+                        "current autoloop hook env carries run identity",
+                        "AUTOLOOP_RUN_ID: string;",
                     ),
                     (
-                        "parsed metadata is namespaced under hook_metadata by emitting hook",
-                        "namespace_object.insert(hook_name.to_string(), serde_json::Value::Object(metadata));",
-                    ),
-                    (
-                        "AC-14 integration test validates metadata-only downstream mutation behavior",
-                        "fn test_ac14_mutation_enabled_updates_only_namespaced_metadata_in_downstream_payloads() {",
-                    ),
-                    (
-                        "AC-14 integration test guards mutation surface from prompt field injection",
-                        "assert!(!payload_object.contains_key(\"prompt\"));",
-                    ),
-                    (
-                        "AC-14 integration test guards mutation surface from events field injection",
-                        "assert!(!payload_object.contains_key(\"events\"));",
-                    ),
-                    (
-                        "unit test rejects payloads that include non-metadata keys",
-                        "fn test_parse_hook_mutation_stdout_rejects_non_metadata_payload_shape() {",
+                        "current autoloop hook env carries iteration identity when present",
+                        "AUTOLOOP_ITERATION?: string;",
                     ),
                 ],
             )?;
@@ -1916,47 +1972,33 @@ fn evaluate_ac_15(
         validate_acceptance_context,
         |_harness| {
             assert_workspace_source_contains(
-                "crates/ralph-cli/src/loop_runner.rs",
+                ".ralph/specs/v3-autoloops-cutover.spec.md",
                 &[
                     (
-                        "mutation parser attempts JSON decode of hook stdout",
-                        "let parsed = match serde_json::from_str::<serde_json::Value>(stdout.trim()) {",
+                        "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
+                        "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
                     ),
                     (
-                        "non-JSON mutation output maps to invalid-json parse outcome",
-                        "return HookMutationParseOutcome::Invalid(HookMutationParseError::InvalidJson {",
+                        "old hook engine disposition points to autoloop parity work",
+                        "**Blocker** — acts inside the iteration; → **#38**",
+                    ),
+                ],
+            )?;
+
+            assert_workspace_source_not_contains(
+                "../autoloop/packages/harness/src/hooks.ts",
+                &[
+                    (
+                        "current autoloop hooks must not enforce old JSON-only mutation stdout parsing",
+                        "serde_json::from_str",
                     ),
                     (
-                        "invalid-json failure message is surfaced with parse error context",
-                        "message: format!(\"mutation stdout is not valid JSON: {error}\"),",
+                        "current autoloop hooks must not expose old invalid-mutation failure type",
+                        "InvalidMutationOutput",
                     ),
                     (
-                        "invalid mutation parse outcomes are converted into dispatch failures",
-                        "Some(HookDispatchFailure::InvalidMutationOutput {",
-                    ),
-                    (
-                        "mutation parse failures are dispositioned via on_error policy",
-                        "let disposition = if mutation_failure.is_some() {",
-                    ),
-                    (
-                        "mutation parse failure branch maps through disposition_from_on_error",
-                        "disposition_from_on_error(on_error)",
-                    ),
-                    (
-                        "unit test verifies parser rejects non-JSON mutation stdout",
-                        "fn test_parse_hook_mutation_stdout_rejects_non_json_payload_when_enabled() {",
-                    ),
-                    (
-                        "AC-15 warn-path test verifies non-JSON mutation remains non-blocking",
-                        "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_warn_continues_through_block_gate() {",
-                    ),
-                    (
-                        "AC-15 block-path test verifies non-JSON mutation surfaces blocking reason",
-                        "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_block_surfaces_invalid_output_reason()",
-                    ),
-                    (
-                        "AC-15 suspend-path test verifies non-JSON mutation enters wait_for_resume gate",
-                        "fn test_ac15_dispatch_phase_event_hooks_non_json_mutation_suspend_uses_wait_for_resume_gate() {",
+                        "current autoloop hooks must not expose old mutation parser type",
+                        "HookMutationParseOutcome",
                     ),
                 ],
             )?;
@@ -2057,41 +2099,37 @@ fn evaluate_ac_16(
             )?;
 
             assert_workspace_source_contains(
-                "crates/ralph-cli/src/loop_runner.rs",
+                "../autoloop/packages/harness/src/hooks.ts",
                 &[
                     (
-                        "loop runner emits hook-run telemetry after each attempt",
-                        "event_loop.log_hook_run_telemetry(HookRunTelemetryEntry::from_run_result(",
+                        "autoloop appends hook output telemetry to the journal",
+                        "appendEvent(",
                     ),
                     (
-                        "telemetry emission includes canonical phase-event key",
-                        "phase_event_key,",
-                    ),
-                    ("telemetry emission includes hook identifier", "hook_name,"),
-                    (
-                        "telemetry emission includes computed disposition",
-                        "disposition,",
-                    ),
-                    ("telemetry emission includes suspend mode", "suspend_mode,"),
-                    (
-                        "telemetry emission includes retry attempt",
-                        "retry_attempt,",
+                        "autoloop hook telemetry is typed as hook.output",
+                        "\"hook.output\",",
                     ),
                     (
-                        "telemetry emission includes retry ceiling",
-                        "retry_max_attempts,",
+                        "autoloop hook telemetry includes hook name",
+                        "\"hook\": ${JSON.stringify(name)}, \"exit_code\": ${result.status ?? -1}, \"output\": ${JSON.stringify(combined.trim())}",
                     ),
                     (
-                        "telemetry emission includes executor run result",
-                        "&run_result,",
+                        "autoloop hook telemetry includes exit code",
+                        "\"exit_code\": ${result.status ?? -1}",
+                    ),
+                ],
+            )?;
+
+            assert_workspace_source_contains(
+                "../autoloop/packages/harness/src/iteration.ts",
+                &[
+                    (
+                        "autoloop runs pre-iteration hooks with iteration metadata",
+                        "runHook(\n    loop,\n    \"pre_iteration\",",
                     ),
                     (
-                        "retry-backoff integration test asserts telemetry row count",
-                        "assert_eq!(telemetry_entries.len(), 3);",
-                    ),
-                    (
-                        "wait-then-retry integration test asserts telemetry row count",
-                        "assert_eq!(telemetry_entries.len(), 2);",
+                        "autoloop runs post-iteration hooks with before/after git metadata",
+                        "runHook(\n    loop,\n    \"post_iteration\",",
                     ),
                 ],
             )?;
@@ -2543,14 +2581,66 @@ mod tests {
             .prepare_temp_workspace("command timeout capture")
             .expect("workspace should be created");
 
-        // Write a minimal ralph.yml with a dummy backend (`sleep 3600`)
-        // so `ralph run` enters the event loop and blocks long enough for
-        // the bounded-command timeout to fire.
+        let sleep_backend = harness
+            .write_hook_script(&workspace_dir, "sleep-backend", "#!/bin/sh\nsleep 3600\n")
+            .expect("should write sleep backend");
+        let sleep_backend = sleep_backend
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+
+        harness
+            .write_workspace_file(
+                &workspace_dir,
+                ".ralph/hooks-timeout-preset/autoloops.toml",
+                &format!(
+                    "event_loop.max_iterations = 1\n\
+                     event_loop.completion_event = \"task.complete\"\n\
+                     event_loop.completion_promise = \"LOOP_COMPLETE\"\n\n\
+                     backend.kind = \"command\"\n\
+                     backend.command = \"{sleep_backend}\"\n\
+                     backend.timeout_ms = 3000000\n\n\
+                     review.enabled = false\n\
+                     harness.instructions_file = \"harness.md\"\n"
+                ),
+            )
+            .expect("should write autoloop config");
+        harness
+            .write_workspace_file(
+                &workspace_dir,
+                ".ralph/hooks-timeout-preset/topology.toml",
+                "name = \"hooks-timeout\"\n\
+                 completion = \"task.complete\"\n\n\
+                 [[role]]\n\
+                 id = \"planner\"\n\
+                 emits = [\"task.complete\"]\n\
+                 prompt_file = \"roles/planner.md\"\n\n\
+                 [handoff]\n\
+                 \"loop.start\" = [\"planner\"]\n",
+            )
+            .expect("should write autoloop topology");
+        harness
+            .write_workspace_file(
+                &workspace_dir,
+                ".ralph/hooks-timeout-preset/roles/planner.md",
+                "You are the planner. This backend intentionally sleeps for timeout coverage.\n",
+            )
+            .expect("should write autoloop role");
+        harness
+            .write_workspace_file(
+                &workspace_dir,
+                ".ralph/hooks-timeout-preset/harness.md",
+                "Hooks BDD timeout fixture.\n",
+            )
+            .expect("should write autoloop harness");
+
+        // Run headlessly because this harness redirects stdio; TUI mode requires
+        // a configured terminal and is covered by separate TUI smoke tests.
         harness
             .write_workspace_file(
                 &workspace_dir,
                 "ralph.yml",
-                "cli:\n  backend: custom\n  command: sleep\n  args: [\"3600\"]\n  prompt_mode: stdin\n",
+                "core:\n  autoloop_preset: .ralph/hooks-timeout-preset\n",
             )
             .expect("should write ralph.yml");
 
@@ -2567,7 +2657,14 @@ mod tests {
             .run_bounded_ralph_command(
                 "ralph.run-timeout",
                 &workspace_dir,
-                &["run", "-p", "hooks-bdd-timeout", "--max-iterations", "1"],
+                &[
+                    "run",
+                    "--no-tui",
+                    "-p",
+                    "hooks-bdd-timeout",
+                    "--max-iterations",
+                    "1",
+                ],
                 Duration::from_secs(2),
             )
             .expect("bounded command should return timeout artifact");
@@ -2751,6 +2848,28 @@ mod tests {
     }
 
     #[test]
+    fn test_v3_ac08_autoloop_hook_warn_policy_evidence() {
+        assert_workspace_source_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[
+                (
+                    "autoloop hook failures are detected from exit status or spawn error",
+                    "const failed = result.status !== 0 || result.error;",
+                ),
+                (
+                    "non-strict hook failures are logged as warnings",
+                    "log(loop, \"warn\", msg);",
+                ),
+                (
+                    "only strict pre-run hook failures abort the run",
+                    "if (loop.hooks.strict && name === \"pre_run\") {",
+                ),
+            ],
+        )
+        .expect("AC-08 autoloop warn evidence should exist");
+    }
+
+    #[test]
     fn run_hooks_bdd_suite_passes_ac_09_block_policy() {
         let config = HooksBddConfig::new(Some("AC-09".to_string()), true);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
@@ -2758,6 +2877,24 @@ mod tests {
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
         assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn test_v3_ac09_autoloop_hook_block_policy_evidence() {
+        assert_workspace_source_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[
+                (
+                    "strict pre-run failures abort the run",
+                    "if (loop.hooks.strict && name === \"pre_run\") {",
+                ),
+                (
+                    "strict pre-run failure raises an aborting error",
+                    "throw new Error(`Aborting run: ${msg}`);",
+                ),
+            ],
+        )
+        .expect("AC-09 autoloop block evidence should exist");
     }
 
     #[test]
@@ -2801,6 +2938,32 @@ mod tests {
     }
 
     #[test]
+    fn test_v3_ac13_autoloop_hooks_do_not_parse_metadata_mutations() {
+        assert_workspace_source_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[(
+                "autoloop hook output is appended to journal as hook.output",
+                "\"hook.output\",",
+            )],
+        )
+        .expect("AC-13 hook output evidence should exist");
+        assert_workspace_source_not_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[
+                (
+                    "autoloop hooks must not parse stdout as a metadata mutation payload",
+                    "JSON.parse",
+                ),
+                (
+                    "autoloop hooks must not merge stdout into hook_metadata",
+                    "hook_metadata",
+                ),
+            ],
+        )
+        .expect("AC-13 old mutation parser evidence should be absent");
+    }
+
+    #[test]
     fn run_hooks_bdd_suite_passes_ac_14_metadata_mutation() {
         let config = HooksBddConfig::new(Some("AC-14".to_string()), true);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
@@ -2808,6 +2971,26 @@ mod tests {
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
         assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn test_v3_ac14_metadata_mutation_surface_is_descoped_to_autoloop_hook_contract() {
+        assert_workspace_source_contains(
+            ".ralph/specs/v3-autoloops-cutover.spec.md",
+            &[(
+                "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
+                "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
+            )],
+        )
+        .expect("AC-14 cutover evidence should exist");
+        assert_workspace_source_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[(
+                "current autoloop hook surface passes environment, not mutable payloads",
+                "export interface HookEnv {",
+            )],
+        )
+        .expect("AC-14 autoloop hook contract evidence should exist");
     }
 
     #[test]
@@ -2821,6 +3004,26 @@ mod tests {
     }
 
     #[test]
+    fn test_v3_ac15_json_mutation_format_is_descoped_with_old_runtime() {
+        assert_workspace_source_contains(
+            ".ralph/specs/v3-autoloops-cutover.spec.md",
+            &[(
+                "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
+                "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
+            )],
+        )
+        .expect("AC-15 cutover evidence should exist");
+        assert_workspace_source_not_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[(
+                "current autoloop hooks must not expose old mutation parser type",
+                "HookMutationParseOutcome",
+            )],
+        )
+        .expect("AC-15 old mutation parser evidence should be absent");
+    }
+
+    #[test]
     fn run_hooks_bdd_suite_passes_ac_16_telemetry_completeness() {
         let config = HooksBddConfig::new(Some("AC-16".to_string()), true);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
@@ -2828,6 +3031,28 @@ mod tests {
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
         assert!(results.results[0].passed);
+    }
+
+    #[test]
+    fn test_v3_ac16_autoloop_hook_telemetry_evidence() {
+        assert_workspace_source_contains(
+            "../autoloop/packages/harness/src/hooks.ts",
+            &[
+                (
+                    "autoloop appends hook output telemetry to the journal",
+                    "appendEvent(",
+                ),
+                (
+                    "autoloop hook telemetry is typed as hook.output",
+                    "\"hook.output\",",
+                ),
+                (
+                    "autoloop hook telemetry includes hook name",
+                    "\"hook\": ${JSON.stringify(name)}, \"exit_code\": ${result.status ?? -1}, \"output\": ${JSON.stringify(combined.trim())}",
+                ),
+            ],
+        )
+        .expect("AC-16 autoloop hook telemetry evidence should exist");
     }
 
     #[test]

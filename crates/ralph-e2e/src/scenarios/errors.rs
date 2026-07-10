@@ -803,7 +803,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
 
     #[test]
@@ -811,20 +811,6 @@ mod tests {
         let s = format!("{}✅{}", "x".repeat(99), "y".repeat(10));
         let out = truncate(&s, 100);
         for _ in out.chars() {}
-    }
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-errors-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
     }
 
     fn mock_timeout_result() -> crate::executor::ExecutionResult {
@@ -908,7 +894,7 @@ mod tests {
 
     #[test]
     fn test_timeout_setup_creates_config() {
-        let workspace = test_workspace("timeout-setup");
+        let workspace = test_workspace("errors", "timeout-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = TimeoutScenario::new();
@@ -993,7 +979,7 @@ mod tests {
 
     #[test]
     fn test_max_iter_setup_creates_config() {
-        let workspace = test_workspace("max-iter-setup");
+        let workspace = test_workspace("errors", "max-iter-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MaxIterationsScenario::new();
@@ -1077,7 +1063,7 @@ mod tests {
 
     #[test]
     fn test_auth_failure_setup_creates_config() {
-        let workspace = test_workspace("auth-failure-setup");
+        let workspace = test_workspace("errors", "auth-failure-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = AuthFailureScenario::new();
@@ -1168,7 +1154,7 @@ mod tests {
 
     #[test]
     fn test_backend_unavailable_setup_creates_config() {
-        let workspace = test_workspace("backend-unavailable-setup");
+        let workspace = test_workspace("errors", "backend-unavailable-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = BackendUnavailableScenario::new();
@@ -1238,7 +1224,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_timeout_full_run() {
-        let workspace = test_workspace("timeout-full");
+        let workspace = test_workspace("errors", "timeout-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = TimeoutScenario::new();
@@ -1265,7 +1251,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_max_iterations_full_run() {
-        let workspace = test_workspace("max-iter-full");
+        let workspace = test_workspace("errors", "max-iter-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MaxIterationsScenario::new();
@@ -1292,7 +1278,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_backend_unavailable_full_run() {
-        let workspace = test_workspace("backend-unavailable-full");
+        let workspace = test_workspace("errors", "backend-unavailable-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = BackendUnavailableScenario::new();

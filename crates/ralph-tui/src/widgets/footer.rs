@@ -161,10 +161,7 @@ impl Widget for Footer<'_> {
 
         // Show total elapsed time (default to 00:00 if loop hasn't started)
         let elapsed_display = if let Some(elapsed) = self.state.get_loop_elapsed() {
-            let total_secs = elapsed.as_secs();
-            let mins = total_secs / 60;
-            let secs = total_secs % 60;
-            format!("Total Time Elapsed: {mins:02}:{secs:02}")
+            format!("Total Time Elapsed: {}", ralph_core::utils::format_elapsed(elapsed))
         } else {
             "Total Time Elapsed: 00:00".to_string()
         };

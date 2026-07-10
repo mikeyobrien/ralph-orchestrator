@@ -553,23 +553,9 @@ impl AssertionExt for crate::models::Assertion {
 mod tests {
     use super::*;
     use crate::executor::EventRecord;
-    use std::env;
+    use crate::scenarios::test_helpers::{cleanup_workspace, test_workspace};
     use std::fs;
     use std::time::Duration;
-
-    fn test_workspace(test_name: &str) -> std::path::PathBuf {
-        env::temp_dir().join(format!(
-            "ralph-e2e-orch-{}-{}",
-            test_name,
-            std::process::id()
-        ))
-    }
-
-    fn cleanup_workspace(path: &std::path::PathBuf) {
-        if path.exists() {
-            fs::remove_dir_all(path).ok();
-        }
-    }
 
     fn mock_execution_result() -> crate::executor::ExecutionResult {
         crate::executor::ExecutionResult {
@@ -603,7 +589,7 @@ mod tests {
 
     #[test]
     fn test_single_iter_setup_creates_config() {
-        let workspace = test_workspace("single-iter-setup");
+        let workspace = test_workspace("orch", "single-iter-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = SingleIterScenario::new();
@@ -679,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_multi_iter_setup_creates_config() {
-        let workspace = test_workspace("multi-iter-setup");
+        let workspace = test_workspace("orch", "multi-iter-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MultiIterScenario::new();
@@ -780,7 +766,7 @@ mod tests {
 
     #[test]
     fn test_completion_setup_creates_config() {
-        let workspace = test_workspace("completion-setup");
+        let workspace = test_workspace("orch", "completion-setup");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = CompletionScenario::new();
@@ -872,7 +858,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_single_iter_full_run() {
-        let workspace = test_workspace("single-iter-full");
+        let workspace = test_workspace("orch", "single-iter-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = SingleIterScenario::new();
@@ -899,7 +885,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_multi_iter_full_run() {
-        let workspace = test_workspace("multi-iter-full");
+        let workspace = test_workspace("orch", "multi-iter-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = MultiIterScenario::new();
@@ -926,7 +912,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live backend"]
     async fn test_completion_full_run() {
-        let workspace = test_workspace("completion-full");
+        let workspace = test_workspace("orch", "completion-full");
         fs::create_dir_all(&workspace).unwrap();
 
         let scenario = CompletionScenario::new();

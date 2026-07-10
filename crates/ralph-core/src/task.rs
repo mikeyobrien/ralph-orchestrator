@@ -3,7 +3,9 @@
 //! Lightweight task tracking system inspired by Steve Yegge's Beads.
 //! Provides structured task data with JSONL persistence and dependency tracking.
 
+use crate::utils::now_rfc3339;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Status of a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +27,17 @@ impl TaskStatus {
     /// Terminal statuses indicate the task is done and no longer needs attention.
     pub fn is_terminal(&self) -> bool {
         matches!(self, TaskStatus::Closed | TaskStatus::Failed)
+    }
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskStatus::Open => f.write_str("open"),
+            TaskStatus::InProgress => f.write_str("in_progress"),
+            TaskStatus::Closed => f.write_str("closed"),
+            TaskStatus::Failed => f.write_str("failed"),
+        }
     }
 }
 
@@ -84,7 +97,7 @@ impl Task {
             priority: priority.clamp(1, 5),
             blocked_by: Vec::new(),
             loop_id: None,
-            created: chrono::Utc::now().to_rfc3339(),
+            created: now_rfc3339(),
             started: None,
             closed: None,
         }
@@ -98,13 +111,7 @@ impl Task {
 
     /// Generates a unique task ID: task-{timestamp}-{hex_suffix}
     pub fn generate_id() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let duration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-        let timestamp = duration.as_secs();
-        let hex_suffix = format!("{:04x}", duration.subsec_micros() % 0x10000);
-        format!("task-{}-{}", timestamp, hex_suffix)
+        crate::utils::generate_prefixed_id("task")
     }
 
     /// Returns true if this task is ready to work on (open + no blockers pending).
@@ -142,9 +149,21 @@ impl Task {
     pub fn start(&mut self) {
         self.status = TaskStatus::InProgress;
         if self.started.is_none() {
-            self.started = Some(chrono::Utc::now().to_rfc3339());
+            self.started = Some(now_rfc3339());
         }
         self.closed = None;
+    }
+
+    /// Marks the task as closed with a completion timestamp.
+    pub fn close(&mut self) {
+        self.status = TaskStatus::Closed;
+        self.closed = Some(now_rfc3339());
+    }
+
+    /// Marks the task as failed with a completion timestamp.
+    pub fn fail(&mut self) {
+        self.status = TaskStatus::Failed;
+        self.closed = Some(now_rfc3339());
     }
 
     /// Reopens a terminal task for further work.
@@ -252,9 +271,17 @@ mod tests {
     fn test_reopen_resets_terminal_state() {
         let mut task = Task::new("Test".to_string(), 1);
         task.status = TaskStatus::Closed;
-        task.closed = Some(chrono::Utc::now().to_rfc3339());
+        task.closed = Some(now_rfc3339());
         task.reopen();
         assert_eq!(task.status, TaskStatus::Open);
         assert!(task.closed.is_none());
+    }
+
+    #[test]
+    fn task_status_display_matches_serde() {
+        assert_eq!(TaskStatus::Open.to_string(), "open");
+        assert_eq!(TaskStatus::InProgress.to_string(), "in_progress");
+        assert_eq!(TaskStatus::Closed.to_string(), "closed");
+        assert_eq!(TaskStatus::Failed.to_string(), "failed");
     }
 }

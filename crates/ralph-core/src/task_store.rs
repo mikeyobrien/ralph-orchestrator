@@ -16,43 +16,15 @@
 
 use crate::file_lock::FileLock;
 use crate::task::{Task, TaskStatus};
+use crate::utils::read_jsonl_lenient;
 use std::io;
 use std::path::Path;
-use tracing::warn;
 
 /// A store for managing tasks with JSONL persistence and file locking.
 pub struct TaskStore {
     path: std::path::PathBuf,
     tasks: Vec<Task>,
     lock: FileLock,
-}
-
-/// Parses a JSONL line into a Task, logging a warning on failure.
-fn parse_task_line(line: &str) -> Option<Task> {
-    match serde_json::from_str(line) {
-        Ok(task) => Some(task),
-        Err(e) => {
-            warn!(
-                error = %e,
-                line = line.chars().take(200).collect::<String>(),
-                "Skipping malformed task line in JSONL"
-            );
-            None
-        }
-    }
-}
-
-fn load_tasks_from_path(path: &Path) -> io::Result<Vec<Task>> {
-    if path.exists() {
-        let content = std::fs::read_to_string(path)?;
-        Ok(content
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .filter_map(parse_task_line)
-            .collect())
-    } else {
-        Ok(Vec::new())
-    }
 }
 
 impl TaskStore {
@@ -66,7 +38,7 @@ impl TaskStore {
         let lock = FileLock::new(path)?;
         let _guard = lock.shared()?;
 
-        let tasks = load_tasks_from_path(path)?;
+        let tasks = read_jsonl_lenient(path)?;
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -116,7 +88,7 @@ impl TaskStore {
     pub fn reload(&mut self) -> io::Result<()> {
         let _guard = self.lock.shared()?;
 
-        self.tasks = load_tasks_from_path(&self.path)?;
+        self.tasks = read_jsonl_lenient(&self.path)?;
 
         Ok(())
     }
@@ -142,7 +114,7 @@ impl TaskStore {
         let _guard = self.lock.exclusive()?;
 
         // Reload to get latest changes from other loops
-        self.tasks = load_tasks_from_path(&self.path)?;
+        self.tasks = read_jsonl_lenient(&self.path)?;
 
         // Execute the user function
         let result = f(self);
