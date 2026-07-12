@@ -12,7 +12,10 @@
 use crate::resolve_workspace_root;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_core::{MarkdownMemoryStore, Memory, MemoryType, truncate_with_ellipsis};
+use ralph_core::{
+    MarkdownMemoryStore, Memory, MemoryType, format_memories_as_markdown, truncate_to_budget,
+    truncate_with_ellipsis,
+};
 use std::path::PathBuf;
 
 use crate::display::colors;
@@ -686,36 +689,6 @@ fn print_memory_detail(memory: &Memory, use_colors: bool) {
     }
 }
 
-fn format_memories_as_markdown(memories: &[Memory]) -> String {
-    let mut output = String::from("# Memories\n");
-
-    // Group by type
-    for memory_type in MemoryType::all() {
-        let type_memories: Vec<_> = memories
-            .iter()
-            .filter(|m| m.memory_type == *memory_type)
-            .collect();
-
-        if type_memories.is_empty() {
-            continue;
-        }
-
-        output.push_str(&format!("\n## {}\n", memory_type.section_name()));
-
-        for memory in type_memories {
-            output.push_str(&format!(
-                "\n### {}\n> {}\n<!-- tags: {} | created: {} -->\n",
-                memory.id,
-                memory.content.replace('\n', "\n> "),
-                memory.tags.join(", "),
-                memory.created
-            ));
-        }
-    }
-
-    output
-}
-
 fn format_memories_as_text(memories: &[Memory]) -> String {
     let mut output = String::new();
 
@@ -733,38 +706,6 @@ fn format_memories_as_text(memories: &[Memory]) -> String {
     }
 
     output
-}
-
-/// Truncate content to approximately fit within a token budget.
-///
-/// Uses a simple heuristic of ~4 characters per token.
-fn truncate_to_budget(content: &str, budget: usize) -> String {
-    // Rough estimate: 4 chars per token
-    let char_budget = budget * 4;
-
-    if content.len() <= char_budget {
-        return content.to_string();
-    }
-
-    // Find a good break point (end of a memory block)
-    let truncated = &content[..char_budget];
-
-    // Try to find the last complete memory block (ends with -->)
-    if let Some(last_complete) = truncated.rfind("-->") {
-        let end = last_complete + 3;
-        // Find the next newline after -->
-        let final_end = truncated[end..].find('\n').map_or(end, |n| end + n + 1);
-        format!(
-            "{}\n\n<!-- truncated: budget {} tokens exceeded -->",
-            &content[..final_end],
-            budget
-        )
-    } else {
-        format!(
-            "{}\n\n<!-- truncated: budget {} tokens exceeded -->",
-            truncated, budget
-        )
-    }
 }
 
 #[cfg(test)]
