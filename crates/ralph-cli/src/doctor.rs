@@ -466,34 +466,8 @@ fn command_version_ok(command: &str) -> bool {
 }
 
 fn command_exists(command: &str) -> bool {
-    let path = Path::new(command);
-    if path.components().count() > 1 {
-        return path.is_file();
-    }
-
-    let Some(path_var) = env::var_os("PATH") else {
-        return false;
-    };
-    let extensions = executable_extensions();
-
-    for dir in env::split_paths(&path_var) {
-        for ext in &extensions {
-            let candidate = if ext.is_empty() {
-                dir.join(command)
-            } else {
-                dir.join(format!("{}{}", command, ext.to_string_lossy()))
-            };
-
-            if candidate.is_file() {
-                return true;
-            }
-        }
-    }
-
-    false
+    ralph_core::utils::find_executable(command).is_some()
 }
-
-use ralph_core::utils::executable_extensions;
 
 fn report_from_checks(checks: Vec<CheckResult>) -> PreflightReport {
     let warnings = checks

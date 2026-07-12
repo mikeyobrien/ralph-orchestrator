@@ -246,6 +246,43 @@ pub fn open_read_write(path: impl AsRef<Path>) -> io::Result<File> {
         .open(path.as_ref())
 }
 
+/// Searches PATH for a command and returns its resolved path, or `None`.
+///
+/// If `command` contains a path separator (e.g. `./script.sh`), it's checked
+/// directly. Otherwise, each directory on `PATH` is probed with platform
+/// extensions (`.exe`/`.cmd` on Windows, bare name on Unix).
+pub fn find_executable(command: &str) -> Option<std::path::PathBuf> {
+    use std::path::Path;
+
+    let path = Path::new(command);
+    if path.components().count() > 1 {
+        return if path.is_file() {
+            Some(path.to_path_buf())
+        } else {
+            None
+        };
+    }
+
+    let path_var = std::env::var_os("PATH")?;
+    let extensions = executable_extensions();
+
+    for dir in std::env::split_paths(&path_var) {
+        for ext in &extensions {
+            let candidate = if ext.is_empty() {
+                dir.join(command)
+            } else {
+                dir.join(format!("{}{}", command, ext.to_string_lossy()))
+            };
+
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 /// Strips ANSI escape sequences from raw bytes.
 ///
 /// Handles CSI sequences (`\x1b[...`), OSC sequences (`\x1b]...BEL/ST`),

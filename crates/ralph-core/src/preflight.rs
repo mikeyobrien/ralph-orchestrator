@@ -4,7 +4,7 @@ use crate::config::ConfigWarning;
 use crate::{RalphConfig, git_ops};
 use async_trait::async_trait;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -271,14 +271,14 @@ fn validate_hook_command_resolvability(config: &RalphConfig, diagnostics: &mut V
     }
 }
 
-fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
+pub fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
     env_map
         .get("PATH")
         .or_else(|| env_map.get("Path"))
         .map(String::as_str)
 }
 
-fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
+pub fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
     match hook_cwd {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => workspace_root.join(path),
@@ -286,7 +286,7 @@ fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
     }
 }
 
-fn resolve_hook_command(
+pub fn resolve_hook_command(
     command: &str,
     cwd: &Path,
     path_override: Option<&str>,
@@ -301,14 +301,14 @@ fn resolve_hook_command(
 
         if !resolved.exists() {
             return Err(format!(
-                "resolves to '{}' but the file does not exist.",
+                "Command '{command}' resolves to '{}' but the file does not exist.",
                 resolved.display()
             ));
         }
 
         if !is_executable_file(&resolved) {
             return Err(format!(
-                "resolves to '{}' but it is not executable.",
+                "Command '{command}' resolves to '{}' but it is not executable.",
                 resolved.display()
             ));
         }
@@ -321,14 +321,18 @@ fn resolve_hook_command(
         .or_else(|| env::var_os("PATH"))
         .ok_or_else(|| {
             format!(
-                "PATH is not set while resolving command '{}'. Set PATH in the environment or hook env override.",
-                command
+                "PATH is not set while resolving command '{command}'. Set PATH in the environment or hook env override."
             )
         })?;
 
     let extensions = executable_extensions();
+    let mut seen_paths = HashSet::new();
 
     for dir in env::split_paths(&path_value) {
+        if !seen_paths.insert(dir.clone()) {
+            continue;
+        }
+
         for extension in &extensions {
             let candidate = if extension.is_empty() {
                 dir.join(command)
@@ -348,10 +352,10 @@ fn resolve_hook_command(
         "process PATH"
     };
 
-    Err(format!("was not found in {path_source}."))
+    Err(format!("Command '{command}' was not found in {path_source}."))
 }
 
-use crate::utils::{executable_extensions, is_executable_file};
+use crate::utils::{executable_extensions, find_executable, is_executable_file};
 
 struct BackendAvailableCheck;
 
@@ -979,37 +983,6 @@ fn ensure_directory(path: &Path, created: &mut Vec<String>) -> anyhow::Result<()
     created.push(path.display().to_string());
     Ok(())
 }
-
-fn find_executable(command: &str) -> Option<PathBuf> {
-    let path = Path::new(command);
-    if path.components().count() > 1 {
-        return if path.is_file() {
-            Some(path.to_path_buf())
-        } else {
-            None
-        };
-    }
-
-    let path_var = env::var_os("PATH")?;
-    let extensions = executable_extensions();
-
-    for dir in env::split_paths(&path_var) {
-        for ext in &extensions {
-            let candidate = if ext.is_empty() {
-                dir.join(command)
-            } else {
-                dir.join(format!("{}{}", command, ext.to_string_lossy()))
-            };
-
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    None
-}
-
 
 fn is_git_workspace(path: &Path) -> bool {
     let git_dir = path.join(".git");
