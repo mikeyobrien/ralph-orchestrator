@@ -258,49 +258,14 @@ impl LoopCompletionHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::init_test_repo;
     use std::process::Command;
     use tempfile::TempDir;
-
-    fn init_git_repo(dir: &std::path::Path) {
-        Command::new("git")
-            .args(["init", "--initial-branch=main"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.email", "test@test.local"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.name", "Test User"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        std::fs::write(dir.join("README.md"), "# Test").unwrap();
-
-        // Add .ralph/ to .gitignore so landing doesn't create uncommitted changes
-        std::fs::write(dir.join(".gitignore"), ".ralph/\n").unwrap();
-
-        Command::new("git")
-            .args(["add", "README.md", ".gitignore"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "-m", "Initial commit"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-    }
 
     #[test]
     fn test_primary_loop_with_landing() {
         let temp = TempDir::new().unwrap();
-        init_git_repo(temp.path());
+        init_test_repo(temp.path(), &[".ralph/"]);
         let context = LoopContext::primary(temp.path().to_path_buf());
         context.ensure_directories().unwrap();
         let handler = LoopCompletionHandler::new(true);
@@ -318,7 +283,7 @@ mod tests {
     fn test_worktree_loop_auto_merge_enqueues() {
         let temp = TempDir::new().unwrap();
         let repo_root = temp.path().to_path_buf();
-        init_git_repo(&repo_root);
+        init_test_repo(&repo_root, &[".ralph/"]);
         let worktree_path = repo_root.join(".worktrees/ralph-test-1234");
 
         // Create necessary directories
@@ -354,7 +319,7 @@ mod tests {
     fn test_worktree_loop_no_auto_merge_manual() {
         let temp = TempDir::new().unwrap();
         let repo_root = temp.path().to_path_buf();
-        init_git_repo(&repo_root);
+        init_test_repo(&repo_root, &[".ralph/"]);
         let worktree_path = repo_root.join(".worktrees/ralph-test-5678");
 
         std::fs::create_dir_all(&worktree_path).unwrap();
@@ -397,7 +362,7 @@ mod tests {
     fn test_worktree_loop_auto_commits_uncommitted_changes() {
         let temp = TempDir::new().unwrap();
         let repo_root = temp.path().to_path_buf();
-        init_git_repo(&repo_root);
+        init_test_repo(&repo_root, &[".ralph/"]);
 
         // Create worktree directory and set up as a git worktree
         let worktree_path = repo_root.join(".worktrees/ralph-autocommit");
@@ -455,7 +420,7 @@ mod tests {
     fn test_worktree_loop_no_auto_commit_when_clean() {
         let temp = TempDir::new().unwrap();
         let repo_root = temp.path().to_path_buf();
-        init_git_repo(&repo_root);
+        init_test_repo(&repo_root, &[".ralph/"]);
 
         // Create worktree
         let worktree_path = repo_root.join(".worktrees/ralph-clean");

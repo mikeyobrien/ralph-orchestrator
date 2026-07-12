@@ -666,40 +666,8 @@ pub fn sync_working_directory_to_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::init_test_repo;
     use tempfile::TempDir;
-
-    fn init_git_repo(dir: &Path) {
-        Command::new("git")
-            .args(["init", "--initial-branch=main"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.email", "test@test.local"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.name", "Test User"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        // Create initial commit (required for worktrees)
-        fs::write(dir.join("README.md"), "# Test").unwrap();
-        Command::new("git")
-            .args(["add", "README.md"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "-m", "Initial commit"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-    }
 
     #[test]
     fn test_worktree_config_default() {
@@ -726,7 +694,7 @@ mod tests {
     #[test]
     fn test_create_and_remove_worktree() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         let config = WorktreeConfig::default();
         let loop_id = "test-loop-123";
@@ -750,7 +718,7 @@ mod tests {
     #[test]
     fn test_create_worktree_already_exists() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         let config = WorktreeConfig::default();
         let loop_id = "duplicate";
@@ -766,7 +734,7 @@ mod tests {
     #[test]
     fn test_list_worktrees() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Initially just the main worktree
         let worktrees = list_worktrees(temp_dir.path()).unwrap();
@@ -784,7 +752,7 @@ mod tests {
     #[test]
     fn test_list_ralph_worktrees() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         let config = WorktreeConfig::default();
         let _wt1 = create_worktree(temp_dir.path(), "loop-1", &config).unwrap();
@@ -859,7 +827,7 @@ mod tests {
     #[test]
     fn test_worktree_exists() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         let config = WorktreeConfig::default();
         let loop_id = "check-exists";
@@ -885,7 +853,7 @@ mod tests {
     #[test]
     fn test_remove_nonexistent_worktree() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         let result = remove_worktree(temp_dir.path(), temp_dir.path().join("nonexistent"));
 
@@ -923,7 +891,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_get_untracked_files() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create untracked files
         fs::write(temp_dir.path().join("untracked1.txt"), "content1").unwrap();
@@ -938,7 +906,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_get_unstaged_modified_files() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Modify a tracked file without staging
         fs::write(temp_dir.path().join("README.md"), "# Modified").unwrap();
@@ -951,7 +919,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_untracked_files_to_worktree() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create an untracked file
         fs::write(temp_dir.path().join("new_file.txt"), "untracked content").unwrap();
@@ -974,7 +942,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_unstaged_changes_to_worktree() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Modify a tracked file without staging
         fs::write(temp_dir.path().join("README.md"), "# Modified Content").unwrap();
@@ -997,7 +965,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_respects_gitignore() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Add a pattern to .gitignore
         fs::write(temp_dir.path().join(".gitignore"), "*.log\n").unwrap();
@@ -1031,7 +999,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_excludes_worktrees_directory() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create an untracked file in the worktrees directory manually
         let worktrees_dir = temp_dir.path().join(".worktrees");
@@ -1064,7 +1032,7 @@ branch refs/heads/ralph/loop-1
         use std::os::unix::fs as unix_fs;
 
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create a target file
         fs::write(temp_dir.path().join("target.txt"), "target content").unwrap();
@@ -1099,7 +1067,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_handles_binary_files() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create a binary file (PNG header bytes)
         let binary_content: Vec<u8> = vec![
@@ -1122,7 +1090,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_handles_nested_directories() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create nested untracked files
         let nested_dir = temp_dir.path().join("src/components/nested");
@@ -1143,7 +1111,7 @@ branch refs/heads/ralph/loop-1
     #[test]
     fn test_sync_stats_returned() {
         let temp_dir = TempDir::new().unwrap();
-        init_git_repo(temp_dir.path());
+        init_test_repo(temp_dir.path(), &[]);
 
         // Create untracked files
         fs::write(temp_dir.path().join("untracked1.txt"), "content").unwrap();

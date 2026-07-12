@@ -233,45 +233,14 @@ impl LandingHandler {
 mod tests {
     use super::*;
     use crate::task::Task;
+    use crate::testing::init_test_repo;
     use std::fs;
     use std::process::Command;
     use tempfile::TempDir;
 
-    fn init_git_repo(dir: &std::path::Path) {
-        Command::new("git")
-            .args(["init", "--initial-branch=main"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.email", "test@test.local"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.name", "Test User"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-
-        fs::write(dir.join("README.md"), "# Test").unwrap();
-        Command::new("git")
-            .args(["add", "README.md"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "-m", "Initial commit"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-    }
-
     fn setup_test_context() -> (TempDir, LoopContext) {
         let temp = TempDir::new().unwrap();
-        init_git_repo(temp.path());
+        init_test_repo(temp.path(), &[]);
 
         // Add .ralph/ to .gitignore so handoff files don't create uncommitted changes
         fs::write(temp.path().join(".gitignore"), ".ralph/\n").unwrap();
@@ -405,7 +374,7 @@ mod tests {
     fn test_worktree_landing() {
         let temp = TempDir::new().unwrap();
         let repo_root = temp.path().to_path_buf();
-        init_git_repo(&repo_root);
+        init_test_repo(&repo_root, &[]);
 
         // Create .ralph directories
         fs::create_dir_all(repo_root.join(".ralph/agent")).unwrap();
