@@ -66,9 +66,72 @@ fn git_ok(output: Output) -> Result<Output, GitOpsError> {
     }
 }
 
-fn git_stdout(path: &Path, args: &[&str]) -> Result<String, GitOpsError> {
-    let output = git_ok(Command::new("git").args(args).current_dir(path).output()?)?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+/// Run a git command and return trimmed stdout, or a descriptive error.
+///
+/// Like [`git_output`] but returns `Err` instead of `None` on failure,
+/// including the stderr (or stdout if stderr is empty) in the error message.
+pub fn git_output_strict(path: &Path, args: &[&str]) -> Result<String, GitOpsError> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        Err(GitOpsError::Git(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            detail
+        )))
+    }
+}
+
+/// Run a git command, returning `Ok(())` on success or a descriptive error.
+pub fn git_run(path: &Path, args: &[&str]) -> Result<(), GitOpsError> {
+    git_output_strict(path, args).map(|_| ())
+}
+
+/// Run a git command and return stdout if successful, `None` otherwise.
+pub fn git_output(path: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        None
+    }
+}
+
+/// Check whether a git ref (branch, tag, commit) exists.
+pub fn git_ref_exists(path: &Path, reference: &str) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", reference])
+        .current_dir(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Check whether a named git remote exists.
+pub fn git_remote_exists(path: &Path, remote: &str) -> bool {
+    Command::new("git")
+        .args(["remote", "get-url", remote])
+        .current_dir(path)
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 /// Check if the working directory has uncommitted changes.
@@ -82,7 +145,7 @@ fn git_stdout(path: &Path, args: &[&str]) -> Result<String, GitOpsError> {
 ///
 /// * `path` - Path to the git repository (or worktree)
 pub fn has_uncommitted_changes(path: impl AsRef<Path>) -> Result<bool, GitOpsError> {
-    let stdout = git_stdout(path.as_ref(), &["status", "--porcelain"])?;
+    let stdout = git_output_strict(path.as_ref(), &["status", "--porcelain"])?;
     Ok(!stdout.is_empty())
 }
 
@@ -166,13 +229,13 @@ pub fn auto_commit_changes(
 
 /// Count the number of files staged for commit.
 fn count_staged_files(path: &Path) -> Result<usize, GitOpsError> {
-    let stdout = git_stdout(path, &["diff", "--cached", "--name-only"])?;
+    let stdout = git_output_strict(path, &["diff", "--cached", "--name-only"])?;
     Ok(stdout.lines().filter(|line| !line.is_empty()).count())
 }
 
 /// Get the HEAD commit SHA.
 pub fn get_head_sha(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
-    git_stdout(path.as_ref(), &["rev-parse", "HEAD"])
+    git_output_strict(path.as_ref(), &["rev-parse", "HEAD"])
 }
 
 /// Get the current branch name.
@@ -184,7 +247,7 @@ pub fn get_head_sha(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
 ///
 /// * `path` - Path to the git repository (or worktree)
 pub fn get_current_branch(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
-    let branch = git_stdout(path.as_ref(), &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let branch = git_output_strict(path.as_ref(), &["rev-parse", "--abbrev-ref", "HEAD"])?;
 
     if branch == "HEAD" {
         return Err(GitOpsError::Git("Detached HEAD state".to_string()));
@@ -208,7 +271,7 @@ pub fn get_current_branch(path: impl AsRef<Path>) -> Result<String, GitOpsError>
 pub fn clean_stashes(path: impl AsRef<Path>) -> Result<usize, GitOpsError> {
     let path = path.as_ref();
 
-    let stash_list = git_stdout(path, &["stash", "list"])?;
+    let stash_list = git_output_strict(path, &["stash", "list"])?;
     let stash_count = stash_list.lines().filter(|line| !line.is_empty()).count();
 
     if stash_count == 0 {
@@ -232,7 +295,7 @@ pub fn clean_stashes(path: impl AsRef<Path>) -> Result<usize, GitOpsError> {
 pub fn prune_remote_refs(path: impl AsRef<Path>) -> Result<(), GitOpsError> {
     let path = path.as_ref();
 
-    let remotes = git_stdout(path, &["remote"])?;
+    let remotes = git_output_strict(path, &["remote"])?;
     if !remotes.lines().any(|r| r.trim() == "origin") {
         return Ok(());
     }
@@ -266,7 +329,7 @@ pub fn is_working_tree_clean(path: impl AsRef<Path>) -> Result<bool, GitOpsError
 ///
 /// * `path` - Path to the git repository (or worktree)
 pub fn get_commit_summary(path: impl AsRef<Path>) -> Result<String, GitOpsError> {
-    git_stdout(path.as_ref(), &["log", "-1", "--format=%h: %s"])
+    git_output_strict(path.as_ref(), &["log", "-1", "--format=%h: %s"])
 }
 
 /// Get a list of files that were modified in the most recent commits.
