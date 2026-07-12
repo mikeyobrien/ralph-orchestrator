@@ -18,11 +18,10 @@
 //! the in-house engine.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use ralph_core::{
     CompletionAction, LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue,
-    RunStats, SummaryWriter, TerminationReason,
+    RunStats, SummaryWriter, TerminationReason, get_commit_summary, get_head_sha,
 };
 use tracing::{debug, info, warn};
 
@@ -44,6 +43,10 @@ pub fn coordinate_completion(
     loop_id: &str,
     use_colors: bool,
 ) {
+    let repo_root = context
+        .map(|c| c.repo_root().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
     // 1. Summary file.
     let summary_writer = SummaryWriter::default();
     let scratchpad_path = Path::new(scratchpad);
@@ -52,7 +55,7 @@ pub fn coordinate_completion(
     } else {
         None
     };
-    let final_commit = last_commit_info();
+    let final_commit = get_commit_summary(&repo_root).ok();
     if let Err(e) = summary_writer.write(reason, state, scratchpad_opt, final_commit.as_deref()) {
         warn!("Failed to write summary file: {}", e);
     }
@@ -64,7 +67,7 @@ pub fn coordinate_completion(
             if let Err(e) = history.record_terminated("SIGTERM") {
                 warn!("Failed to record termination in history: {}", e);
             }
-        } else if let Err(e) = history.record_completed(history_reason(reason)) {
+        } else if let Err(e) = history.record_completed(reason.history_label()) {
             warn!("Failed to record completion in history: {}", e);
         }
     }
@@ -72,13 +75,10 @@ pub fn coordinate_completion(
     // 3. Merge-queue transitions for merge loops (RALPH_MERGE_LOOP_ID set).
     let merge_loop_id = std::env::var("RALPH_MERGE_LOOP_ID").ok();
     if let Some(ref mlid) = merge_loop_id {
-        let repo_root = context
-            .map(|c| c.repo_root().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
         let queue = MergeQueue::new(&repo_root);
 
         if matches!(reason, TerminationReason::CompletionPromise) {
-            match head_commit() {
+            match get_head_sha(&repo_root).ok() {
                 Some(sha) => {
                     if let Err(e) = queue.mark_merged(mlid, &sha) {
                         warn!(loop_id = %mlid, error = %e, "Failed to mark merge as completed");
@@ -96,10 +96,10 @@ pub fn coordinate_completion(
                     }
                 }
             }
-        } else if let Err(e) = queue.mark_needs_review(mlid, needs_review_reason(reason)) {
+        } else if let Err(e) = queue.mark_needs_review(mlid, reason.review_description()) {
             warn!(loop_id = %mlid, error = %e, "Failed to mark merge as needs-review");
         } else {
-            info!(loop_id = %mlid, reason = needs_review_reason(reason), "Merge marked as needs-review");
+            info!(loop_id = %mlid, reason = %reason, "Merge marked as needs-review");
         }
     }
 
@@ -143,79 +143,18 @@ pub fn coordinate_completion(
     print_termination(reason, state, use_colors, Some(loop_id));
 }
 
-/// History event label (snake_case) for a termination reason.
-fn history_reason(reason: &TerminationReason) -> &'static str {
-    match reason {
-        TerminationReason::CompletionPromise => "completion_promise",
-        TerminationReason::MaxIterations => "max_iterations",
-        TerminationReason::MaxRuntime => "max_runtime",
-        TerminationReason::MaxCost => "max_cost",
-        TerminationReason::ConsecutiveFailures => "consecutive_failures",
-        TerminationReason::LoopThrashing => "loop_thrashing",
-        TerminationReason::LoopStale => "loop_stale",
-        TerminationReason::ValidationFailure => "validation_failure",
-        TerminationReason::Stopped => "stopped",
-        TerminationReason::Interrupted => "interrupted",
-        TerminationReason::RestartRequested => "restart_requested",
-        TerminationReason::WorkspaceGone => "workspace_gone",
-        TerminationReason::Cancelled => "cancelled",
-    }
-}
-
-/// Human-readable reason recorded when a non-completing merge loop needs review.
-fn needs_review_reason(reason: &TerminationReason) -> &'static str {
-    match reason {
-        TerminationReason::MaxIterations => "max iterations reached",
-        TerminationReason::MaxRuntime => "max runtime exceeded",
-        TerminationReason::MaxCost => "max cost exceeded",
-        TerminationReason::ConsecutiveFailures => "consecutive failures",
-        TerminationReason::LoopThrashing => "loop thrashing detected",
-        TerminationReason::LoopStale => "stale loop detected",
-        TerminationReason::ValidationFailure => "validation failure",
-        TerminationReason::Stopped => "manually stopped",
-        TerminationReason::Interrupted => "interrupted by signal",
-        TerminationReason::RestartRequested => "restart requested",
-        TerminationReason::WorkspaceGone => "workspace directory removed",
-        TerminationReason::Cancelled => "cancelled by human",
-        TerminationReason::CompletionPromise => "completed",
-    }
-}
-
-/// `git log -1 --format="%H %s"` (commit + subject), or `None`.
-fn last_commit_info() -> Option<String> {
-    git_line(&["log", "-1", "--format=%H %s"])
-}
-
-/// `git rev-parse HEAD`, or `None`.
-fn head_commit() -> Option<String> {
-    git_line(&["rev-parse", "HEAD"])
-}
-
-fn git_line(args: &[&str]) -> Option<String> {
-    let out = Command::new("git").args(args).output().ok()?;
-    if out.status.success() {
-        String::from_utf8(out.stdout)
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn history_and_review_labels_cover_all_reasons() {
-        // Exhaustive match arms guarantee compile-time coverage; spot-check a few.
         assert_eq!(
-            history_reason(&TerminationReason::CompletionPromise),
+            TerminationReason::CompletionPromise.history_label(),
             "completion_promise"
         );
         assert_eq!(
-            needs_review_reason(&TerminationReason::MaxIterations),
+            TerminationReason::MaxIterations.review_description(),
             "max iterations reached"
         );
     }
