@@ -205,7 +205,8 @@ impl HookExecutor {
 impl HookExecutorContract for HookExecutor {
     fn run(&self, request: HookRunRequest) -> Result<HookRunResult, HookExecutorError> {
         let started_at = Utc::now();
-        let resolved_cwd = resolve_hook_cwd(&request.workspace_root, request.cwd.as_deref());
+        let resolved_cwd =
+            crate::preflight::resolve_hook_cwd(&request.workspace_root, request.cwd.as_deref());
 
         let executable = request
             .command
@@ -512,14 +513,6 @@ fn capture_stream_output<R: Read>(
         content: String::from_utf8_lossy(&captured).into_owned(),
         truncated,
     })
-}
-
-fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
-    match hook_cwd {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => workspace_root.join(path),
-        None => workspace_root.to_path_buf(),
-    }
 }
 
 fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
