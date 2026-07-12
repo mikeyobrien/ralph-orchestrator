@@ -223,15 +223,14 @@ fn apply_stream_event(event: &StreamEvent, state: &Arc<Mutex<TuiState>>) {
         "error.raised" => {
             apply_error(event, &mut s);
         }
-        "stream.keepalive" | "system.heartbeat" | "loop.merge.progress" => {
-            // Update liveness indicator
-            s.last_event = Some(event.topic.clone());
-            s.last_event_at = Some(std::time::Instant::now());
-        }
+        "stream.keepalive" | "system.heartbeat" | "loop.merge.progress" => {}
         _ => {
             debug!(topic = %event.topic, "Unhandled stream topic in TUI bridge");
         }
     }
+
+    s.last_event = Some(event.topic.clone());
+    s.last_event_at = Some(std::time::Instant::now());
 }
 
 /// Append a log line to the current iteration buffer.
@@ -270,9 +269,6 @@ fn apply_log_line(event: &StreamEvent, state: &mut TuiState) {
     {
         lines.push(Line::from(text.to_string()));
     }
-
-    state.last_event = Some("task.log.line".to_string());
-    state.last_event_at = Some(std::time::Instant::now());
 }
 
 /// Handle task status transitions → update task counts and active task.
@@ -295,9 +291,6 @@ fn apply_task_status_change(event: &StreamEvent, state: &mut TuiState) {
         }
         _ => {}
     }
-
-    state.last_event = Some("task.status.changed".to_string());
-    state.last_event_at = Some(std::time::Instant::now());
 }
 
 /// Handle loop status transitions → iteration boundary + completion.
@@ -335,9 +328,6 @@ fn apply_loop_status_change(event: &StreamEvent, state: &mut TuiState) {
         }
         _ => {}
     }
-
-    state.last_event = Some("loop.status.changed".to_string());
-    state.last_event_at = Some(std::time::Instant::now());
 }
 
 /// Handle system lifecycle events (loop started, terminated).
@@ -353,9 +343,6 @@ fn apply_lifecycle(event: &StreamEvent, state: &mut TuiState) {
     } else if phase == "terminated" {
         apply_loop_completed(state);
     }
-
-    state.last_event = Some("system.lifecycle".to_string());
-    state.last_event_at = Some(std::time::Instant::now());
 }
 
 /// Surface errors in the TUI content area.
@@ -372,9 +359,6 @@ fn apply_error(event: &StreamEvent, state: &mut TuiState) {
         .unwrap_or("UNKNOWN");
 
     append_error_line(state, code, message);
-
-    state.last_event = Some("error.raised".to_string());
-    state.last_event_at = Some(std::time::Instant::now());
 }
 
 #[cfg(test)]
@@ -389,20 +373,15 @@ mod tests {
 
     fn make_event(topic: &str, payload: Value) -> StreamEvent {
         StreamEvent {
-            api_version: "v1".to_string(),
-            stream: "events.v1".to_string(),
             topic: topic.to_string(),
             cursor: "1234-0".to_string(),
             sequence: 0,
-            ts: "2026-02-26T00:00:00Z".to_string(),
             resource: StreamResource {
                 kind: "task".to_string(),
                 id: "task-1".to_string(),
             },
             replay: StreamReplay {
                 mode: "live".to_string(),
-                requested_cursor: None,
-                batch: None,
             },
             payload,
         }
