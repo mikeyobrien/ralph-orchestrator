@@ -7,7 +7,7 @@
 //! - `show`: Show detailed configuration for a specific hat
 
 use crate::backend_support;
-use crate::display::colors;
+use crate::display::Palette;
 use crate::preflight;
 use crate::{ConfigSource, HatsSource, is_toml_preset_dir, preset_search_roots};
 use anyhow::{Context, Result};
@@ -510,29 +510,13 @@ fn print_check<W: Write>(
     msg: &str,
     use_colors: bool,
 ) -> Result<()> {
-    if use_colors {
-        match result {
-            CheckResult::Ok => {
-                writeln!(writer, "  [{}ok{}] {}", colors::GREEN, colors::RESET, msg)?
-            }
-            CheckResult::Warn => writeln!(
-                writer,
-                "  [{}warn{}] {}",
-                colors::YELLOW,
-                colors::RESET,
-                msg
-            )?,
-            CheckResult::Error => {
-                writeln!(writer, "  [{}err{}] {}", colors::RED, colors::RESET, msg)?
-            }
-        }
-    } else {
-        match result {
-            CheckResult::Ok => writeln!(writer, "  [ok] {}", msg)?,
-            CheckResult::Warn => writeln!(writer, "  [warn] {}", msg)?,
-            CheckResult::Error => writeln!(writer, "  [err] {}", msg)?,
-        }
-    }
+    let p = Palette::new(use_colors);
+    let (color, label) = match result {
+        CheckResult::Ok => (p.green, "ok"),
+        CheckResult::Warn => (p.yellow, "warn"),
+        CheckResult::Error => (p.red, "err"),
+    };
+    writeln!(writer, "  [{color}{label}{}] {msg}", p.reset)?;
     Ok(())
 }
 
@@ -859,11 +843,8 @@ fn show_hat<W: Write>(
 
     let hat = hat.context(format!("Hat '{}' not found", name))?;
 
-    if use_colors {
-        writeln!(writer, "{}{}{}", colors::BOLD, hat.name, colors::RESET)?;
-    } else {
-        writeln!(writer, "{}", hat.name)?;
-    }
+    let p = Palette::new(use_colors);
+    writeln!(writer, "{}{}{}", p.bold, hat.name, p.reset)?;
 
     if !hat.description.is_empty() {
         writeln!(writer, "{}", hat.description)?;
