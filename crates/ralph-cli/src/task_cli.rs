@@ -14,7 +14,7 @@ use crate::{display::Palette, resolve_path_from_workspace, resolve_workspace_roo
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_core::{Task, TaskStatus, TaskStore};
+use ralph_core::{Task, TaskStatus, TaskStore, truncate_with_ellipsis};
 use std::path::PathBuf;
 
 fn status_color_for(status: TaskStatus, p: &Palette) -> &'static str {
@@ -472,11 +472,7 @@ fn execute_list(args: ListArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
                     let sc = status_color_for(task.status, &p);
                     let pc = priority_color_for(task.priority, &p);
 
-                    let title_truncated = if task.title.len() > 60 {
-                        crate::display::truncate(&task.title, 60)
-                    } else {
-                        task.title.clone()
-                    };
+                    let title_truncated = truncate_with_ellipsis(&task.title, 60);
 
                     println!(
                         "{}{:<20}{} {}{:<15}{} {}{:<8}{} {:<60} {:<24}",
@@ -527,11 +523,7 @@ fn execute_ready(args: ReadyArgs, root: Option<&PathBuf>, use_colors: bool) -> R
                 println!("{}{}{}", p.dim, "-".repeat(115), p.reset);
 
                 for task in &ready {
-                    let title_truncated = if task.title.len() > 60 {
-                        crate::display::truncate(&task.title, 60)
-                    } else {
-                        task.title.clone()
-                    };
+                    let title_truncated = truncate_with_ellipsis(&task.title, 60);
 
                     let pc = priority_color_for(task.priority, &p);
 
