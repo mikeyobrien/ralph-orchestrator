@@ -109,6 +109,7 @@ pub use planning_session::{
 pub use preflight::{
     AcceptanceCriterion, CheckResult, CheckStatus, PreflightCheck, PreflightReport,
     PreflightRunner, extract_acceptance_criteria, extract_all_criteria, extract_criteria_from_file,
+    hook_path_override, resolve_hook_command, resolve_hook_cwd,
 };
 pub use preset_source::{
     PresetRegistry, PresetSource, PresetSourceError, TomlPresetSource, YamlPresetSource,
@@ -125,7 +126,7 @@ pub use task_definition::{
     TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
 };
 pub use task_store::TaskStore;
-pub use text::{floor_char_boundary, truncate_with_ellipsis};
+pub use text::truncate_with_ellipsis;
 pub use urgent_steer::{UrgentSteerRecord, UrgentSteerStore};
 pub use workspace::{
     CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,

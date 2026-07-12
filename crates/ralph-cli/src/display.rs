@@ -3,7 +3,7 @@
 //! This module contains functions for formatting and printing
 //! termination messages, event tables, and other terminal UI elements.
 
-use ralph_core::{EventRecord, TerminationReason, floor_char_boundary, truncate_with_ellipsis};
+use ralph_core::{EventRecord, TerminationReason, truncate_with_ellipsis};
 
 /// ANSI color codes for terminal output.
 pub mod colors {
@@ -84,10 +84,6 @@ fn resume_hint_for(reason: &TerminationReason, loop_id: &str) -> Option<String> 
     }
 }
 
-/// Truncates a string to max_len characters, adding ellipsis if truncated.
-pub fn truncate(s: &str, max_len: usize) -> String {
-    truncate_with_ellipsis(s, max_len)
-}
 
 /// Prints termination message with status.
 ///
@@ -101,69 +97,41 @@ pub fn print_termination(
     use_colors: bool,
     loop_id: Option<&str>,
 ) {
-    use colors::*;
+    let p = Palette::new(use_colors);
+    let (b, r, d, c) = (p.bold, p.reset, p.dim, p.cyan);
 
-    // Determine status color and message based on termination reason
     let (color, icon, label) = match reason {
-        TerminationReason::CompletionPromise => (GREEN, "?", "Completion promise detected"),
-        TerminationReason::MaxIterations => (YELLOW, "?", "Maximum iterations reached"),
-        TerminationReason::MaxRuntime => (YELLOW, "?", "Maximum runtime exceeded"),
-        TerminationReason::MaxCost => (YELLOW, "?", "Maximum cost exceeded"),
-        TerminationReason::ConsecutiveFailures => (RED, "?", "Too many consecutive failures"),
-        TerminationReason::LoopThrashing => (RED, "?", "Loop thrashing detected"),
-        TerminationReason::LoopStale => (RED, "?", "Stale loop detected"),
-        TerminationReason::ValidationFailure => (RED, "?", "Too many malformed JSONL events"),
-        TerminationReason::Stopped => (CYAN, "?", "Manually stopped"),
-        TerminationReason::Interrupted => (YELLOW, "?", "Interrupted by signal"),
-        TerminationReason::RestartRequested => (CYAN, "↻", "Restarting by human request"),
-        TerminationReason::WorkspaceGone => (RED, "?", "Workspace directory removed"),
-        TerminationReason::Cancelled => (CYAN, "⏹", "Cancelled gracefully"),
+        TerminationReason::CompletionPromise => (p.green, "?", "Completion promise detected"),
+        TerminationReason::MaxIterations => (p.yellow, "?", "Maximum iterations reached"),
+        TerminationReason::MaxRuntime => (p.yellow, "?", "Maximum runtime exceeded"),
+        TerminationReason::MaxCost => (p.yellow, "?", "Maximum cost exceeded"),
+        TerminationReason::ConsecutiveFailures => (p.red, "?", "Too many consecutive failures"),
+        TerminationReason::LoopThrashing => (p.red, "?", "Loop thrashing detected"),
+        TerminationReason::LoopStale => (p.red, "?", "Stale loop detected"),
+        TerminationReason::ValidationFailure => (p.red, "?", "Too many malformed JSONL events"),
+        TerminationReason::Stopped => (p.cyan, "?", "Manually stopped"),
+        TerminationReason::Interrupted => (p.yellow, "?", "Interrupted by signal"),
+        TerminationReason::RestartRequested => (p.cyan, "↻", "Restarting by human request"),
+        TerminationReason::WorkspaceGone => (p.red, "?", "Workspace directory removed"),
+        TerminationReason::Cancelled => (p.cyan, "⏹", "Cancelled gracefully"),
     };
 
     let separator = "-".repeat(58);
 
-    if use_colors {
-        println!("\n{BOLD}+{separator}+{RESET}");
-        println!(
-            "{BOLD}|{RESET} {color}{BOLD}{icon}{RESET} Loop terminated: {color}{label}{RESET}"
-        );
-        println!("{BOLD}+{separator}+{RESET}");
-        println!(
-            "{BOLD}|{RESET}   Iterations:  {CYAN}{}{RESET}",
-            state.iterations
-        );
-        println!(
-            "{BOLD}|{RESET}   Elapsed:     {CYAN}{:.1}s{RESET}",
-            state.elapsed.as_secs_f64()
-        );
-        if state.cost_usd > 0.0 {
-            println!(
-                "{BOLD}|{RESET}   Est. cost:   {CYAN}${:.2}{RESET}",
-                state.cost_usd
-            );
-        }
-        println!("{BOLD}+{separator}+{RESET}");
-    } else {
-        println!("\n+{}+", "-".repeat(58));
-        println!("| {icon} Loop terminated: {label}");
-        println!("+{}+", "-".repeat(58));
-        println!("|   Iterations:  {}", state.iterations);
-        println!("|   Elapsed:     {:.1}s", state.elapsed.as_secs_f64());
-        if state.cost_usd > 0.0 {
-            println!("|   Est. cost:   ${:.2}", state.cost_usd);
-        }
-        println!("+{}+", "-".repeat(58));
+    println!("\n{b}+{separator}+{r}");
+    println!("{b}|{r} {color}{b}{icon}{r} Loop terminated: {color}{label}{r}");
+    println!("{b}+{separator}+{r}");
+    println!("{b}|{r}   Iterations:  {c}{}{r}", state.iterations);
+    println!("{b}|{r}   Elapsed:     {c}{:.1}s{r}", state.elapsed.as_secs_f64());
+    if state.cost_usd > 0.0 {
+        println!("{b}|{r}   Est. cost:   {c}${:.2}{r}", state.cost_usd);
     }
+    println!("{b}+{separator}+{r}");
 
-    // Resume hint: only for recoverable reasons and when we know the loop id.
     if let Some(id) = loop_id
         && let Some(cmd) = resume_hint_for(reason, id)
     {
-        if use_colors {
-            println!("  {DIM}Resume:{RESET} {CYAN}{cmd}{RESET}");
-        } else {
-            println!("  Resume: {cmd}");
-        }
+        println!("  {d}Resume:{r} {c}{cmd}{r}");
     }
 }
 
@@ -187,81 +155,49 @@ pub fn get_topic_color(topic: &str) -> &'static str {
 
 /// Prints a table of event records.
 pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
-    use colors::*;
+    let p = Palette::new(use_colors);
+    let (b, d, r) = (p.bold, p.dim, p.reset);
 
-    // Header
-    if use_colors {
-        println!(
-            "{BOLD}{DIM}  # | Time     | Iteration | Hat           | Topic              | Triggered      | Payload{RESET}"
-        );
-        println!(
-            "{DIM}----+----------+-----------+---------------+--------------------+----------------+-----------------{RESET}"
-        );
-    } else {
-        println!(
-            "  # | Time     | Iteration | Hat           | Topic              | Triggered      | Payload"
-        );
-        println!(
-            "----|----------|-----------|---------------|--------------------|-----------------|-----------------"
-        );
-    }
+    println!(
+        "{b}{d}  # | Time     | Iteration | Hat           | Topic              | Triggered      | Payload{r}"
+    );
+    println!(
+        "{d}----+----------+-----------+---------------+--------------------+----------------+-----------------{r}"
+    );
 
     for (i, record) in records.iter().enumerate() {
-        let topic_color = get_topic_color(&record.topic);
+        let tc = if r.is_empty() { "" } else { get_topic_color(&record.topic) };
         let triggered = record.triggered.as_deref().unwrap_or("-");
         let payload_one_line = record.payload.replace('\n', " ");
         let payload_preview = truncate_with_ellipsis(&payload_one_line, 40);
 
-        // Extract time portion (HH:MM:SS) from ISO 8601 timestamp
         let time = record
             .ts
             .find('T')
             .and_then(|t_pos| {
                 let after_t = &record.ts[t_pos + 1..];
-                // Find end of time (before timezone indicator or end of string)
                 let end = after_t
                     .find(|c| c == 'Z' || c == '+' || c == '-')
                     .unwrap_or(after_t.len());
                 let time_str = &after_t[..end];
-                // Take only HH:MM:SS (usually ASCII), but still ensure we slice on a valid UTF-8
-                // boundary for robustness. Otherwise, an unexpected `ts` (e.g. CJK/emoji) can make
-                // `&s[..N]` panic.
-                let boundary = floor_char_boundary(time_str, 8);
+                let boundary = time_str.floor_char_boundary(8);
                 Some(&time_str[..boundary])
             })
             .unwrap_or("-");
 
-        if use_colors {
-            println!(
-                "{DIM}{:>3}{RESET} | {:<8} | {:>9} | {:<13} | {topic_color}{:<18}{RESET} | {:<14} | {DIM}{}{RESET}",
-                i + 1,
-                time,
-                record.iteration,
-                truncate(&record.hat, 13),
-                truncate(&record.topic, 18),
-                truncate(triggered, 14),
-                payload_preview
-            );
-        } else {
-            println!(
-                "{:>3} | {:<8} | {:>9} | {:<13} | {:<18} | {:<14} | {}",
-                i + 1,
-                time,
-                record.iteration,
-                truncate(&record.hat, 13),
-                truncate(&record.topic, 18),
-                truncate(triggered, 14),
-                payload_preview
-            );
-        }
+        println!(
+            "{d}{:>3}{r} | {:<8} | {:>9} | {:<13} | {tc}{:<18}{r} | {:<14} | {d}{}{r}",
+            i + 1,
+            time,
+            record.iteration,
+            truncate_with_ellipsis(&record.hat, 13),
+            truncate_with_ellipsis(&record.topic, 18),
+            truncate_with_ellipsis(triggered, 14),
+            payload_preview
+        );
     }
 
-    // Footer
-    if use_colors {
-        println!("\n{DIM}Total: {} events{RESET}", records.len());
-    } else {
-        println!("\nTotal: {} events", records.len());
-    }
+    println!("\n{d}Total: {} events{r}", records.len());
 }
 
 #[cfg(test)]
@@ -302,28 +238,6 @@ mod tests {
         assert!(resume_hint_for(&TerminationReason::Interrupted, "xy").is_some());
     }
 
-    #[test]
-    fn test_truncate_short_string() {
-        assert_eq!(truncate("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_long_string() {
-        assert_eq!(truncate("hello world", 8), "hello...");
-    }
-
-    #[test]
-    fn test_truncate_does_not_panic_on_multibyte_chars() {
-        // Let a multi-byte character straddle the truncation boundary. The old implementation
-        // would panic because `&s[..N]` was not on a UTF-8 boundary.
-        let s = format!("{}✅{}", "x".repeat(39), "y".repeat(10));
-
-        let out = truncate(&s, 40);
-
-        // Verify output is valid UTF-8 (iterating `chars()` should not panic).
-        for _ in out.chars() {}
-        assert!(out.ends_with("..."));
-    }
 
     #[test]
     fn test_print_events_table_does_not_panic_on_multibyte_payload() {

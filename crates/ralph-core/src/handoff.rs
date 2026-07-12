@@ -13,7 +13,6 @@ use crate::git_ops::{get_commit_summary, get_current_branch, get_head_sha, get_r
 use crate::loop_context::LoopContext;
 use crate::task::{Task, TaskStatus};
 use crate::task_store::TaskStore;
-use crate::text::floor_char_boundary;
 use std::io;
 use std::path::PathBuf;
 
@@ -280,7 +279,7 @@ fn truncate_prompt(prompt: &str, max_len: usize) -> String {
     if prompt.len() <= max_len {
         prompt.to_string()
     } else {
-        let safe_len = floor_char_boundary(prompt, max_len);
+        let safe_len = prompt.floor_char_boundary(max_len);
         format!("{}...", &prompt[..safe_len])
     }
 }

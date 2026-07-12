@@ -4,7 +4,6 @@
 //! The observer pattern allows hooking into the event bus without modifying routing.
 
 use crate::loop_context::LoopContext;
-use crate::text::floor_char_boundary;
 use crate::utils::{deserialize_flexible_payload_required, now_rfc3339};
 use ralph_proto::{Event, HatId};
 use serde::{Deserialize, Serialize};
@@ -77,7 +76,7 @@ impl EventRecord {
     ) -> Self {
         let payload = if event.payload.len() > Self::MAX_PAYLOAD_LEN {
             // Find a valid UTF-8 char boundary at or before MAX_PAYLOAD_LEN.
-            let truncate_at = floor_char_boundary(&event.payload, Self::MAX_PAYLOAD_LEN);
+            let truncate_at = event.payload.floor_char_boundary(Self::MAX_PAYLOAD_LEN);
             format!(
                 "{}... [truncated, {} chars total]",
                 &event.payload[..truncate_at],

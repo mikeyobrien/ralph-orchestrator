@@ -43,7 +43,7 @@ impl MalformedLine {
         let content = if content.len() > Self::MAX_CONTENT_LEN {
             // Truncate at a valid UTF-8 character boundary to avoid panics
             // on multi-byte content.
-            let truncate_at = crate::text::floor_char_boundary(content, Self::MAX_CONTENT_LEN);
+            let truncate_at = content.floor_char_boundary(Self::MAX_CONTENT_LEN);
             format!("{}...", &content[..truncate_at])
         } else {
             content.to_string()
