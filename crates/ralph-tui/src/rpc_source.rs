@@ -19,7 +19,8 @@ use ralph_proto::json_rpc::RpcEvent;
 
 use crate::state::{TaskCounts, TuiState, WaveInfo};
 use crate::state_mutations::{apply_loop_completed, apply_task_active, apply_task_close};
-use crate::text_renderer::{sanitize_tui_inline_text, text_to_lines, truncate};
+use crate::text_renderer::{text_to_lines, truncate};
+use ralph_core::sanitize_tui_inline_text;
 
 use ralph_adapters::tool_preview::{format_tool_result, format_tool_summary};
 

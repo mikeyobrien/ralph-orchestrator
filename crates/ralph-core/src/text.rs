@@ -1,7 +1,10 @@
 //! Text utilities for the Ralph Orchestrator.
 //!
 //! This module provides common text manipulation functions used throughout
-//! the codebase, including UTF-8 safe string truncation.
+//! the codebase, including UTF-8 safe string truncation and TUI text
+//! sanitization.
+
+use std::borrow::Cow;
 
 /// Truncates a string to a maximum number of characters, including "..." if truncated.
 ///
@@ -52,6 +55,45 @@ pub fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
             .unwrap_or(s.len());
         format!("{}...", &s[..byte_idx])
     }
+}
+
+/// Sanitizes text for multi-line TUI display (block content like agent output).
+///
+/// - Normalizes `\r\n` and bare `\r` to `\n`.
+/// - Strips C0 control characters (bell, backspace, vertical tab, form feed)
+///   that can corrupt terminal layout.
+/// - Preserves `\n` and `\t`.
+pub fn sanitize_tui_block_text(text: &str) -> Cow<'_, str> {
+    let has_cr = text.contains('\r');
+    let has_other_ctrl = text
+        .chars()
+        .any(|c| matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
+
+    if !has_cr && !has_other_ctrl {
+        return Cow::Borrowed(text);
+    }
+
+    let mut s = if has_cr {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text.to_string()
+    };
+
+    if has_other_ctrl {
+        s.retain(|c| !matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
+    }
+
+    Cow::Owned(s)
+}
+
+/// Sanitizes text for single-line TUI display (tool summaries, errors).
+///
+/// Replaces all newlines and carriage returns with spaces, then strips
+/// C0 control characters that can corrupt the terminal.
+pub fn sanitize_tui_inline_text(text: &str) -> String {
+    let mut s = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    s.retain(|c| !matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
+    s
 }
 
 #[cfg(test)]
@@ -111,5 +153,35 @@ mod tests {
     fn test_single_char_truncation() {
         assert_eq!(truncate_with_ellipsis("hello", 1), "h");
         assert_eq!(truncate_with_ellipsis("🎉hello", 1), "🎉");
+    }
+
+    #[test]
+    fn sanitize_block_normalizes_crlf() {
+        let result = sanitize_tui_block_text("line1\r\nline2\rline3");
+        assert_eq!(result.as_ref(), "line1\nline2\nline3");
+    }
+
+    #[test]
+    fn sanitize_block_strips_control_chars() {
+        let result = sanitize_tui_block_text("hello\u{0007}world\u{000b}!");
+        assert_eq!(result.as_ref(), "helloworld!");
+    }
+
+    #[test]
+    fn sanitize_block_borrows_clean_text() {
+        let result = sanitize_tui_block_text("clean text\n\ttabs ok");
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn sanitize_inline_replaces_newlines_with_spaces() {
+        let s = "line1\r\nline2\nline3\rline4";
+        assert_eq!(sanitize_tui_inline_text(s), "line1 line2 line3 line4");
+    }
+
+    #[test]
+    fn sanitize_inline_strips_control_chars() {
+        let s = "hello\u{0007}\u{0008}world";
+        assert_eq!(sanitize_tui_inline_text(s), "helloworld");
     }
 }

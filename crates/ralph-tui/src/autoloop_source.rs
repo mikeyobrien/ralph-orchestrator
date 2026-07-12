@@ -25,7 +25,7 @@ use ralph_adapters::{AutoloopEvent, AutoloopEventTailer};
 
 use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
-use crate::text_renderer::sanitize_tui_inline_text;
+use ralph_core::sanitize_tui_inline_text;
 
 /// Per-reader translation context: tracks the role label autoloop last reported
 /// (autoloop's role ≈ ralph's hat) so the *next* `iteration.start` can label its

@@ -7,9 +7,8 @@
 //! This is extracted from `ralph-adapters::stream_handler` to be shared
 //! between the TuiStreamHandler and the RPC event source.
 
-use std::borrow::Cow;
-
 use ansi_to_tui::IntoText;
+use ralph_core::sanitize_tui_block_text;
 use ratatui::text::{Line, Span};
 use termimad::MadSkin;
 
@@ -80,40 +79,6 @@ pub fn contains_ansi(text: &str) -> bool {
     text.contains("\x1b[")
 }
 
-/// Normalizes terminal control characters that commonly break ratatui rendering.
-///
-/// In particular:
-/// - `\r` (carriage return) is used by many CLIs (git, cargo, etc.) to render
-///   progress updates on a single line. When embedded in ratatui content it can
-///   move the cursor and corrupt layout.
-/// - Some other C0 controls (bell, backspace, vertical tab, form feed) can also
-///   cause display corruption or odd glyphs.
-///
-/// We keep `\n` and `\t` intact.
-pub fn sanitize_tui_block_text(text: &str) -> Cow<'_, str> {
-    let has_cr = text.contains('\r');
-    let has_other_ctrl = text
-        .chars()
-        .any(|c| matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
-
-    if !has_cr && !has_other_ctrl {
-        return Cow::Borrowed(text);
-    }
-
-    let mut s = if has_cr {
-        // Normalize CRLF and bare CR to LF.
-        text.replace("\r\n", "\n").replace('\r', "\n")
-    } else {
-        text.to_string()
-    };
-
-    if has_other_ctrl {
-        s.retain(|c| !matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
-    }
-
-    Cow::Owned(s)
-}
-
 /// Truncates a string to approximately `max_len` characters, appending `"..."`.
 ///
 /// Works on Unicode code-point boundaries, not bytes, so multi-byte characters
@@ -131,20 +96,11 @@ pub fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
-/// Sanitizes text that must stay on a *single* TUI line (tool summaries, errors).
-/// Removes embedded newlines and carriage returns entirely.
-pub fn sanitize_tui_inline_text(text: &str) -> String {
-    let mut s = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
-
-    // Drop other control characters that can corrupt the terminal.
-    s.retain(|c| !matches!(c, '\u{0007}' | '\u{0008}' | '\u{000b}' | '\u{000c}'));
-
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::sanitize_tui_inline_text;
+    use std::borrow::Cow;
 
     #[test]
     fn test_text_to_lines_empty() {
