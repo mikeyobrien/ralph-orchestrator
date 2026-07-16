@@ -691,33 +691,61 @@ fn collect_needed_defs(
 }
 
 fn schema_ref_object(root_schema: &Value, schema_ref: &str) -> Result<Map<String, Value>> {
-    let all_defs = root_schema
+    let defs = root_schema
         .get("$defs")
-        .cloned()
+        .and_then(Value::as_object)
         .context("schema must expose $defs")?;
+
+    let def_name = resolve_def_name(schema_ref)
+        .with_context(|| format!("schema ref '{schema_ref}' must point into #/$defs"))?;
+
+    // MCP clients (Claude Code, the Anthropic API) reject tool schemas whose root is a
+    // bare $ref instead of an object schema, so inline the referenced def at the root.
+    let mut schema = defs
+        .get(def_name)
+        .and_then(Value::as_object)
+        .cloned()
+        .with_context(|| format!("schema def '{def_name}' must be a JSON object"))?;
 
     // Only include $defs that are actually referenced by this tool's schema
     let needed_names = collect_needed_defs(root_schema, schema_ref)?;
-    let filtered_defs: Map<String, Value> = all_defs
-        .as_object()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(name, _)| needed_names.contains(name))
+    let mut filtered_defs: Map<String, Value> = defs
+        .iter()
+        .filter(|(name, _)| needed_names.contains(name.as_str()))
+        .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
 
-    let schema = json!({
-        "$schema": root_schema
+    // The inlined root def only stays in $defs if the remaining schema still references it.
+    let mut referenced = std::collections::HashSet::new();
+    for ref_path in collect_refs(&Value::Object(schema.clone())) {
+        if let Some(name) = resolve_def_name(&ref_path) {
+            referenced.insert(name.to_string());
+        }
+    }
+    for (name, value) in &filtered_defs {
+        if name != def_name {
+            for ref_path in collect_refs(value) {
+                if let Some(dep) = resolve_def_name(&ref_path) {
+                    referenced.insert(dep.to_string());
+                }
+            }
+        }
+    }
+    if !referenced.contains(def_name) {
+        filtered_defs.remove(def_name);
+    }
+
+    schema.insert(
+        "$schema".to_string(),
+        root_schema
             .get("$schema")
             .cloned()
             .unwrap_or_else(|| json!("https://json-schema.org/draft/2020-12/schema")),
-        "$defs": filtered_defs,
-        "$ref": schema_ref,
-    });
-    schema
-        .as_object()
-        .cloned()
-        .context("generated schema object must be a JSON object")
+    );
+    if !filtered_defs.is_empty() {
+        schema.insert("$defs".to_string(), Value::Object(filtered_defs));
+    }
+    Ok(schema)
 }
 
 fn compile_validator(schema: &Map<String, Value>) -> Result<Arc<JSONSchema>> {
@@ -853,10 +881,13 @@ mod tests {
             .len();
         let catalog = tool_catalog();
         let task_create = catalog.lookup("task_create").expect("task_create tool");
-        let task_create_def_count = task_create.tool.input_schema["$defs"]
-            .as_object()
-            .expect("task_create input schema exposes filtered $defs")
-            .len();
+        let task_create_def_count = task_create
+            .tool
+            .input_schema
+            .get("$defs")
+            .and_then(Value::as_object)
+            .map(Map::len)
+            .unwrap_or(0);
 
         assert!(
             task_create_def_count < full_def_count,
@@ -871,6 +902,34 @@ mod tests {
             payload_size < 1_000_000,
             "tools/list schema payload should stay under 1MB, got {payload_size} bytes"
         );
+    }
+
+    #[test]
+    fn catalog_inlines_tool_schema_roots() {
+        let catalog = tool_catalog();
+        let mut cursor: Option<String> = None;
+        loop {
+            let listed = catalog
+                .list_tools(cursor.as_deref())
+                .expect("tools should list");
+            for tool in &listed.tools {
+                assert_eq!(
+                    tool.input_schema.get("type").and_then(Value::as_str),
+                    Some("object"),
+                    "tool '{}' input schema root must be an object schema",
+                    tool.name
+                );
+                assert!(
+                    tool.input_schema.get("$ref").is_none(),
+                    "tool '{}' input schema root must not be a bare $ref",
+                    tool.name
+                );
+            }
+            match listed.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
     }
 
     #[tokio::test]
