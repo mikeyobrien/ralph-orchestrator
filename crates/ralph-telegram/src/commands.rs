@@ -43,12 +43,19 @@ fn parse_command(text: &str) -> (&str, &str) {
 }
 
 fn truncate_with_ellipsis(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
+    let char_count = input.chars().count();
+    if char_count <= max_chars {
         input.to_string()
+    } else if max_chars < 3 {
+        input.chars().take(max_chars).collect()
     } else {
-        let mut truncated: String = input.chars().take(max_chars).collect();
-        truncated.push_str("...");
-        truncated
+        let keep = max_chars - 3;
+        let byte_idx = input
+            .char_indices()
+            .nth(keep)
+            .map(|(idx, _)| idx)
+            .unwrap_or(input.len());
+        format!("{}...", &input[..byte_idx])
     }
 }
 

@@ -52,10 +52,6 @@ struct RequestMeta {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RpcResponse {
-    #[allow(dead_code)]
-    api_version: String,
-    #[allow(dead_code)]
-    id: String,
     result: Option<Value>,
     error: Option<RpcErrorBody>,
 }
@@ -75,15 +71,9 @@ pub struct RpcErrorBody {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamEvent {
-    #[allow(dead_code)]
-    pub api_version: String,
-    #[allow(dead_code)]
-    pub stream: String,
     pub topic: String,
     pub cursor: String,
     pub sequence: u64,
-    #[allow(dead_code)]
-    pub ts: String,
     pub resource: StreamResource,
     pub replay: StreamReplay,
     pub payload: Value,
@@ -100,10 +90,6 @@ pub struct StreamResource {
 #[serde(rename_all = "camelCase")]
 pub struct StreamReplay {
     pub mode: String,
-    #[allow(dead_code)]
-    pub requested_cursor: Option<String>,
-    #[allow(dead_code)]
-    pub batch: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +167,7 @@ impl RpcClient {
             meta: if is_mutating {
                 Some(RequestMeta {
                     idempotency_key: next_idempotency_key(method),
-                    request_ts: chrono::Utc::now().to_rfc3339(),
+                    request_ts: ralph_core::utils::now_rfc3339(),
                 })
             } else {
                 None

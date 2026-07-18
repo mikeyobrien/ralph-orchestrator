@@ -1052,7 +1052,7 @@ impl TuiState {
             return false;
         };
 
-        let timestamp = chrono::Utc::now().to_rfc3339();
+        let timestamp = ralph_core::utils::now_rfc3339();
         let event = serde_json::json!({
             "topic": "human.guidance",
             "payload": message,

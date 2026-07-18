@@ -90,4 +90,60 @@ impl TerminationReason {
     pub fn is_success(&self) -> bool {
         matches!(self, TerminationReason::CompletionPromise)
     }
+
+    /// Snake-case label for loop history records.
+    ///
+    /// Differs from [`as_str`](Self::as_str) only for `CompletionPromise`
+    /// (`"completion_promise"` vs `"completed"`) to preserve the existing
+    /// JSONL history format.
+    pub fn history_label(&self) -> &'static str {
+        match self {
+            TerminationReason::CompletionPromise => "completion_promise",
+            other => other.as_str(),
+        }
+    }
+
+    /// Short human-readable description for merge-queue review entries.
+    pub fn review_description(&self) -> &'static str {
+        match self {
+            TerminationReason::CompletionPromise => "completed",
+            TerminationReason::MaxIterations => "max iterations reached",
+            TerminationReason::MaxRuntime => "max runtime exceeded",
+            TerminationReason::MaxCost => "max cost exceeded",
+            TerminationReason::ConsecutiveFailures => "consecutive failures",
+            TerminationReason::LoopThrashing => "loop thrashing detected",
+            TerminationReason::LoopStale => "stale loop detected",
+            TerminationReason::ValidationFailure => "validation failure",
+            TerminationReason::Stopped => "manually stopped",
+            TerminationReason::Interrupted => "interrupted by signal",
+            TerminationReason::RestartRequested => "restart requested",
+            TerminationReason::WorkspaceGone => "workspace directory removed",
+            TerminationReason::Cancelled => "cancelled by human",
+        }
+    }
+}
+
+impl std::fmt::Display for TerminationReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.review_description())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_matches_review_description() {
+        let reason = TerminationReason::MaxIterations;
+        assert_eq!(format!("{reason}"), reason.review_description());
+    }
+
+    #[test]
+    fn display_completion_promise() {
+        assert_eq!(
+            format!("{}", TerminationReason::CompletionPromise),
+            "completed"
+        );
+    }
 }

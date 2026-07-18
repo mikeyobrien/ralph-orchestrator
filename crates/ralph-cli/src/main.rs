@@ -182,9 +182,7 @@ pub enum OutputFormat {
     Json,
 }
 
-// Re-export colors and truncate from display module for use in this file
 use display::colors;
-use display::truncate;
 
 /// Source for core configuration.
 #[derive(Debug, Clone)]
@@ -1521,7 +1519,7 @@ async fn run_command(
                 }
             }
         })
-        .map(|p| truncate(&p, 100))
+        .map(|p| truncate_with_ellipsis(&p, 100))
         .unwrap_or_else(|| "[no prompt]".to_string());
 
     let mut pending_worktree_registration: Option<LoopEntry> = None;
@@ -2137,7 +2135,7 @@ fn emit_command_with_root(
     }
 
     // Generate timestamp if not provided
-    let ts = args.ts.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let ts = args.ts.unwrap_or_else(ralph_core::utils::now_rfc3339);
 
     // Validate JSON payload if --json flag is set
     let payload = if args.json && !args.payload.is_empty() {

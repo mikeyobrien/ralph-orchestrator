@@ -431,12 +431,8 @@ impl MergeQueue {
 
         let file = File::open(&self.queue_path)?;
 
-        let flock = Flock::lock(file, FlockArg::LockShared).map_err(|(_, errno)| {
-            MergeQueueError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("flock failed: {}", errno),
-            ))
-        })?;
+        let flock = Flock::lock(file, FlockArg::LockShared)
+            .map_err(|(_, errno)| MergeQueueError::Io(crate::utils::flock_io_error(errno)))?;
 
         f(&crate::utils::clone_file_from_flock(&flock)?)
     }
@@ -461,12 +457,8 @@ impl MergeQueue {
 
         let file = crate::utils::open_read_write(&self.queue_path)?;
 
-        let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
-            MergeQueueError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("flock failed: {}", errno),
-            ))
-        })?;
+        let flock = Flock::lock(file, FlockArg::LockExclusive)
+            .map_err(|(_, errno)| MergeQueueError::Io(crate::utils::flock_io_error(errno)))?;
 
         f(crate::utils::clone_file_from_flock(&flock)?)
     }

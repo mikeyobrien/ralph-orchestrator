@@ -16,6 +16,7 @@ pub mod colors {
     pub const CYAN: &str = "\x1b[36m";
     pub const BLUE: &str = "\x1b[34m";
     pub const MAGENTA: &str = "\x1b[35m";
+    pub const GRAY: &str = "\x1b[90m";
 }
 
 /// Color palette that returns either real ANSI codes or empty strings.
@@ -34,6 +35,7 @@ pub struct Palette {
     pub cyan: &'static str,
     pub blue: &'static str,
     pub magenta: &'static str,
+    pub gray: &'static str,
 }
 
 impl Palette {
@@ -49,6 +51,7 @@ impl Palette {
                 cyan: colors::CYAN,
                 blue: colors::BLUE,
                 magenta: colors::MAGENTA,
+                gray: colors::GRAY,
             }
         } else {
             Self {
@@ -61,6 +64,7 @@ impl Palette {
                 cyan: "",
                 blue: "",
                 magenta: "",
+                gray: "",
             }
         }
     }

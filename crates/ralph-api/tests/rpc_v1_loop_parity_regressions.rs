@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use ralph_core::{
     LoopEntry, LoopLock, LoopRegistry, MergeQueue, MergeState, WorktreeConfig, create_worktree,
 };
@@ -92,25 +92,6 @@ fn rpc_request(id: &str, method: &str, params: Value, idempotency_key: Option<&s
     request
 }
 
-fn init_git_repo(path: &Path) -> Result<()> {
-    run_git(path, &["init", "--initial-branch=main"])?;
-    run_git(path, &["config", "user.email", "test@test.local"])?;
-    run_git(path, &["config", "user.name", "Test User"])?;
-
-    fs::write(path.join("README.md"), "# Test\n")?;
-    run_git(path, &["add", "README.md"])?;
-    run_git(path, &["commit", "-m", "Initial commit"])?;
-    Ok(())
-}
-
-fn run_git(path: &Path, args: &[&str]) -> Result<()> {
-    let status = std::process::Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .status()?;
-    ensure!(status.success(), "git {:?} failed", args);
-    Ok(())
-}
 
 #[cfg(unix)]
 fn create_fake_ralph_command() -> Result<(TempDir, PathBuf, PathBuf)> {
@@ -249,7 +230,7 @@ async fn loop_discard_removes_worktree_and_marks_discarded() -> Result<()> {
     let server = TestServer::start(ApiConfig::default()).await;
     let client = Client::new();
 
-    init_git_repo(server.workspace_path())?;
+    ralph_core::testing::init_test_repo(server.workspace_path(), &[]);
 
     let worktree = create_worktree(
         server.workspace_path(),
@@ -386,7 +367,7 @@ async fn loop_process_real_ralph_flow_succeeds_with_queued_entry() -> Result<()>
 
     // A git repo is not strictly required by `ralph loops process` itself, but
     // having one avoids spurious warnings from the real binary.
-    init_git_repo(server.workspace_path())?;
+    ralph_core::testing::init_test_repo(server.workspace_path(), &[]);
 
     // Enqueue an entry so loop_domain.process() actually invokes the wrapper
     // (an empty queue returns immediately without touching ralph).

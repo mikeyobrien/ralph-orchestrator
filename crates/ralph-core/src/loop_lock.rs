@@ -149,17 +149,11 @@ impl LoopLock {
                     })
                 }
                 Err((file, errno)) => {
-                    use nix::errno::Errno;
-                    // EWOULDBLOCK and EAGAIN are the same on some platforms (macOS)
-                    if errno == Errno::EWOULDBLOCK || errno == Errno::EAGAIN {
-                        // Lock is held by another process - read their metadata
+                    if crate::utils::is_lock_contention(errno) {
                         let metadata = Self::read_metadata(&file)?;
                         Err(LockError::AlreadyLocked(metadata))
                     } else {
-                        Err(LockError::Io(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("flock failed: {}", errno),
-                        )))
+                        Err(LockError::Io(crate::utils::flock_io_error(errno)))
                     }
                 }
             }
@@ -209,10 +203,7 @@ impl LoopLock {
                         lock_path,
                     })
                 }
-                Err((_, errno)) => Err(LockError::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("flock failed: {}", errno),
-                ))),
+                Err((_, errno)) => Err(LockError::Io(crate::utils::flock_io_error(errno))),
             }
         }
 
@@ -261,7 +252,6 @@ impl LoopLock {
 
         #[cfg(unix)]
         {
-            use nix::errno::Errno;
             use nix::fcntl::{Flock, FlockArg};
 
             match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
@@ -270,13 +260,10 @@ impl LoopLock {
                     Ok(false)
                 }
                 Err((_, errno)) => {
-                    if errno == Errno::EWOULDBLOCK || errno == Errno::EAGAIN {
+                    if crate::utils::is_lock_contention(errno) {
                         Ok(true)
                     } else {
-                        Err(LockError::Io(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("flock failed: {}", errno),
-                        )))
+                        Err(LockError::Io(crate::utils::flock_io_error(errno)))
                     }
                 }
             }

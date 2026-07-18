@@ -235,12 +235,8 @@ impl LoopRegistry {
 
         let file = crate::utils::open_read_write(&self.registry_path)?;
 
-        let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
-            RegistryError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("flock failed: {}", errno),
-            ))
-        })?;
+        let flock = Flock::lock(file, FlockArg::LockExclusive)
+            .map_err(|(_, errno)| RegistryError::Io(crate::utils::flock_io_error(errno)))?;
 
         let mut data = self.read_data_from_file(&flock)?;
 

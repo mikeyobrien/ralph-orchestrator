@@ -72,8 +72,8 @@ pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
 pub use file_lock::{FileLock, LockGuard as FileLockGuard, LockedFile};
 pub use git_ops::{
     AutoCommitResult, GitOpsError, auto_commit_changes, clean_stashes, get_commit_summary,
-    get_current_branch, get_head_sha, get_recent_files, has_uncommitted_changes,
-    is_working_tree_clean, prune_remote_refs,
+    get_current_branch, get_head_sha, get_recent_files, git_output, git_output_strict, git_ref_exists,
+    git_remote_exists, git_run, has_uncommitted_changes, is_working_tree_clean, prune_remote_refs,
 };
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hat_registry::HatRegistry;

@@ -168,6 +168,18 @@ pub fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+/// Converts a flock errno into an `io::Error`.
+#[cfg(unix)]
+pub fn flock_io_error(errno: nix::errno::Errno) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, format!("flock failed: {}", errno))
+}
+
+/// Returns `true` if the errno indicates the lock is held by another process.
+#[cfg(unix)]
+pub fn is_lock_contention(errno: nix::errno::Errno) -> bool {
+    errno == nix::errno::Errno::EWOULDBLOCK || errno == nix::errno::Errno::EAGAIN
+}
+
 /// Clones a usable `File` handle from a `nix::fcntl::Flock`.
 ///
 /// `Flock` doesn't expose the inner `File` directly, so we duplicate the
