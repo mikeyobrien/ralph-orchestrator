@@ -1,13 +1,13 @@
 //! Adapter that drives the `autoloop` CLI as a subprocess.
 //!
-//! [`AutoloopRunner`] assembles an `autoloop run <preset> "<prompt>"` invocation,
-//! spawns it in a working directory, waits for completion, and parses the
+//! [`AutoloopRunner`] assembles an `autoloop run <preset> [options] "<prompt>"`
+//! invocation, spawns it in a working directory, waits for completion, and parses the
 //! "autoloops summary" block that autoloop prints to stdout on exit.
 //!
 //! # Invocation contract
 //!
 //! ```text
-//! autoloop run <preset-dir> "<prompt>" -b <backend> --set key=value ...
+//! autoloop run <preset-dir> -b <backend> --set key=value ... "<prompt>"
 //! ```
 //!
 //! Note the `-b` single-token gotcha: the backend value MUST be passed as ONE
@@ -204,12 +204,14 @@ impl AutoloopRunner {
 
     /// Assembles the full argv (excluding the program itself).
     ///
-    /// Layout: `[<node bin>?] run <preset> <prompt> [-b <backend>] [--set kv]...`
+    /// Layout: `[<node bin>?] run <preset> [-b <backend>] [--set kv]... [--events path] <prompt>`.
+    ///
+    /// The positional prompt must remain last because autoloop parses it as a
+    /// variadic argument; options placed after it can be consumed as prompt text.
     fn build_args(&self) -> Vec<String> {
         let (_program, mut args) = self.program_and_prefix();
         args.push("run".to_string());
         args.push(self.preset_dir.to_string_lossy().into_owned());
-        args.push(self.prompt.clone());
 
         if let Some(backend) = &self.backend {
             args.push("-b".to_string());
@@ -227,6 +229,7 @@ impl AutoloopRunner {
             args.push(events.to_string_lossy().into_owned());
         }
 
+        args.push(self.prompt.clone());
         args
     }
 
@@ -514,27 +517,31 @@ journal: /j
     }
 
     #[test]
-    fn build_args_keeps_backend_as_single_token() {
+    fn build_args_places_all_options_before_prompt() {
         let runner = AutoloopRunner::new("/presets/autocode", "do the thing", "/work")
             .backend("node x.js")
-            .max_iterations(3);
-        let args = runner.build_args();
+            .max_iterations(3)
+            .set_override("event_loop.max_runtime", "12000")
+            .events_path("/tmp/events.jsonl");
 
-        // Locate -b and assert the following element is the whole backend string.
-        let b_pos = args.iter().position(|a| a == "-b").expect("-b present");
-        assert_eq!(args[b_pos + 1], "node x.js");
-
-        // run <preset> <prompt> ...
-        assert_eq!(args[0], "run");
-        assert_eq!(args[1], "/presets/autocode");
-        assert_eq!(args[2], "do the thing");
-
-        // --set override present in order.
-        let set_pos = args
-            .iter()
-            .position(|a| a == "--set")
-            .expect("--set present");
-        assert_eq!(args[set_pos + 1], "event_loop.max_iterations=3");
+        assert_eq!(
+            runner.build_args(),
+            vec![
+                "run",
+                "/presets/autocode",
+                "-b",
+                // The multi-word backend remains exactly one argv element.
+                "node x.js",
+                "--set",
+                "event_loop.max_iterations=3",
+                "--set",
+                "event_loop.max_runtime=12000",
+                "--events",
+                "/tmp/events.jsonl",
+                // Prompt is last so variadic prompt parsing cannot absorb options.
+                "do the thing",
+            ]
+        );
     }
 
     #[test]
@@ -544,8 +551,7 @@ journal: /j
         let (program, _) = runner.program_and_prefix();
         assert_eq!(program, "node");
         let args = runner.build_args();
-        assert_eq!(args[0], "/checkout/bin/autoloop");
-        assert_eq!(args[1], "run");
+        assert_eq!(args, vec!["/checkout/bin/autoloop", "run", "/p", "x"]);
     }
 
     #[test]

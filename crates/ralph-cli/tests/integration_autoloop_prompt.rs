@@ -43,6 +43,13 @@ struct Harness {
 
 impl Harness {
     fn new(config_prompt_file: Option<&str>) -> Self {
+        Self::new_with_event_loop(config_prompt_file, &[])
+    }
+
+    fn new_with_event_loop(
+        config_prompt_file: Option<&str>,
+        event_loop_fields: &[(&str, &str)],
+    ) -> Self {
         let workspace = tempfile::tempdir().expect("workspace temp dir");
         let home = tempfile::tempdir().expect("home temp dir");
         let preset = workspace.path().join("preset");
@@ -51,13 +58,20 @@ impl Harness {
         fs::write(preset.join("topology.toml"), TOPOLOGY_TOML).expect("write topology.toml");
         fs::write(preset.join("roles/worker.md"), "Complete the test.").expect("write role prompt");
 
-        let prompt_file_config = config_prompt_file
-            .map(|path| format!("event_loop:\n  prompt_file: {path}\n"))
-            .unwrap_or_default();
+        let mut event_loop_config = String::new();
+        if config_prompt_file.is_some() || !event_loop_fields.is_empty() {
+            event_loop_config.push_str("event_loop:\n");
+            if let Some(path) = config_prompt_file {
+                event_loop_config.push_str(&format!("  prompt_file: {path}\n"));
+            }
+            for (key, value) in event_loop_fields {
+                event_loop_config.push_str(&format!("  {key}: {value}\n"));
+            }
+        }
         fs::write(
             workspace.path().join("ralph.yml"),
             format!(
-                "core:\n  engine: autoloop\n  autoloop_preset: preset\ncli:\n  backend: claude\nfeatures:\n  auto_merge: false\n{prompt_file_config}"
+                "core:\n  engine: autoloop\n  autoloop_preset: preset\ncli:\n  backend: claude\nfeatures:\n  auto_merge: false\n{event_loop_config}"
             ),
         )
         .expect("write ralph.yml");
@@ -204,7 +218,7 @@ fn assert_recorded_prompt(harness: &Harness, expected: &str) {
             .expect("canonicalize expected preset path"),
         "unexpected autoloop argv: {argv:?}"
     );
-    assert_eq!(argv[2], expected, "unexpected autoloop argv: {argv:?}");
+    assert_eq!(argv.last().map(String::as_str), Some(expected));
 }
 
 #[test]
@@ -331,5 +345,52 @@ fn run_inline_prompt_overrides_stale_configured_prompt_file() {
     assert!(
         !argv.iter().any(|arg| arg.contains("decoy file prompt")),
         "stale prompt leaked into autoloop argv: {argv:?}"
+    );
+}
+
+#[test]
+fn explicit_preset_receives_cli_and_config_budget_overrides_before_prompt() {
+    let harness = Harness::new_with_event_loop(
+        None,
+        &[
+            ("max_runtime_seconds", "12"),
+            ("max_cost_usd", "3.5"),
+            ("max_consecutive_failures", "2"),
+        ],
+    );
+
+    let output = harness.run(&["-p", "budgeted prompt", "--max-iterations", "7"]);
+
+    assert_success(&output);
+    let argv = harness.recorded_argv();
+    let prompt_position = argv
+        .iter()
+        .position(|arg| arg == "budgeted prompt")
+        .expect("prompt should be present");
+    for expected in [
+        "event_loop.max_iterations=7",
+        "event_loop.max_runtime=12000",
+        "event_loop.max_cost_usd=3.5",
+    ] {
+        let position = argv
+            .iter()
+            .position(|arg| arg == expected)
+            .unwrap_or_else(|| panic!("missing {expected:?} in autoloop argv: {argv:?}"));
+        assert_eq!(argv[position - 1], "--set", "unexpected argv: {argv:?}");
+        assert!(
+            position < prompt_position,
+            "override {expected:?} must precede prompt: {argv:?}"
+        );
+    }
+    assert_eq!(prompt_position, argv.len() - 1, "unexpected argv: {argv:?}");
+
+    let process_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        process_output.contains("event_loop.max_consecutive_failures"),
+        "ignored budget warning was not visible:\n{process_output}"
     );
 }
