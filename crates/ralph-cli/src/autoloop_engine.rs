@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{AutoloopRunner, events_run_result, parse_events};
-use ralph_core::{LoopContext, RalphConfig, RunStats, TerminationReason};
+use ralph_core::{EventLoopConfig, LoopContext, RalphConfig, RunStats, TerminationReason};
 
 use crate::completion_coord::coordinate_completion;
 
@@ -41,6 +41,29 @@ fn resolve(workspace: &Path, p: &str) -> PathBuf {
     } else {
         workspace.join(path)
     }
+}
+
+/// Resolve the prompt passed to the autoloop subprocess.
+///
+/// Inline text takes precedence over a prompt file so callers that set
+/// `event_loop.prompt` (including `ralph run -p`) cannot be shadowed by a stale
+/// configured file path.
+fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Result<String> {
+    if let Some(prompt) = event_loop
+        .prompt
+        .as_ref()
+        .filter(|prompt| !prompt.trim().is_empty())
+    {
+        return Ok(prompt.clone());
+    }
+
+    if event_loop.prompt_file.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let path = resolve(workspace, &event_loop.prompt_file);
+    std::fs::read_to_string(&path)
+        .with_context(|| format!("reading prompt file {}", path.display()))
 }
 
 /// Drive the configured autoloop preset as ralph's engine, returning the mapped
@@ -84,17 +107,7 @@ pub async fn run_autoloop_engine(
         }
     };
 
-    // The prompt comes from the canonical normalized field.
-    let prompt = {
-        let pf = config.event_loop.prompt_file.clone();
-        if pf.trim().is_empty() {
-            String::new()
-        } else {
-            let path = resolve(&workspace, &pf);
-            std::fs::read_to_string(&path)
-                .with_context(|| format!("reading prompt file {}", path.display()))?
-        }
-    };
+    let prompt = resolve_autoloop_prompt(&workspace, &config.event_loop)?;
 
     // Structured event sink under .ralph/ — the preferred observability channel.
     let events_path = workspace.join(".ralph").join("autoloop-events.ndjson");
@@ -380,6 +393,80 @@ pub async fn start_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autoloop_prompt_prefers_inline_text_over_file() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("prompt.md"), "file prompt").unwrap();
+        let event_loop = EventLoopConfig {
+            prompt: Some("inline prompt".to_string()),
+            prompt_file: "prompt.md".to_string(),
+            ..EventLoopConfig::default()
+        };
+
+        let prompt = resolve_autoloop_prompt(workspace.path(), &event_loop).unwrap();
+
+        assert_eq!(prompt, "inline prompt");
+    }
+
+    #[test]
+    fn autoloop_prompt_reads_file_when_inline_text_is_absent() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("prompt.md"), "file prompt").unwrap();
+        let event_loop = EventLoopConfig {
+            prompt: None,
+            prompt_file: "prompt.md".to_string(),
+            ..EventLoopConfig::default()
+        };
+
+        let prompt = resolve_autoloop_prompt(workspace.path(), &event_loop).unwrap();
+
+        assert_eq!(prompt, "file prompt");
+    }
+
+    #[test]
+    fn autoloop_prompt_is_empty_when_no_source_is_configured() {
+        let workspace = tempfile::tempdir().unwrap();
+        let event_loop = EventLoopConfig {
+            prompt: None,
+            prompt_file: String::new(),
+            ..EventLoopConfig::default()
+        };
+
+        let prompt = resolve_autoloop_prompt(workspace.path(), &event_loop).unwrap();
+
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn autoloop_prompt_errors_when_configured_file_is_missing() {
+        let workspace = tempfile::tempdir().unwrap();
+        let event_loop = EventLoopConfig {
+            prompt: None,
+            prompt_file: "missing.md".to_string(),
+            ..EventLoopConfig::default()
+        };
+
+        let error = resolve_autoloop_prompt(workspace.path(), &event_loop).unwrap_err();
+
+        assert!(error.to_string().contains("reading prompt file"));
+        assert!(error.to_string().contains("missing.md"));
+    }
+
+    #[test]
+    fn autoloop_prompt_uses_file_when_inline_text_is_whitespace() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("prompt.md"), "file prompt").unwrap();
+        let event_loop = EventLoopConfig {
+            prompt: Some("  \n".to_string()),
+            prompt_file: "prompt.md".to_string(),
+            ..EventLoopConfig::default()
+        };
+
+        let prompt = resolve_autoloop_prompt(workspace.path(), &event_loop).unwrap();
+
+        assert_eq!(prompt, "file prompt");
+    }
 
     #[test]
     fn maps_autoloop_stop_reasons_to_termination() {

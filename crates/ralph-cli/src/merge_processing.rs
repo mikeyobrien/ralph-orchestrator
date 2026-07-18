@@ -15,6 +15,20 @@ use std::process::{Command, Stdio};
 use ralph_core::MergeQueue;
 use tracing::{debug, info, warn};
 
+fn merge_ralph_args(loop_id: &str) -> Vec<String> {
+    vec![
+        "run".to_string(),
+        "-c".to_string(),
+        ".ralph/merge-loop-config.yml".to_string(),
+        "-H".to_string(),
+        "builtin:merge-loop".to_string(),
+        "--exclusive".to_string(),
+        "--no-tui".to_string(),
+        "-p".to_string(),
+        format!("Merge loop {loop_id} from branch ralph/{loop_id}"),
+    ]
+}
+
 /// Drain the merge queue by spawning a `merge-ralph` subprocess (`ralph_cmd`)
 /// for each queued entry. Errors are logged and leave the entry queued for
 /// manual retry; never panics.
@@ -122,17 +136,7 @@ fn process_pending_merges_with_command(repo_root: &Path, ralph_cmd: &OsStr) {
 
         match Command::new(ralph_cmd)
             .current_dir(repo_root)
-            .args([
-                "run",
-                "-c",
-                ".ralph/merge-loop-config.yml",
-                "-H",
-                "builtin:merge-loop",
-                "--exclusive",
-                "--no-tui",
-                "-p",
-                &format!("Merge loop {} from branch ralph/{}", loop_id, loop_id),
-            ])
+            .args(merge_ralph_args(loop_id))
             .env("RALPH_MERGE_LOOP_ID", loop_id)
             .stdout(stdout_stdio)
             .stderr(stderr_stdio)
@@ -214,6 +218,17 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod");
         path
+    }
+
+    #[test]
+    fn merge_ralph_args_include_non_empty_merge_prompt() {
+        let args = merge_ralph_args("loop-1234");
+        let prompt_flag = args.iter().position(|arg| arg == "-p").expect("-p flag");
+
+        assert_eq!(
+            args.get(prompt_flag + 1).map(String::as_str),
+            Some("Merge loop loop-1234 from branch ralph/loop-1234")
+        );
     }
 
     #[test]
