@@ -170,7 +170,7 @@ fn test_wait_for_resume_if_suspended_prioritizes_restart_over_resume()
 - threshold: `55%`
 - operational score: `55.11%`（`178 caught / (178 caught + 145 missed)`）
 - strict score: `53.45%`
-- critical-path counts: `MISS=0`, `TIMEOUT=1`, `unviable=3`
+- 重要経路の件数: `MISS=0`, `TIMEOUT=1`, `unviable=3`
 
 CI アップロード/デバッグ用に生成された成果物:
 
