@@ -46,7 +46,7 @@ What actually happens
 
 ## Logs
 ```
-Error messages here
+エラーメッセージをここに
 ```
 ```
 

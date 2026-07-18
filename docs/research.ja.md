@@ -421,7 +421,7 @@ Geoffrey Huntley が述べたように、「最も単純な解決策が最良の
 
 ### 背景の読み物
 
-4. Reed, H. (2024). "Spec-Driven Development with AI". https://harper.blog/
+4. Reed, H. (2024). "Spec-Driven Development with AI". https://harper.blog/ - AI を用いた仕様駆動開発について
 5. Brooks, F. (1975). "The Mythical Man-Month" - ソフトウェアの複雑さについて
 6. Simon, H. (1996). "The Sciences of the Artificial" - 限定合理性について
 7. Wiener, N. (1948). "Cybernetics" - フィードバックシステムについて
