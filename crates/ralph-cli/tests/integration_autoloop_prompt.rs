@@ -3,7 +3,13 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use ralph_core::{
+    HistoryEventType, LoopEntry, LoopHistory, LoopLock, LoopRegistry, MergeQueue, MergeState,
+};
 
 use tempfile::TempDir;
 
@@ -30,6 +36,8 @@ struct Harness {
     workspace: TempDir,
     home: TempDir,
     argv_out: PathBuf,
+    crash_ready: PathBuf,
+    crash_release: PathBuf,
     bin_dir: PathBuf,
 }
 
@@ -84,6 +92,14 @@ impl Harness {
 set -eu
 : "${ARGV_OUT:?ARGV_OUT must be set}"
 printf '%s\n' "$@" > "$ARGV_OUT"
+if [ -n "${CRASH_READY:-}" ]; then
+  : "${CRASH_RELEASE:?CRASH_RELEASE must be set in crash mode}"
+  touch "$CRASH_READY"
+  while [ ! -e "$CRASH_RELEASE" ]; do
+    sleep 0.01
+  done
+  exit 1
+fi
 cat <<'SUMMARY'
 autoloops summary
 ===================
@@ -103,15 +119,19 @@ SUMMARY
         fs::set_permissions(&fake_autoloop, permissions).expect("make fake autoloop executable");
 
         let argv_out = workspace.path().join("autoloop-argv.txt");
+        let crash_ready = workspace.path().join("autoloop-crash-ready");
+        let crash_release = workspace.path().join("autoloop-crash-release");
         Self {
             workspace,
             home,
             argv_out,
+            crash_ready,
+            crash_release,
             bin_dir,
         }
     }
 
-    fn run(&self, prompt_args: &[&str]) -> Output {
+    fn command(&self, prompt_args: &[&str]) -> Command {
         let inherited_path = std::env::var_os("PATH").unwrap_or_default();
         let mut paths = vec![self.bin_dir.clone()];
         paths.extend(std::env::split_paths(&inherited_path));
@@ -121,7 +141,8 @@ SUMMARY
         args.extend_from_slice(prompt_args);
         args.extend_from_slice(&["--no-tui", "--skip-preflight"]);
 
-        Command::new(env!("CARGO_BIN_EXE_ralph"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ralph"));
+        command
             .args(args)
             .current_dir(self.workspace.path())
             .env("PATH", path)
@@ -130,8 +151,16 @@ SUMMARY
             .env("USERPROFILE", self.home.path())
             .env_remove("RALPH_CONFIG")
             .env_remove("RALPH_WORKSPACE_ROOT")
-            .output()
-            .expect("execute ralph")
+            .env_remove("RALPH_MERGE_LOOP_ID")
+            .env_remove("CRASH_READY")
+            .env_remove("CRASH_RELEASE")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    }
+
+    fn run(&self, prompt_args: &[&str]) -> Output {
+        self.command(prompt_args).output().expect("execute ralph")
     }
 
     fn recorded_argv(&self) -> Vec<String> {
@@ -176,6 +205,88 @@ fn assert_recorded_prompt(harness: &Harness, expected: &str) {
         "unexpected autoloop argv: {argv:?}"
     );
     assert_eq!(argv[2], expected, "unexpected autoloop argv: {argv:?}");
+}
+
+#[test]
+fn crash_runs_completion_coordination() {
+    const LOOP_ID: &str = "ralph-crash-coordination-test";
+
+    let harness = Harness::new(None);
+    let queue = MergeQueue::new(harness.workspace.path());
+    queue.enqueue(LOOP_ID, "crash coordination test").unwrap();
+
+    let mut command = harness.command(&["-p", "crash after startup"]);
+    command
+        .env("RALPH_MERGE_LOOP_ID", LOOP_ID)
+        .env("CRASH_READY", &harness.crash_ready)
+        .env("CRASH_RELEASE", &harness.crash_release);
+    let mut child = command.spawn().expect("spawn ralph");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !harness.crash_ready.exists() {
+        if let Some(status) = child.try_wait().expect("poll ralph") {
+            panic!("ralph exited before fake autoloop reached crash barrier: {status}");
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("timed out waiting for fake autoloop crash barrier");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let ralph_pid = child.id();
+    let mut registry_entry = LoopEntry::with_id(
+        LOOP_ID,
+        "crash coordination test",
+        None::<String>,
+        harness.workspace.path().display().to_string(),
+    );
+    registry_entry.pid = ralph_pid;
+    LoopRegistry::new(harness.workspace.path())
+        .register(registry_entry)
+        .expect("seed live registry entry");
+
+    fs::write(&harness.crash_release, "release\n").expect("release fake autoloop");
+    let output = child.wait_with_output().expect("wait for ralph");
+
+    assert!(
+        !output.status.success(),
+        "ralph should preserve the autoloop crash as a nonzero exit"
+    );
+
+    let history = LoopHistory::new(harness.workspace.path().join(".ralph/history.jsonl"));
+    let history_events = history.read_all().expect("read loop history");
+    assert!(
+        history_events.iter().any(|event| matches!(
+            &event.event_type,
+            HistoryEventType::LoopCompleted { reason } if reason == "validation_failure"
+        )),
+        "missing validation_failure completion record; events: {history_events:?}; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        LoopRegistry::new(harness.workspace.path())
+            .get(LOOP_ID)
+            .expect("read loop registry")
+            .is_none(),
+        "completion coordination left the live registry entry behind"
+    );
+
+    let queue_entry = queue
+        .get_entry(LOOP_ID)
+        .expect("read merge queue")
+        .expect("seeded merge queue entry should remain present");
+    assert_eq!(
+        queue_entry.state,
+        MergeState::NeedsReview,
+        "failed merge run should be dispositioned for review"
+    );
+
+    let reacquired_lock = LoopLock::try_acquire(harness.workspace.path(), "post-crash probe")
+        .expect("primary loop lock should be reacquirable after ralph exits");
+    drop(reacquired_lock);
 }
 
 #[test]

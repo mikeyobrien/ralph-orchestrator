@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use ralph_adapters::{AutoloopRunner, events_run_result, parse_events};
+use ralph_adapters::{
+    AutoloopRunError, AutoloopRunSummary, AutoloopRunner, events_run_result, parse_events,
+};
 use ralph_core::{EventLoopConfig, LoopContext, RalphConfig, RunStats, TerminationReason};
 
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
@@ -31,6 +33,43 @@ fn map_stop_reason(reason: &str) -> TerminationReason {
         }
         _ => TerminationReason::Stopped,
     }
+}
+
+/// Normalized result of driving the autoloop subprocess.
+///
+/// Keeping failures intact lets the completion path coordinate a crash before
+/// returning the original diagnostic to the CLI.
+#[derive(Debug)]
+enum AutoloopOutcome {
+    Completed(AutoloopRunSummary),
+    Stopped,
+    Failed(anyhow::Error),
+}
+
+/// Interpret a subprocess result using whether Ralph initiated a process-group
+/// kill. autoloop deliberately re-raises SIGTERM/SIGKILL, which is represented
+/// either as `128 + signal` or as a signaled status without a numeric exit code.
+/// Those statuses are a user stop only after Ralph's own kill request; the same
+/// status from an externally killed child remains a crash.
+fn interpret_autoloop_result(
+    result: Result<AutoloopRunSummary>,
+    killed_by_ralph: bool,
+) -> AutoloopOutcome {
+    match result {
+        Ok(summary) => AutoloopOutcome::Completed(summary),
+        Err(error) if killed_by_ralph && is_kill_exit(&error) => AutoloopOutcome::Stopped,
+        Err(error) => AutoloopOutcome::Failed(error),
+    }
+}
+
+fn is_kill_exit(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<AutoloopRunError>(),
+        Some(AutoloopRunError::NonZeroExit {
+            code: Some(137 | 143) | None,
+            ..
+        })
+    )
 }
 
 /// Resolve `p` against `workspace` when relative.
@@ -143,40 +182,64 @@ pub async fn run_autoloop_engine(
         .events_path(events_path.clone());
 
     let start = Instant::now();
-    let summary = if tui {
+    let outcome = if tui {
         // In-process TUI: render the autoloop run live by tailing its --events
         // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
         // child (see run_autoloop_with_tui).
-        run_autoloop_with_tui(runner, events_path.clone(), workspace.clone())
-            .await
-            .context("autoloop TUI run failed")?
+        match run_autoloop_with_tui(runner, events_path.clone(), workspace.clone()).await {
+            Ok(outcome) => outcome,
+            Err(error) => AutoloopOutcome::Failed(error.context("autoloop TUI run failed")),
+        }
     } else {
         // Headless: AutoloopRunner::run blocks on the subprocess; keep the async
         // runtime free. Unchanged from the pre-TUI path.
-        tokio::task::spawn_blocking(move || runner.run())
+        let result = tokio::task::spawn_blocking(move || runner.run())
             .await
-            .context("autoloop run task panicked")?
-            .context("autoloop run failed")?
+            .context("autoloop run task panicked")
+            .and_then(|result| result.context("autoloop run failed"));
+        interpret_autoloop_result(result, false)
     };
 
-    if let Ok(content) = std::fs::read_to_string(&events_path) {
-        if let Some(result) = events_run_result(&parse_events(&content)) {
-            println!(
-                "autoloop engine: run_id={} iterations={} stop_reason={}",
-                result.run_id, result.iterations, result.stop_reason
-            );
+    // Normalize every child execution result before coordinating so success,
+    // user stop, spawn/wait failures, and non-zero exits all traverse the same
+    // completion path exactly once. Failed runs have no trustworthy summary,
+    // so coordinate them with elapsed wall time and zeroed iteration/cost data,
+    // then return the original diagnostic after bookkeeping is complete.
+    let (reason, state, failure) = match outcome {
+        AutoloopOutcome::Completed(summary) => {
+            if let Ok(content) = std::fs::read_to_string(&events_path) {
+                if let Some(result) = events_run_result(&parse_events(&content)) {
+                    println!(
+                        "autoloop engine: run_id={} iterations={} stop_reason={}",
+                        result.run_id, result.iterations, result.stop_reason
+                    );
+                }
+            }
+
+            let reason = map_stop_reason(&summary.stop_reason);
+            let state = RunStats {
+                iterations: summary.iterations,
+                elapsed: start.elapsed(),
+                cost_usd: summary.cost_usd,
+            };
+            (reason, state, None)
         }
-    }
-
-    let reason = map_stop_reason(&summary.stop_reason);
-
-    // Mirror the in-house engine's completion bookkeeping so parallel-loop
-    // coordination (merge queue, registry, landing) works under the autoloop
-    // engine. autoloop owns iteration/timing; we surface what the summary gives.
-    let state = RunStats {
-        iterations: summary.iterations,
-        elapsed: start.elapsed(),
-        cost_usd: summary.cost_usd,
+        AutoloopOutcome::Stopped => (
+            TerminationReason::Stopped,
+            RunStats {
+                elapsed: start.elapsed(),
+                ..RunStats::default()
+            },
+            None,
+        ),
+        AutoloopOutcome::Failed(error) => (
+            TerminationReason::ValidationFailure,
+            RunStats {
+                elapsed: start.elapsed(),
+                ..RunStats::default()
+            },
+            Some(error),
+        ),
     };
 
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
@@ -199,7 +262,10 @@ pub async fn run_autoloop_engine(
         use_colors,
     );
 
-    Ok(reason)
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(reason),
+    }
 }
 
 /// Run the autoloop subprocess with the in-process live TUI.
@@ -223,7 +289,7 @@ async fn run_autoloop_with_tui(
     runner: AutoloopRunner,
     events_path: PathBuf,
     workspace: PathBuf,
-) -> Result<ralph_adapters::AutoloopRunSummary> {
+) -> Result<AutoloopOutcome> {
     use ralph_tui::Tui;
     use tokio::sync::watch;
 
@@ -289,9 +355,12 @@ async fn run_autoloop_with_tui(
     // If the subprocess is still running (user quit via q or Ctrl+C — neither
     // exits autoloop), stop the whole process group so the backend isn't
     // orphaned. No-op if the run already completed naturally.
-    if !completed.load(Ordering::SeqCst) {
+    let killed_by_ralph = if !completed.load(Ordering::SeqCst) {
         kill_autoloop_group(child_pid);
-    }
+        true
+    } else {
+        false
+    };
     // Ensure the reader does its final drain even if the TUI exited first (q).
     let _ = terminated_tx.send(true);
 
@@ -300,7 +369,7 @@ async fn run_autoloop_with_tui(
     let _ = reader_handle.await;
     tui_result.context("TUI render loop failed")?;
 
-    summary
+    Ok(interpret_autoloop_result(summary, killed_by_ralph))
 }
 
 /// Stop the autoloop subprocess tree: SIGTERM the whole process group, then
@@ -401,6 +470,73 @@ pub async fn start_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn nonzero_exit(code: Option<i32>) -> anyhow::Error {
+        anyhow::Error::new(AutoloopRunError::NonZeroExit {
+            code,
+            stderr_tail: "test stderr".to_string(),
+        })
+        .context("autoloop run failed")
+    }
+
+    fn test_summary() -> AutoloopRunSummary {
+        AutoloopRunSummary {
+            run_id: "run-test".to_string(),
+            iterations: 3,
+            stop_reason: "completed".to_string(),
+            cost_usd: 0.25,
+            journal: PathBuf::from("/tmp/journal.jsonl"),
+            memory: PathBuf::from("/tmp/memory.jsonl"),
+        }
+    }
+
+    #[test]
+    fn ralph_sigterm_kill_maps_to_stopped() {
+        let outcome = interpret_autoloop_result(Err(nonzero_exit(Some(128 + 15))), true);
+
+        assert!(matches!(outcome, AutoloopOutcome::Stopped));
+    }
+
+    #[test]
+    fn ralph_sigkill_maps_to_stopped() {
+        let outcome = interpret_autoloop_result(Err(nonzero_exit(Some(128 + 9))), true);
+
+        assert!(matches!(outcome, AutoloopOutcome::Stopped));
+    }
+
+    #[test]
+    fn ralph_signaled_status_without_exit_code_maps_to_stopped() {
+        let outcome = interpret_autoloop_result(Err(nonzero_exit(None)), true);
+
+        assert!(matches!(outcome, AutoloopOutcome::Stopped));
+    }
+
+    #[test]
+    fn external_sigkill_exit_remains_failure() {
+        let outcome = interpret_autoloop_result(Err(nonzero_exit(Some(128 + 9))), false);
+
+        let AutoloopOutcome::Failed(error) = outcome else {
+            panic!("external signal must remain a crash");
+        };
+        assert!(matches!(
+            error.downcast_ref::<AutoloopRunError>(),
+            Some(AutoloopRunError::NonZeroExit {
+                code: Some(137),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn successful_summary_is_preserved() {
+        let summary = test_summary();
+        let outcome = interpret_autoloop_result(Ok(summary.clone()), false);
+
+        let AutoloopOutcome::Completed(actual) = outcome else {
+            panic!("successful run must retain its summary");
+        };
+        assert_eq!(actual, summary);
+    }
 
     #[test]
     fn autoloop_prompt_prefers_inline_text_over_file() {

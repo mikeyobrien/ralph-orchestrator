@@ -40,7 +40,7 @@ impl TerminationReason {
     /// Returns the exit code for this termination reason per spec.
     ///
     /// Per spec "Loop Termination" section:
-    /// - 0: Completion promise detected (success)
+    /// - 0: Completion promise detected or manually stopped (clean exit)
     /// - 1: Consecutive failures or unrecoverable error (failure)
     /// - 2: Max iterations, max runtime, or max cost exceeded (limit)
     /// - 130: User interrupt (SIGINT = 128 + 2)
@@ -51,8 +51,8 @@ impl TerminationReason {
             | TerminationReason::LoopThrashing
             | TerminationReason::LoopStale
             | TerminationReason::ValidationFailure
-            | TerminationReason::Stopped
             | TerminationReason::WorkspaceGone => 1,
+            TerminationReason::Stopped => 0,
             TerminationReason::MaxIterations
             | TerminationReason::MaxRuntime
             | TerminationReason::MaxCost => 2,
@@ -145,5 +145,10 @@ mod tests {
             format!("{}", TerminationReason::CompletionPromise),
             "completed"
         );
+    }
+
+    #[test]
+    fn manually_stopped_is_a_clean_exit() {
+        assert_eq!(TerminationReason::Stopped.exit_code(), 0);
     }
 }
