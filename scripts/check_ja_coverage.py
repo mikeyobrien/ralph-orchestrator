@@ -68,6 +68,7 @@ def suspect_untranslated(md_text: str) -> list[tuple[int, str]]:
     suspects: list[tuple[int, str]] = []
     in_code = False
     in_frontmatter = False
+    fence_len = 0
     lines = md_text.splitlines()
     for i, raw in enumerate(lines, start=1):
         # frontmatter (--- ... ---) は英語維持の決定に従い判定対象外
@@ -78,8 +79,16 @@ def suspect_untranslated(md_text: str) -> list[tuple[int, str]]:
             if raw.strip() == "---":
                 in_frontmatter = False
             continue
-        if _CODEFENCE_RE.match(raw.strip()):
-            in_code = not in_code
+        # コードフェンス（CommonMark 準拠）: 情報文字列付き ``` はブロック内では本文扱い。
+        # 閉じるのは、開いた長さ以上の「情報なし」の裸フェンスのみ。ネストを正しく扱う。
+        fence_m = re.match(r"^(`{3,}|~{3,})(.*)$", raw.strip())
+        if fence_m:
+            ticks, info = fence_m.group(1), fence_m.group(2).strip()
+            if not in_code:
+                in_code = True
+                fence_len = len(ticks)
+            elif info == "" and len(ticks) >= fence_len:
+                in_code = False
             continue
         if in_code:
             continue
@@ -95,6 +104,9 @@ def suspect_untranslated(md_text: str) -> list[tuple[int, str]]:
             continue
         # JSON/構造的な行（ネストしたコードフェンス内で拾われるコード）は除外
         if stripped[0] in '"{}[]':
+            continue
+        # ディレクトリツリーの罫線（├ └ │ ─）で始まる行は除外（ネストフェンス内の図）
+        if stripped[0] in "├└│─":
             continue
         text = _strip_noise(stripped)
         if _JP_RE.search(text):

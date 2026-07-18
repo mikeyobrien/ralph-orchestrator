@@ -15,7 +15,7 @@
 
 `todo-prompt.md` ファイルを作成します。
 
-```markdown
+````markdown
 # Build Todo List CLI Application
 
 ## Objective
@@ -107,7 +107,7 @@ todos.json:
 - [ ] README with usage instructions
 
 The orchestrator will continue iterations until all criteria are met or limits reached.
-```
+````
 
 ## 例の実行
 
