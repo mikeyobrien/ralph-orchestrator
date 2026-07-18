@@ -17,12 +17,15 @@
 //! | `event_loop.completion_promise`         | `event_loop.completion_promise`   |
 //! | `event_loop.required_events`            | `event_loop.required_events`      |
 //! | `event_loop.max_iterations`             | `event_loop.max_iterations`       |
-//! | `core.guardrails`                       | `harness.md`                      |
+//! | `event_loop.max_runtime_seconds`         | `event_loop.max_runtime` (ms)     |
+//! | `event_loop.max_cost_usd`                | `event_loop.max_cost_usd`         |
+//! | `core.guardrails`                        | `harness.md`                      |
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 use ralph_core::RalphConfig;
 
@@ -137,11 +140,41 @@ fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Map Ralph's normalized loop budgets to autoloop 0.9.2 config overrides.
+///
+/// Autoloop duration values are milliseconds. There is no autoloop equivalent
+/// for Ralph's consecutive-failure budget, so it is deliberately omitted and
+/// called out rather than approximated with a differently-behaving limit.
+pub(crate) fn autoloop_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
+    let el = &config.event_loop;
+    tracing::warn!(
+        field = "event_loop.max_consecutive_failures",
+        value = el.max_consecutive_failures,
+        "engine=autoloop: ignoring event_loop.max_consecutive_failures because autoloop 0.9.2 has no equivalent budget"
+    );
+
+    let mut overrides = vec![
+        ("event_loop.max_iterations", el.max_iterations.to_string()),
+        (
+            "event_loop.max_runtime",
+            Duration::from_secs(el.max_runtime_seconds)
+                .as_millis()
+                .to_string(),
+        ),
+    ];
+    if let Some(max_cost_usd) = el.max_cost_usd {
+        overrides.push(("event_loop.max_cost_usd", max_cost_usd.to_string()));
+    }
+    overrides
+}
+
 /// Write `autoloops.toml` from ralph's event-loop config.
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
-    auto.push_str(&format!("event_loop.max_iterations = {}\n", el.max_iterations));
+    for (key, value) in autoloop_budget_overrides(config) {
+        auto.push_str(&format!("{key} = {value}\n"));
+    }
     auto.push_str(&format!(
         "event_loop.completion_event = {}\n",
         q(COMPLETION_EVENT)
@@ -177,11 +210,17 @@ fn starting_role(config: &RalphConfig, hats: &[(&String, &ralph_core::HatConfig)
         .clone()
         .unwrap_or_else(|| "task.start".to_string());
     for (id, hat) in hats {
-        if hat.triggers.iter().any(|t| *t == start_event || t == "task.start") {
+        if hat
+            .triggers
+            .iter()
+            .any(|t| *t == start_event || t == "task.start")
+        {
             return (*id).clone();
         }
     }
-    hats.first().map(|(id, _)| (*id).clone()).unwrap_or_default()
+    hats.first()
+        .map(|(id, _)| (*id).clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -254,5 +293,47 @@ hats:
         // The generated preset is loadable by ralph's own autoloop preset reader
         // (round-trip sanity against preset_source's detector).
         assert!(dir.path().join("topology.toml").is_file());
+    }
+
+    #[test]
+    fn writes_normalized_v2_budgets_with_autoloop_keys_and_units() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+event_loop:
+  max_iterations: 9
+  max_runtime_seconds: 12
+  max_cost_usd: 3.5
+  max_consecutive_failures: 2
+"#,
+        )
+        .expect("valid v2 config");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("event_loop.max_iterations = 9\n"));
+        assert!(auto.contains("event_loop.max_runtime = 12000\n"));
+        assert!(auto.contains("event_loop.max_cost_usd = 3.5\n"));
+        assert!(!auto.contains("max_consecutive_failures"));
+    }
+
+    #[test]
+    fn writes_v1_budget_aliases_after_normalization() {
+        let mut cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+max_runtime: 8
+max_cost: 1.25
+"#,
+        )
+        .expect("valid v1 config");
+        cfg.normalize();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("event_loop.max_runtime = 8000\n"));
+        assert!(auto.contains("event_loop.max_cost_usd = 1.25\n"));
     }
 }

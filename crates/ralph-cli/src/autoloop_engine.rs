@@ -134,7 +134,7 @@ pub async fn run_autoloop_engine(
     // Use an explicit preset if configured; otherwise generate one from ralph's
     // native hats topology so existing ralph configs run on the autoloop engine
     // without a hand-authored preset.
-    let preset = match config.core.autoloop_preset.as_deref() {
+    let (preset, explicit_preset) = match config.core.autoloop_preset.as_deref() {
         Some(p) => {
             let preset = resolve(&workspace, p);
             if !preset.join("autoloops.toml").is_file() {
@@ -143,14 +143,14 @@ pub async fn run_autoloop_engine(
                     preset.display()
                 );
             }
-            preset
+            (preset, true)
         }
         None => {
             let preset = workspace.join(".ralph").join("autoloop-preset");
             crate::autoloop_preset_gen::generate_preset(&config, &preset)
                 .context("generating an autoloop preset from the hats topology")?;
             tracing::info!(preset = %preset.display(), "engine=autoloop: generated preset from hats config");
-            preset
+            (preset, false)
         }
     };
 
@@ -178,8 +178,13 @@ pub async fn run_autoloop_engine(
         );
     }
 
-    let runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
+    let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .events_path(events_path.clone());
+    if explicit_preset {
+        for (key, value) in crate::autoloop_preset_gen::autoloop_budget_overrides(&config) {
+            runner = runner.set_override(key, &value);
+        }
+    }
 
     let start = Instant::now();
     let outcome = if tui {
