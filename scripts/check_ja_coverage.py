@@ -42,6 +42,16 @@ ALLOWLIST = {
     "sqlite", "react", "vite", "ratatui", "pty", "stdio", "rpc",
 }
 
+# コマンド呼び出しの行頭トークン。ネストしたコードフェンス内で拾われた
+# シェル/CLI コマンド行を未翻訳散文と誤検出しないための許容。
+COMMAND_PREFIXES = {
+    "ralph", "cargo", "npm", "npx", "git", "curl", "just", "cd", "mkdir",
+    "export", "sudo", "ln", "pip", "pipx", "uv", "jq", "nix", "direnv",
+    "rustup", "kubectl", "docker", "python", "python3", "node", "brew",
+    "bash", "sh", "vim", "touch", "source", "install", "chmod", "cp", "mv",
+    "rm", "echo", "cat", "grep", "ls", "helm", "make", "yarn", "pnpm",
+}
+
 
 def _strip_noise(line: str) -> str:
     line = _IMAGE_RE.sub(" ", line)
@@ -76,6 +86,10 @@ def suspect_untranslated(md_text: str) -> list[tuple[int, str]]:
             continue
         # 見出し記号/表の罫線/箇条書き記号のみは除外
         if re.fullmatch(r"[#>*\-=|:\s\d.]+", stripped):
+            continue
+        # シェル/CLI コマンド行は除外（ネストしたフェンス内の取りこぼし対策）
+        first_token = re.split(r"[\s(]", stripped, maxsplit=1)[0].lstrip("$`").lower()
+        if first_token in COMMAND_PREFIXES:
             continue
         text = _strip_noise(stripped)
         if _JP_RE.search(text):
