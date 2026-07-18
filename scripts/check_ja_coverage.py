@@ -24,6 +24,8 @@ _JP_RE = re.compile(r"[぀-ヿ㐀-鿿ｦ-ﾟ]")
 _WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _CODEFENCE_RE = re.compile(r"^```")
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
+# Markdown 画像/バッジ（![alt](url)）は装飾。alt ごと除去する。
+_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK_URL_RE = re.compile(r"https?://\S+|\][^)]*\)|\]\([^)]*\)")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -42,6 +44,7 @@ ALLOWLIST = {
 
 
 def _strip_noise(line: str) -> str:
+    line = _IMAGE_RE.sub(" ", line)
     line = _INLINE_CODE_RE.sub(" ", line)
     line = _LINK_URL_RE.sub(" ", line)
     line = _HTML_TAG_RE.sub(" ", line)

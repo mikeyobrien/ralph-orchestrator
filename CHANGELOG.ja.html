@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>変更履歴 — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">変更履歴</a></h1>
+<p>ralph-orchestrator への注目すべき変更はすべてここに記録されます。</p>
+<p>形式は <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a> に基づいており、この
+プロジェクトは <a href="https://semver.org/spec/v2.0.0.html">セマンティックバージョニング</a> に
+従います。</p>
+<h2 id="2101-2026-06-22"><a class="toclink" href="#2101-2026-06-22"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.0...v2.10.1">2.10.1</a> - 2026-06-22</a></h2>
+<h3 id="_2"><a class="toclink" href="#_2">修正</a></h3>
+<ul>
+<li>カセットベースのカスタムバックエンドに標準入力経由でプロンプトを渡すことで、e2e の
+  モックモード検証を復旧しました。</li>
+<li>モック e2e の単一イテレーションシナリオを、旧来のスクラッチパッド書き込みではなく完了
+  シグナルを検証するよう更新しました。</li>
+<li>gitignore の統合テストを、ユーザー/グローバルの Git 除外ファイルから分離しました。</li>
+</ul>
+<h2 id="2100-2026-06-21"><a class="toclink" href="#2100-2026-06-21"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.3...v2.10.0">2.10.0</a> - 2026-06-21</a></h2>
+<h3 id="_3"><a class="toclink" href="#_3">追加</a></h3>
+<ul>
+<li>Forge CLI バックエンドの統合。</li>
+<li>コントロールプレーンにおける RObot（ヒューマンインザループ）RPC ドメイン。加えて、
+  ライブソケットではなくファイルを通じて人間との対話を駆動するファイルベースの Web モード。</li>
+<li>ワークツリーループがリモートのレビューブランチを公開できるようになり、リベースにも対応。</li>
+<li>事前確認におけるローカルのファイルベースのハットインポート。インポートの解決と、
+  インポート元ファイルのコンテキストを伴うスキーマ検証を含む。</li>
+<li>TUI のイテレーションバッファをディスクへオンデマンドでエクスポート: <code>e</code> は現在の
+  イテレーションを、<code>E</code> はすべてのイテレーションをエクスポート。</li>
+<li>TUI に表示される、コンテキストウィンドウ使用率のテレメトリ。</li>
+</ul>
+<h3 id="_4"><a class="toclink" href="#_4">変更</a></h3>
+<ul>
+<li>Pi バックエンドのパッケージ参照を <code>@earendil-works/pi-coding-agent</code> に更新しました。</li>
+<li>エージェント波の可観測性ドキュメントを刷新し、ハットインポートの設計スペックを追加
+  しました。</li>
+</ul>
+<h3 id="_5"><a class="toclink" href="#_5">修正</a></h3>
+<ul>
+<li>TUI の検索モードは、入力されたクエリ文字をキーバインドに漏らすのではなく取り込むように
+  なりました（例: クエリ中の <code>e</code> がエクスポートを起動しなくなった）。<code>Search:</code> プロンプト、
+  <code>N/M</code> の一致カウンタ、<code>n</code>/<code>N</code> のナビゲーションが再び機能します。</li>
+<li>ランタイムはガイダンスの後に明示的な完了シグナルを要求するようになり、ループの早期終了を
+  防止します。</li>
+<li>ループの継続状態をイテレーションをまたいで永続化します。</li>
+<li>生成される指示において、ハットごとのスクラッチパッド設定を尊重します。</li>
+<li>終了前に ACP ターミナル出力を排出し、最終出力が切り詰められないようにします。</li>
+<li>パスの不一致エラーを避けるため、Ralph の成果物パスを正規化します。</li>
+<li>API 上で公開される MCP ツールスキーマの重複を排除します。</li>
+</ul>
+<h2 id="293-2026-05-08"><a class="toclink" href="#293-2026-05-08"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.2...v2.9.3">2.9.3</a> - 2026-05-08</a></h2>
+<h3 id="_6"><a class="toclink" href="#_6">追加</a></h3>
+<ul>
+<li><code>llms.txt</code> 駆動の内省のための <code>ralph-docs</code> スキル。</li>
+<li><code>-H &lt;name&gt;</code> 配下の統一プリセット機構。YAML と TOML の両プリセットに対応。</li>
+<li>kiro-acp バックエンド向けの <code>ralph plan</code> 対応。完了時のフォールバックを含む。</li>
+<li>ライブなエージェント観察を伴うビジュアルワークフローエディタ（ビルダー）。</li>
+<li>ハットごとのスクラッチパッド設定。</li>
+<li>ハットがキャンセルの約束（cancellation promise）を設定できるように。</li>
+<li>ループバナー、イテレーションごとのフッター、再開ヒントを備えた <code>--no-tui</code> の UX 改善。</li>
+</ul>
+<h3 id="_7"><a class="toclink" href="#_7">変更</a></h3>
+<ul>
+<li>Amazon Linux 2 / 2023 との互換性のため、Linux の配布ターゲットを musl に切り替えました。</li>
+<li>フック用のグローバルなユーザー設定を文書化し、FAQ セクションを追加し、TOML プリセット
+  形式の autoloop 作成ガイドをリンクしました。</li>
+</ul>
+<h3 id="_8"><a class="toclink" href="#_8">修正</a></h3>
+<ul>
+<li>Claude の子セッションは既定で <code>--setting-sources project,local</code> を使うようになり、
+  ホストのユーザーレベルの <code>~/.claude/settings.json</code> のフック、プラグイン、MCP サーバーが
+  Ralph のオーケストレーション実行に漏れ込むのを防ぎます。旧来の挙動を望むユーザーは
+  <code>cli.args: ["--setting-sources", "user,project,local"]</code> で元に戻せます。</li>
+<li>テキスト完了のフォールバックを <code>check_completion_event()</code> を通すようにしました。</li>
+<li><code>RALPH_EVENTS_FILE</code> 環境変数を伝播し、遅延した終了理由を保持します。</li>
+<li>残存するテキストバックエンドがループの進行を停滞させるのを防ぎます。</li>
+<li>Rust 1.95 の <code>duration_suboptimal_units</code> clippy 警告を解消します。</li>
+</ul>
+<h3 id="_9"><a class="toclink" href="#_9">セキュリティ</a></h3>
+<ul>
+<li><code>sync-embedded-files.sh</code> において <code>source</code> を安全な変数パーサに置き換えました。</li>
+<li><code>test-fresh-install.sh</code> で <code>npm install</code> ではなく <code>npm ci</code> を使用します。</li>
+</ul>
+<h2 id="292-2026-04-10"><a class="toclink" href="#292-2026-04-10"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.1...v2.9.2">2.9.2</a> - 2026-04-10</a></h2>
+<h3 id="_10"><a class="toclink" href="#_10">変更</a></h3>
+<ul>
+<li>壊れたリリース成果物を素早く検出するため、公開後の <code>cargo install</code> スモークテストを
+  リリースワークフローに追加しました。</li>
+<li>Pi と Roo バックエンド向けに <code>ralph doctor</code> の認証環境変数の検出を拡張しました。</li>
+<li>バックエンドガイドで Pi バックエンドを文書化しました。</li>
+</ul>
+<h3 id="_11"><a class="toclink" href="#_11">修正</a></h3>
+<ul>
+<li>非対話的な PTY 実行における PTY 標準入力のデッドロックを回避し、大きなプロンプトでの
+  Claude + TUI の空白/停止出力を修正しました。</li>
+</ul>
+<h2 id="291-2026-04-04"><a class="toclink" href="#291-2026-04-04"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.0...v2.9.1">2.9.1</a> - 2026-04-04</a></h2>
+<h3 id="_12"><a class="toclink" href="#_12">修正</a></h3>
+<ul>
+<li><code>ralph-adapters</code> の <code>tool_preview.rs</code> を <code>ralph-tui</code> にクレートをまたいで <code>#[path]</code>
+  で include していたため <code>cargo install ralph-cli</code> が失敗する問題。<code>tool_preview</code> を
+  <code>ralph-adapters</code> の公開モジュールに移し、適切な依存として追加しました。</li>
+</ul>
+<h2 id="290-2026-04-03"><a class="toclink" href="#290-2026-04-03"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.8.1...v2.9.0">2.9.0</a> - 2026-04-03</a></h2>
+<h3 id="_13"><a class="toclink" href="#_13">追加</a></h3>
+<ul>
+<li>ループ内での並列ハット実行のためのエージェント波。</li>
+<li>TUI ヘッダーでの現在のブランチ表示。</li>
+<li>より豊富な Copilot JSON ストリームイベントの処理。</li>
+</ul>
+<h3 id="_14"><a class="toclink" href="#_14">変更</a></h3>
+<ul>
+<li>リッチな TUI ツール出力とエンドツーエンドのハーネスを改善しました。</li>
+<li>カバレッジと Rust ゲートの検証を CI の早い段階に移し、ローカル/GitHub のチェックを
+  整合させました。</li>
+<li>ドキュメントのリンクとカバレッジ公開の仕組みを刷新しました。</li>
+</ul>
+<h3 id="_15"><a class="toclink" href="#_15">修正</a></h3>
+<ul>
+<li>TUI のマウストグルの挙動。</li>
+<li>ループ状態のスクラッチパッドパスの解決。</li>
+<li>引数ベースのバックエンドの大きなプロンプトの受け渡しを、一時ファイル経由に変更。</li>
+<li>CLI エグゼキュータのストリーミングと非活動タイムアウトの処理。</li>
+<li>自己ループのイベント公開ガイダンスとバックエンド契約検証のカバレッジ。</li>
+</ul>
+<h2 id="281-2026-03-16"><a class="toclink" href="#281-2026-03-16"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.8.0...v2.8.1">2.8.1</a> - 2026-03-16</a></h2>
+<h3 id="_16"><a class="toclink" href="#_16">変更</a></h3>
+<ul>
+<li>2.8.1 リリースのためのバージョン更新。</li>
+</ul>
+<h2 id="280-2026-03-10"><a class="toclink" href="#280-2026-03-10"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.7.0...v2.8.0">2.8.0</a> - 2026-03-10</a></h2>
+<h3 id="_17"><a class="toclink" href="#_17">追加</a></h3>
+<ul>
+<li>Ralph を stdio 上のワークスペーススコープ MCP サーバーとして公開する <code>ralph mcp serve</code>。</li>
+<li>ユーザースコープの既定設定の探索と、ユーザーごとの Ralph 既定値のサポート。</li>
+<li>TUI ヘッダーでの更新可否の通知。</li>
+<li>人間のガイダンスがクリーンな再起動要求フローを起動できるように。</li>
+</ul>
+<h3 id="_18"><a class="toclink" href="#_18">変更</a></h3>
+<ul>
+<li>コアのプリセット群を、維持されているワークフローに集約し、プリセットのドキュメント、例、
+  評価ツールを刷新しました。</li>
+<li>Ralph 固有のノイズを減らし引き継ぎの品質を高めるため、PDD とコードタスクのガイダンスを
+  洗練しました。</li>
+</ul>
+<h3 id="_19"><a class="toclink" href="#_19">修正</a></h3>
+<ul>
+<li>マルチハットのプリセットイベント契約、遅延イベントの復旧、アクティブハットの表示、下流の
+  デバッグ/レビューの引き継ぎを堅牢化しました。</li>
+<li>ハット使用時に、コア設定のランタイム上限を保持するようにしました。</li>
+<li>ヘッドレスループランナーのバックエンド選択を修正しました。</li>
+<li>再起動の再開が必須の単一コマンドシェルフローを使うようにし、その契約カバレッジを追加
+  しました。</li>
+</ul>
+<h2 id="270-2026-03-06"><a class="toclink" href="#270-2026-03-06"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.6.0...v2.7.0">2.7.0</a> - 2026-03-06</a></h2>
+<h3 id="_20"><a class="toclink" href="#_20">追加</a></h3>
+<ul>
+<li>プロジェクトごとのオーケストレーターのライフサイクルフック v1。</li>
+<li>ACP エグゼキュータ対応の <code>kiro-acp</code> バックエンド。</li>
+<li>JSON-RPC の標準入出力上のサブプロセス TUI。</li>
+<li>ACP ベースのフロー向けの TUI ツール描画の改善。</li>
+</ul>
+<h3 id="_21"><a class="toclink" href="#_21">変更</a></h3>
+<ul>
+<li>冗長なクローンを削除し <code>now_ts</code> の重複を排除して、内部のコード経路を簡素化しました。</li>
+<li>非推奨の <code>Duration</code> メソッドの使用を <code>from_secs</code> に置き換えました。</li>
+<li><code>ralph plan</code> の PDD SOP は、正規の <code>strands-agents/agent-sop</code> 上流ソースから同期する
+  ようになり、小さな Ralph 固有のループ引き継ぎの追補を伴います。</li>
+<li>SOP 保守のための、埋め込みアセットの同期・チェック・上流リフレッシュのヘルパを追加
+  しました。</li>
+<li>プリセットのドキュメントを統一し近代化しました。</li>
+<li><code>llms.txt</code> マップの生成と CI 検証を追加しました。</li>
+<li>Web の <code>tsx</code> 事前確認の挙動を堅牢化し、資金提供のメタデータを追加しました。</li>
+</ul>
+<h3 id="_22"><a class="toclink" href="#_22">修正</a></h3>
+<ul>
+<li>サブプロセス TUI モードでの自己ロックの競合を回避します。</li>
+<li>TUI において Pi のテキストデルタを流れる段落に蓄積します。</li>
+<li>ゾンビ化したワークツリーループをより確実に片付けます。</li>
+<li>ACP の孤立プロセス、乱れた TUI 出力、欠落したツール詳細を修正します。</li>
+<li>clippy の問題と欠落した構造体フィールドを解消します。</li>
+</ul>
+<h2 id="260-2026-02-25"><a class="toclink" href="#260-2026-02-25"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.1...v2.6.0">2.6.0</a> - 2026-02-25</a></h2>
+<h3 id="_23"><a class="toclink" href="#_23">追加</a></h3>
+<ul>
+<li>Rust RPC v1 のコントロールプレーンと、新しい RPC 契約への Web クライアントの移行。</li>
+<li><code>ralph</code> CLI のシェル補完のサポート。</li>
+<li>強制的なレビューパスを備えた <code>fresh-eyes</code> プリセット。</li>
+</ul>
+<h3 id="_24"><a class="toclink" href="#_24">修正</a></h3>
+<ul>
+<li>ハット表示が前のイテレーションのハットで固まらなくなりました。</li>
+<li>マルチバイト文字でのパニックを防ぐ UTF-8 安全な切り詰め。</li>
+<li>カスタムハット（OpenCode を含む）で、ハットレベルのバックエンド省略形 <code>args</code> が尊重
+  されるように。</li>
+<li>非推奨の <code>project.*</code> 設定キーは、<code>core.*</code> への明確な移行ヒントとともに早期に失敗する
+  ようになりました。</li>
+</ul>
+<h2 id="251-2026-02-14"><a class="toclink" href="#251-2026-02-14"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.5.0...v2.5.1">2.5.1</a> - 2026-02-14</a></h2>
+<h3 id="_25"><a class="toclink" href="#_25">変更</a></h3>
+<ul>
+<li>2.5.1 リリースのためのバージョン更新。</li>
+</ul>
+<h2 id="230-2025-01-28"><a class="toclink" href="#230-2025-01-28"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.5...v2.3.0">2.3.0</a> - 2025-01-28</a></h2>
+<h3 id="_26"><a class="toclink" href="#_26">追加</a></h3>
+<ul>
+<li><strong>Web ダッシュボード（アルファ版）</strong>: Ralph のオーケストレーションループを監視・管理する
+  ための多機能な Web UI</li>
+<li>React + Vite + TailwindCSS のフロントエンドと、Fastify + tRPC + SQLite の
+    バックエンド</li>
+<li>両サーバー（バックエンド:3000、フロントエンド:5173）を起動する <code>ralph web</code> コマンド</li>
+<li>新規インストールのための事前確認と自動インストール</li>
+<li>ポート競合の検出、ラベル付き出力、ブラウザの自動起動</li>
+<li>tsc+node コンパイルによるバックエンド開発向けに Node 22 を固定</li>
+<li><strong>Hats CLI</strong>: トポロジの可視化と AI による図の生成（<code>ralph hats</code>）</li>
+<li><strong>イベント公開ガイド</strong>: ハットがすでにアクティブなときはトポロジ表示をスキップ</li>
+<li><strong>並列設定ゲート</strong>: ワークツリーの生成を制御する <code>features.parallel</code> 設定オプション</li>
+<li><strong>ハットごとのバックエンド引数</strong>: ハットレベルのバックエンド設定における <code>args</code> の対応</li>
+<li><strong>新しいプリセット</strong>: 追加のプリセットと改善されたワークフローパターン</li>
+<li><strong>ドキュメント</strong>: ガバナンスファイルを備えたドキュメントの再編と、README の強化</li>
+</ul>
+<h3 id="_27"><a class="toclink" href="#_27">修正</a></h3>
+<ul>
+<li>ハットレベルのバックエンド設定と args の上書きを尊重する</li>
+<li>バックエンドの開発ワークフローが ts-node ではなく tsc+node を使用する</li>
+</ul>
+<h2 id="225-2025-01-17"><a class="toclink" href="#225-2025-01-17"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.4...v2.2.5">2.2.5</a> - 2025-01-17</a></h2>
+<h3 id="_28"><a class="toclink" href="#_28">追加</a></h3>
+<ul>
+<li>ループのマージコマンド（<code>ralph loop merge</code>）とカスタムバックエンド引数</li>
+<li>CLI 経由でコアフィールドを上書きする設定の対応</li>
+<li>費用のかからない E2E テストのためのモックアダプタ</li>
+<li>CI: すべての PR/プッシュでモック E2E テストを実行</li>
+</ul>
+<h3 id="_29"><a class="toclink" href="#_29">修正</a></h3>
+<ul>
+<li>claude-code-action のフォーク PR バグに対する CI の回避策</li>
+<li>フォーク PR を扱うための CI の書き込み権限</li>
+</ul>
+<h2 id="224-2025-01-14"><a class="toclink" href="#224-2025-01-14"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.3...v2.2.4">2.2.4</a> - 2025-01-14</a></h2>
+<h3 id="_30"><a class="toclink" href="#_30">修正</a></h3>
+<ul>
+<li>npx のプロセスグループ下での TUI ハング</li>
+<li>サブスクリプションユーザー向けに費用表示を見積もりとして明確化</li>
+</ul>
+<h2 id="223-2025-01-12"><a class="toclink" href="#223-2025-01-12"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.2...v2.2.3">2.2.3</a> - 2025-01-12</a></h2>
+<h3 id="_31"><a class="toclink" href="#_31">追加</a></h3>
+<ul>
+<li>git ワークツリーによるマルチループの並行実行</li>
+<li>目標のドリフトを防ぐための、プロンプト内の OBJECTIVE セクション</li>
+<li>Claude Code の GitHub ワークフロー</li>
+</ul>
+<h3 id="_32"><a class="toclink" href="#_32">修正</a></h3>
+<ul>
+<li>イベント出力での UTF-8 切り詰めパニック</li>
+</ul>
+<h3 id="_33"><a class="toclink" href="#_33">変更</a></h3>
+<ul>
+<li>プリセット設定を更新</li>
+</ul>
+<h2 id="222-2025-01-10"><a class="toclink" href="#222-2025-01-10"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.1...v2.2.2">2.2.2</a> - 2025-01-10</a></h2>
+<h3 id="_34"><a class="toclink" href="#_34">修正</a></h3>
+<ul>
+<li>シグナルハンドラの登録を TUI 初期化の後に移動</li>
+<li>ドキュメント: バッジ描画のための div への markdown 属性</li>
+</ul>
+<h2 id="221-2025-01-08"><a class="toclink" href="#221-2025-01-08"><a href="https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.2.0...v2.2.1">2.2.1</a> - 2025-01-08</a></h2>
+<h3 id="_35"><a class="toclink" href="#_35">追加</a></h3>
+<ul>
+<li>CLI の使い勝手: バックエンドフラグ、組み込みプリセット、URL 設定</li>
+<li>v2 向けの包括的な MkDocs ドキュメントサイト</li>
+</ul>
+<h3 id="_36"><a class="toclink" href="#_36">修正</a></h3>
+<ul>
+<li>TUI: TUI 有効化のために標準入力が端末であることを要求</li>
+<li>MkDocs の strict ビルドの失敗</li>
+<li>Confession-loop プリセットを <code>ralph emit</code> コマンドを使うよう更新</li>
+</ul>
+<h3 id="_37"><a class="toclink" href="#_37">変更</a></h3>
+<ul>
+<li>コードベースをモジュール化し、TUI モードを修正</li>
+</ul>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>
