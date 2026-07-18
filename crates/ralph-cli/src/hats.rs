@@ -316,7 +316,7 @@ fn list_presets_table<W: Write>(
     if presets.is_empty() {
         writeln!(
             writer,
-            "No presets found. Searched:\n  - ./presets/\n  - $XDG_CONFIG_HOME/ralph/presets/\n  - $HOME/.config/ralph/presets/\n  - $HOME/.config/autoloop/presets/\n  - $RALPH_PRESETS_DIR/\n  - $AUTOLOOP_PRESETS_DIR/ (deprecated)\n\nDrop a YAML preset or TOML-dir preset in any of the above. Example:\n  mkdir -p ~/.config/ralph/presets\n  ln -s /path/to/autoloop/packages/presets/presets/autocode ~/.config/ralph/presets/\n\nOr set:  export RALPH_PRESETS_DIR=/path/to/your/presets"
+            "No presets found. Searched:\n  - ./presets/\n  - $XDG_CONFIG_HOME/ralph/presets/\n  - $HOME/.config/ralph/presets/\n  - $HOME/.config/autoloop/presets/\n  - $RALPH_PRESETS_DIR/\n  - $AUTOLOOP_PRESETS_DIR/ (deprecated)\n\nDrop a YAML preset or TOML-dir preset in any of the above. Example:\n  mkdir -p ~/.config/ralph/presets\n  ln -s /path/to/presets/autocode ~/.config/ralph/presets/\n\nOr set:  export RALPH_PRESETS_DIR=/path/to/your/presets"
         )?;
         return Ok(());
     }

@@ -44,6 +44,7 @@ use ralph_e2e::{
     HatMultiWorkflowScenario,
     HatSingleScenario,
     HooksBddConfig,
+    HooksBddScenarioStatus,
     MaxIterationsScenario,
     // Tier 6: Memory System
     MemoryAddScenario,
@@ -390,10 +391,10 @@ fn run_hooks_bdd_placeholder_suite(opts: &TestOpts, verbosity: Verbosity) {
     }
 
     for result in &results.results {
-        let status = if result.passed {
-            "✅ PASS".green()
-        } else {
-            "❌ FAIL".red()
+        let status = match result.status {
+            HooksBddScenarioStatus::Passed => "✅ PASS".green(),
+            HooksBddScenarioStatus::Failed => "❌ FAIL".red(),
+            HooksBddScenarioStatus::Descoped => "⚠ DESCOPED".yellow(),
         };
 
         println!(
@@ -412,9 +413,10 @@ fn run_hooks_bdd_placeholder_suite(opts: &TestOpts, verbosity: Verbosity) {
     println!(
         "\n{}",
         format!(
-            "Summary: {} passed, {} failed, {} total",
+            "Summary: {} passed, {} failed, {} descoped (engine-owned), {} total",
             results.passed_count(),
             results.failed_count(),
+            results.descoped_count(),
             results.total_count()
         )
         .bold()

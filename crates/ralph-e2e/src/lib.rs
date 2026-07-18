@@ -43,7 +43,7 @@ pub use crate::executor::{
 };
 pub use crate::hooks_bdd::{
     HooksBddConfig, HooksBddError, HooksBddRunResults, HooksBddScenario, HooksBddScenarioResult,
-    discover_hooks_bdd_scenarios, run_hooks_bdd_suite,
+    HooksBddScenarioStatus, discover_hooks_bdd_scenarios, run_hooks_bdd_suite,
 };
 pub use crate::mock::{
     CassetteError, CassetteResolver, DEFAULT_CASSETTE_DIR, MockConfig, build_mock_cli_args,
