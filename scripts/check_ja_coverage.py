@@ -20,7 +20,9 @@ import sys
 import ja_scope as scope
 
 # 未翻訳判定: コード/リンク等を除いた行に、日本語文字が無く英単語が多い場合に疑う。
-_JP_RE = re.compile(r"[぀-ヿ㐀-鿿ｦ-ﾟ]")
+# 日本語（かな・漢字・半角カナ）に加え、CJK 約物（U+3000-303F: 「」、・など）と
+# 全角記号（U+FF00-FFEF: （）！？など）も日本語コンテキストの信号として扱う。
+_JP_RE = re.compile(r"[　-〿぀-ヿ㐀-鿿＀-￯]")
 _WORD_RE = re.compile(r"[A-Za-z]{2,}")
 _CODEFENCE_RE = re.compile(r"^```")
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
@@ -90,6 +92,9 @@ def suspect_untranslated(md_text: str) -> list[tuple[int, str]]:
         # シェル/CLI コマンド行は除外（ネストしたフェンス内の取りこぼし対策）
         first_token = re.split(r"[\s(]", stripped, maxsplit=1)[0].lstrip("$`").lower()
         if first_token in COMMAND_PREFIXES:
+            continue
+        # JSON/構造的な行（ネストしたコードフェンス内で拾われるコード）は除外
+        if stripped[0] in '"{}[]':
             continue
         text = _strip_noise(stripped)
         if _JP_RE.search(text):
