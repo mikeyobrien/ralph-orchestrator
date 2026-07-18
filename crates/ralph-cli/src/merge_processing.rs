@@ -35,6 +35,23 @@ fn merge_ralph_args(loop_id: &str) -> Vec<String> {
 fn process_pending_merges_with_command(repo_root: &Path, ralph_cmd: &OsStr) {
     let queue = MergeQueue::new(repo_root);
 
+    match queue.recover_stale_merges() {
+        Ok(recovered) => {
+            for loop_id in recovered {
+                warn!(
+                    loop_id = %loop_id,
+                    "Recovered stale merge process; loop now needs review"
+                );
+            }
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to recover stale merge processes; continuing queue drain"
+            );
+        }
+    }
+
     // Get all pending merges
     let pending = match queue.list_by_state(ralph_core::merge_queue::MergeState::Queued) {
         Ok(entries) => entries,
@@ -238,6 +255,42 @@ mod tests {
         std::fs::create_dir_all(repo_root.join(".ralph/merge-queue")).expect("queue dir");
 
         process_pending_merges(repo_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_process_pending_merges_recovers_stale_entry_without_spawning() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        let queue = ralph_core::merge_queue::MergeQueue::new(repo_root);
+        queue.enqueue("loop-stale", "merge prompt").expect("enqueue");
+        queue
+            .mark_merging("loop-stale", u32::MAX - 1)
+            .expect("mark merging");
+
+        let invocation_marker = repo_root.join("ralph-invoked");
+        let bin_dir = repo_root.join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+        let ralph_path = write_fake_executable(
+            &bin_dir,
+            "ralph",
+            &format!("touch '{}'", invocation_marker.display()),
+        );
+
+        process_pending_merges_with_command(repo_root, ralph_path.as_os_str());
+
+        let entry = queue
+            .get_entry("loop-stale")
+            .expect("read queue")
+            .expect("stale entry");
+        assert_eq!(
+            entry.state,
+            ralph_core::merge_queue::MergeState::NeedsReview
+        );
+        assert!(
+            !invocation_marker.exists(),
+            "stale merge must not be drained after recovery"
+        );
     }
 
     #[cfg(unix)]

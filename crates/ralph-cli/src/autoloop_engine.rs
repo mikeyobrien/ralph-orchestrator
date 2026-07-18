@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use ralph_adapters::{AutoloopRunner, events_run_result, parse_events};
 use ralph_core::{EventLoopConfig, LoopContext, RalphConfig, RunStats, TerminationReason};
 
-use crate::completion_coord::coordinate_completion;
+use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
 
 /// Map an autoloop `stopReason` onto ralph's [`TerminationReason`].
 fn map_stop_reason(reason: &str) -> TerminationReason {
@@ -83,6 +83,14 @@ pub async fn run_autoloop_engine(
     tui: bool,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
+
+    if let Ok(merge_loop_id) = std::env::var("RALPH_MERGE_LOOP_ID") {
+        let repo_root = context
+            .as_ref()
+            .map(|c| c.repo_root().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        mark_merge_run_started(&repo_root, &merge_loop_id, std::process::id());
+    }
 
     // Use an explicit preset if configured; otherwise generate one from ralph's
     // native hats topology so existing ralph configs run on the autoloop engine

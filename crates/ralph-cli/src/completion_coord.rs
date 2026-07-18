@@ -21,11 +21,34 @@ use std::path::{Path, PathBuf};
 
 use ralph_core::{
     CompletionAction, LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue,
-    RunStats, SummaryWriter, TerminationReason, get_commit_summary, get_head_sha,
+    MergeQueueError, RunStats, SummaryWriter, TerminationReason, get_commit_summary, get_head_sha,
 };
 use tracing::{debug, info, warn};
 
 use crate::display::print_termination;
+
+/// Mark a merge-run child as the process actively merging its queue entry.
+///
+/// Queue lookup and transition failures are deliberately non-fatal: merge-run
+/// startup must continue so completion coordination can report its outcome.
+pub fn mark_merge_run_started(repo_root: &Path, merge_loop_id: &str, pid: u32) {
+    let queue = MergeQueue::new(repo_root);
+
+    match queue.mark_merging(merge_loop_id, pid) {
+        Ok(()) => {
+            info!(loop_id = %merge_loop_id, pid, "Merge loop started, marked as merging");
+        }
+        Err(MergeQueueError::NotFound(_)) => {
+            warn!(loop_id = %merge_loop_id, "Merge loop started but no queue entry found");
+        }
+        Err(MergeQueueError::InvalidTransition(_, from, _)) => {
+            debug!(loop_id = %merge_loop_id, state = ?from, "Merge queue entry already in terminal state, skipping");
+        }
+        Err(error) => {
+            warn!(loop_id = %merge_loop_id, error = %error, "Failed to mark merge loop as merging");
+        }
+    }
+}
 
 /// Run the completion bookkeeping for a loop that terminated with `reason`.
 ///
@@ -174,5 +197,57 @@ mod tests {
             "test-loop",
             false,
         );
+    }
+
+    #[test]
+    fn merge_run_start_allows_queued_entry_to_be_marked_merged() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-queued", "prompt").unwrap();
+
+        mark_merge_run_started(temp_dir.path(), "loop-queued", 4242);
+
+        let entry = queue.get_entry("loop-queued").unwrap().unwrap();
+        assert_eq!(entry.state, ralph_core::MergeState::Merging);
+        assert_eq!(entry.merge_pid, Some(4242));
+        queue.mark_merged("loop-queued", "abc123").unwrap();
+    }
+
+    #[test]
+    fn merge_run_start_allows_queued_entry_to_be_marked_needs_review() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-review", "prompt").unwrap();
+
+        mark_merge_run_started(temp_dir.path(), "loop-review", 4243);
+
+        queue.mark_needs_review("loop-review", "reason").unwrap();
+        let entry = queue.get_entry("loop-review").unwrap().unwrap();
+        assert_eq!(entry.state, ralph_core::MergeState::NeedsReview);
+    }
+
+    #[test]
+    fn merge_run_start_ignores_missing_entry() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+
+        mark_merge_run_started(temp_dir.path(), "missing", 4244);
+
+        assert!(queue.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_run_start_ignores_already_merged_entry() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+        queue.enqueue("loop-merged", "prompt").unwrap();
+        queue.mark_merging("loop-merged", 4245).unwrap();
+        queue.mark_merged("loop-merged", "abc123").unwrap();
+
+        mark_merge_run_started(temp_dir.path(), "loop-merged", 4246);
+
+        let entry = queue.get_entry("loop-merged").unwrap().unwrap();
+        assert_eq!(entry.state, ralph_core::MergeState::Merged);
+        assert_eq!(entry.merge_commit.as_deref(), Some("abc123"));
     }
 }
