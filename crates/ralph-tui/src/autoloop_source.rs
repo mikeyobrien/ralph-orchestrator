@@ -48,7 +48,9 @@ impl AutoloopMapCtx {
 
     /// The hat/role display label to attribute the next iteration to.
     fn hat_display(&self) -> String {
-        self.role_label.clone().unwrap_or_else(|| "autoloop".to_string())
+        self.role_label
+            .clone()
+            .unwrap_or_else(|| "autoloop".to_string())
     }
 }
 
@@ -183,10 +185,7 @@ pub fn apply_autoloop_event(
                 push_line(
                     &mut s,
                     Line::from(vec![
-                        Span::styled(
-                            "\u{25A0} run finished: ",
-                            Style::default().fg(Color::Blue),
-                        ),
+                        Span::styled("\u{25A0} run finished: ", Style::default().fg(Color::Blue)),
                         Span::raw(sanitize_tui_inline_text(stop_reason)),
                     ]),
                 );
@@ -309,9 +308,7 @@ pub async fn run_autoloop_event_reader(
             Line::from(vec![
                 Span::styled(
                     "\u{26A0} ",
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("run ended before reporting a result"),
             ]),
@@ -364,10 +361,7 @@ mod tests {
         assert_eq!(s.iteration, 2);
         assert_eq!(s.max_iterations, Some(7));
         // Default role label before any progress event.
-        assert_eq!(
-            s.iterations[0].hat_display.as_deref(),
-            Some("autoloop")
-        );
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("autoloop"));
         assert_eq!(s.iterations[0].backend.as_deref(), Some("autoloop"));
     }
 
@@ -379,7 +373,11 @@ mod tests {
         apply_autoloop_event(&ev(line), &state, &mut ctx);
         apply_autoloop_event(&ev(line), &state, &mut ctx);
         let s = state.lock().unwrap();
-        assert_eq!(s.total_iterations(), 1, "same iteration number reuses buffer");
+        assert_eq!(
+            s.total_iterations(),
+            1,
+            "same iteration number reuses buffer"
+        );
     }
 
     #[test]
@@ -393,14 +391,17 @@ mod tests {
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"progress","runId":"r1","iteration":1,"emittedTopic":"tasks.ready","outcome":"continue:routed_event","allowedRoles":["planner"]}"#),
+            &ev(
+                r#"{"type":"progress","runId":"r1","iteration":1,"emittedTopic":"tasks.ready","outcome":"continue:routed_event","allowedRoles":["planner"]}"#,
+            ),
             &state,
             &mut ctx,
         );
 
         let text = lines_text(&state);
         assert!(
-            text.iter().any(|l| l.contains("\u{2192} tasks.ready (continue:routed_event)")),
+            text.iter()
+                .any(|l| l.contains("\u{2192} tasks.ready (continue:routed_event)")),
             "expected routing line, got: {text:?}"
         );
 
@@ -449,7 +450,9 @@ mod tests {
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"ask.pending","runId":"r1","iteration":1,"questionId":"q1","question":"Proceed with delete?"}"#),
+            &ev(
+                r#"{"type":"ask.pending","runId":"r1","iteration":1,"questionId":"q1","question":"Proceed with delete?"}"#,
+            ),
             &state,
             &mut ctx,
         );
@@ -460,7 +463,8 @@ mod tests {
         }
         let text = lines_text(&state);
         assert!(
-            text.iter().any(|l| l.contains("HUMAN ASK") && l.contains("Proceed with delete?")),
+            text.iter()
+                .any(|l| l.contains("HUMAN ASK") && l.contains("Proceed with delete?")),
             "expected human-ask line, got: {text:?}"
         );
     }
@@ -475,7 +479,9 @@ mod tests {
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"loop.finish","iterations":2,"stopReason":"max_iterations","runId":"r1","costUsd":0.08}"#),
+            &ev(
+                r#"{"type":"loop.finish","iterations":2,"stopReason":"max_iterations","runId":"r1","costUsd":0.08}"#,
+            ),
             &state,
             &mut ctx,
         );
@@ -563,7 +569,8 @@ mod tests {
 
         let text = lines_text(&state);
         assert!(
-            text.iter().any(|l| l.contains("run ended before reporting a result")),
+            text.iter()
+                .any(|l| l.contains("run ended before reporting a result")),
             "expected synthesized error line, got: {text:?}"
         );
         let s = state.lock().unwrap();

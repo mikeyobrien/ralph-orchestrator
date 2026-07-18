@@ -245,7 +245,11 @@ impl MergeQueue {
 
     /// Marks a loop as being merged.
     pub fn mark_merging(&self, loop_id: &str, pid: u32) -> Result<(), MergeQueueError> {
-        self.validate_transition(loop_id, MergeState::Merging, &[MergeState::Queued, MergeState::NeedsReview])?;
+        self.validate_transition(
+            loop_id,
+            MergeState::Merging,
+            &[MergeState::Queued, MergeState::NeedsReview],
+        )?;
         self.append_event(&MergeEvent::new(loop_id, MergeEventType::Merging { pid }))
     }
 
@@ -295,7 +299,11 @@ impl MergeQueue {
 
     /// Marks a loop as discarded.
     pub fn discard(&self, loop_id: &str, reason: Option<&str>) -> Result<(), MergeQueueError> {
-        self.validate_transition(loop_id, MergeState::Discarded, &[MergeState::Queued, MergeState::NeedsReview])?;
+        self.validate_transition(
+            loop_id,
+            MergeState::Discarded,
+            &[MergeState::Queued, MergeState::NeedsReview],
+        )?;
         self.append_event(&MergeEvent::new(
             loop_id,
             MergeEventType::Discarded {

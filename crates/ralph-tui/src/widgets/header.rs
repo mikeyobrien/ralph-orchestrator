@@ -80,7 +80,10 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
             state.get_iteration_elapsed()
         };
         if let Some(elapsed) = elapsed {
-            left_spans.push(Span::raw(format!(" {}", ralph_core::utils::format_elapsed(elapsed))));
+            left_spans.push(Span::raw(format!(
+                " {}",
+                ralph_core::utils::format_elapsed(elapsed)
+            )));
         }
     }
 

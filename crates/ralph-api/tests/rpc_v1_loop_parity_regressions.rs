@@ -92,7 +92,6 @@ fn rpc_request(id: &str, method: &str, params: Value, idempotency_key: Option<&s
     request
 }
 
-
 #[cfg(unix)]
 fn create_fake_ralph_command() -> Result<(TempDir, PathBuf, PathBuf)> {
     use std::os::unix::fs::PermissionsExt;

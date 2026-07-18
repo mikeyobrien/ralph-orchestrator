@@ -88,7 +88,6 @@ fn resume_hint_for(reason: &TerminationReason, loop_id: &str) -> Option<String> 
     }
 }
 
-
 /// Prints termination message with status.
 ///
 /// When `loop_id` is provided, also prints a `Resume:` hint line for
@@ -126,7 +125,10 @@ pub fn print_termination(
     println!("{b}|{r} {color}{b}{icon}{r} Loop terminated: {color}{label}{r}");
     println!("{b}+{separator}+{r}");
     println!("{b}|{r}   Iterations:  {c}{}{r}", state.iterations);
-    println!("{b}|{r}   Elapsed:     {c}{:.1}s{r}", state.elapsed.as_secs_f64());
+    println!(
+        "{b}|{r}   Elapsed:     {c}{:.1}s{r}",
+        state.elapsed.as_secs_f64()
+    );
     if state.cost_usd > 0.0 {
         println!("{b}|{r}   Est. cost:   {c}${:.2}{r}", state.cost_usd);
     }
@@ -170,7 +172,11 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
     );
 
     for (i, record) in records.iter().enumerate() {
-        let tc = if r.is_empty() { "" } else { get_topic_color(&record.topic) };
+        let tc = if r.is_empty() {
+            ""
+        } else {
+            get_topic_color(&record.topic)
+        };
         let triggered = record.triggered.as_deref().unwrap_or("-");
         let payload_one_line = record.payload.replace('\n', " ");
         let payload_preview = truncate_with_ellipsis(&payload_one_line, 40);
@@ -241,7 +247,6 @@ mod tests {
     fn test_resume_hint_present_for_interrupted() {
         assert!(resume_hint_for(&TerminationReason::Interrupted, "xy").is_some());
     }
-
 
     #[test]
     fn test_print_events_table_does_not_panic_on_multibyte_payload() {

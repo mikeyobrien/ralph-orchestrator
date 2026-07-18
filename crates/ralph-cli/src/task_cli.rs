@@ -587,10 +587,7 @@ fn execute_close(args: CloseArgs, root: Option<&PathBuf>, use_colors: bool) -> R
 
     store.save().context("Failed to save tasks")?;
 
-    println!(
-        "{}Closed task: {} - {}{}",
-        p.green, task_id, title, p.reset
-    );
+    println!("{}Closed task: {} - {}{}", p.green, task_id, title, p.reset);
 
     Ok(())
 }
@@ -609,10 +606,7 @@ fn execute_fail(args: FailArgs, root: Option<&PathBuf>, use_colors: bool) -> Res
 
     store.save().context("Failed to save tasks")?;
 
-    println!(
-        "{}Failed task: {} - {}{}",
-        p.red, task_id, title, p.reset
-    );
+    println!("{}Failed task: {} - {}{}", p.red, task_id, title, p.reset);
 
     Ok(())
 }

@@ -7,8 +7,7 @@
 //! Skips when node or the autoloop checkout is absent.
 
 use ralph_adapters::{
-    AutoloopBin, AutoloopRunner, first_pending_ask, parse_events,
-    events_run_result,
+    AutoloopBin, AutoloopRunner, events_run_result, first_pending_ask, parse_events,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -130,7 +129,10 @@ fn setup(fixture_name: &str) -> Option<Env> {
         }
     }
     fs::write(work.path().join("index.html"), "<p>hi</p>\n").unwrap();
-    let _ = Command::new("git").args(["add", "."]).current_dir(work.path()).status();
+    let _ = Command::new("git")
+        .args(["add", "."])
+        .current_dir(work.path())
+        .status();
     let _ = Command::new("git")
         .args(["commit", "-q", "-m", "init"])
         .current_dir(work.path())
@@ -146,14 +148,23 @@ fn setup(fixture_name: &str) -> Option<Env> {
     perms.set_mode(0o755);
     fs::set_permissions(&wrapper, perms).unwrap();
 
-    Some(Env { work, bin, preset, wrapper, fixture })
+    Some(Env {
+        work,
+        bin,
+        preset,
+        wrapper,
+        fixture,
+    })
 }
 
 fn runner(env: &Env) -> AutoloopRunner {
     AutoloopRunner::new(&env.preset, "native contract", env.work.path())
         .bin(AutoloopBin::Node(env.bin.clone()))
         .backend(env.wrapper.to_string_lossy().into_owned())
-        .env("MOCK_FIXTURE_PATH", env.fixture.to_string_lossy().into_owned())
+        .env(
+            "MOCK_FIXTURE_PATH",
+            env.fixture.to_string_lossy().into_owned(),
+        )
 }
 
 #[test]
@@ -176,7 +187,9 @@ fn ralph_consumes_the_structured_events_stream() {
     // The resolved `progress` event (routing + outcome) is on the stream — it
     // is NOT in the journal, so this proves native consumption of #30.
     assert!(
-        events.iter().any(|e| e.kind == "progress" && e.outcome.is_some()),
+        events
+            .iter()
+            .any(|e| e.kind == "progress" && e.outcome.is_some()),
         "stream should carry resolved progress events"
     );
 
@@ -239,7 +252,10 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
         .expect("autoloop run should succeed");
 
     let delivered = responder.join().unwrap();
-    assert!(delivered, "responder should have observed ask.pending and replied");
+    assert!(
+        delivered,
+        "responder should have observed ask.pending and replied"
+    );
 
     // The run completed normally (the ask was answered, not timed out).
     assert!(!summary.stop_reason.is_empty());
@@ -252,8 +268,14 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
         journal.contains(r#""topic": "ask.answered""#),
         "the human response should have been delivered and recorded"
     );
-    assert!(journal.contains(answer), "the answer text should be in the journal");
-    assert!(!journal.contains(r#""topic": "ask.timeout""#), "should not have timed out");
+    assert!(
+        journal.contains(answer),
+        "the answer text should be in the journal"
+    );
+    assert!(
+        !journal.contains(r#""topic": "ask.timeout""#),
+        "should not have timed out"
+    );
 
     eprintln!("hitl round-trip ok: stop_reason={}", summary.stop_reason);
 }

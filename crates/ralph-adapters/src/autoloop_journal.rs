@@ -110,8 +110,10 @@ fn parse_iteration(v: &Value) -> Option<u32> {
 
 /// Parse a single JSON object line into an [`AutoloopRecord`].
 fn parse_line(line: &str, line_no: usize) -> Result<AutoloopRecord, JournalError> {
-    let raw: RawRecord =
-        serde_json::from_str(line).map_err(|source| JournalError::Json { line: line_no, source })?;
+    let raw: RawRecord = serde_json::from_str(line).map_err(|source| JournalError::Json {
+        line: line_no,
+        source,
+    })?;
 
     let topic = raw.topic.ok_or_else(|| JournalError::InvalidRecord {
         line: line_no,
@@ -281,7 +283,11 @@ pub fn derive_run_summary(records: &[AutoloopRecord]) -> RunSummary {
     let iterations = if iteration_starts > 0 {
         iteration_starts
     } else {
-        records.iter().filter_map(|r| r.iteration).max().unwrap_or(0)
+        records
+            .iter()
+            .filter_map(|r| r.iteration)
+            .max()
+            .unwrap_or(0)
     };
 
     // Terminal record: `loop.complete` for a successful finish, `loop.stop`
@@ -620,7 +626,10 @@ mod tests {
         // Polling a not-yet-existent journal yields nothing, not an error.
         assert!(tailer.poll().unwrap().is_empty());
 
-        append(&path, "{\"run\":\"r\",\"topic\":\"loop.start\",\"fields\":{}}\n");
+        append(
+            &path,
+            "{\"run\":\"r\",\"topic\":\"loop.start\",\"fields\":{}}\n",
+        );
         let recs = tailer.poll().unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].topic, "loop.start");
@@ -682,7 +691,11 @@ mod tests {
             ),
         );
         let recs = tailer.poll().unwrap();
-        assert_eq!(recs.len(), 2, "tailer should re-read from the top after truncation");
+        assert_eq!(
+            recs.len(),
+            2,
+            "tailer should re-read from the top after truncation"
+        );
         assert_eq!(tailer.state().run_id.as_deref(), Some("r9"));
         assert_eq!(tailer.state().stop_reason.as_deref(), Some("completed"));
         assert!(tailer.state().completed);
@@ -706,7 +719,10 @@ mod tests {
         // Write the raw partial multibyte by bytes.
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             f.write_all(&bytes[e_pos..split]).unwrap();
         }
         // No complete UTF-8 line yet.
@@ -714,7 +730,10 @@ mod tests {
         // Write the remainder.
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             f.write_all(&bytes[split..]).unwrap();
         }
         let recs = tailer.poll().unwrap();
@@ -747,7 +766,10 @@ mod tests {
         append(&path, content);
         let mut tailer = AutoloopJournalTailer::new(&path);
         tailer.poll().unwrap();
-        assert!(tailer.state().completed, "loop.complete must mark completion");
+        assert!(
+            tailer.state().completed,
+            "loop.complete must mark completion"
+        );
         assert_eq!(tailer.state().stop_reason.as_deref(), Some("completed"));
     }
 
@@ -769,10 +791,18 @@ mod tests {
         );
         let mut tailer = AutoloopJournalTailer::new(&path);
         let recs = tailer.poll().unwrap();
-        assert_eq!(recs.len(), 2, "valid records around the corrupt line survive");
+        assert_eq!(
+            recs.len(),
+            2,
+            "valid records around the corrupt line survive"
+        );
         assert_eq!(recs[0].topic, "loop.start");
         assert_eq!(recs[1].topic, "loop.complete");
-        assert_eq!(tailer.errors().len(), 1, "the corrupt line is recorded as an error");
+        assert_eq!(
+            tailer.errors().len(),
+            1,
+            "the corrupt line is recorded as an error"
+        );
         assert!(tailer.state().completed);
         assert_eq!(tailer.state().stop_reason.as_deref(), Some("completed"));
     }

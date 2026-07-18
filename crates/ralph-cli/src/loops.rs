@@ -552,7 +552,6 @@ fn colorize_status(status: &str, p: &crate::display::Palette) -> String {
     format!("{color}{status}{}", p.reset)
 }
 
-
 fn shorten_path(path: &str) -> String {
     // Show just the last component or relative path
     if let Some(last) = std::path::Path::new(path).file_name() {
@@ -1257,19 +1256,15 @@ fn rebase_loop_branch(cwd: &Path, target: &ReviewableLoop, base_branch: &str) ->
                 target.loop_id
             )
         })?;
-        if let Err(err) = git_run(&temp_path, &["rebase", base_branch]).with_context(|| {
-            format!("Failed to rebase loop '{}'", target.loop_id)
-        }) {
+        if let Err(err) = git_run(&temp_path, &["rebase", base_branch])
+            .with_context(|| format!("Failed to rebase loop '{}'", target.loop_id))
+        {
             bail!(
                 "{err}\nTemporary rebase worktree left at {}. Resolve with `git rebase --continue` there or abort with `git rebase --abort`.",
                 temp_path.display()
             );
         }
-        git_run(
-            cwd,
-            &["worktree", "remove", "--force", &temp_path_arg],
-        )
-        .with_context(|| {
+        git_run(cwd, &["worktree", "remove", "--force", &temp_path_arg]).with_context(|| {
             format!(
                 "Failed to remove temporary worktree for loop '{}'",
                 target.loop_id
@@ -1745,7 +1740,6 @@ mod tests {
             .write_suspend_state(&state)
             .expect("write suspend-state");
     }
-
 
     #[test]
     fn test_colorize_status() {

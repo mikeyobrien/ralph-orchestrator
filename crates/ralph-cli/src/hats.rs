@@ -363,10 +363,7 @@ fn list_hats_json<W: Write>(writer: &mut W, registry: &HatRegistry) -> Result<()
 
 fn list_hats<W: Write>(writer: &mut W, registry: &HatRegistry, _use_colors: bool) -> Result<()> {
     if registry.is_empty() {
-        writeln!(
-            writer,
-            "No custom hats configured (solo mode)."
-        )?;
+        writeln!(writer, "No custom hats configured (solo mode).")?;
         return Ok(());
     }
 

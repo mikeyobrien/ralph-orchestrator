@@ -128,12 +128,7 @@ impl ErrorLogger {
         })
     }
 
-    pub fn log(
-        &mut self,
-        iteration: u32,
-        hat: &str,
-        error: DiagnosticError,
-    ) -> io::Result<()> {
+    pub fn log(&mut self, iteration: u32, hat: &str, error: DiagnosticError) -> io::Result<()> {
         let entry = ErrorEntry {
             ts: now_rfc3339(),
             iteration,

@@ -222,7 +222,6 @@ fn validate_command_resolvability(config: &RalphConfig, report: &mut HooksValida
     }
 }
 
-
 fn non_empty_trimmed(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

@@ -303,10 +303,7 @@ impl AutoloopRunner {
     /// - [`AutoloopRunError::NonZeroExit`] if autoloop exited non-zero.
     /// - [`AutoloopRunError::UnparseableSummary`] if the summary block is absent
     ///   or malformed.
-    pub fn wait_with_summary(
-        &self,
-        child: Child,
-    ) -> Result<AutoloopRunSummary, AutoloopRunError> {
+    pub fn wait_with_summary(&self, child: Child) -> Result<AutoloopRunSummary, AutoloopRunError> {
         let output = child
             .wait_with_output()
             .map_err(|source| AutoloopRunError::Spawn {
@@ -533,7 +530,10 @@ journal: /j
         assert_eq!(args[2], "do the thing");
 
         // --set override present in order.
-        let set_pos = args.iter().position(|a| a == "--set").expect("--set present");
+        let set_pos = args
+            .iter()
+            .position(|a| a == "--set")
+            .expect("--set present");
         assert_eq!(args[set_pos + 1], "event_loop.max_iterations=3");
     }
 
@@ -642,10 +642,7 @@ journal: /j
         let wrapper = work.join("mock-wrapper.sh");
         fs::write(
             &wrapper,
-            format!(
-                "#!/usr/bin/env bash\nexec node {} \"$@\"\n",
-                mock.display()
-            ),
+            format!("#!/usr/bin/env bash\nexec node {} \"$@\"\n", mock.display()),
         )
         .expect("write wrapper");
         let mut perms = fs::metadata(&wrapper).unwrap().permissions();

@@ -82,8 +82,7 @@ impl AutoloopEventTailer {
             Err(e) => {
                 let valid = e.valid_up_to();
                 self.pending_bytes = raw[valid..].to_vec();
-                String::from_utf8(raw[..valid].to_vec())
-                    .expect("valid_up_to slice is valid utf-8")
+                String::from_utf8(raw[..valid].to_vec()).expect("valid_up_to slice is valid utf-8")
             }
         };
 
@@ -148,7 +147,10 @@ mod tests {
         assert_eq!(first.len(), 2);
         assert_eq!(first[0].kind, "iteration.start");
         assert_eq!(first[0].max_iterations, Some(3));
-        assert_eq!(first[1].allowed_roles.as_deref(), Some(&["planner".to_string()][..]));
+        assert_eq!(
+            first[1].allowed_roles.as_deref(),
+            Some(&["planner".to_string()][..])
+        );
 
         // A second poll with no new bytes yields nothing.
         assert!(tailer.poll().unwrap().is_empty());
@@ -186,7 +188,10 @@ mod tests {
         let path = dir.path().join("events.ndjson");
         let mut tailer = AutoloopEventTailer::new(&path);
 
-        append(&path, &format!("{ITER}\nnot json at all\n{{partial\n{FINISH}\n"));
+        append(
+            &path,
+            &format!("{ITER}\nnot json at all\n{{partial\n{FINISH}\n"),
+        );
         let got = tailer.poll().unwrap();
         assert_eq!(got.len(), 2, "two malformed lines skipped");
         assert_eq!(got[0].kind, "iteration.start");

@@ -263,7 +263,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let repo_root = temp_dir.path();
         let queue = ralph_core::merge_queue::MergeQueue::new(repo_root);
-        queue.enqueue("loop-stale", "merge prompt").expect("enqueue");
+        queue
+            .enqueue("loop-stale", "merge prompt")
+            .expect("enqueue");
         queue
             .mark_merging("loop-stale", u32::MAX - 1)
             .expect("mark merging");

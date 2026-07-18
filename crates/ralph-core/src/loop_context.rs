@@ -419,11 +419,7 @@ impl LoopContext {
     /// Creates the specs symlink in a worktree pointing to main repo.
     #[cfg(unix)]
     pub fn setup_specs_symlink(&self) -> std::io::Result<bool> {
-        self.create_worktree_symlink(
-            &self.specs_dir(),
-            &self.main_specs_dir(),
-            &self.ralph_dir(),
-        )
+        self.create_worktree_symlink(&self.specs_dir(), &self.main_specs_dir(), &self.ralph_dir())
     }
 
     #[cfg(not(unix))]

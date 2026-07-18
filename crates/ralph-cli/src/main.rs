@@ -19,10 +19,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod autoloop_engine;
 mod autoloop_preset_gen;
-mod completion_coord;
-mod merge_processing;
 mod backend_support;
 mod bot;
+mod completion_coord;
 mod config_resolution;
 mod display;
 mod doctor;
@@ -33,6 +32,7 @@ mod interact;
 mod loops;
 mod mcp;
 mod memory;
+mod merge_processing;
 mod preflight;
 mod presets;
 mod skill_cli;
@@ -170,7 +170,6 @@ fn resolve_marker_target(workspace_root: &Path, marker_value: &str) -> PathBuf {
         workspace_root.join(path)
     }
 }
-
 
 /// Output format for events command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]

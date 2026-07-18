@@ -39,7 +39,10 @@ fn fixture_topic_sequence_matches_contract() {
         "loop.stop",
     ];
 
-    assert_eq!(topics, expected, "journal topic sequence drifted from contract");
+    assert_eq!(
+        topics, expected,
+        "journal topic sequence drifted from contract"
+    );
 }
 
 #[test]

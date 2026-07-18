@@ -141,7 +141,10 @@ fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
-    auto.push_str(&format!("event_loop.max_iterations = {}\n", el.max_iterations));
+    auto.push_str(&format!(
+        "event_loop.max_iterations = {}\n",
+        el.max_iterations
+    ));
     auto.push_str(&format!(
         "event_loop.completion_event = {}\n",
         q(COMPLETION_EVENT)
@@ -177,11 +180,17 @@ fn starting_role(config: &RalphConfig, hats: &[(&String, &ralph_core::HatConfig)
         .clone()
         .unwrap_or_else(|| "task.start".to_string());
     for (id, hat) in hats {
-        if hat.triggers.iter().any(|t| *t == start_event || t == "task.start") {
+        if hat
+            .triggers
+            .iter()
+            .any(|t| *t == start_event || t == "task.start")
+        {
             return (*id).clone();
         }
     }
-    hats.first().map(|(id, _)| (*id).clone()).unwrap_or_default()
+    hats.first()
+        .map(|(id, _)| (*id).clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

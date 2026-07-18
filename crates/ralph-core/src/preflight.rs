@@ -352,7 +352,9 @@ pub fn resolve_hook_command(
         "process PATH"
     };
 
-    Err(format!("Command '{command}' was not found in {path_source}."))
+    Err(format!(
+        "Command '{command}' was not found in {path_source}."
+    ))
 }
 
 use crate::utils::{executable_extensions, find_executable, is_executable_file};

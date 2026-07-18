@@ -191,9 +191,7 @@ impl LoopRegistry {
 
     /// Gets a loop entry by ID.
     pub fn get(&self, id: &str) -> Result<Option<LoopEntry>, RegistryError> {
-        self.with_lock(|data| {
-            data.loops.iter().find(|e| e.id == id).cloned()
-        })
+        self.with_lock(|data| data.loops.iter().find(|e| e.id == id).cloned())
     }
 
     /// Lists all active loops (after cleaning stale entries).
