@@ -259,16 +259,6 @@ pub async fn run_autoloop_engine(
         "engine=autoloop: driving the autoloop runtime as a subprocess"
     );
 
-    // Backend selection is not yet mapped from ralph's backend names to
-    // autoloop's backend kinds (#347), so the subprocess uses autoloop's default
-    // backend. Surface that explicitly rather than silently ignoring the config.
-    if config.cli.backend != "auto" && !config.cli.backend.is_empty() {
-        tracing::warn!(
-            backend = %config.cli.backend,
-            "engine=autoloop: ralph backend selection is not forwarded to autoloop yet; using autoloop's default backend (see #347)"
-        );
-    }
-
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .events_path(events_path.clone());
     if explicit_preset {

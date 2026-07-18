@@ -1408,6 +1408,14 @@ async fn run_command(
         config.cli.idle_timeout_secs = timeout;
     }
 
+    // An explicit autoloop preset owns its backend configuration. Combining it
+    // with a CLI backend override would otherwise silently discard `-b`.
+    if args.backend.is_some() && config.core.autoloop_preset.is_some() {
+        anyhow::bail!(
+            "Cannot combine `-b`/`--backend` with `core.autoloop_preset`: the explicit preset owns backend selection. Drop `-b`/`--backend`, or remove `core.autoloop_preset`."
+        );
+    }
+
     // Apply backend override from CLI (takes precedence over config)
     if let Some(backend) = args.backend {
         config.cli.backend = backend;
@@ -1438,6 +1446,13 @@ async fn run_command(
                 return Err(anyhow::Error::new(e));
             }
         }
+    }
+
+    // Validate that the selected backend can be represented by autoloop before
+    // acquiring the loop lock or creating a parallel worktree. Preset-backed
+    // runs use the backend configuration owned by that preset instead.
+    if config.core.autoloop_preset.is_none() {
+        autoloop_preset_gen::autoloop_backend_spec(&config)?;
     }
 
     let preflight_verbose = verbose || args.verbose;

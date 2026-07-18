@@ -153,7 +153,13 @@ SUMMARY
 
         let mut args = vec!["--color", "never", "--config", "ralph.yml", "run"];
         args.extend_from_slice(prompt_args);
-        args.extend_from_slice(&["--no-tui", "--skip-preflight"]);
+        if !prompt_args
+            .iter()
+            .any(|arg| matches!(*arg, "--autonomous" | "-a"))
+        {
+            args.push("--no-tui");
+        }
+        args.push("--skip-preflight");
 
         let mut command = Command::new(env!("CARGO_BIN_EXE_ralph"));
         command
@@ -326,6 +332,54 @@ fn run_inline_prompt_reaches_autoloop_as_positional_argument() {
 
     assert_success(&output);
     assert_recorded_prompt(&harness, "text");
+}
+
+#[test]
+fn generated_preset_forwards_pi_backend_selection() {
+    let harness = Harness::new(None);
+    fs::write(
+        harness.workspace.path().join("ralph.yml"),
+        "core:\n  engine: autoloop\ncli:\n  backend: claude\nfeatures:\n  auto_merge: false\n",
+    )
+    .expect("write generated-preset ralph.yml");
+
+    let output = harness.run(&["--autonomous", "-b", "pi", "-p", "backend forwarding"]);
+
+    assert_success(&output);
+    let argv = harness.recorded_argv();
+    assert!(argv.len() >= 3, "unexpected autoloop argv: {argv:?}");
+    assert_eq!(argv[0], "run", "unexpected autoloop argv: {argv:?}");
+    let autoloops_toml = fs::read_to_string(Path::new(&argv[1]).join("autoloops.toml"))
+        .expect("read generated autoloops.toml from recorded preset argv");
+    assert!(
+        autoloops_toml.contains("backend.kind = \"pi\""),
+        "generated preset did not select the pi backend:\n{autoloops_toml}"
+    );
+    assert!(
+        autoloops_toml.contains("backend.command = \"pi\""),
+        "generated preset did not select the pi command:\n{autoloops_toml}"
+    );
+}
+
+#[test]
+fn explicit_preset_rejects_cli_backend_without_running_autoloop() {
+    let harness = Harness::new(None);
+
+    let output = harness.run(&["--autonomous", "-b", "claude", "-p", "conflicting backend"]);
+
+    assert!(
+        !output.status.success(),
+        "ralph should reject a CLI backend combined with an explicit preset"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("explicit preset owns backend selection"),
+        "conflict error did not explain backend ownership:\n{stderr}"
+    );
+    assert!(
+        !harness.argv_out.exists(),
+        "fake autoloop must not run when backend selection conflicts with an explicit preset"
+    );
 }
 
 #[test]
