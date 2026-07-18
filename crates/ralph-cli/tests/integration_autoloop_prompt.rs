@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ralph_core::{
-    HistoryEventType, LoopEntry, LoopHistory, LoopLock, LoopRegistry, MergeQueue, MergeState,
+    HistoryEventType, LoopEntry, LoopHistory, LoopLock, LoopRegistry, MergeQueue, MergeState, Task,
 };
 
 use tempfile::TempDir;
@@ -177,6 +177,21 @@ SUMMARY
         self.command(prompt_args).output().expect("execute ralph")
     }
 
+    fn task(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_ralph"))
+            .args(["--color", "never", "tools", "task"])
+            .args(args)
+            .arg("--root")
+            .arg(self.workspace.path())
+            .current_dir(self.workspace.path())
+            .env("HOME", self.home.path())
+            .env("USERPROFILE", self.home.path())
+            .env_remove("RALPH_CONFIG")
+            .env_remove("RALPH_WORKSPACE_ROOT")
+            .output()
+            .expect("execute ralph tools task")
+    }
+
     fn recorded_argv(&self) -> Vec<String> {
         fs::read_to_string(&self.argv_out)
             .expect("fake autoloop should record argv")
@@ -311,6 +326,87 @@ fn run_inline_prompt_reaches_autoloop_as_positional_argument() {
 
     assert_success(&output);
     assert_recorded_prompt(&harness, "text");
+}
+
+#[test]
+fn fresh_run_marker_isolates_open_tasks_from_previous_run() {
+    let harness = Harness::new(None);
+    let marker = harness.workspace.path().join(".ralph/current-loop-id");
+
+    let first_run = harness.run(&["-p", "first run"]);
+    assert_success(&first_run);
+    let first_loop_id = fs::read_to_string(&marker).expect("first run should write loop marker");
+    let first_loop_id = first_loop_id.trim();
+    assert!(
+        !first_loop_id.is_empty(),
+        "first run marker must not be blank"
+    );
+
+    let add = harness.task(&["add", "Task from first autoloop run"]);
+    assert_success(&add);
+
+    let second_run = harness.run(&["-p", "second run"]);
+    assert_success(&second_run);
+    let second_loop_id = fs::read_to_string(&marker).expect("second run should write loop marker");
+    let second_loop_id = second_loop_id.trim();
+    assert!(
+        !second_loop_id.is_empty(),
+        "second run marker must not be blank"
+    );
+    assert_ne!(
+        second_loop_id, first_loop_id,
+        "a fresh run must replace the previous loop marker"
+    );
+
+    let ready = harness.task(&["ready", "--format", "json"]);
+    assert_success(&ready);
+    let ready_tasks: Vec<Task> =
+        serde_json::from_slice(&ready.stdout).expect("parse current-loop ready tasks");
+    assert!(
+        ready_tasks.is_empty(),
+        "the second run must not see the first run's task: {ready_tasks:?}"
+    );
+
+    let all_ready = harness.task(&["ready", "--all", "--format", "json"]);
+    assert_success(&all_ready);
+    let all_ready_tasks: Vec<Task> =
+        serde_json::from_slice(&all_ready.stdout).expect("parse all ready tasks");
+    assert_eq!(all_ready_tasks.len(), 1);
+    assert_eq!(all_ready_tasks[0].title, "Task from first autoloop run");
+    assert_eq!(all_ready_tasks[0].loop_id.as_deref(), Some(first_loop_id));
+}
+
+#[test]
+fn completion_warning_reports_open_ralph_tasks_without_gating_success() {
+    let harness = Harness::new(None);
+
+    let initial_run = harness.run(&["-p", "establish loop identity"]);
+    assert_success(&initial_run);
+
+    let add = harness.task(&["add", "Open task at autoloop completion"]);
+    assert_success(&add);
+    fs::write(
+        harness.workspace.path().join(".ralph/agent/scratchpad.md"),
+        "# Continue-state fixture\n",
+    )
+    .expect("write continue scratchpad fixture");
+
+    let continued_run = harness.run(&["-p", "complete with open task", "--continue"]);
+    assert_success(&continued_run);
+
+    let process_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&continued_run.stdout),
+        String::from_utf8_lossy(&continued_run.stderr)
+    );
+    assert!(
+        process_output.contains("WARNING: autoloop completed with open Ralph task count: 1"),
+        "open-task observation warning was not visible:\n{process_output}"
+    );
+    assert!(
+        process_output.contains("did not participate in the autoloop engine completion gate"),
+        "warning did not explain its non-gating semantics:\n{process_output}"
+    );
 }
 
 #[test]

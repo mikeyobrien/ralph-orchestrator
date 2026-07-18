@@ -1703,6 +1703,7 @@ async fn run_command(
         Some(loop_context),
         auto_merge_override,
         args.loop_id.clone(),
+        args.continue_mode,
         color_mode.should_use_colors(),
         wants_tui,
     )
@@ -1851,6 +1852,7 @@ async fn resume_command(
         None, // Deprecated resume command doesn't carry a loop_context
         None, // Use config.features.auto_merge (deprecated command)
         None, // Deprecated resume command doesn't support --loop-id
+        true, // Deprecated resume reuses the current loop ID marker
         color_mode.should_use_colors(),
         wants_tui,
     )

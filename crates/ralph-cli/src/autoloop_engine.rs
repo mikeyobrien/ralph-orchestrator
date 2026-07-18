@@ -13,7 +13,9 @@ use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopRunError, AutoloopRunSummary, AutoloopRunner, events_run_result, parse_events,
 };
-use ralph_core::{EventLoopConfig, LoopContext, RalphConfig, RunStats, TerminationReason};
+use ralph_core::{
+    EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
+};
 
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
 
@@ -82,6 +84,90 @@ fn resolve(workspace: &Path, p: &str) -> PathBuf {
     }
 }
 
+/// Report Ralph tasks that could not participate in autoloop's completion gate.
+///
+/// This is deliberately observation only. autoloop remains the engine and owns
+/// completion judgment using its canonical task store.
+fn warn_on_open_ralph_tasks(tasks_path: &Path, loop_id: &str) {
+    match TaskStore::load(tasks_path) {
+        Ok(store) => {
+            let open_count = store
+                .open()
+                .into_iter()
+                .filter(|task| task.loop_id.as_deref() == Some(loop_id))
+                .count();
+            if open_count > 0 {
+                eprintln!(
+                    "WARNING: autoloop completed with open Ralph task count: {open_count} \
+                     (loop_id={loop_id}). Ralph and autoloop task stores are separate because \
+                     their formats are incompatible; these Ralph tasks did not participate in \
+                     the autoloop engine completion gate."
+                );
+            }
+        }
+        Err(error) => eprintln!(
+            "WARNING: autoloop completed, but Ralph could not inspect open tasks at '{}': \
+             {error}. Ralph and autoloop task stores are separate because their formats are \
+             incompatible; this observation failure does not change engine completion.",
+            tasks_path.display()
+        ),
+    }
+}
+
+/// Resolve the run identity and publish it for task ownership before startup.
+///
+/// Worktree loops keep the identity assigned when their context was created.
+/// Primary fresh runs always replace a stale marker with a new identity, while
+/// continue runs reuse either their explicit ID or the current marker.
+fn prepare_loop_identity(
+    context: &LoopContext,
+    continue_mode: bool,
+    explicit_loop_id: Option<&str>,
+) -> Result<String> {
+    let loop_id = if let Some(loop_id) = context.loop_id() {
+        loop_id.to_string()
+    } else if continue_mode {
+        if let Some(loop_id) = explicit_loop_id {
+            let loop_id = loop_id.trim();
+            if loop_id.is_empty() {
+                bail!("Cannot continue: --loop-id must not be blank");
+            }
+            loop_id.to_string()
+        } else {
+            let marker = context.ralph_dir().join("current-loop-id");
+            let loop_id = std::fs::read_to_string(&marker).with_context(|| {
+                format!(
+                    "Cannot continue: current loop ID marker '{}' is unavailable; pass --loop-id or start a fresh run",
+                    marker.display()
+                )
+            })?;
+            let loop_id = loop_id.trim();
+            if loop_id.is_empty() {
+                bail!(
+                    "Cannot continue: current loop ID marker '{}' is blank; pass --loop-id or start a fresh run",
+                    marker.display()
+                );
+            }
+            loop_id.to_string()
+        }
+    } else {
+        format!("primary-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S-%f"))
+    };
+
+    let marker = context.ralph_dir().join("current-loop-id");
+    std::fs::create_dir_all(context.ralph_dir()).with_context(|| {
+        format!(
+            "creating Ralph state directory {}",
+            context.ralph_dir().display()
+        )
+    })?;
+    std::fs::write(&marker, &loop_id)
+        .with_context(|| format!("writing current loop ID marker {}", marker.display()))?;
+    tracing::debug!(loop_id = %loop_id, marker = %marker.display(), "wrote current loop ID marker");
+
+    Ok(loop_id)
+}
+
 /// Resolve the prompt passed to the autoloop subprocess.
 ///
 /// Inline text takes precedence over a prompt file so callers that set
@@ -118,10 +204,15 @@ pub async fn run_autoloop_engine(
     context: Option<LoopContext>,
     auto_merge_override: Option<bool>,
     loop_id: Option<String>,
+    continue_mode: bool,
     use_colors: bool,
     tui: bool,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
+    let identity_context = context
+        .clone()
+        .unwrap_or_else(|| LoopContext::primary(workspace.clone()));
+    let loop_id = prepare_loop_identity(&identity_context, continue_mode, loop_id.as_deref())?;
 
     if let Ok(merge_loop_id) = std::env::var("RALPH_MERGE_LOOP_ID") {
         let repo_root = context
@@ -222,6 +313,9 @@ pub async fn run_autoloop_engine(
             }
 
             let reason = map_stop_reason(&summary.stop_reason);
+            if reason == TerminationReason::CompletionPromise {
+                warn_on_open_ralph_tasks(&identity_context.tasks_path(), &loop_id);
+            }
             let state = RunStats {
                 iterations: summary.iterations,
                 elapsed: start.elapsed(),
@@ -248,13 +342,6 @@ pub async fn run_autoloop_engine(
     };
 
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
-    let loop_id = loop_id
-        .or_else(|| {
-            context
-                .as_ref()
-                .and_then(|c| c.loop_id().map(|s| s.to_string()))
-        })
-        .unwrap_or_else(|| "primary".to_string());
 
     coordinate_completion(
         &reason,
@@ -469,7 +556,7 @@ pub async fn start_loop(
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
     // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
-    run_autoloop_engine(config, Some(loop_context), None, None, false, false).await
+    run_autoloop_engine(config, Some(loop_context), None, None, false, false, false).await
 }
 
 #[cfg(test)]
@@ -493,6 +580,104 @@ mod tests {
             journal: PathBuf::from("/tmp/journal.jsonl"),
             memory: PathBuf::from("/tmp/memory.jsonl"),
         }
+    }
+
+    #[test]
+    fn fresh_primary_run_replaces_stale_loop_id_marker() {
+        let workspace = tempfile::tempdir().unwrap();
+        let context = LoopContext::primary(workspace.path().to_path_buf());
+        std::fs::create_dir_all(context.ralph_dir()).unwrap();
+        std::fs::write(context.ralph_dir().join("current-loop-id"), "stale-loop").unwrap();
+
+        let loop_id = prepare_loop_identity(&context, false, None).unwrap();
+
+        assert_ne!(loop_id, "stale-loop");
+        assert!(loop_id.starts_with("primary-"));
+        assert_eq!(
+            std::fs::read_to_string(context.ralph_dir().join("current-loop-id")).unwrap(),
+            loop_id
+        );
+    }
+
+    #[test]
+    fn implicit_continue_reuses_loop_id_marker() {
+        let workspace = tempfile::tempdir().unwrap();
+        let context = LoopContext::primary(workspace.path().to_path_buf());
+        std::fs::create_dir_all(context.ralph_dir()).unwrap();
+        std::fs::write(
+            context.ralph_dir().join("current-loop-id"),
+            " previous-loop \n",
+        )
+        .unwrap();
+
+        let loop_id = prepare_loop_identity(&context, true, None).unwrap();
+
+        assert_eq!(loop_id, "previous-loop");
+        assert_eq!(
+            std::fs::read_to_string(context.ralph_dir().join("current-loop-id")).unwrap(),
+            "previous-loop"
+        );
+    }
+
+    #[test]
+    fn explicit_continue_loop_id_wins_over_marker() {
+        let workspace = tempfile::tempdir().unwrap();
+        let context = LoopContext::primary(workspace.path().to_path_buf());
+        std::fs::create_dir_all(context.ralph_dir()).unwrap();
+        std::fs::write(context.ralph_dir().join("current-loop-id"), "previous-loop").unwrap();
+
+        let loop_id = prepare_loop_identity(&context, true, Some("chosen-loop")).unwrap();
+
+        assert_eq!(loop_id, "chosen-loop");
+        assert_eq!(
+            std::fs::read_to_string(context.ralph_dir().join("current-loop-id")).unwrap(),
+            "chosen-loop"
+        );
+    }
+
+    #[test]
+    fn implicit_continue_errors_when_loop_id_marker_is_missing() {
+        let workspace = tempfile::tempdir().unwrap();
+        let context = LoopContext::primary(workspace.path().to_path_buf());
+
+        let error = prepare_loop_identity(&context, true, None).unwrap_err();
+
+        assert!(error.to_string().contains("Cannot continue"));
+        assert!(error.to_string().contains("current-loop-id"));
+        assert!(error.to_string().contains("--loop-id"));
+    }
+
+    #[test]
+    fn implicit_continue_errors_when_loop_id_marker_is_blank() {
+        let workspace = tempfile::tempdir().unwrap();
+        let context = LoopContext::primary(workspace.path().to_path_buf());
+        std::fs::create_dir_all(context.ralph_dir()).unwrap();
+        std::fs::write(context.ralph_dir().join("current-loop-id"), " \n").unwrap();
+
+        let error = prepare_loop_identity(&context, true, None).unwrap_err();
+
+        assert!(error.to_string().contains("Cannot continue"));
+        assert!(error.to_string().contains("blank"));
+        assert!(error.to_string().contains("--loop-id"));
+    }
+
+    #[test]
+    fn worktree_run_keeps_context_loop_id() {
+        let workspace = tempfile::tempdir().unwrap();
+        let repo_root = tempfile::tempdir().unwrap();
+        let context = LoopContext::worktree(
+            "worktree-loop",
+            workspace.path().to_path_buf(),
+            repo_root.path().to_path_buf(),
+        );
+
+        let loop_id = prepare_loop_identity(&context, false, None).unwrap();
+
+        assert_eq!(loop_id, "worktree-loop");
+        assert_eq!(
+            std::fs::read_to_string(context.ralph_dir().join("current-loop-id")).unwrap(),
+            "worktree-loop"
+        );
     }
 
     #[test]

@@ -172,6 +172,16 @@ pub(crate) fn autoloop_budget_overrides(config: &RalphConfig) -> Vec<(&'static s
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
+
+    // Deliberately do not set `core.tasks_file` to Ralph's
+    // `.ralph/agent/tasks.jsonl`. Ralph stores snapshot records with `title`,
+    // lifecycle statuses such as `in_progress`/`closed`/`failed`, priorities,
+    // dependencies, and loop IDs. autoloop's append-only records instead use
+    // `type = "task"`, `text`, and `open`/`done`. Sharing the path would make
+    // autoloop silently ignore Ralph records and risk corrupting the file with
+    // mixed formats. autoloop therefore keeps its canonical task store and
+    // remains the sole authority for its completion gate; Ralph only warns
+    // observationally about its separate open tasks after engine completion.
     for (key, value) in autoloop_budget_overrides(config) {
         auto.push_str(&format!("{key} = {value}\n"));
     }
@@ -293,6 +303,18 @@ hats:
         // The generated preset is loadable by ralph's own autoloop preset reader
         // (round-trip sanity against preset_source's detector).
         assert!(dir.path().join("topology.toml").is_file());
+    }
+
+    #[test]
+    fn keeps_incompatible_ralph_and_autoloop_task_stores_separate() {
+        let cfg = RalphConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(!auto.contains("core.tasks_file"));
+        assert!(!auto.contains(".ralph/agent/tasks.jsonl"));
     }
 
     #[test]
