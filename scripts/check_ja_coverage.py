@@ -94,6 +94,9 @@ def suspect_untranslated(md_text: str) -> list[tuple[int, str]]:
         text = _strip_noise(stripped)
         if _JP_RE.search(text):
             continue  # 日本語を含む行はOK
+        # 散文は空白区切りの語が複数ある。単一トークン（URL/パス/識別子）は対象外。
+        if len(text.split()) < 3:
+            continue
         words = [w.lower() for w in _WORD_RE.findall(text)]
         meaningful = [w for w in words if w not in ALLOWLIST]
         # 意味のある英単語が3語以上連なる＝未翻訳の散文の疑い
