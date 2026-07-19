@@ -8,10 +8,13 @@
 //!
 //! Unlike the RPC stream (a pipe), the autoloop `--events` file is a *growing
 //! file*: [`run_autoloop_event_reader`] polls an [`AutoloopEventTailer`] on a
-//! ~100ms interval rather than awaiting line-by-line. The `--events` stream
-//! updates at iteration **boundaries**, not per-token, so the content pane
-//! advances one iteration at a time (no live token streaming).
+//! ~100ms interval rather than awaiting line-by-line. The same tick also polls
+//! the active backend's bounded per-iteration stream, so the content pane
+//! advances while an agent is still working and reconciles to authoritative
+//! `backend.output` at the iteration boundary.
 
+use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -21,7 +24,7 @@ use ratatui::text::{Line, Span};
 use tokio::sync::watch;
 use tracing::debug;
 
-use ralph_adapters::{AutoloopEvent, AutoloopEventTailer};
+use ralph_adapters::{AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, StreamLine};
 
 use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
@@ -38,12 +41,24 @@ pub struct AutoloopMapCtx {
     /// The iteration number of the most recently started iteration. Used to
     /// only reset/create a buffer when the number actually changes.
     current_iteration: Option<u32>,
+    /// User-facing names for engine role IDs. Explicit presets leave this
+    /// empty and display their role IDs directly.
+    role_display_names: HashMap<String, String>,
+    /// Run-scoped directory derived from the authoritative `loop.start` event.
+    run_dir: Option<PathBuf>,
+    /// Bounded tailer for the currently active iteration's backend stream.
+    stream_tailer: Option<BackendStreamTailer>,
+    /// Buffer index at which provisional live lines begin.
+    live_region_mark: Option<usize>,
 }
 
 impl AutoloopMapCtx {
-    /// Creates an empty context.
-    pub fn new() -> Self {
-        Self::default()
+    /// Creates a context with optional user-facing names for engine role IDs.
+    pub fn new(role_display_names: HashMap<String, String>) -> Self {
+        Self {
+            role_display_names,
+            ..Self::default()
+        }
     }
 
     /// The hat/role display label to attribute the current iteration to.
@@ -51,6 +66,15 @@ impl AutoloopMapCtx {
         self.role_label
             .clone()
             .unwrap_or_else(|| "autoloop".to_string())
+    }
+
+    /// Maps an engine role ID to its configured display name, falling back to
+    /// the ID itself for explicit presets.
+    fn role_display_name(&self, role_id: &str) -> String {
+        self.role_display_names
+            .get(role_id)
+            .cloned()
+            .unwrap_or_else(|| role_id.to_string())
     }
 }
 
@@ -78,12 +102,27 @@ pub fn apply_autoloop_event(
     let now = Instant::now();
 
     match event.kind.as_str() {
+        "loop.start" => {
+            if let (Some(work_dir), Some(run_id)) = (&event.work_dir, &event.run_id) {
+                ctx.run_dir = Some(work_dir.join(".autoloop").join("runs").join(run_id));
+            }
+            s.last_event = Some("loop.start".to_string());
+            s.last_event_at = Some(now);
+        }
+
         "iteration.banner" => {
-            ctx.role_label = event
-                .allowed_roles
-                .as_ref()
-                .and_then(|roles| roles.first())
-                .cloned();
+            if let Some(role_id) = event.allowed_roles.as_ref().and_then(|roles| roles.first()) {
+                let role_label = ctx.role_display_name(role_id);
+                ctx.role_label = Some(role_label.clone());
+
+                // autoloop emits iteration.start before iteration.banner. Fix
+                // the placeholder (or previous role) attached at start time
+                // without creating a second buffer. Banner-before-start also
+                // remains supported through ctx.role_label above.
+                if event.iteration == ctx.current_iteration {
+                    s.set_latest_iteration_hat_display(role_label);
+                }
+            }
             s.last_event = Some("iteration.banner".to_string());
             s.last_event_at = Some(now);
         }
@@ -106,6 +145,14 @@ pub fn apply_autoloop_event(
                     s.max_iterations = Some(max);
                 }
                 s.iteration_started = Some(now);
+
+                ctx.live_region_mark = s
+                    .latest_iteration_lines_handle()
+                    .and_then(|handle| handle.lock().ok().map(|lines| lines.len()));
+                ctx.stream_tailer = ctx
+                    .run_dir
+                    .as_ref()
+                    .map(|run_dir| BackendStreamTailer::for_iteration(run_dir, iteration));
             } else if let Some(max) = event.max_iterations {
                 s.max_iterations = Some(max);
             }
@@ -142,9 +189,22 @@ pub fn apply_autoloop_event(
         }
 
         "backend.output" => {
+            let is_current_iteration =
+                event.iteration.is_none() || event.iteration == ctx.current_iteration;
+            if is_current_iteration {
+                if let Some(mark) = ctx.live_region_mark.take()
+                    && let Some(handle) = s.latest_iteration_lines_handle()
+                    && let Ok(mut lines) = handle.lock()
+                {
+                    lines.truncate(mark);
+                }
+                // Once authoritative output arrives, never poll this iteration's
+                // stream again or provisional lines could reappear afterward.
+                ctx.stream_tailer = None;
+            }
+
             if let Some(output) = &event.output {
-                // The one real per-iteration agent content the coarse --events
-                // stream carries. Split on newlines into individual Lines.
+                // Split the authoritative iteration result into display lines.
                 let lines: Vec<Line<'static>> = output
                     .split('\n')
                     .map(|l| Line::raw(sanitize_tui_inline_text(l)))
@@ -235,6 +295,40 @@ fn push_lines(state: &mut TuiState, new_lines: Vec<Line<'static>>) {
     }
 }
 
+/// Polls and renders provisional output from the active backend stream.
+fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
+    let Some(tailer) = ctx.stream_tailer.as_mut() else {
+        return;
+    };
+    let stream_lines = match tailer.poll() {
+        Ok(lines) => lines,
+        Err(error) => {
+            debug!(%error, "autoloop backend stream poll failed");
+            return;
+        }
+    };
+    if stream_lines.is_empty() {
+        return;
+    }
+
+    let rendered = stream_lines
+        .into_iter()
+        .map(|line| match line {
+            StreamLine::AgentText(text) => Line::from(Span::styled(
+                sanitize_tui_inline_text(&text),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+            StreamLine::ToolSummary(text) => Line::from(Span::styled(
+                sanitize_tui_inline_text(&text),
+                Style::default().fg(Color::Cyan),
+            )),
+        })
+        .collect();
+    if let Ok(mut state) = state.lock() {
+        push_lines(&mut state, rendered);
+    }
+}
+
 /// Live-tails the autoloop `--events` file and applies each event to the TUI
 /// state, until cancellation.
 ///
@@ -251,13 +345,16 @@ fn push_lines(state: &mut TuiState, new_lines: Vec<Line<'static>>) {
 /// If the stream drains to the terminal cancel without ever seeing a
 /// `loop.finish` / `summary`, an error line is appended to the latest iteration
 /// (mirrors the EOF-without-terminal-event handling in `rpc_source`).
-pub async fn run_autoloop_event_reader(
+pub async fn run_autoloop_event_reader<S>(
     events_path: PathBuf,
     state: Arc<Mutex<TuiState>>,
     mut cancel_rx: watch::Receiver<bool>,
-) {
+    role_display_names: HashMap<String, String, S>,
+) where
+    S: BuildHasher + Send,
+{
     let mut tailer = AutoloopEventTailer::new(events_path);
-    let mut ctx = AutoloopMapCtx::new();
+    let mut ctx = AutoloopMapCtx::new(role_display_names.into_iter().collect());
     let mut saw_terminal = false;
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
@@ -281,6 +378,7 @@ pub async fn run_autoloop_event_reader(
                             }
                             apply_autoloop_event(event, &state, &mut ctx);
                         }
+                        poll_backend_stream(&state, &mut ctx);
                     }
                     Err(e) => {
                         debug!(error = %e, "autoloop event reader poll failed");
@@ -307,6 +405,9 @@ pub async fn run_autoloop_event_reader(
             debug!(error = %e, "autoloop event reader final drain failed");
         }
     }
+    // Mirror the final event drain for a backend that was killed between ticks.
+    // If backend.output landed above, reconciliation already dropped the tailer.
+    poll_backend_stream(&state, &mut ctx);
 
     // If the run ended without ever reporting a terminal result, surface that in
     // the content pane rather than leaving the view ambiguously "running".
@@ -359,7 +460,7 @@ mod tests {
     #[test]
     fn iteration_start_sets_iteration_and_max() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
 
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":7,"runId":"r1"}"#),
@@ -379,7 +480,7 @@ mod tests {
     #[test]
     fn duplicate_iteration_start_does_not_create_second_buffer() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         let line = r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#;
         apply_autoloop_event(&ev(line), &state, &mut ctx);
         apply_autoloop_event(&ev(line), &state, &mut ctx);
@@ -394,17 +495,18 @@ mod tests {
     #[test]
     fn banner_labels_each_iteration_with_its_current_role() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
 
+        // Real autoloop order is iteration.start followed by iteration.banner.
         apply_autoloop_event(
-            &ev(
-                r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"runId":"r1","allowedRoles":["planner"]}"#,
-            ),
+            &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
             &state,
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"runId":"r1","allowedRoles":["planner"]}"#,
+            ),
             &state,
             &mut ctx,
         );
@@ -424,14 +526,14 @@ mod tests {
         );
 
         apply_autoloop_event(
-            &ev(
-                r#"{"type":"iteration.banner","iteration":2,"maxIterations":3,"runId":"r1","allowedRoles":["builder"]}"#,
-            ),
+            &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":3,"runId":"r1"}"#),
             &state,
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":3,"runId":"r1"}"#),
+            &ev(
+                r#"{"type":"iteration.banner","iteration":2,"maxIterations":3,"runId":"r1","allowedRoles":["builder"]}"#,
+            ),
             &state,
             &mut ctx,
         );
@@ -439,12 +541,76 @@ mod tests {
         let s = state.lock().unwrap();
         assert_eq!(s.iterations[0].hat_display.as_deref(), Some("planner"));
         assert_eq!(s.iterations[1].hat_display.as_deref(), Some("builder"));
+        assert!(
+            s.iterations
+                .iter()
+                .all(|iteration| { iteration.hat_display.as_deref() != Some("autoloop") })
+        );
+    }
+
+    #[test]
+    fn explicit_preset_uses_role_ids_for_all_iterations() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
+
+        for (iteration, role) in [(1, "planner"), (2, "builder"), (3, "finalizer")] {
+            apply_autoloop_event(
+                &ev(&format!(
+                    r#"{{"type":"iteration.start","iteration":{iteration},"maxIterations":3,"runId":"r1"}}"#
+                )),
+                &state,
+                &mut ctx,
+            );
+            apply_autoloop_event(
+                &ev(&format!(
+                    r#"{{"type":"iteration.banner","iteration":{iteration},"maxIterations":3,"runId":"r1","allowedRoles":["{role}"]}}"#
+                )),
+                &state,
+                &mut ctx,
+            );
+        }
+
+        let s = state.lock().unwrap();
+        let labels: Vec<_> = s
+            .iterations
+            .iter()
+            .map(|iteration| iteration.hat_display.as_deref())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![Some("planner"), Some("builder"), Some("finalizer")]
+        );
+    }
+
+    #[test]
+    fn banner_maps_role_id_to_display_name() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::from([(
+            "builder".to_string(),
+            "🔨 Builder".to_string(),
+        )]));
+
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
+            &state,
+            &mut ctx,
+        );
+        apply_autoloop_event(
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"runId":"r1","allowedRoles":["builder"]}"#,
+            ),
+            &state,
+            &mut ctx,
+        );
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("🔨 Builder"));
     }
 
     #[test]
     fn backend_output_splits_into_lines() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
             &state,
@@ -465,7 +631,7 @@ mod tests {
     #[test]
     fn ask_pending_sets_footer_and_line() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
             &state,
@@ -494,7 +660,7 @@ mod tests {
     #[test]
     fn progress_timeout_clears_pending_ask() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"ask.pending","question":"Still waiting?"}"#),
             &state,
@@ -512,7 +678,7 @@ mod tests {
     #[test]
     fn ask_pending_sanitizes_footer_question() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev("{\"type\":\"ask.pending\",\"question\":\"line1\\nline2\\u0007\"}"),
             &state,
@@ -528,7 +694,7 @@ mod tests {
     #[test]
     fn loop_finish_completes_and_freezes_elapsed() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
             &state,
@@ -561,6 +727,288 @@ mod tests {
         f.write_all(s.as_bytes()).unwrap();
     }
 
+    async fn wait_for_line(state: &Arc<Mutex<TuiState>>, needle: &str) -> bool {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if lines_text(state).iter().any(|line| line.contains(needle)) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    async fn wait_for_iteration(state: &Arc<Mutex<TuiState>>) -> bool {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if state.lock().unwrap().total_iterations() > 0 {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn live_stream_lines_appear_before_backend_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let run_dir = workspace.join(".autoloop/runs/live-run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let events_path = dir.path().join("events.ndjson");
+        append(
+            &events_path,
+            &format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "loop.start",
+                    "runId": "live-run",
+                    "workDir": workspace,
+                }),
+                serde_json::json!({
+                    "type": "iteration.start",
+                    "iteration": 1,
+                    "maxIterations": 3,
+                    "runId": "live-run",
+                })
+            ),
+        );
+
+        let state = make_state();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let reader_state = Arc::clone(&state);
+        let handle = tokio::spawn(async move {
+            run_autoloop_event_reader(events_path, reader_state, cancel_rx, HashMap::new()).await;
+        });
+
+        assert!(
+            wait_for_iteration(&state).await,
+            "iteration buffer never appeared"
+        );
+        append(
+            &run_dir.join("pi-stream.1.jsonl"),
+            concat!(
+                r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"live before boundary"},{"type":"toolCall","name":"read","arguments":{"path":"src/main.rs"}}]}}"#,
+                "\n",
+            ),
+        );
+
+        let visible = wait_for_line(&state, "live before boundary").await;
+        let tool_visible = wait_for_line(&state, "⚙ read").await;
+        {
+            let state = state.lock().unwrap();
+            let lines = state.iterations.last().unwrap().lines.lock().unwrap();
+            let agent = lines
+                .iter()
+                .find(|line| line.to_string().contains("live before boundary"))
+                .unwrap();
+            let tool = lines
+                .iter()
+                .find(|line| line.to_string().contains("⚙ read"))
+                .unwrap();
+            assert!(agent.spans[0].style.add_modifier.contains(Modifier::DIM));
+            assert_eq!(tool.spans[0].style.fg, Some(Color::Cyan));
+        }
+        cancel_tx.send(true).unwrap();
+        handle.await.unwrap();
+
+        assert!(
+            visible && tool_visible,
+            "stream text and tool summary should be visible before backend.output: {:?}",
+            lines_text(&state)
+        );
+    }
+
+    #[tokio::test]
+    async fn backend_output_replaces_the_provisional_live_region() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let run_dir = workspace.join(".autoloop/runs/reconcile-run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let events_path = dir.path().join("events.ndjson");
+        append(
+            &events_path,
+            &format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "loop.start",
+                    "runId": "reconcile-run",
+                    "workDir": workspace,
+                }),
+                serde_json::json!({
+                    "type": "iteration.start",
+                    "iteration": 1,
+                    "runId": "reconcile-run",
+                })
+            ),
+        );
+        append(
+            &run_dir.join("pi-stream.1.jsonl"),
+            concat!(
+                r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"provisional live text"}]}}"#,
+                "\n",
+            ),
+        );
+
+        let state = make_state();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let reader_state = Arc::clone(&state);
+        let reader_events = events_path.clone();
+        let handle = tokio::spawn(async move {
+            run_autoloop_event_reader(reader_events, reader_state, cancel_rx, HashMap::new()).await;
+        });
+        assert!(wait_for_line(&state, "provisional live text").await);
+
+        append(
+            &events_path,
+            concat!(
+                r#"{"type":"backend.output","iteration":1,"runId":"reconcile-run","output":"authoritative final text"}"#,
+                "\n",
+                r#"{"type":"loop.finish","runId":"reconcile-run","iterations":1,"stopReason":"completed"}"#,
+                "\n",
+            ),
+        );
+        assert!(wait_for_line(&state, "authoritative final text").await);
+        cancel_tx.send(true).unwrap();
+        handle.await.unwrap();
+
+        let text = lines_text(&state);
+        assert_eq!(
+            text.iter()
+                .filter(|line| line.contains("authoritative final text"))
+                .count(),
+            1,
+            "authoritative output must appear exactly once: {text:?}"
+        );
+        assert!(
+            text.iter()
+                .all(|line| !line.contains("provisional live text")),
+            "provisional live output must be removed: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn huge_live_stream_keeps_the_tui_buffer_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let run_dir = workspace.join(".autoloop/runs/bounded-run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let events_path = dir.path().join("events.ndjson");
+        append(
+            &events_path,
+            &format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "loop.start",
+                    "runId": "bounded-run",
+                    "workDir": workspace,
+                }),
+                serde_json::json!({
+                    "type": "iteration.start",
+                    "iteration": 1,
+                    "runId": "bounded-run",
+                })
+            ),
+        );
+
+        let mut stream = String::new();
+        for index in 0..5_000 {
+            stream.push_str(
+                &serde_json::json!({
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{
+                            "type": "text",
+                            "text": format!("bounded line {index:04}"),
+                        }],
+                    },
+                })
+                .to_string(),
+            );
+            stream.push('\n');
+        }
+        stream.push_str(
+            concat!(
+                r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"newest bounded marker"}]}}"#,
+                "\n",
+            ),
+        );
+        std::fs::write(run_dir.join("pi-stream.1.jsonl"), stream).unwrap();
+
+        let state = make_state();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let reader_state = Arc::clone(&state);
+        let handle = tokio::spawn(async move {
+            run_autoloop_event_reader(events_path, reader_state, cancel_rx, HashMap::new()).await;
+        });
+        assert!(wait_for_line(&state, "newest bounded marker").await);
+
+        let line_count = lines_text(&state).len();
+        assert!(
+            line_count <= ralph_adapters::backend_stream_tailer::MAX_STREAM_LINES,
+            "live buffer exceeded stream cap: {line_count}"
+        );
+
+        cancel_tx.send(true).unwrap();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_backend_stream_preserves_boundary_only_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let events_path = dir.path().join("events.ndjson");
+        append(
+            &events_path,
+            &format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "loop.start",
+                    "runId": "command-run",
+                    "workDir": workspace,
+                }),
+                serde_json::json!({
+                    "type": "iteration.start",
+                    "iteration": 1,
+                    "runId": "command-run",
+                })
+            ),
+        );
+
+        let state = make_state();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let reader_state = Arc::clone(&state);
+        let reader_events = events_path.clone();
+        let handle = tokio::spawn(async move {
+            run_autoloop_event_reader(reader_events, reader_state, cancel_rx, HashMap::new()).await;
+        });
+        assert!(wait_for_iteration(&state).await);
+        assert!(lines_text(&state).is_empty());
+
+        append(
+            &events_path,
+            concat!(
+                r#"{"type":"backend.output","iteration":1,"runId":"command-run","output":"command boundary output"}"#,
+                "\n",
+                r#"{"type":"loop.finish","runId":"command-run","iterations":1,"stopReason":"completed"}"#,
+                "\n",
+            ),
+        );
+        assert!(wait_for_line(&state, "command boundary output").await);
+        cancel_tx.send(true).unwrap();
+        handle.await.unwrap();
+
+        let text = lines_text(&state);
+        assert_eq!(
+            text.iter()
+                .filter(|line| line.contains("command boundary output"))
+                .count(),
+            1,
+            "boundary output should retain existing behavior: {text:?}"
+        );
+    }
+
     #[tokio::test]
     async fn final_drain_after_cancel_applies_loop_finish() {
         // The terminal loop.finish is written AFTER cancel is signalled — the
@@ -578,7 +1026,7 @@ mod tests {
         let reader_state = Arc::clone(&state);
         let reader_path = path.clone();
         let handle = tokio::spawn(async move {
-            run_autoloop_event_reader(reader_path, reader_state, cancel_rx).await;
+            run_autoloop_event_reader(reader_path, reader_state, cancel_rx, HashMap::new()).await;
         });
 
         // Give the reader a couple of ticks to consume the first event.
@@ -616,7 +1064,7 @@ mod tests {
         let reader_state = Arc::clone(&state);
         let reader_path = path.clone();
         let handle = tokio::spawn(async move {
-            run_autoloop_event_reader(reader_path, reader_state, cancel_rx).await;
+            run_autoloop_event_reader(reader_path, reader_state, cancel_rx, HashMap::new()).await;
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;

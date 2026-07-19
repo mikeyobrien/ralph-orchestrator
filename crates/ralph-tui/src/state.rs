@@ -687,6 +687,17 @@ impl TuiState {
         }
     }
 
+    /// Updates the display label on the latest iteration.
+    ///
+    /// Some event sources announce the iteration before announcing its role,
+    /// so the initial placeholder must be replaceable without creating a new
+    /// iteration buffer.
+    pub fn set_latest_iteration_hat_display(&mut self, hat_display: String) {
+        if let Some(buffer) = self.iterations.last_mut() {
+            buffer.hat_display = Some(hat_display);
+        }
+    }
+
     /// Finalizes the latest iteration's elapsed time if it isn't already set.
     pub fn finish_latest_iteration(&mut self) {
         let Some(buffer) = self.iterations.last_mut() else {

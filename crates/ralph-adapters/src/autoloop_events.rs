@@ -10,6 +10,8 @@
 //! [`AutoloopEvent`] keyed by `kind` — every field ralph consumes is optional,
 //! so unknown event types decode losslessly and forward-compatibly.
 
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 /// One decoded `LoopEvent` line. `kind` is the event `type`; the remaining
@@ -20,6 +22,10 @@ pub struct AutoloopEvent {
     pub kind: String,
     #[serde(rename = "runId", default)]
     pub run_id: Option<String>,
+    /// Workspace root; present on `loop.start`. Together with `run_id`, this
+    /// locates per-iteration backend streams under `.autoloop/runs/<runId>`.
+    #[serde(rename = "workDir", default)]
+    pub work_dir: Option<PathBuf>,
     #[serde(default)]
     pub iteration: Option<u32>,
     /// Present on `loop.finish` / `summary`.
@@ -178,6 +184,18 @@ mod tests {
         assert_eq!(progress.kind, "progress");
         assert_eq!(progress.emitted_topic.as_deref(), Some("tasks.ready"));
         assert_eq!(progress.outcome.as_deref(), Some("continue:routed_event"));
+    }
+
+    #[test]
+    fn parses_loop_start_run_directory_fields() {
+        let events =
+            parse_events(r#"{"type":"loop.start","runId":"live-run","workDir":"/tmp/workspace"}"#);
+
+        assert_eq!(events[0].run_id.as_deref(), Some("live-run"));
+        assert_eq!(
+            events[0].work_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/workspace"))
+        );
     }
 
     #[test]
