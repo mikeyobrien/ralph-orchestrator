@@ -26,6 +26,7 @@ mod config_resolution;
 mod display;
 mod doctor;
 mod engine_install;
+mod engine_provision;
 mod hats;
 mod hooks;
 mod init;
@@ -51,9 +52,7 @@ use ralph_adapters::{AutoloopBin, detect_backend};
 use ralph_core::{
     CheckStatus, EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry,
     PreflightReport, PreflightRunner, RalphConfig, TerminationReason, UrgentSteerStore,
-    autoloop_health::{
-        AUTOLOOP_INSTALL_HINT, AutoloopHealth, MIN_AUTOLOOP_VERSION, check_autoloop,
-    },
+    autoloop_health::{AUTOLOOP_INSTALL_HINT, AutoloopHealth, MIN_AUTOLOOP_VERSION},
     truncate_with_ellipsis,
     worktree::{WorktreeConfig, create_worktree, ensure_gitignore, remove_worktree},
 };
@@ -1360,10 +1359,10 @@ pub(crate) fn ensure_autoloop_for_run(
 ) -> Result<AutoloopBin> {
     match health {
         AutoloopHealth::Missing => anyhow::bail!(
-            "autoloop was not found in Ralph's engine directory or on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required)"
+            "autoloop was not found in Ralph's engine directory or on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required). For non-interactive first-run provisioning, set RALPH_AUTO_INSTALL_ENGINE=1"
         ),
         AutoloopHealth::TooOld { path, version, .. } if !skip_preflight => anyhow::bail!(
-            "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
+            "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}; run: ralph doctor --install-engine; or set RALPH_AUTO_INSTALL_ENGINE=1 for non-interactive first-run provisioning",
             path.display()
         ),
         AutoloopHealth::TooOld {
@@ -1559,7 +1558,10 @@ async fn run_command(
         return Ok(());
     }
 
-    let autoloop_bin = ensure_autoloop_for_run(check_autoloop(), args.skip_preflight)?;
+    let autoloop_bin = engine_provision::ensure_autoloop_with_provisioning(
+        !args.autonomous && std::io::stdin().is_terminal(),
+        args.skip_preflight,
+    )?;
 
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
@@ -1849,7 +1851,10 @@ async fn resume_command(
 
     // Resolve once before inspecting continuation state and retain the exact
     // selection for launch so resume cannot disagree with its dependency gate.
-    let autoloop_bin = ensure_autoloop_for_run(check_autoloop(), false)?;
+    let autoloop_bin = engine_provision::ensure_autoloop_with_provisioning(
+        !args.autonomous && std::io::stdin().is_terminal(),
+        false,
+    )?;
 
     // Check that scratchpad exists (required for resume)
     let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
@@ -2571,6 +2576,7 @@ mod tests {
         assert!(missing.contains(AUTOLOOP_INSTALL_HINT));
         assert!(missing.contains("ralph doctor --install-engine"));
         assert!(missing.contains("no Node required"));
+        assert!(missing.contains("RALPH_AUTO_INSTALL_ENGINE=1"));
 
         let old = ensure_autoloop_for_run(
             AutoloopHealth::TooOld {
@@ -2585,6 +2591,8 @@ mod tests {
         assert!(message.contains("0.9.2"));
         assert!(message.contains(MIN_AUTOLOOP_VERSION));
         assert!(message.contains(AUTOLOOP_INSTALL_HINT));
+        assert!(message.contains("ralph doctor --install-engine"));
+        assert!(message.contains("RALPH_AUTO_INSTALL_ENGINE=1"));
     }
 
     #[test]

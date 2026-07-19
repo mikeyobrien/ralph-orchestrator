@@ -46,19 +46,23 @@ export PATH="$HOME/bin:$PATH"
 
 ## Autoloop dependency
 
-Ralph requires autoloop >= 0.10.0. The npm method installs autoloop
-automatically as a dependency. For the GitHub Releases installer, Cargo, or a
-prebuilt binary, install it separately:
+Ralph requires autoloop >= 0.10.0. The recommended npm method installs
+autoloop automatically as a dependency. After installing Ralph via the GitHub
+Releases installer, Cargo, or a prebuilt binary, just run `ralph run`: on the
+first interactive run, Ralph offers to download the pinned standalone engine.
+For CI and other non-interactive environments, opt in to first-run provisioning
+explicitly:
 
 ```bash
-npm install -g @mobrienv/autoloop
+RALPH_AUTO_INSTALL_ENGINE=1 ralph run -p "your task"
 ```
+
+You can instead install the npm engine yourself with
+`npm install -g @mobrienv/autoloop`.
 
 ### No-Node install (vendored engine)
 
-If Node.js is unavailable, install Ralph via Cargo, the GitHub Releases
-installer, or a prebuilt binary, then install the pinned standalone autoloop
-engine:
+To install the standalone engine manually before the first run:
 
 ```bash
 ralph doctor --install-engine

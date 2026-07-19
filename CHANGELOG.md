@@ -13,6 +13,7 @@ observation/coordination plane; autoloop owns loop execution, role dispatch,
 completion, and budgets. See docs/migration/v3-autoloop-engine.md.
 
 ### Added
+- First-run autoloop engine provisioning, with `RALPH_AUTO_INSTALL_ENGINE` opt-in for CI and other non-interactive environments.
 - Autoloop engine driver, preset generation from hats (incl. per-role
   concurrency/aggregation), completion coordination bridge, journal/--events
   native consumption, live headless progress streaming.

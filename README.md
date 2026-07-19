@@ -36,18 +36,22 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 cargo install ralph-cli
 ```
 
-Ralph requires autoloop >= 0.10.0. The npm installation installs it
-automatically as a dependency. If you use Cargo or the GitHub Releases
-installer, install it separately:
+Ralph requires autoloop >= 0.10.0. The recommended npm installation installs
+it automatically as a dependency. After installing Ralph via Cargo or the
+GitHub Releases installer, just run `ralph run`: on the first interactive run,
+Ralph offers to download the pinned standalone engine. For CI and other
+non-interactive environments, opt in to first-run provisioning explicitly:
 
 ```bash
-npm install -g @mobrienv/autoloop
+RALPH_AUTO_INSTALL_ENGINE=1 ralph run -p "your task"
 ```
+
+You can instead install the npm engine yourself with
+`npm install -g @mobrienv/autoloop`.
 
 ### No-Node install (vendored engine)
 
-If Node.js is unavailable, install Ralph via Cargo or the GitHub Releases
-installer, then install the pinned standalone autoloop engine:
+To install the standalone engine manually before the first run:
 
 ```bash
 ralph doctor --install-engine
@@ -229,6 +233,10 @@ workflow.
 - **npm** (recommended for most users): `npm install -g @ralph-orchestrator/ralph-cli`
 - **Cargo**: `cargo install ralph-cli` (best for Rust developers)
 - **GitHub Releases installer**: One-link install with `curl ... | sh`
+
+Cargo and installer users can run `ralph run` immediately; the first
+interactive run offers to provision the autoloop engine. In CI or another
+non-interactive environment, set `RALPH_AUTO_INSTALL_ENGINE=1` to opt in.
 
 **Is Homebrew supported?**
 Homebrew is not currently published from this repository's automated release flow. Prefer npm, Cargo, or the GitHub Releases installer.

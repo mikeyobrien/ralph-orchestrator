@@ -712,8 +712,7 @@ pub async fn start_loop(
 
     // Resolve once before creating state or acquiring the loop lock, then use
     // that exact binary for launch.
-    let autoloop_bin =
-        crate::ensure_autoloop_for_run(ralph_core::autoloop_health::check_autoloop(), false)?;
+    let autoloop_bin = crate::engine_provision::ensure_autoloop_with_provisioning(false, false)?;
 
     // Ensure scratchpad directory exists.
     crate::ensure_scratchpad_directory(&config)?;
