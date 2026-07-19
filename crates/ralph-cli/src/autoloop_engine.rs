@@ -6,15 +6,18 @@
 //! result onto ralph's [`TerminationReason`]. This is the thin-layer engine swap
 //! at the heart of v3: autoloop owns loop execution; ralph coordinates.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
-    AutoloopRunError, AutoloopRunSummary, AutoloopRunner, events_run_result, parse_events,
+    AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary, AutoloopRunner,
+    events_run_result, parse_events,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
+    sanitize_tui_inline_text,
 };
 
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
@@ -277,13 +280,13 @@ pub async fn run_autoloop_engine(
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop TUI run failed")),
         }
     } else {
-        // Headless: AutoloopRunner::run blocks on the subprocess; keep the async
-        // runtime free. Unchanged from the pre-TUI path.
-        let result = tokio::task::spawn_blocking(move || runner.run())
-            .await
-            .context("autoloop run task panicked")
-            .and_then(|result| result.context("autoloop run failed"));
-        interpret_autoloop_result(result, false)
+        // Headless observes the same structured engine event stream as the TUI.
+        // Keep the blocking child wait off the async runtime while a sibling
+        // task tails and flushes live progress to stdout.
+        match run_autoloop_headless(runner, events_path.clone()).await {
+            Ok(outcome) => outcome,
+            Err(error) => AutoloopOutcome::Failed(error.context("autoloop headless run failed")),
+        }
     };
 
     // Normalize every child execution result before coordinating so success,
@@ -348,6 +351,178 @@ pub async fn run_autoloop_engine(
         Some(error) => Err(error),
         None => Ok(reason),
     }
+}
+
+#[derive(Debug, Default)]
+struct HeadlessPrintCtx {
+    iteration: Option<u32>,
+    max_iterations: Option<u32>,
+    role: Option<String>,
+}
+
+impl HeadlessPrintCtx {
+    fn iteration_label(&self, event: &AutoloopEvent) -> String {
+        let iteration = event.iteration.or(self.iteration).unwrap_or_default();
+        match event.max_iterations.or(self.max_iterations) {
+            Some(max_iterations) => format!("{iteration}/{max_iterations}"),
+            None => iteration.to_string(),
+        }
+    }
+
+    fn role(&self) -> &str {
+        self.role.as_deref().unwrap_or("unknown")
+    }
+}
+
+/// Format one engine event for the headless observation stream.
+///
+/// Role is sourced from `iteration.banner`, matching the engine's current
+/// iteration routing truth. Events that do not represent user-facing progress
+/// update context or are omitted.
+fn format_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) -> Option<String> {
+    match event.kind.as_str() {
+        "iteration.banner" => {
+            ctx.iteration = event.iteration;
+            ctx.max_iterations = event.max_iterations;
+            ctx.role = event
+                .allowed_roles
+                .as_ref()
+                .and_then(|roles| roles.first())
+                .cloned();
+            None
+        }
+        "iteration.start" => {
+            ctx.iteration = event.iteration.or(ctx.iteration);
+            ctx.max_iterations = event.max_iterations.or(ctx.max_iterations);
+            Some(format!(
+                "autoloop: iteration {} role={} started",
+                ctx.iteration_label(event),
+                ctx.role()
+            ))
+        }
+        "iteration.footer" => Some(format!(
+            "autoloop: iteration {} role={} finished",
+            ctx.iteration_label(event),
+            ctx.role()
+        )),
+        "progress" => {
+            ctx.iteration = event.iteration.or(ctx.iteration);
+            let topic = event.emitted_topic.as_deref().unwrap_or("none");
+            let outcome = event.outcome.as_deref().unwrap_or("unknown");
+            Some(format!(
+                "autoloop: iteration {} role={} progress emitted_topic={} outcome={}",
+                ctx.iteration_label(event),
+                ctx.role(),
+                topic,
+                outcome
+            ))
+        }
+        "ask.pending" => {
+            ctx.iteration = event.iteration.or(ctx.iteration);
+            let question = sanitize_tui_inline_text(event.question.as_deref().unwrap_or_default());
+            Some(format!(
+                "autoloop: iteration {} role={} HUMAN ASK: {}",
+                ctx.iteration_label(event),
+                ctx.role(),
+                question
+            ))
+        }
+        "loop.finish" | "summary" => {
+            let iterations = event.iterations.unwrap_or_default();
+            let stop_reason = event.stop_reason.as_deref().unwrap_or("unknown");
+            let cost = event
+                .cost_usd
+                .map(|cost| format!(" cost_usd=${cost:.4}"))
+                .unwrap_or_default();
+            Some(format!(
+                "autoloop: finished iterations={iterations} stop_reason={stop_reason}{cost}"
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn print_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) {
+    let Some(line) = format_headless_event(event, ctx) else {
+        return;
+    };
+    println!("{line}");
+    // A pipe is block-buffered; explicitly flush so bot daemons and callers
+    // consuming stdout observe each progress line before the child exits.
+    let _ = std::io::stdout().flush();
+}
+
+/// Run autoloop headlessly while live-tailing its structured event stream.
+async fn run_autoloop_headless(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+) -> Result<AutoloopOutcome> {
+    use tokio::sync::watch;
+
+    // Headless intentionally leaves autoloop in Ralph's process group. Unlike
+    // the interactive TUI path, there is no local quit action requiring Ralph
+    // to kill a separately-owned subprocess tree.
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let (terminated_tx, mut terminated_rx) = watch::channel(false);
+
+    let reader_handle = tokio::spawn(async move {
+        let mut tailer = AutoloopEventTailer::new(events_path);
+        let mut ctx = HeadlessPrintCtx::default();
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = terminated_rx.changed() => {
+                    if *terminated_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = ticker.tick() => {
+                    match tailer.poll() {
+                        Ok(events) => {
+                            for event in &events {
+                                print_headless_event(event, &mut ctx);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "headless autoloop event reader poll failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        // autoloop writes terminal events immediately before exit. Drain once
+        // after cancellation so those final structured facts are not lost.
+        match tailer.poll() {
+            Ok(events) => {
+                for event in &events {
+                    print_headless_event(event, &mut ctx);
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "headless autoloop event reader final drain failed");
+            }
+        }
+    });
+
+    let wait_handle = tokio::spawn(async move {
+        let summary = tokio::task::spawn_blocking(move || runner.wait_with_summary(child))
+            .await
+            .context("autoloop wait task panicked")
+            .and_then(|summary| summary.context("autoloop run failed"));
+        let _ = terminated_tx.send(true);
+        summary
+    });
+
+    let summary = wait_handle.await.context("autoloop wait join failed")?;
+    reader_handle
+        .await
+        .context("headless autoloop event reader task failed")?;
+
+    Ok(interpret_autoloop_result(summary, false))
 }
 
 /// Run the autoloop subprocess with the in-process live TUI.
@@ -574,6 +749,57 @@ mod tests {
             journal: PathBuf::from("/tmp/journal.jsonl"),
             memory: PathBuf::from("/tmp/memory.jsonl"),
         }
+    }
+
+    #[test]
+    fn headless_formatter_reports_engine_iteration_truth() {
+        let events = parse_events(concat!(
+            r#"{"type":"iteration.banner","iteration":2,"maxIterations":4,"allowedRoles":["builder"]}"#,
+            "\n",
+            r#"{"type":"iteration.start","runId":"r1","iteration":2,"maxIterations":4}"#,
+            "\n",
+            r#"{"type":"progress","runId":"r1","iteration":2,"allowedRoles":["builder"],"emittedTopic":"build.done","outcome":"continue:routed_event"}"#,
+            "\n",
+            r#"{"type":"iteration.footer","iteration":2,"elapsedS":1.5}"#,
+            "\n",
+            r#"{"type":"loop.finish","runId":"r1","iterations":2,"stopReason":"completed","costUsd":0.25}"#,
+            "\n",
+        ));
+        let mut ctx = HeadlessPrintCtx::default();
+        let lines: Vec<_> = events
+            .iter()
+            .filter_map(|event| format_headless_event(event, &mut ctx))
+            .collect();
+
+        assert_eq!(
+            lines,
+            vec![
+                "autoloop: iteration 2/4 role=builder started",
+                "autoloop: iteration 2/4 role=builder progress emitted_topic=build.done outcome=continue:routed_event",
+                "autoloop: iteration 2/4 role=builder finished",
+                "autoloop: finished iterations=2 stop_reason=completed cost_usd=$0.2500",
+            ]
+        );
+    }
+
+    #[test]
+    fn headless_formatter_sanitizes_human_ask() {
+        let events = parse_events(concat!(
+            r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"allowedRoles":["planner"]}"#,
+            "\n",
+            r#"{"type":"ask.pending","runId":"r1","iteration":1,"questionId":"q1","question":"line1\nline2\u0007"}"#,
+            "\n",
+        ));
+        let mut ctx = HeadlessPrintCtx::default();
+        let lines: Vec<_> = events
+            .iter()
+            .filter_map(|event| format_headless_event(event, &mut ctx))
+            .collect();
+
+        assert_eq!(
+            lines,
+            vec!["autoloop: iteration 1/3 role=planner HUMAN ASK: line1 line2"]
+        );
     }
 
     #[test]
