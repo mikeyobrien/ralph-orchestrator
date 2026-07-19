@@ -4,6 +4,42 @@ All notable changes to ralph-orchestrator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-07-19
+
+The v3 major: the in-house orchestration engine (~31K lines) is replaced by
+the [autoloop](https://github.com/mikeyobrien/autoloop) runtime (>= 0.10.0)
+running as a subprocess. Ralph is now the TUI frontend and
+observation/coordination plane; autoloop owns loop execution, role dispatch,
+completion, and budgets. See docs/migration/v3-autoloop-engine.md.
+
+### Added
+- Autoloop engine driver, preset generation from hats (incl. per-role
+  concurrency/aggregation), completion coordination bridge, journal/--events
+  native consumption, live headless progress streaming.
+- Dependency health: `ralph doctor` autoloop/Node rows, fail-before-lock
+  preflight on run/resume/bot, pinned minimum engine version.
+- No-Node channel: `ralph doctor --install-engine` downloads the
+  SHA256-verified standalone engine binary to `~/.ralph/engine/`.
+- Fake-autoloop replay fixture substrate; revived `ralph-e2e --mock` driving
+  the real engine path.
+
+### Changed
+- Backend selection, budgets, tasks/memories, and merge coordination are
+  forwarded to/delegated to the engine; unmappable configuration fails fast
+  instead of being silently ignored.
+- Docs, shipped presets, and compiled-in agent instructions rewritten for
+  the v3 architecture.
+
+### Removed
+- In-house engine (`event_loop`, `hatless_ralph`, waves, `loop_runner`),
+  `ralph wave` CLI, `--rpc` JSON-lines mode, `--record-session`, the v2
+  smoke corpus. `core.engine` is inert.
+
+### Known gaps (tracked)
+- Telegram RObot HITL inactive during runs pending engine relay (#345);
+  RPC mode (#343).
+
+
 ## [2.10.1] - 2026-06-22
 
 ### Fixed

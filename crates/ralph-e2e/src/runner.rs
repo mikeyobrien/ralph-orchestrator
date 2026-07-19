@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn test_configure_mock_mode_uses_stdin_prompt_mode() {
-        let workspace = test_workspace_base("mock-mode-stdin");
+        let workspace = test_workspace("runner", "mock-mode-stdin");
         cleanup_workspace(&workspace);
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(
