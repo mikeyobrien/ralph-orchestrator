@@ -112,17 +112,19 @@ Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
 
 ## Architecture
 
-Ralph is organized as a Cargo workspace with seven crates:
+Ralph is organized as a Cargo workspace with nine crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `ralph-proto` | Protocol types: Event, Hat, Topic |
-| `ralph-core` | Business logic: EventLoop, Config |
-| `ralph-adapters` | CLI backend integrations |
-| `ralph-tui` | Terminal UI with ratatui |
-| `ralph-cli` | Binary entry point |
-| `ralph-e2e` | End-to-end testing |
-| `ralph-bench` | Benchmarking |
+| `ralph-cli` | CLI/TUI frontend, autoloop launch, completion and merge coordination |
+| `ralph-core` | Shared configuration and coordination state |
+| `ralph-adapters` | Autoloop process, journal, event-stream, and summary adapters |
+| `ralph-tui` | Ratatui observation UI |
+| `ralph-proto` | Shared protocol definitions |
+| `ralph-telegram` | Retained Telegram components; not connected to `ralph run` under v3 pending autoloop#345 |
+| `ralph-e2e` | Legacy E2E scenario inventory and test framework |
+| `ralph-bench` | Benchmarking support |
+| `ralph-api` | Rust RPC API used by the web dashboard |
 
 ## Community
 

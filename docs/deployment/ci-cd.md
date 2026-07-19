@@ -312,7 +312,7 @@ jobs:
           \`\`\`
           
           ## Changelog
-          See [CHANGELOG.md](CHANGELOG.md) for details.
+          See [CHANGELOG.md](../reference/changelog.md) for details.
 ```
 
 ## GitLab CI/CD
