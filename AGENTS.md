@@ -67,8 +67,6 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 - **CLI commands**: `crates/ralph-cli/src/loops.rs`, `task_cli.rs`
 - **Telegram integration**: `crates/ralph-telegram/src/` (bot, service, state, handler)
 - **RObot config**: `crates/ralph-core/src/config.rs` (`RobotConfig`, `TelegramBotConfig`)
-- **Wave system**: `crates/ralph-core/src/wave_tracker.rs`, `wave_detection.rs`, `wave_prompt.rs`
-- **Wave CLI**: `crates/ralph-cli/src/wave.rs`
 - **Web server**: `backend/ralph-web-server/src/` (tRPC routes in `api/`, runners in `runner/`)
 - **Web dashboard**: `frontend/ralph-web/src/` (React components in `components/`)
 
@@ -149,11 +147,9 @@ ralph run -p "Add footer after </p>" --max-iterations 5
 ralph loops
 ```
 
-## Agent Waves (Intra-Loop Parallelism)
+## Autoloop Role Concurrency
 
-Waves enable a single hat to process multiple work items in parallel within one iteration.
-
-### Hat Config Fields
+Hat concurrency and aggregation are translated into the generated autoloop topology:
 
 ```yaml
 hats:
@@ -161,48 +157,28 @@ hats:
     name: "Reviewer"
     triggers: ["review.file"]
     publishes: ["review.done"]
-    concurrency: 4              # Max parallel workers (default: 1)
+    concurrency: 4              # Declarative parallel branches
     instructions: "..."
 
   synthesizer:
     triggers: ["review.done"]
     publishes: ["review.complete"]
-    aggregate:                   # Buffer results until all arrive
+    aggregate:                   # Wait for all branch results
       mode: wait_for_all
-      timeout: 300               # Seconds to wait
+      timeout: 300               # Seconds
 ```
 
-- `concurrency > 1` enables wave execution for a hat
-- `aggregate` makes a hat wait for all wave results before activating
-- A hat cannot have both `concurrency > 1` and `aggregate`
-
-### Wave Dispatch
-
-Agents dispatch waves via CLI:
-```bash
-ralph wave emit review.file --payloads "src/main.rs" "src/lib.rs" "src/config.rs"
-```
-
-### How It Works
-
-1. Agent emits wave events (tagged with shared `wave_id`)
-2. Loop runner detects wave events, resolves target hat
-3. Spawns N parallel backend instances (up to `concurrency` limit)
-4. Each worker gets: focused prompt, per-worker events file, wave env vars
-5. Results merged back to main events file
-6. Aggregator hat picks up results on next iteration
-
-### Key Code Locations
-
-- **Wave CLI**: `crates/ralph-cli/src/wave.rs`
-- **Wave detection**: `crates/ralph-core/src/wave_detection.rs`
-- **Worker prompt**: `crates/ralph-core/src/wave_prompt.rs`
-- **Wave tracker**: `crates/ralph-core/src/wave_tracker.rs`
-- **Loop integration**: `crates/ralph-cli/src/loop_runner.rs` (`execute_wave`)
+- `concurrency > 1` maps to autoloop per-role `concurrency`; routing one event to the role
+  launches that many declarative branches, each prefixed with `[branch i/N]`.
+- `aggregate` maps to autoloop role aggregation; Ralph's timeout seconds are converted to
+  `timeout_ms` in the generated topology.
+- A hat cannot have both `concurrency > 1` and `aggregate`.
+- Agents publish normal handoff events through the live autoloop harness event tool; autoloop
+  owns parallel dispatch and result aggregation.
 
 ### Presets
 
-- `presets/wave-review.yml` — Scatter-gather code review
+- `presets/wave-review.yml` — Declarative autoloop-concurrency scatter-gather review
 
 ## Smoke Tests (Replay-Based)
 

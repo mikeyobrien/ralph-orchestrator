@@ -14,6 +14,8 @@
 //! | `hats.<id>.publishes`                   | `[[role]] emits`                  |
 //! | `hats.<id>.instructions`                | `roles/<id>.md` (`prompt_file`)   |
 //! | `hats.<id>.triggers` (inverted)         | `[handoff] <event> = [role, ...]` |
+//! | `hats.<id>.concurrency` (when > 1)      | `[[role]] concurrency`            |
+//! | `hats.<id>.aggregate`                   | `[[role]] aggregate`              |
 //! | `event_loop.completion_promise`         | `event_loop.completion_promise`   |
 //! | `event_loop.required_events`            | `event_loop.required_events`      |
 //! | `event_loop.max_iterations`             | `event_loop.max_iterations`       |
@@ -93,6 +95,18 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
             topo.push_str(&format!("name = {}\n", q(&hat.name)));
         }
         topo.push_str(&format!("emits = {}\n", arr(&hat.publishes)));
+        if hat.concurrency > 1 {
+            topo.push_str(&format!("concurrency = {}\n", hat.concurrency));
+        }
+        if let Some(aggregate) = &hat.aggregate {
+            // Ralph's aggregate schema currently accepts only wait_for_all.
+            let mode = "wait_for_all";
+            let timeout_ms = u64::from(aggregate.timeout) * 1_000;
+            topo.push_str(&format!(
+                "aggregate = {{ mode = {}, timeout_ms = {timeout_ms} }}\n",
+                q(mode)
+            ));
+        }
         topo.push_str(&format!("prompt_file = {}\n\n", q(&role_file)));
     }
     topo.push_str("[handoff]\n");
@@ -439,6 +453,99 @@ hats:
         // The generated preset is loadable by ralph's own autoloop preset reader
         // (round-trip sanity against preset_source's detector).
         assert!(dir.path().join("topology.toml").is_file());
+    }
+
+    #[test]
+    fn writes_hat_concurrency_above_sequential_default() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  reviewer:
+    name: Reviewer
+    description: "reviews"
+    triggers: ["review.ready"]
+    publishes: ["review.done"]
+    instructions: "Review it."
+    concurrency: 4
+"#,
+        )
+        .expect("valid concurrent hat config");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(topo.contains("id = \"reviewer\"\n"));
+        assert!(topo.contains("concurrency = 4\n"));
+    }
+
+    #[test]
+    fn omits_hat_concurrency_at_sequential_default() {
+        let cfg = config_with_hats();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(!topo.contains("concurrency ="));
+    }
+
+    #[test]
+    fn writes_hat_aggregate_with_millisecond_timeout() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  synthesizer:
+    name: Synthesizer
+    description: "synthesizes"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    instructions: "Synthesize it."
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#,
+        )
+        .expect("valid aggregate hat config");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(topo.contains("id = \"synthesizer\"\n"));
+        assert!(topo.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n"));
+    }
+
+    #[test]
+    fn ports_wave_review_preset_to_declarative_autoloop_topology() {
+        let preset_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../presets/wave-review.yml");
+        let yaml = fs::read_to_string(&preset_path).expect("wave review preset should be readable");
+        let mut cfg: RalphConfig =
+            serde_yaml::from_str(&yaml).expect("wave review preset should parse");
+        cfg.normalize();
+        cfg.validate()
+            .expect("wave review preset should pass config validation");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).expect("wave review preset should generate");
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        let reviewer = topo
+            .split("[[role]]\n")
+            .find(|block| block.lines().any(|line| line == "id = \"reviewer\""))
+            .expect("reviewer role should be generated");
+        assert!(reviewer.contains("concurrency = 3\n"));
+
+        let synthesizer = topo
+            .split("[[role]]\n")
+            .find(|block| block.lines().any(|line| line == "id = \"synthesizer\""))
+            .expect("synthesizer role should be generated");
+        assert!(
+            synthesizer.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n")
+        );
+        assert!(topo.contains("\"review.perspective\" = [\"reviewer\"]\n"));
+        assert!(topo.contains("\"review.done\" = [\"synthesizer\"]\n"));
     }
 
     #[test]
