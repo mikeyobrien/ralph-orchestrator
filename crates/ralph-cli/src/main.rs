@@ -960,6 +960,7 @@ async fn main() -> Result<()> {
     install_panic_hook();
 
     let cli = Cli::parse();
+    let use_colors = cli.color.should_use_colors();
 
     // Detect if TUI mode is requested - TUI owns the terminal, so logs must not go to stdout
     // TUI is enabled by default unless --no-tui, --autonomous, or --rpc is specified
@@ -1045,21 +1046,30 @@ async fn main() -> Result<()> {
             {
                 if let Ok(trace_layer) = DiagnosticTraceLayer::new(session_dir) {
                     tracing_subscriber::registry()
-                        .with(tracing_subscriber::fmt::layer())
+                        .with(tracing_subscriber::fmt::layer().with_ansi(use_colors))
                         .with(tracing_subscriber::EnvFilter::new(filter))
                         .with(trace_layer)
                         .init();
                 } else {
                     // Fallback: just stdout
-                    tracing_subscriber::fmt().with_env_filter(filter).init();
+                    tracing_subscriber::fmt()
+                        .with_env_filter(filter)
+                        .with_ansi(use_colors)
+                        .init();
                 }
             } else {
                 // Fallback: just stdout
-                tracing_subscriber::fmt().with_env_filter(filter).init();
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_ansi(use_colors)
+                    .init();
             }
         } else {
             // Normal mode without diagnostics: just stdout
-            tracing_subscriber::fmt().with_env_filter(filter).init();
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_ansi(use_colors)
+                .init();
         }
     }
 
