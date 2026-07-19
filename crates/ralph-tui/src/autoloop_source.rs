@@ -12,6 +12,7 @@
 //! updates at iteration **boundaries**, not per-token, so the content pane
 //! advances one iteration at a time (no live token streaming).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -38,12 +39,18 @@ pub struct AutoloopMapCtx {
     /// The iteration number of the most recently started iteration. Used to
     /// only reset/create a buffer when the number actually changes.
     current_iteration: Option<u32>,
+    /// User-facing names for engine role IDs. Explicit presets leave this
+    /// empty and display their role IDs directly.
+    role_display_names: HashMap<String, String>,
 }
 
 impl AutoloopMapCtx {
-    /// Creates an empty context.
-    pub fn new() -> Self {
-        Self::default()
+    /// Creates a context with optional user-facing names for engine role IDs.
+    pub fn new(role_display_names: HashMap<String, String>) -> Self {
+        Self {
+            role_display_names,
+            ..Self::default()
+        }
     }
 
     /// The hat/role display label to attribute the current iteration to.
@@ -51,6 +58,15 @@ impl AutoloopMapCtx {
         self.role_label
             .clone()
             .unwrap_or_else(|| "autoloop".to_string())
+    }
+
+    /// Maps an engine role ID to its configured display name, falling back to
+    /// the ID itself for explicit presets.
+    fn role_display_name(&self, role_id: &str) -> String {
+        self.role_display_names
+            .get(role_id)
+            .cloned()
+            .unwrap_or_else(|| role_id.to_string())
     }
 }
 
@@ -79,11 +95,18 @@ pub fn apply_autoloop_event(
 
     match event.kind.as_str() {
         "iteration.banner" => {
-            ctx.role_label = event
-                .allowed_roles
-                .as_ref()
-                .and_then(|roles| roles.first())
-                .cloned();
+            if let Some(role_id) = event.allowed_roles.as_ref().and_then(|roles| roles.first()) {
+                let role_label = ctx.role_display_name(role_id);
+                ctx.role_label = Some(role_label.clone());
+
+                // autoloop emits iteration.start before iteration.banner. Fix
+                // the placeholder (or previous role) attached at start time
+                // without creating a second buffer. Banner-before-start also
+                // remains supported through ctx.role_label above.
+                if event.iteration == ctx.current_iteration {
+                    s.set_latest_iteration_hat_display(role_label);
+                }
+            }
             s.last_event = Some("iteration.banner".to_string());
             s.last_event_at = Some(now);
         }
@@ -255,9 +278,10 @@ pub async fn run_autoloop_event_reader(
     events_path: PathBuf,
     state: Arc<Mutex<TuiState>>,
     mut cancel_rx: watch::Receiver<bool>,
+    role_display_names: HashMap<String, String>,
 ) {
     let mut tailer = AutoloopEventTailer::new(events_path);
-    let mut ctx = AutoloopMapCtx::new();
+    let mut ctx = AutoloopMapCtx::new(role_display_names);
     let mut saw_terminal = false;
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
@@ -359,7 +383,7 @@ mod tests {
     #[test]
     fn iteration_start_sets_iteration_and_max() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
 
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":7,"runId":"r1"}"#),
@@ -379,7 +403,7 @@ mod tests {
     #[test]
     fn duplicate_iteration_start_does_not_create_second_buffer() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         let line = r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#;
         apply_autoloop_event(&ev(line), &state, &mut ctx);
         apply_autoloop_event(&ev(line), &state, &mut ctx);
@@ -394,17 +418,18 @@ mod tests {
     #[test]
     fn banner_labels_each_iteration_with_its_current_role() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
 
+        // Real autoloop order is iteration.start followed by iteration.banner.
         apply_autoloop_event(
-            &ev(
-                r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"runId":"r1","allowedRoles":["planner"]}"#,
-            ),
+            &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
             &state,
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"runId":"r1","allowedRoles":["planner"]}"#,
+            ),
             &state,
             &mut ctx,
         );
@@ -424,14 +449,14 @@ mod tests {
         );
 
         apply_autoloop_event(
-            &ev(
-                r#"{"type":"iteration.banner","iteration":2,"maxIterations":3,"runId":"r1","allowedRoles":["builder"]}"#,
-            ),
+            &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":3,"runId":"r1"}"#),
             &state,
             &mut ctx,
         );
         apply_autoloop_event(
-            &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":3,"runId":"r1"}"#),
+            &ev(
+                r#"{"type":"iteration.banner","iteration":2,"maxIterations":3,"runId":"r1","allowedRoles":["builder"]}"#,
+            ),
             &state,
             &mut ctx,
         );
@@ -439,12 +464,76 @@ mod tests {
         let s = state.lock().unwrap();
         assert_eq!(s.iterations[0].hat_display.as_deref(), Some("planner"));
         assert_eq!(s.iterations[1].hat_display.as_deref(), Some("builder"));
+        assert!(
+            s.iterations
+                .iter()
+                .all(|iteration| { iteration.hat_display.as_deref() != Some("autoloop") })
+        );
+    }
+
+    #[test]
+    fn explicit_preset_uses_role_ids_for_all_iterations() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
+
+        for (iteration, role) in [(1, "planner"), (2, "builder"), (3, "finalizer")] {
+            apply_autoloop_event(
+                &ev(&format!(
+                    r#"{{"type":"iteration.start","iteration":{iteration},"maxIterations":3,"runId":"r1"}}"#
+                )),
+                &state,
+                &mut ctx,
+            );
+            apply_autoloop_event(
+                &ev(&format!(
+                    r#"{{"type":"iteration.banner","iteration":{iteration},"maxIterations":3,"runId":"r1","allowedRoles":["{role}"]}}"#
+                )),
+                &state,
+                &mut ctx,
+            );
+        }
+
+        let s = state.lock().unwrap();
+        let labels: Vec<_> = s
+            .iterations
+            .iter()
+            .map(|iteration| iteration.hat_display.as_deref())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![Some("planner"), Some("builder"), Some("finalizer")]
+        );
+    }
+
+    #[test]
+    fn banner_maps_role_id_to_display_name() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::from([(
+            "builder".to_string(),
+            "🔨 Builder".to_string(),
+        )]));
+
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
+            &state,
+            &mut ctx,
+        );
+        apply_autoloop_event(
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"runId":"r1","allowedRoles":["builder"]}"#,
+            ),
+            &state,
+            &mut ctx,
+        );
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("🔨 Builder"));
     }
 
     #[test]
     fn backend_output_splits_into_lines() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
             &state,
@@ -465,7 +554,7 @@ mod tests {
     #[test]
     fn ask_pending_sets_footer_and_line() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
             &state,
@@ -494,7 +583,7 @@ mod tests {
     #[test]
     fn progress_timeout_clears_pending_ask() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"ask.pending","question":"Still waiting?"}"#),
             &state,
@@ -512,7 +601,7 @@ mod tests {
     #[test]
     fn ask_pending_sanitizes_footer_question() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev("{\"type\":\"ask.pending\",\"question\":\"line1\\nline2\\u0007\"}"),
             &state,
@@ -528,7 +617,7 @@ mod tests {
     #[test]
     fn loop_finish_completes_and_freezes_elapsed() {
         let state = make_state();
-        let mut ctx = AutoloopMapCtx::new();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
             &state,
@@ -578,7 +667,7 @@ mod tests {
         let reader_state = Arc::clone(&state);
         let reader_path = path.clone();
         let handle = tokio::spawn(async move {
-            run_autoloop_event_reader(reader_path, reader_state, cancel_rx).await;
+            run_autoloop_event_reader(reader_path, reader_state, cancel_rx, HashMap::new()).await;
         });
 
         // Give the reader a couple of ticks to consume the first event.
@@ -616,7 +705,7 @@ mod tests {
         let reader_state = Arc::clone(&state);
         let reader_path = path.clone();
         let handle = tokio::spawn(async move {
-            run_autoloop_event_reader(reader_path, reader_state, cancel_rx).await;
+            run_autoloop_event_reader(reader_path, reader_state, cancel_rx, HashMap::new()).await;
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;

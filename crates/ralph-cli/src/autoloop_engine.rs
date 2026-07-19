@@ -302,7 +302,14 @@ pub async fn run_autoloop_engine(
         // In-process TUI: render the autoloop run live by tailing its --events
         // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
         // child (see run_autoloop_with_tui).
-        match run_autoloop_with_tui(runner, events_path.clone(), workspace.clone()).await {
+        match run_autoloop_with_tui(
+            runner,
+            events_path.clone(),
+            workspace.clone(),
+            role_display_names,
+        )
+        .await
+        {
             Ok(outcome) => outcome,
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop TUI run failed")),
         }
@@ -648,6 +655,7 @@ async fn run_autoloop_with_tui(
     runner: AutoloopRunner,
     events_path: PathBuf,
     workspace: PathBuf,
+    role_display_names: HashMap<String, String>,
 ) -> Result<AutoloopOutcome> {
     use ralph_tui::Tui;
     use tokio::sync::watch;
@@ -678,7 +686,13 @@ async fn run_autoloop_with_tui(
         let reader_state = Arc::clone(&state);
         let cancel_rx = terminated_rx.clone();
         tokio::spawn(async move {
-            ralph_tui::run_autoloop_event_reader(events_path, reader_state, cancel_rx).await;
+            ralph_tui::run_autoloop_event_reader(
+                events_path,
+                reader_state,
+                cancel_rx,
+                role_display_names,
+            )
+            .await;
         })
     };
 
