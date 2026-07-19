@@ -1,4 +1,7 @@
-use ralph_core::autoloop_health::VENDORED_AUTOLOOP_VERSION;
+use anyhow::{Context, Result};
+use ralph_adapters::AutoloopBin;
+use ralph_core::autoloop_health::{AutoloopHealth, VENDORED_AUTOLOOP_VERSION, check_autoloop};
+use std::io::{self, Write};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +48,50 @@ pub fn too_old_prompt(path: &Path, found_version: &str) -> String {
         "autoloop engine v{found_version} at {} is too old; the vendored engine will outrank PATH — download v{VENDORED_AUTOLOOP_VERSION} to ~/.ralph/engine now? [Y/n]",
         path.display()
     )
+}
+
+pub fn ensure_autoloop_with_provisioning(
+    interactive: bool,
+    skip_preflight: bool,
+) -> Result<AutoloopBin> {
+    let health = check_autoloop();
+    let needs_provisioning = matches!(
+        &health,
+        AutoloopHealth::Missing | AutoloopHealth::TooOld { .. } if !skip_preflight
+    );
+
+    if !needs_provisioning {
+        return crate::ensure_autoloop_for_run(health, skip_preflight);
+    }
+
+    match provisioning_decision(interactive, auto_install_opt_in()) {
+        ProvisionDecision::Refuse => {
+            return crate::ensure_autoloop_for_run(health, skip_preflight);
+        }
+        ProvisionDecision::PromptUser => {
+            let prompt = match &health {
+                AutoloopHealth::Missing => missing_prompt(),
+                AutoloopHealth::TooOld { path, version, .. } => too_old_prompt(path, version),
+                _ => unreachable!("only unavailable engines reach the provisioning prompt"),
+            };
+            eprint!("{prompt} ");
+            io::stderr()
+                .flush()
+                .context("failed to display the autoloop engine download prompt")?;
+
+            let mut response = String::new();
+            io::stdin()
+                .read_line(&mut response)
+                .context("failed to read the autoloop engine download response")?;
+            if !prompt_accepts(&response) {
+                return crate::ensure_autoloop_for_run(health, skip_preflight);
+            }
+        }
+        ProvisionDecision::AutoInstall => {}
+    }
+
+    crate::engine_install::install().context("failed to provision the autoloop engine")?;
+    crate::ensure_autoloop_for_run(check_autoloop(), skip_preflight)
 }
 
 #[cfg(test)]
