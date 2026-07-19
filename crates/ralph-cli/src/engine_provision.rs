@@ -33,6 +33,14 @@ fn auto_install_opt_in_value(value: Option<&str>) -> bool {
     })
 }
 
+fn needs_provisioning(health: &AutoloopHealth, skip_preflight: bool) -> bool {
+    match health {
+        AutoloopHealth::Missing => true,
+        AutoloopHealth::TooOld { .. } => !skip_preflight,
+        AutoloopHealth::VersionUnknown { .. } | AutoloopHealth::Ok { .. } => false,
+    }
+}
+
 pub fn prompt_accepts(line: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes")
 }
@@ -55,12 +63,8 @@ pub fn ensure_autoloop_with_provisioning(
     skip_preflight: bool,
 ) -> Result<AutoloopBin> {
     let health = check_autoloop();
-    let needs_provisioning = matches!(
-        &health,
-        AutoloopHealth::Missing | AutoloopHealth::TooOld { .. } if !skip_preflight
-    );
 
-    if !needs_provisioning {
+    if !needs_provisioning(&health, skip_preflight) {
         return crate::ensure_autoloop_for_run(health, skip_preflight);
     }
 
@@ -97,6 +101,34 @@ pub fn ensure_autoloop_with_provisioning(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::autoloop_health::AutoloopSource;
+
+    #[test]
+    fn provisioning_need_respects_health_and_skip_preflight() {
+        let too_old = AutoloopHealth::TooOld {
+            path: "/usr/local/bin/autoloop".into(),
+            version: "0.9.0".into(),
+            source: AutoloopSource::PathLookup,
+        };
+        let ok = AutoloopHealth::Ok {
+            path: "/usr/local/bin/autoloop".into(),
+            version: VENDORED_AUTOLOOP_VERSION.into(),
+            source: AutoloopSource::PathLookup,
+        };
+        let version_unknown = AutoloopHealth::VersionUnknown {
+            path: "/usr/local/bin/autoloop".into(),
+            source: AutoloopSource::PathLookup,
+        };
+
+        assert!(needs_provisioning(&AutoloopHealth::Missing, false));
+        assert!(needs_provisioning(&AutoloopHealth::Missing, true));
+        assert!(needs_provisioning(&too_old, false));
+        assert!(!needs_provisioning(&too_old, true));
+        assert!(!needs_provisioning(&ok, false));
+        assert!(!needs_provisioning(&ok, true));
+        assert!(!needs_provisioning(&version_unknown, false));
+        assert!(!needs_provisioning(&version_unknown, true));
+    }
 
     #[test]
     fn provisioning_decision_respects_interactivity_and_explicit_opt_in() {
