@@ -27,13 +27,13 @@ use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
 use ralph_core::sanitize_tui_inline_text;
 
-/// Per-reader translation context: tracks the role label autoloop last reported
-/// (autoloop's role ≈ ralph's hat) so the *next* `iteration.start` can label its
-/// iteration, plus the last-seen iteration number to detect boundaries.
+/// Per-reader translation context: tracks the current iteration's role label
+/// from `iteration.banner` (autoloop's role ≈ ralph's hat), plus the last-seen
+/// iteration number to detect boundaries.
 #[derive(Debug, Default)]
 pub struct AutoloopMapCtx {
     /// Display label for the active role, from the most recent
-    /// `progress.allowedRoles[0]`. `None` until the first progress event.
+    /// `iteration.banner.allowedRoles[0]`. `None` until the first banner.
     role_label: Option<String>,
     /// The iteration number of the most recently started iteration. Used to
     /// only reset/create a buffer when the number actually changes.
@@ -46,7 +46,7 @@ impl AutoloopMapCtx {
         Self::default()
     }
 
-    /// The hat/role display label to attribute the next iteration to.
+    /// The hat/role display label to attribute the current iteration to.
     fn hat_display(&self) -> String {
         self.role_label
             .clone()
@@ -60,8 +60,9 @@ impl AutoloopMapCtx {
 ///
 /// | kind             | effect                                                       |
 /// |------------------|--------------------------------------------------------------|
+/// | `iteration.banner` | records the current iteration's role label                |
 /// | `iteration.start`| new iteration buffer + `iteration`/`max_iterations`          |
-/// | `progress`       | `→ <emittedTopic> (<outcome>)` status line; updates role      |
+/// | `progress`       | `→ <emittedTopic> (<outcome>)` status line; expires asks      |
 /// | `backend.output` | splits agent output into lines in the current iteration      |
 /// | `ask.pending`    | `⚠ HUMAN ASK` line + footer `pending_ask` (display only)      |
 /// | `loop.finish`/`summary` | final iteration count + cost; freezes via `apply_loop_completed` |
@@ -77,6 +78,16 @@ pub fn apply_autoloop_event(
     let now = Instant::now();
 
     match event.kind.as_str() {
+        "iteration.banner" => {
+            ctx.role_label = event
+                .allowed_roles
+                .as_ref()
+                .and_then(|roles| roles.first())
+                .cloned();
+            s.last_event = Some("iteration.banner".to_string());
+            s.last_event_at = Some(now);
+        }
+
         "iteration.start" => {
             let iteration = event.iteration.unwrap_or(0);
             // Only start a fresh buffer when the iteration number advances —
@@ -104,11 +115,11 @@ pub fn apply_autoloop_event(
         }
 
         "progress" => {
-            // Update the role label for the NEXT iteration's header.
-            if let Some(roles) = &event.allowed_roles
-                && let Some(first) = roles.first()
-            {
-                ctx.role_label = Some(first.clone());
+            if matches!(
+                event.outcome.as_deref(),
+                Some("ask:timeout" | "ask:answered")
+            ) {
+                s.pending_ask = None;
             }
 
             let topic = event.emitted_topic.as_deref().unwrap_or("(none)");
@@ -159,7 +170,7 @@ pub fn apply_autoloop_event(
                     Span::raw(sanitize_tui_inline_text(&question)),
                 ]),
             );
-            s.pending_ask = Some(question);
+            s.pending_ask = Some(sanitize_tui_inline_text(&question));
 
             s.last_event = Some("ask.pending".to_string());
             s.last_event_at = Some(now);
@@ -381,10 +392,17 @@ mod tests {
     }
 
     #[test]
-    fn progress_pushes_routing_line_and_updates_role() {
+    fn banner_labels_each_iteration_with_its_current_role() {
         let state = make_state();
         let mut ctx = AutoloopMapCtx::new();
 
+        apply_autoloop_event(
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"runId":"r1","allowedRoles":["planner"]}"#,
+            ),
+            &state,
+            &mut ctx,
+        );
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
             &state,
@@ -405,18 +423,22 @@ mod tests {
             "expected routing line, got: {text:?}"
         );
 
-        // The role label is now available for the NEXT iteration's header.
+        apply_autoloop_event(
+            &ev(
+                r#"{"type":"iteration.banner","iteration":2,"maxIterations":3,"runId":"r1","allowedRoles":["builder"]}"#,
+            ),
+            &state,
+            &mut ctx,
+        );
         apply_autoloop_event(
             &ev(r#"{"type":"iteration.start","iteration":2,"maxIterations":3,"runId":"r1"}"#),
             &state,
             &mut ctx,
         );
+
         let s = state.lock().unwrap();
-        assert_eq!(
-            s.iterations.last().unwrap().hat_display.as_deref(),
-            Some("planner"),
-            "second iteration should be labelled with the role from progress"
-        );
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("planner"));
+        assert_eq!(s.iterations[1].hat_display.as_deref(), Some("builder"));
     }
 
     #[test]
@@ -467,6 +489,40 @@ mod tests {
                 .any(|l| l.contains("HUMAN ASK") && l.contains("Proceed with delete?")),
             "expected human-ask line, got: {text:?}"
         );
+    }
+
+    #[test]
+    fn progress_timeout_clears_pending_ask() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new();
+        apply_autoloop_event(
+            &ev(r#"{"type":"ask.pending","question":"Still waiting?"}"#),
+            &state,
+            &mut ctx,
+        );
+        apply_autoloop_event(
+            &ev(r#"{"type":"progress","outcome":"ask:timeout"}"#),
+            &state,
+            &mut ctx,
+        );
+
+        assert_eq!(state.lock().unwrap().pending_ask, None);
+    }
+
+    #[test]
+    fn ask_pending_sanitizes_footer_question() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new();
+        apply_autoloop_event(
+            &ev("{\"type\":\"ask.pending\",\"question\":\"line1\\nline2\\u0007\"}"),
+            &state,
+            &mut ctx,
+        );
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_ask.as_deref(), Some("line1 line2"));
+        let question = s.pending_ask.as_deref().unwrap();
+        assert!(!question.contains(['\n', '\r', '\u{0007}']));
     }
 
     #[test]
