@@ -6,6 +6,7 @@
 //! result onto ralph's [`TerminationReason`]. This is the thin-layer engine swap
 //! at the heart of v3: autoloop owns loop execution; ralph coordinates.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -13,7 +14,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner, events_run_result, parse_events,
+    AutoloopRunner,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
@@ -21,6 +22,7 @@ use ralph_core::{
 };
 
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
+use crate::display::Palette;
 
 /// Map an autoloop `stopReason` onto ralph's [`TerminationReason`].
 fn map_stop_reason(reason: &str) -> TerminationReason {
@@ -249,6 +251,29 @@ pub async fn run_autoloop_engine(
         }
     };
 
+    // Generated presets use Ralph's hat IDs as engine role IDs. Explicit
+    // presets define their own role namespace, so their IDs are already the
+    // best user-facing labels available.
+    let role_display_names = if explicit_preset {
+        HashMap::new()
+    } else {
+        config
+            .hats
+            .iter()
+            .map(|(id, hat)| {
+                let name = hat.name.trim();
+                (
+                    id.clone(),
+                    if name.is_empty() {
+                        id.clone()
+                    } else {
+                        name.to_string()
+                    },
+                )
+            })
+            .collect()
+    };
+
     let prompt = resolve_autoloop_prompt(&workspace, &config.event_loop)?;
 
     // Structured event sink under .ralph/ — the preferred observability channel.
@@ -285,7 +310,9 @@ pub async fn run_autoloop_engine(
         // Headless observes the same structured engine event stream as the TUI.
         // Keep the blocking child wait off the async runtime while a sibling
         // task tails and flushes live progress to stdout.
-        match run_autoloop_headless(runner, events_path.clone()).await {
+        match run_autoloop_headless(runner, events_path.clone(), role_display_names, use_colors)
+            .await
+        {
             Ok(outcome) => outcome,
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop headless run failed")),
         }
@@ -298,15 +325,6 @@ pub async fn run_autoloop_engine(
     // then return the original diagnostic after bookkeeping is complete.
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
-            if let Ok(content) = std::fs::read_to_string(&events_path) {
-                if let Some(result) = events_run_result(&parse_events(&content)) {
-                    println!(
-                        "autoloop engine: run_id={} iterations={} stop_reason={}",
-                        result.run_id, result.iterations, result.stop_reason
-                    );
-                }
-            }
-
             let reason = map_stop_reason(&summary.stop_reason);
             if reason == TerminationReason::CompletionPromise {
                 warn_on_open_ralph_tasks(&identity_context.tasks_path(), &loop_id);
@@ -355,89 +373,142 @@ pub async fn run_autoloop_engine(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct HeadlessPrintCtx {
     iteration: Option<u32>,
     max_iterations: Option<u32>,
-    role: Option<String>,
+    role_id: Option<String>,
+    role_display_names: HashMap<String, String>,
+    cumulative_cost_usd: Option<f64>,
+    palette: Palette,
 }
 
 impl HeadlessPrintCtx {
-    fn iteration_label(&self, event: &AutoloopEvent) -> String {
-        let iteration = event.iteration.or(self.iteration).unwrap_or_default();
-        match event.max_iterations.or(self.max_iterations) {
+    fn new(role_display_names: HashMap<String, String>, use_colors: bool) -> Self {
+        Self {
+            iteration: None,
+            max_iterations: None,
+            role_id: None,
+            role_display_names,
+            cumulative_cost_usd: None,
+            palette: Palette::new(use_colors),
+        }
+    }
+
+    /// Update routing context before rendering an event. A new iteration clears
+    /// the previous role so a missing banner cannot mislabel the next start.
+    fn observe(&mut self, event: &AutoloopEvent) {
+        if let Some(iteration) = event.iteration {
+            if self.iteration != Some(iteration) {
+                self.role_id = None;
+            }
+            self.iteration = Some(iteration);
+        }
+        self.max_iterations = event.max_iterations.or(self.max_iterations);
+
+        if let Some(role_id) = event
+            .allowed_roles
+            .as_ref()
+            .and_then(|roles| roles.first())
+            .map(|role| role.trim())
+            .filter(|role| !role.is_empty() && !role.eq_ignore_ascii_case("unknown"))
+        {
+            self.role_id = Some(role_id.to_string());
+        }
+    }
+
+    fn iteration_label(&self) -> String {
+        let iteration = self.iteration.unwrap_or_default();
+        match self.max_iterations {
             Some(max_iterations) => format!("{iteration}/{max_iterations}"),
             None => iteration.to_string(),
         }
     }
 
-    fn role(&self) -> &str {
-        self.role.as_deref().unwrap_or("unknown")
+    fn role_name(&self) -> Option<&str> {
+        let role_id = self.role_id.as_deref()?;
+        Some(
+            self.role_display_names
+                .get(role_id)
+                .map(String::as_str)
+                .unwrap_or(role_id),
+        )
+    }
+
+    fn role_segment(&self) -> String {
+        let Some(role) = self.role_name() else {
+            return String::new();
+        };
+        let p = self.palette;
+        format!(" {}|{} {}{}{}", p.dim, p.reset, p.magenta, role, p.reset)
+    }
+
+    fn iteration_cost_segment(&mut self, cumulative_cost_usd: Option<f64>) -> String {
+        let Some(cumulative) = cumulative_cost_usd else {
+            return String::new();
+        };
+        let iteration = cumulative - self.cumulative_cost_usd.unwrap_or_default();
+        self.cumulative_cost_usd = Some(cumulative);
+        let p = self.palette;
+        format!(
+            " {}|{} {}cost ${iteration:.4} iteration, ${cumulative:.4} total{}",
+            p.dim, p.reset, p.cyan, p.reset
+        )
     }
 }
 
-/// Format one engine event for the headless observation stream.
+/// Format one structured engine event in Ralph's headless voice.
 ///
-/// Role is sourced from `iteration.banner`, matching the engine's current
-/// iteration routing truth. Events that do not represent user-facing progress
-/// update context or are omitted.
+/// The banner and footer are context-only: `iteration.start` opens a transition
+/// and `progress` closes it with the routed topic. Terminal engine events stay
+/// in the events file and journal; [`coordinate_completion`] renders Ralph's
+/// sole user-facing ending.
 fn format_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) -> Option<String> {
+    ctx.observe(event);
+    let p = ctx.palette;
+
     match event.kind.as_str() {
-        "iteration.banner" => {
-            ctx.iteration = event.iteration;
-            ctx.max_iterations = event.max_iterations;
-            ctx.role = event
-                .allowed_roles
-                .as_ref()
-                .and_then(|roles| roles.first())
-                .cloned();
-            None
-        }
-        "iteration.start" => {
-            ctx.iteration = event.iteration.or(ctx.iteration);
-            ctx.max_iterations = event.max_iterations.or(ctx.max_iterations);
-            Some(format!(
-                "autoloop: iteration {} role={} started",
-                ctx.iteration_label(event),
-                ctx.role()
-            ))
-        }
-        "iteration.footer" => Some(format!(
-            "autoloop: iteration {} role={} finished",
-            ctx.iteration_label(event),
-            ctx.role()
+        "iteration.banner" | "iteration.footer" | "loop.finish" | "summary" => None,
+        "iteration.start" => Some(format!(
+            "{}{}Iteration {}{} started{}",
+            p.bold,
+            p.cyan,
+            ctx.iteration_label(),
+            p.reset,
+            ctx.role_segment()
         )),
         "progress" => {
-            ctx.iteration = event.iteration.or(ctx.iteration);
-            let topic = event.emitted_topic.as_deref().unwrap_or("none");
-            let outcome = event.outcome.as_deref().unwrap_or("unknown");
+            let topic_segment = event
+                .emitted_topic
+                .as_deref()
+                .map(|topic| {
+                    format!(
+                        " {}|{} emitted {}{}{}",
+                        p.dim, p.reset, p.cyan, topic, p.reset
+                    )
+                })
+                .unwrap_or_default();
+            let role_segment = ctx.role_segment();
+            let cost_segment = ctx.iteration_cost_segment(event.cost_usd);
             Some(format!(
-                "autoloop: iteration {} role={} progress emitted_topic={} outcome={}",
-                ctx.iteration_label(event),
-                ctx.role(),
-                topic,
-                outcome
+                "{}{}Iteration {}{} finished{role_segment}{topic_segment}{cost_segment}",
+                p.bold,
+                p.green,
+                ctx.iteration_label(),
+                p.reset,
             ))
         }
         "ask.pending" => {
-            ctx.iteration = event.iteration.or(ctx.iteration);
             let question = sanitize_tui_inline_text(event.question.as_deref().unwrap_or_default());
             Some(format!(
-                "autoloop: iteration {} role={} HUMAN ASK: {}",
-                ctx.iteration_label(event),
-                ctx.role(),
-                question
-            ))
-        }
-        "loop.finish" | "summary" => {
-            let iterations = event.iterations.unwrap_or_default();
-            let stop_reason = event.stop_reason.as_deref().unwrap_or("unknown");
-            let cost = event
-                .cost_usd
-                .map(|cost| format!(" cost_usd=${cost:.4}"))
-                .unwrap_or_default();
-            Some(format!(
-                "autoloop: finished iterations={iterations} stop_reason={stop_reason}{cost}"
+                "{}{}Iteration {}{} human input requested{} {}|{} {question}",
+                p.bold,
+                p.yellow,
+                ctx.iteration_label(),
+                p.reset,
+                ctx.role_segment(),
+                p.dim,
+                p.reset
             ))
         }
         _ => None,
@@ -458,6 +529,8 @@ fn print_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) {
 async fn run_autoloop_headless(
     runner: AutoloopRunner,
     events_path: PathBuf,
+    role_display_names: HashMap<String, String>,
+    use_colors: bool,
 ) -> Result<AutoloopOutcome> {
     use tokio::sync::watch;
 
@@ -469,7 +542,7 @@ async fn run_autoloop_headless(
 
     let reader_handle = tokio::spawn(async move {
         let mut tailer = AutoloopEventTailer::new(events_path);
-        let mut ctx = HeadlessPrintCtx::default();
+        let mut ctx = HeadlessPrintCtx::new(role_display_names, use_colors);
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
         loop {
@@ -764,20 +837,30 @@ mod tests {
     }
 
     #[test]
-    fn headless_formatter_reports_engine_iteration_truth() {
-        let events = parse_events(concat!(
-            r#"{"type":"iteration.banner","iteration":2,"maxIterations":4,"allowedRoles":["builder"]}"#,
+    fn headless_formatter_reports_hat_names_without_stale_or_unknown_roles() {
+        let events = ralph_adapters::parse_events(concat!(
+            r#"{"type":"iteration.banner","iteration":1,"maxIterations":4,"allowedRoles":["planner"]}"#,
             "\n",
+            r#"{"type":"iteration.start","runId":"r1","iteration":1,"maxIterations":4}"#,
+            "\n",
+            r#"{"type":"progress","runId":"r1","iteration":1,"allowedRoles":["planner"],"emittedTopic":"plan.ready","outcome":"continue:routed_event","costUsd":0.1}"#,
+            "\n",
+            r#"{"type":"iteration.footer","iteration":1,"elapsedS":1.5}"#,
+            "\n",
+            // No banner for iteration 2: its start omits the hat instead of
+            // showing the previous hat or inventing an "unknown" role.
             r#"{"type":"iteration.start","runId":"r1","iteration":2,"maxIterations":4}"#,
             "\n",
-            r#"{"type":"progress","runId":"r1","iteration":2,"allowedRoles":["builder"],"emittedTopic":"build.done","outcome":"continue:routed_event"}"#,
-            "\n",
-            r#"{"type":"iteration.footer","iteration":2,"elapsedS":1.5}"#,
+            r#"{"type":"progress","runId":"r1","iteration":2,"allowedRoles":["builder"],"emittedTopic":"build.done","outcome":"continue:routed_event","costUsd":0.25}"#,
             "\n",
             r#"{"type":"loop.finish","runId":"r1","iterations":2,"stopReason":"completed","costUsd":0.25}"#,
             "\n",
         ));
-        let mut ctx = HeadlessPrintCtx::default();
+        let role_names = HashMap::from([
+            ("planner".to_string(), "Planning Lead".to_string()),
+            ("builder".to_string(), "Build Crew".to_string()),
+        ]);
+        let mut ctx = HeadlessPrintCtx::new(role_names, false);
         let lines: Vec<_> = events
             .iter()
             .filter_map(|event| format_headless_event(event, &mut ctx))
@@ -786,23 +869,25 @@ mod tests {
         assert_eq!(
             lines,
             vec![
-                "autoloop: iteration 2/4 role=builder started",
-                "autoloop: iteration 2/4 role=builder progress emitted_topic=build.done outcome=continue:routed_event",
-                "autoloop: iteration 2/4 role=builder finished",
-                "autoloop: finished iterations=2 stop_reason=completed cost_usd=$0.2500",
+                "Iteration 1/4 started | Planning Lead",
+                "Iteration 1/4 finished | Planning Lead | emitted plan.ready | cost $0.1000 iteration, $0.1000 total",
+                "Iteration 2/4 started",
+                "Iteration 2/4 finished | Build Crew | emitted build.done | cost $0.1500 iteration, $0.2500 total",
             ]
         );
+        assert!(lines.iter().all(|line| !line.contains("unknown")));
     }
 
     #[test]
     fn headless_formatter_sanitizes_human_ask() {
-        let events = parse_events(concat!(
+        let events = ralph_adapters::parse_events(concat!(
             r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"allowedRoles":["planner"]}"#,
             "\n",
             r#"{"type":"ask.pending","runId":"r1","iteration":1,"questionId":"q1","question":"line1\nline2\u0007"}"#,
             "\n",
         ));
-        let mut ctx = HeadlessPrintCtx::default();
+        let role_names = HashMap::from([("planner".to_string(), "Planning Lead".to_string())]);
+        let mut ctx = HeadlessPrintCtx::new(role_names, false);
         let lines: Vec<_> = events
             .iter()
             .filter_map(|event| format_headless_event(event, &mut ctx))
@@ -810,7 +895,7 @@ mod tests {
 
         assert_eq!(
             lines,
-            vec!["autoloop: iteration 1/3 role=planner HUMAN ASK: line1 line2"]
+            vec!["Iteration 1/3 human input requested | Planning Lead | line1 line2"]
         );
     }
 

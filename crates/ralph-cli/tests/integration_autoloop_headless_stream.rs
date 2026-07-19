@@ -132,7 +132,7 @@ fn headless_run_streams_iteration_progress_before_autoloop_exits() {
     let mut progress_line = None;
     while Instant::now() < deadline {
         if let Ok(line) = line_rx.recv_timeout(Duration::from_millis(100))
-            && line.contains("iteration 1/2")
+            && line.contains("Iteration 1/2")
             && line.contains("planner")
         {
             progress_line = Some(line);
