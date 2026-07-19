@@ -13,14 +13,22 @@ use crate::{ConfigSource, HatsSource};
 
 /// Run first-run diagnostics and environment validation.
 #[derive(Parser, Debug)]
-pub struct DoctorArgs {}
+pub struct DoctorArgs {
+    /// Download and install Ralph's standalone autoloop engine.
+    #[arg(long)]
+    install_engine: bool,
+}
 
 pub async fn execute(
     config_sources: &[ConfigSource],
     hats_source: Option<&HatsSource>,
-    _args: DoctorArgs,
+    args: DoctorArgs,
     use_colors: bool,
 ) -> Result<()> {
+    if args.install_engine {
+        return crate::engine_install::install();
+    }
+
     let source_label = crate::preflight::config_source_label(config_sources, hats_source);
     let config = crate::preflight::load_config_for_preflight(config_sources, hats_source).await?;
 

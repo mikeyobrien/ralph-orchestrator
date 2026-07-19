@@ -95,8 +95,9 @@ toml = "0.8"
 clap = { version = "4", features = ["derive", "std", "cargo"] }
 clap_complete = "4"
 
-# Regex for text processing
+# Regex and hashing for text/artifact processing
 regex = "1"
+sha2 = "0.10"
 
 # HTTP client for remote presets
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

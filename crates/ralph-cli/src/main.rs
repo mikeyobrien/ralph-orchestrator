@@ -25,6 +25,7 @@ mod completion_coord;
 mod config_resolution;
 mod display;
 mod doctor;
+mod engine_install;
 mod hats;
 mod hooks;
 mod init;
