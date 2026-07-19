@@ -46,12 +46,30 @@ export PATH="$HOME/bin:$PATH"
 
 ## Autoloop dependency
 
-Ralph requires `@mobrienv/autoloop >= 0.10.0` on `PATH`. The npm method
-installs autoloop automatically as a dependency. For the GitHub Releases
-installer, Cargo, or a prebuilt binary, install it separately:
+Ralph requires autoloop >= 0.10.0. The npm method installs autoloop
+automatically as a dependency. For the GitHub Releases installer, Cargo, or a
+prebuilt binary, install it separately:
 
 ```bash
 npm install -g @mobrienv/autoloop
+```
+
+### No-Node install (vendored engine)
+
+If Node.js is unavailable, install Ralph via Cargo, the GitHub Releases
+installer, or a prebuilt binary, then install the pinned standalone autoloop
+engine:
+
+```bash
+ralph doctor --install-engine
+```
+
+Ralph downloads the engine, verifies its SHA-256 checksum, and installs it at
+`~/.ralph/engine/autoloop`. Set `RALPH_ENGINE_DIR` to install and resolve the
+engine from another directory:
+
+```bash
+RALPH_ENGINE_DIR=/path/to/engine ralph doctor --install-engine
 ```
 
 ## Verify Installation

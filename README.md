@@ -36,12 +36,29 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 cargo install ralph-cli
 ```
 
-Ralph requires `@mobrienv/autoloop >= 0.10.0` on `PATH`. The npm installation
-installs it automatically as a dependency. If you use Cargo or the GitHub
-Releases installer, install it separately:
+Ralph requires autoloop >= 0.10.0. The npm installation installs it
+automatically as a dependency. If you use Cargo or the GitHub Releases
+installer, install it separately:
 
 ```bash
 npm install -g @mobrienv/autoloop
+```
+
+### No-Node install (vendored engine)
+
+If Node.js is unavailable, install Ralph via Cargo or the GitHub Releases
+installer, then install the pinned standalone autoloop engine:
+
+```bash
+ralph doctor --install-engine
+```
+
+Ralph downloads the engine, verifies its SHA-256 checksum, and installs it at
+`~/.ralph/engine/autoloop`. Set `RALPH_ENGINE_DIR` to install and resolve the
+engine from another directory:
+
+```bash
+RALPH_ENGINE_DIR=/path/to/engine ralph doctor --install-engine
 ```
 
 > Homebrew is not currently published from this repository's automated release flow. Prefer npm, Cargo, or the GitHub Releases installer.
