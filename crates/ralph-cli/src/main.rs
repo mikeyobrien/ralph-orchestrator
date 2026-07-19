@@ -26,6 +26,8 @@ mod config_resolution;
 mod display;
 mod doctor;
 mod engine_install;
+#[allow(dead_code)]
+mod engine_provision;
 mod hats;
 mod hooks;
 mod init;
