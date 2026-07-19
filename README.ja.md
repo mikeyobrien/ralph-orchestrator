@@ -16,7 +16,7 @@
 
 > 「僕が英語で失敗する？そんなの不可能だい！」 - Ralph Wiggum
 
-**[ドキュメント](https://mikeyobrien.github.io/ralph-orchestrator/)** | **[はじめに](https://mikeyobrien.github.io/ralph-orchestrator/getting-started/quick-start/)** | **[プリセット](https://mikeyobrien.github.io/ralph-orchestrator/guide/presets/)**
+**[ドキュメント](docs/index.ja.md)** | **[はじめに](docs/getting-started/quick-start.ja.md)** | **[プリセット](docs/guide/presets.ja.md)**
 
 ## インストール
 
@@ -183,22 +183,20 @@ RObot:
   `/restart`
 
 セットアップ手順は
-[Telegram ガイド](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/)
+[Telegram ガイド](docs/guide/telegram.ja.md)
 を参照してください。
 
 ## ドキュメント
 
-完全なドキュメントは
-**[mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)**
-にあります。
+完全なドキュメントは[こちら](docs/index.ja.md)を参照してください。
 
-- [インストール](https://mikeyobrien.github.io/ralph-orchestrator/getting-started/installation/)
-- [クイックスタート](https://mikeyobrien.github.io/ralph-orchestrator/getting-started/quick-start/)
-- [設定](https://mikeyobrien.github.io/ralph-orchestrator/guide/configuration/)
-- [CLI リファレンス](https://mikeyobrien.github.io/ralph-orchestrator/guide/cli-reference/)
-- [プリセット](https://mikeyobrien.github.io/ralph-orchestrator/guide/presets/)
-- [概念: ハットとイベント](https://mikeyobrien.github.io/ralph-orchestrator/concepts/hats-and-events/)
-- [アーキテクチャ](https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/)
+- [インストール](docs/getting-started/installation.ja.md)
+- [クイックスタート](docs/getting-started/quick-start.ja.md)
+- [設定](docs/guide/configuration.ja.md)
+- [CLI リファレンス](docs/guide/cli-reference.ja.md)
+- [プリセット](docs/guide/presets.ja.md)
+- [概念: ハットとイベント](docs/concepts/hats-and-events.ja.md)
+- [アーキテクチャ](docs/advanced/architecture.ja.md)
 
 
 ## FAQ
@@ -295,8 +293,7 @@ nvm（推奨）を使う: `nvm install`（`.nvmrc` を読み込む）、また�
 - [Discord サーバー](https://discord.gg/XWUyeUNffh) に参加する
 - [Issue トラッカー](https://github.com/mikeyobrien/ralph-orchestrator/issues)
   でバグを報告する
-- [mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)
-  で完全なドキュメントを読む
+- [docs/](docs/index.ja.md) で完全なドキュメントを読む
 
 ## コントリビューション
 

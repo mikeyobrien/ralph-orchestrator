@@ -15,7 +15,7 @@ A hat-based orchestration framework that keeps AI agents in a loop until the tas
 
 > "Me fail English? That's unpossible!" - Ralph Wiggum
 
-**[Documentation](https://mikeyobrien.github.io/ralph-orchestrator/)** | **[Getting Started](https://mikeyobrien.github.io/ralph-orchestrator/getting-started/quick-start/)** | **[Presets](https://mikeyobrien.github.io/ralph-orchestrator/guide/presets/)**
+**[Documentation](docs/index.md)** | **[Getting Started](docs/getting-started/quick-start.md)** | **[Presets](docs/guide/presets.md)**
 
 ## Installation
 
@@ -169,19 +169,19 @@ RObot:
 - **Parallel loop routing** — Messages route via reply-to, `@loop-id` prefix, or default to primary
 - **Telegram commands** — `/status`, `/tasks`, `/restart` for real-time loop visibility
 
-See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) for setup instructions.
+See the [Telegram guide](docs/guide/telegram.md) for setup instructions.
 
 ## Documentation
 
-Full documentation is available at **[mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)**:
+See the [full documentation](docs/index.md):
 
-- [Installation](https://mikeyobrien.github.io/ralph-orchestrator/getting-started/installation/)
-- [Quick Start](https://mikeyobrien.github.io/ralph-orchestrator/getting-started/quick-start/)
-- [Configuration](https://mikeyobrien.github.io/ralph-orchestrator/guide/configuration/)
-- [CLI Reference](https://mikeyobrien.github.io/ralph-orchestrator/guide/cli-reference/)
-- [Presets](https://mikeyobrien.github.io/ralph-orchestrator/guide/presets/)
-- [Concepts: Hats & Events](https://mikeyobrien.github.io/ralph-orchestrator/concepts/hats-and-events/)
-- [Architecture](https://mikeyobrien.github.io/ralph-orchestrator/advanced/architecture/)
+- [Installation](docs/getting-started/installation.md)
+- [Quick Start](docs/getting-started/quick-start.md)
+- [Configuration](docs/guide/configuration.md)
+- [CLI Reference](docs/guide/cli-reference.md)
+- [Presets](docs/guide/presets.md)
+- [Concepts: Hats & Events](docs/concepts/hats-and-events.md)
+- [Architecture](docs/advanced/architecture.md)
 
 
 ## FAQ
@@ -263,7 +263,7 @@ Use nvm (recommended): `nvm install` (reads `.nvmrc`), or install directly from 
 **Where can I get help?**
 - Join our [Discord server](https://discord.gg/XWUyeUNffh)
 - Report bugs on the [Issue Tracker](https://github.com/mikeyobrien/ralph-orchestrator/issues)
-- Read full documentation at [mikeyobrien.github.io/ralph-orchestrator](https://mikeyobrien.github.io/ralph-orchestrator/)
+- Read the full documentation in [docs/](docs/index.md)
 
 ## Contributing
 
