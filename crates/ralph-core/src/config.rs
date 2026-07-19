@@ -451,7 +451,7 @@ impl RalphConfig {
                 value = mi,
                 "Normalizing v1 field"
             );
-            self.event_loop.max_iterations = mi;
+            self.event_loop.max_iterations = Some(mi);
             normalized_count += 1;
         }
 
@@ -881,8 +881,11 @@ pub struct EventLoopConfig {
     pub completion_promise: String,
 
     /// Maximum number of iterations before timeout.
-    #[serde(default = "default_max_iterations")]
-    pub max_iterations: u32,
+    ///
+    /// `None` preserves that the user did not configure this value, allowing an
+    /// explicit autoloop preset to own its iteration budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
 
     /// Maximum runtime in seconds.
     #[serde(default = "default_max_runtime")]
@@ -999,13 +1002,20 @@ fn default_max_failures() -> u32 {
     5
 }
 
+impl EventLoopConfig {
+    /// Returns the configured iteration budget or Ralph's generated-preset default.
+    pub fn effective_max_iterations(&self) -> u32 {
+        self.max_iterations.unwrap_or_else(default_max_iterations)
+    }
+}
+
 impl Default for EventLoopConfig {
     fn default() -> Self {
         Self {
             prompt: None,
             prompt_file: default_prompt_file(),
             completion_promise: default_completion_promise(),
-            max_iterations: default_max_iterations(),
+            max_iterations: None,
             max_runtime_seconds: default_max_runtime(),
             max_cost_usd: None,
             max_consecutive_failures: default_max_failures(),
@@ -2231,11 +2241,24 @@ mod tests {
         let config = RalphConfig::default();
         // Default config has no custom hats (uses default planner+builder)
         assert!(config.hats.is_empty());
-        assert_eq!(config.event_loop.max_iterations, 100);
+        assert_eq!(config.event_loop.max_iterations, None);
+        assert_eq!(config.event_loop.effective_max_iterations(), 100);
         assert!(!config.verbose);
         assert!(!config.features.preflight.enabled);
         assert!(!config.features.preflight.strict);
         assert!(config.features.preflight.skip.is_empty());
+    }
+
+    #[test]
+    fn max_iterations_tracks_whether_yaml_set_it() {
+        let unset: RalphConfig = serde_yaml::from_str("event_loop: {}\n").unwrap();
+        assert_eq!(unset.event_loop.max_iterations, None);
+        assert_eq!(unset.event_loop.effective_max_iterations(), 100);
+
+        let explicit: RalphConfig =
+            serde_yaml::from_str("event_loop:\n  max_iterations: 7\n").unwrap();
+        assert_eq!(explicit.event_loop.max_iterations, Some(7));
+        assert_eq!(explicit.event_loop.effective_max_iterations(), 7);
     }
 
     #[test]
@@ -2357,9 +2380,10 @@ verbose: true
 "#;
         let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
 
-        // Before normalization, v2 fields have defaults
+        // Before normalization, the v2 field remains unset.
         assert_eq!(config.cli.backend, "claude"); // default
-        assert_eq!(config.event_loop.max_iterations, 100); // default
+        assert_eq!(config.event_loop.max_iterations, None);
+        assert_eq!(config.event_loop.effective_max_iterations(), 100);
 
         // Normalize v1 -> v2
         config.normalize();
@@ -2368,7 +2392,7 @@ verbose: true
         assert_eq!(config.cli.backend, "gemini");
         assert_eq!(config.event_loop.prompt_file, "TASK.md");
         assert_eq!(config.event_loop.completion_promise, "RALPH_DONE");
-        assert_eq!(config.event_loop.max_iterations, 75);
+        assert_eq!(config.event_loop.max_iterations, Some(75));
         assert_eq!(config.event_loop.max_runtime_seconds, 7200);
         assert_eq!(config.event_loop.max_cost_usd, Some(10.0));
         assert!(config.verbose);

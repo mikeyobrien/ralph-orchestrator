@@ -1403,7 +1403,7 @@ hats:
         let merged = merge_hats_overlay(core, hats).unwrap();
         let config: RalphConfig = serde_yaml::from_value(merged).unwrap();
 
-        assert_eq!(config.event_loop.max_iterations, 100);
+        assert_eq!(config.event_loop.max_iterations, Some(100));
         assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
         assert!(config.hats.contains_key("reviewer"));
         assert!(!config.hats.contains_key("builder"));
@@ -1443,7 +1443,7 @@ hats:
         let merged = merge_hats_overlay(core, hats).unwrap();
         let config: RalphConfig = serde_yaml::from_value(merged).unwrap();
 
-        assert_eq!(config.event_loop.max_iterations, 100);
+        assert_eq!(config.event_loop.max_iterations, Some(100));
         assert_eq!(config.event_loop.max_runtime_seconds, 28800);
         assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
         assert_eq!(config.event_loop.cancellation_promise, "BUILD_PARKED");
@@ -1495,7 +1495,7 @@ hats:
             .await
             .unwrap();
 
-        assert_eq!(config.event_loop.max_iterations, 50);
+        assert_eq!(config.event_loop.max_iterations, Some(50));
         assert_eq!(config.event_loop.completion_promise, "REVIEW_COMPLETE");
         assert!(config.hats.contains_key("reviewer"));
         assert!(!config.hats.contains_key("builder"));

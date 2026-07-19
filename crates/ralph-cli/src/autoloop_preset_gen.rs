@@ -161,22 +161,32 @@ fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
 /// for Ralph's consecutive-failure budget, so it is deliberately omitted and
 /// called out rather than approximated with a differently-behaving limit.
 pub(crate) fn autoloop_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
+    warn_unsupported_budget(config);
     let el = &config.event_loop;
+    let mut overrides = Vec::new();
+    if let Some(max_iterations) = el.max_iterations {
+        overrides.push(("event_loop.max_iterations", max_iterations.to_string()));
+    }
+    overrides.extend(autoloop_non_iteration_budget_overrides(config));
+    overrides
+}
+
+fn warn_unsupported_budget(config: &RalphConfig) {
     tracing::warn!(
         field = "event_loop.max_consecutive_failures",
-        value = el.max_consecutive_failures,
+        value = config.event_loop.max_consecutive_failures,
         "engine=autoloop: ignoring event_loop.max_consecutive_failures because autoloop 0.9.2 has no equivalent budget"
     );
+}
 
-    let mut overrides = vec![
-        ("event_loop.max_iterations", el.max_iterations.to_string()),
-        (
-            "event_loop.max_runtime",
-            Duration::from_secs(el.max_runtime_seconds)
-                .as_millis()
-                .to_string(),
-        ),
-    ];
+fn autoloop_non_iteration_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
+    let el = &config.event_loop;
+    let mut overrides = vec![(
+        "event_loop.max_runtime",
+        Duration::from_secs(el.max_runtime_seconds)
+            .as_millis()
+            .to_string(),
+    )];
     if let Some(max_cost_usd) = el.max_cost_usd {
         overrides.push(("event_loop.max_cost_usd", max_cost_usd.to_string()));
     }
@@ -316,6 +326,7 @@ pub(crate) fn autoloop_backend_spec(
 
 /// Write `autoloops.toml` from ralph's event-loop config.
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
+    warn_unsupported_budget(config);
     let el = &config.event_loop;
     let mut auto = String::new();
 
@@ -328,7 +339,11 @@ fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     // mixed formats. autoloop therefore keeps its canonical task store and
     // remains the sole authority for its completion gate; Ralph only warns
     // observationally about its separate open tasks after engine completion.
-    for (key, value) in autoloop_budget_overrides(config) {
+    auto.push_str(&format!(
+        "event_loop.max_iterations = {}\n",
+        el.effective_max_iterations()
+    ));
+    for (key, value) in autoloop_non_iteration_budget_overrides(config) {
         auto.push_str(&format!("{key} = {value}\n"));
     }
     auto.push_str(&format!(
@@ -419,6 +434,43 @@ hats:
         let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
         assert!(topo.contains("id = \"ralph\""));
         assert!(topo.contains("\"loop.start\" = [\"ralph\"]"));
+    }
+
+    #[test]
+    fn generated_preset_writes_effective_default_max_iterations() {
+        let cfg = RalphConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("event_loop.max_iterations = 100\n"));
+    }
+
+    #[test]
+    fn explicit_preset_does_not_override_unset_max_iterations() {
+        let cfg = RalphConfig::default();
+
+        let overrides = autoloop_budget_overrides(&cfg);
+
+        assert!(
+            !overrides
+                .iter()
+                .any(|(key, _)| *key == "event_loop.max_iterations")
+        );
+    }
+
+    #[test]
+    fn explicit_preset_forwards_user_set_max_iterations() {
+        let cfg: RalphConfig = serde_yaml::from_str("event_loop:\n  max_iterations: 7\n").unwrap();
+
+        let overrides = autoloop_budget_overrides(&cfg);
+
+        assert!(
+            overrides
+                .iter()
+                .any(|(key, value)| { *key == "event_loop.max_iterations" && value == "7" })
+        );
     }
 
     #[test]

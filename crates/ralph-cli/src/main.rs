@@ -1440,7 +1440,7 @@ async fn run_command(
         config.event_loop.prompt = None; // Clear inline
     }
     if let Some(max_iter) = args.max_iterations {
-        config.event_loop.max_iterations = max_iter;
+        config.event_loop.max_iterations = Some(max_iter);
     }
     if let Some(promise) = args.completion_promise {
         config.event_loop.completion_promise = promise;
@@ -1545,7 +1545,10 @@ async fn run_command(
             "  Completion promise: {}",
             config.event_loop.completion_promise
         );
-        println!("  Max iterations: {}", config.event_loop.max_iterations);
+        println!(
+            "  Max iterations: {}",
+            config.event_loop.effective_max_iterations()
+        );
         println!("  Max runtime: {}s", config.event_loop.max_runtime_seconds);
         println!(
             "  Scratchpad: {} (enabled: {})",
@@ -1883,7 +1886,7 @@ async fn resume_command(
 
     // Apply CLI overrides
     if let Some(max_iter) = args.max_iterations {
-        config.event_loop.max_iterations = max_iter;
+        config.event_loop.max_iterations = Some(max_iter);
     }
     if verbose {
         config.verbose = true;
