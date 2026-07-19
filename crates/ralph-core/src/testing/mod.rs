@@ -1,6 +1,6 @@
 //! Testing utilities for deterministic E2E tests.
 
-#[cfg(all(feature = "test-support", unix))]
+#[cfg(all(any(test, feature = "test-support"), unix))]
 pub mod fake_autoloop;
 pub mod mock_backend;
 #[cfg(feature = "recording")]

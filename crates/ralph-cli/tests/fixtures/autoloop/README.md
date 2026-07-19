@@ -13,7 +13,7 @@ A fixture contains one JSON object per non-empty line. Each object describes one
 Unknown fields and malformed JSON are rejected when the fake is built.
 
 ```json
-{"steps":[{"events":["<raw NDJSON LoopEvent line>"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE","then_exit":1}},{"journal":["<raw NDJSON journal line>"]},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/journal.jsonl","memory":"/tmp/memory.jsonl"}},{"exit":0}]}
+{"steps":[{"events":["<raw NDJSON LoopEvent line>"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE","then_exit":1}},{"journal":["<raw NDJSON journal line>"]},{"stdout":["<literal stdout line>"]},{"stderr":["[autoloops] [info] <literal engine log line>"]},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/journal.jsonl","memory":"/tmp/memory.jsonl"}},{"exit":0}]}
 ```
 
 `cost_usd` and `barrier.then_exit` are optional. All other fields shown for a
@@ -39,6 +39,10 @@ a single physical line; blank lines between invocation objects are allowed.
   coordinated-crash test paths.
 - **`journal`** appends its lines to `$JOURNAL_OUT` when that variable is set,
   otherwise to `./.autoloop/journal.jsonl`. Parent directories are created.
+- **`stdout`** and **`stderr`** write their literal lines to the corresponding
+  process stream. They can appear anywhere in the steps array, including before
+  or after `summary`, so tests can model engine logs and surrounding output
+  noise while preserving exact step order.
 - **`summary`** writes the canonical summary block to stdout:
 
   ```text

@@ -1,9 +1,10 @@
 //! Fixture-driven fake `autoloop` binary for integration and E2E tests.
 //!
 //! A fixture is JSONL with one invocation object per line. Each invocation
-//! contains ordered `events`, `barrier`, `journal`, `summary`, and `exit`
-//! steps. The generated executable dispatches successive calls to successive
-//! fixture lines, replaying the final line after the fixture is exhausted.
+//! contains ordered `events`, `barrier`, `journal`, `stdout`, `stderr`,
+//! `summary`, and `exit` steps. The generated executable dispatches successive
+//! calls to successive fixture lines, replaying the final line after the fixture
+//! is exhausted.
 
 use serde::Deserialize;
 use std::fs;
@@ -50,6 +51,8 @@ enum Step {
     Events(EventsStep),
     Barrier(BarrierStep),
     Journal(JournalStep),
+    Stdout(StdoutStep),
+    Stderr(StderrStep),
     Summary(SummaryStep),
     Exit(ExitStep),
 }
@@ -58,6 +61,18 @@ enum Step {
 #[serde(deny_unknown_fields)]
 struct EventsStep {
     events: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StdoutStep {
+    stdout: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StderrStep {
+    stderr: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,6 +240,22 @@ fn invocation_script(
                     "cat {} >> \"$journal_path\"\n",
                     shell_quote(&payload)
                 ));
+            }
+            Step::Stdout(step) => {
+                payload_index += 1;
+                let payload = payload_dir.join(format!(
+                    "invocation-{invocation_index}-step-{payload_index}-stdout"
+                ));
+                write_lines(&payload, &step.stdout)?;
+                script.push_str(&format!("cat {}\n", shell_quote(&payload)));
+            }
+            Step::Stderr(step) => {
+                payload_index += 1;
+                let payload = payload_dir.join(format!(
+                    "invocation-{invocation_index}-step-{payload_index}-stderr"
+                ));
+                write_lines(&payload, &step.stderr)?;
+                script.push_str(&format!("cat {} >&2\n", shell_quote(&payload)));
             }
             Step::Summary(step) => {
                 payload_index += 1;
@@ -427,6 +458,43 @@ mod tests {
             fs::read_to_string(override_path).unwrap(),
             "{\"entry\":1}\n"
         );
+    }
+
+    #[test]
+    fn emits_ordered_stdout_and_stderr_around_parseable_summary() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"stdout":["before summary"]},{"stderr":["[autoloops] [info] booted","engine detail"]},{"summary":{"run_id":"with-noise","iterations":2,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/j","memory":"/tmp/m"}},{"stdout":["after summary"]}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+
+        let output = command(&fake).output().unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            "[autoloops] [info] booted\nengine detail\n"
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            stdout,
+            concat!(
+                "before summary\n",
+                "autoloops summary\n",
+                "===================\n",
+                "run_id: with-noise\n",
+                "iterations: 2\n",
+                "stop_reason: completed\n",
+                "cost_usd: 0.01\n",
+                "journal: /tmp/j\n",
+                "memory: /tmp/m\n",
+                "after summary\n",
+            )
+        );
+        assert!(stdout.contains(
+            "autoloops summary\n===================\nrun_id: with-noise\niterations: 2\nstop_reason: completed\n"
+        ));
     }
 
     #[test]
