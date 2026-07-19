@@ -1,7 +1,7 @@
 //! Fixture-driven fake `autoloop` binary for integration and E2E tests.
 //!
 //! A fixture is JSONL with one invocation object per line. Each invocation
-//! contains ordered `events`, `barrier`, `journal`, `stdout`, `stderr`,
+//! contains ordered `events`, `stream`, `barrier`, `journal`, `stdout`, `stderr`,
 //! `summary`, and `exit` steps. The generated executable dispatches successive
 //! calls to successive fixture lines, replaying the final line after the fixture
 //! is exhausted.
@@ -49,6 +49,7 @@ struct Invocation {
 #[serde(untagged)]
 enum Step {
     Events(EventsStep),
+    Stream(StreamStep),
     Barrier(BarrierStep),
     Journal(JournalStep),
     Stdout(StdoutStep),
@@ -61,6 +62,20 @@ enum Step {
 #[serde(deny_unknown_fields)]
 struct EventsStep {
     events: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamStep {
+    stream: Stream,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Stream {
+    /// Absolute path, or a path relative to the fake process workspace.
+    path: PathBuf,
+    lines: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +230,18 @@ fn invocation_script(
                     shell_quote(&payload)
                 ));
             }
+            Step::Stream(step) => {
+                payload_index += 1;
+                let payload = payload_dir.join(format!(
+                    "invocation-{invocation_index}-step-{payload_index}-stream"
+                ));
+                write_lines(&payload, &step.stream.lines)?;
+                script.push_str(&format!(
+                    "stream_path={}\nmkdir -p \"$(dirname \"$stream_path\")\"\ncat {} >> \"$stream_path\"\n",
+                    shell_quote(&step.stream.path),
+                    shell_quote(&payload),
+                ));
+            }
             Step::Barrier(step) => {
                 validate_env_name(&step.barrier.ready_env)?;
                 validate_env_name(&step.barrier.release_env)?;
@@ -362,6 +389,30 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(events).unwrap(),
+            "{\"type\":\"one\"}\n{\"type\":\"two\"}\n"
+        );
+    }
+
+    #[test]
+    fn writes_backend_stream_lines_relative_to_the_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"stream":{"path":".autoloop/runs/live/pi-stream.1.jsonl","lines":["{\"type\":\"one\"}","{\"type\":\"two\"}"]}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join(".autoloop/runs/live/pi-stream.1.jsonl")).unwrap(),
             "{\"type\":\"one\"}\n{\"type\":\"two\"}\n"
         );
     }
