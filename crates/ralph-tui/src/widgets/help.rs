@@ -147,22 +147,30 @@ pub fn render(f: &mut Frame, area: Rect, autoloop_source: bool) {
         )),
     ];
 
+    // Size the popup to its content (plus borders) so every binding stays
+    // visible; a fixed percentage height silently clips the tail of the
+    // help text on short terminals.
+    let content_height = help_text.len() as u16 + 2;
     let paragraph = Paragraph::new(help_text)
         .block(block)
         .alignment(Alignment::Left);
 
-    let popup_area = centered_rect(50, 75, area);
+    let popup_area = centered_rect_fixed_height(50, content_height, area);
     f.render_widget(Clear, popup_area);
     f.render_widget(paragraph, popup_area);
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
+/// Center a popup horizontally at `percent_x` width with an exact height,
+/// clamped to the available area.
+fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
+    let height = height.min(r.height);
+    let top = (r.height - height) / 2;
+    let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Length(top),
+            Constraint::Length(height),
+            Constraint::Min(0),
         ])
         .split(r);
 
@@ -173,8 +181,9 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage(percent_x),
             Constraint::Percentage((100 - percent_x) / 2),
         ])
-        .split(popup_layout[1])[1]
+        .split(vertical[1])[1]
 }
+
 
 #[cfg(test)]
 mod tests {
