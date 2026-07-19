@@ -27,15 +27,8 @@ pub async fn execute(
     let runner = ralph_core::PreflightRunner::default_checks();
     let preflight_report = runner.run_all(&config).await;
 
-    let mut config_check = None;
-    let mut other_checks = Vec::new();
-    for check in preflight_report.checks {
-        match check.name.as_str() {
-            "config" => config_check = Some(check),
-            "backend" => {}
-            _ => other_checks.push(check),
-        }
-    }
+    let (config_check, autoloop_check, other_checks) =
+        split_preflight_checks(preflight_report.checks);
 
     let mut checks = Vec::new();
     if let Some(check) = config_check {
@@ -46,6 +39,10 @@ pub async fn execute(
 
     let backend_checks = backend_checks(&config, command_version_ok, command_exists);
     checks.extend(backend_checks);
+
+    if let Some(check) = autoloop_check {
+        checks.push(check);
+    }
 
     let auth_backends = auth_backend_names(&config);
     checks.push(auth_hint_check(&auth_backends, |key| env::var(key).ok()));
@@ -60,6 +57,25 @@ pub async fn execute(
     }
 
     Ok(())
+}
+
+fn split_preflight_checks(
+    checks: Vec<CheckResult>,
+) -> (Option<CheckResult>, Option<CheckResult>, Vec<CheckResult>) {
+    let mut config_check = None;
+    let mut autoloop_check = None;
+    let mut other_checks = Vec::new();
+
+    for check in checks {
+        match check.name.as_str() {
+            "config" => config_check = Some(check),
+            "backend" => {}
+            "autoloop" => autoloop_check = Some(check),
+            _ => other_checks.push(check),
+        }
+    }
+
+    (config_check, autoloop_check, other_checks)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -596,6 +612,61 @@ mod tests {
             concurrency: 1,
             aggregate: None,
         }
+    }
+
+    #[test]
+    fn doctor_keeps_autoloop_check_for_explicit_display() {
+        let cases = [
+            CheckResult::pass(
+                "autoloop",
+                "Autoloop 0.10.0 available (/opt/autoloop/bin/autoloop)",
+            ),
+            CheckResult::warn(
+                "autoloop",
+                "Autoloop available (version unknown)",
+                "existence check passed",
+            ),
+            CheckResult::fail(
+                "autoloop",
+                "Autoloop not found",
+                "Install it with: npm install -g @mobrienv/autoloop",
+            ),
+            CheckResult::fail(
+                "autoloop",
+                "Autoloop 0.9.2 is too old",
+                "Ralph requires >= 0.10.0. Update it with: npm install -g @mobrienv/autoloop",
+            ),
+        ];
+
+        for expected in cases {
+            let expected_status = expected.status;
+            let expected_label = expected.label.clone();
+            let expected_message = expected.message.clone();
+            let (_, actual, others) = split_preflight_checks(vec![expected]);
+            let actual = actual.expect("doctor should retain the autoloop row");
+
+            assert_eq!(actual.name, "autoloop");
+            assert_eq!(actual.status, expected_status);
+            assert_eq!(actual.label, expected_label);
+            assert_eq!(actual.message, expected_message);
+            assert!(others.is_empty());
+        }
+    }
+
+    #[test]
+    fn doctor_excludes_generic_backend_check_and_preserves_other_checks() {
+        let checks = vec![
+            CheckResult::pass("config", "Configuration valid"),
+            CheckResult::pass("backend", "Backend available"),
+            CheckResult::pass("hooks", "Hooks valid"),
+        ];
+
+        let (config, autoloop, others) = split_preflight_checks(checks);
+
+        assert_eq!(config.expect("config row").name, "config");
+        assert!(autoloop.is_none());
+        assert_eq!(others.len(), 1);
+        assert_eq!(others[0].name, "hooks");
     }
 
     #[test]

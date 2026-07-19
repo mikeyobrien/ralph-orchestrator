@@ -533,6 +533,10 @@ pub async fn start_loop(
         }
     }
 
+    // Fail before creating state or acquiring the loop lock when the sole
+    // orchestration engine is unavailable.
+    crate::ensure_autoloop_for_run(ralph_core::autoloop_health::check_autoloop(), false)?;
+
     // Ensure scratchpad directory exists.
     crate::ensure_scratchpad_directory(&config)?;
 

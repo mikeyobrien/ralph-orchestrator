@@ -44,6 +44,16 @@ export PATH="$HOME/bin:$PATH"
 
 > Homebrew is not currently published from this repository's automated release flow.
 
+## Autoloop dependency
+
+Ralph requires `@mobrienv/autoloop >= 0.10.0` on `PATH`. The npm method
+installs autoloop automatically as a dependency. For the GitHub Releases
+installer, Cargo, or a prebuilt binary, install it separately:
+
+```bash
+npm install -g @mobrienv/autoloop
+```
+
 ## Verify Installation
 
 ```bash

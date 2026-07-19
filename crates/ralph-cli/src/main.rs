@@ -50,6 +50,9 @@ use ralph_adapters::detect_backend;
 use ralph_core::{
     CheckStatus, EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry,
     PreflightReport, PreflightRunner, RalphConfig, TerminationReason, UrgentSteerStore,
+    autoloop_health::{
+        AUTOLOOP_INSTALL_HINT, AutoloopHealth, MIN_AUTOLOOP_VERSION, check_autoloop,
+    },
     truncate_with_ellipsis,
     worktree::{WorktreeConfig, create_worktree, ensure_gitignore, remove_worktree},
 };
@@ -1350,6 +1353,33 @@ fn print_preflight_summary(
     }
 }
 
+pub(crate) fn ensure_autoloop_for_run(health: AutoloopHealth, skip_preflight: bool) -> Result<()> {
+    match health {
+        AutoloopHealth::Missing => anyhow::bail!(
+            "autoloop was not found on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}"
+        ),
+        AutoloopHealth::TooOld { path, version } if !skip_preflight => anyhow::bail!(
+            "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
+            path.display()
+        ),
+        AutoloopHealth::TooOld { path, version } => {
+            eprintln!(
+                "Warning: found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}",
+                path.display()
+            );
+            Ok(())
+        }
+        AutoloopHealth::VersionUnknown { path } => {
+            eprintln!(
+                "Warning: found autoloop at {}, but its version could not be determined; existence check passed.",
+                path.display()
+            );
+            Ok(())
+        }
+        AutoloopHealth::Ok { .. } => Ok(()),
+    }
+}
+
 async fn run_command(
     config_sources: &[ConfigSource],
     hats_source: Option<&HatsSource>,
@@ -1453,6 +1483,13 @@ async fn run_command(
     // runs use the backend configuration owned by that preset instead.
     if config.core.autoloop_preset.is_none() {
         autoloop_preset_gen::autoloop_backend_spec(&config)?;
+    }
+
+    // Dry runs report dependency health through the regular preflight table.
+    // Real runs gate here, before scratchpad creation, lock acquisition, or
+    // parallel worktree creation.
+    if !args.dry_run {
+        ensure_autoloop_for_run(check_autoloop(), args.skip_preflight)?;
     }
 
     let preflight_verbose = verbose || args.verbose;
@@ -1794,6 +1831,10 @@ async fn resume_command(
 
     // Load split core + hats config
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
+
+    // Fail before inspecting continuation state or invoking the engine so the
+    // deprecated resume entry point has the same actionable dependency error.
+    ensure_autoloop_for_run(check_autoloop(), false)?;
 
     // Check that scratchpad exists (required for resume)
     let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
@@ -2505,6 +2546,45 @@ mod tests {
     use ralph_core::{HookMutationConfig, HookOnError, HookPhaseEvent, HookSpec};
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn autoloop_run_gate_fails_missing_and_old_versions() {
+        let missing = ensure_autoloop_for_run(AutoloopHealth::Missing, true)
+            .expect_err("missing autoloop must fail even with --skip-preflight");
+        assert!(missing.to_string().contains(AUTOLOOP_INSTALL_HINT));
+
+        let old = ensure_autoloop_for_run(
+            AutoloopHealth::TooOld {
+                path: PathBuf::from("/opt/autoloop"),
+                version: "0.9.2".to_string(),
+            },
+            false,
+        )
+        .expect_err("old autoloop must fail without --skip-preflight");
+        let message = old.to_string();
+        assert!(message.contains("0.9.2"));
+        assert!(message.contains(MIN_AUTOLOOP_VERSION));
+        assert!(message.contains(AUTOLOOP_INSTALL_HINT));
+    }
+
+    #[test]
+    fn autoloop_run_gate_allows_skip_unknown_and_healthy_versions() {
+        let path = PathBuf::from("/opt/autoloop");
+        for health in [
+            AutoloopHealth::TooOld {
+                path: path.clone(),
+                version: "0.9.2".to_string(),
+            },
+            AutoloopHealth::VersionUnknown { path: path.clone() },
+            AutoloopHealth::Ok {
+                path,
+                version: MIN_AUTOLOOP_VERSION.to_string(),
+            },
+        ] {
+            ensure_autoloop_for_run(health, true).expect("health state should pass this gate");
+        }
+    }
+
     #[test]
     fn test_required_restart_command_matches_contract() {
         let command = required_restart_command(4242);

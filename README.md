@@ -36,6 +36,14 @@ curl --proto '=https' --tlsv1.2 -LsSf \
 cargo install ralph-cli
 ```
 
+Ralph requires `@mobrienv/autoloop >= 0.10.0` on `PATH`. The npm installation
+installs it automatically as a dependency. If you use Cargo or the GitHub
+Releases installer, install it separately:
+
+```bash
+npm install -g @mobrienv/autoloop
+```
+
 > Homebrew is not currently published from this repository's automated release flow. Prefer npm, Cargo, or the GitHub Releases installer.
 
 ## Quick Start

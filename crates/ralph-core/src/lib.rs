@@ -10,6 +10,7 @@
 //! - Terminal capture for session recording
 //! - Benchmark task definitions and workspace isolation
 
+pub mod autoloop_health;
 #[cfg(feature = "recording")]
 mod cli_capture;
 mod config;

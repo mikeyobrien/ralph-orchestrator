@@ -1,5 +1,8 @@
 //! Preflight checks for validating environment and configuration before running.
 
+use crate::autoloop_health::{
+    AUTOLOOP_INSTALL_HINT, AutoloopHealth, MIN_AUTOLOOP_VERSION, check_autoloop,
+};
 use crate::config::ConfigWarning;
 use crate::{RalphConfig, git_ops};
 use async_trait::async_trait;
@@ -108,6 +111,7 @@ impl PreflightRunner {
                 Box::new(ConfigValidCheck),
                 Box::new(HooksValidationCheck),
                 Box::new(BackendAvailableCheck),
+                Box::new(AutoloopAvailableCheck),
                 Box::new(TelegramTokenCheck),
                 Box::new(GitCleanCheck),
                 Box::new(PathsExistCheck),
@@ -271,7 +275,9 @@ fn validate_hook_command_resolvability(config: &RalphConfig, diagnostics: &mut V
     }
 }
 
-pub fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
+pub fn hook_path_override<S: std::hash::BuildHasher>(
+    env_map: &HashMap<String, String, S>,
+) -> Option<&str> {
     env_map
         .get("PATH")
         .or_else(|| env_map.get("Path"))
@@ -374,6 +380,49 @@ impl PreflightCheck for BackendAvailableCheck {
         }
 
         check_named_backend(self.name(), config, backend)
+    }
+}
+
+struct AutoloopAvailableCheck;
+
+#[async_trait]
+impl PreflightCheck for AutoloopAvailableCheck {
+    fn name(&self) -> &'static str {
+        "autoloop"
+    }
+
+    async fn run(&self, _config: &RalphConfig) -> CheckResult {
+        autoloop_check_result(check_autoloop())
+    }
+}
+
+fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
+    match health {
+        AutoloopHealth::Missing => CheckResult::fail(
+            "autoloop",
+            "Autoloop not found",
+            format!("autoloop was not found on PATH. Install it with: {AUTOLOOP_INSTALL_HINT}"),
+        ),
+        AutoloopHealth::VersionUnknown { path } => CheckResult::warn(
+            "autoloop",
+            "Autoloop available (version unknown)",
+            format!(
+                "Found autoloop at {}, but its version could not be determined; existence check passed",
+                path.display()
+            ),
+        ),
+        AutoloopHealth::TooOld { path, version } => CheckResult::fail(
+            "autoloop",
+            format!("Autoloop {version} is too old"),
+            format!(
+                "Found autoloop {version} at {}; Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
+                path.display()
+            ),
+        ),
+        AutoloopHealth::Ok { path, version } => CheckResult::pass(
+            "autoloop",
+            format!("Autoloop {version} available ({})", path.display()),
+        ),
     }
 }
 
@@ -1047,11 +1096,53 @@ mod tests {
     }
 
     #[test]
-    fn default_checks_include_hooks_check_name() {
+    fn default_checks_include_hooks_and_autoloop_check_names() {
         let runner = PreflightRunner::default_checks();
         let check_names = runner.check_names();
 
         assert!(check_names.contains(&"hooks"));
+        assert!(check_names.contains(&"autoloop"));
+    }
+
+    #[test]
+    fn autoloop_check_result_maps_all_health_states() {
+        let path = PathBuf::from("/opt/autoloop/bin/autoloop");
+        let cases = [
+            (
+                AutoloopHealth::Missing,
+                CheckStatus::Fail,
+                AUTOLOOP_INSTALL_HINT,
+            ),
+            (
+                AutoloopHealth::VersionUnknown { path: path.clone() },
+                CheckStatus::Warn,
+                "version could not be determined",
+            ),
+            (
+                AutoloopHealth::TooOld {
+                    path: path.clone(),
+                    version: "0.9.2".to_string(),
+                },
+                CheckStatus::Fail,
+                MIN_AUTOLOOP_VERSION,
+            ),
+            (
+                AutoloopHealth::Ok {
+                    path,
+                    version: MIN_AUTOLOOP_VERSION.to_string(),
+                },
+                CheckStatus::Pass,
+                MIN_AUTOLOOP_VERSION,
+            ),
+        ];
+
+        for (health, status, expected_text) in cases {
+            let result = autoloop_check_result(health);
+            let rendered = format!("{} {}", result.label, result.message.unwrap_or_default());
+            assert_eq!(result.name, "autoloop");
+            assert_eq!(result.status, status);
+            assert!(rendered.contains(expected_text), "{rendered}");
+        }
     }
 
     #[tokio::test]
