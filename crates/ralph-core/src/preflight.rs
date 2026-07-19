@@ -1,7 +1,7 @@
 //! Preflight checks for validating environment and configuration before running.
 
 use crate::autoloop_health::{
-    AUTOLOOP_INSTALL_HINT, AutoloopHealth, MIN_AUTOLOOP_VERSION, check_autoloop,
+    AUTOLOOP_INSTALL_HINT, AutoloopHealth, AutoloopSource, MIN_AUTOLOOP_VERSION, check_autoloop,
 };
 use crate::config::ConfigWarning;
 use crate::{RalphConfig, git_ops};
@@ -401,29 +401,56 @@ fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
         AutoloopHealth::Missing => CheckResult::fail(
             "autoloop",
             "Autoloop not found",
-            format!("autoloop was not found on PATH. Install it with: {AUTOLOOP_INSTALL_HINT}"),
+            format!(
+                "autoloop was not found in Ralph's engine directory or on PATH. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required)"
+            ),
         ),
-        AutoloopHealth::VersionUnknown { path, .. } => CheckResult::warn(
+        AutoloopHealth::VersionUnknown { path, source } => CheckResult::warn(
             "autoloop",
-            "Autoloop available (version unknown)",
+            format!(
+                "Autoloop available (version unknown; {})",
+                autoloop_source_label(source, &path)
+            ),
             format!(
                 "Found autoloop at {}, but its version could not be determined; existence check passed",
                 path.display()
             ),
         ),
-        AutoloopHealth::TooOld { path, version, .. } => CheckResult::fail(
+        AutoloopHealth::TooOld {
+            path,
+            version,
+            source,
+        } => CheckResult::fail(
             "autoloop",
-            format!("Autoloop {version} is too old"),
+            format!(
+                "Autoloop {version} is too old ({})",
+                autoloop_source_label(source, &path)
+            ),
             format!(
                 "Found autoloop {version} at {}; Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
                 path.display()
             ),
         ),
-        AutoloopHealth::Ok { path, version, .. } => CheckResult::pass(
+        AutoloopHealth::Ok {
+            path,
+            version,
+            source,
+        } => CheckResult::pass(
             "autoloop",
-            format!("Autoloop {version} available ({})", path.display()),
+            format!(
+                "Autoloop {version} available ({})",
+                autoloop_source_label(source, &path)
+            ),
         ),
     }
+}
+
+fn autoloop_source_label(source: AutoloopSource, path: &std::path::Path) -> String {
+    let source = match source {
+        AutoloopSource::Vendored => "vendored",
+        AutoloopSource::PathLookup => "PATH",
+    };
+    format!("{source}: {}", path.display())
 }
 
 struct TelegramTokenCheck;
@@ -1148,6 +1175,38 @@ mod tests {
             assert_eq!(result.status, status);
             assert!(rendered.contains(expected_text), "{rendered}");
         }
+    }
+
+    #[test]
+    fn autoloop_check_result_names_source_and_both_install_routes() {
+        let path = PathBuf::from("/managed/autoloop");
+        let vendored = autoloop_check_result(AutoloopHealth::Ok {
+            path: path.clone(),
+            version: MIN_AUTOLOOP_VERSION.to_string(),
+            source: crate::autoloop_health::AutoloopSource::Vendored,
+        });
+        assert!(vendored.label.contains("vendored: /managed/autoloop"));
+
+        for health in [
+            AutoloopHealth::VersionUnknown {
+                path: path.clone(),
+                source: crate::autoloop_health::AutoloopSource::PathLookup,
+            },
+            AutoloopHealth::TooOld {
+                path,
+                version: "0.9.2".to_string(),
+                source: crate::autoloop_health::AutoloopSource::PathLookup,
+            },
+        ] {
+            let result = autoloop_check_result(health);
+            assert!(result.label.contains("PATH: /managed/autoloop"));
+        }
+
+        let missing = autoloop_check_result(AutoloopHealth::Missing);
+        let guidance = missing.message.expect("missing engine guidance");
+        assert!(guidance.contains(AUTOLOOP_INSTALL_HINT));
+        assert!(guidance.contains("ralph doctor --install-engine"));
+        assert!(guidance.contains("no Node required"));
     }
 
     #[tokio::test]

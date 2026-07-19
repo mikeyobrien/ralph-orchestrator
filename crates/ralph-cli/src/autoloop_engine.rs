@@ -12,8 +12,8 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
-    AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary, AutoloopRunner,
-    events_run_result, parse_events,
+    AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
+    AutoloopRunner, events_run_result, parse_events,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
@@ -204,6 +204,7 @@ fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Re
 /// no merge-queue / registry participation.
 pub async fn run_autoloop_engine(
     config: RalphConfig,
+    autoloop_bin: AutoloopBin,
     context: Option<LoopContext>,
     auto_merge_override: Option<bool>,
     loop_id: Option<String>,
@@ -263,6 +264,7 @@ pub async fn run_autoloop_engine(
     );
 
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
+        .bin(autoloop_bin)
         .events_path(events_path.clone());
     if explicit_preset {
         for (key, value) in crate::autoloop_preset_gen::autoloop_budget_overrides(&config) {
@@ -708,9 +710,10 @@ pub async fn start_loop(
         }
     }
 
-    // Fail before creating state or acquiring the loop lock when the sole
-    // orchestration engine is unavailable.
-    crate::ensure_autoloop_for_run(ralph_core::autoloop_health::check_autoloop(), false)?;
+    // Resolve once before creating state or acquiring the loop lock, then use
+    // that exact binary for launch.
+    let autoloop_bin =
+        crate::ensure_autoloop_for_run(ralph_core::autoloop_health::check_autoloop(), false)?;
 
     // Ensure scratchpad directory exists.
     crate::ensure_scratchpad_directory(&config)?;
@@ -725,7 +728,17 @@ pub async fn start_loop(
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
     // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
-    run_autoloop_engine(config, Some(loop_context), None, None, false, false, false).await
+    run_autoloop_engine(
+        config,
+        autoloop_bin,
+        Some(loop_context),
+        None,
+        None,
+        false,
+        false,
+        false,
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ mod web_robot_service;
 
 use anyhow::{Context, Result};
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum};
-use ralph_adapters::detect_backend;
+use ralph_adapters::{AutoloopBin, detect_backend};
 use ralph_core::{
     CheckStatus, EventHistory, LockError, LoopContext, LoopEntry, LoopLock, LoopRegistry,
     PreflightReport, PreflightRunner, RalphConfig, TerminationReason, UrgentSteerStore,
@@ -1353,30 +1353,44 @@ fn print_preflight_summary(
     }
 }
 
-pub(crate) fn ensure_autoloop_for_run(health: AutoloopHealth, skip_preflight: bool) -> Result<()> {
+pub(crate) fn ensure_autoloop_for_run(
+    health: AutoloopHealth,
+    skip_preflight: bool,
+) -> Result<AutoloopBin> {
     match health {
         AutoloopHealth::Missing => anyhow::bail!(
-            "autoloop was not found on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}"
+            "autoloop was not found in Ralph's engine directory or on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required)"
         ),
         AutoloopHealth::TooOld { path, version, .. } if !skip_preflight => anyhow::bail!(
             "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
             path.display()
         ),
-        AutoloopHealth::TooOld { path, version, .. } => {
+        AutoloopHealth::TooOld {
+            path,
+            version,
+            source,
+        } => {
             eprintln!(
                 "Warning: found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}",
                 path.display()
             );
-            Ok(())
+            Ok(autoloop_bin(path, source))
         }
-        AutoloopHealth::VersionUnknown { path, .. } => {
+        AutoloopHealth::VersionUnknown { path, source } => {
             eprintln!(
                 "Warning: found autoloop at {}, but its version could not be determined; existence check passed.",
                 path.display()
             );
-            Ok(())
+            Ok(autoloop_bin(path, source))
         }
-        AutoloopHealth::Ok { .. } => Ok(()),
+        AutoloopHealth::Ok { path, source, .. } => Ok(autoloop_bin(path, source)),
+    }
+}
+
+fn autoloop_bin(path: PathBuf, source: ralph_core::autoloop_health::AutoloopSource) -> AutoloopBin {
+    match source {
+        ralph_core::autoloop_health::AutoloopSource::Vendored => AutoloopBin::Explicit(path),
+        ralph_core::autoloop_health::AutoloopSource::PathLookup => AutoloopBin::PathLookup,
     }
 }
 
@@ -1486,12 +1500,9 @@ async fn run_command(
     }
 
     // Dry runs report dependency health through the regular preflight table.
-    // Real runs gate here, before scratchpad creation, lock acquisition, or
-    // parallel worktree creation.
-    if !args.dry_run {
-        ensure_autoloop_for_run(check_autoloop(), args.skip_preflight)?;
-    }
-
+    // Real runs resolve the engine once before scratchpad creation, lock
+    // acquisition, or parallel worktree creation, then retain that exact
+    // selection for subprocess launch.
     let preflight_verbose = verbose || args.verbose;
 
     if args.dry_run {
@@ -1546,6 +1557,8 @@ async fn run_command(
         }
         return Ok(());
     }
+
+    let autoloop_bin = ensure_autoloop_for_run(check_autoloop(), args.skip_preflight)?;
 
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
@@ -1752,6 +1765,7 @@ async fn run_command(
     let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
     let reason = autoloop_engine::run_autoloop_engine(
         config,
+        autoloop_bin,
         Some(loop_context),
         auto_merge_override,
         args.loop_id.clone(),
@@ -1832,9 +1846,9 @@ async fn resume_command(
     // Load split core + hats config
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
 
-    // Fail before inspecting continuation state or invoking the engine so the
-    // deprecated resume entry point has the same actionable dependency error.
-    ensure_autoloop_for_run(check_autoloop(), false)?;
+    // Resolve once before inspecting continuation state and retain the exact
+    // selection for launch so resume cannot disagree with its dependency gate.
+    let autoloop_bin = ensure_autoloop_for_run(check_autoloop(), false)?;
 
     // Check that scratchpad exists (required for resume)
     let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
@@ -1905,6 +1919,7 @@ async fn resume_command(
     let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
     let reason = autoloop_engine::run_autoloop_engine(
         config,
+        autoloop_bin,
         None, // Deprecated resume command doesn't carry a loop_context
         None, // Use config.features.auto_merge (deprecated command)
         None, // Deprecated resume command doesn't support --loop-id
@@ -2551,7 +2566,10 @@ mod tests {
     fn autoloop_run_gate_fails_missing_and_old_versions() {
         let missing = ensure_autoloop_for_run(AutoloopHealth::Missing, true)
             .expect_err("missing autoloop must fail even with --skip-preflight");
-        assert!(missing.to_string().contains(AUTOLOOP_INSTALL_HINT));
+        let missing = missing.to_string();
+        assert!(missing.contains(AUTOLOOP_INSTALL_HINT));
+        assert!(missing.contains("ralph doctor --install-engine"));
+        assert!(missing.contains("no Node required"));
 
         let old = ensure_autoloop_for_run(
             AutoloopHealth::TooOld {
@@ -2566,6 +2584,35 @@ mod tests {
         assert!(message.contains("0.9.2"));
         assert!(message.contains(MIN_AUTOLOOP_VERSION));
         assert!(message.contains(AUTOLOOP_INSTALL_HINT));
+    }
+
+    #[test]
+    fn autoloop_run_gate_selects_vendored_binary_explicitly() {
+        let vendored_path = PathBuf::from("/managed/autoloop");
+        let vendored = ensure_autoloop_for_run(
+            AutoloopHealth::Ok {
+                path: vendored_path.clone(),
+                version: MIN_AUTOLOOP_VERSION.to_string(),
+                source: ralph_core::autoloop_health::AutoloopSource::Vendored,
+            },
+            false,
+        )
+        .expect("vendored engine should pass the gate");
+        assert!(
+            matches!(vendored, AutoloopBin::Explicit(path) if path == vendored_path),
+            "vendored health must produce an explicit runner binary"
+        );
+
+        let path = ensure_autoloop_for_run(
+            AutoloopHealth::Ok {
+                path: PathBuf::from("/path/autoloop"),
+                version: MIN_AUTOLOOP_VERSION.to_string(),
+                source: ralph_core::autoloop_health::AutoloopSource::PathLookup,
+            },
+            false,
+        )
+        .expect("PATH engine should pass the gate");
+        assert!(matches!(path, AutoloopBin::PathLookup));
     }
 
     #[test]

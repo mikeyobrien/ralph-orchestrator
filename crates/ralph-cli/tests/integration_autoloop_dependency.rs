@@ -12,6 +12,7 @@ struct Harness {
     workspace: TempDir,
     home: TempDir,
     bin_dir: PathBuf,
+    engine_dir: PathBuf,
 }
 
 impl Harness {
@@ -20,6 +21,8 @@ impl Harness {
         let home = tempfile::tempdir().expect("home temp dir");
         let bin_dir = workspace.path().join("test-bin");
         fs::create_dir(&bin_dir).expect("create controlled PATH directory");
+        let engine_dir = workspace.path().join("test-engine");
+        fs::create_dir(&engine_dir).expect("create controlled engine directory");
         write_executable(&bin_dir.join("test-backend"), "#!/bin/sh\nexit 0\n");
         write_config(workspace.path(), ".ralph/agent/scratchpad.md");
 
@@ -27,6 +30,7 @@ impl Harness {
             workspace,
             home,
             bin_dir,
+            engine_dir,
         }
     }
 
@@ -62,6 +66,13 @@ impl Harness {
 
     fn install_unversionable_autoloop(&self) {
         write_executable(&self.bin_dir.join("autoloop"), "#!/bin/sh\nexit 0\n");
+    }
+
+    fn install_vendored_autoloop(&self, version: &str) {
+        write_executable(
+            &self.engine_dir.join("autoloop"),
+            &format!("#!/bin/sh\nprintf 'autoloop {version}\\n'\n"),
+        );
     }
 
     fn doctor(&self) -> Output {
@@ -114,6 +125,7 @@ impl Harness {
             .args(args)
             .current_dir(self.workspace.path())
             .env("PATH", &self.bin_dir)
+            .env("RALPH_ENGINE_DIR", &self.engine_dir)
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
             .env_remove("RALPH_CONFIG")
@@ -167,6 +179,48 @@ fn assert_run_reached_past_gate(output: &Output) {
         !text.contains("autoloop was not found on PATH")
             && !text.contains(&format!("but Ralph requires >= {MIN_AUTOLOOP_VERSION}")),
         "run stopped at the autoloop gate: {text}"
+    );
+}
+
+#[test]
+fn doctor_names_vendored_then_path_resolution_and_both_missing_remedies() {
+    let harness = Harness::new();
+    harness.install_versioned_autoloop("0.12.3");
+    harness.install_vendored_autoloop("0.10.1");
+
+    let vendored = harness.doctor();
+    let vendored_text = rendered(&vendored);
+    assert!(vendored.status.success(), "doctor output: {vendored_text}");
+    assert!(
+        vendored_text.contains("Autoloop 0.10.1 available (vendored:"),
+        "doctor output: {vendored_text}"
+    );
+    assert!(
+        vendored_text.contains(&harness.engine_dir.join("autoloop").display().to_string()),
+        "doctor output: {vendored_text}"
+    );
+
+    fs::remove_file(harness.engine_dir.join("autoloop")).expect("remove vendored engine");
+    let path = harness.doctor();
+    let path_text = rendered(&path);
+    assert!(path.status.success(), "doctor output: {path_text}");
+    assert!(
+        path_text.contains("Autoloop 0.12.3 available (PATH:"),
+        "doctor output: {path_text}"
+    );
+
+    fs::remove_file(harness.bin_dir.join("autoloop")).expect("remove PATH shim");
+    let missing = harness.doctor();
+    let missing_text = rendered(&missing);
+    assert!(!missing.status.success(), "doctor output: {missing_text}");
+    assert!(
+        missing_text.contains(AUTOLOOP_INSTALL_HINT),
+        "doctor output: {missing_text}"
+    );
+    assert!(
+        missing_text.contains("ralph doctor --install-engine")
+            && missing_text.contains("no Node required"),
+        "doctor output: {missing_text}"
     );
 }
 
