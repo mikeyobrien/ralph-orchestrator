@@ -403,7 +403,7 @@ fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
             "Autoloop not found",
             format!("autoloop was not found on PATH. Install it with: {AUTOLOOP_INSTALL_HINT}"),
         ),
-        AutoloopHealth::VersionUnknown { path } => CheckResult::warn(
+        AutoloopHealth::VersionUnknown { path, .. } => CheckResult::warn(
             "autoloop",
             "Autoloop available (version unknown)",
             format!(
@@ -411,7 +411,7 @@ fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
                 path.display()
             ),
         ),
-        AutoloopHealth::TooOld { path, version } => CheckResult::fail(
+        AutoloopHealth::TooOld { path, version, .. } => CheckResult::fail(
             "autoloop",
             format!("Autoloop {version} is too old"),
             format!(
@@ -419,7 +419,7 @@ fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
                 path.display()
             ),
         ),
-        AutoloopHealth::Ok { path, version } => CheckResult::pass(
+        AutoloopHealth::Ok { path, version, .. } => CheckResult::pass(
             "autoloop",
             format!("Autoloop {version} available ({})", path.display()),
         ),
@@ -1114,7 +1114,10 @@ mod tests {
                 AUTOLOOP_INSTALL_HINT,
             ),
             (
-                AutoloopHealth::VersionUnknown { path: path.clone() },
+                AutoloopHealth::VersionUnknown {
+                    path: path.clone(),
+                    source: crate::autoloop_health::AutoloopSource::PathLookup,
+                },
                 CheckStatus::Warn,
                 "version could not be determined",
             ),
@@ -1122,6 +1125,7 @@ mod tests {
                 AutoloopHealth::TooOld {
                     path: path.clone(),
                     version: "0.9.2".to_string(),
+                    source: crate::autoloop_health::AutoloopSource::PathLookup,
                 },
                 CheckStatus::Fail,
                 MIN_AUTOLOOP_VERSION,
@@ -1130,6 +1134,7 @@ mod tests {
                 AutoloopHealth::Ok {
                     path,
                     version: MIN_AUTOLOOP_VERSION.to_string(),
+                    source: crate::autoloop_health::AutoloopSource::PathLookup,
                 },
                 CheckStatus::Pass,
                 MIN_AUTOLOOP_VERSION,

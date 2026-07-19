@@ -1358,18 +1358,18 @@ pub(crate) fn ensure_autoloop_for_run(health: AutoloopHealth, skip_preflight: bo
         AutoloopHealth::Missing => anyhow::bail!(
             "autoloop was not found on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}"
         ),
-        AutoloopHealth::TooOld { path, version } if !skip_preflight => anyhow::bail!(
+        AutoloopHealth::TooOld { path, version, .. } if !skip_preflight => anyhow::bail!(
             "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
             path.display()
         ),
-        AutoloopHealth::TooOld { path, version } => {
+        AutoloopHealth::TooOld { path, version, .. } => {
             eprintln!(
                 "Warning: found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}",
                 path.display()
             );
             Ok(())
         }
-        AutoloopHealth::VersionUnknown { path } => {
+        AutoloopHealth::VersionUnknown { path, .. } => {
             eprintln!(
                 "Warning: found autoloop at {}, but its version could not be determined; existence check passed.",
                 path.display()
@@ -2557,6 +2557,7 @@ mod tests {
             AutoloopHealth::TooOld {
                 path: PathBuf::from("/opt/autoloop"),
                 version: "0.9.2".to_string(),
+                source: ralph_core::autoloop_health::AutoloopSource::PathLookup,
             },
             false,
         )
@@ -2574,11 +2575,16 @@ mod tests {
             AutoloopHealth::TooOld {
                 path: path.clone(),
                 version: "0.9.2".to_string(),
+                source: ralph_core::autoloop_health::AutoloopSource::PathLookup,
             },
-            AutoloopHealth::VersionUnknown { path: path.clone() },
+            AutoloopHealth::VersionUnknown {
+                path: path.clone(),
+                source: ralph_core::autoloop_health::AutoloopSource::PathLookup,
+            },
             AutoloopHealth::Ok {
                 path,
                 version: MIN_AUTOLOOP_VERSION.to_string(),
+                source: ralph_core::autoloop_health::AutoloopSource::PathLookup,
             },
         ] {
             ensure_autoloop_for_run(health, true).expect("health state should pass this gate");
