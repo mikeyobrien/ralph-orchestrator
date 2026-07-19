@@ -190,7 +190,11 @@ fn assert_run_reached_past_gate(output: &Output) {
         "expected arranged failure: {text}"
     );
     assert!(
-        !text.contains("autoloop was not found on PATH")
+        text.contains("autoloop run failed"),
+        "run did not reach the arranged engine-launch failure: {text}"
+    );
+    assert!(
+        !text.contains("autoloop was not found in Ralph's engine directory")
             && !text.contains(&format!("but Ralph requires >= {MIN_AUTOLOOP_VERSION}")),
         "run stopped at the autoloop gate: {text}"
     );
