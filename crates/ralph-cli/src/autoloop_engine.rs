@@ -14,7 +14,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner,
+    AutoloopRunner, parse_events, terminal_stop_detail,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
@@ -35,11 +35,52 @@ fn map_stop_reason(reason: &str) -> TerminationReason {
         "cost_budget" => TerminationReason::MaxCost,
         "stalled" => TerminationReason::LoopStale,
         "interrupted" => TerminationReason::Interrupted,
-        "backend_failed" | "backend_timeout" | "verdict_takeover" => {
-            TerminationReason::ValidationFailure
+        "error" | "backend_failed" | "backend_timeout" => {
+            TerminationReason::EngineError { detail: None }
         }
+        "verdict_takeover" => TerminationReason::ValidationFailure,
         _ => TerminationReason::Stopped,
     }
+}
+
+#[derive(Debug, PartialEq)]
+struct FailedRunRecovery {
+    reason: TerminationReason,
+    iterations: u32,
+    cost_usd: f64,
+}
+
+fn enrich_engine_error(reason: TerminationReason, events: &[AutoloopEvent]) -> TerminationReason {
+    match reason {
+        TerminationReason::EngineError { .. } => TerminationReason::EngineError {
+            detail: terminal_stop_detail(events),
+        },
+        reason => reason,
+    }
+}
+
+/// Recover an engine-provided terminal result after the subprocess exits non-zero.
+///
+/// A completion reason from a failed process is deliberately rejected: it must
+/// not trigger completion or merge coordination when the child itself crashed.
+fn recover_failed_run(events: &[AutoloopEvent]) -> Option<FailedRunRecovery> {
+    let result = events.iter().rev().find_map(AutoloopEvent::run_result)?;
+    let reason = map_stop_reason(&result.stop_reason);
+    if reason == TerminationReason::CompletionPromise {
+        return None;
+    }
+
+    Some(FailedRunRecovery {
+        reason: enrich_engine_error(reason, events),
+        iterations: result.iterations,
+        cost_usd: result.cost_usd,
+    })
+}
+
+fn read_events(path: &Path) -> Vec<AutoloopEvent> {
+    std::fs::read_to_string(path)
+        .map(|content| parse_events(&content))
+        .unwrap_or_default()
 }
 
 /// Normalized result of driving the autoloop subprocess.
@@ -320,12 +361,17 @@ pub async fn run_autoloop_engine(
 
     // Normalize every child execution result before coordinating so success,
     // user stop, spawn/wait failures, and non-zero exits all traverse the same
-    // completion path exactly once. Failed runs have no trustworthy summary,
-    // so coordinate them with elapsed wall time and zeroed iteration/cost data,
-    // then return the original diagnostic after bookkeeping is complete.
+    // completion path exactly once. On failure, the engine's terminal event is
+    // authoritative when present; malformed JSONL remains the last resort.
+    // The original subprocess diagnostic is still returned after bookkeeping.
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
-            let reason = map_stop_reason(&summary.stop_reason);
+            let mapped_reason = map_stop_reason(&summary.stop_reason);
+            let reason = if matches!(mapped_reason, TerminationReason::EngineError { .. }) {
+                enrich_engine_error(mapped_reason, &read_events(&events_path))
+            } else {
+                mapped_reason
+            };
             if reason == TerminationReason::CompletionPromise {
                 warn_on_open_ralph_tasks(&identity_context.tasks_path(), &loop_id);
             }
@@ -344,14 +390,21 @@ pub async fn run_autoloop_engine(
             },
             None,
         ),
-        AutoloopOutcome::Failed(error) => (
-            TerminationReason::ValidationFailure,
-            RunStats {
-                elapsed: start.elapsed(),
-                ..RunStats::default()
-            },
-            Some(error),
-        ),
+        AutoloopOutcome::Failed(error) => {
+            let recovery = recover_failed_run(&read_events(&events_path));
+            let (reason, iterations, cost_usd) = recovery
+                .map(|recovery| (recovery.reason, recovery.iterations, recovery.cost_usd))
+                .unwrap_or((TerminationReason::ValidationFailure, 0, 0.0));
+            (
+                reason,
+                RunStats {
+                    iterations,
+                    elapsed: start.elapsed(),
+                    cost_usd,
+                },
+                Some(error),
+            )
+        }
     };
 
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
@@ -1167,6 +1220,60 @@ mod tests {
     }
 
     #[test]
+    fn failed_run_recovers_engine_error_and_detail_from_terminal_events() {
+        let events = parse_events(concat!(
+            r#"{"type":"iteration.start","iteration":0,"maxIterations":1,"runId":"r1"}"#,
+            "\n",
+            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found"}"#,
+            "\n",
+            r#"{"type":"loop.finish","iterations":0,"stopReason":"error","runId":"r1","costUsd":0}"#,
+            "\n",
+        ));
+
+        assert_eq!(
+            recover_failed_run(&events),
+            Some(FailedRunRecovery {
+                reason: TerminationReason::EngineError {
+                    detail: Some("boom: native CLI not found".to_string()),
+                },
+                iterations: 0,
+                cost_usd: 0.0,
+            })
+        );
+    }
+
+    #[test]
+    fn failed_run_without_terminal_event_keeps_malformed_jsonl_fallback() {
+        let events = parse_events("{not json}\n{\"type\":\"loop.finish\"");
+
+        assert_eq!(recover_failed_run(&events), None);
+    }
+
+    #[test]
+    fn failed_run_rejects_a_completion_terminal_event() {
+        let events = parse_events(
+            r#"{"type":"loop.finish","iterations":2,"stopReason":"completed","runId":"r1","costUsd":0.5}"#,
+        );
+
+        assert_eq!(recover_failed_run(&events), None);
+    }
+
+    #[test]
+    fn completed_backend_failure_enriches_engine_error_detail() {
+        let events = parse_events(
+            r#"{"type":"log","level":"error","message":"loop stop reason=backend_failed completed_iterations=0 detail=backend exploded"}"#,
+        );
+        let reason = enrich_engine_error(map_stop_reason("backend_failed"), &events);
+
+        assert_eq!(
+            reason,
+            TerminationReason::EngineError {
+                detail: Some("backend exploded".to_string()),
+            }
+        );
+    }
+
+    #[test]
     fn maps_autoloop_stop_reasons_to_termination() {
         assert!(matches!(
             map_stop_reason("completed"),
@@ -1192,8 +1299,14 @@ mod tests {
             map_stop_reason("interrupted"),
             TerminationReason::Interrupted
         ));
+        for reason in ["error", "backend_failed", "backend_timeout"] {
+            assert!(matches!(
+                map_stop_reason(reason),
+                TerminationReason::EngineError { detail: None }
+            ));
+        }
         assert!(matches!(
-            map_stop_reason("backend_failed"),
+            map_stop_reason("verdict_takeover"),
             TerminationReason::ValidationFailure
         ));
         // Unknown reasons fall back to a generic stop.
