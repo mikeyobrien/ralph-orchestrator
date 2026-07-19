@@ -7,7 +7,10 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ralph_core::merge_queue::{MergeEvent, MergeEventType, MergeQueue, MergeState};
+use ralph_core::{
+    merge_queue::{MergeEvent, MergeEventType, MergeQueue, MergeState},
+    testing::fake_autoloop::{FakeAutoloop, build_fake_autoloop},
+};
 use tempfile::TempDir;
 
 const LOOP_ID: &str = "merge-lifecycle-test";
@@ -16,6 +19,7 @@ struct Harness {
     workspace: TempDir,
     home: TempDir,
     bin_dir: PathBuf,
+    fake_autoloop: FakeAutoloop,
     spawn_log: PathBuf,
 }
 
@@ -47,24 +51,13 @@ impl Harness {
             ],
         );
 
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/autoloop/merge_lifecycle.jsonl");
+        let fake_autoloop = build_fake_autoloop(&workspace.path().join("fake-autoloop"), &fixture)
+            .expect("build fixture-driven fake autoloop");
+
         let bin_dir = workspace.path().join("bin");
         fs::create_dir(&bin_dir).expect("create fake bin dir");
-        write_executable(
-            &bin_dir.join("autoloop"),
-            r#"#!/bin/sh
-set -eu
-cat <<'SUMMARY'
-autoloops summary
-===================
-run_id: run-merge-lifecycle
-iterations: 1
-stop_reason: completed
-journal: /tmp/autoloop-merge-lifecycle-journal.jsonl
-memory: /tmp/autoloop-merge-lifecycle-memory.jsonl
-SUMMARY
-"#,
-        );
-
         let spawn_log = workspace.path().join("ralph-spawns.log");
         write_executable(
             &bin_dir.join("ralph"),
@@ -86,6 +79,7 @@ exec "$REAL_RALPH" "$@"
             workspace,
             home,
             bin_dir,
+            fake_autoloop,
             spawn_log,
         }
     }
@@ -96,7 +90,10 @@ exec "$REAL_RALPH" "$@"
 
     fn process_queue(&self) -> Output {
         let inherited_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut paths = vec![self.bin_dir.clone()];
+        let mut paths = vec![
+            self.bin_dir.clone(),
+            self.fake_autoloop.bin_dir().to_path_buf(),
+        ];
         paths.extend(std::env::split_paths(&inherited_path));
         let path = std::env::join_paths(paths).expect("construct PATH");
 

@@ -26,7 +26,7 @@
 use crate::Backend;
 use crate::executor::RalphExecutor;
 use crate::mock::{CassetteResolver, MockConfig, build_mock_cli_args};
-use crate::models::TestResult;
+use crate::models::{SkippedScenario, TestResult};
 use crate::scenarios::{ScenarioError, TestScenario};
 use crate::workspace::WorkspaceManager;
 use std::path::{Path, PathBuf};
@@ -66,6 +66,9 @@ pub struct RunConfig {
 
     /// Mock mode configuration (if enabled).
     pub mock_config: Option<MockConfig>,
+
+    /// Scenarios intentionally omitted from this run, retained in reports.
+    pub skipped_scenarios: Vec<SkippedScenario>,
 }
 
 impl RunConfig {
@@ -97,6 +100,12 @@ impl RunConfig {
         self.mock_config = Some(config);
         self
     }
+
+    /// Adds intentionally skipped scenarios to the run report.
+    pub fn with_skipped_scenarios(mut self, skipped: Vec<SkippedScenario>) -> Self {
+        self.skipped_scenarios = skipped;
+        self
+    }
 }
 
 /// Aggregated results from a test run.
@@ -108,8 +117,8 @@ pub struct RunResults {
     /// Total duration of the run.
     pub duration: Duration,
 
-    /// Number of scenarios that were skipped.
-    pub skipped_count: usize,
+    /// Scenarios that were intentionally or operationally skipped.
+    pub skipped: Vec<SkippedScenario>,
 }
 
 impl RunResults {
@@ -125,10 +134,15 @@ impl RunResults {
 
     /// Returns the total number of tests run.
     pub fn total_count(&self) -> usize {
-        self.results.len()
+        self.results.len() + self.skipped.len()
     }
 
-    /// Returns true if all tests passed.
+    /// Returns the number of skipped scenarios.
+    pub fn skipped_count(&self) -> usize {
+        self.skipped.len()
+    }
+
+    /// Returns true if all executed tests passed.
     pub fn all_passed(&self) -> bool {
         self.results.iter().all(|r| r.passed)
     }
@@ -244,23 +258,30 @@ impl TestRunner {
         let start = Instant::now();
         let matching = self.matching_scenarios(config);
 
-        if matching.is_empty() && config.filter.is_some() {
+        if matching.is_empty() && config.filter.is_some() && config.skipped_scenarios.is_empty() {
             return Err(RunnerError::NoMatchingScenarios(
                 config.filter.clone().unwrap(),
             ));
         }
 
         // Calculate total scenarios: if no backend specified, multiply by supported backends
-        let total_scenarios: usize = if config.backend.is_some() {
+        let runnable_scenarios: usize = if config.backend.is_some() {
             matching.len()
         } else {
             matching.iter().map(|s| s.supported_backends().len()).sum()
         };
+        let total_scenarios = runnable_scenarios + config.skipped_scenarios.len();
 
         self.emit_progress(ProgressEvent::RunStarted { total_scenarios });
 
         let mut results = Vec::new();
-        let mut skipped_count = 0;
+        let mut skipped = config.skipped_scenarios.clone();
+        for scenario in &skipped {
+            self.emit_progress(ProgressEvent::ScenarioSkipped {
+                scenario_id: scenario.scenario_id.clone(),
+                reason: scenario.reason.clone(),
+            });
+        }
 
         for scenario in matching {
             // Determine which backends to run for this scenario
@@ -295,11 +316,17 @@ impl TestRunner {
                 let scenario_config = match setup_result {
                     Ok(cfg) => cfg,
                     Err(e) => {
+                        let reason = format!("Setup failed: {e}");
                         self.emit_progress(ProgressEvent::ScenarioSkipped {
                             scenario_id: scenario_id.clone(),
-                            reason: format!("Setup failed: {}", e),
+                            reason: reason.clone(),
                         });
-                        skipped_count += 1;
+                        skipped.push(SkippedScenario {
+                            scenario_id: scenario_id.clone(),
+                            scenario_description: scenario.description().to_string(),
+                            tier: tier.clone(),
+                            reason,
+                        });
 
                         if !config.keep_workspaces {
                             self.workspace_mgr.cleanup(&scenario_id).ok();
@@ -317,11 +344,17 @@ impl TestRunner {
                         mock_config,
                     )
                 {
+                    let reason = format!("Mock setup failed: {e}");
                     self.emit_progress(ProgressEvent::ScenarioSkipped {
                         scenario_id: scenario_id.clone(),
-                        reason: format!("Mock setup failed: {}", e),
+                        reason: reason.clone(),
                     });
-                    skipped_count += 1;
+                    skipped.push(SkippedScenario {
+                        scenario_id: scenario_id.clone(),
+                        scenario_description: scenario.description().to_string(),
+                        tier: tier.clone(),
+                        reason,
+                    });
 
                     if !config.keep_workspaces {
                         self.workspace_mgr.cleanup(&scenario_id).ok();
@@ -398,7 +431,7 @@ impl TestRunner {
         let run_results = RunResults {
             results,
             duration: start.elapsed(),
-            skipped_count,
+            skipped,
         };
 
         self.emit_progress(ProgressEvent::RunCompleted {
@@ -682,7 +715,7 @@ mod tests {
                 },
             ],
             duration: Duration::from_secs(4),
-            skipped_count: 0,
+            skipped: vec![],
         };
 
         assert_eq!(results.passed_count(), 2);
@@ -704,7 +737,7 @@ mod tests {
                 duration: Duration::from_secs(1),
             }],
             duration: Duration::from_secs(1),
-            skipped_count: 0,
+            skipped: vec![],
         };
 
         assert!(results.all_passed());
@@ -743,7 +776,7 @@ mod tests {
                 },
             ],
             duration: Duration::from_secs(3),
-            skipped_count: 0,
+            skipped: vec![],
         };
 
         let by_tier = results.by_tier();
@@ -777,7 +810,7 @@ mod tests {
                 },
             ],
             duration: Duration::from_secs(2),
-            skipped_count: 0,
+            skipped: vec![],
         };
 
         let failures = results.failures();
@@ -879,6 +912,26 @@ mod tests {
         assert_eq!(results.total_count(), 0);
         assert!(results.all_passed()); // Vacuous truth
 
+        cleanup_workspace(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_runner_reports_explicit_skip() {
+        let workspace = test_workspace("runner", "explicit-skip");
+        let runner = TestRunner::new(WorkspaceManager::new(&workspace), vec![]);
+        let config = RunConfig::new().with_skipped_scenarios(vec![SkippedScenario {
+            scenario_id: "legacy".to_string(),
+            scenario_description: "Legacy test".to_string(),
+            tier: "Legacy".to_string(),
+            reason: "no v3 replacement".to_string(),
+        }]);
+
+        let results = runner.run(&config).await.unwrap();
+
+        assert_eq!(results.total_count(), 1);
+        assert_eq!(results.skipped_count(), 1);
+        assert_eq!(results.skipped[0].reason, "no v3 replacement");
+        assert!(results.all_passed());
         cleanup_workspace(&workspace);
     }
 

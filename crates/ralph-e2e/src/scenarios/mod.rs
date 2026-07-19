@@ -43,6 +43,8 @@
 
 mod capabilities;
 mod connectivity;
+#[cfg(unix)]
+mod engine;
 mod errors;
 mod events;
 mod hats;
@@ -53,6 +55,8 @@ mod tasks;
 
 pub use capabilities::{StreamingScenario, ToolUseScenario};
 pub use connectivity::ConnectivityScenario;
+#[cfg(unix)]
+pub use engine::EngineCompletionScenario;
 pub use errors::{
     AuthFailureScenario, BackendUnavailableScenario, MaxIterationsScenario, TimeoutScenario,
 };

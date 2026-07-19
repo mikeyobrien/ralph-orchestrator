@@ -1,0 +1,1 @@
+{"steps":[{"barrier":{"ready_env":"CRASH_READY","release_env":"CRASH_RELEASE","then_exit":1}},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","journal":"/tmp/autoloop-test-journal.jsonl","memory":"/tmp/autoloop-test-memory.jsonl"}}]}

@@ -239,11 +239,32 @@ impl RalphExecutor {
         self.run_with_timeout(config, config.timeout).await
     }
 
+    /// Executes ralph with scenario-specific environment variables and PATH prefixes.
+    pub async fn run_with_environment(
+        &self,
+        config: &ScenarioConfig,
+        environment: &[(String, String)],
+        path_prefixes: &[PathBuf],
+    ) -> Result<ExecutionResult, ExecutorError> {
+        self.run_inner(config, config.timeout, environment, path_prefixes)
+            .await
+    }
+
     /// Executes ralph with a specific timeout.
     pub async fn run_with_timeout(
         &self,
         config: &ScenarioConfig,
         timeout: Duration,
+    ) -> Result<ExecutionResult, ExecutorError> {
+        self.run_inner(config, timeout, &[], &[]).await
+    }
+
+    async fn run_inner(
+        &self,
+        config: &ScenarioConfig,
+        timeout: Duration,
+        environment: &[(String, String)],
+        path_prefixes: &[PathBuf],
     ) -> Result<ExecutionResult, ExecutorError> {
         use std::process::Stdio;
         use tokio::io::AsyncWriteExt;
@@ -280,6 +301,21 @@ impl RalphExecutor {
             .env("RALPH_WORKSPACE_ROOT", &self.workspace)
             // Use Haiku for faster, cheaper E2E tests
             .env("CLAUDE_MODEL", "haiku");
+
+        if !path_prefixes.is_empty() {
+            let mut paths = path_prefixes.to_vec();
+            paths.extend(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            ));
+            let path = std::env::join_paths(paths).map_err(|error| {
+                ExecutorError::SpawnError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("failed to construct PATH: {error}"),
+                ))
+            })?;
+            cmd.env("PATH", path);
+        }
+        cmd.envs(environment.iter().map(|(key, value)| (key, value)));
 
         // Handle prompt
         match &config.prompt {

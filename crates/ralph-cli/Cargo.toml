@@ -67,6 +67,9 @@ mimalloc = { version = "0.1", default-features = false }
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
 
+[dev-dependencies]
+ralph-core = { workspace = true, features = ["test-support"] }
+
 [[example]]
 name = "calculator"
 path = "examples/calculator.rs"

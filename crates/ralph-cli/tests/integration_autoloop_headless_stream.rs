@@ -2,12 +2,13 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use ralph_core::testing::fake_autoloop::build_fake_autoloop;
 
 const AUTOLOOPS_TOML: &str = r#"
 [event_loop]
@@ -75,55 +76,13 @@ fn headless_run_streams_iteration_progress_before_autoloop_exits() {
         ],
     );
 
-    let bin_dir = workspace.path().join("bin");
-    fs::create_dir(&bin_dir).expect("create fake bin dir");
-    let fake_autoloop = bin_dir.join("autoloop");
-    fs::write(
-        &fake_autoloop,
-        r#"#!/bin/sh
-set -eu
-: "${STREAM_READY:?STREAM_READY must be set}"
-: "${STREAM_RELEASE:?STREAM_RELEASE must be set}"
-events=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--events" ]; then
-    shift
-    events="$1"
-    break
-  fi
-  shift
-done
-[ -n "$events" ]
-printf '%s\n' '{"type":"iteration.banner","runId":"run-stream","iteration":1,"maxIterations":2,"allowedRoles":["planner"]}' >> "$events"
-printf '%s\n' '{"type":"iteration.start","runId":"run-stream","iteration":1,"maxIterations":2}' >> "$events"
-sleep 0.2
-printf '%s\n' '{"type":"progress","runId":"run-stream","iteration":1,"allowedRoles":["planner"],"emittedTopic":"plan.ready","outcome":"continue:routed_event"}' >> "$events"
-touch "$STREAM_READY"
-while [ ! -e "$STREAM_RELEASE" ]; do
-  sleep 0.01
-done
-printf '%s\n' '{"type":"loop.finish","runId":"run-stream","iterations":1,"stopReason":"completed","costUsd":0.01}' >> "$events"
-cat <<'SUMMARY'
-autoloops summary
-===================
-run_id: run-stream
-iterations: 1
-stop_reason: completed
-cost_usd: 0.01
-journal: /tmp/autoloop-stream-journal.jsonl
-memory: /tmp/autoloop-stream-memory.jsonl
-SUMMARY
-"#,
-    )
-    .expect("write fake autoloop");
-    let mut permissions = fs::metadata(&fake_autoloop)
-        .expect("fake autoloop metadata")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&fake_autoloop, permissions).expect("make fake autoloop executable");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/autoloop/headless_stream.jsonl");
+    let fake_autoloop = build_fake_autoloop(&workspace.path().join("fake-autoloop"), &fixture)
+        .expect("build fixture-driven fake autoloop");
 
     let inherited_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = vec![bin_dir];
+    let mut paths = vec![fake_autoloop.bin_dir().to_path_buf()];
     paths.extend(std::env::split_paths(&inherited_path));
     let path = std::env::join_paths(paths).expect("construct PATH");
     let ready = workspace.path().join("stream-ready");

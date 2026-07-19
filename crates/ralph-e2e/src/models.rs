@@ -38,6 +38,19 @@ pub struct TestResult {
     pub duration: Duration,
 }
 
+/// A scenario intentionally not executed, with an explicit reason.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkippedScenario {
+    /// Unique scenario identifier.
+    pub scenario_id: String,
+    /// Human-readable description.
+    pub scenario_description: String,
+    /// Test tier.
+    pub tier: String,
+    /// Why this scenario was skipped.
+    pub reason: String,
+}
+
 /// A single assertion within a test.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Assertion {

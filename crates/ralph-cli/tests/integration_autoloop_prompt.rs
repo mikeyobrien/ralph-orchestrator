@@ -1,7 +1,6 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -9,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use ralph_core::{
     HistoryEventType, LoopEntry, LoopHistory, LoopLock, LoopRegistry, MergeQueue, MergeState, Task,
+    testing::fake_autoloop::{FakeAutoloop, build_fake_autoloop},
 };
 
 use tempfile::TempDir;
@@ -35,10 +35,9 @@ prompt_file = "roles/worker.md"
 struct Harness {
     workspace: TempDir,
     home: TempDir,
-    argv_out: PathBuf,
+    fake_autoloop: FakeAutoloop,
     crash_ready: PathBuf,
     crash_release: PathBuf,
-    bin_dir: PathBuf,
 }
 
 impl Harness {
@@ -97,57 +96,25 @@ impl Harness {
             ],
         );
 
-        let bin_dir = workspace.path().join("bin");
-        fs::create_dir(&bin_dir).expect("create fake bin dir");
-        let fake_autoloop = bin_dir.join("autoloop");
-        fs::write(
-            &fake_autoloop,
-            r#"#!/bin/sh
-set -eu
-: "${ARGV_OUT:?ARGV_OUT must be set}"
-printf '%s\n' "$@" > "$ARGV_OUT"
-if [ -n "${CRASH_READY:-}" ]; then
-  : "${CRASH_RELEASE:?CRASH_RELEASE must be set in crash mode}"
-  touch "$CRASH_READY"
-  while [ ! -e "$CRASH_RELEASE" ]; do
-    sleep 0.01
-  done
-  exit 1
-fi
-cat <<'SUMMARY'
-autoloops summary
-===================
-run_id: run-test
-iterations: 1
-stop_reason: completed
-journal: /tmp/autoloop-test-journal.jsonl
-memory: /tmp/autoloop-test-memory.jsonl
-SUMMARY
-"#,
-        )
-        .expect("write fake autoloop");
-        let mut permissions = fs::metadata(&fake_autoloop)
-            .expect("fake autoloop metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&fake_autoloop, permissions).expect("make fake autoloop executable");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/autoloop/prompt_delivery.jsonl");
+        let fake_autoloop = build_fake_autoloop(&workspace.path().join("fake-autoloop"), &fixture)
+            .expect("build fixture-driven fake autoloop");
 
-        let argv_out = workspace.path().join("autoloop-argv.txt");
         let crash_ready = workspace.path().join("autoloop-crash-ready");
         let crash_release = workspace.path().join("autoloop-crash-release");
         Self {
             workspace,
             home,
-            argv_out,
+            fake_autoloop,
             crash_ready,
             crash_release,
-            bin_dir,
         }
     }
 
     fn command(&self, prompt_args: &[&str]) -> Command {
         let inherited_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut paths = vec![self.bin_dir.clone()];
+        let mut paths = vec![self.fake_autoloop.bin_dir().to_path_buf()];
         paths.extend(std::env::split_paths(&inherited_path));
         let path = std::env::join_paths(paths).expect("construct PATH");
 
@@ -166,7 +133,7 @@ SUMMARY
             .args(args)
             .current_dir(self.workspace.path())
             .env("PATH", path)
-            .env("ARGV_OUT", &self.argv_out)
+            .env("ARGV_OUT", self.fake_autoloop.argv_out())
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
             .env_remove("RALPH_CONFIG")
@@ -199,11 +166,9 @@ SUMMARY
     }
 
     fn recorded_argv(&self) -> Vec<String> {
-        fs::read_to_string(&self.argv_out)
+        self.fake_autoloop
+            .recorded_argv()
             .expect("fake autoloop should record argv")
-            .lines()
-            .map(str::to_owned)
-            .collect()
     }
 }
 
@@ -377,7 +342,7 @@ fn explicit_preset_rejects_cli_backend_without_running_autoloop() {
         "conflict error did not explain backend ownership:\n{stderr}"
     );
     assert!(
-        !harness.argv_out.exists(),
+        !harness.fake_autoloop.argv_out().exists(),
         "fake autoloop must not run when backend selection conflicts with an explicit preset"
     );
 }

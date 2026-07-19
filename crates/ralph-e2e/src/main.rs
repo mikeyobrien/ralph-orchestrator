@@ -24,6 +24,8 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
+#[cfg(unix)]
+use ralph_e2e::EngineCompletionScenario;
 use ralph_e2e::{
     AuthChecker,
     // Tier 7: Error Handling
@@ -55,13 +57,13 @@ use ralph_e2e::{
     MemoryPersistenceScenario,
     MemoryRapidWriteScenario,
     MemorySearchScenario,
-    MockConfig,
     MultiIterScenario,
     ReportFormat as LibReportFormat,
     ReportWriter,
     RunConfig,
     SingleIterScenario,
     // Tier 4: Capabilities
+    SkippedScenario,
     StreamingScenario,
     TerminalReporter,
     TestRunner,
@@ -76,6 +78,7 @@ use ralph_e2e::{
     run_hooks_bdd_suite,
     run_mock_cli,
 };
+use std::path::Path;
 
 /// Backend selection for E2E tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -187,13 +190,9 @@ pub struct TestOpts {
     #[arg(long)]
     pub skip_analysis: bool,
 
-    /// Use mock mode (replay cassettes instead of real backends)
+    /// Run the CI-safe v3 engine smoke with fixture replay
     #[arg(long)]
     pub mock: bool,
-
-    /// Replay speed for mock mode (0.0 = instant, 10.0 = 10x faster)
-    #[arg(long, default_value = "0.0")]
-    pub mock_speed: f32,
 }
 
 /// Report output format.
@@ -219,8 +218,8 @@ impl ReportFormat {
     }
 }
 
-/// Returns all registered test scenarios.
-fn get_all_scenarios() -> Vec<Box<dyn TestScenario>> {
+/// Returns the legacy v2 cassette scenario inventory.
+fn get_legacy_scenarios() -> Vec<Box<dyn TestScenario>> {
     vec![
         // Tier 1: Connectivity (backend-agnostic)
         Box::new(ConnectivityScenario::new()),
@@ -258,6 +257,36 @@ fn get_all_scenarios() -> Vec<Box<dyn TestScenario>> {
     ]
 }
 
+/// Returns all registered scenarios, including the v3 engine smoke.
+fn get_all_scenarios() -> Vec<Box<dyn TestScenario>> {
+    let mut scenarios: Vec<Box<dyn TestScenario>> = Vec::new();
+    #[cfg(unix)]
+    scenarios.push(Box::new(EngineCompletionScenario::new()));
+    scenarios.extend(get_legacy_scenarios());
+    scenarios
+}
+
+fn legacy_skips(filter: Option<&str>) -> Vec<SkippedScenario> {
+    const REASON: &str = "targets deleted v2 in-house loop (cassette replay); no v3 replacement";
+    let filter = filter.map(str::to_lowercase);
+    get_legacy_scenarios()
+        .into_iter()
+        .filter(|scenario| {
+            filter.as_ref().is_none_or(|filter| {
+                scenario.id().to_lowercase().contains(filter)
+                    || scenario.description().to_lowercase().contains(filter)
+                    || scenario.tier().to_lowercase().contains(filter)
+            })
+        })
+        .map(|scenario| SkippedScenario {
+            scenario_id: scenario.id().to_string(),
+            scenario_description: scenario.description().to_string(),
+            tier: scenario.tier().to_string(),
+            reason: REASON.to_string(),
+        })
+        .collect()
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -288,7 +317,7 @@ fn main() {
     println!("{}", "━".repeat(40).dimmed());
 
     if cli.test_opts.mock {
-        println!("{}", "Mode: Mock (cassette replay)".dimmed());
+        println!("{}", "Mode: Mock (v3 real-engine fixture replay)".dimmed());
     }
 
     // Determine verbosity
@@ -467,11 +496,12 @@ async fn list_scenarios(opts: &TestOpts, verbosity: Verbosity) {
             println!("  {}", current_tier.bold().underline());
         }
 
-        println!(
-            "    {}  {}",
-            scenario.id().cyan(),
-            scenario.description().dimmed()
-        );
+        let description = if scenario.id() == "engine-completion" {
+            scenario.description().to_string()
+        } else {
+            format!("{} [legacy/skipped under v3 mock]", scenario.description())
+        };
+        println!("    {}  {}", scenario.id().cyan(), description.dimmed());
     }
 
     if scenarios.is_empty() {
@@ -531,11 +561,28 @@ async fn run_tests(opts: &TestOpts, verbosity: Verbosity) {
         .join(".e2e-tests");
     let workspace_mgr = WorkspaceManager::new(workspace_path.clone());
 
-    // Get scenarios
-    let scenarios = get_all_scenarios();
+    // Mock mode is the CI-safe v3 engine smoke. The old cassette scenarios
+    // remain explicit skipped records in the same normal runner/report flow.
+    let scenarios: Vec<Box<dyn TestScenario>> = if opts.mock {
+        #[cfg(unix)]
+        {
+            vec![Box::new(EngineCompletionScenario::new())]
+        }
+        #[cfg(not(unix))]
+        {
+            Vec::new()
+        }
+    } else {
+        get_all_scenarios()
+    };
 
     // Build run configuration
     let mut config = RunConfig::new().keep_workspaces(opts.keep_workspace);
+    if opts.mock {
+        config = config
+            .with_backend(LibBackend::Claude)
+            .with_skipped_scenarios(legacy_skips(opts.filter.as_deref()));
+    }
 
     if let Some(filter) = &opts.filter {
         config = config.with_filter(filter);
@@ -545,10 +592,29 @@ async fn run_tests(opts: &TestOpts, verbosity: Verbosity) {
         config = config.with_backend(backend);
     }
 
-    // Configure mock mode if enabled
+    // Mock mode is a source-tree CI gate: build the sibling binary first so
+    // fixture replay cannot accidentally exercise a stale or globally installed Ralph.
     if opts.mock {
-        let mock_config = MockConfig::default().with_speed(opts.mock_speed);
-        config = config.with_mock(mock_config);
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("ralph-e2e must live under the Cargo workspace");
+        let status = std::process::Command::new("cargo")
+            .args(["build", "--quiet", "-p", "ralph-cli"])
+            .current_dir(workspace_root)
+            .status()
+            .unwrap_or_else(|error| {
+                eprintln!(
+                    "{} Failed to build local Ralph: {}",
+                    "Error:".red().bold(),
+                    error
+                );
+                std::process::exit(1);
+            });
+        if !status.success() {
+            eprintln!("{} Failed to build local Ralph", "Error:".red().bold());
+            std::process::exit(1);
+        }
     }
 
     // Resolve the ralph binary to use (local build preferred over PATH)

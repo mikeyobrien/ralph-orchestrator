@@ -7,6 +7,7 @@ description = "Core orchestration loop, configuration, and state management for 
 
 [features]
 recording = []
+test-support = []
 
 [lints]
 workspace = true
