@@ -14,6 +14,7 @@
 //! `backend.output` at the iteration boundary.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -344,14 +345,16 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
 /// If the stream drains to the terminal cancel without ever seeing a
 /// `loop.finish` / `summary`, an error line is appended to the latest iteration
 /// (mirrors the EOF-without-terminal-event handling in `rpc_source`).
-pub async fn run_autoloop_event_reader(
+pub async fn run_autoloop_event_reader<S>(
     events_path: PathBuf,
     state: Arc<Mutex<TuiState>>,
     mut cancel_rx: watch::Receiver<bool>,
-    role_display_names: HashMap<String, String>,
-) {
+    role_display_names: HashMap<String, String, S>,
+) where
+    S: BuildHasher + Send,
+{
     let mut tailer = AutoloopEventTailer::new(events_path);
-    let mut ctx = AutoloopMapCtx::new(role_display_names);
+    let mut ctx = AutoloopMapCtx::new(role_display_names.into_iter().collect());
     let mut saw_terminal = false;
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 

@@ -223,7 +223,7 @@ fn content_lines(content: Option<&Value>) -> Vec<StreamLine> {
                     push_text_lines(&mut lines, text);
                 }
             }
-            Some("tool_use") | Some("toolCall") => {
+            Some("tool_use" | "toolCall") => {
                 let Some(name) = block.get("name").and_then(Value::as_str) else {
                     continue;
                 };
