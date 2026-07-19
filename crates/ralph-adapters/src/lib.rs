@@ -50,7 +50,7 @@ pub use auto_detect::{
 pub use autoloop_event_tailer::AutoloopEventTailer;
 pub use autoloop_events::{
     AutoloopEvent, PendingAsk, RunResult, first_pending_ask, parse_events,
-    run_result as events_run_result,
+    run_result as events_run_result, terminal_stop_detail,
 };
 pub use autoloop_journal::{
     AutoloopJournalTailer, AutoloopRecord, JournalError, JournalReplay, LiveRunState, RunSummary,

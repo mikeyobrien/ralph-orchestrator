@@ -40,6 +40,12 @@ pub struct AutoloopEvent {
     pub emitted_topic: Option<String>,
     #[serde(default)]
     pub outcome: Option<String>,
+    /// Present on `log`.
+    #[serde(default)]
+    pub level: Option<String>,
+    /// Present on `log`.
+    #[serde(default)]
+    pub message: Option<String>,
     /// Roles allowed to act this iteration; present on `progress`. The first is
     /// the active role, used to label the iteration (autoloop's role ≈ ralph's hat).
     #[serde(rename = "allowedRoles", default)]
@@ -130,6 +136,24 @@ pub fn run_result(events: &[AutoloopEvent]) -> Option<RunResult> {
     events.iter().rev().find_map(AutoloopEvent::run_result)
 }
 
+/// The detail from the latest engine error stop log, if present.
+pub fn terminal_stop_detail(events: &[AutoloopEvent]) -> Option<String> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != "log" || event.level.as_deref() != Some("error") {
+            return None;
+        }
+
+        let message = event.message.as_deref()?;
+        if !message.contains("loop stop reason=") {
+            return None;
+        }
+
+        let (_, detail) = message.split_once("detail=")?;
+        let detail = detail.trim();
+        (!detail.is_empty()).then(|| detail.to_owned())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +220,36 @@ mod tests {
         // The two valid complete lines decode; malformed + partial are skipped.
         assert_eq!(events.len(), 2);
         assert_eq!(run_result(&events).unwrap().stop_reason, "completed");
+    }
+
+    #[test]
+    fn extracts_detail_from_the_latest_engine_error_stop_log() {
+        let content = concat!(
+            r#"{"type":"iteration.start","iteration":0,"maxIterations":1,"runId":"r1"}"#,
+            "\n",
+            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found"}"#,
+            "\n",
+            r#"{"type":"loop.finish","iterations":0,"stopReason":"error","runId":"r1","costUsd":0}"#,
+            "\n",
+        );
+
+        assert_eq!(
+            terminal_stop_detail(&parse_events(content)).as_deref(),
+            Some("boom: native CLI not found")
+        );
+    }
+
+    #[test]
+    fn stop_detail_is_absent_without_an_error_log() {
+        assert!(terminal_stop_detail(&parse_events(SAMPLE)).is_none());
+    }
+
+    #[test]
+    fn stop_detail_is_absent_when_detail_is_blank() {
+        let events = parse_events(
+            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=   "}"#,
+        );
+
+        assert!(terminal_stop_detail(&events).is_none());
     }
 }
