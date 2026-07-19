@@ -8,16 +8,17 @@ loop execution, role dispatch, completion judgment, and budgets.
 
 ## New requirement: the autoloop engine
 
-Ralph 3.0 requires `autoloop >= 0.10.0`. Two ways to get it:
+Ralph 3.0 requires `autoloop >= 0.10.0`. The recommended npm installation
+pulls it in automatically. Cargo, GitHub Releases installer, and prebuilt-binary
+users can just run `ralph run`: first-run provisioning offers to download the
+SHA256-verified standalone engine into `~/.ralph/engine/` interactively. For
+CI and other non-interactive environments, opt in with
+`RALPH_AUTO_INSTALL_ENGINE=1 ralph run -p "your task"`.
 
-- **npm** (needs Node >= 20): `npm install -g @mobrienv/autoloop`.
-  Installing ralph itself via npm pulls it in automatically.
-- **No Node?** `ralph doctor --install-engine` downloads the standalone
-  single-binary engine for your platform into `~/.ralph/engine/`
-  (SHA256-verified). No Node runtime needed.
-
-`ralph doctor` shows which engine resolution is active; `ralph run` fails
-fast with install guidance if no usable engine is found.
+To provision the standalone engine manually, run
+`ralph doctor --install-engine`. No Node runtime is needed. `ralph doctor`
+shows which engine resolution is active; a declined or non-interactive run
+without opt-in fails fast with install guidance.
 
 ## What breaks
 
