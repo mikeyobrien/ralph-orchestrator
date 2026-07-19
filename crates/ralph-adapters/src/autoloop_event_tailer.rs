@@ -76,15 +76,36 @@ impl AutoloopEventTailer {
             raw = combined;
         }
 
-        // Decode the maximal valid UTF-8 prefix; stash a torn trailing sequence.
-        let text = match std::str::from_utf8(&raw) {
-            Ok(s) => s.to_string(),
-            Err(e) => {
-                let valid = e.valid_up_to();
-                self.pending_bytes = raw[valid..].to_vec();
-                String::from_utf8(raw[..valid].to_vec()).expect("valid_up_to slice is valid utf-8")
+        // Decode every valid UTF-8 segment. Genuinely invalid bytes are
+        // skipped so they cannot pin the tailer at the same offset forever;
+        // only a torn trailing sequence is carried into the next poll.
+        let mut text = String::new();
+        let mut undecoded = raw.as_slice();
+        loop {
+            match std::str::from_utf8(undecoded) {
+                Ok(valid) => {
+                    text.push_str(valid);
+                    break;
+                }
+                Err(error) => {
+                    let valid_up_to = error.valid_up_to();
+                    text.push_str(
+                        std::str::from_utf8(&undecoded[..valid_up_to])
+                            .expect("valid_up_to slice is valid utf-8"),
+                    );
+
+                    match error.error_len() {
+                        Some(invalid_len) => {
+                            undecoded = &undecoded[valid_up_to + invalid_len..];
+                        }
+                        None => {
+                            self.pending_bytes = undecoded[valid_up_to..].to_vec();
+                            break;
+                        }
+                    }
+                }
             }
-        };
+        }
 
         // Combine with the unterminated line carried from the last poll, then
         // split on newlines. A trailing segment without a newline stays pending.
@@ -121,12 +142,16 @@ mod tests {
     use std::io::Write;
 
     fn append(path: &Path, s: &str) {
+        append_bytes(path, s.as_bytes());
+    }
+
+    fn append_bytes(path: &Path, bytes: &[u8]) {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
             .unwrap();
-        f.write_all(s.as_bytes()).unwrap();
+        f.write_all(bytes).unwrap();
     }
 
     const ITER: &str = r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#;
@@ -196,6 +221,48 @@ mod tests {
         assert_eq!(got.len(), 2, "two malformed lines skipped");
         assert_eq!(got[0].kind, "iteration.start");
         assert_eq!(got[1].kind, "loop.finish");
+    }
+
+    #[test]
+    fn tailer_recovers_past_invalid_utf8_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.ndjson");
+        let mut tailer = AutoloopEventTailer::new(&path);
+
+        let mut bytes = format!("{ITER}\n").into_bytes();
+        bytes.extend_from_slice(b"{\"type\":\xFF}\n");
+        bytes.extend_from_slice(format!("{FINISH}\n").as_bytes());
+        append_bytes(&path, &bytes);
+
+        let first = tailer.poll().unwrap();
+        assert_eq!(first.len(), 2, "invalid UTF-8 line should be skipped");
+        assert_eq!(first[0].kind, "iteration.start");
+        assert_eq!(first[1].kind, "loop.finish");
+
+        append(&path, &format!("{PROG}\n"));
+        let second = tailer.poll().unwrap();
+        assert_eq!(second.len(), 1, "tailer must continue after invalid UTF-8");
+        assert_eq!(second[0].kind, "progress");
+    }
+
+    #[test]
+    fn buffers_a_torn_multibyte_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.ndjson");
+        let mut tailer = AutoloopEventTailer::new(&path);
+        let event = r#"{"type":"iteration.start","iteration":1,"runId":"café"}"#;
+        let bytes = event.as_bytes();
+        let multibyte_start = event.find('é').unwrap();
+
+        append_bytes(&path, &bytes[..multibyte_start + 1]);
+        assert!(tailer.poll().unwrap().is_empty());
+
+        append_bytes(&path, &bytes[multibyte_start + 1..]);
+        append(&path, "\n");
+        let got = tailer.poll().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].kind, "iteration.start");
+        assert_eq!(got[0].run_id.as_deref(), Some("café"));
     }
 
     #[test]
