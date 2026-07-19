@@ -74,10 +74,10 @@ impl Fixture {
 
 fn artifact_name() -> &'static str {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => "autoloop-bun-darwin-arm64",
-        ("macos", "x86_64") => "autoloop-bun-darwin-x64",
-        ("linux", "x86_64") => "autoloop-bun-linux-x64",
-        ("linux", "aarch64") => "autoloop-bun-linux-arm64",
+        ("macos", "aarch64") => "autoloop-darwin-arm64",
+        ("macos", "x86_64") => "autoloop-darwin-x64",
+        ("linux", "x86_64") => "autoloop-linux-x64",
+        ("linux", "aarch64") => "autoloop-linux-arm64",
         platform => panic!("installer integration test unsupported on {platform:?}"),
     }
 }

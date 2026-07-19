@@ -88,10 +88,10 @@ pub fn install() -> Result<()> {
 
 fn artifact_name() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => Ok("autoloop-bun-darwin-arm64"),
-        ("macos", "x86_64") => Ok("autoloop-bun-darwin-x64"),
-        ("linux", "x86_64") => Ok("autoloop-bun-linux-x64"),
-        ("linux", "aarch64") => Ok("autoloop-bun-linux-arm64"),
+        ("macos", "aarch64") => Ok("autoloop-darwin-arm64"),
+        ("macos", "x86_64") => Ok("autoloop-darwin-x64"),
+        ("linux", "x86_64") => Ok("autoloop-linux-x64"),
+        ("linux", "aarch64") => Ok("autoloop-linux-arm64"),
         (os, arch) => bail!(
             "no standalone autoloop engine is available for platform {os}/{arch}; install the Node package instead with `npm install -g @mobrienv/autoloop`"
         ),
