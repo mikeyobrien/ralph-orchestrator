@@ -24,6 +24,8 @@ pub enum TerminationReason {
     LoopStale,
     /// Too many consecutive malformed JSONL lines in events file.
     ValidationFailure,
+    /// The engine reported an unrecoverable error.
+    EngineError { detail: Option<String> },
     /// Manually stopped.
     Stopped,
     /// Interrupted by signal (SIGINT/SIGTERM).
@@ -51,6 +53,7 @@ impl TerminationReason {
             | TerminationReason::LoopThrashing
             | TerminationReason::LoopStale
             | TerminationReason::ValidationFailure
+            | TerminationReason::EngineError { .. }
             | TerminationReason::WorkspaceGone => 1,
             TerminationReason::Stopped => 0,
             TerminationReason::MaxIterations
@@ -78,6 +81,7 @@ impl TerminationReason {
             TerminationReason::LoopThrashing => "loop_thrashing",
             TerminationReason::LoopStale => "loop_stale",
             TerminationReason::ValidationFailure => "validation_failure",
+            TerminationReason::EngineError { .. } => "error",
             TerminationReason::Stopped => "stopped",
             TerminationReason::Interrupted => "interrupted",
             TerminationReason::RestartRequested => "restart_requested",
@@ -114,6 +118,7 @@ impl TerminationReason {
             TerminationReason::LoopThrashing => "loop thrashing detected",
             TerminationReason::LoopStale => "stale loop detected",
             TerminationReason::ValidationFailure => "validation failure",
+            TerminationReason::EngineError { .. } => "engine error",
             TerminationReason::Stopped => "manually stopped",
             TerminationReason::Interrupted => "interrupted by signal",
             TerminationReason::RestartRequested => "restart requested",
@@ -150,5 +155,18 @@ mod tests {
     #[test]
     fn manually_stopped_is_a_clean_exit() {
         assert_eq!(TerminationReason::Stopped.exit_code(), 0);
+    }
+
+    #[test]
+    fn engine_error_has_failure_contract() {
+        let reason = TerminationReason::EngineError {
+            detail: Some("boom".to_string()),
+        };
+
+        assert_eq!(reason.exit_code(), 1);
+        assert_eq!(reason.as_str(), "error");
+        assert_eq!(reason.history_label(), "error");
+        assert_eq!(reason.review_description(), "engine error");
+        assert!(!reason.is_success());
     }
 }

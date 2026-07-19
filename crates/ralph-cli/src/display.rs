@@ -3,7 +3,11 @@
 //! This module contains functions for formatting and printing
 //! termination messages, event tables, and other terminal UI elements.
 
-use ralph_core::{EventRecord, TerminationReason, truncate_with_ellipsis};
+use std::borrow::Cow;
+
+use ralph_core::{
+    EventRecord, TerminationReason, sanitize_tui_inline_text, truncate_with_ellipsis,
+};
 
 /// ANSI color codes for terminal output.
 pub mod colors {
@@ -88,6 +92,23 @@ fn resume_hint_for(reason: &TerminationReason, loop_id: &str) -> Option<String> 
     }
 }
 
+fn engine_error_label(detail: Option<&str>) -> String {
+    let Some(detail) = detail else {
+        return "Engine error".to_string();
+    };
+
+    let sanitized = sanitize_tui_inline_text(detail);
+    let detail = if sanitized.chars().count() > 200 {
+        let mut truncated: String = sanitized.chars().take(199).collect();
+        truncated.push('…');
+        truncated
+    } else {
+        sanitized
+    };
+
+    format!("Engine error: {detail}")
+}
+
 /// Prints termination message with status.
 ///
 /// When `loop_id` is provided, also prints a `Resume:` hint line for
@@ -103,20 +124,37 @@ pub fn print_termination(
     let p = Palette::new(use_colors);
     let (b, r, d, c) = (p.bold, p.reset, p.dim, p.cyan);
 
-    let (color, icon, label) = match reason {
-        TerminationReason::CompletionPromise => (p.green, "?", "Completion promise detected"),
-        TerminationReason::MaxIterations => (p.yellow, "?", "Maximum iterations reached"),
-        TerminationReason::MaxRuntime => (p.yellow, "?", "Maximum runtime exceeded"),
-        TerminationReason::MaxCost => (p.yellow, "?", "Maximum cost exceeded"),
-        TerminationReason::ConsecutiveFailures => (p.red, "?", "Too many consecutive failures"),
-        TerminationReason::LoopThrashing => (p.red, "?", "Loop thrashing detected"),
-        TerminationReason::LoopStale => (p.red, "?", "Stale loop detected"),
-        TerminationReason::ValidationFailure => (p.red, "?", "Too many malformed JSONL events"),
-        TerminationReason::Stopped => (p.cyan, "?", "Manually stopped"),
-        TerminationReason::Interrupted => (p.yellow, "?", "Interrupted by signal"),
-        TerminationReason::RestartRequested => (p.cyan, "↻", "Restarting by human request"),
-        TerminationReason::WorkspaceGone => (p.red, "?", "Workspace directory removed"),
-        TerminationReason::Cancelled => (p.cyan, "⏹", "Cancelled gracefully"),
+    let (color, icon, label): (_, _, Cow<'_, str>) = match reason {
+        TerminationReason::CompletionPromise => {
+            (p.green, "?", Cow::Borrowed("Completion promise detected"))
+        }
+        TerminationReason::MaxIterations => {
+            (p.yellow, "?", Cow::Borrowed("Maximum iterations reached"))
+        }
+        TerminationReason::MaxRuntime => (p.yellow, "?", Cow::Borrowed("Maximum runtime exceeded")),
+        TerminationReason::MaxCost => (p.yellow, "?", Cow::Borrowed("Maximum cost exceeded")),
+        TerminationReason::ConsecutiveFailures => {
+            (p.red, "?", Cow::Borrowed("Too many consecutive failures"))
+        }
+        TerminationReason::LoopThrashing => (p.red, "?", Cow::Borrowed("Loop thrashing detected")),
+        TerminationReason::LoopStale => (p.red, "?", Cow::Borrowed("Stale loop detected")),
+        TerminationReason::ValidationFailure => {
+            (p.red, "?", Cow::Borrowed("Too many malformed JSONL events"))
+        }
+        TerminationReason::EngineError { detail } => (
+            p.red,
+            "?",
+            Cow::Owned(engine_error_label(detail.as_deref())),
+        ),
+        TerminationReason::Stopped => (p.cyan, "?", Cow::Borrowed("Manually stopped")),
+        TerminationReason::Interrupted => (p.yellow, "?", Cow::Borrowed("Interrupted by signal")),
+        TerminationReason::RestartRequested => {
+            (p.cyan, "↻", Cow::Borrowed("Restarting by human request"))
+        }
+        TerminationReason::WorkspaceGone => {
+            (p.red, "?", Cow::Borrowed("Workspace directory removed"))
+        }
+        TerminationReason::Cancelled => (p.cyan, "⏹", Cow::Borrowed("Cancelled gracefully")),
     };
 
     let separator = "-".repeat(58);
@@ -213,6 +251,32 @@ pub fn print_events_table(records: &[EventRecord], use_colors: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_error_label_without_detail_is_category_only() {
+        assert_eq!(engine_error_label(None), "Engine error");
+    }
+
+    #[test]
+    fn engine_error_label_sanitizes_inline_detail() {
+        assert_eq!(
+            engine_error_label(Some("boom:\r\nnative CLI\u{0007} not found")),
+            "Engine error: boom: native CLI not found"
+        );
+    }
+
+    #[test]
+    fn engine_error_label_caps_detail_at_200_characters() {
+        let label = engine_error_label(Some(&"x".repeat(201)));
+        let detail = label.strip_prefix("Engine error: ").unwrap();
+
+        assert_eq!(detail.chars().count(), 200);
+        assert!(detail.ends_with('…'));
+        assert_eq!(
+            detail.chars().filter(|character| *character == 'x').count(),
+            199
+        );
+    }
 
     #[test]
     fn test_resume_hint_skipped_for_completion_promise() {
