@@ -2823,6 +2823,7 @@ dependencies = [
  "crossterm 0.28.1",
  "futures",
  "indicatif",
+ "insta",
  "keyring",
  "mimalloc",
  "nix 0.29.0",

@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
+use insta::{assert_snapshot, with_settings};
 use ralph_core::testing::fake_autoloop::{FakeAutoloop, build_fake_autoloop};
 use tempfile::TempDir;
 
@@ -205,6 +206,27 @@ fn headless_run_uses_ralph_voice_and_gates_engine_noise_by_verbosity() {
         !default_output.as_bytes().contains(&0x1b),
         "--color never emitted ANSI escapes:\n{default_output:?}"
     );
+
+    let piped_stdout = String::from_utf8(default.stdout.clone()).expect("UTF-8 piped stdout");
+    with_settings!({
+        filters => vec![
+            (
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z",
+                "[TIMESTAMP]",
+            ),
+            (r"primary-\d+", "primary-[TIMESTAMP]"),
+            (
+                r"(?x)
+                  (?:/private)?/var/folders/(?:[^/\s]+/){2}T/\.tmp[A-Za-z0-9]+
+                  |
+                  /tmp/\.tmp[A-Za-z0-9]+",
+                "[TEMP]",
+            ),
+            (r"\d+(?:\.\d+)?s", "[ELAPSED]"),
+        ]
+    }, {
+        assert_snapshot!("piped_headless_output", piped_stdout);
+    });
 
     let verbose = harness.run(true);
     assert_success(&verbose);
