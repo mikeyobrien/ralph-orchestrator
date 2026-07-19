@@ -2,14 +2,14 @@
 # Ralph Orchestrator
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75+-orange)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org/)
 [![Build](https://img.shields.io/github/actions/workflow/status/mikeyobrien/ralph-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/mikeyobrien/ralph-orchestrator/actions)
 [![Coverage](https://img.shields.io/endpoint?url=https://mikeyobrien.github.io/ralph-orchestrator/badges/coverage.json)](CONTRIBUTING.md#coverage)
 [![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 [![Docs](https://img.shields.io/badge/docs-mkdocs-blue)](https://mikeyobrien.github.io/ralph-orchestrator/)
 [![Discord](https://img.shields.io/discord/1482421188700667906?label=Discord&logo=discord&logoColor=white)](https://discord.gg/XWUyeUNffh)
 
-A hat-based orchestration framework that keeps AI agents in a loop until the task is done.
+A terminal frontend and coordination plane for autonomous coding loops powered by autoloop.
 
 > "Me fail English? That's unpossible!" - Ralph Wiggum
 
@@ -54,13 +54,15 @@ ralph init --backend claude
 
 # 2. Plan your feature (interactive PDD session)
 ralph plan "Add user authentication with JWT"
-# Creates: .ralph/specs/user-authentication/requirements.md, design.md, implementation-plan.md
+# The session writes its approved design and plan under .agents/planning/ by default.
 
-# 3. Implement the feature
-ralph run -p "Implement the feature in .ralph/specs/user-authentication/"
+# 3. Implement the approved plan
+ralph run -p "Implement the approved authentication plan under .agents/planning/"
 ```
 
-Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
+`ralph run` launches autoloop as the execution engine. Autoloop owns iteration
+and completion judgment; Ralph observes its journal, event stream, and summary,
+then coordinates the TUI, loop registry, worktrees, and merge queue.
 
 For simpler tasks, skip planning and run directly:
 
@@ -104,7 +106,7 @@ under a single workspace root, so server-per-workspace is the deterministic mode
 
 **Requirements:**
 - Rust toolchain (for `ralph-api`)
-- Node.js >= 18 + npm (for the frontend)
+- Node.js >= 22 + npm (for the frontend)
 
 On first run, `ralph web` auto-detects missing `node_modules` and runs `npm install`.
 
@@ -141,41 +143,34 @@ Use this mode from an MCP client configuration rather than an interactive termin
 
 ## What is Ralph?
 
-Ralph implements the [Ralph Wiggum technique](https://ghuntley.com/ralph/) — autonomous task completion through continuous iteration. It supports:
+Ralph applies the [Ralph Wiggum technique](https://ghuntley.com/ralph/) as the
+terminal frontend and observation/coordination plane around autoloop. Autoloop
+is the execution engine and owns completion judgment; Ralph provides:
 
 - **Multi-Backend Support** — Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, OpenCode
-- **Hat System** — Specialized personas coordinating through events
-- **Backpressure** — Gates that reject incomplete work (tests, lint, typecheck)
+- **Hat System** — Specialized personas translated into autoloop roles and event routing
+- **Observation** — TUI views over autoloop's journal, event stream, and summary contracts
+- **Coordination** — Loop registry, worktrees, merge queue, and completion bookkeeping
 - **Memories & Tasks** — Persistent learning and runtime work tracking
 - **5 Supported Builtins** — `code-assist`, `debug`, `research`, `review`, and `pdd-to-code-assist`, with more patterns documented as examples
 
 ## RObot (Human-in-the-Loop)
 
-Ralph supports human interaction during orchestration via Telegram. Agents can ask questions and block until answered; humans can send proactive guidance at any time.
-
-Quick onboarding (Telegram):
+**Telegram HITL is currently inactive for `ralph run` under the autoloop engine,
+pending autoloop#345.**
+The retained `ralph bot` commands can configure and test Telegram, but agent
+questions and proactive guidance are not yet relayed into an autoloop-backed
+run.
 
 ```bash
-ralph bot onboard --telegram   # guided setup (token + chat id)
+ralph bot onboard              # guided setup (token + chat id)
 ralph bot status               # verify config
 ralph bot test                 # send a test message
-ralph run -c ralph.bot.yml -p  "Help the human"
 ```
 
-```yaml
-# ralph.yml
-RObot:
-  enabled: true
-  telegram:
-    bot_token: "your-token"  # Or RALPH_TELEGRAM_BOT_TOKEN env var
-```
-
-- **Agent questions** — Agents emit `human.interact` events; the loop blocks until a response arrives or times out
-- **Proactive guidance** — Send messages anytime to steer the agent mid-loop
-- **Parallel loop routing** — Messages route via reply-to, `@loop-id` prefix, or default to primary
-- **Telegram commands** — `/status`, `/tasks`, `/restart` for real-time loop visibility
-
-See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/) for setup instructions.
+See the [Telegram guide](https://mikeyobrien.github.io/ralph-orchestrator/guide/telegram/)
+for bot setup. Its in-loop relay workflow remains unavailable under autoloop
+pending #345.
 
 ## Documentation
 
@@ -195,16 +190,22 @@ Full documentation is available at **[mikeyobrien.github.io/ralph-orchestrator](
 ### General
 
 **What is Ralph Orchestrator?**
-Ralph is a hat-based orchestration framework that implements the Ralph Wiggum technique — autonomous task completion through continuous iteration. It keeps AI agents in a loop until the task is done, supporting multiple backends like Claude Code, Gemini CLI, Codex, and more.
+Ralph is the terminal frontend and observation/coordination plane for the
+autoloop engine. It exposes hat-based workflows, TUI observation, persistent
+state, worktrees, and merge coordination while autoloop executes roles and
+judges completion.
 
 **How is Ralph different from other AI coding tools?**
-Unlike single-shot AI assistants, Ralph iterates until completion using a "hat system" with specialized personas. It includes backpressure gates (tests, lint, typecheck) that reject incomplete work, plus persistent memories and tasks for continuous learning.
+Ralph coordinates repeated, role-based agent work rather than making a
+single-shot request. Backpressure and completion remain engine judgments;
+Ralph observes their results and coordinates the surrounding developer
+workflow.
 
 ### Installation & Setup
 
 **What are the system requirements?**
-- Rust 1.75+ (for the `ralph-api` component)
-- Node.js >= 18 + npm (for the web dashboard frontend)
+- Current stable Rust (Edition 2024 workspace; no explicit MSRV is declared)
+- Node.js >= 22 + npm (for the web dashboard frontend)
 - An AI coding assistant CLI (Claude Code, Codex, Gemini CLI, etc.)
 
 **Which installation method should I use?**
@@ -221,7 +222,7 @@ Homebrew is not currently published from this repository's automated release flo
 ```bash
 ralph init --backend claude
 ralph plan "Add user authentication with JWT"
-ralph run -p "Implement the feature in .ralph/specs/user-authentication/"
+ralph run -p "Implement the approved authentication plan under .agents/planning/"
 ```
 
 **What backends does Ralph support?**
@@ -233,11 +234,14 @@ Ralph uses specialized personas (hats) that coordinate through events. Each hat 
 ### RObot (Human-in-the-Loop)
 
 **What is RObot?**
-RObot enables human interaction during orchestration via Telegram. Agents can ask questions and block until answered; humans can send proactive guidance mid-loop.
+RObot is the retained Telegram integration surface. Telegram relay into
+`ralph run` is inactive under the autoloop engine pending autoloop#345.
 
-**How do I set up Telegram integration?**
+**Can I configure Telegram now?**
+Yes. The setup and test commands remain available, but they do not enable
+in-loop questions or proactive guidance for autoloop-backed runs:
 ```bash
-ralph bot onboard --telegram   # guided setup
+ralph bot onboard              # guided setup
 ralph bot status               # verify config
 ralph bot test                 # send a test message
 ```

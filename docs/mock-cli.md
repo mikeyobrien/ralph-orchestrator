@@ -1,4 +1,10 @@
-# Mock CLI: Cost-Free E2E Testing
+# Mock CLI: Legacy Cassette Tooling
+
+!!! warning "Not a v3 GA gate"
+    `ralph-e2e mock-cli` still replays retained cassettes, but the scenario
+    suite targets the deleted in-house loop. It is inventory/porting tooling,
+    not regression proof for the autoloop-backed runtime. The current
+    `cargo run -p ralph-e2e -- --mock` suite is not expected to be the v3 gate.
 
 ## Problem Statement
 
@@ -132,17 +138,12 @@ ralph-e2e mock-cli --version
 2. **Ralph installed**: Required for whitelisted command execution
 3. **Workspace setup**: Mock CLI runs in the scenario workspace directory
 
-### Recording New Cassettes
+### Cassette Maintenance
 
-To create cassettes for new scenarios:
-
-```bash
-# Run E2E test with real backend and session recording
-ralph run --record-session cassettes/e2e/my-scenario-claude.jsonl
-
-# Or use the E2E harness with recording enabled
-# (Implementation detail: E2E harness should support --record flag)
-```
+The v3 `ralph run` path does not produce replay cassettes. Existing cassettes
+can still be inspected or replayed directly with `ralph-e2e mock-cli`, but new
+v3 coverage should be written as integration tests against the live CLI and
+autoloop adapter contracts instead of extending this fixture workflow.
 
 ## API Reference
 
@@ -339,7 +340,7 @@ ralph-e2e mock-cli \
 
 **Expected**: 
 - Output contains "Creating task" and "Task created"
-- `.agent/tasks.jsonl` contains new task entry
+- `.ralph/agent/tasks.jsonl` contains the expected retained Ralph task entry
 
 ### Example 3: Accelerated Replay for CI
 

@@ -125,7 +125,7 @@ ACP enables integration with any agent that implements the [Agent Client Protoco
 - Standardized JSON-RPC 2.0 protocol
 - Flexible permission handling (4 modes)
 - File and terminal operation support
-- Session persistence via scratchpad
+- Session and streaming capabilities defined by the ACP backend
 - Streaming update support
 
 **Best For:**
@@ -469,7 +469,7 @@ python ralph_orchestrator.py \
 - **Permission Control**: Four modes for fine-grained access control
 - **File Operations**: Secure read/write with path validation
 - **Terminal Operations**: Full subprocess lifecycle management
-- **Session Persistence**: Scratchpad for cross-iteration context
+- **Session Persistence**: Determined by the ACP agent and autoloop harness
 - **Streaming Updates**: Real-time agent output and thoughts
 
 **Permission Mode Examples:**
@@ -510,19 +510,14 @@ adapters:
         - "/^fs\\/.*$/"
 ```
 
-**Agent Scratchpad:**
-All agents maintain context across iterations via a scratchpad file (`.agent/scratchpad.md` by default):
-- Persists progress from previous iterations
-- Records decisions and context
-- Tracks current blockers or issues
-- Lists remaining work items
+**Iteration State:**
 
-In hat-based configurations, each hat can have its own scratchpad via the `scratchpad` config option — set a custom path, disable it entirely, or inherit from `core.scratchpad`. See [Per-Hat Scratchpads](configuration.md#with-per-hat-scratchpads) for details.
-
-```bash
-# The scratchpad is automatically managed
-cat .agent/scratchpad.md
-```
+Autoloop owns cross-iteration engine state under v3. Ralph still parses the
+retained `core.scratchpad` and per-hat scratchpad configuration fields, but it
+does not translate per-hat scratchpads into the generated autoloop topology or
+automatically manage `.ralph/agent/scratchpad.md` as every agent's continuity
+mechanism. Put required handoff state in the files named by the active
+autoloop harness/role instructions.
 
 ## Multi-Agent Strategies
 
@@ -705,7 +700,8 @@ Agents write events to the run's events file (`.ralph/events-YYYYMMDD-HHMMSS.jso
 - ❌ **DON'T**: Use YAML formatting in payloads (causes literal newlines)
 - ❌ **DON'T**: Put multi-line content directly in payloads
 
-For detailed output, write to your scratchpad file and emit a brief event.
+For detailed output, write to a shared file named by the active harness and
+emit a brief event.
 
 ### Example: Builder Hat
 

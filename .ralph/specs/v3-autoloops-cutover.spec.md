@@ -1,21 +1,30 @@
 ---
-status: migrated
+status: "migrated (implementation); release-gated by v3-ga-readiness.spec.md"
 created: 2026-06-23
-updated: 2026-06-24
+updated: 2026-07-19
 bead: ralph-orchestrator-v3-autoloops-backend-a7e
 related:
   - feature-parity.spec.md
   - v1-v2-feature-parity.spec.md
+  - v3-ga-readiness.spec.md
+release_gate: .ralph/specs/v3-ga-readiness.spec.md
 upstream_tracking: https://github.com/mikeyobrien/autoloop/issues/29
 ---
 
 # v3 Cutover Spec: autoloop as ralph's orchestration backend
 
-## Implementation status (2026-06-24)
+## Implementation status (2026-06-24; historical snapshot)
 
-Branch `feat/v3-autoloops-backend`. The autoloop engine is **wired, default, and
-coordinate-complete**; the in-house engine remains behind `core.engine = "ralph"`
-as an escape hatch until parity-gated deletion (slice 8) can land green.
+> **Status scope:** `migrated` means the engine cutover was implemented. It is
+> not GA approval. The canonical release gate and current acceptance/regression
+> statuses live in [v3-ga-readiness.spec.md](v3-ga-readiness.spec.md). Where this
+> historical migration narrative conflicts with that gate, the GA-readiness
+> spec controls.
+
+At this snapshot on branch `feat/v3-autoloops-backend`, the autoloop engine was
+**wired, default, and coordinate-complete**; the in-house engine remained behind
+`core.engine = "ralph"` as an escape hatch until parity-gated deletion (slice 8)
+could land green.
 
 **Done & verified green:**
 - Native `--events` NDJSON consumption + journal tailer + `AutoloopRunner`
@@ -128,25 +137,32 @@ These are fully-built ralph subsystems with **no autoloop equivalent** and must 
 | **init / tutorial scaffolding** | `main.rs:InitArgs`/`TutorialArgs` | Emit autoloop-preset scaffold instead of `ralph.yml`; tutorial narrative obsolete |
 | **UrgentSteerStore** (file-backed, backend-agnostic steer) | `urgent_steer.rs` | Reconcile with control channel; `command` backend can't interrupt mid-iteration |
 
-## Test threshold (the bar before flipping the default)
+## Test threshold (superseded by the GA R-matrix)
 
-Must-pass behaviors, each needing a parity test that survives deletion of `event_loop/tests.rs`:
+This was the pre-cutover parity checklist, not the live release bar. GA signoff
+uses the AC tables and **R1–R28 regression matrix** in
+[v3-ga-readiness.spec.md](v3-ga-readiness.spec.md). The GA spec owns status;
+commit presence or a passing narrow test below does not by itself close an AC.
 
-1. **Completion via event + required_events** — terminates only after completion event AND all required events appear; premature completion rejected.
-2. **Completion-promise fallback** — `LOOP_COMPLETE` completes only when no invalid event occurred that turn; **a promise inside an event tag does NOT complete** (port ralph `test_promise_inside_event_tag_does_not_complete` as a NEGATIVE assertion against autoloop's `resolveOutcome`).
-3. **Open-task completion gate** — open (non-soft) tasks block completion **through the subprocess boundary** (no current integration test covers this; it lived only in the deleted `event_loop/tests.rs`).
-4. **Backpressure evidence gates** — unsupported `build.done`/`review.done`/`verify.passed` rejected (mechanism per #33).
-5. **Termination on limits** — `max_iterations`/`max_runtime`/`max_cost_usd`/stall terminate with correct `stopReason`; **exhaustively map ALL `stopReason` literals** (`stop.ts`+`index.ts`, incl. `interrupted`/`verdict_exit`/`verdict_takeover`) with a guard test that fails on a new one (#37).
-6. **Wave fan-out** — `wave-review` scatter-gather produces equivalent output under autoloop's model (#35).
-7. **Journal observability / live state** — ralph derives iteration/cost/routing/completion purely from tailing the journal, **including a torn/partial final line** (see Bug below) — BLOCKER contract test pinning schema + write-ordering (#31).
-8. **Live control bridge** — steer/interrupt/guide round-trip (file → SIGUSR1 → autoloop), verified where the adapter supports it (#34 for `command`).
-9. **HITL blocking ask** — loop blocks on `human.interact`, Telegram delivers, response unblocks the asking turn (#32).
-10. **Merge-queue coordination** — multiple autoloop **subprocess** runs queue and merge correctly (current `integration_loops_merge.rs` drives the API directly — never spawns a loop; net-new e2e needed).
-11. **Cost-budget termination** — `max_cost_usd` fires under a usage-emitting backend; graceful (documented) behavior under one that does not (#34).
-12. **Preset translation fidelity** — same preset behaves identically: old ralph engine vs new autoloop subprocess.
-13. **Resume / `--continue`** — interrupted run resumes without redoing completed work.
+### Branch evidence mapped to the GA gate (2026-07-19)
 
-**Missing test substrate (prerequisite):** there is no fixture/recorder that spawns a real `autoloop run` and tails a real journal. A new autoloop-journal replay fixture format must be built before any of the above parity tests are startable (CLAUDE.md mandates replay-based smoke over live API).
+`git log --oneline -25` and the named tests map the post-audit fixes as follows:
+
+| GA area | Evidence now on this branch | Remaining gate |
+|---|---|---|
+| A1 / R1–R3 prompt delivery | `1e4cd01` passes inline/file prompts as the final autoloop positional argument; `run_inline_prompt_reaches_autoloop_as_positional_argument`, `run_prompt_file_contents_reach_autoloop_as_positional_argument`, and the inline-precedence test cover the CLI path. Merge-drain prompt/env forwarding is covered with the B1 integration path. The bot daemon applies its supplied prompt in `autoloop_engine::start_loop`. | Canonical closure, including the dedicated bot assertion R2, is per the GA spec. |
+| B1 / R9 merge lifecycle | `5bf3105`; `process_queue_observes_full_lifecycle_and_does_not_remerge` observes Queued → Merging → Merged and proves a second drain does not respawn the merge. | Final AC status is per the GA spec. |
+| B2–B3 / R10–R11 stop and crash coordination | `4c48a90`; signal-mapping unit tests distinguish Ralph-requested stops from external crashes, and `crash_runs_completion_coordination` checks history, registry cleanup, needs-review disposition, and lock reacquisition. | The PTY `q` entry-point assertion required by R10 remains per the GA spec. |
+| A3 / R5 budgets | `6f3707a`; the explicit-preset integration test verifies CLI max-iterations precedence plus runtime/cost overrides before the prompt. | Partial: `max_consecutive_failures` is warned as unsupported rather than enforced; full A3 status is per the GA spec. |
+| A4 / R6–R7 task integration | `a200c0f`; fresh-run marker/task-isolation coverage exists and generated presets receive task/memory instructions. | Partial by design: open Ralph tasks are observation-only and produce a warning; autoloop's canonical task store owns completion. The hard-gate wording and R7 closure remain per the GA spec. |
+| A2 / R4 backend selection | `f5ea0fd`; generated presets carry the selected backend, while a CLI backend conflicting with an explicit preset fails before spawning autoloop. | Final AC status is per the GA spec. |
+| D1–D2 / R25 dependency health | `41dcbc7`; `autoloop_health`, doctor, run/resume preflight, release/install wiring, and integration tests cover missing, old, supported, and unversionable binaries before lock/worktree creation. | Published-runtime compatibility (D3) and final release status remain per the GA spec. |
+| F1–F2 / R26 suite integrity | `6fb1223` removes sibling-repository source assertions; Ralph-owned hook ACs use runtime tests and engine-owned ACs are explicitly descoped rather than falsely certified. | Full-workspace green and the remaining F-matrix are release evidence tracked by the GA spec. |
+| E1/E4 / R27 shipped concurrency surfaces | `083f25c` removes the deleted wave CLI from shipped tools, ports `wave-review` to autoloop role concurrency, and adds a shipped-artifact regression test. | Final E-gate status is per the GA spec. |
+
+All other historical parity behaviors—including completion semantics, exhaustive
+stop reasons, live control, HITL, observability, resume, replay/mock substrate,
+and packaging—are governed solely by the current GA spec and its R-matrix.
 
 ## Confirmed ralph-side bug (fix independent of the cutover)
 
@@ -223,4 +239,4 @@ Each step must `cargo build`/`cargo test` green and be committed.
 - [x] Deleted obsolete tests: `event_loop_ralph.rs`, `smoke_runner.rs`, the EventLoop diagnostics tests, `integration_events_isolation.rs`, `integration_resume.rs`, 5 legacy behavioral tests in `integration_run.rs`.
 - [x] `core.engine` is now inert (autoloop unconditional); field retained for config compatibility.
 
-**STATUS: v3 is fully migrated.** The in-house engine is deleted (~31K lines); autoloop is the sole engine. Workspace builds clean (0 warnings); ralph-cli (21 test binaries), ralph-core (640 lib), ralph-tui/api/telegram/proto/bench all green. Adversarially reviewed (run/resume/bot/merge-loop verified correct); one HIGH bug (dropped backend) fixed → warn + #347. The autoloop-runtime live contract test (`ralph-adapters`) is the only red, gated on the local autoloop build having `--events` (autoloop PRs #40–#44), not a deletion regression. Descoped to tracked issues: TUI #342, RPC #343, native-resume #344, bot HITL #345, bench #346, backend mapping #347.
+**IMPLEMENTATION STATUS: the v3 engine cutover is fully migrated; GA is not signed off here.** The in-house engine is deleted (~31K lines); autoloop is the sole engine. Release status is governed by [v3-ga-readiness.spec.md](v3-ga-readiness.spec.md). At this migration snapshot, the workspace built clean (0 warnings); ralph-cli (21 test binaries), ralph-core (640 lib), ralph-tui/api/telegram/proto/bench were green. Adversarial review of that snapshot found one HIGH bug (dropped backend), then tracked it as #347. The autoloop-runtime live contract test (`ralph-adapters`) was red, gated on the local autoloop build having `--events` (autoloop PRs #40–#44), not a deletion regression. Descoped work was tracked as TUI #342, RPC #343, native-resume #344, bot HITL #345, bench #346, and backend mapping #347.

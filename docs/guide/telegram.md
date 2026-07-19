@@ -1,27 +1,41 @@
 # Telegram Integration
 
-Ralph supports human-in-the-loop communication via Telegram. Agents can ask questions during orchestration, and humans can send proactive guidance at any time — all through a Telegram bot.
+!!! warning "Not connected to the v3 engine"
+    Telegram human-in-the-loop relay is **inactive for `ralph run` under the
+    autoloop engine**. The engine relay contract is pending autoloop#345.
+    Enabling `RObot` does not currently make an autoloop-backed run pause for
+    questions, consume replies, or inject proactive guidance.
+
+The `ralph-telegram` crate, `ralph bot` command group, configuration shape, and
+persisted bot state remain in the repository for the future relay. You can set
+up credentials, inspect status, run the standalone daemon, and send a test
+message; do not treat those checks as evidence that in-loop HITL works.
 
 ## Setup
 
 ### 1. Create a Telegram Bot
 
-1. Open Telegram and message [@BotFather](https://t.me/BotFather)
-2. Send `/newbot` and follow the prompts
-3. Copy the bot token (format: `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+1. Open Telegram and message [@BotFather](https://t.me/BotFather).
+2. Send `/newbot` and follow the prompts.
+3. Copy the bot token.
 
-### 2. Configure Ralph
-
-**Option A: Environment variable (recommended)**
+### 2. Run the Onboarding Command
 
 ```bash
-export RALPH_TELEGRAM_BOT_TOKEN="your-bot-token"
+ralph bot onboard
 ```
 
-**Option B: Config file**
+The command can prompt for the token and detect a chat ID, or accept the
+current non-interactive options:
+
+```bash
+ralph bot onboard --token "$RALPH_TELEGRAM_BOT_TOKEN" --chat-id 123456789
+```
+
+Alternatively set `RALPH_TELEGRAM_BOT_TOKEN` and keep the reserved
+configuration shape in `ralph.yml`:
 
 ```yaml
-# ralph.yml
 RObot:
   enabled: true
   timeout_seconds: 300
@@ -29,253 +43,77 @@ RObot:
     bot_token: "your-bot-token"
 ```
 
-The environment variable takes precedence over the config file.
+The environment variable takes precedence over the token in the config file.
+A custom Telegram Bot API endpoint can be set with
+`RALPH_TELEGRAM_API_URL` or `RObot.telegram.api_url`.
 
-### 3. Start a Loop
+### 3. Inspect or Test the Bot Configuration
 
 ```bash
-ralph run -p "your prompt"
+ralph bot status
+ralph bot test "Hello from Ralph"
 ```
 
-The bot sends a greeting message on startup. The chat ID is auto-detected from the first message you send to the bot — just send any message to get started.
+`ralph bot test` performs a Telegram network send and therefore needs a valid
+token and chat ID. It tests bot connectivity only; it does not activate the
+missing autoloop relay.
 
-## Configuration Reference
+## Retained Components
 
-```yaml
-RObot:
-  enabled: true                    # Enable human-in-the-loop (default: false)
-  timeout_seconds: 300             # How long to block waiting for a response
-  checkin_interval_seconds: 120    # Periodic status updates (optional)
-  telegram:
-    bot_token: "your-bot-token"    # Or use RALPH_TELEGRAM_BOT_TOKEN env var
-    api_url: "http://localhost:8081"  # Optional: custom Bot API URL (for testing)
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `enabled` | Yes | Must be `true` to activate Telegram |
-| `timeout_seconds` | Yes | Seconds to wait for a human reply before continuing |
-| `checkin_interval_seconds` | No | Send periodic "still working" status updates |
-| `telegram.bot_token` | Yes* | Bot token from BotFather (*or set via env var) |
-| `telegram.api_url` | No | Custom Telegram Bot API URL (or `RALPH_TELEGRAM_API_URL` env var) |
-
-For long-running loops, increase `timeout_seconds` and set `checkin_interval_seconds`:
-
-```yaml
-RObot:
-  enabled: true
-  timeout_seconds: 43200            # 12 hours
-  checkin_interval_seconds: 900     # Check in every 15 minutes
-```
-
-## How It Works
-
-### Agent Asks a Question (`human.interact`)
-
-When an agent emits a `human.interact` event during orchestration:
-
-1. The bot formats the question with context (hat name, iteration, loop ID) and sends it to Telegram
-2. The event loop **blocks**, waiting for a reply
-3. You reply in Telegram
-4. Your reply is published as a `human.response` event
-5. The next iteration receives your response in its context
-
-If no reply arrives within `timeout_seconds`, the loop continues without a response.
-
-### You Send Proactive Guidance (`human.guidance`)
-
-You can send messages at any time (not as replies to a question):
-
-1. Your message is written as a `human.guidance` event to `events.jsonl`
-2. On the next iteration, all guidance events are collected and squashed into a numbered list
-3. A `## ROBOT GUIDANCE` section is injected into the agent's prompt
-
-This lets you steer the agent without waiting for it to ask.
-
-### Event Summary
-
-| Event | Direction | Behavior |
-|-------|-----------|----------|
-| `human.interact` | Agent to Human | Agent asks a question; loop blocks until reply or timeout |
-| `human.response` | Human to Agent | Your reply to a `human.interact` question |
-| `human.guidance` | Human to Agent | Proactive message injected into agent's next prompt |
-
-## Parallel Loop Routing
-
-When running multiple loops in parallel (via worktrees), messages are routed by priority:
-
-1. **Reply-to**: Replying to a bot question routes to the loop that asked it
-2. **@prefix**: Starting a message with `@loop-id` routes to that specific loop
-3. **Default**: Messages without routing go to the primary loop
-
-Examples:
-
-- Reply directly to a question message → routed to the loop that asked
-- Send `@feature-auth check the edge cases` → routed to the `feature-auth` loop
-- Send `focus on tests` → routed to the primary (main) loop
-
-Each loop has its own `events.jsonl`:
-- Primary loop: `.ralph/events.jsonl`
-- Worktree loops: `.worktrees/<loop-id>/.ralph/events.jsonl`
-
-## Multimedia Support
-
-The Telegram integration supports sending files and images:
-
-- **Documents**: Any file type (logs, reports, etc.)
-- **Photos**: Image files with optional HTML-formatted captions
-
-Both support retry with exponential backoff, same as text messages.
-
-## Bot Behavior
-
-### Lifecycle
-
-- **Startup**: Sends a greeting message if the chat ID is known
-- **Running**: Polls for incoming messages via long polling (`getUpdates`)
-- **Shutdown**: Sends a farewell message, then stops the polling task
-
-### Reactions
-
-The bot reacts to your messages with emoji:
-- **Replies to questions**: reacted with a thumbs up
-- **Proactive guidance**: reacted with eyes, plus a short text acknowledgment
-
-### Primary Loop Only
-
-The Telegram bot only starts on the **primary loop** (the one holding `.ralph/loop.lock`). Worktree loops route messages through the primary loop's bot.
-
-## Error Handling
-
-| Scenario | Behavior |
-|----------|----------|
-| Send failure | Retried with exponential backoff: 1s, 2s, 4s (3 attempts) |
-| All retries fail | Logged to diagnostics, treated as timeout (loop continues) |
-| Missing bot token | Clear error listing both config and env var options |
-| Response timeout | Configurable via `timeout_seconds`; loop continues without response |
-| No chat ID | Questions logged but not sent; resolved when you message the bot |
-
-## State File
-
-The bot persists its state to `.ralph/telegram-state.json`:
-
-```json
-{
-  "chat_id": 123456789,
-  "last_seen": "2026-01-29T10:00:00Z",
-  "pending_questions": {
-    "main": {
-      "asked_at": "2026-01-29T10:05:00Z",
-      "message_id": 42
-    }
-  }
-}
-```
-
-- `chat_id`: Auto-detected from your first message to the bot
-- `pending_questions`: Tracks which loops have outstanding questions, used for reply routing
-
-## Architecture
-
-```
-TelegramService (lifecycle management)
-├── BotApi / TelegramBot (teloxide wrapper, sends messages/documents/photos)
-├── StateManager (chat ID, pending questions, reply routing)
-├── MessageHandler (incoming messages → events.jsonl)
-└── retry_with_backoff (exponential retry for all sends)
-```
-
-The crate lives at `crates/ralph-telegram/` with these modules:
+The implementation remains under `crates/ralph-telegram/`:
 
 | Module | Purpose |
 |--------|---------|
-| `lib.rs` | Public API exports |
-| `bot.rs` | `BotApi` trait + `TelegramBot` implementation, message formatting |
-| `service.rs` | `TelegramService` lifecycle, send/receive, polling |
-| `handler.rs` | `MessageHandler` for routing incoming messages to events |
-| `state.rs` | `StateManager` + `TelegramState` persistence |
-| `error.rs` | `TelegramError` enum with typed error variants |
+| `bot.rs` | Telegram API abstraction and message formatting |
+| `service.rs` | Bot service lifecycle and polling |
+| `handler.rs` | Incoming-message handling |
+| `state.rs` | Persisted chat and pending-question state |
+| `error.rs` | Typed Telegram errors |
 
-## Testing
+Bot state is stored in `.ralph/telegram-state.json`. The command group also
+includes `ralph bot token` and `ralph bot daemon`; use `ralph bot --help` for
+the current options.
 
-```bash
-cargo test -p ralph-telegram          # 33 unit tests (mocked, no network)
-cargo test -p ralph-core human        # 11 integration tests in ralph-core
-```
+## What Is Deferred
 
-All tests use a `MockBot` implementation of `BotApi` — no Telegram API calls are made during testing.
+The retained code models the intended `human.interact`, `human.response`, and
+`human.guidance` relay. Under the old in-house loop, those events were routed
+between a running loop and Telegram. Under v3, autoloop owns the live event
+loop, so Ralph cannot correctly block engine execution or inject replies until
+autoloop exposes the relay contract tracked by autoloop#345.
 
-## Testing with a Mock Telegram Server
+Until that lands:
 
-When developing custom hats that use `human.interact`, you can test the full human-in-the-loop flow locally without a real Telegram bot by pointing Ralph at a mock Telegram Bot API server.
+- Agents in `ralph run` cannot ask a human through the retained Telegram relay.
+- Telegram replies and proactive messages are not injected into an autoloop
+  iteration.
+- Worktree-loop routing and periodic in-run check-ins are not active v3
+  behavior.
+- A successful `ralph bot test` only proves Telegram credentials and network
+  access.
 
-### 1. Start a Mock Server
-
-[telegram-test-api](https://github.com/nickolay/telegram-test-api) is a Docker-based mock that implements the Telegram Bot API:
-
-```bash
-docker run -d --name telegram-mock -p 8081:8081 \
-  ghcr.io/nickolay/telegram-test-api:latest
-```
-
-### 2. Point Ralph at It
-
-**Option A: Environment variable**
+## Testing the Retained Crate
 
 ```bash
-export RALPH_TELEGRAM_API_URL="http://localhost:8081"
-export RALPH_TELEGRAM_BOT_TOKEN="test-token"
+cargo test -p ralph-telegram
 ```
 
-**Option B: Config file**
+The crate tests use mocked bot behavior and do not require Telegram network
+access. A custom `RALPH_TELEGRAM_API_URL` remains useful when developing the
+retained bot components, but it cannot provide end-to-end v3 HITL while
+#345 is unresolved.
 
-```yaml
-# ralph.yml
-RObot:
-  enabled: true
-  timeout_seconds: 30
-  telegram:
-    bot_token: "test-token"
-    api_url: "http://localhost:8081"
-```
+## Troubleshooting Setup
 
-The environment variable takes precedence over the config file value.
+### `ralph bot status` reports no token
 
-### 3. Run Your Loop
+Set `RALPH_TELEGRAM_BOT_TOKEN` or run `ralph bot onboard`.
 
-```bash
-ralph run -p "your prompt" --max-iterations 5
-```
+### `ralph bot test` has no chat ID
 
-The bot sends all API requests to the mock server instead of `https://api.telegram.org`. You can inspect requests, simulate replies, and verify that your hats emit the right `human.interact` events — all without touching real Telegram.
+Send a message to the bot during onboarding or provide `--chat-id` explicitly.
 
-### Use Cases
+### The bot works, but `ralph run` does not pause or receive guidance
 
-- **Custom hat development**: Verify that your hats ask the right questions at the right time
-- **CI/CD pipelines**: Run HIL integration tests without network access or bot tokens
-- **Debugging**: Inspect the exact payloads Ralph sends to the Telegram API
-
-## Troubleshooting
-
-### Bot doesn't respond
-
-- Verify your bot token: `curl https://api.telegram.org/bot<TOKEN>/getMe`
-- Make sure you've sent at least one message to the bot (for chat ID auto-detection)
-- Check that `RObot.enabled: true` is set in your config
-
-### Messages go to the wrong loop
-
-- Use reply-to for routing to the loop that asked the question
-- Use `@loop-id` prefix to target a specific loop
-- Unrouted messages default to the primary loop
-
-### Timeout before you can respond
-
-- Increase `timeout_seconds` in your config
-- For long tasks, set `checkin_interval_seconds` so you know the loop is still active
-
-### "No chat ID configured" warnings
-
-- The bot auto-detects your chat ID from the first message you send
-- Send any message to the bot to establish the connection
-- The chat ID is persisted in `.ralph/telegram-state.json`
+That is the expected v3 limitation pending autoloop#345, not a credential
+problem.

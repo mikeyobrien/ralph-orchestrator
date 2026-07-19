@@ -91,7 +91,6 @@ nav:
     - Testing & Validation: advanced/testing.md
     - Diagnostics: advanced/diagnostics.md
     - Parallel Loops: advanced/parallel-loops.md
-    - Agent Waves: advanced/agent-waves.md
   - API Reference:
     - api/index.md
     - ralph-proto: api/ralph-proto.md
@@ -160,7 +159,6 @@ plugins:
           - advanced/testing.md
           - advanced/diagnostics.md
           - advanced/parallel-loops.md
-          - advanced/agent-waves.md
         API Reference:
           - api/index.md
           - api/ralph-proto.md

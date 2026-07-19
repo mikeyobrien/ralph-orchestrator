@@ -1,259 +1,80 @@
 # ralph-core
 
-The orchestration engine — the heart of Ralph.
+`ralph-core` provides shared configuration and coordination state for Ralph.
+It is **not** the v3 orchestration engine: autoloop owns role dispatch,
+iteration state, event routing, and completion judgment. `ralph-cli` launches
+the engine, while `ralph-adapters` observe its journal, event stream, and
+summary.
 
-## Overview
+## Current Responsibilities
 
-`ralph-core` provides:
+- Load and validate `ralph.yml` through `RalphConfig`
+- Check the external autoloop dependency through `autoloop_health`
+- Track loop identity, locks, history, and registry entries
+- Coordinate worktrees and the event-sourced merge queue
+- Store Ralph memories and Ralph runtime task records
+- Provide diagnostics, hooks, preflight, skills, and planning support
 
-- Configuration loading and validation
-- The main event loop
-- Memory and task storage
-- Event parsing
-- Instruction assembly
+## Important Modules
 
-## Key Components
+| Module | Purpose |
+|--------|---------|
+| `autoloop_health` | Version and availability checks for the engine dependency |
+| `loop_context` | Resolve primary/worktree state paths |
+| `loop_lock` | Coordinate the primary loop slot |
+| `loop_registry` | Track active and completed loops |
+| `merge_queue` | Persist merge coordination as JSONL events |
+| `memory_store` | Read and write persistent Ralph memories |
+| `task_store` | Read and write Ralph runtime tracking tasks |
+| `diagnostics` | Capture observation and error diagnostics |
+| `hooks` | Run configured lifecycle hooks |
+| `preflight` | Evaluate preflight checks |
 
-### Config
+## Configuration
 
-Configuration loading from YAML.
-
-```rust
-use ralph_core::config::Config;
-
-// Load from file
-let config = Config::load("ralph.yml")?;
-
-// Load with defaults
-let config = Config::default();
-```
-
-**Configuration structure:**
-
-```rust
-pub struct Config {
-    pub cli: CliConfig,
-    pub event_loop: EventLoopConfig,
-    pub core: CoreConfig,
-    pub memories: MemoryConfig,
-    pub tasks: TaskConfig,
-    pub hats: HashMap<String, HatConfig>,
-}
-
-pub struct EventLoopConfig {
-    pub completion_promise: String,
-    pub max_iterations: usize,
-    pub max_runtime_seconds: u64,
-    pub idle_timeout_secs: u64,
-    pub starting_event: Option<String>,
-    pub checkpoint_interval: usize,
-    pub prompt_file: Option<String>,
-}
-
-pub struct CliConfig {
-    pub backend: String,
-    pub prompt_mode: PromptMode,
-}
-
-pub struct MemoryConfig {
-    pub enabled: bool,
-    pub inject: InjectMode,
-    pub budget: usize,
-    pub filter: MemoryFilter,
-}
-
-pub struct TaskConfig {
-    pub enabled: bool,
-}
-```
-
-### EventLoop
-
-The main orchestration loop.
+The public configuration type is `RalphConfig`:
 
 ```rust
-use ralph_core::EventLoop;
+use ralph_core::RalphConfig;
 
-// Create with config
-let event_loop = EventLoop::new(config);
-
-// Run orchestration
-let result = event_loop.run().await?;
+let config = RalphConfig::default();
+assert_eq!(config.core.specs_dir, ".ralph/specs/");
 ```
 
-**EventLoop lifecycle:**
+Relevant top-level sections include `event_loop`, `cli`, `core`, `hats`,
+`events`, `memories`, `tasks`, `features`, `hooks`, `skills`, and `RObot`.
+Ralph translates supported execution settings into an autoloop preset before
+launch; it does not instantiate a `ralph_core::EventLoop`.
 
-1. Load configuration
-2. Initialize EventBus with hats
-3. Publish starting event (if configured)
-4. Loop:
-   - Get next event
-   - Find matching hat
-   - Inject instructions
-   - Execute backend
-   - Parse output for events
-   - Check for completion
-5. Return result
+## Runtime Tasks and Completion
 
-### MemoryStore
+`TaskStore` manages Ralph's `.ralph/agent/tasks.jsonl` records. These records
+are useful for coordination and observation, but their format differs from
+autoloop's canonical task store. Consequently they do not participate in the
+v3 engine's completion gate. Autoloop alone decides engine completion; Ralph
+may warn if its separate task store still contains open tasks afterward.
 
-Persistent memory management.
+## Testing
 
-```rust
-use ralph_core::memory_store::MemoryStore;
-
-let store = MemoryStore::new(".agent/memories.md");
-
-// Add memory
-store.add(Memory {
-    content: "Uses barrel exports".to_string(),
-    memory_type: MemoryType::Pattern,
-    tags: vec!["structure".to_string()],
-})?;
-
-// Search
-let results = store.search("exports")?;
-
-// List by type
-let patterns = store.list_by_type(MemoryType::Pattern)?;
-```
-
-### TaskStore
-
-Runtime task tracking.
-
-```rust
-use ralph_core::task_store::TaskStore;
-
-let store = TaskStore::new(".agent/tasks.jsonl");
-
-// Add task
-let id = store.add(Task {
-    title: "Implement auth".to_string(),
-    priority: 2,
-    blocked_by: vec![],
-})?;
-
-// Get ready tasks
-let ready = store.ready()?;
-
-// Close task
-store.close(&id)?;
-```
-
-### EventParser
-
-Parse agent output for events.
-
-```rust
-use ralph_core::event_parser::EventParser;
-
-let parser = EventParser::new();
-
-// Parse output
-let events = parser.parse(agent_output)?;
-
-// Check for completion
-let complete = parser.is_complete(agent_output, "LOOP_COMPLETE");
-```
-
-**Event formats recognized:**
+Use the normal crate and workspace tests:
 
 ```bash
-# CLI command
-ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
-
-# JSON
-{"event": "build.done", "payload": "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"}
+cargo test -p ralph-core
+cargo test
 ```
 
-### Instructions
+The former replay smoke-test command does not select tests in the default
+feature set and is not a v3 gate. The `recording` Cargo feature still exposes
+low-level recorder/player utilities for library consumers, but `ralph run`
+does not wire those utilities into the autoloop path.
 
-Hat instruction assembly.
+## Related Engine Integration
 
-```rust
-use ralph_core::instructions::InstructionBuilder;
+The engine-facing code lives outside this crate:
 
-let builder = InstructionBuilder::new();
-
-// Build instructions for a hat
-let instructions = builder
-    .with_base_prompt(&config.prompt_file)
-    .with_guardrails(&config.guardrails)
-    .with_memories(&memories)
-    .with_hat_instructions(&hat.instructions)
-    .build()?;
-```
-
-## Testing Support
-
-### Smoke Runner
-
-Replay-based testing with JSONL fixtures.
-
-```rust
-use ralph_core::testing::smoke_runner::SmokeRunner;
-
-let runner = SmokeRunner::new("tests/fixtures/basic.jsonl");
-let result = runner.run().await?;
-assert!(result.completed);
-```
-
-### Session Recorder
-
-Record sessions for replay.
-
-```rust
-use ralph_core::session_recorder::SessionRecorder;
-
-let recorder = SessionRecorder::new("session.jsonl");
-recorder.record_output("Hello")?;
-recorder.record_tool_call("read_file", args)?;
-recorder.finish()?;
-```
-
-## Error Types
-
-```rust
-pub enum CoreError {
-    ConfigError(String),
-    IoError(std::io::Error),
-    ParseError(String),
-    MemoryError(String),
-    TaskError(String),
-}
-```
-
-## Feature Flags
-
-| Flag | Description |
-|------|-------------|
-| `default` | Standard features |
-| `testing` | Test utilities |
-
-## Example: Custom Event Loop
-
-```rust
-use ralph_core::{Config, EventLoop};
-use ralph_proto::{EventBus, Event};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Load config
-    let config = Config::load("ralph.yml")?;
-
-    // Create event loop
-    let mut event_loop = EventLoop::new(config);
-
-    // Optional: Add custom event listener
-    event_loop.on_event(|event| {
-        println!("Event: {:?}", event.topic);
-    });
-
-    // Run
-    let result = event_loop.run().await?;
-
-    println!("Completed in {} iterations", result.iterations);
-    Ok(())
-}
-```
+- `crates/ralph-cli/src/autoloop_engine.rs`
+- `crates/ralph-cli/src/autoloop_preset_gen.rs`
+- `crates/ralph-adapters/src/autoloop_runner.rs`
+- `crates/ralph-adapters/src/autoloop_events.rs`
+- `crates/ralph-adapters/src/autoloop_journal.rs`
+- `crates/ralph-adapters/src/autoloop_event_tailer.rs`

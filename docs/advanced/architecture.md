@@ -1,303 +1,114 @@
 # Architecture
 
-Ralph's system architecture and how the pieces fit together.
+Ralph is the terminal frontend and observation/coordination plane for the
+**autoloop** engine. Autoloop owns role dispatch, iteration state, event
+routing, task completion judgment, and the final summary. Ralph does not
+re-implement those decisions: it launches autoloop and observes its journal,
+`--events` stream, and summary, then coordinates the TUI, loop registry,
+worktrees, completion handling, and merge queue around those contracts.
 
-## Overview
+## Workspace Layout
 
-Ralph is a Cargo workspace with seven crates, each with a specific responsibility:
+The Cargo workspace has nine crates:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      ralph-cli                          │
-│                  (Binary Entry Point)                   │
-├─────────────┬─────────────┬─────────────┬──────────────┤
-│ ralph-core  │ralph-adapters│  ralph-tui  │ ralph-e2e   │
-│  (Engine)   │ (Backends)   │    (UI)     │  (Testing)  │
-├─────────────┴─────────────┴─────────────┴──────────────┤
-│                     ralph-proto                         │
-│                  (Protocol Types)                       │
-└─────────────────────────────────────────────────────────┘
-```
+| Crate | Responsibility |
+|-------|----------------|
+| `ralph-cli` | CLI/TUI frontend, autoloop launch, completion and merge coordination |
+| `ralph-core` | Shared configuration and coordination state |
+| `ralph-adapters` | Autoloop process, journal, event-stream, and summary adapters |
+| `ralph-tui` | Ratatui observation UI |
+| `ralph-proto` | Shared protocol definitions |
+| `ralph-telegram` | Retained Telegram components; not connected to `ralph run` under v3 pending autoloop#345 |
+| `ralph-e2e` | Legacy E2E scenario inventory and test framework |
+| `ralph-bench` | Benchmarking support |
+| `ralph-api` | Rust RPC API used by the web dashboard |
 
-## Crate Responsibilities
+The separate `backend/` and `frontend/` workspaces contain the legacy Node web
+server and the React dashboard.
 
-### ralph-proto
-
-Protocol types shared across all crates.
-
-**Key types:**
-
-| Type | Purpose |
-|------|---------|
-| `Event` | Message with topic, payload, source/target hat |
-| `Hat` | Persona definition (triggers, publishes, instructions) |
-| `HatId` | Unique hat identifier |
-| `Topic` | Event routing with glob patterns |
-| `EventBus` | Hat registry and event routing |
-
-**Location:** `crates/ralph-proto/src/`
-
-### ralph-core
-
-The orchestration engine.
-
-**Key components:**
-
-| Module | Purpose |
-|--------|---------|
-| `EventLoop` | Main orchestration loop |
-| `config` | YAML configuration loading |
-| `event_parser` | Parse agent output for events |
-| `memory_store` | Persistent memory management |
-| `task_store` | Task storage and querying |
-| `instructions` | Hat instruction assembly |
-
-**Location:** `crates/ralph-core/src/`
-
-### ralph-adapters
-
-CLI backend integrations.
-
-**Key components:**
-
-| Module | Purpose |
-|--------|---------|
-| `CliBackend` | Backend definition |
-| `pty_executor` | PTY-based execution |
-| `stream_handler` | Output handlers |
-| `auto_detect` | Backend availability detection |
-
-**Supported backends:**
-- Claude Code
-- Kiro
-- Gemini CLI
-- Codex
-- Forge
-- Amp
-- Copilot CLI
-- OpenCode
-
-**Location:** `crates/ralph-adapters/src/`
-
-### ralph-tui
-
-Terminal UI using ratatui.
-
-**Features:**
-- Real-time iteration display
-- Elapsed time tracking
-- Hat emoji and name display
-- Activity indicator
-- Event topic display
-
-**Location:** `crates/ralph-tui/src/`
-
-### ralph-cli
-
-Binary entry point and CLI parsing.
-
-**Commands:**
-- `ralph run` — Execute orchestration
-- `ralph init` — Initialize config
-- `ralph plan` — PDD planning
-- `ralph task` — Task generation
-- `ralph events` — View history
-- `ralph tools` — Memory/task management
-
-**Location:** `crates/ralph-cli/src/`
-
-### ralph-e2e
-
-End-to-end testing framework.
-
-**Test tiers:**
-
-| Tier | Focus |
-|------|-------|
-| 1 | Connectivity |
-| 2 | Orchestration Loop |
-| 3 | Events |
-| 4 | Capabilities |
-| 5 | Hat Collections |
-| 6 | Memory System |
-| 7 | Error Handling |
-
-**Location:** `crates/ralph-e2e/src/`
-
-### ralph-bench
-
-Benchmarking harness (development only).
-
-**Location:** `crates/ralph-bench/src/`
-
-## Data Flow
-
-### Traditional Mode
+## Execution Flow
 
 ```mermaid
 flowchart TD
-    A[PROMPT.md] --> B[ralph-cli]
-    B --> C[ralph-core EventLoop]
-    C --> D[ralph-adapters Backend]
-    D --> E[AI CLI]
-    E --> F[Output]
-    F --> G{LOOP_COMPLETE?}
-    G -->|No| C
-    G -->|Yes| H[Done]
+    A[ralph run] --> B[Generate autoloop preset]
+    B --> C[Launch autoloop]
+    C --> D[Autoloop dispatches roles and judges completion]
+    C --> E[Journal, events stream, summary]
+    E --> F[Ralph adapters]
+    F --> G[TUI and loop registry]
+    F --> H[Completion coordination]
+    H --> I[Merge queue and worktrees]
 ```
 
-### Hat-Based Mode
+The load-bearing implementation files are:
 
-```mermaid
-flowchart TD
-    A[starting_event] --> B[EventBus]
-    B --> C{Match Hat?}
-    C -->|Yes| D[Inject Instructions]
-    D --> E[Execute Backend]
-    E --> F[Parse Output]
-    F --> G{Event Emitted?}
-    G -->|Yes| H[Route Event]
-    H --> B
-    G -->|No| I{LOOP_COMPLETE?}
-    I -->|Yes| J[Done]
-    I -->|No| B
+- `crates/ralph-cli/src/autoloop_engine.rs`
+- `crates/ralph-cli/src/autoloop_preset_gen.rs`
+- `crates/ralph-cli/src/completion_coord.rs`
+- `crates/ralph-cli/src/merge_processing.rs`
+- `crates/ralph-adapters/src/autoloop_runner.rs`
+- `crates/ralph-adapters/src/autoloop_events.rs`
+- `crates/ralph-adapters/src/autoloop_journal.rs`
+- `crates/ralph-adapters/src/autoloop_event_tailer.rs`
+- `crates/ralph-core/src/autoloop_health.rs`
+
+## Configuration Translation
+
+Ralph reads `ralph.yml` and translates supported hats, events, backend options,
+budgets, and completion settings into a temporary autoloop preset. Hat
+concurrency and aggregation become autoloop topology settings; autoloop then
+owns dispatch and aggregation.
+
+Some Ralph configuration remains coordination-only. In particular, Ralph's
+runtime task records and autoloop's canonical task records have incompatible
+formats. Ralph may inspect open Ralph tasks after a run and warn, but only
+autoloop's task store participates in the engine completion gate.
+
+## State on Disk
+
+Primary-loop coordination state lives under `.ralph/`:
+
+```text
+.ralph/
+├── agent/
+│   ├── memories.md       # Ralph persistent memories
+│   ├── tasks.jsonl       # Ralph runtime tracking; not autoloop's completion gate
+│   └── scratchpad.md     # Retained configurable Ralph state path
+├── events.jsonl          # Ralph event-history view/default emit target
+├── loop.lock             # Primary-loop lock
+├── loops.json            # Loop registry
+├── merge-queue.jsonl     # Event-sourced merge queue
+├── specs/                # Committed specifications
+└── tasks/                # Committed code-task files
 ```
 
-## State Management
+Autoloop keeps its own canonical run state and journal. Ralph consumes those
+engine artifacts through the adapter contract rather than copying their
+judgment into `.ralph/agent/tasks.jsonl` or the scratchpad.
 
-### Files on Disk
+Worktree loops isolate events, runtime tasks, and scratchpad under that
+worktree's `.ralph/`. Memories, specifications, and committed code tasks are
+symlinked to the main repository. See [Parallel Loops](parallel-loops.md).
 
-All persistent state lives in `.agent/`:
+## Observation and Completion
 
-```
-.agent/
-├── memories.md         # Persistent learning
-├── tasks.jsonl         # Runtime work tracking
-├── event_history.jsonl # Event audit log
-└── scratchpad.md       # Iteration state (per-hat scratchpads may also exist)
-```
+In TUI mode Ralph tails autoloop's event stream and journal while the engine is
+running. When autoloop exits, Ralph reads the summary, maps the engine stop
+reason, updates coordination state, and either completes in place or queues a
+worktree for merge processing.
 
-### Event Bus
-
-In-memory during execution:
-
-```rust
-struct EventBus {
-    hats: HashMap<HatId, Hat>,
-    pending_events: VecDeque<Event>,
-    event_history: Vec<Event>,
-}
-```
-
-### Configuration
-
-Loaded from `ralph.yml`:
-
-```rust
-struct Config {
-    cli: CliConfig,
-    event_loop: EventLoopConfig,
-    core: CoreConfig,
-    memories: MemoryConfig,
-    tasks: TaskConfig,
-    hats: HashMap<String, HatConfig>,
-}
-```
+Telegram HITL is not currently part of this flow. The retained bot and relay
+components are awaiting an autoloop engine relay contract (autoloop#345).
 
 ## Process Model
 
-### Unix Process Groups
-
-Ralph manages processes carefully:
-
-- Creates process group leadership
-- Handles SIGINT, SIGTERM gracefully
-- Prevents orphan processes
-- Restores terminal state on exit
-
-### PTY Handling
-
-For real-time output capture:
-
-```rust
-// Async PTY execution with stream handling
-pty_executor.execute(command, stream_handler).await
-```
-
-## Async Architecture
-
-Ralph uses Tokio throughout:
-
-- Async trait support
-- Stream-based output capture
-- Concurrent PTY handling
-- Non-blocking TUI updates
-
-## Error Handling
-
-Custom error types with context:
-
-```rust
-// thiserror for type definitions
-#[derive(Error, Debug)]
-enum RalphError {
-    #[error("Configuration error: {0}")]
-    Config(String),
-    // ...
-}
-
-// anyhow for context
-fn load_config() -> Result<Config> {
-    read_file(path).context("Failed to load config")?
-}
-```
-
-## Extension Points
-
-### Custom Backends
-
-Implement `CliBackend` trait:
-
-```rust
-struct MyBackend;
-
-impl CliBackend for MyBackend {
-    fn command(&self) -> &str { "my-cli" }
-    fn prompt_mode(&self) -> PromptMode { PromptMode::Arg }
-}
-```
-
-### Custom Stream Handlers
-
-Implement `StreamHandler` trait:
-
-```rust
-struct MyHandler;
-
-impl StreamHandler for MyHandler {
-    fn on_output(&mut self, chunk: &str) { ... }
-    fn on_complete(&mut self) { ... }
-}
-```
-
-## Performance Considerations
-
-### Context Window
-
-Optimize for "smart zone" (40-60% of tokens):
-
-- Memory injection has configurable budget
-- Instructions are assembled efficiently
-- Large outputs are truncated
-
-### Token Efficiency
-
-- Events are routing signals, not data transport
-- Detailed output goes to memories
-- Event payloads are kept small
+Ralph supervises the autoloop subprocess, handles terminal restoration and
+signals, and keeps auxiliary event/journal readers synchronized with process
+termination. Tokio tasks keep TUI observation non-blocking.
 
 ## Next Steps
 
-- Explore [Event System Design](event-system.md) in depth
-- Learn about [Creating Custom Hats](custom-hats.md)
-- Understand [Testing & Validation](testing.md)
+- [Hats and Events](../concepts/hats-and-events.md)
+- [Parallel Loops](parallel-loops.md)
+- [Testing & Validation](testing.md)
+- [Diagnostics](diagnostics.md)

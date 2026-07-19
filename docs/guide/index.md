@@ -12,7 +12,7 @@ Practical guides for using Ralph Orchestrator effectively.
 | [Backends](backends.md) | Supported AI backends |
 | [Writing Prompts](prompts.md) | Prompt engineering tips |
 | [Cost Management](cost-management.md) | Controlling API costs |
-| [Telegram Integration](telegram.md) | Human-in-the-loop via Telegram |
+| [Telegram Integration](telegram.md) | Retained bot setup; in-loop relay inactive pending autoloop#345 |
 
 ## Quick Links
 
