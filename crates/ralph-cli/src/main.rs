@@ -403,7 +403,7 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
     if let Some(parent) = scratchpad_path.parent()
         && !parent.exists()
     {
-        info!("Creating scratchpad directory: {}", parent.display());
+        debug!("Creating scratchpad directory: {}", parent.display());
         std::fs::create_dir_all(parent)?;
     }
     Ok(())

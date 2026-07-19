@@ -246,7 +246,7 @@ pub async fn run_autoloop_engine(
             let preset = workspace.join(".ralph").join("autoloop-preset");
             crate::autoloop_preset_gen::generate_preset(&config, &preset)
                 .context("generating an autoloop preset from the hats topology")?;
-            tracing::info!(preset = %preset.display(), "engine=autoloop: generated preset from hats config");
+            tracing::debug!(preset = %preset.display(), "engine=autoloop: generated preset from hats config");
             (preset, false)
         }
     };
@@ -283,7 +283,7 @@ pub async fn run_autoloop_engine(
     }
     let _ = std::fs::remove_file(&events_path);
 
-    tracing::info!(
+    tracing::debug!(
         preset = %preset.display(),
         "engine=autoloop: driving the autoloop runtime as a subprocess"
     );
@@ -525,6 +525,31 @@ fn print_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) {
     let _ = std::io::stdout().flush();
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineLogLevel {
+    Error,
+    Warn,
+    Debug,
+}
+
+fn engine_log_level(line: &str) -> EngineLogLevel {
+    if line.contains("[error]") {
+        EngineLogLevel::Error
+    } else if line.contains("[warn]") {
+        EngineLogLevel::Warn
+    } else {
+        EngineLogLevel::Debug
+    }
+}
+
+fn trace_engine_stderr_line(line: &str) {
+    match engine_log_level(line) {
+        EngineLogLevel::Error => tracing::error!(target: "autoloop::engine", "{line}"),
+        EngineLogLevel::Warn => tracing::warn!(target: "autoloop::engine", "{line}"),
+        EngineLogLevel::Debug => tracing::debug!(target: "autoloop::engine", "{line}"),
+    }
+}
+
 /// Run autoloop headlessly while live-tailing its structured event stream.
 async fn run_autoloop_headless(
     runner: AutoloopRunner,
@@ -584,10 +609,12 @@ async fn run_autoloop_headless(
     });
 
     let wait_handle = tokio::spawn(async move {
-        let summary = tokio::task::spawn_blocking(move || runner.wait_with_summary(child))
-            .await
-            .context("autoloop wait task panicked")
-            .and_then(|summary| summary.context("autoloop run failed"));
+        let summary = tokio::task::spawn_blocking(move || {
+            runner.wait_with_summary_streaming_stderr(child, trace_engine_stderr_line)
+        })
+        .await
+        .context("autoloop wait task panicked")
+        .and_then(|summary| summary.context("autoloop run failed"));
         let _ = terminated_tx.send(true);
         summary
     });
@@ -776,7 +803,7 @@ pub async fn start_loop(
         });
         match detected {
             Ok(backend) => {
-                tracing::info!("Auto-detected backend: {}", backend);
+                tracing::debug!("Auto-detected backend: {}", backend);
                 config.cli.backend = backend;
             }
             Err(e) => return Err(anyhow::Error::new(e)),
@@ -834,6 +861,26 @@ mod tests {
             journal: PathBuf::from("/tmp/journal.jsonl"),
             memory: PathBuf::from("/tmp/memory.jsonl"),
         }
+    }
+
+    #[test]
+    fn engine_stderr_lines_map_to_user_visible_severity() {
+        assert_eq!(
+            engine_log_level("[autoloops] [error] backend failed"),
+            EngineLogLevel::Error
+        );
+        assert_eq!(
+            engine_log_level("[autoloops] [warn] retrying"),
+            EngineLogLevel::Warn
+        );
+        assert_eq!(
+            engine_log_level("[autoloops] [info] started"),
+            EngineLogLevel::Debug
+        );
+        assert_eq!(
+            engine_log_level("unclassified engine output"),
+            EngineLogLevel::Debug
+        );
     }
 
     #[test]

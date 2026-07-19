@@ -234,7 +234,7 @@ impl LoopCompletionHandler {
         match handler.land(prompt) {
             Ok(result) => {
                 if result.committed {
-                    info!(
+                    debug!(
                         commit = ?result.commit_sha,
                         handoff = %result.handoff_path.display(),
                         "Landing completed with auto-commit"

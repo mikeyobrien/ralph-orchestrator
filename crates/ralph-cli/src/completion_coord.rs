@@ -133,7 +133,7 @@ pub fn coordinate_completion(
             match handler.handle_completion(ctx, prompt) {
                 Ok(CompletionAction::None) => debug!("Loop completed, no action needed"),
                 Ok(CompletionAction::Landed { .. }) => {
-                    info!("Primary loop landed successfully")
+                    debug!("Primary loop landed successfully")
                 }
                 Ok(CompletionAction::Enqueued { loop_id: lid, .. }) => {
                     info!(loop_id = %lid, "Loop queued for auto-merge");

@@ -27,6 +27,7 @@
 //! memory: <abs path to .autoloop/memory.jsonl>
 //! ```
 
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
@@ -314,16 +315,113 @@ impl AutoloopRunner {
                 source,
             })?;
 
-        if !output.status.success() {
+        self.summary_from_output(output.status, &output.stdout, &output.stderr)
+    }
+
+    /// Waits for a spawned child while forwarding each stderr line to `on_line`.
+    ///
+    /// The callback runs on a dedicated blocking reader thread so stderr is
+    /// drained live without risking a full child pipe. stdout remains captured
+    /// and is used only for summary parsing. The trailing stderr bytes are kept
+    /// for [`AutoloopRunError::NonZeroExit`], preserving [`Self::run`]'s error
+    /// contract while allowing a headless frontend to surface verbose logs.
+    pub fn wait_with_summary_streaming_stderr<F>(
+        &self,
+        mut child: Child,
+        on_line: F,
+    ) -> Result<AutoloopRunSummary, AutoloopRunError>
+    where
+        F: FnMut(&str) + Send + 'static,
+    {
+        let stderr = child.stderr.take().ok_or_else(|| AutoloopRunError::Spawn {
+            command: self.command_display(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "spawned autoloop child has no piped stderr",
+            ),
+        })?;
+        let stderr_reader = std::thread::spawn(move || read_stderr(stderr, on_line));
+
+        // With stderr taken by the reader thread, wait_with_output drains only
+        // stdout. Both pipes are therefore consumed concurrently.
+        let output_result = child
+            .wait_with_output()
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source,
+            });
+        let stderr_tail = stderr_reader
+            .join()
+            .map_err(|_| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source: std::io::Error::other("autoloop stderr reader thread panicked"),
+            })?
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source,
+            })?;
+        let output = output_result?;
+
+        self.summary_from_output(output.status, &output.stdout, &stderr_tail)
+    }
+
+    fn summary_from_output(
+        &self,
+        status: std::process::ExitStatus,
+        stdout: &[u8],
+        stderr: &[u8],
+    ) -> Result<AutoloopRunSummary, AutoloopRunError> {
+        if !status.success() {
             return Err(AutoloopRunError::NonZeroExit {
-                code: output.status.code(),
-                stderr_tail: stderr_tail(&output.stderr),
+                code: status.code(),
+                stderr_tail: stderr_tail(stderr),
             });
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(stdout);
         parse_summary(&stdout).ok_or(AutoloopRunError::UnparseableSummary)
     }
+}
+
+/// Drains stderr line-by-line, forwarding text while retaining only its tail.
+fn read_stderr<R, F>(stderr: R, mut on_line: F) -> std::io::Result<Vec<u8>>
+where
+    R: Read,
+    F: FnMut(&str),
+{
+    let mut reader = BufReader::new(stderr);
+    let mut line = Vec::new();
+    let mut tail = Vec::new();
+
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+
+        let text = String::from_utf8_lossy(&line);
+        on_line(text.trim_end_matches(['\r', '\n']));
+        append_stderr_tail(&mut tail, &line);
+    }
+
+    Ok(tail)
+}
+
+fn append_stderr_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
+    if bytes.len() >= STDERR_TAIL_BYTES {
+        tail.clear();
+        tail.extend_from_slice(&bytes[bytes.len() - STDERR_TAIL_BYTES..]);
+        return;
+    }
+
+    let overflow = tail
+        .len()
+        .saturating_add(bytes.len())
+        .saturating_sub(STDERR_TAIL_BYTES);
+    if overflow > 0 {
+        tail.drain(..overflow);
+    }
+    tail.extend_from_slice(bytes);
 }
 
 /// Returns a UTF-8 tail of `bytes`, at most [`STDERR_TAIL_BYTES`] long.
@@ -413,6 +511,28 @@ stop_reason: completed
 journal: /tmp/work/.autoloop/journal.jsonl
 memory: /tmp/work/.autoloop/memory.jsonl
 ";
+
+    #[test]
+    fn stderr_reader_forwards_lines_and_retains_bounded_tail() {
+        let long_line = format!("{}\n", "x".repeat(STDERR_TAIL_BYTES));
+        let input = format!("first\r\n{long_line}last-without-newline");
+        let mut lines = Vec::new();
+
+        let tail = read_stderr(input.as_bytes(), |line| lines.push(line.to_string()))
+            .expect("stderr should be readable");
+
+        assert_eq!(
+            lines,
+            vec![
+                "first".to_string(),
+                "x".repeat(STDERR_TAIL_BYTES),
+                "last-without-newline".to_string(),
+            ]
+        );
+        assert_eq!(tail.len(), STDERR_TAIL_BYTES);
+        assert!(String::from_utf8_lossy(&tail).ends_with("last-without-newline"));
+        assert!(!String::from_utf8_lossy(&tail).contains("first"));
+    }
 
     #[test]
     fn parses_clean_summary_block() {
