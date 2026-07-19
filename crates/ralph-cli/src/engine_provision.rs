@@ -45,6 +45,10 @@ pub fn prompt_accepts(line: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes")
 }
 
+fn response_consents(bytes_read: usize, line: &str) -> bool {
+    bytes_read > 0 && prompt_accepts(line)
+}
+
 pub fn missing_prompt() -> String {
     format!(
         "autoloop engine not found — download v{VENDORED_AUTOLOOP_VERSION} to ~/.ralph/engine now? [Y/n]"
@@ -84,10 +88,10 @@ pub fn ensure_autoloop_with_provisioning(
                 .context("failed to display the autoloop engine download prompt")?;
 
             let mut response = String::new();
-            io::stdin()
+            let bytes_read = io::stdin()
                 .read_line(&mut response)
                 .context("failed to read the autoloop engine download response")?;
-            if !prompt_accepts(&response) {
+            if !response_consents(bytes_read, &response) {
                 return crate::ensure_autoloop_for_run(health, skip_preflight);
             }
         }
@@ -179,6 +183,14 @@ mod tests {
                 "expected {declined:?} to decline"
             );
         }
+    }
+
+    #[test]
+    fn prompt_response_requires_input_before_consenting() {
+        assert!(!response_consents(0, ""), "EOF must decline");
+        assert!(response_consents(1, "\n"), "Enter accepts the default");
+        assert!(response_consents(4, "yes\n"));
+        assert!(!response_consents(2, "n\n"));
     }
 
     #[test]
