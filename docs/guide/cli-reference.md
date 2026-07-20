@@ -323,6 +323,10 @@ ralph hats [OPTIONS] [COMMAND]
 
 Run the web dashboard.
 
+> **Live-state limitation:** The dashboard does **not** render live loop state
+> under the v3 autoloop engine yet. The autoloop event parser port is tracked by
+> `ga3-c4-dashboard-dead-svf`. `ralph web` prints this caveat at startup.
+
 ```bash
 ralph web [OPTIONS]
 ```
@@ -434,7 +438,7 @@ Supported shells: `bash`, `elvish`, `fish`, `powershell`, `zsh`.
 | 0 | Completion promise reached (`LOOP_COMPLETE`) |
 | 1 | Failure or stop condition (failure/cancelled/throttled state) |
 | 2 | Runtime limits reached (`max-iterations`, `max-runtime`, or `max-cost`) |
-| 3 | Loop requested restart |
+| 3 | Reserved restart exit code; restart is not currently supported under the autoloop engine |
 | 130 | Interrupted by signal (Ctrl-C / SIGINT) |
 
 ## Environment Variables

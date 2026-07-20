@@ -28,7 +28,7 @@ without opt-in fails fast with install guidance.
 | `ralph run --rpc` (JSON-lines protocol) | Removed (tracked as #343). |
 | `ralph run --record-session` (smoke fixtures) | Removed. Replay tests use the fake-autoloop fixture substrate (`tests/fixtures/autoloop/`). |
 | `core.engine` config field | Autoloop is the only engine. `autoloop` remains valid; any other value is rejected because the in-house engine was removed in v3. Remove the field or set it to `autoloop`. |
-| Telegram RObot HITL during runs | Inactive pending autoloop relay wiring (#345). Config is accepted but a warning is logged. |
+| Telegram RObot HITL during runs | Inactive pending autoloop relay wiring (#345). When enabled, config validation logs this warning: `Telegram HITL relay is INACTIVE under the autoloop engine (pending autoloop#345): bot commands/status work, but agent questions are not relayed.` |
 | In-house smoke corpus (`smoke_runner`) | Replaced by the fake-autoloop replay substrate and `ralph-e2e --mock`. |
 
 ## What keeps working (now via the engine)

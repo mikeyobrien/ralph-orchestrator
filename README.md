@@ -94,10 +94,14 @@ ralph run -p "Add input validation to the /users endpoint"
 ## Web Dashboard (Alpha)
 
 > **Alpha:** The web dashboard is under active development. Expect rough edges and breaking changes.
+>
+> **Live-state limitation:** The dashboard does **not** render live loop state
+> under the v3 autoloop engine yet. Porting the autoloop event parser is tracked
+> by `ga3-c4-dashboard-dead-svf`.
 
 <img width="1513" height="1128" alt="image" src="https://github.com/user-attachments/assets/ce5f072f-3d81-44d8-8f2f-88b42b33a3be" />
 
-Ralph includes a web dashboard for monitoring and managing orchestration loops.
+Ralph retains the alpha web dashboard while its v3 live-state parser integration is pending.
 
 ```bash
 ralph web                              # starts Rust RPC API + frontend + opens browser
@@ -274,7 +278,10 @@ ralph bot test                 # send a test message
 ### Web Dashboard
 
 **How do I access the web dashboard?**
-Run `ralph web` to start the Rust RPC API + frontend and open your browser. The dashboard is currently in Alpha — expect rough edges and breaking changes.
+Run `ralph web` to start the Rust RPC API + frontend and open your browser. The
+dashboard is currently in Alpha and does **not** render live loop state under
+the v3 autoloop engine yet; the parser port is tracked by
+`ga3-c4-dashboard-dead-svf`.
 
 **Can I customize the dashboard ports?**
 Yes: `ralph web --backend-port 4000 --frontend-port 8080`
