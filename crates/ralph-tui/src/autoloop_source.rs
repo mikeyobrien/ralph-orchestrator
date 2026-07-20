@@ -13,7 +13,7 @@
 //! advances while an agent is still working and reconciles to authoritative
 //! `backend.output` at the iteration boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -24,7 +24,10 @@ use ratatui::text::{Line, Span};
 use tokio::sync::watch;
 use tracing::debug;
 
-use ralph_adapters::{AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, StreamLine};
+use ralph_adapters::{
+    AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, StreamLine,
+    backend_stream_tailer::{MAX_STREAM_LINE_BYTES, MAX_STREAM_LINES, ToolCallIdentity},
+};
 
 use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
@@ -52,6 +55,22 @@ pub struct AutoloopMapCtx {
     stream_tailer: Option<BackendStreamTailer>,
     /// Buffer index at which provisional live lines begin.
     live_region_mark: Option<usize>,
+    /// Newest bounded assistant/tool presentation for the active iteration.
+    live_items: VecDeque<LiveItem>,
+    /// Tool identities retained independently from rendered text.
+    seen_live_tool_ids: HashSet<ToolCallIdentity>,
+    /// Bounded insertion order for tool identity retention.
+    live_tool_id_order: VecDeque<ToolCallIdentity>,
+    /// Latest cumulative dropped-byte count, rendered as one replaceable status.
+    backpressure_bytes: Option<u64>,
+    /// Prevents replayed `backend.output` events from appending final text twice.
+    authoritative_output_applied: bool,
+}
+
+#[derive(Debug)]
+enum LiveItem {
+    Assistant(Line<'static>),
+    Tool(Line<'static>),
 }
 
 impl AutoloopMapCtx {
@@ -165,6 +184,11 @@ pub fn apply_autoloop_event(
                 ctx.live_region_mark = s
                     .latest_iteration_lines_handle()
                     .and_then(|handle| handle.lock().ok().map(|lines| lines.len()));
+                ctx.live_items.clear();
+                ctx.seen_live_tool_ids.clear();
+                ctx.live_tool_id_order.clear();
+                ctx.backpressure_bytes = None;
+                ctx.authoritative_output_applied = false;
                 ctx.stream_tailer = ctx
                     .workspace_root
                     .as_deref()
@@ -210,25 +234,12 @@ pub fn apply_autoloop_event(
         "backend.output" => {
             let is_current_iteration =
                 event.iteration.is_none() || event.iteration == ctx.current_iteration;
-            if is_current_iteration {
-                if let Some(mark) = ctx.live_region_mark.take()
-                    && let Some(handle) = s.latest_iteration_lines_handle()
-                    && let Ok(mut lines) = handle.lock()
-                {
-                    lines.truncate(mark);
-                }
-                // Once authoritative output arrives, never poll this iteration's
-                // stream again or provisional lines could reappear afterward.
+            if is_current_iteration && !ctx.authoritative_output_applied {
+                // Take the tailer before rebuilding the region so no later tick
+                // can resurrect provisional output from this stream.
                 ctx.stream_tailer = None;
-            }
-
-            if let Some(output) = &event.output {
-                // Split the authoritative iteration result into display lines.
-                let lines: Vec<Line<'static>> = output
-                    .split('\n')
-                    .map(|l| Line::raw(sanitize_tui_inline_text(l)))
-                    .collect();
-                push_lines(&mut s, lines);
+                ctx.authoritative_output_applied = true;
+                reconcile_authoritative_output(&mut s, ctx, event.output.as_deref());
             }
 
             s.last_event = Some("backend.output".to_string());
@@ -330,26 +341,157 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
         return;
     }
 
-    let rendered = stream_lines
-        .into_iter()
-        .map(|line| match line {
-            StreamLine::AgentText(text) => Line::from(Span::styled(
-                sanitize_tui_inline_text(&text),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-            StreamLine::ToolSummary { text, .. } => Line::from(Span::styled(
-                sanitize_tui_inline_text(&text),
-                Style::default().fg(Color::Cyan),
-            )),
-            StreamLine::Backpressure { skipped_bytes } => Line::from(Span::styled(
-                format!("… {skipped_bytes} bytes skipped …"),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-        })
-        .collect();
-    if let Ok(mut state) = state.lock() {
-        push_lines(&mut state, rendered);
+    for stream_line in stream_lines {
+        match stream_line {
+            StreamLine::AgentText(text) => {
+                ctx.live_items
+                    .push_back(LiveItem::Assistant(styled_stream_line(
+                        &text,
+                        Style::default().add_modifier(Modifier::DIM),
+                    )))
+            }
+            StreamLine::ToolSummary { identity, text } => {
+                if remember_live_tool(ctx, identity) {
+                    ctx.live_items.push_back(LiveItem::Tool(styled_stream_line(
+                        &text,
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
+            }
+            StreamLine::Backpressure { skipped_bytes } => {
+                ctx.backpressure_bytes = Some(skipped_bytes);
+            }
+        }
     }
+    trim_live_items(ctx);
+    if let Ok(mut state) = state.lock() {
+        render_live_region(&mut state, ctx);
+    }
+}
+
+fn remember_live_tool(ctx: &mut AutoloopMapCtx, identity: ToolCallIdentity) -> bool {
+    if !ctx.seen_live_tool_ids.insert(identity.clone()) {
+        return false;
+    }
+    if ctx.live_tool_id_order.len() == MAX_STREAM_LINES
+        && let Some(expired) = ctx.live_tool_id_order.pop_front()
+    {
+        ctx.seen_live_tool_ids.remove(&expired);
+    }
+    ctx.live_tool_id_order.push_back(identity);
+    true
+}
+
+fn trim_live_items(ctx: &mut AutoloopMapCtx) {
+    let status_lines = usize::from(ctx.backpressure_bytes.is_some());
+    let mark = bounded_region_mark(ctx.live_region_mark.unwrap_or(0), status_lines);
+    let capacity = MAX_STREAM_LINES.saturating_sub(mark + status_lines);
+    while ctx.live_items.len() > capacity {
+        ctx.live_items.pop_front();
+    }
+}
+
+fn render_live_region(state: &mut TuiState, ctx: &AutoloopMapCtx) {
+    let Some(mark) = ctx.live_region_mark else {
+        return;
+    };
+    let Some(handle) = state.latest_iteration_lines_handle() else {
+        return;
+    };
+    let Ok(mut lines) = handle.lock() else {
+        return;
+    };
+    let status_lines = usize::from(ctx.backpressure_bytes.is_some());
+    lines.truncate(bounded_region_mark(mark, status_lines));
+    if let Some(skipped_bytes) = ctx.backpressure_bytes {
+        lines.push(backpressure_line(skipped_bytes));
+    }
+    lines.extend(ctx.live_items.iter().map(|item| match item {
+        LiveItem::Assistant(line) | LiveItem::Tool(line) => line.clone(),
+    }));
+    debug_assert!(lines.len() <= MAX_STREAM_LINES);
+}
+
+fn reconcile_authoritative_output(
+    state: &mut TuiState,
+    ctx: &mut AutoloopMapCtx,
+    output: Option<&str>,
+) {
+    let Some(mark) = ctx.live_region_mark.take() else {
+        return;
+    };
+    let status_lines = usize::from(ctx.backpressure_bytes.is_some());
+    let bounded_mark = bounded_region_mark(mark, status_lines);
+    let capacity = MAX_STREAM_LINES.saturating_sub(bounded_mark + status_lines);
+    let mut retained = VecDeque::with_capacity(capacity);
+
+    for item in &ctx.live_items {
+        if let LiveItem::Tool(line) = item {
+            push_bounded(&mut retained, line.clone(), capacity);
+        }
+    }
+    if let Some(output) = output {
+        for text in output.split('\n') {
+            push_bounded(
+                &mut retained,
+                Line::raw(bounded_inline_text(text)),
+                capacity,
+            );
+        }
+    }
+
+    let Some(handle) = state.latest_iteration_lines_handle() else {
+        return;
+    };
+    let Ok(mut lines) = handle.lock() else {
+        return;
+    };
+    lines.truncate(bounded_mark);
+    if let Some(skipped_bytes) = ctx.backpressure_bytes {
+        lines.push(backpressure_line(skipped_bytes));
+    }
+    lines.extend(retained);
+    debug_assert!(lines.len() <= MAX_STREAM_LINES);
+    ctx.live_items.clear();
+}
+
+fn bounded_region_mark(mark: usize, reserved_status_lines: usize) -> usize {
+    mark.min(MAX_STREAM_LINES.saturating_sub(reserved_status_lines))
+}
+
+fn push_bounded(lines: &mut VecDeque<Line<'static>>, line: Line<'static>, capacity: usize) {
+    if capacity == 0 {
+        return;
+    }
+    if lines.len() == capacity {
+        lines.pop_front();
+    }
+    lines.push_back(line);
+}
+
+fn styled_stream_line(text: &str, style: Style) -> Line<'static> {
+    Line::from(Span::styled(bounded_inline_text(text), style))
+}
+
+fn backpressure_line(skipped_bytes: u64) -> Line<'static> {
+    styled_stream_line(
+        &format!("… {skipped_bytes} bytes skipped …"),
+        Style::default().add_modifier(Modifier::DIM),
+    )
+}
+
+fn bounded_inline_text(text: &str) -> String {
+    let sanitized = sanitize_tui_inline_text(text);
+    if sanitized.len() <= MAX_STREAM_LINE_BYTES {
+        return sanitized;
+    }
+    let mut end = MAX_STREAM_LINE_BYTES.saturating_sub('…'.len_utf8());
+    while !sanitized.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    let mut bounded = sanitized[..end].to_string();
+    bounded.push('…');
+    bounded
 }
 
 /// Live-tails the autoloop `--events` file and applies each event to the TUI
@@ -481,6 +623,12 @@ mod tests {
         };
         let lines = buf.lines.lock().unwrap();
         lines.iter().map(|l| l.to_string()).collect()
+    }
+
+    fn iteration_lines_text(state: &Arc<Mutex<TuiState>>, index: usize) -> Vec<String> {
+        let s = state.lock().unwrap();
+        let lines = s.iterations[index].lines.lock().unwrap();
+        lines.iter().map(|line| line.to_string()).collect()
     }
 
     fn render_header(state: &TuiState) -> String {
@@ -959,10 +1107,14 @@ mod tests {
             }),
             "visible tool paths must not expose workspace or private run prefixes: {text:?}"
         );
+        assert!(
+            text.iter().all(|line| !line.contains("bytes skipped")),
+            "normal incremental stream must not show backpressure: {text:?}"
+        );
     }
 
     #[tokio::test]
-    async fn backend_output_replaces_the_provisional_live_region() {
+    async fn backend_output_preserves_distinct_tools_across_history_and_export() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         let run_dir = workspace.join(".autoloop/runs/reconcile-run");
@@ -984,22 +1136,27 @@ mod tests {
                 })
             ),
         );
+        let stream_path = run_dir.join("pi-stream.1.jsonl");
         append(
-            &run_dir.join("pi-stream.1.jsonl"),
+            &stream_path,
             concat!(
                 r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"provisional live text"}]}}"#,
+                "\n",
+                r#"{"type":"tool_execution_start","toolCallId":"call-a","toolName":"read","args":{"path":"Cargo.toml"}}"#,
                 "\n",
             ),
         );
 
         let state = make_state();
+        state.lock().unwrap().set_export_workspace_root(&workspace);
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let reader_state = Arc::clone(&state);
         let reader_events = events_path.clone();
+        let reader_workspace = workspace.clone();
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 reader_events,
-                workspace,
+                reader_workspace,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),
@@ -1007,37 +1164,128 @@ mod tests {
             .await;
         });
         assert!(wait_for_line(&state, "provisional live text").await);
+        assert!(wait_for_line(&state, "⚙ read: Cargo.toml").await);
+
+        // Pi streams may replay cumulative records. The replayed stable ID is
+        // suppressed while a genuinely distinct same-rendering ID survives.
+        append(
+            &stream_path,
+            concat!(
+                r#"{"type":"tool_execution_start","toolCallId":"call-a","toolName":"read","args":{"path":"Cargo.toml"}}"#,
+                "\n",
+                r#"{"type":"tool_execution_start","toolCallId":"call-b","toolName":"read","args":{"path":"Cargo.toml"}}"#,
+                "\n",
+            ),
+        );
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let count = lines_text(&state)
+                .iter()
+                .filter(|line| line.contains("⚙ read: Cargo.toml"))
+                .count();
+            if count == 2 {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "second tool never appeared"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
 
         append(
             &events_path,
             concat!(
                 r#"{"type":"backend.output","iteration":1,"runId":"reconcile-run","output":"authoritative final text"}"#,
                 "\n",
-                r#"{"type":"loop.finish","runId":"reconcile-run","iterations":1,"stopReason":"completed"}"#,
+                r#"{"type":"backend.output","iteration":1,"runId":"reconcile-run","output":"authoritative final text"}"#,
                 "\n",
             ),
         );
         assert!(wait_for_line(&state, "authoritative final text").await);
+
+        // Content appended after the boundary must never resume this tailer.
+        append(
+            &stream_path,
+            concat!(
+                r#"{"type":"tool_execution_start","toolCallId":"call-c","toolName":"read","args":{"path":"must-not-resume.rs"}}"#,
+                "\n",
+            ),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        append(
+            &events_path,
+            concat!(
+                r#"{"type":"iteration.start","iteration":2,"runId":"reconcile-run"}"#,
+                "\n",
+                r#"{"type":"loop.finish","runId":"reconcile-run","iterations":2,"stopReason":"completed"}"#,
+                "\n",
+            ),
+        );
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while state.lock().unwrap().total_iterations() != 2 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "second iteration never appeared"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
         cancel_tx.send(true).unwrap();
         handle.await.unwrap();
 
-        let text = lines_text(&state);
+        let completed = iteration_lines_text(&state, 0);
         assert_eq!(
-            text.iter()
+            completed
+                .iter()
+                .filter(|line| line.contains("⚙ read: Cargo.toml"))
+                .count(),
+            2,
+            "stable replay must be removed but distinct IDs retained: {completed:?}"
+        );
+        assert_eq!(
+            completed
+                .iter()
                 .filter(|line| line.contains("authoritative final text"))
                 .count(),
             1,
-            "authoritative output must appear exactly once: {text:?}"
+            "authoritative output must appear exactly once: {completed:?}"
         );
         assert!(
-            text.iter()
-                .all(|line| !line.contains("provisional live text")),
-            "provisional live output must be removed: {text:?}"
+            completed
+                .iter()
+                .all(|line| !line.contains("provisional live text"))
         );
+        assert!(
+            completed
+                .iter()
+                .all(|line| !line.contains("must-not-resume.rs"))
+        );
+
+        {
+            let mut state = state.lock().unwrap();
+            state.navigate_prev();
+            assert_eq!(state.current_view, 0);
+            state.navigate_next();
+            state.navigate_prev();
+            assert!(state.export_current_iteration_to_disk());
+        }
+        assert_eq!(iteration_lines_text(&state, 0), completed);
+        let export_dir = crate::export::export_dir(&workspace);
+        let export_path = std::fs::read_dir(export_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let exported = std::fs::read_to_string(export_path).unwrap();
+        assert_eq!(exported.matches("⚙ read: Cargo.toml").count(), 2);
+        assert_eq!(exported.matches("authoritative final text").count(), 1);
+        assert!(!exported.contains("provisional live text"));
+        assert!(!exported.contains("must-not-resume.rs"));
     }
 
     #[tokio::test]
-    async fn huge_live_stream_keeps_the_tui_buffer_bounded() {
+    async fn repeated_oversized_growth_coalesces_status_and_retains_newest_lines() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         let run_dir = workspace.join(".autoloop/runs/bounded-run");
@@ -1060,31 +1308,7 @@ mod tests {
             ),
         );
 
-        let mut stream = String::new();
-        for index in 0..5_000 {
-            stream.push_str(
-                &serde_json::json!({
-                    "type": "message_end",
-                    "message": {
-                        "role": "assistant",
-                        "content": [{
-                            "type": "text",
-                            "text": format!("bounded line {index:04}"),
-                        }],
-                    },
-                })
-                .to_string(),
-            );
-            stream.push('\n');
-        }
-        stream.push_str(
-            concat!(
-                r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"newest bounded marker"}]}}"#,
-                "\n",
-            ),
-        );
-        std::fs::write(run_dir.join("pi-stream.1.jsonl"), stream).unwrap();
-
+        let stream_path = run_dir.join("pi-stream.1.jsonl");
         let state = make_state();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let reader_state = Arc::clone(&state);
@@ -1098,12 +1322,58 @@ mod tests {
             )
             .await;
         });
-        assert!(wait_for_line(&state, "newest bounded marker").await);
+        assert!(wait_for_iteration(&state).await);
 
-        let line_count = lines_text(&state).len();
+        // One oversized unterminated record is entirely discarded while the
+        // tailer's pending memory remains bounded.
+        let unterminated =
+            MAX_STREAM_LINE_BYTES + ralph_adapters::backend_stream_tailer::MAX_BYTES_PER_POLL;
+        append(&stream_path, &"x".repeat(unterminated));
+        assert!(wait_for_line(&state, &format!("… {unterminated} bytes skipped …")).await);
+
+        let polls = 6_u64;
+        let oversized = ralph_adapters::backend_stream_tailer::MAX_BYTES_PER_POLL;
+        for index in 0..polls {
+            let record = serde_json::json!({
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": format!("newest marker {index}")}],
+                },
+            });
+            let tool = serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": format!("newest-tool-{index}"),
+                "toolName": "read",
+                "args": {"path": format!("newest-tool-{index}.rs")},
+            });
+            append(
+                &stream_path,
+                &format!("\n{}\n{}\n{}\n", "x".repeat(oversized), record, tool),
+            );
+            assert!(wait_for_line(&state, &format!("newest marker {index}")).await);
+            assert!(wait_for_line(&state, &format!("newest-tool-{index}.rs")).await);
+        }
+
+        let expected_skipped = unterminated as u64 + polls * (oversized as u64 + 2);
         assert!(
-            line_count <= ralph_adapters::backend_stream_tailer::MAX_STREAM_LINES,
-            "live buffer exceeded stream cap: {line_count}"
+            wait_for_line(&state, &format!("… {expected_skipped} bytes skipped …")).await,
+            "cumulative status did not reach expected total"
+        );
+        let text = lines_text(&state);
+        assert_eq!(
+            text.iter()
+                .filter(|line| line.contains("bytes skipped"))
+                .count(),
+            1,
+            "backpressure updates must replace one visible status: {text:?}"
+        );
+        assert!(text.iter().any(|line| line.contains("newest marker 5")));
+        assert!(text.iter().any(|line| line.contains("newest-tool-5.rs")));
+        assert!(text.len() <= MAX_STREAM_LINES, "live buffer exceeded cap");
+        assert!(
+            text.iter().all(|line| line.len() <= MAX_STREAM_LINE_BYTES),
+            "rendered line exceeded byte cap"
         );
 
         cancel_tx.send(true).unwrap();
