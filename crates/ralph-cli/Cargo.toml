@@ -71,6 +71,7 @@ nix = { workspace = true }
 [dev-dependencies]
 insta = { version = "1.40", features = ["filters"] }
 ralph-core = { workspace = true, features = ["test-support"] }
+vt100.workspace = true
 
 [[example]]
 name = "calculator"
