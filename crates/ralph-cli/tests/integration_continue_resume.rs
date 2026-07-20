@@ -192,9 +192,13 @@ fn resume_reports_native_engine_limitation_without_inspecting_scratchpad() {
     );
     assert!(
         text.contains(
-            "native engine resume is not yet supported (tracked #344); use `ralph run --continue` to continue coordination state, or `autoloop resume <run-id>` directly"
+            "direct loop resume is not yet supported (tracked #344); use `ralph run --continue` to continue Ralph coordination state. Advanced escape hatch: `autoloop resume <run-id>` resumes the engine directly"
         ),
-        "truthful unsupported message missing: {text}"
+        "Ralph-first unsupported message missing: {text}"
+    );
+    assert!(
+        text.find("ralph run --continue") < text.find("autoloop resume <run-id>"),
+        "Ralph recovery command must precede the advanced engine escape hatch: {text}"
     );
     assert!(
         !text.contains("scratchpad not found"),
