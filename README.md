@@ -101,7 +101,7 @@ ralph run -p "Add input validation to the /users endpoint"
 
 <img width="1513" height="1128" alt="image" src="https://github.com/user-attachments/assets/ce5f072f-3d81-44d8-8f2f-88b42b33a3be" />
 
-Ralph includes a web dashboard for monitoring and managing orchestration loops.
+Ralph retains the alpha web dashboard while its v3 live-state parser integration is pending.
 
 ```bash
 ralph web                              # starts Rust RPC API + frontend + opens browser
