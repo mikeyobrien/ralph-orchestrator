@@ -22,8 +22,8 @@ pub struct AutoloopEvent {
     pub kind: String,
     #[serde(rename = "runId", default)]
     pub run_id: Option<String>,
-    /// Workspace root; present on `loop.start`. Together with `run_id`, this
-    /// locates per-iteration backend streams under `.autoloop/runs/<runId>`.
+    /// Optional workspace metadata. Current runtime `loop.start` events may
+    /// omit it, so callers must not rely on it to locate local run state.
     #[serde(rename = "workDir", default)]
     pub work_dir: Option<PathBuf>,
     #[serde(default)]

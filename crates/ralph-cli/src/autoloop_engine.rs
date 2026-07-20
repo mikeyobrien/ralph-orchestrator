@@ -774,7 +774,7 @@ async fn run_autoloop_with_tui(
     let tui = Tui::new()
         .with_termination_signal(terminated_rx.clone())
         .with_interrupt_tx(interrupt_tx)
-        .with_export_workspace_root(workspace);
+        .with_export_workspace_root(workspace.clone());
     let state = tui.state();
 
     // Mark the source so the footer suppresses guidance/steer affordances that
@@ -790,6 +790,7 @@ async fn run_autoloop_with_tui(
         tokio::spawn(async move {
             ralph_tui::run_autoloop_event_reader(
                 events_path,
+                workspace,
                 reader_state,
                 cancel_rx,
                 role_display_names,
