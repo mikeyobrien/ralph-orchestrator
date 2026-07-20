@@ -24,6 +24,8 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(10);
 /// Timeout for both servers to become ready
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
+const DASHBOARD_LIVE_STATE_CAVEAT: &str = "WARNING: The Ralph web dashboard does NOT render live loop state under the v3 autoloop engine yet; the parser port is tracked by ga3-c4-dashboard-dead-svf.";
+
 /// Arguments for the web subcommand
 #[derive(Parser, Debug)]
 pub struct WebArgs {
@@ -407,6 +409,7 @@ async fn forward_output(
 /// Run both backend and frontend dev servers in parallel
 pub async fn execute(args: WebArgs) -> Result<()> {
     println!("Starting Ralph web servers...");
+    println!("{DASHBOARD_LIVE_STATE_CAVEAT}");
 
     // Determine workspace root: explicit flag or current directory
     let workspace_root = match args.workspace {
@@ -694,6 +697,14 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod");
         path
+    }
+
+    #[test]
+    fn startup_caveat_discloses_live_state_limitation() {
+        assert_eq!(
+            DASHBOARD_LIVE_STATE_CAVEAT,
+            "WARNING: The Ralph web dashboard does NOT render live loop state under the v3 autoloop engine yet; the parser port is tracked by ga3-c4-dashboard-dead-svf."
+        );
     }
 
     #[test]
