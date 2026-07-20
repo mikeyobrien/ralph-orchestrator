@@ -1,14 +1,17 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use ralph_core::testing::fake_autoloop::build_fake_autoloop;
+use ralph_core::{
+    HistoryEventType, LoopEntry, LoopHistory, LoopRegistry, MergeQueue, MergeState,
+    testing::fake_autoloop::build_fake_autoloop,
+};
 use serde_json::json;
 
 const ROWS: u16 = 42;
@@ -178,6 +181,224 @@ fn release_and_kill(child: &mut Box<dyn portable_pty::Child + Send + Sync>, rele
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn transcript_text(transcript: &Arc<Mutex<Vec<u8>>>) -> String {
+    String::from_utf8_lossy(&transcript.lock().expect("lock transcript")).into_owned()
+}
+
+#[test]
+fn tui_quit_clean_exit_and_coordination() {
+    const LOOP_ID: &str = "tui-quit-coordination";
+
+    let workspace = tempfile::tempdir().expect("workspace temp dir");
+    let home = tempfile::tempdir().expect("home temp dir");
+    let preset = workspace.path().join("preset");
+    fs::create_dir_all(preset.join("roles")).expect("create preset roles dir");
+    fs::write(preset.join("autoloops.toml"), AUTOLOOPS_TOML).expect("write autoloops.toml");
+    fs::write(preset.join("topology.toml"), TOPOLOGY_TOML).expect("write topology.toml");
+    fs::write(preset.join("roles/planner.md"), "Wait for the quit test.")
+        .expect("write role prompt");
+    fs::write(
+        workspace.path().join("ralph.yml"),
+        "core:\n  engine: autoloop\n  autoloop_preset: preset\ncli:\n  backend: claude\nfeatures:\n  auto_merge: false\n",
+    )
+    .expect("write ralph.yml");
+    fs::write(workspace.path().join("README.md"), "tui quit test\n").expect("write README");
+    run_git(workspace.path(), &["init", "--quiet"]);
+    run_git(
+        workspace.path(),
+        &["add", "README.md", "ralph.yml", "preset"],
+    );
+    run_git(
+        workspace.path(),
+        &[
+            "-c",
+            "user.name=Ralph Test",
+            "-c",
+            "user.email=ralph@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
+    );
+
+    let ready = workspace.path().join("quit-ready");
+    let release = workspace.path().join("quit-release");
+    let fixture = workspace.path().join("tui-quit.jsonl");
+    let invocation = json!({
+        "steps": [
+            {"events": [
+                json!({
+                    "type": "loop.start",
+                    "runId": LOOP_ID,
+                    "workDir": workspace.path(),
+                    "maxIterations": 1,
+                }).to_string(),
+                json!({
+                    "type": "iteration.start",
+                    "runId": LOOP_ID,
+                    "iteration": 1,
+                    "maxIterations": 1,
+                }).to_string(),
+                json!({
+                    "type": "iteration.banner",
+                    "runId": LOOP_ID,
+                    "iteration": 1,
+                    "maxIterations": 1,
+                    "allowedRoles": ["planner"],
+                }).to_string(),
+            ]},
+            {"barrier": {"ready_env": "QUIT_READY", "release_env": "QUIT_RELEASE"}},
+        ]
+    });
+    fs::write(&fixture, format!("{invocation}\n")).expect("write quit fixture");
+    let fake_autoloop = build_fake_autoloop(&workspace.path().join("fake-autoloop"), &fixture)
+        .expect("build fixture-driven fake autoloop");
+
+    let queue = MergeQueue::new(workspace.path());
+    queue
+        .enqueue(LOOP_ID, "tui quit coordination")
+        .expect("seed merge queue");
+
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![fake_autoloop.bin_dir().to_path_buf()];
+    paths.extend(std::env::split_paths(&inherited_path));
+    let path = std::env::join_paths(paths).expect("construct PATH");
+
+    let pty = native_pty_system()
+        .openpty(PtySize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("open pty");
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_ralph"));
+    command.args([
+        "--config",
+        "ralph.yml",
+        "run",
+        "--skip-preflight",
+        "--max-iterations",
+        "1",
+        "-p",
+        "exercise TUI quit coordination",
+    ]);
+    command.cwd(workspace.path());
+    command.env("TERM", "xterm-256color");
+    command.env("PATH", path);
+    command.env("HOME", home.path());
+    command.env("USERPROFILE", home.path());
+    command.env("QUIT_READY", &ready);
+    command.env("QUIT_RELEASE", &release);
+    command.env("RALPH_MERGE_LOOP_ID", LOOP_ID);
+    command.env_remove("RALPH_CONFIG");
+    command.env_remove("RALPH_WORKSPACE_ROOT");
+
+    let mut reader = pty.master.try_clone_reader().expect("clone pty reader");
+    let mut writer = pty.master.take_writer().expect("take pty writer");
+    let mut child = pty
+        .slave
+        .spawn_command(command)
+        .expect("spawn ralph in pty");
+    drop(pty.slave);
+    drop(pty.master);
+
+    let transcript = Arc::new(Mutex::new(Vec::new()));
+    let transcript_for_reader = Arc::clone(&transcript);
+    let reader_thread = thread::spawn(move || {
+        let mut bytes = [0_u8; 8192];
+        loop {
+            match reader.read(&mut bytes) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => transcript_for_reader
+                    .lock()
+                    .expect("lock transcript")
+                    .extend_from_slice(&bytes[..read]),
+            }
+        }
+    });
+
+    if !wait_for_file(&ready, Duration::from_secs(10)) {
+        release_and_kill(&mut child, &[&release]);
+        drop(writer);
+        reader_thread.join().expect("join pty reader");
+        panic!(
+            "fake autoloop never reached quit barrier; transcript:\n{}",
+            transcript_text(&transcript)
+        );
+    }
+
+    let ralph_pid = child
+        .process_id()
+        .expect("ralph PTY child should expose its PID");
+    let mut registry_entry = LoopEntry::with_id(
+        LOOP_ID,
+        "tui quit coordination",
+        None::<String>,
+        workspace.path().display().to_string(),
+    );
+    registry_entry.pid = ralph_pid;
+    LoopRegistry::new(workspace.path())
+        .register(registry_entry)
+        .expect("seed live registry entry");
+
+    writer.write_all(b"q").expect("send q through PTY");
+    writer.flush().expect("flush PTY input");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll ralph") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            release_and_kill(&mut child, &[&release]);
+            drop(writer);
+            reader_thread.join().expect("join pty reader");
+            panic!(
+                "ralph did not exit after q; transcript:\n{}",
+                transcript_text(&transcript)
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    drop(writer);
+    reader_thread.join().expect("join pty reader");
+
+    let transcript = transcript_text(&transcript);
+    assert!(
+        status.success(),
+        "ralph failed with {status:?}; transcript:\n{transcript}"
+    );
+
+    let history_events = LoopHistory::new(workspace.path().join(".ralph/history.jsonl"))
+        .read_all()
+        .expect("read loop history");
+    assert!(
+        history_events.iter().any(|event| matches!(
+            &event.event_type,
+            HistoryEventType::LoopCompleted { reason } if reason == "stopped"
+        )),
+        "missing stopped completion record; events: {history_events:?}; transcript:\n{transcript}"
+    );
+    assert!(
+        LoopRegistry::new(workspace.path())
+            .get(LOOP_ID)
+            .expect("read loop registry")
+            .is_none(),
+        "completion coordination left the registry entry behind; transcript:\n{transcript}"
+    );
+    let queue_entry = queue
+        .get_entry(LOOP_ID)
+        .expect("read merge queue")
+        .expect("seeded merge queue entry should remain present");
+    assert_eq!(
+        queue_entry.state,
+        MergeState::NeedsReview,
+        "stopped merge run should require review; entry: {queue_entry:?}; transcript:\n{transcript}"
+    );
 }
 
 #[test]
