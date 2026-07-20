@@ -11,6 +11,7 @@ esac
 SCRIPT_DIR=$(cd "${SCRIPT_PATH%/*}" && pwd -P)
 SOURCE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
 PRESET_DIR="$SOURCE_ROOT/presets/live-harness-smoke"
+RESULT_PARSER="$SOURCE_ROOT/tools/smoke_live_harness_results.py"
 
 RALPH_COMMAND=${RALPH_BIN:-ralph}
 AUTOLOOP_COMMAND=${AUTOLOOP_BIN:-autoloop}
@@ -155,21 +156,37 @@ kill "$WATCHDOG_PID" 2>/dev/null || true
 wait "$WATCHDOG_PID" 2>/dev/null || true
 WATCHDOG_PID=
 
-if [[ -f "$TIMEOUT_MARKER" ]]; then
-  printf 'ERROR: live harness smoke timed out after %s seconds\n' "$SMOKE_TIMEOUT_SECONDS" >&2
-  printf 'Ralph output: %s\nRerun: %s\n' "$OUTPUT_PATH" "$RERUN_COMMAND" >&2
-  exit 124
-fi
-if [[ "$RALPH_STATUS" -ne 0 ]]; then
-  printf 'ERROR: Ralph live harness smoke exited %s\n' "$RALPH_STATUS" >&2
-  printf 'Ralph output: %s\nRerun: %s\n' "$OUTPUT_PATH" "$RERUN_COMMAND" >&2
-  exit "$RALPH_STATUS"
+JOURNAL_PATH="$WORKSPACE/.autoloop/journal.jsonl"
+EVIDENCE_PATH="$WORKSPACE/.autoloop/missing-smoke-evidence.txt"
+run_dirs=("$WORKSPACE"/.autoloop/runs/*)
+if [[ ${#run_dirs[@]} -eq 1 && -d "${run_dirs[0]}" ]]; then
+  EVIDENCE_PATH="${run_dirs[0]}/smoke-evidence.txt"
 fi
 
-# Native-journal and per-provider fail-closed reporting is added in the next slice.
+parser_args=(
+  "$RESULT_PARSER"
+  --journal "$JOURNAL_PATH"
+  --evidence "$EVIDENCE_PATH"
+  --output "$OUTPUT_PATH"
+  --workspace "$WORKSPACE"
+  --rerun "$RERUN_COMMAND"
+  --ralph-status "$RALPH_STATUS"
+)
+if [[ -f "$TIMEOUT_MARKER" ]]; then
+  parser_args+=(--timed-out)
+fi
+
+set +e
+"$PYTHON_RESOLVED" "${parser_args[@]}"
+RESULT_STATUS=$?
+set -e
+if [[ "$RESULT_STATUS" -ne 0 ]]; then
+  exit "$RESULT_STATUS"
+fi
+
 if [[ "$KEEP_SMOKE_DIR" == 1 ]]; then
-  printf 'Ralph launch exited 0; output retained for result verification: %s\n' "$OUTPUT_PATH"
+  printf 'PASS: live smoke evidence retained in %s\n' "$WORKSPACE"
 else
-  printf 'Ralph launch exited 0; disposable workspace will be removed\n'
+  printf 'PASS: live smoke complete; disposable workspace will be removed\n'
 fi
 RUN_SUCCEEDED=1
