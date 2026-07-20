@@ -337,9 +337,13 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
                 sanitize_tui_inline_text(&text),
                 Style::default().add_modifier(Modifier::DIM),
             )),
-            StreamLine::ToolSummary(text) => Line::from(Span::styled(
+            StreamLine::ToolSummary { text, .. } => Line::from(Span::styled(
                 sanitize_tui_inline_text(&text),
                 Style::default().fg(Color::Cyan),
+            )),
+            StreamLine::Backpressure { skipped_bytes } => Line::from(Span::styled(
+                format!("… {skipped_bytes} bytes skipped …"),
+                Style::default().add_modifier(Modifier::DIM),
             )),
         })
         .collect();
