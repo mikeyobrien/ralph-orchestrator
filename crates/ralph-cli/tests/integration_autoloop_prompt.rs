@@ -445,12 +445,16 @@ fn completion_warning_reports_open_ralph_tasks_without_gating_success() {
         String::from_utf8_lossy(&continued_run.stderr)
     );
     assert!(
-        process_output.contains("WARNING: autoloop completed with open Ralph task count: 1"),
+        process_output.contains("WARNING: Loop completed with 1 open Ralph task(s)"),
         "open-task observation warning was not visible:\n{process_output}"
     );
     assert!(
-        process_output.contains("did not participate in the autoloop engine completion gate"),
+        process_output.contains("did not participate in loop completion"),
         "warning did not explain its non-gating semantics:\n{process_output}"
+    );
+    assert!(
+        !process_output.contains("autoloop completed"),
+        "engine-first task warning leaked:\n{process_output}"
     );
 }
 
@@ -540,8 +544,12 @@ fn explicit_preset_receives_cli_and_config_budget_overrides_before_prompt() {
     );
     assert!(
         preflight_output.contains(
-            "WARNING: event_loop.max_consecutive_failures=2 is NOT enforced by autoloop 0.10.x"
+            "event_loop.max_consecutive_failures=2 is not enforced; the loop has no equivalent consecutive-failure budget"
         ),
         "prominent unsupported-budget warning was not visible:\n{preflight_output}"
+    );
+    assert!(
+        !preflight_output.contains("0.10.x") && !preflight_output.contains("0.9.2"),
+        "engine version leaked into budget warning:\n{preflight_output}"
     );
 }

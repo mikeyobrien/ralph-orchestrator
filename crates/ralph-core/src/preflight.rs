@@ -232,7 +232,7 @@ impl PreflightCheck for ConsecutiveFailureBudgetCheck {
             self.name(),
             format!("Consecutive-failure budget is not enforced ({value})"),
             format!(
-                "WARNING: event_loop.max_consecutive_failures={value} is NOT enforced by autoloop 0.10.x; autoloop has no equivalent consecutive-failure budget."
+                "event_loop.max_consecutive_failures={value} is not enforced; the loop has no equivalent consecutive-failure budget."
             ),
         )
     }
@@ -1168,8 +1168,10 @@ mod tests {
         assert!(result.label.contains("not enforced (17)"));
         let message = result.message.expect("expected unsupported-budget warning");
         assert!(message.contains("event_loop.max_consecutive_failures=17"));
-        assert!(message.contains("NOT enforced by autoloop 0.10.x"));
-        assert!(message.contains("no equivalent consecutive-failure budget"));
+        assert!(message.contains("is not enforced"));
+        assert!(message.contains("the loop has no equivalent consecutive-failure budget"));
+        assert!(!message.contains("autoloop"));
+        assert!(!message.contains("0.10"));
     }
 
     #[tokio::test]

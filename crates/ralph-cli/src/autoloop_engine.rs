@@ -195,17 +195,15 @@ fn warn_on_open_ralph_tasks(tasks_path: &Path, loop_id: &str) {
                 .count();
             if open_count > 0 {
                 eprintln!(
-                    "WARNING: autoloop completed with open Ralph task count: {open_count} \
-                     (loop_id={loop_id}). Ralph and autoloop task stores are separate because \
-                     their formats are incompatible; these Ralph tasks did not participate in \
-                     the autoloop engine completion gate."
+                    "WARNING: Loop completed with {open_count} open Ralph task(s) \
+                     (loop_id={loop_id}). Ralph tasks use a separate task store and did not \
+                     participate in loop completion."
                 );
             }
         }
         Err(error) => eprintln!(
-            "WARNING: autoloop completed, but Ralph could not inspect open tasks at '{}': \
-             {error}. Ralph and autoloop task stores are separate because their formats are \
-             incompatible; this observation failure does not change engine completion.",
+            "WARNING: Loop completed, but Ralph could not inspect open tasks at '{}': \
+             {error}. This observation failure does not change loop completion.",
             tasks_path.display()
         ),
     }
