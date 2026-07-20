@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "tools/smoke-live-harnesses.sh"
 PARSER = ROOT / "tools/smoke_live_harness_results.py"
 PRESET = ROOT / "presets/live-harness-smoke"
+HANDOFF_GATE = PRESET / "scripts/require_smoke_handoff.py"
 BACKENDS = (
     ("claude", "claude-sdk", "claude", "smoke.claude.done"),
     ("codex", "command", "codex", "smoke.codex.done"),
@@ -307,6 +308,63 @@ class PromptProbeContract(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((missing / "smoke-evidence.txt").exists())
+
+
+class HandoffGateContract(unittest.TestCase):
+    def run_gate(self, workspace: Path, iteration: int, records: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
+        run_id = "gate-contract"
+        journal = workspace / ".autoloop/journal.jsonl"
+        journal.parent.mkdir(parents=True)
+        journal.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        state_dir = workspace / ".autoloop/runs" / run_id
+        state_dir.mkdir(parents=True)
+        (state_dir / "smoke-evidence.txt").write_text(
+            "".join(f"HARNESS_SMOKE:{name}\n" for name, *_ in BACKENDS[:iteration]),
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "AUTOLOOP_PROJECT_DIR": str(workspace),
+                "AUTOLOOP_RUN_ID": run_id,
+                "AUTOLOOP_ITERATION": str(iteration),
+            }
+        )
+        return subprocess.run(
+            ["python3", str(HANDOFF_GATE)],
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+
+    def test_gate_accepts_each_exact_provider_turn(self) -> None:
+        all_records = journal_records("gate-contract")
+        for iteration in range(1, len(BACKENDS) + 1):
+            with self.subTest(iteration=iteration), tempfile.TemporaryDirectory() as temp:
+                records = [
+                    record
+                    for record in all_records
+                    if record.get("iteration") in (None, str(iteration))
+                ]
+                result = self.run_gate(Path(temp), iteration, records)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"iteration={iteration}", result.stdout)
+
+    def test_gate_rejects_a_missing_handoff_before_retry(self) -> None:
+        iteration = 3
+        records = [
+            record
+            for record in journal_records("gate-contract")
+            if record.get("iteration") in (None, str(iteration))
+            and record.get("topic") != "smoke.opencode.done"
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            result = self.run_gate(Path(temp), iteration, records)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("expected one smoke.opencode.done, found 0", result.stderr)
 
 
 class NativePresetSelectionIntegration(unittest.TestCase):
