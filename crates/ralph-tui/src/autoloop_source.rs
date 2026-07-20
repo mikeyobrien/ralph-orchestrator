@@ -44,6 +44,8 @@ pub struct AutoloopMapCtx {
     /// User-facing names for engine role IDs. Explicit presets leave this
     /// empty and display their role IDs directly.
     role_display_names: HashMap<String, String>,
+    /// Workspace root reported by the authoritative `loop.start` event.
+    workspace_root: Option<PathBuf>,
     /// Run-scoped directory derived from the authoritative `loop.start` event.
     run_dir: Option<PathBuf>,
     /// Bounded tailer for the currently active iteration's backend stream.
@@ -106,6 +108,7 @@ pub fn apply_autoloop_event(
     match event.kind.as_str() {
         "loop.start" => {
             if let (Some(work_dir), Some(run_id)) = (&event.work_dir, &event.run_id) {
+                ctx.workspace_root = Some(work_dir.clone());
                 ctx.run_dir = Some(work_dir.join(".autoloop").join("runs").join(run_id));
             }
             s.last_event = Some("loop.start".to_string());
@@ -152,9 +155,12 @@ pub fn apply_autoloop_event(
                     .latest_iteration_lines_handle()
                     .and_then(|handle| handle.lock().ok().map(|lines| lines.len()));
                 ctx.stream_tailer = ctx
-                    .run_dir
-                    .as_ref()
-                    .map(|run_dir| BackendStreamTailer::for_iteration(run_dir, iteration));
+                    .workspace_root
+                    .as_deref()
+                    .zip(ctx.run_dir.as_deref())
+                    .map(|(workspace_root, run_dir)| {
+                        BackendStreamTailer::for_iteration(workspace_root, run_dir, iteration)
+                    });
             } else if let Some(max) = event.max_iterations {
                 s.max_iterations = Some(max);
             }
@@ -871,16 +877,34 @@ mod tests {
             wait_for_iteration(&state).await,
             "iteration buffer never appeared"
         );
+        let private_path = run_dir.join("plan.md");
+        let repository_path = workspace.join("crates/ralph-tui/src/lib.rs");
         append(
             &run_dir.join("pi-stream.1.jsonl"),
-            concat!(
-                r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"live before boundary"},{"type":"toolCall","name":"read","arguments":{"path":"src/main.rs"}}]}}"#,
-                "\n",
+            &format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "live before boundary"},
+                            {"type": "toolCall", "name": "read", "arguments": {"path": private_path}},
+                        ],
+                    },
+                }),
+                serde_json::json!({
+                    "type": "tool_execution_start",
+                    "toolName": "read",
+                    "args": {"path": repository_path},
+                }),
             ),
         );
 
         let visible = wait_for_line(&state, "live before boundary").await;
-        let tool_visible = wait_for_line(&state, "⚙ read").await;
+        let private_tool_visible = wait_for_line(&state, "⚙ read: engine:plan.md").await;
+        let repository_tool_visible =
+            wait_for_line(&state, "⚙ read: crates/ralph-tui/src/lib.rs").await;
         {
             let state = state.lock().unwrap();
             let lines = state.iterations.last().unwrap().lines.lock().unwrap();
@@ -898,10 +922,17 @@ mod tests {
         cancel_tx.send(true).unwrap();
         handle.await.unwrap();
 
+        let text = lines_text(&state);
         assert!(
-            visible && tool_visible,
-            "stream text and tool summary should be visible before backend.output: {:?}",
-            lines_text(&state)
+            visible && private_tool_visible && repository_tool_visible,
+            "stream text and tool summaries should be visible before backend.output: {text:?}"
+        );
+        assert!(
+            text.iter().all(|line| {
+                !line.contains(&workspace.display().to_string())
+                    && !line.contains(".autoloop/runs/")
+            }),
+            "visible tool paths must not expose workspace or private run prefixes: {text:?}"
         );
     }
 
