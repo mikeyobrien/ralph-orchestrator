@@ -115,6 +115,13 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
 
     starts = [record for record in records if record["topic"] == "backend.start"]
     finishes = [record for record in records if record["topic"] == "backend.finish"]
+    failed_hooks = [
+        record
+        for record in records
+        if record["topic"] == "hook.output" and str(field(record, "exit_code", "missing")) != "0"
+    ]
+    if failed_hooks:
+        errors.append(f"native journal contains {len(failed_hooks)} failed lifecycle hook(s)")
     emitted = [record for record in records if record["topic"] in {backend.handoff for backend in BACKENDS}]
     expected_topics = [backend.handoff for backend in BACKENDS]
     actual_topics = [record["topic"] for record in emitted]
@@ -152,7 +159,11 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
             finish = finishes[index - 1]
             timed_out = field(finish, "timed_out", False)
             exit_code = str(field(finish, "exit_code", "missing"))
-            finish_response = str(field(finish, "output", "")).strip() == row.backend.response_sentinel
+            # Streaming backends may preserve assistant text emitted before tool calls;
+            # the authoritative final response must still be the exact terminal suffix.
+            finish_response = str(field(finish, "output", "")).strip().endswith(
+                row.backend.response_sentinel
+            )
             if iteration_number(finish) != index or exit_code != "0" or timed_out in (True, "true", "1", 1):
                 row.errors.append(
                     f"backend.finish failed (iteration={finish.get('iteration')!r}, exit_code={exit_code}, timed_out={timed_out})"
@@ -181,17 +192,31 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
         )
 
     start_records = [record for record in records if record["topic"] == "loop.start"]
+    complete_records = [record for record in records if record["topic"] == "loop.complete"]
     stop_records = [record for record in records if record["topic"] == "loop.stop"]
-    stop_detail = "missing loop.stop"
+    stop_detail = "missing loop.complete"
     if len(start_records) != 1:
         errors.append(f"native journal must contain exactly one loop.start; found {len(start_records)}")
-    if len(stop_records) != 1:
-        errors.append(f"native journal must contain exactly one loop.stop; found {len(stop_records)}")
+    if len(complete_records) != 1:
+        errors.append(
+            f"native journal must contain exactly one loop.complete; found {len(complete_records)}"
+        )
     if stop_records:
-        stop = stop_records[-1]
-        stop_detail = ", ".join(f"{key}={value}" for key, value in sorted((stop.get("fields") or {}).items())) or "loop.stop"
-        if field(stop, "reason") != "completion_event":
-            errors.append(f"loop.stop reason must be completion_event; found {field(stop, 'reason')!r}")
+        errors.append(f"successful native journal must not contain loop.stop; found {len(stop_records)}")
+        stopped = stop_records[-1]
+        stop_detail = ", ".join(
+            f"{key}={value}" for key, value in sorted((stopped.get("fields") or {}).items())
+        ) or "loop.stop"
+    if complete_records:
+        completed = complete_records[-1]
+        stop_detail = ", ".join(
+            f"{key}={value}" for key, value in sorted((completed.get("fields") or {}).items())
+        ) or "loop.complete"
+        if field(completed, "reason") != "completion_event":
+            errors.append(
+                "loop.complete reason must be completion_event; "
+                f"found {field(completed, 'reason')!r}"
+            )
 
     last_output = "unavailable"
     for finish in reversed(finishes):

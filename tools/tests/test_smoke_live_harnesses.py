@@ -63,13 +63,17 @@ def journal_records(run: str = "fake-six-provider") -> list[dict[str, object]]:
                     "fields": {
                         "exit_code": "0",
                         "timed_out": False,
-                        "output": response,
+                        "output": (
+                            f"provider tool-call preface\n{response}"
+                            if name == "claude"
+                            else response
+                        ),
                     },
                 },
             ]
         )
     records.append(
-        {"run": run, "topic": "loop.stop", "fields": {"reason": "completion_event"}}
+        {"run": run, "iteration": "6", "topic": "loop.complete", "fields": {"reason": "completion_event"}}
     )
     return records
 
@@ -136,7 +140,7 @@ class FakeRunnerIntegration(unittest.TestCase):
                             {{"run": run, "iteration": str(iteration), "topic": handoff, "payload": response, "source": "agent"}},
                             {{"run": run, "iteration": str(iteration), "topic": "backend.finish", "fields": {{"exit_code": "0", "timed_out": False, "output": response}}}},
                         ]
-                    records.append({{"run": run, "topic": "loop.stop", "fields": {{"reason": "completion_event", "elapsed_s": "1", "cost_usd": "0"}}}})
+                    records.append({{"run": run, "iteration": "6", "topic": "loop.complete", "fields": {{"reason": "completion_event", "elapsed_s": "1", "cost_usd": "0"}}}})
                     (cwd / ".autoloop/journal.jsonl").write_text("".join(json.dumps(r) + "\\n" for r in records))
                     print("fake six-provider launch complete; elapsed_s=1 cost_usd=0")
                     """
@@ -196,6 +200,19 @@ class FakeRunnerIntegration(unittest.TestCase):
             broken = [dict(r) for r in base_records]
             broken[-2] = {**broken[-2], "fields": {"exit_code": "9", "timed_out": False, "output": "backend exploded"}}
             cases["backend failure"] = (broken, None, "backend.finish failed")
+            cases["failed lifecycle gate"] = (
+                base_records
+                + [
+                    {
+                        "run": "fake-six-provider",
+                        "iteration": "1",
+                        "topic": "hook.output",
+                        "fields": {"exit_code": "1", "output": "gate failed"},
+                    }
+                ],
+                None,
+                "failed lifecycle hook",
+            )
             cases["malformed journal"] = (base_records, "{not-json}\n", "malformed native journal")
 
             for label, (records, journal_override, diagnostic) in cases.items():
@@ -368,6 +385,44 @@ class HandoffGateContract(unittest.TestCase):
 
 
 class NativePresetSelectionIntegration(unittest.TestCase):
+    def test_blocking_handoff_hook_prevents_a_second_paid_turn(self) -> None:
+        autoloop = os.environ.get("AUTOLOOP_BIN") or shutil.which("autoloop")
+        if not autoloop:
+            self.skipTest("autoloop executable unavailable; CI engine-contract job must provide AUTOLOOP_BIN")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            preset = root / "preset"
+            shutil.copytree(PRESET, preset)
+            guard = executable(root / "no-handoff", "#!/bin/sh\nprintf 'NO_HANDOFF\\n'\n")
+            topology = preset / "topology.toml"
+            text = topology.read_text(encoding="utf-8")
+            text = text.replace('backend_kind = "claude-sdk"', 'backend_kind = "command"', 1)
+            text = text.replace('backend_command = "claude"', f'backend_command = "{guard}"', 1)
+            topology.write_text(text, encoding="utf-8")
+            work = root / "work"
+            work.mkdir()
+            subprocess.run(["git", "init", "-q", str(work)], check=True)
+
+            result = subprocess.run(
+                [autoloop, "run", str(preset), "--max-iterations", "6", "missing handoff guard"],
+                cwd=work,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            records = [
+                json.loads(line)
+                for line in (work / ".autoloop/journal.jsonl").read_text().splitlines()
+            ]
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len([r for r in records if r["topic"] == "backend.start"]), 1)
+            hook_outputs = [r for r in records if r["topic"] == "hook.output"]
+            self.assertEqual(len(hook_outputs), 1, result.stdout + result.stderr)
+            self.assertEqual(str(hook_outputs[0]["fields"]["exit_code"]), "1")
+            stops = [r for r in records if r["topic"] == "loop.stop"]
+            self.assertEqual(len(stops), 1, result.stdout + result.stderr)
+            self.assertEqual(stops[0]["fields"]["reason"], "error")
+
     def test_all_role_backend_overrides_reach_native_launch_selection(self) -> None:
         autoloop = os.environ.get("AUTOLOOP_BIN") or shutil.which("autoloop")
         if not autoloop:

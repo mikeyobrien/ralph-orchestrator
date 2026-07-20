@@ -72,7 +72,7 @@ def main() -> None:
     if (
         str(field(finishes[0], "exit_code", "missing")) != "0"
         or field(finishes[0], "timed_out", False) in (True, "true", "1", 1)
-        or str(field(finishes[0], "output", "")).strip() != response
+        or not str(field(finishes[0], "output", "")).strip().endswith(response)
     ):
         fail(f"iteration {iteration} backend result was not the exact success response")
 

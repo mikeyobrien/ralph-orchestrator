@@ -23,6 +23,7 @@ backend.trust_all_tools = true
 review.enabled = false
 harness.instructions_file = "harness.md"
 
-[hooks]
-post_iteration = "python3 {{PRESET_DIR}}/scripts/require_smoke_handoff.py"
-strict = true
+[[hook]]
+phase = "post_iteration"
+command = "python3 {{PRESET_DIR}}/scripts/require_smoke_handoff.py"
+on_error = "block"
