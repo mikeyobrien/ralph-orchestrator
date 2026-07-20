@@ -239,6 +239,8 @@ impl SummaryWriter {
                 |detail| format!("Failed: engine error: {detail}"),
             ),
             TerminationReason::Stopped => "Stopped manually".to_string(),
+            TerminationReason::Suspended => "Suspended by engine without completion".to_string(),
+            TerminationReason::CompletionHeld => "Completion held by engine".to_string(),
             TerminationReason::Interrupted => "Interrupted by signal".to_string(),
             TerminationReason::RestartRequested => "Restarting by human request".to_string(),
             TerminationReason::WorkspaceGone => "Failed: workspace directory removed".to_string(),

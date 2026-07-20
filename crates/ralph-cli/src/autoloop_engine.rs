@@ -24,6 +24,43 @@ use ralph_core::{
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
 use crate::display::Palette;
 
+// Keep this test guard synchronized with autoloop's canonical
+// packages/harness/src/types.ts STOP_REASONS list.
+#[cfg(test)]
+const KNOWN_STOP_REASONS: [&str; 25] = [
+    "completed",
+    "completion_event",
+    "completion_promise",
+    "max_iterations",
+    "max_runtime",
+    "cost_budget",
+    "stalled",
+    "error",
+    "backend_failed",
+    "backend_timeout",
+    "verdict_takeover",
+    "verdict_exit",
+    "interrupted",
+    "auth_failed",
+    "quota_exhausted",
+    "rate_limited",
+    "transient_error",
+    "review_unknown",
+    "premature_quit",
+    "suspended",
+    "verdict_unknown",
+    "completion_held",
+    "parallel_wave_timeout",
+    "parallel_wave_failed",
+    "parallel_wave_invalid",
+];
+
+fn engine_stop_error(reason: &str) -> TerminationReason {
+    TerminationReason::EngineError {
+        detail: Some(reason.to_string()),
+    }
+}
+
 /// Map an autoloop `stopReason` onto ralph's [`TerminationReason`].
 fn map_stop_reason(reason: &str) -> TerminationReason {
     match reason {
@@ -35,11 +72,25 @@ fn map_stop_reason(reason: &str) -> TerminationReason {
         "cost_budget" => TerminationReason::MaxCost,
         "stalled" => TerminationReason::LoopStale,
         "interrupted" => TerminationReason::Interrupted,
-        "error" | "backend_failed" | "backend_timeout" => {
-            TerminationReason::EngineError { detail: None }
-        }
-        "verdict_takeover" => TerminationReason::ValidationFailure,
-        _ => TerminationReason::Stopped,
+        "suspended" => TerminationReason::Suspended,
+        "completion_held" => TerminationReason::CompletionHeld,
+        "error"
+        | "backend_failed"
+        | "backend_timeout"
+        | "verdict_takeover"
+        | "auth_failed"
+        | "quota_exhausted"
+        | "rate_limited"
+        | "transient_error"
+        | "review_unknown"
+        | "premature_quit"
+        | "verdict_unknown"
+        | "parallel_wave_timeout"
+        | "parallel_wave_failed"
+        | "parallel_wave_invalid" => engine_stop_error(reason),
+        _ => TerminationReason::EngineError {
+            detail: Some(format!("unknown engine stop reason: {reason}")),
+        },
     }
 }
 
@@ -52,8 +103,8 @@ struct FailedRunRecovery {
 
 fn enrich_engine_error(reason: TerminationReason, events: &[AutoloopEvent]) -> TerminationReason {
     match reason {
-        TerminationReason::EngineError { .. } => TerminationReason::EngineError {
-            detail: terminal_stop_detail(events),
+        TerminationReason::EngineError { detail } => TerminationReason::EngineError {
+            detail: terminal_stop_detail(events).or(detail),
         },
         reason => reason,
     }
@@ -1288,45 +1339,108 @@ mod tests {
     }
 
     #[test]
-    fn maps_autoloop_stop_reasons_to_termination() {
-        assert!(matches!(
-            map_stop_reason("completed"),
-            TerminationReason::CompletionPromise
-        ));
-        assert!(matches!(
-            map_stop_reason("completion_event"),
-            TerminationReason::CompletionPromise
-        ));
-        assert!(matches!(
-            map_stop_reason("completion_promise"),
-            TerminationReason::CompletionPromise
-        ));
-        assert!(matches!(
+    fn completed_engine_failure_keeps_stop_literal_without_richer_detail() {
+        let reason = enrich_engine_error(map_stop_reason("auth_failed"), &[]);
+
+        assert_eq!(reason, engine_stop_error("auth_failed"));
+    }
+
+    #[test]
+    fn r12_maps_every_canonical_stop_reason_without_unknown_fallback() {
+        for reason in [
+            "completed",
+            "completion_event",
+            "completion_promise",
+            "verdict_exit",
+        ] {
+            assert_eq!(
+                map_stop_reason(reason),
+                TerminationReason::CompletionPromise
+            );
+        }
+        assert_eq!(
             map_stop_reason("max_iterations"),
             TerminationReason::MaxIterations
-        ));
-        assert!(matches!(
-            map_stop_reason("cost_budget"),
-            TerminationReason::MaxCost
-        ));
-        assert!(matches!(
+        );
+        assert_eq!(
+            map_stop_reason("max_runtime"),
+            TerminationReason::MaxRuntime
+        );
+        assert_eq!(map_stop_reason("cost_budget"), TerminationReason::MaxCost);
+        assert_eq!(map_stop_reason("stalled"), TerminationReason::LoopStale);
+        assert_eq!(
             map_stop_reason("interrupted"),
             TerminationReason::Interrupted
-        ));
-        for reason in ["error", "backend_failed", "backend_timeout"] {
-            assert!(matches!(
-                map_stop_reason(reason),
-                TerminationReason::EngineError { detail: None }
-            ));
+        );
+        assert_eq!(map_stop_reason("suspended"), TerminationReason::Suspended);
+        assert_eq!(
+            map_stop_reason("completion_held"),
+            TerminationReason::CompletionHeld
+        );
+
+        let engine_errors = [
+            "error",
+            "backend_failed",
+            "backend_timeout",
+            "verdict_takeover",
+            "auth_failed",
+            "quota_exhausted",
+            "rate_limited",
+            "transient_error",
+            "review_unknown",
+            "premature_quit",
+            "verdict_unknown",
+            "parallel_wave_timeout",
+            "parallel_wave_failed",
+            "parallel_wave_invalid",
+        ];
+        for reason in engine_errors {
+            assert_eq!(map_stop_reason(reason), engine_stop_error(reason));
         }
-        assert!(matches!(
-            map_stop_reason("verdict_takeover"),
-            TerminationReason::ValidationFailure
-        ));
-        // Unknown reasons fall back to a generic stop.
-        assert!(matches!(
-            map_stop_reason("something_new"),
-            TerminationReason::Stopped
-        ));
+
+        for reason in KNOWN_STOP_REASONS {
+            let unknown_fallback = TerminationReason::EngineError {
+                detail: Some(format!("unknown engine stop reason: {reason}")),
+            };
+            assert_ne!(
+                map_stop_reason(reason),
+                unknown_fallback,
+                "canonical stop reason {reason:?} reached the unknown fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn failure_class_stop_reasons_exit_non_zero() {
+        for reason in [
+            "auth_failed",
+            "quota_exhausted",
+            "rate_limited",
+            "transient_error",
+            "review_unknown",
+            "premature_quit",
+            "verdict_unknown",
+            "parallel_wave_timeout",
+            "parallel_wave_failed",
+            "parallel_wave_invalid",
+        ] {
+            assert_ne!(
+                map_stop_reason(reason).exit_code(),
+                0,
+                "{reason} must not report success"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_stop_reason_is_a_non_zero_engine_error() {
+        let reason = map_stop_reason("something_new");
+        assert_eq!(
+            reason,
+            TerminationReason::EngineError {
+                detail: Some("unknown engine stop reason: something_new".to_string()),
+            }
+        );
+        assert_ne!(reason.exit_code(), 0);
     }
 }

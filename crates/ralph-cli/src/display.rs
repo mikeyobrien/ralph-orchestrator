@@ -147,6 +147,10 @@ pub fn print_termination(
             Cow::Owned(engine_error_label(detail.as_deref())),
         ),
         TerminationReason::Stopped => (p.cyan, "?", Cow::Borrowed("Manually stopped")),
+        TerminationReason::Suspended => (p.cyan, "⏸", Cow::Borrowed("Suspended by engine")),
+        TerminationReason::CompletionHeld => {
+            (p.cyan, "⏸", Cow::Borrowed("Completion held by engine"))
+        }
         TerminationReason::Interrupted => (p.yellow, "?", Cow::Borrowed("Interrupted by signal")),
         TerminationReason::RestartRequested => {
             (p.cyan, "↻", Cow::Borrowed("Restarting by human request"))
