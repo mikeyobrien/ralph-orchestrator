@@ -13,7 +13,7 @@
 //! advances while an agent is still working and reconciles to authoritative
 //! `backend.output` at the iteration boundary.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -26,7 +26,7 @@ use tracing::debug;
 
 use ralph_adapters::{
     AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, StreamLine,
-    backend_stream_tailer::{MAX_STREAM_LINE_BYTES, MAX_STREAM_LINES, ToolCallIdentity},
+    backend_stream_tailer::{MAX_STREAM_LINE_BYTES, MAX_STREAM_LINES},
 };
 
 use crate::state::TuiState;
@@ -58,11 +58,9 @@ pub struct AutoloopMapCtx {
     /// Bounded content that existed before this iteration's live region.
     iteration_prefix: VecDeque<Line<'static>>,
     /// Newest bounded assistant/tool presentation for the active iteration.
+    /// Tool deduplication is already enforced by `BackendStreamTailer`, where
+    /// structured identity is available; the TUI retains presentation only.
     live_items: VecDeque<LiveItem>,
-    /// Tool identities retained independently from rendered text.
-    seen_live_tool_ids: HashSet<ToolCallIdentity>,
-    /// Bounded insertion order for tool identity retention.
-    live_tool_id_order: VecDeque<ToolCallIdentity>,
     /// Latest cumulative dropped-byte count, rendered as one replaceable status.
     backpressure_bytes: Option<u64>,
     /// Newest bounded lifecycle/status lines emitted after iteration start.
@@ -200,8 +198,6 @@ pub fn apply_autoloop_event(
                     ctx.iteration_prefix.pop_front();
                 }
                 ctx.live_items.clear();
-                ctx.seen_live_tool_ids.clear();
-                ctx.live_tool_id_order.clear();
                 ctx.backpressure_bytes = None;
                 ctx.lifecycle_lines.clear();
                 ctx.completed_tool_lines.clear();
@@ -270,17 +266,19 @@ pub fn apply_autoloop_event(
             push_iteration_line(
                 &mut s,
                 ctx,
-                Line::from(vec![
-                    Span::styled(
-                        "\u{26A0} HUMAN ASK: ",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(bounded_inline_text(&question)),
-                ]),
+                bounded_prefixed_line(
+                    HUMAN_ASK_PREFIX,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                    &question,
+                ),
             );
-            s.pending_ask = Some(sanitize_tui_inline_text(&question));
+            // The footer adds one leading space before the same prefix.
+            s.pending_ask = Some(bounded_inline_text_with_prefix(
+                &question,
+                HUMAN_ASK_PREFIX.len() + 1,
+            ));
 
             s.last_event = Some("ask.pending".to_string());
             s.last_event_at = Some(now);
@@ -306,10 +304,11 @@ pub fn apply_autoloop_event(
                 push_iteration_line(
                     &mut s,
                     ctx,
-                    Line::from(vec![
-                        Span::styled("\u{25A0} run finished: ", Style::default().fg(Color::Blue)),
-                        Span::raw(bounded_inline_text(stop_reason)),
-                    ]),
+                    bounded_prefixed_line(
+                        RUN_FINISHED_PREFIX,
+                        Style::default().fg(Color::Blue),
+                        stop_reason,
+                    ),
                 );
             }
             // Clear any dangling ask once the run is over.
@@ -330,6 +329,8 @@ pub fn apply_autoloop_event(
 
 const COMPLETED_TOOL_LINE_BUDGET: usize = 256;
 const LIFECYCLE_LINE_BUDGET: usize = 64;
+const HUMAN_ASK_PREFIX: &str = "\u{26A0} HUMAN ASK: ";
+const RUN_FINISHED_PREFIX: &str = "\u{25A0} run finished: ";
 
 /// Records an autoloop lifecycle line without allowing it to escape the shared
 /// iteration bound. Once an iteration has started, rendering owns the whole
@@ -380,16 +381,14 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
                         Style::default().add_modifier(Modifier::DIM),
                     )))
             }
-            StreamLine::ToolSummary { identity, text } => {
-                if remember_live_tool(ctx, identity) {
-                    let line = styled_stream_line(&text, Style::default().fg(Color::Cyan));
-                    push_bounded(
-                        &mut ctx.completed_tool_lines,
-                        line.clone(),
-                        COMPLETED_TOOL_LINE_BUDGET,
-                    );
-                    ctx.live_items.push_back(LiveItem::Tool(line));
-                }
+            StreamLine::ToolSummary { text, .. } => {
+                let line = styled_stream_line(&text, Style::default().fg(Color::Cyan));
+                push_bounded(
+                    &mut ctx.completed_tool_lines,
+                    line.clone(),
+                    COMPLETED_TOOL_LINE_BUDGET,
+                );
+                ctx.live_items.push_back(LiveItem::Tool(line));
             }
             StreamLine::Backpressure { skipped_bytes } => {
                 ctx.backpressure_bytes = Some(skipped_bytes);
@@ -400,19 +399,6 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
     if let Ok(mut state) = state.lock() {
         render_live_region(&mut state, ctx);
     }
-}
-
-fn remember_live_tool(ctx: &mut AutoloopMapCtx, identity: ToolCallIdentity) -> bool {
-    if !ctx.seen_live_tool_ids.insert(identity.clone()) {
-        return false;
-    }
-    if ctx.live_tool_id_order.len() == MAX_STREAM_LINES
-        && let Some(expired) = ctx.live_tool_id_order.pop_front()
-    {
-        ctx.seen_live_tool_ids.remove(&expired);
-    }
-    ctx.live_tool_id_order.push_back(identity);
-    true
 }
 
 fn trim_live_items(ctx: &mut AutoloopMapCtx) {
@@ -593,12 +579,28 @@ fn backpressure_line(skipped_bytes: u64) -> Line<'static> {
     )
 }
 
+fn bounded_prefixed_line(prefix: &'static str, prefix_style: Style, text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(prefix, prefix_style),
+        Span::raw(bounded_inline_text_with_prefix(text, prefix.len())),
+    ])
+}
+
 fn bounded_inline_text(text: &str) -> String {
+    bounded_inline_text_with_prefix(text, 0)
+}
+
+fn bounded_inline_text_with_prefix(text: &str, prefix_bytes: usize) -> String {
     let sanitized = sanitize_tui_inline_text(text);
-    if sanitized.len() <= MAX_STREAM_LINE_BYTES {
+    let max_bytes = MAX_STREAM_LINE_BYTES.saturating_sub(prefix_bytes);
+    if sanitized.len() <= max_bytes {
         return sanitized;
     }
-    let mut end = MAX_STREAM_LINE_BYTES.saturating_sub('…'.len_utf8());
+    let ellipsis_bytes = '…'.len_utf8();
+    if max_bytes < ellipsis_bytes {
+        return String::new();
+    }
+    let mut end = max_bytes - ellipsis_bytes;
     while !sanitized.is_char_boundary(end) {
         end = end.saturating_sub(1);
     }
@@ -1029,6 +1031,42 @@ mod tests {
     }
 
     #[test]
+    fn long_unicode_human_ask_caps_complete_history_and_footer_lines() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
+            &state,
+            &mut ctx,
+        );
+        let question = "界".repeat(MAX_STREAM_LINE_BYTES);
+        apply_autoloop_event(
+            &ev(&serde_json::json!({
+                "type": "ask.pending",
+                "runId": "r1",
+                "iteration": 1,
+                "question": question,
+            })
+            .to_string()),
+            &state,
+            &mut ctx,
+        );
+
+        let rendered = lines_text(&state)
+            .into_iter()
+            .find(|line| line.starts_with(HUMAN_ASK_PREFIX))
+            .expect("human ask history line");
+        assert!(rendered.len() <= MAX_STREAM_LINE_BYTES);
+        assert!(rendered.len() > MAX_STREAM_LINE_BYTES - 3);
+        assert!(rendered.ends_with('…'));
+        let pending = state.lock().unwrap().pending_ask.clone().unwrap();
+        assert!(
+            format!(" {HUMAN_ASK_PREFIX}{pending}").len() <= MAX_STREAM_LINE_BYTES,
+            "footer ask exceeded byte cap"
+        );
+    }
+
+    #[test]
     fn progress_timeout_clears_pending_ask() {
         let state = make_state();
         let mut ctx = AutoloopMapCtx::new(HashMap::new());
@@ -1060,6 +1098,37 @@ mod tests {
         assert_eq!(s.pending_ask.as_deref(), Some("line1 line2"));
         let question = s.pending_ask.as_deref().unwrap();
         assert!(!question.contains(['\n', '\r', '\u{0007}']));
+    }
+
+    #[test]
+    fn long_unicode_stop_reason_caps_complete_rendered_line() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"runId":"r1"}"#),
+            &state,
+            &mut ctx,
+        );
+        let stop_reason = "🛑".repeat(MAX_STREAM_LINE_BYTES);
+        apply_autoloop_event(
+            &ev(&serde_json::json!({
+                "type": "loop.finish",
+                "iterations": 1,
+                "runId": "r1",
+                "stopReason": stop_reason,
+            })
+            .to_string()),
+            &state,
+            &mut ctx,
+        );
+
+        let rendered = lines_text(&state)
+            .into_iter()
+            .find(|line| line.starts_with(RUN_FINISHED_PREFIX))
+            .expect("run finished history line");
+        assert!(rendered.len() <= MAX_STREAM_LINE_BYTES);
+        assert!(rendered.len() > MAX_STREAM_LINE_BYTES - 4);
+        assert!(rendered.ends_with('…'));
     }
 
     #[test]

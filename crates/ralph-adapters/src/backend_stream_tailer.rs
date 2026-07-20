@@ -8,11 +8,11 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::fs::File;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::tool_preview::format_tool_summary;
 
@@ -23,9 +23,36 @@ pub const MAX_STREAM_LINES: usize = 2_000;
 /// Maximum UTF-8 bytes retained in one display line.
 pub const MAX_STREAM_LINE_BYTES: usize = 4 * 1024;
 
-/// Stable, presentation-independent identity for one tool invocation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ToolCallIdentity(String);
+/// Fixed-width, presentation-independent identity for one tool invocation.
+///
+/// Backend IDs and structured fallback events are hashed before this value is
+/// retained. The namespace prevents an ID's bytes from colliding with an
+/// identical structured-event encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ToolCallIdentity {
+    namespace: ToolIdentityNamespace,
+    digest: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+enum ToolIdentityNamespace {
+    StableId = 1,
+    StructuredEvent = 2,
+}
+
+impl ToolCallIdentity {
+    fn hashed(namespace: ToolIdentityNamespace, value: &[u8]) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"ralph.tool-call-identity.v1\0");
+        hasher.update([namespace as u8]);
+        hasher.update(value);
+        Self {
+            namespace,
+            digest: hasher.finalize().into(),
+        }
+    }
+}
 
 /// One displayable item extracted from a backend's NDJSON stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,7 +206,7 @@ impl BackendStreamTailer {
             };
             for parsed in parse_stream_line(format, line, &self.workspace_root, &self.run_dir) {
                 if let StreamLine::ToolSummary { identity, .. } = &parsed
-                    && !self.remember_tool(identity.clone())
+                    && !self.remember_tool(*identity)
                 {
                     continue;
                 }
@@ -233,6 +260,9 @@ impl BackendStreamTailer {
         }
     }
 
+    // Deduplication belongs at the adapter boundary: it has structured backend
+    // identity before presentation and emits only distinct bounded StreamLines.
+    // The TUI may therefore retain rendered tool history without a second set.
     fn remember_tool(&mut self, identity: ToolCallIdentity) -> bool {
         if self.seen_tool_ids.contains(&identity) {
             return false;
@@ -242,7 +272,7 @@ impl BackendStreamTailer {
         {
             self.seen_tool_ids.remove(&expired);
         }
-        self.seen_tool_ids.insert(identity.clone());
+        self.seen_tool_ids.insert(identity);
         self.tool_id_order.push_back(identity);
         true
     }
@@ -368,14 +398,11 @@ fn tool_line(
 
 fn tool_identity(stable_id: Option<&str>, structured_event: &Value) -> ToolCallIdentity {
     if let Some(id) = stable_id {
-        return ToolCallIdentity(format!("id:{id}"));
+        return ToolCallIdentity::hashed(ToolIdentityNamespace::StableId, id.as_bytes());
     }
 
-    let mut hasher = DefaultHasher::new();
-    serde_json::to_vec(structured_event)
-        .unwrap_or_default()
-        .hash(&mut hasher);
-    ToolCallIdentity(format!("event:{:016x}", hasher.finish()))
+    let encoded = serde_json::to_vec(structured_event).unwrap_or_default();
+    ToolCallIdentity::hashed(ToolIdentityNamespace::StructuredEvent, &encoded)
 }
 
 fn present_tool_paths(input: &Value, workspace_root: &Path, run_dir: &Path) -> Value {
@@ -440,7 +467,7 @@ mod tests {
 
     fn tool(id: &str, text: impl Into<String>) -> StreamLine {
         StreamLine::ToolSummary {
-            identity: ToolCallIdentity(format!("id:{id}")),
+            identity: tool_identity(Some(id), &Value::Null),
             text: text.into(),
         }
     }
@@ -682,6 +709,53 @@ mod tests {
     }
 
     #[test]
+    fn multi_megabyte_tool_ids_retain_only_fixed_width_distinct_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), dir.path(), 11);
+        let huge_prefix = "backend-controlled-".to_owned() + &"界".repeat(700_000);
+        assert!(huge_prefix.len() > 2 * 1024 * 1024);
+        let first_id = format!("{huge_prefix}-a");
+        let second_id = format!("{huge_prefix}-b");
+        let event = |id: &str| {
+            serde_json::json!({
+                "type": "tool_execution_start",
+                "toolCallId": id,
+                "toolName": "read",
+                "args": {"path": "same.rs"},
+            })
+        };
+        let parse_tool = |event: &Value| {
+            let mut lines = parse_pi_event(event, dir.path(), dir.path());
+            assert_eq!(lines.len(), 1);
+            match lines.pop().unwrap() {
+                StreamLine::ToolSummary { identity, text } => (identity, text),
+                other => panic!("expected tool summary, got {other:?}"),
+            }
+        };
+
+        let (first, first_text) = parse_tool(&event(&first_id));
+        let (first_replay, replay_text) = parse_tool(&event(&first_id));
+        let (second, second_text) = parse_tool(&event(&second_id));
+
+        assert_eq!(std::mem::size_of::<ToolCallIdentity>(), 33);
+        assert_eq!(first, first_replay);
+        assert_ne!(first, second);
+        assert_eq!(first_text, "⚙ read: same.rs");
+        assert_eq!(first_text, replay_text);
+        assert_eq!(first_text, second_text);
+        assert!(first_text.len() <= MAX_STREAM_LINE_BYTES);
+        assert!(tailer.remember_tool(first));
+        assert!(!tailer.remember_tool(first_replay));
+        assert!(tailer.remember_tool(second));
+        assert_eq!(tailer.seen_tool_ids.len(), 2);
+        assert_eq!(tailer.tool_id_order.len(), 2);
+        assert_eq!(
+            tailer.seen_tool_ids.len() * std::mem::size_of::<ToolCallIdentity>(),
+            66
+        );
+    }
+
+    #[test]
     fn identical_idless_structured_tool_events_use_bounded_fallback_identity() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pi-stream.9.jsonl");
@@ -697,7 +771,8 @@ mod tests {
         assert!(matches!(
             &lines[0],
             StreamLine::ToolSummary { identity, text }
-                if identity.0.starts_with("event:") && text == "⚙ grep: needle"
+                if identity.namespace == ToolIdentityNamespace::StructuredEvent
+                    && text == "⚙ grep: needle"
         ));
         assert_eq!(tailer.seen_tool_ids.len(), 1);
     }

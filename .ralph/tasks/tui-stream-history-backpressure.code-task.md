@@ -4,6 +4,11 @@ Beads:
 - `ralph-orchestrator-v3-autoloops-backend-au2` (P1)
 - `ralph-orchestrator-v3-autoloops-backend-hav` (P2)
 
+## Acceptance approval evidence
+
+The user explicitly confirmed that the bead acceptance was approved before the
+loop launched. No date or additional approval claim is inferred here.
+
 ## Mission
 
 Fix both confirmed Ralph TUI observability defects without weakening stream bounds or moving engine judgment into Ralph:
