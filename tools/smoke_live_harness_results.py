@@ -115,10 +115,9 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
 
     starts = [record for record in records if record["topic"] == "backend.start"]
     finishes = [record for record in records if record["topic"] == "backend.finish"]
+    hooks = [record for record in records if record["topic"] == "hook.output"]
     failed_hooks = [
-        record
-        for record in records
-        if record["topic"] == "hook.output" and str(field(record, "exit_code", "missing")) != "0"
+        record for record in hooks if str(field(record, "exit_code", "missing")) != "0"
     ]
     if failed_hooks:
         errors.append(f"native journal contains {len(failed_hooks)} failed lifecycle hook(s)")
@@ -129,7 +128,21 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
         errors.append(f"handoffs must occur exactly once in order; expected={expected_topics!r} actual={actual_topics!r}")
 
     for index, row in enumerate(rows, 1):
-        row.tool = evidence == [backend.tool_sentinel for backend in BACKENDS]
+        expected_gate = (
+            "smoke probe invocation/result gate passed: "
+            f"iteration={index} backend={row.backend.name} sentinel={row.backend.tool_sentinel}"
+        )
+        matching_hooks = [
+            record
+            for record in hooks
+            if iteration_number(record) == index
+            and str(field(record, "exit_code", "missing")) == "0"
+            and str(field(record, "output", "")).strip() == expected_gate
+        ]
+        row.tool = (
+            evidence == [backend.tool_sentinel for backend in BACKENDS]
+            and len(matching_hooks) == 1
+        )
         matching = [record for record in emitted if record["topic"] == row.backend.handoff]
         row.handoff = len(matching) == 1 and iteration_number(matching[0]) == index
         event_response = (
@@ -177,8 +190,10 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
         if not row.response:
             row.errors.append("missing exact agent response sentinel")
         if not row.tool:
-            row.errors.append("missing exact ordered tool sentinel evidence")
+            row.errors.append("missing exact probe invocation/result gate evidence")
 
+    if len(hooks) != len(BACKENDS):
+        errors.append(f"expected exactly six probe lifecycle hook records, found {len(hooks)}")
     if len(starts) != len(BACKENDS):
         errors.append(f"expected exactly six backend.start records, found {len(starts)}")
     if len(finishes) != len(BACKENDS):
@@ -231,7 +246,7 @@ def validate(records: list[dict[str, Any]], evidence: list[str]) -> tuple[list[R
 
 
 def print_table(rows: list[Row]) -> None:
-    print("BACKEND   KIND         TOOL_SENTINEL   RESPONSE_SENTINEL   HANDOFF   RESULT")
+    print("BACKEND   KIND         PROBE_EVIDENCE  RESPONSE_SENTINEL   HANDOFF   RESULT")
     for row in rows:
         print(
             f"{row.backend.name:<9} {row.backend.kind:<12} "
@@ -268,6 +283,11 @@ def main() -> int:
         errors.extend(f"{row.backend.name} ({row.backend.kind}): {error}" for error in row.errors)
 
     print_table(rows)
+    print(
+        "PROBE SCOPE: exact fixed-probe sentinel/result and lifecycle-gate evidence is required "
+        "for every role. Provider-native artifacts do not uniformly enumerate all read-only tool "
+        "calls, so this report does not claim their exact absence."
+    )
     if errors:
         failing = next((row for row in rows if not row.passed), rows[0])
         print("", file=sys.stderr)

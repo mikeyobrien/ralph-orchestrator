@@ -123,10 +123,12 @@ jobs:
             echo "::error::contract tests skipped — AUTOLOOP_ROOT/node wiring is broken"
             exit 1
           fi
+      - name: Create Python virtual environment
+        run: python3 -m venv .venv
       - name: Run fake live-harness smoke integration
         env:
           AUTOLOOP_BIN: ${{ github.workspace }}/autoloop/bin/autoloop
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v tools.tests.test_smoke_live_harnesses
+        run: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest -v tools.tests.test_smoke_live_harnesses
 
   # Verify the crate can be packaged (catches include_str! issues)
   # Only runs on PRs - main pushes are either merges (already verified) or

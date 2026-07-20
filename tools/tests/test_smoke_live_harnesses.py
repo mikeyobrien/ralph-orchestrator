@@ -9,8 +9,11 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+import time
 import textwrap
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -27,12 +30,33 @@ BACKENDS = (
     ("hermes", "acp", "hermes", "smoke.hermes.done"),
     ("kiro", "acp", "kiro-cli", "smoke.complete"),
 )
+FAKE_PROVIDER_SCRIPT = """#!/bin/sh
+set -eu
+name=${0##*/}
+case "$name:$*" in
+  'claude:auth status --json') printf '%s\\n' '{"loggedIn":true}'; exit 0 ;;
+  'codex:login status') exit 0 ;;
+  'opencode:auth list --pure') printf '%s\\n' '1 credentials'; exit 0 ;;
+  'pi:--offline --list-models') printf 'provider model\\nfake ready\\n'; exit 0 ;;
+  'hermes:dump') printf 'provider: fake-provider\\n'; exit 0 ;;
+  'hermes:auth status fake-provider') printf 'fake-provider: logged in\\n'; exit 0 ;;
+  'kiro-cli:whoami --format json') printf '%s\\n' '{"user":"fake"}'; exit 0 ;;
+esac
+printf '%s %s\\n' "$name" "$*" >>"$PAID_MARKER"
+exit 97
+"""
 
 
 def executable(path: Path, content: str) -> Path:
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return path
+
+
+def install_fake_providers(bin_dir: Path) -> None:
+    trap = executable(bin_dir / "provider-trap", FAKE_PROVIDER_SCRIPT)
+    for command in ("claude", "codex", "opencode", "pi", "hermes", "kiro-cli"):
+        (bin_dir / command).symlink_to(trap)
 
 
 def journal_records(run: str = "fake-six-provider") -> list[dict[str, object]]:
@@ -70,6 +94,18 @@ def journal_records(run: str = "fake-six-provider") -> list[dict[str, object]]:
                         ),
                     },
                 },
+                {
+                    "run": run,
+                    "iteration": str(iteration),
+                    "topic": "hook.output",
+                    "fields": {
+                        "exit_code": "0",
+                        "output": (
+                            "smoke probe invocation/result gate passed: "
+                            f"iteration={iteration} backend={name} sentinel=HARNESS_SMOKE:{name}"
+                        ),
+                    },
+                },
             ]
         )
     records.append(
@@ -104,14 +140,9 @@ class FakeRunnerIntegration(unittest.TestCase):
             paid_marker = root / "PAID_PROVIDER_WAS_CALLED"
             probe_trace = root / "probe.trace"
 
-            # These names satisfy preflight but are hard traps: fake Ralph must model
-            # logical provider turns through fake-probe, never launch provider CLIs.
-            trap = executable(
-                bin_dir / "provider-trap",
-                "#!/bin/sh\nprintf '%s\\n' \"$0\" >>\"$PAID_MARKER\"\nexit 97\n",
-            )
-            for command in ("claude", "codex", "opencode", "pi", "hermes", "kiro-cli"):
-                (bin_dir / command).symlink_to(trap)
+            # Auth/catalog probes are harmless; every other invocation is a hard
+            # paid-backend trap. Fake Ralph must never launch provider CLIs.
+            install_fake_providers(bin_dir)
 
             executable(bin_dir / "autoloop", "#!/bin/sh\nexit 98\n")
             executable(
@@ -139,6 +170,7 @@ class FakeRunnerIntegration(unittest.TestCase):
                             {{"run": run, "iteration": str(iteration), "topic": "backend.start", "fields": {{"backend_kind": kind, "command": command}}}},
                             {{"run": run, "iteration": str(iteration), "topic": handoff, "payload": response, "source": "agent"}},
                             {{"run": run, "iteration": str(iteration), "topic": "backend.finish", "fields": {{"exit_code": "0", "timed_out": False, "output": response}}}},
+                            {{"run": run, "iteration": str(iteration), "topic": "hook.output", "fields": {{"exit_code": "0", "output": f"smoke probe invocation/result gate passed: iteration={{iteration}} backend={{name}} sentinel=HARNESS_SMOKE:{{name}}"}}}},
                         ]
                     records.append({{"run": run, "iteration": "6", "topic": "loop.complete", "fields": {{"reason": "completion_event", "elapsed_s": "1", "cost_usd": "0"}}}})
                     (cwd / ".autoloop/journal.jsonl").write_text("".join(json.dumps(r) + "\\n" for r in records))
@@ -181,6 +213,111 @@ class FakeRunnerIntegration(unittest.TestCase):
             )
             shutil.rmtree(retained)
 
+    def test_auth_preflight_aggregates_failures_without_workspace_or_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            workspace_parent = root / "workspaces"
+            workspace_parent.mkdir()
+            paid_marker = root / "PAID_PROVIDER_WAS_CALLED"
+            failing = executable(
+                bin_dir / "failing-provider",
+                """#!/bin/sh
+name=${0##*/}
+case "$name:$*" in
+  'claude:auth status --json') printf '%s\\n' '{"loggedIn":false}'; exit 0 ;;
+  'codex:login status') exit 1 ;;
+  'opencode:auth list --pure') printf '%s\\n' '0 credentials'; exit 0 ;;
+  'pi:--offline --list-models') printf 'provider model\\n'; exit 0 ;;
+  'hermes:dump') printf '%s\\n' 'provider:'; exit 0 ;;
+  'kiro-cli:whoami --format json') exit 1 ;;
+esac
+printf '%s\\n' "$name:$*" >>"$PAID_MARKER"
+exit 97
+""",
+            )
+            for command in ("claude", "codex", "opencode", "pi", "hermes", "kiro-cli"):
+                (bin_dir / command).symlink_to(failing)
+            fake_ralph = executable(
+                bin_dir / "ralph",
+                "#!/bin/sh\nprintf 'ralph launched\\n' >>\"$PAID_MARKER\"\nexit 97\n",
+            )
+            executable(bin_dir / "autoloop", "#!/bin/sh\nexit 98\n")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{bin_dir}:{env['PATH']}",
+                    "RALPH_BIN": str(fake_ralph),
+                    "AUTOLOOP_BIN": str(bin_dir / "autoloop"),
+                    "TMPDIR": str(workspace_parent),
+                    "PAID_MARKER": str(paid_marker),
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(RUNNER)], cwd=ROOT, env=env, text=True, capture_output=True, timeout=30
+            )
+            combined = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, combined)
+            for diagnostic in (
+                "Claude auth status",
+                "Codex login status",
+                "OpenCode auth list",
+                "Pi offline model catalog",
+                "Hermes selected provider",
+                "Kiro whoami",
+            ):
+                self.assertIn(diagnostic, combined)
+            self.assertNotIn("Running paid live harness smoke", combined)
+            self.assertEqual(list(workspace_parent.iterdir()), [])
+            self.assertFalse(paid_marker.exists(), "preflight failure launched a provider backend or Ralph")
+
+    @unittest.skipUnless(os.name == "posix", "process groups require Unix")
+    def test_timeout_terminates_paid_provider_descendant_process_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            install_fake_providers(bin_dir)
+            paid_marker = root / "PAID_PROVIDER_WAS_CALLED"
+            descendant_pid = root / "descendant.pid"
+            executable(bin_dir / "autoloop", "#!/bin/sh\nexit 98\n")
+            fake_ralph = executable(
+                bin_dir / "ralph",
+                "#!/bin/sh\nsleep 300 &\nprintf '%s' \"$!\" >\"$DESCENDANT_PID\"\nwait\n",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{bin_dir}:{env['PATH']}",
+                    "RALPH_BIN": str(fake_ralph),
+                    "AUTOLOOP_BIN": str(bin_dir / "autoloop"),
+                    "KEEP_SMOKE_DIR": "1",
+                    "SMOKE_TIMEOUT_SECONDS": "1",
+                    "PAID_MARKER": str(paid_marker),
+                    "DESCENDANT_PID": str(descendant_pid),
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(RUNNER)], cwd=ROOT, env=env, text=True, capture_output=True, timeout=25
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(descendant_pid.is_file(), result.stdout + result.stderr)
+            pid = int(descendant_pid.read_text())
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail(f"paid-provider descendant survived timeout cleanup: pid={pid}")
+            self.assertFalse(paid_marker.exists(), "auth preflight was mistaken for a paid backend invocation")
+            match = re.search(r"Smoke workspace retained: (.+)", result.stdout + result.stderr)
+            if match:
+                shutil.rmtree(Path(match.group(1).strip()))
+
     def test_failure_matrix_is_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -198,7 +335,11 @@ class FakeRunnerIntegration(unittest.TestCase):
                 [r for r in base_records if r["topic"] != "smoke.complete"], None, "literal emitted topic smoke.complete"
             )
             broken = [dict(r) for r in base_records]
-            broken[-2] = {**broken[-2], "fields": {"exit_code": "9", "timed_out": False, "output": "backend exploded"}}
+            finish_index = max(index for index, record in enumerate(broken) if record["topic"] == "backend.finish")
+            broken[finish_index] = {
+                **broken[finish_index],
+                "fields": {"exit_code": "9", "timed_out": False, "output": "backend exploded"},
+            }
             cases["backend failure"] = (broken, None, "backend.finish failed")
             cases["failed lifecycle gate"] = (
                 base_records
@@ -226,7 +367,7 @@ class FakeRunnerIntegration(unittest.TestCase):
                         pass
                     result = subprocess.run(
                         [
-                            "python3", str(PARSER), "--journal", str(journal), "--evidence", str(evidence),
+                            sys.executable, str(PARSER), "--journal", str(journal), "--evidence", str(evidence),
                             "--output", str(output), "--workspace", str(case_dir), "--rerun", "fake-rerun",
                             "--ralph-status", "0",
                         ],
@@ -239,7 +380,7 @@ class FakeRunnerIntegration(unittest.TestCase):
             timeout_dir.mkdir()
             journal, evidence, output = write_fixture(timeout_dir)
             timed_out = subprocess.run(
-                ["python3", str(PARSER), "--journal", str(journal), "--evidence", str(evidence),
+                [sys.executable, str(PARSER), "--journal", str(journal), "--evidence", str(evidence),
                  "--output", str(output), "--workspace", str(timeout_dir), "--rerun", "fake-rerun",
                  "--ralph-status", "143", "--timed-out"],
                 text=True, capture_output=True,
@@ -258,7 +399,7 @@ class FakeRunnerIntegration(unittest.TestCase):
                     journal, evidence, output = write_fixture(case_dir)
                     evidence.write_text(content, encoding="utf-8")
                     result = subprocess.run(
-                        ["python3", str(PARSER), "--journal", str(journal), "--evidence", str(evidence),
+                        [sys.executable, str(PARSER), "--journal", str(journal), "--evidence", str(evidence),
                          "--output", str(output), "--workspace", str(case_dir), "--rerun", "fake-rerun",
                          "--ralph-status", "0"],
                         text=True, capture_output=True,
@@ -351,7 +492,7 @@ class HandoffGateContract(unittest.TestCase):
             }
         )
         return subprocess.run(
-            ["python3", str(HANDOFF_GATE)],
+            [sys.executable, str(HANDOFF_GATE)],
             env=env,
             text=True,
             capture_output=True,
@@ -447,21 +588,53 @@ class NativePresetSelectionIntegration(unittest.TestCase):
             )
             self.assertIn("cost_usd: 0.000000", zero.stdout)
 
-            guard = executable(root / "backend-guard", "#!/bin/sh\nexit 86\n")
-            expected_args = {
-                "claude": "",
-                "codex": "exec,--yolo",
-                "opencode": "run",
-                "pi": "",
-                "hermes": "acp",
-                "kiro": "acp",
+            # Parse and assert every original override field before converting only
+            # the selected role to a fake command backend for deterministic routing.
+            parsed = tomllib.loads((PRESET / "topology.toml").read_text(encoding="utf-8"))
+            roles = {role["id"]: role for role in parsed["role"]}
+            expected = {
+                "claude": ("claude-sdk", "claude", [], None, None),
+                "codex": ("command", "codex", ["exec", "--yolo"], "arg", None),
+                "opencode": ("command", "opencode", ["run"], "arg", None),
+                "pi": ("pi", "pi", [], "arg", None),
+                "hermes": ("acp", "hermes", ["acp"], "acp", "hermes"),
+                "kiro": ("acp", "kiro-cli", ["acp"], "acp", "kiro"),
             }
-            for name, kind, _command, _handoff in BACKENDS:
+            for name, values in expected.items():
+                role = roles[name]
+                self.assertEqual(
+                    (
+                        role["backend_kind"],
+                        role["backend_command"],
+                        role["backend_args"],
+                        role.get("backend_prompt_mode"),
+                        role.get("backend_provider"),
+                    ),
+                    values,
+                )
+                self.assertEqual(role["backend_timeout_ms"], 300000)
+
+            guard = executable(root / "backend-guard", "#!/bin/sh\nexit 86\n")
+            for name, _kind, _command, _handoff in BACKENDS:
                 case = root / name
                 shutil.copytree(PRESET, case / "preset")
                 topology = case / "preset/topology.toml"
                 text = topology.read_text(encoding="utf-8")
-                text = re.sub(r'backend_command = "[^"]+"', f'backend_command = "{guard}"', text)
+                blocks = text.split("[[role]]")
+                for index in range(1, len(blocks)):
+                    if re.search(rf'^\s*id = "{re.escape(name)}"$', blocks[index], re.MULTILINE):
+                        block = blocks[index]
+                        block = re.sub(r'^backend_kind = ".*"$', 'backend_kind = "command"', block, flags=re.MULTILINE)
+                        block = re.sub(r'^backend_provider = ".*"\n', '', block, flags=re.MULTILINE)
+                        block = re.sub(r'^backend_command = ".*"$', f'backend_command = "{guard}"', block, flags=re.MULTILINE)
+                        block = re.sub(r'^backend_args = \[.*\]$', 'backend_args = []', block, flags=re.MULTILINE)
+                        if "backend_prompt_mode" in block:
+                            block = re.sub(r'^backend_prompt_mode = ".*"$', 'backend_prompt_mode = "arg"', block, flags=re.MULTILINE)
+                        else:
+                            block = block.replace('backend_args = []\n', 'backend_args = []\nbackend_prompt_mode = "arg"\n')
+                        blocks[index] = block
+                        break
+                text = "[[role]]".join(blocks)
                 text = text.replace('"loop.start" = ["claude"]', f'"loop.start" = ["{name}"]')
                 topology.write_text(text, encoding="utf-8")
                 work = case / "work"
@@ -476,11 +649,11 @@ class NativePresetSelectionIntegration(unittest.TestCase):
                 self.assertEqual(len(starts), 1, result.stdout + result.stderr)
                 stops = [record for record in records if record["topic"] == "loop.stop"]
                 self.assertEqual(len(stops), 1, result.stdout + result.stderr)
-                self.assertIn(stops[0]["fields"]["reason"], {"backend_failed", "backend_auth", "error"})
+                self.assertIn(stops[0]["fields"]["reason"], {"backend_failed", "error"})
                 fields = starts[0]["fields"]
-                self.assertEqual(fields["backend_kind"], kind)
+                self.assertEqual(fields["backend_kind"], "command")
                 self.assertEqual(fields["command"], str(guard))
-                self.assertEqual(fields.get("args", ""), expected_args[name])
+                self.assertEqual(fields.get("args", ""), "")
                 self.assertEqual(fields["timeout_ms"], "300000")
 
                 run_dirs = [path for path in (work / ".autoloop/runs").iterdir() if path.is_dir()]

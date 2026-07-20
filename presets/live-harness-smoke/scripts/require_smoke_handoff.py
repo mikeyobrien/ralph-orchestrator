@@ -87,7 +87,10 @@ def main() -> None:
             f"expected={expected_evidence!r} actual={actual_evidence!r}"
         )
 
-    print(f"smoke handoff gate passed: iteration={iteration} backend={name}")
+    print(
+        f"smoke probe invocation/result gate passed: "
+        f"iteration={iteration} backend={name} sentinel=HARNESS_SMOKE:{name}"
+    )
 
 
 if __name__ == "__main__":

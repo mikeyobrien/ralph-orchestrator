@@ -29,10 +29,13 @@ Run from a Ralph source checkout with:
 - `claude`, `codex`, `opencode`, `pi`, `hermes`, and `kiro-cli` installed;
 - every provider CLI already authenticated with a usable default model/profile.
 
-The script checks executable availability before creating a workspace, but it
-does not log in or prove authentication. Verify each CLI's account/profile
-separately before starting. A missing or unauthenticated provider is a hard
-failure; there are no skips or retries.
+Before creating a workspace, the script aggregates executable and noninteractive
+readiness failures: Claude `auth status --json` must report `loggedIn`, Codex
+`login status` must pass, OpenCode must list at least one credential, Hermes'
+selected provider must report logged in, and Kiro `whoami` must pass. Pi has no
+offline auth-status API, so its offline configured model catalog must be
+nonempty. These are read-only checks: the runner never logs in, runs setup,
+refreshes catalogs, or mutates provider auth. Any failure launches nothing.
 
 ## Cost and safety bounds
 
@@ -51,8 +54,10 @@ The fixed probes write only to the run's engine state. The runner creates a new
 disposable git repository outside the source checkout, writes an absolute
 explicit-preset Ralph config there, and does not modify provider configuration.
 It deletes successful workspaces by default and always retains failed ones.
-Signals and timeout also retain the workspace. Do not run this from automated
-tests or CI; the repository integration suite uses fake providers instead.
+Signals and timeout terminate Ralph's dedicated Unix process group (including
+engine and paid-provider descendants) and retain the workspace. Do not run this
+from automated tests or CI; the repository integration suite uses fake providers
+whose readiness calls are harmless and whose backend calls are hard traps.
 
 ## Run
 
@@ -68,7 +73,11 @@ Retain successful evidence for manual inspection or dogfood recording:
 KEEP_SMOKE_DIR=1 tools/smoke-live-harnesses.sh
 ```
 
-A passing run prints six ordered `PASS` rows. With retained state, inspect:
+A passing run prints six ordered `PASS` rows. Each row requires the exact probe
+sentinel/result plus its successful lifecycle gate, exact response, and handoff.
+The native provider artifacts do not uniformly enumerate every unrelated
+read-only tool call, so the report explicitly does not claim that their absence
+is independently observable across all providers. With retained state, inspect:
 
 ```text
 <workspace>/ralph-output.log
@@ -90,7 +99,8 @@ HARNESS_SMOKE:kiro
 
 Before sharing logs, inspect them for credentials, account metadata, prompts,
 or other sensitive provider output. Never commit retained workspaces or runtime
-`.autoloop/`/`.ralph/` state.
+`.autoloop/`/`.ralph/` state. The committed sanitized dogfood result is recorded
+in [`DOGFOOD.md`](DOGFOOD.md).
 
 ## Supported overrides
 
