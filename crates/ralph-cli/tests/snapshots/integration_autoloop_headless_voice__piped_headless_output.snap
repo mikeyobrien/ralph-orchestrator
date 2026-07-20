@@ -2,7 +2,6 @@
 source: crates/ralph-cli/tests/integration_autoloop_headless_voice.rs
 expression: piped_stdout
 ---
-[TIMESTAMP]  WARN ralph::autoloop_preset_gen: engine=autoloop: ignoring event_loop.max_consecutive_failures because autoloop 0.9.2 has no equivalent budget field="event_loop.max_consecutive_failures" value=5
 Iteration 1/2 started | Planning Lead
 Iteration 1/2 finished | Planning Lead | emitted build.task | cost $0.0100 iteration, $0.0100 total
 Iteration 2/2 started | Build Crew

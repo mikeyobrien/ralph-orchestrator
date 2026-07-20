@@ -110,6 +110,7 @@ impl PreflightRunner {
             checks: vec![
                 Box::new(ConfigValidCheck),
                 Box::new(HooksValidationCheck),
+                Box::new(ConsecutiveFailureBudgetCheck),
                 Box::new(BackendAvailableCheck),
                 Box::new(AutoloopAvailableCheck),
                 Box::new(TelegramTokenCheck),
@@ -214,6 +215,26 @@ impl PreflightCheck for HooksValidationCheck {
                 diagnostics.join("\n"),
             )
         }
+    }
+}
+
+struct ConsecutiveFailureBudgetCheck;
+
+#[async_trait]
+impl PreflightCheck for ConsecutiveFailureBudgetCheck {
+    fn name(&self) -> &'static str {
+        "failure-budget"
+    }
+
+    async fn run(&self, config: &RalphConfig) -> CheckResult {
+        let value = config.event_loop.max_consecutive_failures;
+        CheckResult::warn(
+            self.name(),
+            format!("Consecutive-failure budget is not enforced ({value})"),
+            format!(
+                "WARNING: event_loop.max_consecutive_failures={value} is NOT enforced by autoloop 0.10.x; autoloop has no equivalent consecutive-failure budget."
+            ),
+        )
     }
 }
 
@@ -1126,12 +1147,45 @@ mod tests {
     }
 
     #[test]
-    fn default_checks_include_hooks_and_autoloop_check_names() {
+    fn default_checks_include_hooks_failure_budget_and_autoloop_check_names() {
         let runner = PreflightRunner::default_checks();
         let check_names = runner.check_names();
 
         assert!(check_names.contains(&"hooks"));
+        assert!(check_names.contains(&"failure-budget"));
         assert!(check_names.contains(&"autoloop"));
+    }
+
+    #[tokio::test]
+    async fn failure_budget_check_warns_with_configured_value_and_engine_limitation() {
+        let mut config = RalphConfig::default();
+        config.event_loop.max_consecutive_failures = 17;
+
+        let result = ConsecutiveFailureBudgetCheck.run(&config).await;
+
+        assert_eq!(result.name, "failure-budget");
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(result.label.contains("not enforced (17)"));
+        let message = result.message.expect("expected unsupported-budget warning");
+        assert!(message.contains("event_loop.max_consecutive_failures=17"));
+        assert!(message.contains("NOT enforced by autoloop 0.10.x"));
+        assert!(message.contains("no equivalent consecutive-failure budget"));
+    }
+
+    #[tokio::test]
+    async fn failure_budget_check_warns_for_the_default_value() {
+        let config = RalphConfig::default();
+        let expected = config.event_loop.max_consecutive_failures;
+
+        let result = ConsecutiveFailureBudgetCheck.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(
+            result
+                .message
+                .expect("expected unsupported-budget warning")
+                .contains(&format!("max_consecutive_failures={expected}"))
+        );
     }
 
     #[test]
