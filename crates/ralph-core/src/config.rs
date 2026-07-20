@@ -512,6 +512,13 @@ impl RalphConfig {
     pub fn validate(&self) -> Result<Vec<ConfigWarning>, ConfigError> {
         let mut warnings = Vec::new();
 
+        // Hard validation must run before warning suppression.
+        if self.core.engine != "autoloop" {
+            return Err(ConfigError::InvalidEngine {
+                engine: self.core.engine.clone(),
+            });
+        }
+
         // Skip all warnings if suppressed
         if self.suppress_warnings {
             return Ok(warnings);
@@ -1061,10 +1068,8 @@ pub struct CoreConfig {
     #[serde(skip)]
     pub workspace_root: std::path::PathBuf,
 
-    /// Orchestration engine selector. As of the v3 cutover the autoloop runtime
-    /// is the sole engine; the in-house event loop has been removed. This field
-    /// is retained for config compatibility but no longer switches engines —
-    /// every run drives autoloop regardless of its value.
+    /// Orchestration engine selector. The only valid value is `autoloop` because
+    /// the in-house event loop was removed in v3.
     #[serde(default = "default_engine")]
     pub engine: String,
 
@@ -1080,8 +1085,6 @@ fn default_specs_dir() -> String {
 }
 
 fn default_engine() -> String {
-    // v3: autoloop is the sole orchestration engine. The in-house event loop was
-    // deleted; this field is retained for config compatibility but is inert.
     "autoloop".to_string()
 }
 
@@ -2182,6 +2185,11 @@ pub enum ConfigError {
     InvalidCompletionPromise,
 
     #[error(
+        "Invalid core.engine '{engine}': the in-house engine was removed in v3; remove the field or set autoloop."
+    )]
+    InvalidEngine { engine: String },
+
+    #[error(
         "Custom backend requires a command.\nFix: set 'cli.command' in your config (or run `ralph init --backend custom`).\nSee: docs/reference/troubleshooting.md#custom-backend-command"
     )]
     CustomBackendRequiresCommand,
@@ -2420,6 +2428,48 @@ agent_priority: [gemini, claude, codex]
                 "opencode", "pi", "roo"
             ]
         );
+    }
+
+    #[test]
+    fn core_engine_rejects_removed_ralph_engine() {
+        let config: RalphConfig = serde_yaml::from_str("core:\n  engine: ralph\n").unwrap();
+
+        let error = config.validate().unwrap_err();
+
+        assert!(matches!(
+            error,
+            ConfigError::InvalidEngine { ref engine } if engine == "ralph"
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Invalid core.engine 'ralph': the in-house engine was removed in v3; remove the field or set autoloop."
+        );
+    }
+
+    #[test]
+    fn core_engine_accepts_autoloop() {
+        let config: RalphConfig = serde_yaml::from_str("core:\n  engine: autoloop\n").unwrap();
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn core_engine_accepts_unset_default() {
+        let config: RalphConfig = serde_yaml::from_str("{}\n").unwrap();
+
+        assert_eq!(config.core.engine, "autoloop");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn core_engine_validation_is_not_suppressed() {
+        let config: RalphConfig =
+            serde_yaml::from_str("_suppress_warnings: true\ncore:\n  engine: ralph\n").unwrap();
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidEngine { ref engine }) if engine == "ralph"
+        ));
     }
 
     #[test]
