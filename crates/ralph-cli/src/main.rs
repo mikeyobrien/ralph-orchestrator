@@ -883,6 +883,10 @@ fn is_diagnostics_eligible_command(command: Option<&Commands>) -> bool {
     matches!(command, Some(Commands::Run(_)) | None)
 }
 
+fn has_interactive_terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install panic hook to restore terminal state on crash
@@ -893,12 +897,16 @@ async fn main() -> Result<()> {
     let use_colors = cli.color.should_use_colors();
 
     // Detect if TUI mode is requested - TUI owns the terminal, so logs must not go to stdout.
-    // TUI is enabled by default unless --no-tui or --autonomous is specified.
-    let tui_enabled = match &cli.command {
+    // A default run can use the TUI only when both standard streams are real terminals.
+    let tui_requested = match &cli.command {
         Some(Commands::Run(args)) => !args.no_tui && !args.autonomous,
         None => true,
         _ => false,
     };
+    let tui_enabled = tui_requested && has_interactive_terminal();
+    if tui_requested && !tui_enabled {
+        eprintln!("No interactive terminal detected; using headless mode.");
+    }
     let mcp_enabled = matches!(&cli.command, Some(Commands::Mcp(_)));
 
     // Initialize logging - suppress in TUI mode to avoid corrupting the display
@@ -1319,6 +1327,7 @@ async fn run_command(
     color_mode: ColorMode,
     args: RunArgs,
 ) -> Result<()> {
+    let wants_tui = !args.no_tui && !args.autonomous && has_interactive_terminal();
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
 
     // Apply CLI overrides (after normalization so they take final precedence)
@@ -1340,11 +1349,11 @@ async fn run_command(
         config.verbose = true;
     }
 
-    // Apply execution mode overrides per spec
-    // TUI is enabled by default (unless --no-tui is specified)
+    // Apply execution mode overrides per spec. A non-terminal default run uses
+    // the same headless mode as explicit --no-tui rather than entering raw mode.
     if args.autonomous {
         config.cli.default_mode = "autonomous".to_string();
-    } else if !args.no_tui {
+    } else if wants_tui {
         config.cli.default_mode = "interactive".to_string();
     }
 
@@ -1457,10 +1466,8 @@ async fn run_command(
         return Ok(());
     }
 
-    let autoloop_bin = engine_provision::ensure_autoloop_with_provisioning(
-        !args.autonomous && std::io::stdin().is_terminal(),
-        args.skip_preflight,
-    )?;
+    let autoloop_bin =
+        engine_provision::ensure_autoloop_with_provisioning(wants_tui, args.skip_preflight)?;
 
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
@@ -1661,9 +1668,7 @@ async fn run_command(
     // landing) so parallel loops keep working.
     //
     // The legacy in-house engine paths are descoped; autoloop is the sole runtime.
-    // TUI is the default unless --no-tui or --autonomous was given (the same
-    // predicate the logging setup uses at startup).
-    let wants_tui = !args.no_tui && !args.autonomous;
+    // The startup logging decision and engine launch share the same terminal gate.
     let reason = autoloop_engine::run_autoloop_engine(
         config,
         autoloop_bin,
