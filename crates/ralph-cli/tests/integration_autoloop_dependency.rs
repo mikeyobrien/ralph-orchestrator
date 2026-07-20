@@ -92,28 +92,6 @@ impl Harness {
         ])
     }
 
-    fn resume(&self) -> Output {
-        self.ralph(&[
-            "--color",
-            "never",
-            "--config",
-            "ralph.yml",
-            "resume",
-            "--no-tui",
-        ])
-    }
-
-    fn arrange_resume_state(&self) {
-        let ralph_dir = self.workspace.path().join(".ralph");
-        fs::create_dir_all(ralph_dir.join("agent")).expect("create resume state directory");
-        fs::write(ralph_dir.join("agent/scratchpad.md"), "resume state\n")
-            .expect("write resume scratchpad");
-        fs::write(ralph_dir.join("current-loop-id"), "previous-loop\n")
-            .expect("write current loop marker");
-        fs::write(self.workspace.path().join("PROMPT.md"), "resume prompt\n")
-            .expect("write resume prompt");
-    }
-
     fn arrange_post_gate_failure(&self) {
         fs::write(self.workspace.path().join("blocked"), "not a directory")
             .expect("write scratchpad path blocker");
@@ -262,27 +240,6 @@ fn missing_autoloop_is_reported_and_run_fails_before_lock() {
     assert!(
         !harness.workspace.path().join(".worktrees").exists(),
         "run created a worktree before checking autoloop"
-    );
-}
-
-#[test]
-fn missing_autoloop_is_reported_before_resume_spawns_engine() {
-    let harness = Harness::new();
-    harness.arrange_resume_state();
-
-    let resume = harness.resume();
-    let resume_text = rendered(&resume);
-    assert!(
-        !resume.status.success(),
-        "resume unexpectedly passed: {resume_text}"
-    );
-    assert!(
-        resume_text.contains(AUTOLOOP_INSTALL_HINT),
-        "resume output: {resume_text}"
-    );
-    assert!(
-        !resume_text.contains("failed to spawn autoloop"),
-        "resume reached the raw engine spawn error: {resume_text}"
     );
 }
 

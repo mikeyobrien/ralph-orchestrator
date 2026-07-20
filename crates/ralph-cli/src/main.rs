@@ -411,7 +411,7 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
 
 /// Loads configuration from file sources with override support.
 ///
-/// This is the common sync path used by resume_command and clean_command.
+/// This is the common sync path used by commands that do not support remote URLs.
 /// For the full async path (including Remote URLs), see run_command.
 ///
 /// Returns the loaded config with overrides applied and workspace_root set.
@@ -544,10 +544,9 @@ enum Commands {
     /// Interactive walkthrough of hats, hat collections, and workflow
     Tutorial(TutorialArgs),
 
-    /// DEPRECATED: Use `ralph run --continue` instead.
-    /// Resume a previously interrupted loop from existing scratchpad.
+    /// Native engine resume is not yet supported; use `ralph run --continue`.
     #[command(hide = true)]
-    Resume(ResumeArgs),
+    Resume,
 
     /// View event history for debugging
     Events(EventsArgs),
@@ -648,9 +647,8 @@ struct RunArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// Continue from existing scratchpad (resume interrupted loop).
-    /// Use this when a previous run was interrupted and you want to
-    /// continue from where it left off.
+    /// Continue coordination state from the current loop marker.
+    /// This preserves task-tag continuity; it does not resume native engine state.
     #[arg(long = "continue")]
     continue_mode: bool,
 
@@ -669,25 +667,8 @@ struct RunArgs {
 
     /// Force autonomous mode (headless, non-interactive).
     /// Overrides default_mode from config.
-    #[arg(short, long, conflicts_with = "no_tui", conflicts_with = "rpc")]
+    #[arg(short, long, conflicts_with = "no_tui")]
     autonomous: bool,
-
-    /// Run in RPC mode with JSON-lines protocol on stdin/stdout.
-    /// All output is valid JSON; input accepts RpcCommand messages.
-    /// Use this for IDE integrations and machine-readable interfaces.
-    #[arg(long, conflicts_with = "no_tui", conflicts_with = "autonomous")]
-    rpc: bool,
-
-    /// Use legacy in-process TUI mode instead of subprocess RPC mode.
-    /// This is an escape hatch during the migration to subprocess TUI.
-    #[arg(long, hide = true, conflicts_with = "rpc", conflicts_with = "no_tui")]
-    legacy_tui: bool,
-
-    /// Idle timeout in seconds for interactive mode (default: 30).
-    /// Process is terminated after this many seconds of inactivity.
-    /// Set to 0 to disable idle timeout.
-    #[arg(long)]
-    idle_timeout: Option<u32>,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Multi-Loop Concurrency Options
@@ -714,59 +695,8 @@ struct RunArgs {
     // Verbosity Options
     // ─────────────────────────────────────────────────────────────────────────
     /// Enable verbose output (show tool results and session summary)
-    #[arg(short = 'v', long, conflicts_with = "quiet")]
+    #[arg(short = 'v', long)]
     verbose: bool,
-
-    /// Suppress streaming output (for CI/scripting)
-    #[arg(short = 'q', long, conflicts_with = "verbose")]
-    quiet: bool,
-
-    /// Record session to JSONL file for replay testing
-    #[arg(long, value_name = "FILE")]
-    record_session: Option<PathBuf>,
-
-    /// Custom backend command and arguments (use after --)
-    #[arg(last = true)]
-    custom_args: Vec<String>,
-}
-
-/// Arguments for the resume subcommand.
-///
-/// Per spec: "When loop terminates due to safeguard (not completion promise),
-/// user can run `ralph resume` to restart reading existing scratchpad."
-#[derive(Parser, Debug)]
-struct ResumeArgs {
-    /// Override max iterations (from current position)
-    #[arg(long)]
-    max_iterations: Option<u32>,
-
-    /// Disable TUI observation mode (TUI is enabled by default)
-    #[arg(long, conflicts_with = "autonomous")]
-    no_tui: bool,
-
-    /// Force autonomous mode
-    #[arg(short, long, conflicts_with = "no_tui", conflicts_with = "rpc")]
-    autonomous: bool,
-
-    /// Run in RPC mode with JSON-lines protocol on stdin/stdout.
-    #[arg(long, conflicts_with = "no_tui", conflicts_with = "autonomous")]
-    rpc: bool,
-
-    /// Idle timeout in seconds for TUI mode
-    #[arg(long)]
-    idle_timeout: Option<u32>,
-
-    /// Enable verbose output (show tool results and session summary)
-    #[arg(short = 'v', long, conflicts_with = "quiet")]
-    verbose: bool,
-
-    /// Suppress streaming output (for CI/scripting)
-    #[arg(short = 'q', long, conflicts_with = "verbose")]
-    quiet: bool,
-
-    /// Record session to JSONL file for replay testing
-    #[arg(long, value_name = "FILE")]
-    record_session: Option<PathBuf>,
 }
 
 /// Arguments for the events subcommand.
@@ -946,11 +876,15 @@ fn completions_command(args: CompletionsArgs) -> Result<()> {
 }
 
 /// Returns true if the given command is eligible for diagnostics session creation.
-/// Only `run` and `resume` commands (and the default no-subcommand case) should
-/// create diagnostics session directories. Other subcommands like `emit` or `tools`
-/// would otherwise create empty session dirs.
+/// Only `run` (and the default no-subcommand case) should create diagnostics
+/// session directories. Other subcommands like `emit` or `tools` would otherwise
+/// create empty session dirs.
 fn is_diagnostics_eligible_command(command: Option<&Commands>) -> bool {
-    matches!(command, Some(Commands::Run(_) | Commands::Resume(_)) | None)
+    matches!(command, Some(Commands::Run(_)) | None)
+}
+
+fn has_interactive_terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 #[tokio::main]
@@ -962,20 +896,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let use_colors = cli.color.should_use_colors();
 
-    // Detect if TUI mode is requested - TUI owns the terminal, so logs must not go to stdout
-    // TUI is enabled by default unless --no-tui, --autonomous, or --rpc is specified
-    // RPC mode also suppresses stdout logging (JSON-only output)
-    let tui_enabled = match &cli.command {
-        Some(Commands::Run(args)) => !args.no_tui && !args.autonomous && !args.rpc,
-        Some(Commands::Resume(args)) => !args.no_tui && !args.autonomous && !args.rpc,
+    // Detect if TUI mode is requested - TUI owns the terminal, so logs must not go to stdout.
+    // A default run can use the TUI only when both standard streams are real terminals.
+    let tui_requested = match &cli.command {
+        Some(Commands::Run(args)) => !args.no_tui && !args.autonomous,
         None => true,
         _ => false,
     };
-    let rpc_enabled = match &cli.command {
-        Some(Commands::Run(args)) => args.rpc,
-        Some(Commands::Resume(args)) => args.rpc,
-        _ => false,
-    };
+    let tui_enabled = tui_requested && has_interactive_terminal();
+    if tui_requested && !tui_enabled {
+        eprintln!("No interactive terminal detected; using headless mode.");
+    }
     let mcp_enabled = matches!(&cli.command, Some(Commands::Mcp(_)));
 
     // Initialize logging - suppress in TUI mode to avoid corrupting the display
@@ -1027,8 +958,8 @@ async fn main() -> Result<()> {
             }
         }
         // If log file creation fails, silently continue without logging
-    } else if rpc_enabled || mcp_enabled {
-        // RPC/MCP mode: logs must go to stderr to keep stdout clean for protocol messages
+    } else if mcp_enabled {
+        // MCP mode: logs must go to stderr to keep stdout clean for protocol messages
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)
@@ -1125,16 +1056,7 @@ async fn main() -> Result<()> {
             .await
         }
         Some(Commands::Tutorial(args)) => tutorial_command(cli.color, args),
-        Some(Commands::Resume(args)) => {
-            resume_command(
-                &config_sources,
-                hats_source.as_ref(),
-                cli.verbose,
-                cli.color,
-                args,
-            )
-            .await
-        }
+        Some(Commands::Resume) => resume_command(),
         Some(Commands::Events(args)) => events_command(cli.color, args),
         Some(Commands::Init(args)) => init_command(cli.color, args),
         Some(Commands::Clean(args)) => clean_command(&config_sources, cli.color, args),
@@ -1185,16 +1107,10 @@ async fn main() -> Result<()> {
                 loop_id: None,
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
-                rpc: false,
-                legacy_tui: false,
-                idle_timeout: None,
                 exclusive: false,
                 no_auto_merge: false,
                 skip_preflight: false,
                 verbose: false,
-                quiet: false,
-                record_session: None,
-                custom_args: Vec::new(),
             };
             run_command(
                 &config_sources,
@@ -1409,24 +1325,8 @@ async fn run_command(
     color_mode: ColorMode,
     args: RunArgs,
 ) -> Result<()> {
+    let wants_tui = !args.no_tui && !args.autonomous && has_interactive_terminal();
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
-
-    // Handle --continue mode: check scratchpad exists before proceeding
-    let resume = args.continue_mode;
-    if resume {
-        let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
-        if !scratchpad_path.exists() {
-            anyhow::bail!(
-                "Cannot continue: scratchpad not found at '{}'. \
-                 Start a fresh run with `ralph run`.",
-                config.core.scratchpad.path
-            );
-        }
-        info!(
-            "Found existing scratchpad at '{}', continuing from previous state",
-            config.core.scratchpad.path
-        );
-    }
 
     // Apply CLI overrides (after normalization so they take final precedence)
     // Per spec: CLI -p and -P are mutually exclusive (enforced by clap)
@@ -1447,17 +1347,12 @@ async fn run_command(
         config.verbose = true;
     }
 
-    // Apply execution mode overrides per spec
-    // TUI is enabled by default (unless --no-tui is specified)
+    // Apply execution mode overrides per spec. A non-terminal default run uses
+    // the same headless mode as explicit --no-tui rather than entering raw mode.
     if args.autonomous {
         config.cli.default_mode = "autonomous".to_string();
-    } else if !args.no_tui {
+    } else if wants_tui {
         config.cli.default_mode = "interactive".to_string();
-    }
-
-    // Override idle timeout if specified
-    if let Some(timeout) = args.idle_timeout {
-        config.cli.idle_timeout_secs = timeout;
     }
 
     // An explicit autoloop preset owns its backend configuration. Combining it
@@ -1569,10 +1464,8 @@ async fn run_command(
         return Ok(());
     }
 
-    let autoloop_bin = engine_provision::ensure_autoloop_with_provisioning(
-        !args.autonomous && std::io::stdin().is_terminal(),
-        args.skip_preflight,
-    )?;
+    let autoloop_bin =
+        engine_provision::ensure_autoloop_with_provisioning(wants_tui, args.skip_preflight)?;
 
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
@@ -1772,11 +1665,8 @@ async fn run_command(
     // the engine-agnostic completion coordination (merge queue, registry,
     // landing) so parallel loops keep working.
     //
-    // The legacy in-house engine paths (subprocess TUI, --rpc, --legacy-tui) are
-    // descoped: see #342 (TUI) and #343 (RPC).
-    // TUI is the default unless --no-tui, --autonomous, or --rpc was given
-    // (same predicate the logging setup uses at startup).
-    let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
+    // The legacy in-house engine paths are descoped; autoloop is the sole runtime.
+    // The startup logging decision and engine launch share the same terminal gate.
     let reason = autoloop_engine::run_autoloop_engine(
         config,
         autoloop_bin,
@@ -1828,7 +1718,9 @@ async fn run_command(
 }
 
 fn required_restart_command(pid: u32) -> String {
-    format!("kill {pid} && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml")
+    format!(
+        "kill {pid} && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- -c ralph.test.yml run --continue"
+    )
 }
 
 fn clear_restart_request_signal(workspace_root: &std::path::Path) {
@@ -1836,122 +1728,10 @@ fn clear_restart_request_signal(workspace_root: &std::path::Path) {
     let _ = std::fs::remove_file(&restart_path);
 }
 
-/// Resume a previously interrupted loop from existing scratchpad.
-///
-/// DEPRECATED: Use `ralph run --continue` instead.
-///
-/// Per spec: "When loop terminates due to safeguard (not completion promise),
-/// user can run `ralph run --continue` to restart reading existing scratchpad,
-/// continuing from where it left off."
-async fn resume_command(
-    config_sources: &[ConfigSource],
-    hats_source: Option<&HatsSource>,
-    verbose: bool,
-    color_mode: ColorMode,
-    args: ResumeArgs,
-) -> Result<()> {
-    // Show deprecation warning
-    eprintln!(
-        "{}warning:{} `ralph resume` is deprecated. Use `ralph run --continue` instead.",
-        colors::YELLOW,
-        colors::RESET
-    );
-
-    // Load split core + hats config
-    let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
-
-    // Resolve once before inspecting continuation state and retain the exact
-    // selection for launch so resume cannot disagree with its dependency gate.
-    let autoloop_bin = engine_provision::ensure_autoloop_with_provisioning(
-        !args.autonomous && std::io::stdin().is_terminal(),
-        false,
-    )?;
-
-    // Check that scratchpad exists (required for resume)
-    let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
-    if !scratchpad_path.exists() {
-        anyhow::bail!(
-            "Cannot continue: scratchpad not found at '{}'. \
-             Start a fresh run with `ralph run`.",
-            config.core.scratchpad.path
-        );
-    }
-
-    info!(
-        "Found existing scratchpad at '{}', continuing from previous state",
-        config.core.scratchpad.path
-    );
-
-    // Apply CLI overrides
-    if let Some(max_iter) = args.max_iterations {
-        config.event_loop.max_iterations = Some(max_iter);
-    }
-    if verbose {
-        config.verbose = true;
-    }
-
-    // Apply execution mode overrides
-    // TUI is enabled by default (unless --no-tui is specified)
-    if args.autonomous {
-        config.cli.default_mode = "autonomous".to_string();
-    } else if !args.no_tui {
-        config.cli.default_mode = "interactive".to_string();
-    }
-
-    // Override idle timeout if specified
-    if let Some(timeout) = args.idle_timeout {
-        config.cli.idle_timeout_secs = timeout;
-    }
-
-    // Validate configuration
-    let warnings = config
-        .validate()
-        .context("Configuration validation failed")?;
-    for warning in &warnings {
-        eprintln!("{warning}");
-    }
-
-    // Handle auto-detection if backend is "auto"
-    if config.cli.backend == "auto" {
-        let priority = config.get_agent_priority();
-        let detected = detect_backend(&priority, |backend| {
-            config.adapter_settings(backend).enabled
-        });
-
-        match detected {
-            Ok(backend) => {
-                info!("Auto-detected backend: {}", backend);
-                config.cli.backend = backend;
-            }
-            Err(e) => {
-                eprintln!("{e}");
-                return Err(anyhow::Error::new(e));
-            }
-        }
-    }
-
-    // v3 cutover: resume re-drives the autoloop engine. A true run_id continue
-    // (resuming autoloop's own loop state) is tracked separately in #344; for now
-    // this restarts the loop reading the existing scratchpad/memories on disk.
-    let wants_tui = !args.no_tui && !args.autonomous && !args.rpc;
-    let reason = autoloop_engine::run_autoloop_engine(
-        config,
-        autoloop_bin,
-        None, // Deprecated resume command doesn't carry a loop_context
-        None, // Use config.features.auto_merge (deprecated command)
-        None, // Deprecated resume command doesn't support --loop-id
-        true, // Deprecated resume reuses the current loop ID marker
-        color_mode.should_use_colors(),
-        wants_tui,
+fn resume_command() -> Result<()> {
+    anyhow::bail!(
+        "native engine resume is not yet supported (tracked #344); use `ralph run --continue` to continue coordination state, or `autoloop resume <run-id>` directly"
     )
-    .await?;
-    let exit_code = reason.exit_code();
-
-    if exit_code != 0 {
-        std::process::exit(exit_code);
-    }
-
-    Ok(())
 }
 
 fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
@@ -2663,7 +2443,7 @@ mod tests {
         let command = required_restart_command(4242);
         assert_eq!(
             command,
-            "kill 4242 && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml"
+            "kill 4242 && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- -c ralph.test.yml run --continue"
         );
     }
 
@@ -2777,6 +2557,66 @@ mod tests {
         let cli = Cli::try_parse_from(["ralph", "run", "-H", "builtin:code-assist"])
             .expect("CLI parse failed");
         assert_eq!(cli.hats.as_deref(), Some("builtin:code-assist"));
+    }
+
+    #[test]
+    fn test_r8_removed_run_flags_are_rejected() {
+        let removed_arguments = [
+            vec!["--rpc"],
+            vec!["--record-session", "session.jsonl"],
+            vec!["-q"],
+            vec!["--quiet"],
+            vec!["--idle-timeout", "30"],
+            vec!["--legacy-tui"],
+            vec!["--", "custom-backend", "--custom-arg"],
+        ];
+
+        for arguments in removed_arguments {
+            let mut argv = vec!["ralph", "run"];
+            argv.extend(arguments.iter().copied());
+            let error = Cli::try_parse_from(argv).expect_err("removed run argument must fail");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
+    }
+
+    #[test]
+    fn test_r8_removed_resume_flags_are_rejected() {
+        let removed_arguments = [
+            vec!["--rpc"],
+            vec!["--record-session", "session.jsonl"],
+            vec!["-q"],
+            vec!["--quiet"],
+            vec!["--idle-timeout", "30"],
+            vec!["--max-iterations", "2"],
+            vec!["--no-tui"],
+            vec!["--autonomous"],
+            vec!["-a"],
+        ];
+
+        for arguments in removed_arguments {
+            let mut argv = vec!["ralph", "resume"];
+            argv.extend(arguments.iter().copied());
+            let error = Cli::try_parse_from(argv).expect_err("removed resume argument must fail");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
+    }
+
+    #[test]
+    fn test_r8_retained_run_mode_flags_are_accepted() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--continue", "--no-tui"])
+            .expect("retained run flags must parse");
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(args.continue_mode);
+        assert!(args.no_tui);
+
+        let cli = Cli::try_parse_from(["ralph", "run", "--autonomous"])
+            .expect("autonomous flag must parse");
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(args.autonomous);
     }
 
     #[test]
@@ -3565,31 +3405,11 @@ core:
             loop_id: None,
             no_tui: true,
             autonomous: false,
-            rpc: false,
-            legacy_tui: false,
-            idle_timeout: None,
             exclusive: false,
             no_auto_merge: false,
             skip_preflight: true,
             verbose: false,
-            quiet: false,
-            record_session: None,
-            custom_args: Vec::new(),
         }
-    }
-
-    #[tokio::test]
-    async fn test_run_command_continue_missing_scratchpad_returns_error() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _cwd = CwdGuard::set(temp_dir.path());
-
-        let mut args = default_run_args();
-        args.continue_mode = true;
-
-        let err = run_command(&[], None, false, ColorMode::Never, args)
-            .await
-            .expect_err("expected missing scratchpad error");
-        assert!(err.to_string().contains("scratchpad not found"));
     }
 
     #[tokio::test]

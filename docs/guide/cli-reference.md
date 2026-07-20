@@ -95,12 +95,9 @@ ralph run [OPTIONS]
 | `--dry-run` | Show what would execute |
 | `--no-tui` | Disable TUI mode |
 | `-a, --autonomous` | Force headless mode |
-| `--rpc` | Use the JSON-lines RPC v1 stdin/stdout protocol |
-| `--idle-timeout <SECS>` | TUI idle timeout |
 | `--exclusive` | Wait for primary loop slot |
 | `--no-auto-merge` | Skip automatic merge after worktree loops complete |
 | `--skip-preflight` | Skip auto preflight checks (even when `features.preflight.enabled: true`) |
-| `-q, --quiet` | Suppress streaming output |
 | `--continue` | Re-drive autoloop using existing Ralph state (true engine run-ID resume is pending #344) |
 | `--loop-id <ID>` | Select the existing Ralph loop state used with `--continue` |
 

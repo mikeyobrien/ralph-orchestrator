@@ -148,19 +148,21 @@ event_loop:
 }
 
 #[test]
-fn test_run_continue_requires_scratchpad() {
+fn test_run_continue_does_not_require_scratchpad() {
     let temp_dir = TempDir::new().expect("temp dir");
     let temp_path = temp_dir.path();
+    assert!(!temp_path.join(".ralph/scratchpad.md").exists());
 
     let output = run_ralph(
         temp_path,
         &["run", "--continue", "--dry-run", "--skip-preflight"],
     );
 
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Cannot continue: scratchpad not found"),
-        "stderr: {stderr}"
+        output.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("scratchpad not found"), "stderr: {stderr}");
 }
