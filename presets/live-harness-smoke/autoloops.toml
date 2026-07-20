@@ -1,0 +1,24 @@
+event_loop.max_iterations = 6
+event_loop.max_runtime = "45m"
+event_loop.max_cost_usd = 5.0
+event_loop.completion_event = "smoke.complete"
+event_loop.completion_promise = ""
+event_loop.required_events = [
+  "smoke.claude.done",
+  "smoke.codex.done",
+  "smoke.opencode.done",
+  "smoke.pi.done",
+  "smoke.hermes.done",
+]
+event_loop.completion_must_be_last = true
+
+# The topology overrides every backend field per role. This baseline exists only
+# to keep the native preset independently valid before the initial route resolves.
+backend.kind = "claude-sdk"
+backend.command = "claude"
+backend.args = []
+backend.timeout_ms = 300000
+backend.trust_all_tools = true
+
+review.enabled = false
+harness.instructions_file = "harness.md"
