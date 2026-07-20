@@ -184,7 +184,6 @@ fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
         .split(vertical[1])[1]
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

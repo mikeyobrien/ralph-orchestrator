@@ -783,9 +783,11 @@ mod tests {
             lines.first(),
             Some(StreamLine::Backpressure { skipped_bytes }) if *skipped_bytes > 0
         ));
-        assert!(lines
-            .iter()
-            .any(|line| line == &StreamLine::AgentText("final marker".into())));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == &StreamLine::AgentText("final marker".into()))
+        );
         assert!(lines.len() <= MAX_STREAM_LINES);
         assert!(tailer.pending.len() <= MAX_BYTES_PER_POLL);
         assert!(
