@@ -14,28 +14,39 @@ budgets, canonical run memory/tasks, machine events, journal, and summary.
 Ralph owns config translation, TUI/headless presentation, worktrees, loop
 registry, merge queue, history, dependency health, and completion coordination.
 
-The comparison finds **38 capability rows**. Most engine behavior moved or was
-replaced, but seven user-visible regressions remain:
+The comparison finds **43 capability rows**. Most engine behavior moved or was
+replaced, but twelve user-visible regressions remain:
 
 1. per-hat backend overrides are accepted and documented but not translated
    ([`ralph-orchestrator-v3-autoloops-backend-a7e.16`](#p0));
-2. Roo worked as a V2 global backend but V3 explicitly rejects it; this is not
+2. per-hat `default_publishes` fallback routing is silently dropped
+   ([`ralph-orchestrator-v3-autoloops-backend-a7e.25`](#p0));
+3. per-hat `max_activations` exhaustion limits are silently dropped
+   ([`ralph-orchestrator-v3-autoloops-backend-a7e.25`](#p0));
+4. per-hat `disallowed_tools` prompt restrictions and write audit are silently
+   dropped ([`ralph-orchestrator-v3-autoloops-backend-a7e.25`](#p0));
+5. per-hat `timeout` is not translated for wave workers
+   ([`ralph-orchestrator-v3-autoloops-backend-a7e.25`](#p0));
+6. configured Ralph skill discovery/index/auto-injection is omitted from the V3
+   prompt path ([`ralph-orchestrator-v3-autoloops-backend-a7e.26`](#p1));
+7. Roo worked as a V2 global backend but V3 explicitly rejects it; this is not
    global-backend parity ([`ralph-orchestrator-v3-autoloops-backend-a7e.17`](#p2));
-3. Ralph memories remain usable through `ralph tools memory`, but V2 automatic
+8. Ralph memories remain usable through `ralph tools memory`, but V2 automatic
    Ralph-memory prompt injection is not connected to the V3 engine's separate
    memory store ([`ralph-orchestrator-v3-autoloops-backend-a7e.23`](#p1));
-4. per-hat scratchpad overrides are not translated
+9. per-hat scratchpad overrides are not translated
    ([`ralph-orchestrator-v3-autoloops-backend-a7e.22`](#p2));
-5. Ralph-native direct resume is absent
-   ([`ralph-orchestrator-v3-autoloops-backend-a7e.19`](#p1));
-6. the web dashboard still reads the V2 live-event location
-   ([`ralph-orchestrator-v3-autoloops-backend-a7e.18`](#p1)); and
-7. released Autoloop has ask/respond primitives, but `ralph run` does not relay
-   them through RObot
-   ([`ralph-orchestrator-v3-autoloops-backend-a7e.5`](#p1)).
+10. Ralph-native direct resume is absent
+    ([`ralph-orchestrator-v3-autoloops-backend-a7e.19`](#p1));
+11. the web dashboard still reads the V2 live-event location
+    ([`ralph-orchestrator-v3-autoloops-backend-a7e.18`](#p1)); and
+12. released Autoloop has ask/respond primitives, but `ralph run` does not relay
+    them through RObot
+    ([`ralph-orchestrator-v3-autoloops-backend-a7e.5`](#p1)).
 
 TUI live assistant/tool text works through private backend stream files rather
-than a stable contract. Wave configuration translation exists, but real-runtime
+than a stable contract. Concurrency and wait-for-all aggregation translation
+exist, but the outer per-hat wave-worker timeout is dropped and real-runtime
 scatter/gather certification remains open.
 
 ### Headline classification counts
@@ -47,10 +58,10 @@ scatter/gather certification remains open.
 | 3. Moved to Autoloop ownership | 2 |
 | 4. Moved to Ralph observation/coordination ownership | 3 |
 | 5. Intentionally removed or simplified | 4 |
-| 6. Missing regression | 7 |
+| 6. Missing regression | 12 |
 | 7. Deferred/blocked on an explicit upstream dependency | 0 |
 | 8. New in V3 | 3 |
-| **Total** | **38** |
+| **Total** | **43** |
 
 ## 2. Baselines, citation convention, and method
 
@@ -123,61 +134,89 @@ was used only as historical capability evidence, never as a V3 gate.
 | 5 | Retries and backoff | V2 lifecycle hooks supported retry-backoff and wait-then-retry policies. | Autoloop classifies auth/quota/rate-limit/transient failures; transient/rate-limit errors retry with bounded exponential backoff. V2 hook retry is not retained because hooks are inert. | 2 | Autoloop | `V2:crates/ralph-cli/src/loop_runner.rs:L3403-L3629`; `AL-H:packages/harness/src/iteration.ts:L301-L355`; `V3:crates/ralph-core/src/preflight.rs:L183-L215`. Different retry target and semantics. |
 | 6 | Routing backpressure and completion holds | V2 rejected malformed/invalid event flow and held completion for required events/guidance. | Autoloop rejects disallowed events, re-injects the last rejection into prompts, and can hold completion after acceptance/evidence checks. | 2 | Autoloop | `V2:crates/ralph-core/src/event_loop/loop_state.rs:L43-L46,L83-L86,L170-L176`; `V2:crates/ralph-cli/src/loop_runner.rs:L2626-L2693`; `AL-H:packages/harness/src/prompt.ts:L352-L388,L629-L648`; `AL-H:packages/harness/src/provisional.ts:L137-L165,L320-L322`. Tracking: `ralph-orchestrator-v3-autoloops-backend-au2`, `ralph-orchestrator-v3-autoloops-backend-hav`. |
 | 7 | Failure/stop taxonomy | V2 exposed Ralph-specific stale, thrash, validation, restart, cancel reasons. | V3 maps Autoloop's closed stop-reason set, including typed backend/auth/quota/transient reasons. | 2 | Shared | `V2:crates/ralph-core/src/event_loop/mod.rs:L69-L147`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L24-L86`; `AL-H:packages/harness/src/types.ts:L378-L452`. |
-| 8 | Supported global backend mappings | V2 supported Claude, Pi, Kiro, Gemini, Codex, Forge, Amp, Copilot, OpenCode, custom, and others. | The overlapping supported set is translated and tested; unsupported values fail fast. | 1 | Shared | `V2:crates/ralph-adapters/src/cli_backend.rs`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L212-L317,L680-L779`. This row deliberately excludes Roo. |
-| 9 | Roo global backend | V2 had a Roo adapter and user guide. | V3 explicitly rejects `roo` because its prompt-file contract cannot be represented by the current mapping. | 6 | Ralph decision | `V2:docs/guide/roo-backend.md:L1-L30`; `V2:crates/ralph-adapters/src/cli_backend.rs`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L259-L265,L769-L780`. Decision tracked by `ralph-orchestrator-v3-autoloops-backend-a7e.17`. |
-| 10 | Per-hat backend override | Active V2 hats selected their own backend and args. | Config/docs still expose overrides, but generated roles omit backend fields although Autoloop supports them. | 6 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L1691-L1771`; `V3:crates/ralph-core/src/config.rs:L1928-L1936`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L88-L113,L355-L356`; `AL-M:packages/core/src/topology.ts:L12-L25,L458-L491`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.16`. |
-| 11 | Hats, routing, handoffs | Ralph bus and registry routed events. | Ralph inverts triggers into Autoloop handoff routes and writes role prompts. | 2 | Autoloop | `V2:crates/ralph-core/src/event_loop/mod.rs:L1123-L1298`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L51-L120`. |
-| 12 | Concurrency and aggregation | V2 used bespoke wave execution. | Hat concurrency/aggregate translate to role concurrency/wait-for-all aggregation. | 2 | Autoloop | `V2:crates/ralph-cli/src/loop_runner.rs:L5174-L5559`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L94-L112`; runtime certification remains `ralph-orchestrator-v3-autoloops-backend-a7e.8`. |
-| 13 | `ralph wave` and wave-worker UI | Dedicated command/worker UI. | Removed in favor of declarative role concurrency; stale help remains. | 5 | Removed | `V3:docs/migration/v3-autoloop-engine.md:L23-L32`; `V3:crates/ralph-tui/src/widgets/help.rs:L113-L128`. Help fix: `ralph-orchestrator-v3-autoloops-backend-a7e.21`. |
-| 14 | Engine task authority | Ralph tasks/events participated in V2 completion. | Autoloop's incompatible append-only task store alone gates engine completion; Ralph tasks are observational. | 3 | Autoloop | `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L320-L332`; `V3:crates/ralph-cli/tests/integration_autoloop_prompt.rs:L518-L580`. |
-| 15 | Prompt/context construction | V2 assembled objective, active hats, routed events, ready tasks, memories, guidance, skills, and scratchpad in Ralph. | Ralph passes the objective and role instructions; Autoloop assembles routing, topology, tasks, memory, guidance, scratchpad, backpressure, state-root guidance, and tool instructions each iteration. | 2 | Autoloop | `V2:crates/ralph-core/src/event_loop/mod.rs:L1123-L1298,L1399-L1485`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L266-L286,L367-L383`; `V3:crates/ralph-cli/tests/integration_autoloop_prompt.rs:L442-L517`; `AL-H:packages/harness/src/prompt.ts:L352-L411`. |
-| 16 | Durable memories | V2 automatically injected `.ralph/agent/memories.md` under configured budget/filter. | Ralph memory CLI/store remains, while Autoloop injects its own project/run memory. The generator does not map Ralph's memory file or injection policy, so existing Ralph memories do not automatically reach engine prompts. | 6 | Split | `V2:crates/ralph-core/src/event_loop/mod.rs:L1423-L1485`; `V3:crates/ralph-cli/tests/integration_memory.rs:L1-L34`; `AL-H:packages/harness/src/prompt.ts:L352-L388`; `AL-H:packages/cli/src/commands/memory.ts:L1-L100`. Prompt-semantics decision: `ralph-orchestrator-v3-autoloops-backend-a7e.23`; no source proves cross-store parity. |
-| 17 | Global scratchpad as engine continuity | V2 loaded a configured mutable Ralph scratchpad into each prompt. | Autoloop projects engine scratchpad from journal/state; Ralph's retained global scratchpad is coordination state, not engine authority. | 5 | Autoloop | `V2:crates/ralph-core/src/event_loop/mod.rs:L1581-L1615`; `V3:docs/concepts/memories-and-tasks.md:L151-L175`; `AL-H:packages/harness/src/prompt.ts:L389-L411`. |
-| 18 | Per-hat scratchpad | V2 resolved active-hat override before prompt construction. | Fields remain accepted but generator writes only role instructions/topology. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L1190-L1230`; `V3:crates/ralph-core/src/config.rs:L1948-L1951`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L88-L113`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.22`. |
-| 19 | Ralph loop identity / `--continue` | V2 persisted loop ID and state. | V3 preserves Ralph coordination ID/task tagging only. | 4 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L189-L214`; `V3:crates/ralph-cli/tests/integration_continue_resume.rs:L129-L173`. |
-| 20 | Direct resume/recovery | V2 restored iteration, cost, last hat, and token state. | `ralph resume` is unsupported; `run --continue` is not engine resume; users are pointed to `autoloop resume <run-id>`. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L493-L550`; `V3:crates/ralph-cli/src/main.rs:L650-L657,L1731-L1734`; `V3:crates/ralph-cli/tests/integration_continue_resume.rs:L177-L190`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.19`. |
-| 21 | Telegram HITL and proactive guidance | V2 advertised live `human.interact`, guidance, and restart. | Released Autoloop already provides blocking ask, correlated respond, and response injection, but Ralph's Telegram relay is inactive on the current run path. | 6 | Ralph | `V2:README.md:L144-L168`; `V3:README.md:L182-L198`; `AL-101:packages/harness/src/ask.ts:L1-L66`; `AL-101:packages/cli/src/commands/control.ts:L124-L148`; `AL-101:packages/harness/src/iteration.ts:L725-L804`. Ralph relay regression: `ralph-orchestrator-v3-autoloops-backend-a7e.5`. |
-| 22 | Interruption and live control | V2 had in-process cancel/restart/suspend paths and Telegram guidance. | TUI quit/Ctrl-C terminates the Autoloop process group and coordinates completion; native engine interrupt/guide exists but Ralph does not expose the full control surface. | 2 | Shared | `V2:crates/ralph-cli/src/loop_runner.rs:L2543-L2570,L3276-L3710`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L747-L855`; `AL-H:packages/cli/src/commands/control.ts:L40-L250`. Clean stop is retained; pause/guide parity is not claimed. |
-| 23 | Headless live streaming | V2 autonomous path called streaming observers and a real integration emitted multiple heartbeat lines; the historical test captures output after process exit, so it does not prove pre-exit timing. | V3 integration explicitly observes iteration progress while the child is still alive. | 1 | Shared | `V2:crates/ralph-cli/src/loop_runner.rs:L4416-L4459`; `V2:crates/ralph-cli/tests/integration_run.rs:L348-L414`; `V3:crates/ralph-cli/tests/integration_autoloop_headless_stream.rs:L45-L158`. Parity is strong for streamed content, strongest timing proof is V3-only. |
-| 24 | TUI live assistant/tool content | V2 wrote backend deltas directly into in-process iteration buffers. | V3 tails private `claude-stream.*`/`pi-stream.*`; authoritative events still drive lifecycle. | 2 | Ralph over private files | `V2:crates/ralph-cli/src/loop_runner.rs:L1775-L1795`; `V3:crates/ralph-adapters/README.md:L17-L40`; `V3:crates/ralph-cli/tests/integration_autoloop_tui_live_stream.rs:L94-L189`. Stable contract bead `ralph-orchestrator-v3-autoloops-backend-a7e.20`. |
-| 25 | TUI retained iteration navigation/search | V2 iteration buffers supported previous/next, scrolling, and search. | The same Ralph TUI buffer/navigation layer remains and Autoloop events populate it. | 1 | Ralph | `V2:crates/ralph-tui/src/app.rs:L1-L90`; `V3:crates/ralph-tui/src/autoloop_source.rs:L1-L30`; `V3:crates/ralph-tui/src/app.rs:L639-L735`. Retention is in-memory for the running TUI, not durable engine history. |
-| 26 | TUI export | V2 exported current/all iteration buffers to stable plain text. | The same export module and action tests remain. | 1 | Ralph | `V2:crates/ralph-tui/src/app.rs:L880-L940`; `V3:crates/ralph-tui/src/export.rs:L1-L120`. This proves text-buffer export only, not cost parity. |
-| 27 | Cost reporting | V2 accumulated cost in `LoopState`, enforced budget, and persisted cost for continue. | Engine events/summary supply cost; headless footer calculates iteration/total cost and TUI shows final cost. | 2 | Shared | `V2:crates/ralph-core/src/event_loop/loop_state.rs:L27-L28`; `V2:crates/ralph-core/src/event_loop/mod.rs:L493-L533,L638-L642`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L555-L564,L598-L606`; `V3:crates/ralph-tui/src/widgets/footer.rs:L173-L182`. No claim of identical per-backend accounting. |
-| 28 | Diagnostics and operational navigation | V2 diagnostics captured prompts/agent output/orchestration/errors; loop commands exposed logs/history. | Ralph trace sessions and TUI logs remain; Autoloop adds journal/events/summary, while `ralph loops logs` still prefers legacy event filenames and falls back to Ralph history. | 2 | Shared | `V2:crates/ralph-core/src/diagnostics/mod.rs`; `V2:crates/ralph-core/src/event_loop/mod.rs:L1390-L1421`; `V3:crates/ralph-cli/src/main.rs:L878-L999`; `V3:crates/ralph-cli/src/loops.rs:L564-L637`; `V3:crates/ralph-adapters/README.md:L7-L15`. Artifact UX/root beads: `ralph-orchestrator-v3-autoloops-backend-f50`, `ralph-orchestrator-v3-autoloops-backend-a7e.12`. |
-| 29 | Web dashboard live state | V2 wrote `.ralph/current-events`, which the API watches. | Engine path writes `.ralph/autoloop-events.ndjson`; API still watches the old path and `ralph web` warns. | 6 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L201-L214`; `V3:crates/ralph-api/src/event_watcher.rs:L37-L70`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L369-L383`; `V3:crates/ralph-cli/src/web.rs:L27`. Replacement bead `ralph-orchestrator-v3-autoloops-backend-a7e.18`; no absent legacy bead is credited. |
-| 30 | `--rpc` and `--record-session` | V2 supported RPC TUI modes and smoke/session recording. | Explicitly removed; fake-engine fixtures replace replay capture. | 5 | Removed | `V2:crates/ralph-tui/src/lib.rs:L12-L23`; `V3:docs/migration/v3-autoloop-engine.md:L27-L32`; `V3:crates/ralph-cli/tests/fixtures/autoloop/README.md:L1-L82`. |
-| 31 | Machine events, journal, summary | V2 exposed Ralph-owned event/UI files. | V3 consumes documented `--events`, append-only journal, terminal summary, and exit status. | 8 | Autoloop | `V3:crates/ralph-adapters/README.md:L7-L15`; `V3:crates/ralph-adapters/tests/autoloop_native_contract_integration.rs:L1-L67`. Ralph/engine run-ID correlation: `ralph-orchestrator-v3-autoloops-backend-a7e.24`; per-iteration harness display remains `ralph-orchestrator-v3-autoloops-backend-j0e`. |
-| 32 | Engine dependency and provisioning | V2 had no separate engine; users manually installed/authenticated a backend and `ralph doctor` checked it. | V3 must additionally resolve a compatible Autoloop binary, preferring vendored then PATH, and offers `ralph doctor --install-engine` without Node. | 8 | Ralph | `V2:docs/getting-started/installation.md:L7-L60`; `V2:crates/ralph-cli/src/doctor.rs:L15-L55`; `V3:crates/ralph-cli/tests/integration_autoloop_dependency.rs:L1-L220`; `V3:crates/ralph-core/src/autoloop_health.rs:L11-L18`. This is new operational machinery, not a V2 provisioning equivalent. |
-| 33 | Parallel loops/worktrees/merge queue | V2 already isolated extra loops in worktrees and exposed list/log/history/diff/retry/merge UX. | V3 preserves registry/worktree/queue surfaces and invokes completion coordination after engine exit. | 4 | Ralph | `V2:docs/advanced/parallel-loops.md:L3-L46,L87-L133`; `V2:crates/ralph-cli/tests/integration_loops_merge.rs:L1-L31`; `V3:crates/ralph-cli/src/completion_coord.rs:L98-L157`; `V3:crates/ralph-cli/tests/integration_merge_drain_autoloop.rs`. Final live proof remains `ralph-orchestrator-v3-autoloops-backend-a7e.15`. |
-| 34 | Presets and custom workflows | V2 embedded/discovered Ralph YAML presets and custom hat graphs. | V3 can translate Ralph YAML hats or run an explicit Autoloop TOML preset; discovery recognizes both shapes. | 2 | Shared | `V2:crates/ralph-cli/src/presets.rs`; `V2:crates/ralph-cli/tests/integration_preset.rs`; `V3:crates/ralph-cli/src/hats.rs:L161-L264`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L321-L346`. Translation is not full config parity (rows 4, 9, 10, 16, 18). |
-| 35 | Safety/preflight | V2 checked config, hooks, backend, Telegram token, git cleanliness, paths, tools, and spec completeness. | Those Ralph checks remain; V3 adds engine health plus explicit warnings for inert hooks and unenforced failure budget. Autoloop owns runtime acceptance/evidence gates. | 2 | Shared | `V2:crates/ralph-core/src/preflight.rs:L105-L180,L374-L637`; `V3:crates/ralph-core/src/preflight.rs:L105-L238,L392-L595`; `AL-H:packages/harness/src/acceptance.ts:L44-L118`. Engine hardening tracked by `ralph-orchestrator-v3-autoloops-backend-a7e.13`. |
-| 36 | Authentication behavior | V2 doctor supplied backend-specific auth hints while the backend CLI owned login. | Ralph still checks hints/executable availability; Autoloop classifies runtime `auth_failed` and does not make retryable auth assumptions. | 2 | Shared | `V2:crates/ralph-cli/src/doctor.rs:L48-L55,L263-L365`; `V3:crates/ralph-cli/src/doctor.rs:L48-L55,L263-L365`; `AL-H:packages/harness/src/circuit-breaker.ts:L23-L45`. No paid auth call was made for this research. |
-| 37 | Process cleanup and stale locks | V2 directly owned backend child cleanup and Ralph lock lifetime. | V3 TUI uses an owned process group; all outcomes coordinate; integration covers crash cleanup and replacement after SIGKILL. | 2 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L4388-L4475`; `V3:crates/ralph-adapters/src/autoloop_runner.rs:L147-L150,L281-L287`; `V3:crates/ralph-cli/tests/integration_autoloop_prompt.rs:L265-L440`. |
-| 38 | Replay and real-engine contract testing | V2 used session recording and legacy cassettes. | V3 uses deterministic fake-Autoloop fixtures plus real contract/parity tests. | 8 | Shared | `V3:crates/ralph-cli/tests/fixtures/autoloop/README.md:L1-L82`; `V3:crates/ralph-adapters/tests/autoloop_native_contract_integration.rs:L1-L67`; `V3:crates/ralph-adapters/tests/autoloop_parity_integration.rs:L1-L70`. Live release smoke is still `ralph-orchestrator-v3-autoloops-backend-a7e.15`. |
+| 8 | Supported global backend mappings | V2 supported Claude, Pi, Kiro, Gemini, Codex, Forge, Amp, Copilot, OpenCode, custom, and others. | The overlapping supported set is translated and tested; unsupported values fail fast. | 1 | Shared | `V2:crates/ralph-adapters/src/cli_backend.rs:L68-L101`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L212-L317,L680-L779`. This row deliberately excludes Roo. |
+| 9 | Roo global backend | V2 had a Roo adapter and user guide. | V3 explicitly rejects `roo` because its prompt-file contract cannot be represented by the current mapping. | 6 | Ralph decision | `V2:docs/guide/roo-backend.md:L1-L30`; `V2:crates/ralph-adapters/src/cli_backend.rs:L68-L101`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L259-L265,L769-L780`. Decision tracked by `ralph-orchestrator-v3-autoloops-backend-a7e.17`. |
+| 10 | Per-hat backend override | Active V2 hats selected their own backend and args. | Config/docs still expose overrides, but generated roles omit backend fields although Autoloop supports them. | 6 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L1691-L1771`; `V3:crates/ralph-core/src/config.rs:L1928-L1936`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L88-L113,L355-L356`; `AL-101:packages/core/src/topology.ts:L12-L25,L458-L491`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.16`. |
+| 11 | Per-hat fallback publication | When a hat emitted nothing, V2 injected its configured `default_publishes` event; a completion fallback failed closed into recovery rather than silently completing. | V3 still accepts and documents the field, but generated roles derive `emits` only from `publishes` and contain no fallback-publication setting. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L1951-L1994`; `V3:crates/ralph-core/src/config.rs:L1938-L1940`; `V3:skills/ralph-hats/references/schema.md:L55-L75`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L89-L110`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.25`; audit with sibling per-hat translation bead `a7e.16`. |
+| 12 | Per-hat activation limit | V2 counted activations, dropped later routed work at `max_activations`, and emitted one `<hat>.exhausted` event. | V3 still accepts and documents the limit, but the generated topology has no activation cap or explicit rejection. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L1878-L1933`; `V3:crates/ralph-core/src/config.rs:L1942-L1946`; `V3:skills/ralph-hats/references/schema.md:L55-L69`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L89-L110`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.25`. |
+| 13 | Per-hat tool restrictions | V2 put every configured restriction in the hat prompt and additionally audited file changes when `Edit` or `Write` was disallowed. | V3 still accepts and documents `disallowed_tools`, but Ralph omits it. Released Autoloop accepts per-role `disallowed_tools` and performs an observational file-modification audit; that is a representable partial mechanism, not proof of identical V2 prompt/deny semantics. | 6 | Ralph | `V2:crates/ralph-core/src/hatless_ralph.rs:L900-L938`; `V2:crates/ralph-core/src/event_loop/mod.rs:L2081-L2125`; `V3:crates/ralph-core/src/config.rs:L1953-L1959`; `V3:skills/ralph-hats/references/schema.md:L55-L69`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L89-L110`; `AL-101:packages/core/src/topology.ts:L12-L47,L496-L505`; `AL-101:packages/harness/src/iteration.ts:L266-L272`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.25`. |
+| 14 | Per-hat wave-worker timeout | For V2 waves, outer `hat.timeout` took precedence over aggregate timeout and bounded worker execution; normal non-wave turns used adapter timeout. | V3 still accepts outer `hat.timeout` and translates `aggregate.timeout`, but omits the outer field even though released Autoloop supports per-role `backend_timeout_ms`, changing a configured wave-worker bound. | 6 | Ralph | `V2:crates/ralph-core/src/wave_detection.rs:L27-L42`; `V2:crates/ralph-cli/src/loop_runner.rs:L5208-L5217,L5379-L5383`; `V3:crates/ralph-core/src/config.rs:L1961-L1966`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L98-L109`; `AL-101:packages/core/src/topology.ts:L12-L25,L458-L483`; `AL-101:packages/harness/src/prompt.ts:L77-L89`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.25`. This claim is deliberately limited to wave workers. |
+| 15 | Hats, routing, handoffs | Ralph bus and registry routed events. | Ralph inverts triggers into Autoloop handoff routes and writes role prompts. | 2 | Autoloop | `V2:crates/ralph-core/src/event_loop/mod.rs:L1123-L1298`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L51-L120`. |
+| 16 | Concurrency and aggregation | V2 used bespoke wave execution. | Hat concurrency/aggregate translate to role concurrency/wait-for-all aggregation. | 2 | Autoloop | `V2:crates/ralph-cli/src/loop_runner.rs:L5174-L5559`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L94-L112`; runtime certification remains `ralph-orchestrator-v3-autoloops-backend-a7e.8`. |
+| 17 | `ralph wave` and wave-worker UI | Dedicated command/worker UI. | Removed in favor of declarative role concurrency; stale help remains. | 5 | Removed | `V3:docs/migration/v3-autoloop-engine.md:L23-L32`; `V3:crates/ralph-tui/src/widgets/help.rs:L113-L128`. Help fix: `ralph-orchestrator-v3-autoloops-backend-a7e.21`. |
+| 18 | Engine task authority | Ralph tasks/events participated in V2 completion. | Autoloop's incompatible append-only task store alone gates engine completion; Ralph tasks are observational. | 3 | Autoloop | `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L320-L332`; `V3:crates/ralph-cli/tests/integration_autoloop_prompt.rs:L518-L580`. |
+| 19 | Prompt/context construction | V2 assembled objective, active hats, routed events, ready tasks, memories, guidance, skills, and scratchpad in Ralph. | Ralph passes the objective and role instructions; Autoloop assembles routing, topology, tasks, memory, guidance, scratchpad, backpressure, state-root guidance, and tool instructions each iteration. This does not include configured Ralph skills. | 2 | Autoloop | `V2:crates/ralph-core/src/event_loop/mod.rs:L1123-L1298,L1393-L1485`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L266-L286,L367-L385`; `V3:crates/ralph-cli/tests/integration_autoloop_prompt.rs:L442-L517`; `AL-H:packages/harness/src/prompt.ts:L352-L411`. |
+| 20 | Configured Ralph skill injection | V2 built a registry from `skills.dirs` and overrides, injected a compact index, and prepended configured auto-inject skill content to iteration prompts. | V3 still accepts and describes that configuration and retains the skill CLI, but the generated preset and launch prompt do not consume `config.skills`; native Autoloop presets remain engine-owned. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L256-L296,L1393-L1421,L1556-L1576`; `V3:crates/ralph-core/src/config.rs:L1613-L1685`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L51-L120`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L321-L385`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.26`. |
+| 21 | Durable memories | V2 automatically injected `.ralph/agent/memories.md` under configured budget/filter. | Ralph memory CLI/store remains, while Autoloop injects its own project/run memory. The generator does not map Ralph's memory file or injection policy, so existing Ralph memories do not automatically reach engine prompts. | 6 | Split | `V2:crates/ralph-core/src/event_loop/mod.rs:L1423-L1485`; `V3:crates/ralph-cli/tests/integration_memory.rs:L1-L34`; `AL-H:packages/harness/src/prompt.ts:L352-L388`; `AL-H:packages/cli/src/commands/memory.ts:L1-L100`. Prompt-semantics decision: `ralph-orchestrator-v3-autoloops-backend-a7e.23`; no source proves cross-store parity. |
+| 22 | Global scratchpad as engine continuity | V2 loaded a configured mutable Ralph scratchpad into each prompt. | Autoloop projects engine scratchpad from journal/state; Ralph's retained global scratchpad is coordination state, not engine authority. | 5 | Autoloop | `V2:crates/ralph-core/src/event_loop/mod.rs:L1581-L1615`; `V3:docs/concepts/memories-and-tasks.md:L151-L175`; `AL-H:packages/harness/src/prompt.ts:L389-L411`. |
+| 23 | Per-hat scratchpad | V2 resolved active-hat override before prompt construction. | Fields remain accepted but generator writes only role instructions/topology. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L1190-L1230`; `V3:crates/ralph-core/src/config.rs:L1948-L1951`; `V3:crates/ralph-cli/src/autoloop_preset_gen.rs:L88-L113`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.22`. |
+| 24 | Ralph loop identity / `--continue` | V2 persisted loop ID and state. | V3 preserves Ralph coordination ID/task tagging only. | 4 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L189-L214`; `V3:crates/ralph-cli/tests/integration_continue_resume.rs:L129-L173`. |
+| 25 | Direct resume/recovery | V2 restored iteration, cost, last hat, and token state. | `ralph resume` is unsupported; `run --continue` is not engine resume; users are pointed to `autoloop resume <run-id>`. | 6 | Ralph | `V2:crates/ralph-core/src/event_loop/mod.rs:L493-L550`; `V3:crates/ralph-cli/src/main.rs:L650-L657,L1731-L1734`; `V3:crates/ralph-cli/tests/integration_continue_resume.rs:L177-L190`. Bead `ralph-orchestrator-v3-autoloops-backend-a7e.19`. |
+| 26 | Telegram HITL and proactive guidance | V2 advertised live `human.interact`, guidance, and restart. | Released Autoloop already provides blocking ask, correlated respond, and response injection, but Ralph's Telegram relay is inactive on the current run path. | 6 | Ralph | `V2:README.md:L144-L168`; `V3:README.md:L182-L198`; `AL-101:packages/harness/src/ask.ts:L1-L66`; `AL-101:packages/cli/src/commands/control.ts:L124-L148`; `AL-101:packages/harness/src/iteration.ts:L725-L804`. Ralph relay regression: `ralph-orchestrator-v3-autoloops-backend-a7e.5`. |
+| 27 | Interruption and live control | V2 had in-process cancel/restart/suspend paths and Telegram guidance. | TUI quit/Ctrl-C terminates the Autoloop process group and coordinates completion; native engine interrupt/guide exists but Ralph does not expose the full control surface. | 2 | Shared | `V2:crates/ralph-cli/src/loop_runner.rs:L2543-L2570,L3276-L3710`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L747-L855`; `AL-H:packages/cli/src/commands/control.ts:L40-L250`. Clean stop is retained; pause/guide parity is not claimed. |
+| 28 | Headless live streaming | V2 autonomous path called streaming observers and a real integration emitted multiple heartbeat lines; the historical test captures output after process exit, so it does not prove pre-exit timing. | V3 integration explicitly observes iteration progress while the child is still alive. | 1 | Shared | `V2:crates/ralph-cli/src/loop_runner.rs:L4416-L4459`; `V2:crates/ralph-cli/tests/integration_run.rs:L348-L414`; `V3:crates/ralph-cli/tests/integration_autoloop_headless_stream.rs:L45-L158`. Parity is strong for streamed content, strongest timing proof is V3-only. |
+| 29 | TUI live assistant/tool content | V2 wrote backend deltas directly into in-process iteration buffers. | V3 tails private `claude-stream.*`/`pi-stream.*`; authoritative events still drive lifecycle. | 2 | Ralph over private files | `V2:crates/ralph-cli/src/loop_runner.rs:L1775-L1795`; `V3:crates/ralph-adapters/README.md:L17-L40`; `V3:crates/ralph-cli/tests/integration_autoloop_tui_live_stream.rs:L94-L189`. Stable contract bead `ralph-orchestrator-v3-autoloops-backend-a7e.20`. |
+| 30 | TUI retained iteration navigation/search | V2 iteration buffers supported previous/next, scrolling, and search. | The same Ralph TUI buffer/navigation layer remains and Autoloop events populate it. | 1 | Ralph | `V2:crates/ralph-tui/src/app.rs:L1-L90`; `V3:crates/ralph-tui/src/autoloop_source.rs:L1-L30`; `V3:crates/ralph-tui/src/app.rs:L639-L735`. Retention is in-memory for the running TUI, not durable engine history. |
+| 31 | TUI export | V2 exported current/all iteration buffers to stable plain text. | The same export module and action tests remain. | 1 | Ralph | `V2:crates/ralph-tui/src/app.rs:L880-L940`; `V3:crates/ralph-tui/src/export.rs:L1-L120`. This proves text-buffer export only, not cost parity. |
+| 32 | Cost reporting | V2 accumulated cost in `LoopState`, enforced budget, and persisted cost for continue. | Engine events/summary supply cost; headless footer calculates iteration/total cost and TUI shows final cost. | 2 | Shared | `V2:crates/ralph-core/src/event_loop/loop_state.rs:L27-L28`; `V2:crates/ralph-core/src/event_loop/mod.rs:L493-L533,L638-L642`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L555-L564,L598-L606`; `V3:crates/ralph-tui/src/widgets/footer.rs:L173-L182`. No claim of identical per-backend accounting. |
+| 33 | Diagnostics and operational navigation | V2 diagnostics captured prompts/agent output/orchestration/errors; loop commands exposed logs/history. | Ralph trace sessions and TUI logs remain; Autoloop adds journal/events/summary, while `ralph loops logs` still prefers legacy event filenames and falls back to Ralph history. | 2 | Shared | `V2:crates/ralph-core/src/diagnostics/mod.rs:L1-L25,L32-L80,L115-L180`; `V2:crates/ralph-core/src/event_loop/mod.rs:L1390-L1421`; `V3:crates/ralph-cli/src/main.rs:L878-L999`; `V3:crates/ralph-cli/src/loops.rs:L564-L637`; `V3:crates/ralph-adapters/README.md:L7-L15`. Artifact UX/root beads: `ralph-orchestrator-v3-autoloops-backend-f50`, `ralph-orchestrator-v3-autoloops-backend-a7e.12`. |
+| 34 | Web dashboard live state | V2 wrote `.ralph/current-events`, which the API watches. | Engine path writes `.ralph/autoloop-events.ndjson`; API still watches the old path and `ralph web` warns. | 6 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L201-L214`; `V3:crates/ralph-api/src/event_watcher.rs:L37-L70`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L369-L383`; `V3:crates/ralph-cli/src/web.rs:L27`. Replacement bead `ralph-orchestrator-v3-autoloops-backend-a7e.18`; no absent legacy bead is credited. |
+| 35 | `--rpc` and `--record-session` | V2 supported RPC TUI modes and smoke/session recording. | Explicitly removed; fake-engine fixtures replace replay capture. | 5 | Removed | `V2:crates/ralph-tui/src/lib.rs:L12-L23`; `V3:docs/migration/v3-autoloop-engine.md:L27-L32`; `V3:crates/ralph-cli/tests/fixtures/autoloop/README.md:L1-L82`. |
+| 36 | Machine events, journal, summary | V2 exposed Ralph-owned event/UI files. | V3 consumes documented `--events`, append-only journal, terminal summary, and exit status. | 8 | Autoloop | `V3:crates/ralph-adapters/README.md:L7-L15`; `V3:crates/ralph-adapters/tests/autoloop_native_contract_integration.rs:L1-L67`. Ralph/engine run-ID correlation: `ralph-orchestrator-v3-autoloops-backend-a7e.24`; per-iteration harness display remains `ralph-orchestrator-v3-autoloops-backend-j0e`. |
+| 37 | Engine dependency and provisioning | V2 had no separate engine; users manually installed/authenticated a backend and `ralph doctor` checked it. | V3 must additionally resolve a compatible Autoloop binary, preferring vendored then PATH, and offers `ralph doctor --install-engine` without Node. | 8 | Ralph | `V2:docs/getting-started/installation.md:L7-L60`; `V2:crates/ralph-cli/src/doctor.rs:L15-L55`; `V3:crates/ralph-cli/tests/integration_autoloop_dependency.rs:L1-L220`; `V3:crates/ralph-core/src/autoloop_health.rs:L11-L18`. This is new operational machinery, not a V2 provisioning equivalent. |
+| 38 | Parallel loops/worktrees/merge queue | V2 already isolated extra loops in worktrees and exposed list/log/history/diff/retry/merge UX. | V3 preserves registry/worktree/queue surfaces and invokes completion coordination after engine exit. | 4 | Ralph | `V2:docs/advanced/parallel-loops.md:L3-L46,L87-L133`; `V2:crates/ralph-cli/tests/integration_loops_merge.rs:L1-L31`; `V3:crates/ralph-cli/src/completion_coord.rs:L98-L157`; `V3:crates/ralph-cli/tests/integration_merge_drain_autoloop.rs:L185-L220`. Final live proof remains `ralph-orchestrator-v3-autoloops-backend-a7e.15`. |
+| 39 | Presets and custom workflows | V2 embedded/discovered Ralph YAML presets and custom hat graphs. | V3 can translate Ralph YAML hats or run an explicit Autoloop TOML preset; discovery recognizes both shapes. | 2 | Shared | `V2:crates/ralph-cli/src/presets.rs:L24-L95,L102-L132`; `V2:crates/ralph-cli/tests/integration_preset.rs:L1-L7,L68-L167`; `V3:crates/ralph-cli/src/hats.rs:L161-L264`; `V3:crates/ralph-cli/src/autoloop_engine.rs:L321-L346`. Translation is not full config parity (rows 4, 9-14, 20-21, and 23). |
+| 40 | Safety/preflight | V2 checked config, hooks, backend, Telegram token, git cleanliness, paths, tools, and spec completeness. | Those Ralph checks remain; V3 adds engine health plus explicit warnings for inert hooks and unenforced failure budget. Autoloop owns runtime acceptance/evidence gates. | 2 | Shared | `V2:crates/ralph-core/src/preflight.rs:L105-L180,L374-L637`; `V3:crates/ralph-core/src/preflight.rs:L105-L238,L392-L595`; `AL-H:packages/harness/src/acceptance.ts:L44-L118`. Engine hardening tracked by `ralph-orchestrator-v3-autoloops-backend-a7e.13`. |
+| 41 | Authentication behavior | V2 doctor supplied backend-specific auth hints while the backend CLI owned login. | Ralph still checks hints/executable availability; Autoloop classifies runtime `auth_failed` and does not make retryable auth assumptions. | 2 | Shared | `V2:crates/ralph-cli/src/doctor.rs:L48-L55,L263-L365`; `V3:crates/ralph-cli/src/doctor.rs:L48-L55,L263-L365`; `AL-H:packages/harness/src/circuit-breaker.ts:L23-L45`. No paid auth call was made for this research. |
+| 42 | Process cleanup and stale locks | V2 directly owned backend child cleanup and Ralph lock lifetime. | V3 TUI uses an owned process group; all outcomes coordinate; integration covers crash cleanup and replacement after SIGKILL. | 2 | Ralph | `V2:crates/ralph-cli/src/loop_runner.rs:L4388-L4475`; `V3:crates/ralph-adapters/src/autoloop_runner.rs:L147-L150,L281-L287`; `V3:crates/ralph-cli/tests/integration_autoloop_prompt.rs:L265-L440`. |
+| 43 | Replay and real-engine contract testing | V2 used session recording and legacy cassettes. | V3 uses deterministic fake-Autoloop fixtures plus real contract/parity tests. | 8 | Shared | `V3:crates/ralph-cli/tests/fixtures/autoloop/README.md:L1-L82`; `V3:crates/ralph-adapters/tests/autoloop_native_contract_integration.rs:L1-L67`; `V3:crates/ralph-adapters/tests/autoloop_parity_integration.rs:L1-L70`. Live release smoke is still `ralph-orchestrator-v3-autoloops-backend-a7e.15`. |
 
 ## 4. Release findings
 
-### Confirmed GA blockers / release decisions
+### Confirmed GA implementation blockers
+
+These are current silent losses on the Ralph-generated-preset path, not
+upstream release speculation:
 
 1. **Per-hat backend translation is broken** — P0 implementation bead
    `ralph-orchestrator-v3-autoloops-backend-a7e.16`.
-2. **GA needs real-runtime proof, not only fixtures** — P1 wave certification
-   `ralph-orchestrator-v3-autoloops-backend-a7e.8`, P1 hardening
-   `ralph-orchestrator-v3-autoloops-backend-a7e.13`, and P1 final live smoke
-   `ralph-orchestrator-v3-autoloops-backend-a7e.15`.
-3. **Dashboard live state is severed** — P1 dashboard bead
-   `ralph-orchestrator-v3-autoloops-backend-a7e.18`. Whether an Alpha dashboard
-   blocks CLI GA is a release-policy choice; the technical regression is not
-   ambiguous.
-4. **Roo is a real V2-to-V3 regression** — P2 support-or-remove decision bead
-   `ralph-orchestrator-v3-autoloops-backend-a7e.17`. Release policy must decide
-   whether that intentional decision blocks GA.
+2. **Accepted per-hat execution controls are dropped** — P0 bead
+   `ralph-orchestrator-v3-autoloops-backend-a7e.25` covers
+   `default_publishes`, `max_activations`, `disallowed_tools`, and the outer
+   wave-worker `timeout`. The implementation audit must coordinate with
+   `a7e.16` so every accepted hat field is translated, intentionally
+   Ralph-owned, or rejected before state mutation.
+3. **Configured Ralph skills are dropped from engine prompts** — P1 bead
+   `ralph-orchestrator-v3-autoloops-backend-a7e.26` must restore a supported
+   translation or explicitly retire/reject the obsolete configuration. Native
+   Autoloop preset ownership is not part of this regression.
 
-### Important remaining gaps
+### GA release-evidence gates
+
+These gates validate the release path but are not additional matrix
+regressions:
+
+- Real-runtime scatter/gather certification:
+  `ralph-orchestrator-v3-autoloops-backend-a7e.8`.
+- Final fail-closed provider smoke after the engine dependency is releasable:
+  `ralph-orchestrator-v3-autoloops-backend-a7e.15`.
+
+### Release-policy decisions (not pre-classified blockers)
+
+- **Dashboard live state is severed** — P1 dashboard bead
+  `ralph-orchestrator-v3-autoloops-backend-a7e.18`. The technical regression is
+  confirmed; whether an Alpha dashboard blocks CLI GA is a release-owner
+  decision.
+- **Roo is a V2-to-V3 regression** — P2 support-or-remove bead
+  `ralph-orchestrator-v3-autoloops-backend-a7e.17`. Release owners must decide
+  whether explicit removal is acceptable for GA.
+
+### Important post-GA gaps
+
+This analysis does not promote these previously tracked gaps to GA blockers;
+release owners may set stricter policy:
 
 - Ralph-native resume (P1): `ralph-orchestrator-v3-autoloops-backend-a7e.19`.
-- Stable assistant/tool live-output contract (P1):
-  `ralph-orchestrator-v3-autoloops-backend-a7e.20`.
 - Telegram HITL relay (P1 Ralph regression):
   `ralph-orchestrator-v3-autoloops-backend-a7e.5`.
 - Ralph memory prompt semantics (P1):
@@ -192,6 +231,22 @@ was used only as historical capability evidence, never as a V3 gate.
 - History (P1) and backpressure (P2) fidelity:
   `ralph-orchestrator-v3-autoloops-backend-au2` and
   `ralph-orchestrator-v3-autoloops-backend-hav`.
+
+### Deferred upstream / cross-repository dependencies
+
+- **Engine hardening integration** (`ralph-orchestrator-v3-autoloops-backend-a7e.13`):
+  the cited `AL-H` fixes are hardening-worktree-only, and incremental stream
+  flushing is on `AL-M`, not released `AL-101`. They must become reachable from
+  an integrated/released Autoloop baseline before Ralph can claim them.
+- **Stable assistant/tool live-output contract**
+  (`ralph-orchestrator-v3-autoloops-backend-a7e.20`): Autoloop must expose a
+  supported bounded contract before Ralph can delete private stream-file
+  inference.
+
+These dependencies are kept separate from the confirmed Ralph translation
+blockers. The matrix has no class-7 row because no compared V2 capability is
+classified as *only* deferred upstream; current user-visible losses remain
+Ralph-owned or cross-repository implementation gaps.
 
 ### Intentional removals / simplifications
 
@@ -222,12 +277,32 @@ Autoloop memory. Therefore:
 - Ralph tasks/memories/scratchpad remain useful coordination artifacts.
 - Existing docs saying Ralph memories are automatically injected each iteration
   are not proven true on the V3 launch path.
-- Per-hat scratchpad configuration is a separate confirmed translation gap.
+- Configured Ralph skills are a separate prompt regression: V2 built an index
+  and auto-injected selected content, while V3 passes neither `skills.dirs` nor
+  overrides into the generated preset. This does not establish that Ralph
+  should modify native Autoloop presets.
+- Per-hat scratchpad configuration is another confirmed translation gap.
 
 The state-root contract work belongs to `a7e.12`; Ralph-memory prompt semantics
-belong to `a7e.23`; per-hat scratchpad behavior belongs to `a7e.22`.
-Recombining stores without an explicit format/authority decision would recreate
-split-brain completion state.
+belong to `a7e.23`; configured skill semantics belong to `a7e.26`; and per-hat
+scratchpad behavior belongs to `a7e.22`. Recombining stores or prompt sources
+without an explicit format/authority decision would recreate split-brain state.
+
+### Hat translation and execution controls
+
+The generated topology translates routing, published-event allowlists,
+concurrency, and aggregation, but that successful subset must not be read as
+whole-`HatConfig` parity. Backend overrides (`a7e.16`) and four execution
+controls (`a7e.25`) are silently omitted. The resulting impacts differ:
+fallback routing can stall or change a workflow, activation caps bound cyclic
+work, tool restrictions are safety instructions plus a V2 write audit, and the
+outer timeout bounded V2 wave workers. The timeout finding does not claim that
+V2 used `hat.timeout` for normal non-wave turns.
+
+Ralph owns the generated-preset boundary: every accepted Ralph field must be
+translated through a supported engine contract, intentionally retained by
+Ralph, or rejected before lock/worktree mutation. Autoloop owns runtime
+semantics only after translation, and owns explicit native presets directly.
 
 ### Resume, interruption, and cleanup
 
@@ -259,10 +334,11 @@ should converge discovery without making private stream files authoritative.
 ### Presets, safety, authentication, and cleanup
 
 Custom workflow reachability is retained through two routes: translated Ralph
-YAML and explicit Autoloop TOML. Translation is intentionally lossy where
-contracts differ, and preflight now warns on known losses. Backend
-authentication remains external-CLI owned; Ralph supplies hints and Autoloop
-supplies typed runtime failures. V3 cleanup is more complex because an engine
+YAML and explicit Autoloop TOML. Translation is lossy where contracts differ.
+Preflight warns for hooks and the consecutive-failure budget, but source does
+not show equivalent warnings or rejection for the per-hat and skill omissions
+identified here. Backend authentication remains external-CLI owned; Ralph
+supplies hints and Autoloop supplies typed runtime failures. V3 cleanup is more complex because an engine
 subprocess owns backend descendants, but process-group and stale-lock tests
 cover the critical paths. No claim is made that every platform-specific kill
 path was live-smoked.
@@ -272,7 +348,9 @@ path was live-smoked.
 | Contract | Autoloop authority | Ralph responsibility |
 |---|---|---|
 | Iteration, routing, backpressure, retry, completion | Canonical | Translate config; render observations |
-| Objective and role prompts | Builds final per-turn context | Supplies objective and translated role instructions |
+| Objective and role prompts | Builds final per-turn context | Supplies objective and translated role instructions; translates or rejects configured Ralph skills |
+| Ralph-generated preset fields | Enforces supported topology/runtime fields after translation | Owns complete `HatConfig` audit, translation, and fail-closed validation |
+| Explicit native preset | Canonical preset semantics | Selects and passes through without injecting Ralph-only configuration |
 | Tasks/memory/scratchpad | Canonical engine stores | Separate coordination stores and CLI |
 | `--events`, journal, summary, stop reason, cost | Produces | Decode, display, coordinate |
 | Assistant/tool provisional deltas | Currently private backend stream files | Opportunistic TUI tailer; must not treat as completion truth |
@@ -293,32 +371,42 @@ is tracked by `ralph-orchestrator-v3-autoloops-backend-a7e.14`.
    (`ralph-orchestrator-v3-autoloops-backend-a7e.16`). Outcome: generated roles
    preserve supported backend/model/args, unsupported values fail before state
    mutation, and a fake integration invokes distinct role commands.
+2. **Ralph repository — restore or fail closed every ignored per-hat execution
+   control** (`ralph-orchestrator-v3-autoloops-backend-a7e.25`, coordinated with
+   `a7e.16`). Outcome: a complete accepted-field audit and fake-runtime proof or
+   field-specific pre-mutation rejection for `default_publishes`,
+   `max_activations`, `disallowed_tools`, and `timeout`.
 
 ### P1
 
-1. **Ralph and Autoloop repositories — certify and integrate the release path**:
-   wave runtime (`a7e.8`), Autoloop hardening dependency (`a7e.13`), and final six-provider
-   smoke (`a7e.15`). Outcome: fake cross-process scatter/gather passes, reviewed
+1. **Ralph repository — restore or explicitly retire configured skill
+   injection** (`ralph-orchestrator-v3-autoloops-backend-a7e.26`). Outcome:
+   generated-preset runs receive configured skill index/auto-inject semantics
+   through a stable contract, or obsolete Ralph fields fail closed with
+   migration guidance; explicit native presets remain engine-owned.
+2. **Ralph and Autoloop repositories — certify and integrate the release path**:
+   wave runtime (`a7e.8`), Autoloop hardening dependency (`a7e.13`), and final
+   six-provider smoke (`a7e.15`). Outcome: fake cross-process scatter/gather passes, reviewed
    engine changes are integrated, and one manual fail-closed provider smoke
    records canonical completion.
-2. **Ralph repository — restore or retire dashboard live state** (`a7e.18`).
+3. **Ralph repository — restore or retire dashboard live state** (`a7e.18`).
    Outcome: the Alpha dashboard either consumes supported V3 events in a real
    fake-engine run or removes misleading live-monitoring promises.
-3. **Ralph repository — provide resume and identity contracts** (`a7e.19`,
+4. **Ralph repository — provide resume and identity contracts** (`a7e.19`,
    `a7e.24`). Outcome: Ralph records canonical engine run IDs and resumes an
    interrupted fake run without private-directory discovery while preserving
    registry/worktree/merge coordination.
-4. **Ralph repository — finish Telegram ask/respond relay** (`a7e.5`). Outcome:
+5. **Ralph repository — finish Telegram ask/respond relay** (`a7e.5`). Outcome:
    a blocking released-engine ask is relayed, correlated, answered, resumed, and
    safely timed out through the current `ralph run` path.
-5. **Autoloop and Ralph repositories — replace private stream probing**
+6. **Autoloop and Ralph repositories — replace private stream probing**
    (`a7e.20`). Outcome: a documented bounded live-output contract carries
    assistant/tool lifecycle records and Ralph deletes all private stream-file
    inference while retaining history/export behavior.
-6. **Ralph repository — decide Ralph-memory prompt semantics** (`a7e.23`).
+7. **Ralph repository — decide Ralph-memory prompt semantics** (`a7e.23`).
    Outcome: bounded Ralph memories are translated through a supported contract,
    or automatic injection promises are removed with migration guidance.
-7. **Ralph repository — retain trustworthy observation UX**: harness identity
+8. **Ralph repository — retain trustworthy observation UX**: harness identity
    (`j0e`) and history (`au2`). Outcome: each live/historical iteration displays
    authoritative harness metadata and bounded reconciled tool evidence.
 
@@ -345,10 +433,11 @@ specifically `a7e.18` and `a7e.21`.
 
 ### High confidence
 
-The ownership split, Roo rejection, per-hat backend omission, separate
+The ownership split, Roo rejection, per-hat backend/default-publication/
+activation/tool-restriction omissions, configured-skill omission, separate
 task/memory authority, unsupported Ralph resume, dashboard path mismatch,
 private TUI stream dependency, and process cleanup paths are directly visible
-in launch/config/test execution paths.
+in pinned config, generator, launch, and V2 execution paths.
 
 ### Medium confidence / bounded claims
 
@@ -361,6 +450,18 @@ in launch/config/test execution paths.
   browser session was not replayed.
 - **Cost:** V2 and V3 both carry/enforce/display cost, but backend accounting
   equivalence was not live-validated. TUI export does not establish cost parity.
+- **Per-hat timeout:** V2 source proves `hat.timeout` precedence and use for
+  wave workers only. Normal non-wave turns used adapter timeout, so no broader
+  per-hat timeout claim is made.
+- **Tool restrictions:** V2 injected all configured names as prompt guidance,
+  but hard post-turn auditing was specific to `Edit`/`Write`; this was not a
+  backend-enforced denylist for every tool.
+- **Skills and ignored hat fields:** omission is source-confirmed, but this
+  research did not run a V2/V3 paired live provider. Released Autoloop exposes
+  per-role `disallowed_tools` and `backend_timeout_ms`; their exact semantics
+  are not identical to every V2 behavior. No released equivalent was established
+  here for `default_publishes`, `max_activations`, or configured Ralph skills.
+  Beads `a7e.25` and `a7e.26` require fake-runtime proof or fail-closed rejection.
 - **Cleanup:** Unix crash/SIGKILL and TUI process-group paths have integration
   coverage; Windows live cleanup was not exercised here.
 
