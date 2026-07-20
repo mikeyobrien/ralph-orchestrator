@@ -411,7 +411,7 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
 
 /// Loads configuration from file sources with override support.
 ///
-/// This is the common sync path used by resume_command and clean_command.
+/// This is the common sync path used by commands that do not support remote URLs.
 /// For the full async path (including Remote URLs), see run_command.
 ///
 /// Returns the loaded config with overrides applied and workspace_root set.
@@ -544,10 +544,9 @@ enum Commands {
     /// Interactive walkthrough of hats, hat collections, and workflow
     Tutorial(TutorialArgs),
 
-    /// DEPRECATED: Use `ralph run --continue` instead.
-    /// Resume a previously interrupted loop from existing scratchpad.
+    /// Native engine resume is not yet supported; use `ralph run --continue`.
     #[command(hide = true)]
-    Resume(ResumeArgs),
+    Resume,
 
     /// View event history for debugging
     Events(EventsArgs),
@@ -648,9 +647,8 @@ struct RunArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// Continue from existing scratchpad (resume interrupted loop).
-    /// Use this when a previous run was interrupted and you want to
-    /// continue from where it left off.
+    /// Continue coordination state from the current loop marker.
+    /// This preserves task-tag continuity; it does not resume native engine state.
     #[arg(long = "continue")]
     continue_mode: bool,
 
@@ -696,29 +694,6 @@ struct RunArgs {
     // ─────────────────────────────────────────────────────────────────────────
     // Verbosity Options
     // ─────────────────────────────────────────────────────────────────────────
-    /// Enable verbose output (show tool results and session summary)
-    #[arg(short = 'v', long)]
-    verbose: bool,
-}
-
-/// Arguments for the resume subcommand.
-///
-/// Per spec: "When loop terminates due to safeguard (not completion promise),
-/// user can run `ralph resume` to restart reading existing scratchpad."
-#[derive(Parser, Debug)]
-struct ResumeArgs {
-    /// Override max iterations (from current position)
-    #[arg(long)]
-    max_iterations: Option<u32>,
-
-    /// Disable TUI observation mode (TUI is enabled by default)
-    #[arg(long, conflicts_with = "autonomous")]
-    no_tui: bool,
-
-    /// Force autonomous mode
-    #[arg(short, long, conflicts_with = "no_tui")]
-    autonomous: bool,
-
     /// Enable verbose output (show tool results and session summary)
     #[arg(short = 'v', long)]
     verbose: bool,
@@ -901,11 +876,11 @@ fn completions_command(args: CompletionsArgs) -> Result<()> {
 }
 
 /// Returns true if the given command is eligible for diagnostics session creation.
-/// Only `run` and `resume` commands (and the default no-subcommand case) should
-/// create diagnostics session directories. Other subcommands like `emit` or `tools`
-/// would otherwise create empty session dirs.
+/// Only `run` (and the default no-subcommand case) should create diagnostics
+/// session directories. Other subcommands like `emit` or `tools` would otherwise
+/// create empty session dirs.
 fn is_diagnostics_eligible_command(command: Option<&Commands>) -> bool {
-    matches!(command, Some(Commands::Run(_) | Commands::Resume(_)) | None)
+    matches!(command, Some(Commands::Run(_)) | None)
 }
 
 #[tokio::main]
@@ -921,7 +896,6 @@ async fn main() -> Result<()> {
     // TUI is enabled by default unless --no-tui or --autonomous is specified.
     let tui_enabled = match &cli.command {
         Some(Commands::Run(args)) => !args.no_tui && !args.autonomous,
-        Some(Commands::Resume(args)) => !args.no_tui && !args.autonomous,
         None => true,
         _ => false,
     };
@@ -1074,16 +1048,7 @@ async fn main() -> Result<()> {
             .await
         }
         Some(Commands::Tutorial(args)) => tutorial_command(cli.color, args),
-        Some(Commands::Resume(args)) => {
-            resume_command(
-                &config_sources,
-                hats_source.as_ref(),
-                cli.verbose,
-                cli.color,
-                args,
-            )
-            .await
-        }
+        Some(Commands::Resume) => resume_command(),
         Some(Commands::Events(args)) => events_command(cli.color, args),
         Some(Commands::Init(args)) => init_command(cli.color, args),
         Some(Commands::Clean(args)) => clean_command(&config_sources, cli.color, args),
@@ -1355,23 +1320,6 @@ async fn run_command(
     args: RunArgs,
 ) -> Result<()> {
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
-
-    // Handle --continue mode: check scratchpad exists before proceeding
-    let resume = args.continue_mode;
-    if resume {
-        let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
-        if !scratchpad_path.exists() {
-            anyhow::bail!(
-                "Cannot continue: scratchpad not found at '{}'. \
-                 Start a fresh run with `ralph run`.",
-                config.core.scratchpad.path
-            );
-        }
-        info!(
-            "Found existing scratchpad at '{}', continuing from previous state",
-            config.core.scratchpad.path
-        );
-    }
 
     // Apply CLI overrides (after normalization so they take final precedence)
     // Per spec: CLI -p and -P are mutually exclusive (enforced by clap)
@@ -1767,7 +1715,9 @@ async fn run_command(
 }
 
 fn required_restart_command(pid: u32) -> String {
-    format!("kill {pid} && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml")
+    format!(
+        "kill {pid} && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- -c ralph.test.yml run --continue"
+    )
 }
 
 fn clear_restart_request_signal(workspace_root: &std::path::Path) {
@@ -1775,117 +1725,10 @@ fn clear_restart_request_signal(workspace_root: &std::path::Path) {
     let _ = std::fs::remove_file(&restart_path);
 }
 
-/// Resume a previously interrupted loop from existing scratchpad.
-///
-/// DEPRECATED: Use `ralph run --continue` instead.
-///
-/// Per spec: "When loop terminates due to safeguard (not completion promise),
-/// user can run `ralph run --continue` to restart reading existing scratchpad,
-/// continuing from where it left off."
-async fn resume_command(
-    config_sources: &[ConfigSource],
-    hats_source: Option<&HatsSource>,
-    verbose: bool,
-    color_mode: ColorMode,
-    args: ResumeArgs,
-) -> Result<()> {
-    // Show deprecation warning
-    eprintln!(
-        "{}warning:{} `ralph resume` is deprecated. Use `ralph run --continue` instead.",
-        colors::YELLOW,
-        colors::RESET
-    );
-
-    // Load split core + hats config
-    let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
-
-    // Resolve once before inspecting continuation state and retain the exact
-    // selection for launch so resume cannot disagree with its dependency gate.
-    let autoloop_bin = engine_provision::ensure_autoloop_with_provisioning(
-        !args.autonomous && std::io::stdin().is_terminal(),
-        false,
-    )?;
-
-    // Check that scratchpad exists (required for resume)
-    let scratchpad_path = std::path::Path::new(&config.core.scratchpad.path);
-    if !scratchpad_path.exists() {
-        anyhow::bail!(
-            "Cannot continue: scratchpad not found at '{}'. \
-             Start a fresh run with `ralph run`.",
-            config.core.scratchpad.path
-        );
-    }
-
-    info!(
-        "Found existing scratchpad at '{}', continuing from previous state",
-        config.core.scratchpad.path
-    );
-
-    // Apply CLI overrides
-    if let Some(max_iter) = args.max_iterations {
-        config.event_loop.max_iterations = Some(max_iter);
-    }
-    if verbose {
-        config.verbose = true;
-    }
-
-    // Apply execution mode overrides
-    // TUI is enabled by default (unless --no-tui is specified)
-    if args.autonomous {
-        config.cli.default_mode = "autonomous".to_string();
-    } else if !args.no_tui {
-        config.cli.default_mode = "interactive".to_string();
-    }
-
-    // Validate configuration
-    let warnings = config
-        .validate()
-        .context("Configuration validation failed")?;
-    for warning in &warnings {
-        eprintln!("{warning}");
-    }
-
-    // Handle auto-detection if backend is "auto"
-    if config.cli.backend == "auto" {
-        let priority = config.get_agent_priority();
-        let detected = detect_backend(&priority, |backend| {
-            config.adapter_settings(backend).enabled
-        });
-
-        match detected {
-            Ok(backend) => {
-                info!("Auto-detected backend: {}", backend);
-                config.cli.backend = backend;
-            }
-            Err(e) => {
-                eprintln!("{e}");
-                return Err(anyhow::Error::new(e));
-            }
-        }
-    }
-
-    // v3 cutover: resume re-drives the autoloop engine. A true run_id continue
-    // (resuming autoloop's own loop state) is tracked separately in #344; for now
-    // this restarts the loop reading the existing scratchpad/memories on disk.
-    let wants_tui = !args.no_tui && !args.autonomous;
-    let reason = autoloop_engine::run_autoloop_engine(
-        config,
-        autoloop_bin,
-        None, // Deprecated resume command doesn't carry a loop_context
-        None, // Use config.features.auto_merge (deprecated command)
-        None, // Deprecated resume command doesn't support --loop-id
-        true, // Deprecated resume reuses the current loop ID marker
-        color_mode.should_use_colors(),
-        wants_tui,
+fn resume_command() -> Result<()> {
+    anyhow::bail!(
+        "native engine resume is not yet supported (tracked #344); use `ralph run --continue` to continue coordination state, or `autoloop resume <run-id>` directly"
     )
-    .await?;
-    let exit_code = reason.exit_code();
-
-    if exit_code != 0 {
-        std::process::exit(exit_code);
-    }
-
-    Ok(())
 }
 
 fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
@@ -2597,7 +2440,7 @@ mod tests {
         let command = required_restart_command(4242);
         assert_eq!(
             command,
-            "kill 4242 && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- resume -c ralph.test.yml"
+            "kill 4242 && RALPH_DIAGNOSTICS=1 cargo run --bin ralph -- -c ralph.test.yml run --continue"
         );
     }
 
@@ -2741,6 +2584,10 @@ mod tests {
             vec!["-q"],
             vec!["--quiet"],
             vec!["--idle-timeout", "30"],
+            vec!["--max-iterations", "2"],
+            vec!["--no-tui"],
+            vec!["--autonomous"],
+            vec!["-a"],
         ];
 
         for arguments in removed_arguments {
@@ -3560,20 +3407,6 @@ core:
             skip_preflight: true,
             verbose: false,
         }
-    }
-
-    #[tokio::test]
-    async fn test_run_command_continue_missing_scratchpad_returns_error() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _cwd = CwdGuard::set(temp_dir.path());
-
-        let mut args = default_run_args();
-        args.continue_mode = true;
-
-        let err = run_command(&[], None, false, ColorMode::Never, args)
-            .await
-            .expect_err("expected missing scratchpad error");
-        assert!(err.to_string().contains("scratchpad not found"));
     }
 
     #[tokio::test]
