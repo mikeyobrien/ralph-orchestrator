@@ -249,6 +249,57 @@ class FakeRunnerIntegration(unittest.TestCase):
                     self.assertIn("exactly six ordered unique", result.stderr)
 
 
+class PromptProbeContract(unittest.TestCase):
+    @staticmethod
+    def command_for(name: str) -> str:
+        prompt = (PRESET / "roles" / f"{name}.md").read_text(encoding="utf-8")
+        match = re.search(r"```sh\n(.*?)\n```", prompt, re.DOTALL)
+        if match is None:
+            raise AssertionError(f"missing shell probe in {name} prompt")
+        return match.group(1)
+
+    def test_fixed_probes_use_the_sole_provider_visible_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            run_dir = workspace / ".autoloop/runs/live-smoke"
+            run_dir.mkdir(parents=True)
+
+            for name, *_ in BACKENDS:
+                command = self.command_for(name)
+                self.assertNotIn("AUTOLOOP_STATE_DIR", command)
+                result = subprocess.run(
+                    ["/bin/sh", "-c", command],
+                    cwd=workspace,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, f"HARNESS_SMOKE:{name}\n")
+
+            self.assertEqual(
+                (run_dir / "smoke-evidence.txt").read_text(encoding="utf-8").splitlines(),
+                [f"HARNESS_SMOKE:{name}" for name, *_ in BACKENDS],
+            )
+
+    def test_probe_fails_closed_without_exactly_one_run_directory(self) -> None:
+        command = self.command_for("claude")
+        for directory_count in (0, 2):
+            with self.subTest(directory_count=directory_count), tempfile.TemporaryDirectory() as temp:
+                workspace = Path(temp)
+                runs = workspace / ".autoloop/runs"
+                runs.mkdir(parents=True)
+                for index in range(directory_count):
+                    (runs / f"run-{index}").mkdir()
+                result = subprocess.run(
+                    ["/bin/sh", "-c", command],
+                    cwd=workspace,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(list(runs.glob("*/smoke-evidence.txt")), [])
+
+
 class NativePresetSelectionIntegration(unittest.TestCase):
     def test_all_role_backend_overrides_reach_native_launch_selection(self) -> None:
         autoloop = os.environ.get("AUTOLOOP_BIN") or shutil.which("autoloop")

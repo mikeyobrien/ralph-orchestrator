@@ -10,4 +10,4 @@ For the active role, obey its role prompt literally:
 4. After that result, make your assistant response exactly `HARNESS_OK:<id>:HARNESS_SMOKE:<id>` with no other prose.
 5. Only after producing that exact response, invoke the provided autoloop event tool once to emit the role's sole allowed handoff event. Never print or invoke a completion-promise fallback.
 
-The evidence path is `$AUTOLOOP_STATE_DIR/smoke-evidence.txt`. It is disposable run state. Never inspect or modify the source checkout or persistent provider configuration.
+Each fixed probe derives the evidence path from the sole directory matching `$PWD/.autoloop/runs/*`; the disposable workspace must contain exactly one run. Never inspect or modify the source checkout or persistent provider configuration.
