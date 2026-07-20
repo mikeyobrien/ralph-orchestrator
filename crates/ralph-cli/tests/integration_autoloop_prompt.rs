@@ -150,6 +150,32 @@ impl Harness {
         self.command(prompt_args).output().expect("execute ralph")
     }
 
+    fn preflight_failure_budget(&self) -> Output {
+        let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![self.fake_autoloop.bin_dir().to_path_buf()];
+        paths.extend(std::env::split_paths(&inherited_path));
+        let path = std::env::join_paths(paths).expect("construct PATH");
+
+        Command::new(env!("CARGO_BIN_EXE_ralph"))
+            .args([
+                "--color",
+                "never",
+                "--config",
+                "ralph.yml",
+                "preflight",
+                "--check",
+                "failure-budget",
+            ])
+            .current_dir(self.workspace.path())
+            .env("PATH", path)
+            .env("HOME", self.home.path())
+            .env("USERPROFILE", self.home.path())
+            .env_remove("RALPH_CONFIG")
+            .env_remove("RALPH_WORKSPACE_ROOT")
+            .output()
+            .expect("execute failure-budget preflight")
+    }
+
     fn task(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_ralph"))
             .args(["--color", "never", "tools", "task"])
@@ -498,14 +524,24 @@ fn explicit_preset_receives_cli_and_config_budget_overrides_before_prompt() {
         );
     }
     assert_eq!(prompt_position, argv.len() - 1, "unexpected argv: {argv:?}");
+    assert!(
+        !argv
+            .iter()
+            .any(|arg| arg.contains("max_consecutive_failures")),
+        "unsupported consecutive-failure override leaked into autoloop argv: {argv:?}"
+    );
 
-    let process_output = format!(
+    let preflight = harness.preflight_failure_budget();
+    assert_success(&preflight);
+    let preflight_output = format!(
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&preflight.stdout),
+        String::from_utf8_lossy(&preflight.stderr)
     );
     assert!(
-        process_output.contains("event_loop.max_consecutive_failures"),
-        "ignored budget warning was not visible:\n{process_output}"
+        preflight_output.contains(
+            "WARNING: event_loop.max_consecutive_failures=2 is NOT enforced by autoloop 0.10.x"
+        ),
+        "prominent unsupported-budget warning was not visible:\n{preflight_output}"
     );
 }

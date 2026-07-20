@@ -155,13 +155,13 @@ fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Map Ralph's normalized loop budgets to autoloop 0.9.2 config overrides.
+/// Map Ralph's normalized loop budgets to autoloop 0.10.x config overrides.
 ///
 /// Autoloop duration values are milliseconds. There is no autoloop equivalent
 /// for Ralph's consecutive-failure budget, so it is deliberately omitted and
-/// called out rather than approximated with a differently-behaving limit.
+/// reported by the shared preflight checks rather than approximated with a
+/// differently-behaving limit.
 pub(crate) fn autoloop_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
-    warn_unsupported_budget(config);
     let el = &config.event_loop;
     let mut overrides = Vec::new();
     if let Some(max_iterations) = el.max_iterations {
@@ -169,14 +169,6 @@ pub(crate) fn autoloop_budget_overrides(config: &RalphConfig) -> Vec<(&'static s
     }
     overrides.extend(autoloop_non_iteration_budget_overrides(config));
     overrides
-}
-
-fn warn_unsupported_budget(config: &RalphConfig) {
-    tracing::warn!(
-        field = "event_loop.max_consecutive_failures",
-        value = config.event_loop.max_consecutive_failures,
-        "engine=autoloop: ignoring event_loop.max_consecutive_failures because autoloop 0.9.2 has no equivalent budget"
-    );
 }
 
 fn autoloop_non_iteration_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
@@ -217,7 +209,7 @@ fn backend_args_csv(name: &str, args: &[String]) -> io::Result<Option<String>> {
     Ok((!args.is_empty()).then(|| args.join(",")))
 }
 
-/// Translate Ralph's resolved CLI backend into autoloop 0.9.2 config keys.
+/// Translate Ralph's resolved CLI backend into autoloop 0.10.x config keys.
 ///
 /// Command backends reuse [`CliBackend`] so their headless command, arguments,
 /// prompt flag, and configured overrides remain defined in one place.
@@ -326,7 +318,6 @@ pub(crate) fn autoloop_backend_spec(
 
 /// Write `autoloops.toml` from ralph's event-loop config.
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
-    warn_unsupported_budget(config);
     let el = &config.event_loop;
     let mut auto = String::new();
 

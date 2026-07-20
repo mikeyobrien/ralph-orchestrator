@@ -1325,7 +1325,7 @@ async fn run_auto_preflight(
 
 fn print_preflight_summary(
     report: &PreflightReport,
-    verbose: bool,
+    _verbose: bool,
     prefix: &str,
     use_stdout: bool,
 ) {
@@ -1352,13 +1352,11 @@ fn print_preflight_summary(
         }
     }
 
-    if verbose {
-        for check in &report.checks {
-            if check.status == CheckStatus::Warn
-                && let Some(message) = &check.message
-            {
-                emit(format!("  ⚠ {}: {}", check.name, message));
-            }
+    for check in &report.checks {
+        if check.status == CheckStatus::Warn
+            && let Some(message) = &check.message
+        {
+            emit(format!("  ⚠ {}: {}", check.name, message));
         }
     }
 }

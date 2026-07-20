@@ -28,6 +28,10 @@ pub enum TerminationReason {
     EngineError { detail: Option<String> },
     /// Manually stopped.
     Stopped,
+    /// Execution was suspended by the engine without completing or failing.
+    Suspended,
+    /// Completion was deliberately held by the engine.
+    CompletionHeld,
     /// Interrupted by signal (SIGINT/SIGTERM).
     Interrupted,
     /// Restart requested via Telegram `/restart` command.
@@ -55,7 +59,9 @@ impl TerminationReason {
             | TerminationReason::ValidationFailure
             | TerminationReason::EngineError { .. }
             | TerminationReason::WorkspaceGone => 1,
-            TerminationReason::Stopped => 0,
+            TerminationReason::Stopped
+            | TerminationReason::Suspended
+            | TerminationReason::CompletionHeld => 0,
             TerminationReason::MaxIterations
             | TerminationReason::MaxRuntime
             | TerminationReason::MaxCost => 2,
@@ -83,6 +89,8 @@ impl TerminationReason {
             TerminationReason::ValidationFailure => "validation_failure",
             TerminationReason::EngineError { .. } => "error",
             TerminationReason::Stopped => "stopped",
+            TerminationReason::Suspended => "suspended",
+            TerminationReason::CompletionHeld => "completion_held",
             TerminationReason::Interrupted => "interrupted",
             TerminationReason::RestartRequested => "restart_requested",
             TerminationReason::WorkspaceGone => "workspace_gone",
@@ -120,6 +128,8 @@ impl TerminationReason {
             TerminationReason::ValidationFailure => "validation failure",
             TerminationReason::EngineError { .. } => "engine error",
             TerminationReason::Stopped => "manually stopped",
+            TerminationReason::Suspended => "suspended by engine",
+            TerminationReason::CompletionHeld => "completion held by engine",
             TerminationReason::Interrupted => "interrupted by signal",
             TerminationReason::RestartRequested => "restart requested",
             TerminationReason::WorkspaceGone => "workspace directory removed",
@@ -155,6 +165,22 @@ mod tests {
     #[test]
     fn manually_stopped_is_a_clean_exit() {
         assert_eq!(TerminationReason::Stopped.exit_code(), 0);
+    }
+
+    #[test]
+    fn intentional_non_completion_states_exit_cleanly_but_are_not_success() {
+        for reason in [
+            TerminationReason::Suspended,
+            TerminationReason::CompletionHeld,
+        ] {
+            assert_eq!(reason.exit_code(), 0);
+            assert!(!reason.is_success());
+        }
+        assert_eq!(TerminationReason::Suspended.as_str(), "suspended");
+        assert_eq!(
+            TerminationReason::CompletionHeld.as_str(),
+            "completion_held"
+        );
     }
 
     #[test]

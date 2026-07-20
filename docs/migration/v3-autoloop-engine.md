@@ -27,7 +27,7 @@ without opt-in fails fast with install guidance.
 | `ralph wave …` (wave system) | Removed. Use hat `concurrency:`/`aggregate:` — they map to autoloop's declarative per-role concurrency. `presets/wave-review.yml` is ported. |
 | `ralph run --rpc` (JSON-lines protocol) | Removed (tracked as #343). |
 | `ralph run --record-session` (smoke fixtures) | Removed. Replay tests use the fake-autoloop fixture substrate (`tests/fixtures/autoloop/`). |
-| `core.engine` config field | Inert; autoloop is the only engine. |
+| `core.engine` config field | Autoloop is the only engine. `autoloop` remains valid; any other value is rejected because the in-house engine was removed in v3. Remove the field or set it to `autoloop`. |
 | Telegram RObot HITL during runs | Inactive pending autoloop relay wiring (#345). Config is accepted but a warning is logged. |
 | In-house smoke corpus (`smoke_runner`) | Replaced by the fake-autoloop replay substrate and `ralph-e2e --mock`. |
 
@@ -35,6 +35,11 @@ without opt-in fails fast with install guidance.
 
 - `ralph run -p/-P`, `--max-iterations`, `--max-runtime`, `--max-cost`:
   budgets are forwarded to the engine and enforced there.
+- `event_loop.max_consecutive_failures` is **not enforced** under the autoloop
+  engine. Ralph's default or configured value is retained in its config but is
+  deliberately not translated to a differently behaving engine limit. Ralph
+  emits a preflight warning in `ralph run` and `ralph doctor`. Autoloop 0.10.x
+  was checked and has no equivalent general consecutive-backend-failure budget.
 - `-b`/`cli.backend`: mapped to autoloop backend kinds (claude-sdk, pi,
   ACP, command). Unmappable backends fail fast — nothing is silently
   ignored.
