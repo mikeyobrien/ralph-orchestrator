@@ -192,17 +192,20 @@ impl PreflightCheck for HooksValidationCheck {
             return CheckResult::pass(self.name(), "Hooks disabled (skipping)");
         }
 
+        let configured_hooks = count_configured_hooks(config);
+        if configured_hooks == 0 {
+            return CheckResult::pass(self.name(), "No hooks configured");
+        }
+
         let mut diagnostics = Vec::new();
         validate_hook_duplicate_names(config, &mut diagnostics);
         validate_hook_command_resolvability(config, &mut diagnostics);
 
         if diagnostics.is_empty() {
-            CheckResult::pass(
+            CheckResult::warn(
                 self.name(),
-                format!(
-                    "Hooks validation passed ({} hook(s))",
-                    count_configured_hooks(config)
-                ),
+                format!("Configured hooks are inert ({configured_hooks} hook(s))"),
+                "WARNING: lifecycle hooks are NOT executed under the autoloop engine pending the engine bridge.",
             )
         } else {
             CheckResult::fail(
@@ -1222,7 +1225,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hooks_check_passes_with_resolvable_executable_command() {
+    async fn hooks_check_does_not_warn_when_enabled_but_empty() {
+        let mut config = RalphConfig::default();
+        config.hooks.enabled = true;
+        let check = HooksValidationCheck;
+
+        let result = check.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert_eq!(result.label, "No hooks configured");
+        assert!(result.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn hooks_check_warns_that_resolvable_configured_hooks_are_inert() {
         let temp = tempfile::tempdir().expect("tempdir");
         let script_dir = temp.path().join("scripts/hooks");
         std::fs::create_dir_all(&script_dir).expect("create script directory");
@@ -1242,10 +1258,13 @@ mod tests {
         let check = HooksValidationCheck;
         let result = check.run(&config).await;
 
-        assert_eq!(result.status, CheckStatus::Pass);
-        assert!(result.label.contains("Hooks validation passed"));
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(result.label.contains("Configured hooks are inert"));
         assert!(result.label.contains("1 hook(s)"));
-        assert!(result.message.is_none());
+        let message = result.message.expect("expected inert-hooks warning");
+        assert!(message.contains("lifecycle hooks are NOT executed"));
+        assert!(message.contains("autoloop engine"));
+        assert!(message.contains("pending the engine bridge"));
     }
 
     #[tokio::test]

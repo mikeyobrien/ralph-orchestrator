@@ -12,6 +12,14 @@ fn ralph_preflight(temp_path: &std::path::Path, args: &[&str]) -> std::process::
         .expect("Failed to execute ralph preflight command")
 }
 
+fn rendered(output: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 #[test]
 fn test_preflight_check_config_json() {
     let temp_dir = TempDir::new().expect("temp dir");
@@ -53,6 +61,73 @@ fn test_preflight_unknown_check_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Unknown check"), "stderr: {}", stderr);
+}
+
+#[test]
+fn configured_hooks_warning_is_visible_in_run_and_doctor_but_absent_without_hooks() {
+    const WARNING: &str = "WARNING: lifecycle hooks are NOT executed under the autoloop engine pending the engine bridge.";
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+    let hooks_config = temp_path.join("hooks.yml");
+    fs::write(
+        &hooks_config,
+        r#"
+hooks:
+  enabled: true
+  events:
+    pre.loop.start:
+      - name: truthful-warning
+        command: ["/usr/bin/true"]
+        on_error: warn
+features:
+  preflight:
+    enabled: true
+"#,
+    )
+    .expect("write hooks config");
+
+    let no_hooks_config = temp_path.join("no-hooks.yml");
+    fs::write(
+        &no_hooks_config,
+        "features:\n  preflight:\n    enabled: true\n",
+    )
+    .expect("write no-hooks config");
+
+    for (subcommand, trailing_args) in [
+        ("run", vec!["--dry-run", "--no-tui", "--prompt", "test"]),
+        ("doctor", vec![]),
+    ] {
+        let mut hooks_args = vec![
+            "--color",
+            "never",
+            "--config",
+            hooks_config.to_str().expect("utf8 hooks config"),
+            subcommand,
+        ];
+        hooks_args.extend(trailing_args.iter().copied());
+        let hooks_output = ralph_preflight(temp_path, &hooks_args);
+        let hooks_text = rendered(&hooks_output);
+        assert!(
+            hooks_text.contains(WARNING),
+            "{subcommand} output did not contain inert-hooks warning:\n{hooks_text}"
+        );
+
+        let mut no_hooks_args = vec![
+            "--color",
+            "never",
+            "--config",
+            no_hooks_config.to_str().expect("utf8 no-hooks config"),
+            subcommand,
+        ];
+        no_hooks_args.extend(trailing_args.iter().copied());
+        let no_hooks_output = ralph_preflight(temp_path, &no_hooks_args);
+        let no_hooks_text = rendered(&no_hooks_output);
+        assert!(
+            !no_hooks_text.contains(WARNING),
+            "{subcommand} output unexpectedly contained inert-hooks warning:\n{no_hooks_text}"
+        );
+    }
 }
 
 #[test]
