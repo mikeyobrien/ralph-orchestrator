@@ -476,6 +476,18 @@ async fn bot_test(args: TestArgs, use_colors: bool) -> Result<()> {
 // DAEMON COMMAND
 // ─────────────────────────────────────────────────────────────────────────────
 
+fn daemon_config_warnings(config: &RalphConfig) -> Result<Vec<String>> {
+    config
+        .validate()
+        .context("Configuration validation failed for bot daemon")
+        .map(|warnings| {
+            warnings
+                .into_iter()
+                .map(|warning| warning.to_string())
+                .collect()
+        })
+}
+
 /// Run the bot daemon — delegates to the configured communication adapter.
 ///
 /// Currently only Telegram is supported. The adapter implements
@@ -549,6 +561,10 @@ async fn run_daemon(
 
     if !primary_sources.is_empty() && !used_direct_file {
         warn!("Using resolved runtime config: {}", config_path.display());
+    }
+
+    for warning in daemon_config_warnings(&config)? {
+        print_warning(use_colors, &warning);
     }
 
     // Resolve bot token and chat_id for Telegram adapter
@@ -1125,6 +1141,30 @@ mod tests {
 
         let resolved = resolve_token_from(None, None, Some("  cfg  ".to_string()));
         assert_eq!(resolved.as_deref(), Some("cfg"));
+    }
+
+    #[test]
+    fn test_daemon_config_warnings_include_inactive_hitl_caveat() {
+        let config: RalphConfig = serde_yaml::from_str(
+            r#"
+RObot:
+  enabled: true
+  timeout_seconds: 300
+  telegram:
+    bot_token: "test-token"
+"#,
+        )
+        .unwrap();
+
+        let warnings = daemon_config_warnings(&config).unwrap();
+
+        assert_eq!(
+            warnings,
+            vec![format!(
+                "Warning [RObot.enabled]: {}",
+                ralph_core::ROBOT_HITL_INACTIVE_WARNING
+            )]
+        );
     }
 
     #[tokio::test]
