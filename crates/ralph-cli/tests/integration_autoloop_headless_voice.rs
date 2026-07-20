@@ -32,6 +32,9 @@ hats:
     instructions: "Build the work."
 features:
   auto_merge: false
+  preflight:
+    enabled: true
+    skip: [config, hooks, backend, telegram, git, paths, tools]
 "#;
 
 struct Harness {
@@ -94,7 +97,6 @@ impl Harness {
                 "ralph.yml",
                 "run",
                 "--no-tui",
-                "--skip-preflight",
                 "--max-iterations",
                 "2",
                 "-p",
@@ -151,6 +153,17 @@ fn headless_run_uses_ralph_voice_and_gates_engine_noise_by_verbosity() {
     let default = harness.run(false);
     assert_success(&default);
     let default_output = combined_output(&default);
+    for forbidden in [
+        "autoloop engine:",
+        "[autoloops]",
+        "autoloop::engine",
+        "ralph::autoloop_preset_gen",
+    ] {
+        assert!(
+            !default_output.contains(forbidden),
+            "raw engine/tracing marker {forbidden:?} leaked:\n{default_output}"
+        );
+    }
     assert!(
         !default_output
             .lines()
@@ -158,8 +171,10 @@ fn headless_run_uses_ralph_voice_and_gates_engine_noise_by_verbosity() {
         "raw autoloop voice leaked:\n{default_output}"
     );
     assert!(
-        !default_output.contains("[autoloops]"),
-        "engine log leaked at default verbosity:\n{default_output}"
+        default_output.contains(
+            "⚠ failure-budget: event_loop.max_consecutive_failures=5 is not enforced; the loop has no equivalent consecutive-failure budget."
+        ),
+        "styled budget warning missing:\n{default_output}"
     );
     assert!(
         !default_output.to_ascii_lowercase().contains("unknown"),

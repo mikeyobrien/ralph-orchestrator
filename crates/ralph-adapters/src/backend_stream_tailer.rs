@@ -45,6 +45,7 @@ struct SelectedStream {
 /// Incrementally reads one iteration's Claude or Pi stream file.
 #[derive(Debug)]
 pub struct BackendStreamTailer {
+    workspace_root: PathBuf,
     run_dir: PathBuf,
     iteration: u32,
     selected: Option<SelectedStream>,
@@ -55,8 +56,13 @@ pub struct BackendStreamTailer {
 
 impl BackendStreamTailer {
     /// Create a tailer for an iteration. Its stream file need not exist yet.
-    pub fn for_iteration(run_dir: &Path, iteration: u32) -> Self {
+    ///
+    /// `workspace_root` and `run_dir` provide the presentation boundary for
+    /// tool paths: repository files are workspace-relative and private run
+    /// state is shown with an `engine:` prefix.
+    pub fn for_iteration(workspace_root: &Path, run_dir: &Path, iteration: u32) -> Self {
         Self {
+            workspace_root: workspace_root.to_path_buf(),
             run_dir: run_dir.to_path_buf(),
             iteration,
             selected: None,
@@ -133,7 +139,9 @@ impl BackendStreamTailer {
             let Ok(line) = std::str::from_utf8(raw_line) else {
                 continue;
             };
-            for parsed in parse_stream_line(selected.format, line) {
+            for parsed in
+                parse_stream_line(selected.format, line, &self.workspace_root, &self.run_dir)
+            {
                 if remaining == 0 {
                     continue;
                 }
@@ -177,41 +185,55 @@ impl BackendStreamTailer {
     }
 }
 
-fn parse_stream_line(format: StreamFormat, line: &str) -> Vec<StreamLine> {
+fn parse_stream_line(
+    format: StreamFormat,
+    line: &str,
+    workspace_root: &Path,
+    run_dir: &Path,
+) -> Vec<StreamLine> {
     let Ok(event) = serde_json::from_str::<Value>(line.trim()) else {
         return Vec::new();
     };
     match format {
-        StreamFormat::Claude => parse_claude_event(&event),
-        StreamFormat::Pi => parse_pi_event(&event),
+        StreamFormat::Claude => parse_claude_event(&event, workspace_root, run_dir),
+        StreamFormat::Pi => parse_pi_event(&event, workspace_root, run_dir),
     }
 }
 
-fn parse_claude_event(event: &Value) -> Vec<StreamLine> {
+fn parse_claude_event(event: &Value, workspace_root: &Path, run_dir: &Path) -> Vec<StreamLine> {
     if event.get("type").and_then(Value::as_str) != Some("assistant") {
         return Vec::new();
     }
-    content_lines(event.pointer("/message/content"))
+    content_lines(event.pointer("/message/content"), workspace_root, run_dir)
 }
 
-fn parse_pi_event(event: &Value) -> Vec<StreamLine> {
+fn parse_pi_event(event: &Value, workspace_root: &Path, run_dir: &Path) -> Vec<StreamLine> {
     match event.get("type").and_then(Value::as_str) {
         Some("message_end")
             if event.pointer("/message/role").and_then(Value::as_str) == Some("assistant") =>
         {
-            content_lines(event.pointer("/message/content"))
+            content_lines(event.pointer("/message/content"), workspace_root, run_dir)
         }
         Some("tool_execution_start") => {
             let Some(name) = event.get("toolName").and_then(Value::as_str) else {
                 return Vec::new();
             };
-            vec![tool_line(name, event.get("args").unwrap_or(&Value::Null))]
+            vec![tool_line(
+                name,
+                event.get("args").unwrap_or(&Value::Null),
+                workspace_root,
+                run_dir,
+            )]
         }
         _ => Vec::new(),
     }
 }
 
-fn content_lines(content: Option<&Value>) -> Vec<StreamLine> {
+fn content_lines(
+    content: Option<&Value>,
+    workspace_root: &Path,
+    run_dir: &Path,
+) -> Vec<StreamLine> {
     let Some(blocks) = content.and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -232,7 +254,7 @@ fn content_lines(content: Option<&Value>) -> Vec<StreamLine> {
                     .or_else(|| block.get("arguments"))
                     .or_else(|| block.get("args"))
                     .unwrap_or(&Value::Null);
-                lines.push(tool_line(name, input));
+                lines.push(tool_line(name, input, workspace_root, run_dir));
             }
             _ => {}
         }
@@ -248,13 +270,45 @@ fn push_text_lines(lines: &mut Vec<StreamLine>, text: &str) {
     );
 }
 
-fn tool_line(name: &str, input: &Value) -> StreamLine {
-    let detail = format_tool_summary(name, input).map(|value| one_line(&value));
+fn tool_line(name: &str, input: &Value, workspace_root: &Path, run_dir: &Path) -> StreamLine {
+    let presented_input = present_tool_paths(input, workspace_root, run_dir);
+    let detail = format_tool_summary(name, &presented_input).map(|value| one_line(&value));
     let summary = match detail {
         Some(detail) if !detail.is_empty() => format!("⚙ {name}: {detail}"),
         _ => format!("⚙ {name}"),
     };
     StreamLine::ToolSummary(truncate_utf8(&summary, MAX_STREAM_LINE_BYTES))
+}
+
+fn present_tool_paths(input: &Value, workspace_root: &Path, run_dir: &Path) -> Value {
+    let Value::Object(fields) = input else {
+        return input.clone();
+    };
+
+    let mut presented = fields.clone();
+    for key in ["path", "file_path", "filePath", "notebook_path"] {
+        let Some(path) = fields.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        presented.insert(
+            key.to_string(),
+            Value::String(format_tool_path(path, workspace_root, run_dir)),
+        );
+    }
+    Value::Object(presented)
+}
+
+/// Formats a tool path for display without exposing workspace or private run
+/// directory prefixes. Paths outside the workspace remain unchanged.
+fn format_tool_path(path: &str, workspace_root: &Path, run_dir: &Path) -> String {
+    let path = Path::new(path);
+    if let Ok(relative) = path.strip_prefix(run_dir) {
+        return format!("engine:{}", relative.display());
+    }
+    if let Ok(relative) = path.strip_prefix(workspace_root) {
+        return relative.display().to_string();
+    }
+    path.display().to_string()
 }
 
 fn one_line(value: &str) -> String {
@@ -290,7 +344,7 @@ mod tests {
     fn claude_stream_emits_only_new_assistant_text_and_tool_calls() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("claude-stream.3.jsonl");
-        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), 3);
+        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), dir.path(), 3);
 
         append(
             &path,
@@ -328,7 +382,7 @@ mod tests {
     fn pi_stream_emits_assistant_message_end_text_and_tool_calls() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pi-stream.8.jsonl");
-        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), 8);
+        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), dir.path(), 8);
 
         append(
             &path,
@@ -353,10 +407,48 @@ mod tests {
     }
 
     #[test]
+    fn tool_paths_hide_workspace_and_private_run_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let run_dir = workspace.join(".autoloop/runs/example");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let external = dir.path().join("external/input.txt");
+        let stream_path = run_dir.join("pi-stream.4.jsonl");
+        let mut tailer = BackendStreamTailer::for_iteration(&workspace, &run_dir, 4);
+
+        for path in [
+            run_dir.join("plan.md"),
+            workspace.join("crates/ralph-tui/src/lib.rs"),
+            external.clone(),
+        ] {
+            append(
+                &stream_path,
+                &format!(
+                    "{}\n",
+                    serde_json::json!({
+                        "type": "tool_execution_start",
+                        "toolName": "read",
+                        "args": { "path": path },
+                    })
+                ),
+            );
+        }
+
+        assert_eq!(
+            tailer.poll().unwrap(),
+            vec![
+                StreamLine::ToolSummary("⚙ read: engine:plan.md".into()),
+                StreamLine::ToolSummary("⚙ read: crates/ralph-tui/src/lib.rs".into()),
+                StreamLine::ToolSummary(format!("⚙ read: {}", external.display())),
+            ]
+        );
+    }
+
+    #[test]
     fn missing_stream_is_empty_and_a_later_file_is_discovered() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pi-stream.2.jsonl");
-        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), 2);
+        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), dir.path(), 2);
 
         assert!(tailer.poll().unwrap().is_empty());
         assert!(tailer.poll().unwrap().is_empty());
@@ -395,7 +487,7 @@ mod tests {
         );
         std::fs::write(&path, &fixture).unwrap();
 
-        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), 1);
+        let mut tailer = BackendStreamTailer::for_iteration(dir.path(), dir.path(), 1);
         let lines = tailer.poll().unwrap();
 
         assert!(

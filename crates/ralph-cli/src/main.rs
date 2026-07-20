@@ -544,7 +544,7 @@ enum Commands {
     /// Interactive walkthrough of hats, hat collections, and workflow
     Tutorial(TutorialArgs),
 
-    /// Native engine resume is not yet supported; use `ralph run --continue`.
+    /// Direct loop resume is not yet supported; use `ralph run --continue`.
     #[command(hide = true)]
     Resume,
 
@@ -1730,7 +1730,7 @@ fn clear_restart_request_signal(workspace_root: &std::path::Path) {
 
 fn resume_command() -> Result<()> {
     anyhow::bail!(
-        "native engine resume is not yet supported (tracked #344); use `ralph run --continue` to continue coordination state, or `autoloop resume <run-id>` directly"
+        "direct loop resume is not yet supported (tracked #344); use `ralph run --continue` to continue Ralph coordination state. Advanced escape hatch: `autoloop resume <run-id>` resumes the engine directly"
     )
 }
 
