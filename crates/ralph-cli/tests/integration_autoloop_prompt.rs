@@ -1,11 +1,14 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nix::sys::signal::{Signal, kill, killpg};
+use nix::unistd::Pid;
 use ralph_core::{
     HistoryEventType, LoopEntry, LoopHistory, LoopLock, LoopRegistry, MergeQueue, MergeState, Task,
     testing::fake_autoloop::{FakeAutoloop, build_fake_autoloop},
@@ -38,6 +41,8 @@ struct Harness {
     fake_autoloop: FakeAutoloop,
     crash_ready: PathBuf,
     crash_release: PathBuf,
+    restart_ready: PathBuf,
+    restart_release: PathBuf,
 }
 
 impl Harness {
@@ -103,12 +108,16 @@ impl Harness {
 
         let crash_ready = workspace.path().join("autoloop-crash-ready");
         let crash_release = workspace.path().join("autoloop-crash-release");
+        let restart_ready = workspace.path().join("autoloop-restart-ready");
+        let restart_release = workspace.path().join("autoloop-restart-release");
         Self {
             workspace,
             home,
             fake_autoloop,
             crash_ready,
             crash_release,
+            restart_ready,
+            restart_release,
         }
     }
 
@@ -220,6 +229,35 @@ fn assert_success(output: &Output) {
     );
 }
 
+fn kill_process_group(pid: u32) {
+    let pid = Pid::from_raw(pid.try_into().expect("Ralph PID fits i32"));
+    if let Err(error) = killpg(pid, Signal::SIGKILL) {
+        assert_eq!(
+            error,
+            nix::errno::Errno::ESRCH,
+            "failed to clean Ralph process group"
+        );
+    }
+}
+
+fn wait_for_barrier(child: &mut Child, ready: &Path, label: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        if let Some(status) = child.try_wait().expect("poll ralph") {
+            kill_process_group(child.id());
+            panic!("ralph exited before {label} barrier: {status}");
+        }
+        if Instant::now() >= deadline {
+            let pid = child.id();
+            let _ = child.kill();
+            let _ = child.wait();
+            kill_process_group(pid);
+            panic!("timed out waiting for {label} barrier");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn assert_recorded_prompt(harness: &Harness, expected: &str) {
     let argv = harness.recorded_argv();
     assert!(argv.len() >= 3, "unexpected autoloop argv: {argv:?}");
@@ -313,6 +351,93 @@ fn crash_runs_completion_coordination() {
     let reacquired_lock = LoopLock::try_acquire(harness.workspace.path(), "post-crash probe")
         .expect("primary loop lock should be reacquirable after ralph exits");
     drop(reacquired_lock);
+}
+
+#[test]
+fn interrupted_loop_lock_not_stuck() {
+    let harness = Harness::new(None);
+
+    let mut first_command = harness.command(&["-p", "first blocked run"]);
+    first_command
+        .process_group(0)
+        .env("CRASH_READY", &harness.crash_ready)
+        .env("CRASH_RELEASE", &harness.crash_release)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut first = first_command.spawn().expect("spawn first ralph");
+    let first_pid = first.id();
+    wait_for_barrier(&mut first, &harness.crash_ready, "first run");
+
+    let first_metadata =
+        LoopLock::read_existing(harness.workspace.path()).expect("read first lock metadata");
+    let first_locked = LoopLock::is_locked(harness.workspace.path()).expect("probe first lock");
+
+    let first_process = Pid::from_raw(first_pid.try_into().expect("Ralph PID fits i32"));
+    kill(first_process, Signal::SIGKILL).expect("SIGKILL first Ralph process");
+    let first_status = first.wait().expect("reap SIGKILLed Ralph process");
+    assert!(
+        !first_status.success(),
+        "SIGKILLed Ralph process unexpectedly succeeded"
+    );
+    // Ralph's fake-autoloop child is deliberately left no release path. Kill the
+    // remaining process group after Ralph is reaped so it cannot leak from the test.
+    kill_process_group(first_pid);
+
+    let first_metadata = first_metadata.unwrap_or_else(|| {
+        panic!(
+            "first run should create lock metadata; fake argv: {:?}",
+            harness.recorded_argv()
+        )
+    });
+    assert_eq!(
+        first_metadata.pid, first_pid,
+        "first lock metadata must identify the Ralph process"
+    );
+    assert!(
+        first_locked,
+        "first Ralph process should hold the loop lock"
+    );
+
+    let mut second_command = harness.command(&["-p", "replacement run"]);
+    second_command
+        .process_group(0)
+        .env("CRASH_READY", &harness.restart_ready)
+        .env("CRASH_RELEASE", &harness.restart_release);
+    let mut second = second_command.spawn().expect("spawn replacement ralph");
+    wait_for_barrier(&mut second, &harness.restart_ready, "replacement run");
+
+    let second_pid = second.id();
+    let second_metadata =
+        LoopLock::read_existing(harness.workspace.path()).expect("read replacement lock metadata");
+    let second_locked =
+        LoopLock::is_locked(harness.workspace.path()).expect("probe replacement lock");
+
+    fs::write(&harness.restart_release, "release\n").expect("release replacement fake autoloop");
+    let second_output = second
+        .wait_with_output()
+        .expect("wait for replacement Ralph");
+    assert_success(&second_output);
+
+    let second_metadata = second_metadata.expect("replacement run should rewrite lock metadata");
+    assert_eq!(
+        second_metadata.pid, second_pid,
+        "replacement run must overwrite stale metadata with its Ralph PID"
+    );
+    assert_ne!(
+        second_metadata.pid, first_metadata.pid,
+        "replacement run must not retain stale PID metadata"
+    );
+    assert!(
+        second_locked,
+        "replacement Ralph process should hold the loop lock"
+    );
+    assert!(
+        !LoopLock::is_locked(harness.workspace.path()).expect("probe released lock"),
+        "loop lock remained held after replacement run completed"
+    );
+    let reacquired = LoopLock::try_acquire(harness.workspace.path(), "post-SIGKILL probe")
+        .expect("loop lock should be reacquirable after replacement run");
+    drop(reacquired);
 }
 
 #[test]
