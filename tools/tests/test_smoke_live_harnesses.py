@@ -251,22 +251,35 @@ class FakeRunnerIntegration(unittest.TestCase):
 
 class PromptProbeContract(unittest.TestCase):
     @staticmethod
-    def command_for(name: str) -> str:
-        prompt = (PRESET / "roles" / f"{name}.md").read_text(encoding="utf-8")
-        match = re.search(r"```sh\n(.*?)\n```", prompt, re.DOTALL)
+    def harness() -> str:
+        return (PRESET / "harness.md").read_text(encoding="utf-8")
+
+    @classmethod
+    def command_for(cls, name: str) -> str:
+        match = re.search(
+            rf"- Ordinary probe: `([^`\n]*HARNESS_SMOKE:{re.escape(name)}[^`\n]*)`",
+            cls.harness(),
+        )
         if match is None:
-            raise AssertionError(f"missing shell probe in {name} prompt")
+            raise AssertionError(f"missing ordinary probe in shared harness for {name}")
         return match.group(1)
 
-    def test_fixed_probes_use_the_sole_provider_visible_run_directory(self) -> None:
+    def test_fixed_probes_use_the_rendered_run_state_directory(self) -> None:
+        harness = self.harness()
+        self.assertNotIn("AUTOLOOP_STATE_DIR", harness)
+        for name, _kind, _command, handoff in BACKENDS:
+            self.assertIn(
+                f'{{{{TOOL_PATH}}}} emit {handoff} "HARNESS_OK:{name}:HARNESS_SMOKE:{name}"',
+                harness,
+            )
+
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
             run_dir = workspace / ".autoloop/runs/live-smoke"
             run_dir.mkdir(parents=True)
 
             for name, *_ in BACKENDS:
-                command = self.command_for(name)
-                self.assertNotIn("AUTOLOOP_STATE_DIR", command)
+                command = self.command_for(name).replace("{{STATE_DIR}}", str(run_dir))
                 result = subprocess.run(
                     ["/bin/sh", "-c", command],
                     cwd=workspace,
@@ -281,23 +294,19 @@ class PromptProbeContract(unittest.TestCase):
                 [f"HARNESS_SMOKE:{name}" for name, *_ in BACKENDS],
             )
 
-    def test_probe_fails_closed_without_exactly_one_run_directory(self) -> None:
-        command = self.command_for("claude")
-        for directory_count in (0, 2):
-            with self.subTest(directory_count=directory_count), tempfile.TemporaryDirectory() as temp:
-                workspace = Path(temp)
-                runs = workspace / ".autoloop/runs"
-                runs.mkdir(parents=True)
-                for index in range(directory_count):
-                    (runs / f"run-{index}").mkdir()
-                result = subprocess.run(
-                    ["/bin/sh", "-c", command],
-                    cwd=workspace,
-                    text=True,
-                    capture_output=True,
-                )
-                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(list(runs.glob("*/smoke-evidence.txt")), [])
+    def test_probe_fails_closed_when_rendered_run_directory_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            missing = workspace / ".autoloop/runs/missing"
+            command = self.command_for("claude").replace("{{STATE_DIR}}", str(missing))
+            result = subprocess.run(
+                ["/bin/sh", "-c", command],
+                cwd=workspace,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((missing / "smoke-evidence.txt").exists())
 
 
 class NativePresetSelectionIntegration(unittest.TestCase):
@@ -360,6 +369,16 @@ class NativePresetSelectionIntegration(unittest.TestCase):
                 self.assertEqual(fields["command"], str(guard))
                 self.assertEqual(fields.get("args", ""), expected_args[name])
                 self.assertEqual(fields["timeout_ms"], "300000")
+
+                run_dirs = [path for path in (work / ".autoloop/runs").iterdir() if path.is_dir()]
+                self.assertEqual(len(run_dirs), 1, result.stdout + result.stderr)
+                iteration_starts = [record for record in records if record["topic"] == "iteration.start"]
+                self.assertEqual(len(iteration_starts), 1, result.stdout + result.stderr)
+                rendered_prompt = iteration_starts[0]["fields"]["prompt"]
+                self.assertNotIn("{{STATE_DIR}}", rendered_prompt)
+                self.assertNotIn("{{TOOL_PATH}}", rendered_prompt)
+                self.assertIn(str(run_dirs[0] / "smoke-evidence.txt"), rendered_prompt)
+                self.assertIn(f"HARNESS_SMOKE:{name}", rendered_prompt)
 
 
 if __name__ == "__main__":
