@@ -35,9 +35,9 @@ use ralph_core::sanitize_tui_inline_text;
 /// iteration number to detect boundaries.
 #[derive(Debug, Default)]
 pub struct AutoloopMapCtx {
-    /// Display label for the active role, from the most recent
-    /// `iteration.banner.allowedRoles[0]`. `None` until the first banner.
-    role_label: Option<String>,
+    /// Display label announced for an iteration by
+    /// `iteration.banner.allowedRoles[0]`.
+    announced_role: Option<(u32, String)>,
     /// The iteration number of the most recently started iteration. Used to
     /// only reset/create a buffer when the number actually changes.
     current_iteration: Option<u32>,
@@ -61,11 +61,13 @@ impl AutoloopMapCtx {
         }
     }
 
-    /// The hat/role display label to attribute the current iteration to.
-    fn hat_display(&self) -> String {
-        self.role_label
-            .clone()
-            .unwrap_or_else(|| "autoloop".to_string())
+    /// The role display label to attribute to an iteration.
+    fn role_display_for_iteration(&self, iteration: u32) -> String {
+        self.announced_role
+            .as_ref()
+            .filter(|(announced_iteration, _)| *announced_iteration == iteration)
+            .map(|(_, label)| label.clone())
+            .unwrap_or_else(|| "working".to_string())
     }
 
     /// Maps an engine role ID to its configured display name, falling back to
@@ -111,15 +113,18 @@ pub fn apply_autoloop_event(
         }
 
         "iteration.banner" => {
-            if let Some(role_id) = event.allowed_roles.as_ref().and_then(|roles| roles.first()) {
+            if let (Some(iteration), Some(role_id)) = (
+                event.iteration,
+                event.allowed_roles.as_ref().and_then(|roles| roles.first()),
+            ) {
                 let role_label = ctx.role_display_name(role_id);
-                ctx.role_label = Some(role_label.clone());
+                ctx.announced_role = Some((iteration, role_label.clone()));
 
-                // autoloop emits iteration.start before iteration.banner. Fix
-                // the placeholder (or previous role) attached at start time
-                // without creating a second buffer. Banner-before-start also
-                // remains supported through ctx.role_label above.
-                if event.iteration == ctx.current_iteration {
+                // The usual event order is iteration.start before
+                // iteration.banner. Replace the neutral placeholder without
+                // creating a second buffer. Banner-before-start remains
+                // supported by retaining the announcement above.
+                if ctx.current_iteration == Some(iteration) {
                     s.set_latest_iteration_hat_display(role_label);
                 }
             }
@@ -135,11 +140,8 @@ pub fn apply_autoloop_event(
             let is_new = ctx.current_iteration != Some(iteration);
             if is_new {
                 ctx.current_iteration = Some(iteration);
-                let hat_display = ctx.hat_display();
-                s.start_new_iteration_with_metadata(
-                    Some(hat_display),
-                    Some("autoloop".to_string()),
-                );
+                let role_display = ctx.role_display_for_iteration(iteration);
+                s.start_new_iteration_with_metadata(Some(role_display), None);
                 s.iteration = iteration;
                 if let Some(max) = event.max_iterations {
                     s.max_iterations = Some(max);
@@ -437,6 +439,7 @@ fn is_terminal(event: &AutoloopEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
     use std::io::Write;
     use std::path::Path;
 
@@ -457,6 +460,23 @@ mod tests {
         lines.iter().map(|l| l.to_string()).collect()
     }
 
+    fn render_header(state: &TuiState) -> String {
+        let backend = TestBackend::new(80, 2);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(crate::widgets::header::render(state, 80), frame.area());
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
     #[test]
     fn iteration_start_sets_iteration_and_max() {
         let state = make_state();
@@ -472,9 +492,75 @@ mod tests {
         assert_eq!(s.total_iterations(), 1);
         assert_eq!(s.iteration, 2);
         assert_eq!(s.max_iterations, Some(7));
-        // Default role label before any progress event.
-        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("autoloop"));
-        assert_eq!(s.iterations[0].backend.as_deref(), Some("autoloop"));
+        // Neutral role label until the role announcement arrives.
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("working"));
+        assert_eq!(s.iterations[0].backend, None);
+    }
+
+    #[test]
+    fn start_before_banner_resolves_live_header_without_engine_suffix() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
+
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
+            &state,
+            &mut ctx,
+        );
+        {
+            let s = state.lock().unwrap();
+            assert_eq!(s.total_iterations(), 1);
+            assert_eq!(s.iterations[0].hat_display.as_deref(), Some("working"));
+            assert_eq!(s.iterations[0].backend, None);
+        }
+
+        apply_autoloop_event(
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"runId":"r1","allowedRoles":["planner"]}"#,
+            ),
+            &state,
+            &mut ctx,
+        );
+
+        let mut s = state.lock().unwrap();
+        s.following_latest = true;
+        assert_eq!(s.total_iterations(), 1);
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("planner"));
+        assert_eq!(s.iterations[0].backend, None);
+        let header = render_header(&s);
+        assert!(header.contains("planner"), "missing role in: {header}");
+        assert!(
+            header.contains("[LIVE]"),
+            "missing live marker in: {header}"
+        );
+        assert!(
+            !header.contains("@autoloop"),
+            "engine suffix leaked in: {header}"
+        );
+    }
+
+    #[test]
+    fn banner_before_start_uses_announced_role_without_duplicate_buffer() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new());
+
+        apply_autoloop_event(
+            &ev(
+                r#"{"type":"iteration.banner","iteration":1,"runId":"r1","allowedRoles":["planner"]}"#,
+            ),
+            &state,
+            &mut ctx,
+        );
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#),
+            &state,
+            &mut ctx,
+        );
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.total_iterations(), 1);
+        assert_eq!(s.iterations[0].hat_display.as_deref(), Some("planner"));
+        assert_eq!(s.iterations[0].backend, None);
     }
 
     #[test]
