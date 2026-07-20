@@ -1,11 +1,15 @@
 # ralph-telegram
 
-Telegram integration for human-in-the-loop orchestration in Ralph.
+> [!WARNING]
+> **Telegram HITL relay is INACTIVE under the v3 autoloop engine (pending
+> autoloop#345).** Bot setup, `status`, `test`, and the standalone daemon still
+> work, as do the daemon's informational bot commands. Agent questions are not
+> relayed to Telegram, and Telegram replies or proactive guidance are not
+> connected to running autoloop loops.
 
-Enables bidirectional communication between AI agents and humans during orchestration loops:
-
-- **AI to Human**: Agents emit `human.interact` events; the bot sends questions to Telegram
-- **Human to AI**: Humans reply or send proactive `human.guidance` via Telegram messages
+This crate retains Ralph's Telegram bot surfaces and the reserved design for
+human-in-the-loop orchestration. The relay design described below is not
+current v3 runtime behavior.
 
 ## Setup
 
@@ -47,57 +51,63 @@ export RALPH_TELEGRAM_API_URL="http://localhost:8081"
 
 Or use `RObot.telegram.api_url` in the config file. See the [Telegram guide](../../docs/guide/telegram.md#testing-with-a-mock-telegram-server) for a full walkthrough.
 
-### 3. Start a Loop
+### 3. Start the Standalone Bot Daemon
 
 ```bash
-ralph run -p "your prompt"
+ralph bot daemon
 ```
 
-When the bot starts, it sends a greeting message to your Telegram chat. The chat ID is auto-detected from the first message you send to the bot.
-
-## How It Works
+The daemon can send its greeting to a known Telegram chat and serve the
+supported commands below. It does not attach the relay to `ralph run`; enabling
+`RObot` for a run emits the inactivity warning shown above.
 
 ## Bot Commands
 
-Available commands while a loop is running:
+Available commands while the standalone daemon is running:
 
 - `/status` — current loop status
 - `/tasks` — open tasks
 - `/memories` — recent memories
-- `/tail` — last 20 events
+- `/tail` — last 20 retained events
 - `/model` — current backend/model (runtime or config fallback)
 - `/models` — configured model options found in `ralph*.yml`
-- `/restart` — restart the loop
-- `/stop` — stop the loop at the next iteration boundary
+- `/restart` — reports that restart is unsupported under the autoloop engine
+- `/stop` — reports that stop is unsupported under the autoloop engine
 - `/help` — list available commands
 
-### human.interact Flow
+## Reserved Relay Design (Not Current v3 Behavior)
 
-When an agent emits a `human.interact` event:
+### Reserved `human.interact` Flow
+
+The following is the reserved design pending autoloop#345; it does **not** run
+when an agent emits `human.interact` today:
 
 1. The bot sends the question to Telegram with context (hat name, iteration, loop ID)
-2. The event loop **blocks** waiting for a reply
+2. The event loop blocks waiting for a reply
 3. The human replies in Telegram
 4. The reply is published as a `human.response` event on the bus
 5. The next iteration receives the response in its context
 
-If no response arrives within `timeout_seconds`, the loop continues without a response.
+The reserved timeout behavior would continue the loop without a response when
+no reply arrives within `timeout_seconds`.
 
-### human.guidance Flow
+### Reserved `human.guidance` Flow
 
-Humans can send messages at any time (not as replies to questions):
+The retained design for proactive guidance is also inactive under autoloop:
 
-1. Message is written as a `human.guidance` event to `events.jsonl`
+1. A message is written as a `human.guidance` event to `events.jsonl`
 2. On the next iteration, guidance events are collected and squashed
 3. A `## ROBOT GUIDANCE` section is injected into the agent's prompt
 
-### Parallel Loop Routing
+### Reserved Parallel Loop Routing
 
-With multiple loops running, messages are routed by:
+The retained multi-loop routing design is:
 
 1. **Reply-to**: Replying to a bot question routes to the loop that asked it
 2. **@prefix**: Starting a message with `@loop-id` routes to that loop
 3. **Default**: Messages without routing go to the primary loop
+
+These routes do not connect Telegram messages to v3 autoloop runs today.
 
 ## Architecture
 
@@ -129,6 +139,6 @@ TelegramService (lifecycle management)
 ## Testing
 
 ```bash
-cargo test -p ralph-telegram     # 33 unit tests
-cargo test -p ralph-core human   # 11 integration tests in ralph-core
+cargo test -p ralph-telegram
+cargo test -p ralph-core human
 ```
