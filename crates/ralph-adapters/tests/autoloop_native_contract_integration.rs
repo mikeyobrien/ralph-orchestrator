@@ -232,11 +232,11 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
     let responder_work = work.clone();
     let responder = std::thread::spawn(move || {
         for _ in 0..200 {
-            if let Ok(content) = std::fs::read_to_string(&responder_events) {
-                if let Some(ask) = first_pending_ask(&parse_events(&content)) {
-                    deliver_respond(&responder_work, &ask.run_id, &ask.question_id, answer);
-                    return true;
-                }
+            if let Ok(content) = std::fs::read_to_string(&responder_events)
+                && let Some(ask) = first_pending_ask(&parse_events(&content))
+            {
+                deliver_respond(&responder_work, &ask.run_id, &ask.question_id, answer);
+                return true;
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }

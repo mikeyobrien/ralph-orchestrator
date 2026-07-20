@@ -178,10 +178,10 @@ impl BackendStreamTailer {
                 continue;
             };
             for parsed in parse_stream_line(format, line, &self.workspace_root, &self.run_dir) {
-                if let StreamLine::ToolSummary { identity, .. } = &parsed {
-                    if !self.remember_tool(identity.clone()) {
-                        continue;
-                    }
+                if let StreamLine::ToolSummary { identity, .. } = &parsed
+                    && !self.remember_tool(identity.clone())
+                {
+                    continue;
                 }
                 if useful_limit == 0 {
                     continue;
@@ -237,10 +237,10 @@ impl BackendStreamTailer {
         if self.seen_tool_ids.contains(&identity) {
             return false;
         }
-        if self.tool_id_order.len() == MAX_STREAM_LINES {
-            if let Some(expired) = self.tool_id_order.pop_front() {
-                self.seen_tool_ids.remove(&expired);
-            }
+        if self.tool_id_order.len() == MAX_STREAM_LINES
+            && let Some(expired) = self.tool_id_order.pop_front()
+        {
+            self.seen_tool_ids.remove(&expired);
         }
         self.seen_tool_ids.insert(identity.clone());
         self.tool_id_order.push_back(identity);

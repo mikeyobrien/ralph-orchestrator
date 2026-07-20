@@ -316,15 +316,6 @@ fn push_line(state: &mut TuiState, line: Line<'static>) {
     }
 }
 
-/// Pushes multiple lines into the latest iteration buffer, if one exists.
-fn push_lines(state: &mut TuiState, new_lines: Vec<Line<'static>>) {
-    if let Some(handle) = state.latest_iteration_lines_handle()
-        && let Ok(mut lines) = handle.lock()
-    {
-        lines.extend(new_lines);
-    }
-}
-
 /// Polls and renders provisional output from the active backend stream.
 fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
     let Some(tailer) = ctx.stream_tailer.as_mut() else {
