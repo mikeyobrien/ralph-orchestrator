@@ -229,13 +229,16 @@ impl AutoloopRunner {
         args
     }
 
-    /// A human-readable representation of the command, for error messages.
+    /// Privacy-safe invocation context for error messages.
+    ///
+    /// Arguments are deliberately omitted because they can contain prompts,
+    /// credentials, arbitrary overrides, and physical filesystem paths.
     fn command_display(&self) -> String {
-        let (program, _) = self.program_and_prefix();
-        let args = self.build_args();
-        let mut parts = vec![program];
-        parts.extend(args);
-        parts.join(" ")
+        match &self.bin {
+            AutoloopBin::PathLookup => "autoloop (PATH lookup): run".to_string(),
+            AutoloopBin::Node(_) => "Node-hosted autoloop: run".to_string(),
+            AutoloopBin::Explicit(_) => "configured autoloop executable: run".to_string(),
+        }
     }
 
     /// Spawns `autoloop run`, waits for it to finish, and parses the summary.
@@ -667,6 +670,107 @@ journal: /j
         assert_eq!(program, "node");
         let args = runner.build_args();
         assert_eq!(args, vec!["/checkout/bin/autoloop", "run", "/p", "x"]);
+    }
+
+    fn assert_no_sensitive_markers(rendered: &str) {
+        for secret in [
+            "/ABSOLUTE/",
+            "PROMPT_SECRET_MARKER",
+            "PRESET_SECRET_MARKER",
+            "WORKSPACE_SECRET_MARKER",
+            "SCRIPT_SECRET_MARKER",
+            "EXECUTABLE_SECRET_MARKER",
+            "BACKEND_CREDENTIAL_SECRET_MARKER",
+            "EVENTS_SECRET_MARKER",
+            "STATE_SECRET_MARKER",
+            "JOURNAL_SECRET_MARKER",
+            "MEMORY_SECRET_MARKER",
+            "TASKS_SECRET_MARKER",
+            "ARBITRARY_OVERRIDE_SECRET_MARKER",
+            "core.state_dir",
+            "core.journal_file",
+            "core.memory_file",
+            "core.tasks_file",
+            "arbitrary.secret",
+            "ACCESS_TOKEN_SECRET_KEY",
+            "TOKEN_CREDENTIAL_SECRET_MARKER",
+        ] {
+            assert!(!rendered.contains(secret), "diagnostic exposed {secret}");
+        }
+    }
+
+    #[test]
+    fn command_display_identifies_invocation_without_sensitive_arguments() {
+        let sensitive_runner = AutoloopRunner::new(
+            "/ABSOLUTE/PRESET_SECRET_MARKER",
+            "PROMPT_SECRET_MARKER do not expose",
+            "/ABSOLUTE/WORKSPACE_SECRET_MARKER",
+        )
+        .backend("BACKEND_CREDENTIAL_SECRET_MARKER")
+        .events_path("/ABSOLUTE/EVENTS_SECRET_MARKER.jsonl")
+        .set_override("core.state_dir", "/ABSOLUTE/STATE_SECRET_MARKER")
+        .set_override("core.journal_file", "/ABSOLUTE/JOURNAL_SECRET_MARKER")
+        .set_override("core.memory_file", "/ABSOLUTE/MEMORY_SECRET_MARKER")
+        .set_override("core.tasks_file", "/ABSOLUTE/TASKS_SECRET_MARKER")
+        .set_override("arbitrary.secret", "ARBITRARY_OVERRIDE_SECRET_MARKER")
+        .env("ACCESS_TOKEN_SECRET_KEY", "TOKEN_CREDENTIAL_SECRET_MARKER");
+
+        let displays = [
+            sensitive_runner.command_display(),
+            sensitive_runner
+                .clone()
+                .bin(AutoloopBin::Node(PathBuf::from(
+                    "/ABSOLUTE/SCRIPT_SECRET_MARKER",
+                )))
+                .command_display(),
+            sensitive_runner
+                .bin(AutoloopBin::Explicit(PathBuf::from(
+                    "/ABSOLUTE/EXECUTABLE_SECRET_MARKER",
+                )))
+                .command_display(),
+        ];
+        assert_eq!(
+            displays,
+            [
+                "autoloop (PATH lookup): run",
+                "Node-hosted autoloop: run",
+                "configured autoloop executable: run",
+            ]
+        );
+        for display in &displays {
+            assert_no_sensitive_markers(display);
+        }
+    }
+
+    #[test]
+    fn spawn_error_excludes_sensitive_arguments_and_paths() {
+        let work = tempfile::tempdir().expect("temp working directory");
+        let nonexistent_executable = work.path().join("EXECUTABLE_SECRET_MARKER");
+        let runner = AutoloopRunner::new(
+            work.path().join("PRESET_SECRET_MARKER"),
+            "PROMPT_SECRET_MARKER do not expose",
+            work.path(),
+        )
+        .bin(AutoloopBin::Explicit(nonexistent_executable))
+        .backend("BACKEND_CREDENTIAL_SECRET_MARKER")
+        .events_path(work.path().join("EVENTS_SECRET_MARKER.jsonl"))
+        .set_override("core.state_dir", "STATE_SECRET_MARKER")
+        .set_override("core.journal_file", "JOURNAL_SECRET_MARKER")
+        .set_override("core.memory_file", "MEMORY_SECRET_MARKER")
+        .set_override("core.tasks_file", "TASKS_SECRET_MARKER")
+        .set_override("arbitrary.secret", "ARBITRARY_OVERRIDE_SECRET_MARKER")
+        .env("ACCESS_TOKEN_SECRET_KEY", "TOKEN_CREDENTIAL_SECRET_MARKER");
+
+        let error = runner
+            .spawn()
+            .expect_err("nonexistent executable must fail");
+        let rendered = error.to_string();
+        assert!(rendered.contains("configured autoloop executable: run"));
+        assert_no_sensitive_markers(&rendered);
+        assert!(
+            !rendered.contains(&work.path().to_string_lossy().into_owned()),
+            "spawn error exposed the absolute working directory"
+        );
     }
 
     #[test]
