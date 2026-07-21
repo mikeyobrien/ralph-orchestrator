@@ -11,6 +11,8 @@ use tempfile::TempDir;
 
 const SECRET_PROMPT: &str = "PROMPT_SECRET_NEVER_RENDER_7f6c2a";
 const SECRET_STATE_PATH: &str = "/ABSOLUTE_SECRET_STATE";
+const SECRET_STDERR: &str = "RAW_CHILD_STDERR_SECRET_4de9b1";
+const SECRET_STDOUT: &str = "RAW_CHILD_STDOUT_SECRET_1a2b3c";
 const RALPH_YML: &str = r#"
 core:
   engine: autoloop
@@ -98,8 +100,9 @@ impl Harness {
         self.workspace.path().join(".ralph/autoloop")
     }
 
-    fn run(&self) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_ralph"))
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ralph"));
+        command
             .args([
                 "--color",
                 "never",
@@ -123,9 +126,19 @@ impl Harness {
             .env_remove("RALPH_DIAGNOSTICS")
             .env_remove("RALPH_WORKSPACE_ROOT")
             .env_remove("RALPH_MERGE_LOOP_ID")
-            .env_remove("JOURNAL_OUT")
+            .env_remove("JOURNAL_OUT");
+        command
+    }
+
+    fn run(&self) -> Output {
+        self.command().output().expect("run ralph")
+    }
+
+    fn run_with_diagnostics(&self) -> Output {
+        self.command()
+            .env("RALPH_DIAGNOSTICS", "1")
             .output()
-            .expect("run ralph")
+            .expect("run ralph with diagnostics")
     }
 
     fn assert_fail_closed(&self, output: &Output) {
@@ -179,9 +192,25 @@ impl Harness {
 }
 
 fn invocation(events: Vec<&str>, exit: i32, with_summary: bool) -> Value {
+    invocation_with_raw_output(events, exit, with_summary, None, None)
+}
+
+fn invocation_with_raw_output(
+    events: Vec<&str>,
+    exit: i32,
+    with_summary: bool,
+    stdout: Option<&str>,
+    stderr: Option<&str>,
+) -> Value {
     let mut steps = vec![
         json!({"journal": ["{\"run\":\"local-fixture\",\"topic\":\"loop.start\",\"fields\":{}}"]}),
     ];
+    if let Some(stdout) = stdout {
+        steps.push(json!({"stdout": [stdout]}));
+    }
+    if let Some(stderr) = stderr {
+        steps.push(json!({"stderr": [stderr]}));
+    }
     if !events.is_empty() {
         steps.push(json!({"events": events}));
     }
@@ -214,6 +243,22 @@ fn run_git(cwd: &Path, args: &[&str]) {
     );
 }
 
+fn all_file_contents(root: &Path) -> String {
+    let mut contents = String::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return contents;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            contents.push_str(&all_file_contents(&path));
+        } else if let Ok(file) = fs::read_to_string(path) {
+            contents.push_str(&file);
+        }
+    }
+    contents
+}
+
 fn combined_output(output: &Output) -> String {
     format!(
         "{}{}",
@@ -230,7 +275,7 @@ fn nonzero_engine_exit_keeps_state_owned_and_output_private() {
     let output_text = combined_output(&output);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        output_text.contains("autoloop exited with code Some(23)"),
+        output_text.contains("autoloop (PATH lookup): run failed (exit code Some(23))"),
         "non-zero process failure was not reported:\n{output_text}"
     );
     harness.assert_fail_closed(&output);
@@ -259,6 +304,32 @@ fn explicit_engine_error_detail_wins_over_malformed_event_fallback() {
         !output_text.contains("malformed JSONL"),
         "malformed-event fallback overrode the explicit engine error:\n{output_text}"
     );
+    harness.assert_fail_closed(&output);
+}
+
+#[test]
+fn nonzero_raw_stdout_and_stderr_are_redacted_from_output_and_tracing() {
+    let harness = Harness::new(invocation_with_raw_output(
+        Vec::new(),
+        41,
+        false,
+        Some(&format!("{SECRET_STDOUT} {SECRET_STATE_PATH}")),
+        Some(&format!(
+            "[autoloops] [error] {SECRET_STDERR} {SECRET_STATE_PATH}"
+        )),
+    ));
+    let output = harness.run_with_diagnostics();
+    let output_text = combined_output(&output);
+    let diagnostics = all_file_contents(&harness.workspace.path().join(".ralph/diagnostics"));
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output_text.contains("autoloop (PATH lookup): run failed (exit code Some(41))"));
+    // Raw child stdout AND stderr are untrusted on a non-zero exit: neither the
+    // generic error, the rendered output, nor the diagnostic tracing may leak them.
+    for secret in [SECRET_STDOUT, SECRET_STDERR, SECRET_STATE_PATH] {
+        assert!(!output_text.contains(secret), "output exposed {secret}");
+        assert!(!diagnostics.contains(secret), "tracing exposed {secret}");
+    }
     harness.assert_fail_closed(&output);
 }
 

@@ -33,9 +33,6 @@ use std::process::{Child, Command, Stdio};
 
 use thiserror::Error;
 
-/// Maximum number of trailing stderr bytes captured in error messages.
-const STDERR_TAIL_BYTES: usize = 4096;
-
 /// A parsed `autoloops summary` block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AutoloopRunSummary {
@@ -67,13 +64,13 @@ pub enum AutoloopRunError {
         source: std::io::Error,
     },
 
-    /// The process exited non-zero. Captures the exit code and a tail of stderr.
-    #[error("autoloop exited with code {code:?}; stderr tail:\n{stderr_tail}")]
+    /// The process exited non-zero.
+    #[error("{command} failed (exit code {code:?}); verify the engine configuration and retry")]
     NonZeroExit {
+        /// Privacy-safe executable and action description.
+        command: String,
         /// The process exit code, if available.
         code: Option<i32>,
-        /// The last bytes of stderr, for diagnostics.
-        stderr_tail: String,
     },
 
     /// The process succeeded but stdout did not contain a parseable summary block.
@@ -313,23 +310,22 @@ impl AutoloopRunner {
                 source,
             })?;
 
-        self.summary_from_output(output.status, &output.stdout, &output.stderr)
+        self.summary_from_output(output.status, &output.stdout)
     }
 
-    /// Waits for a spawned child while forwarding each stderr line to `on_line`.
+    /// Waits for a spawned child while notifying `on_diagnostic` for each stderr line.
     ///
     /// The callback runs on a dedicated blocking reader thread so stderr is
-    /// drained live without risking a full child pipe. stdout remains captured
-    /// and is used only for summary parsing. The trailing stderr bytes are kept
-    /// for [`AutoloopRunError::NonZeroExit`], preserving [`Self::run`]'s error
-    /// contract while allowing a headless frontend to surface verbose logs.
+    /// drained live without risking a full child pipe. Raw child text never
+    /// crosses the callback contract. stdout remains captured and is used only
+    /// for summary parsing.
     pub fn wait_with_summary_streaming_stderr<F>(
         &self,
         mut child: Child,
-        on_line: F,
+        on_diagnostic: F,
     ) -> Result<AutoloopRunSummary, AutoloopRunError>
     where
-        F: FnMut(&str) + Send + 'static,
+        F: FnMut() + Send + 'static,
     {
         let stderr = child.stderr.take().ok_or_else(|| AutoloopRunError::Spawn {
             command: self.command_display(),
@@ -338,7 +334,7 @@ impl AutoloopRunner {
                 "spawned autoloop child has no piped stderr",
             ),
         })?;
-        let stderr_reader = std::thread::spawn(move || read_stderr(stderr, on_line));
+        let stderr_reader = std::thread::spawn(move || read_stderr(stderr, on_diagnostic));
 
         // With stderr taken by the reader thread, wait_with_output drains only
         // stdout. Both pipes are therefore consumed concurrently.
@@ -348,7 +344,7 @@ impl AutoloopRunner {
                 command: self.command_display(),
                 source,
             });
-        let stderr_tail = stderr_reader
+        stderr_reader
             .join()
             .map_err(|_| AutoloopRunError::Spawn {
                 command: self.command_display(),
@@ -360,19 +356,18 @@ impl AutoloopRunner {
             })?;
         let output = output_result?;
 
-        self.summary_from_output(output.status, &output.stdout, &stderr_tail)
+        self.summary_from_output(output.status, &output.stdout)
     }
 
     fn summary_from_output(
         &self,
         status: std::process::ExitStatus,
         stdout: &[u8],
-        stderr: &[u8],
     ) -> Result<AutoloopRunSummary, AutoloopRunError> {
         if !status.success() {
             return Err(AutoloopRunError::NonZeroExit {
+                command: self.command_display(),
                 code: status.code(),
-                stderr_tail: stderr_tail(stderr),
             });
         }
 
@@ -381,15 +376,14 @@ impl AutoloopRunner {
     }
 }
 
-/// Drains stderr line-by-line, forwarding text while retaining only its tail.
-fn read_stderr<R, F>(stderr: R, mut on_line: F) -> std::io::Result<Vec<u8>>
+/// Drains stderr line-by-line without exposing child text to the callback.
+fn read_stderr<R, F>(stderr: R, mut on_diagnostic: F) -> std::io::Result<()>
 where
     R: Read,
-    F: FnMut(&str),
+    F: FnMut(),
 {
     let mut reader = BufReader::new(stderr);
     let mut line = Vec::new();
-    let mut tail = Vec::new();
 
     loop {
         line.clear();
@@ -397,35 +391,10 @@ where
             break;
         }
 
-        let text = String::from_utf8_lossy(&line);
-        on_line(text.trim_end_matches(['\r', '\n']));
-        append_stderr_tail(&mut tail, &line);
+        on_diagnostic();
     }
 
-    Ok(tail)
-}
-
-fn append_stderr_tail(tail: &mut Vec<u8>, bytes: &[u8]) {
-    if bytes.len() >= STDERR_TAIL_BYTES {
-        tail.clear();
-        tail.extend_from_slice(&bytes[bytes.len() - STDERR_TAIL_BYTES..]);
-        return;
-    }
-
-    let overflow = tail
-        .len()
-        .saturating_add(bytes.len())
-        .saturating_sub(STDERR_TAIL_BYTES);
-    if overflow > 0 {
-        tail.drain(..overflow);
-    }
-    tail.extend_from_slice(bytes);
-}
-
-/// Returns a UTF-8 tail of `bytes`, at most [`STDERR_TAIL_BYTES`] long.
-fn stderr_tail(bytes: &[u8]) -> String {
-    let start = bytes.len().saturating_sub(STDERR_TAIL_BYTES);
-    String::from_utf8_lossy(&bytes[start..]).into_owned()
+    Ok(())
 }
 
 /// Parses an `autoloops summary` block out of arbitrary stdout.
@@ -511,25 +480,13 @@ memory: /tmp/work/.autoloop/memory.jsonl
 ";
 
     #[test]
-    fn stderr_reader_forwards_lines_and_retains_bounded_tail() {
-        let long_line = format!("{}\n", "x".repeat(STDERR_TAIL_BYTES));
-        let input = format!("first\r\n{long_line}last-without-newline");
-        let mut lines = Vec::new();
+    fn stderr_reader_notifies_without_forwarding_child_text() {
+        let input = "first\r\nsecond\nlast-without-newline";
+        let mut notifications = 0;
 
-        let tail = read_stderr(input.as_bytes(), |line| lines.push(line.to_string()))
-            .expect("stderr should be readable");
+        read_stderr(input.as_bytes(), || notifications += 1).expect("stderr should be readable");
 
-        assert_eq!(
-            lines,
-            vec![
-                "first".to_string(),
-                "x".repeat(STDERR_TAIL_BYTES),
-                "last-without-newline".to_string(),
-            ]
-        );
-        assert_eq!(tail.len(), STDERR_TAIL_BYTES);
-        assert!(String::from_utf8_lossy(&tail).ends_with("last-without-newline"));
-        assert!(!String::from_utf8_lossy(&tail).contains("first"));
+        assert_eq!(notifications, 3);
     }
 
     #[test]

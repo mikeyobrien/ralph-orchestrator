@@ -667,29 +667,11 @@ fn print_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) {
     let _ = std::io::stdout().flush();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EngineLogLevel {
-    Error,
-    Warn,
-    Debug,
-}
-
-fn engine_log_level(line: &str) -> EngineLogLevel {
-    if line.contains("[error]") {
-        EngineLogLevel::Error
-    } else if line.contains("[warn]") {
-        EngineLogLevel::Warn
-    } else {
-        EngineLogLevel::Debug
-    }
-}
-
-fn trace_engine_stderr_line(line: &str) {
-    match engine_log_level(line) {
-        EngineLogLevel::Error => tracing::error!(target: "autoloop::engine", "{line}"),
-        EngineLogLevel::Warn => tracing::warn!(target: "autoloop::engine", "{line}"),
-        EngineLogLevel::Debug => tracing::debug!(target: "autoloop::engine", "{line}"),
-    }
+fn trace_engine_diagnostic() {
+    tracing::debug!(
+        target: "autoloop::engine",
+        "Autoloop emitted diagnostic output"
+    );
 }
 
 /// Run autoloop headlessly while live-tailing its structured event stream.
@@ -752,7 +734,7 @@ async fn run_autoloop_headless(
 
     let wait_handle = tokio::spawn(async move {
         let summary = tokio::task::spawn_blocking(move || {
-            runner.wait_with_summary_streaming_stderr(child, trace_engine_stderr_line)
+            runner.wait_with_summary_streaming_stderr(child, trace_engine_diagnostic)
         })
         .await
         .context("autoloop wait task panicked")
@@ -998,8 +980,8 @@ mod tests {
 
     fn nonzero_exit(code: Option<i32>) -> anyhow::Error {
         anyhow::Error::new(AutoloopRunError::NonZeroExit {
+            command: "autoloop (PATH lookup): run".to_string(),
             code,
-            stderr_tail: "test stderr".to_string(),
         })
         .context("autoloop run failed")
     }
@@ -1013,26 +995,6 @@ mod tests {
             journal: PathBuf::from("/tmp/journal.jsonl"),
             memory: PathBuf::from("/tmp/memory.jsonl"),
         }
-    }
-
-    #[test]
-    fn engine_stderr_lines_map_to_user_visible_severity() {
-        assert_eq!(
-            engine_log_level("[autoloops] [error] backend failed"),
-            EngineLogLevel::Error
-        );
-        assert_eq!(
-            engine_log_level("[autoloops] [warn] retrying"),
-            EngineLogLevel::Warn
-        );
-        assert_eq!(
-            engine_log_level("[autoloops] [info] started"),
-            EngineLogLevel::Debug
-        );
-        assert_eq!(
-            engine_log_level("unclassified engine output"),
-            EngineLogLevel::Debug
-        );
     }
 
     #[test]
