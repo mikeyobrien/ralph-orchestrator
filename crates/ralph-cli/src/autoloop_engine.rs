@@ -171,6 +171,18 @@ fn is_kill_exit(error: &anyhow::Error) -> bool {
     )
 }
 
+/// The Ralph-owned engine state root, absolutized for export to the child.
+fn absolute_engine_state_root(workspace: &Path) -> Result<PathBuf> {
+    let root = ralph_core::engine_state::engine_state_root(workspace);
+    if root.is_absolute() {
+        Ok(root)
+    } else {
+        Ok(std::env::current_dir()
+            .context("resolving the current directory for the engine state root")?
+            .join(root))
+    }
+}
+
 /// Resolve `p` against `workspace` when relative.
 fn resolve(workspace: &Path, p: &str) -> PathBuf {
     let path = PathBuf::from(p);
@@ -378,9 +390,26 @@ pub async fn run_autoloop_engine(
         "engine=autoloop: driving the autoloop runtime as a subprocess"
     );
 
+    // Ralph owns the engine's runtime state: root it beneath .ralph/ via the
+    // supported AUTOLOOP_STATE_DIR contract. The env var takes precedence over
+    // any core.state_dir a preset may declare, so both generated and explicit
+    // presets run with the Ralph-owned root. Exported absolute so the child's
+    // working-directory handling can never re-anchor it.
+    let engine_state_root = absolute_engine_state_root(&workspace)?;
+    std::fs::create_dir_all(&engine_state_root).with_context(|| {
+        format!(
+            "creating the engine state directory {}",
+            engine_state_root.display()
+        )
+    })?;
+
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
-        .events_path(events_path.clone());
+        .events_path(events_path.clone())
+        .env(
+            "AUTOLOOP_STATE_DIR",
+            engine_state_root.to_string_lossy().into_owned(),
+        );
     if explicit_preset {
         for (key, value) in crate::autoloop_preset_gen::autoloop_budget_overrides(&config) {
             runner = runner.set_override(key, &value);
@@ -396,6 +425,7 @@ pub async fn run_autoloop_engine(
             runner,
             events_path.clone(),
             workspace.clone(),
+            engine_state_root.clone(),
             role_display_names,
         )
         .await
@@ -757,6 +787,7 @@ async fn run_autoloop_with_tui(
     runner: AutoloopRunner,
     events_path: PathBuf,
     workspace: PathBuf,
+    engine_state_root: PathBuf,
     role_display_names: HashMap<String, String>,
 ) -> Result<AutoloopOutcome> {
     use ralph_tui::Tui;
@@ -791,6 +822,7 @@ async fn run_autoloop_with_tui(
             ralph_tui::run_autoloop_event_reader(
                 events_path,
                 workspace,
+                engine_state_root,
                 reader_state,
                 cancel_rx,
                 role_display_names,
@@ -831,11 +863,11 @@ async fn run_autoloop_with_tui(
     // If the subprocess is still running (user quit via q or Ctrl+C — neither
     // exits autoloop), stop the whole process group so the backend isn't
     // orphaned. No-op if the run already completed naturally.
-    let killed_by_ralph = if !completed.load(Ordering::SeqCst) {
+    let killed_by_ralph = if completed.load(Ordering::SeqCst) {
+        false
+    } else {
         kill_autoloop_group(child_pid);
         true
-    } else {
-        false
     };
     // Ensure the reader does its final drain even if the TUI exited first (q).
     let _ = terminated_tx.send(true);

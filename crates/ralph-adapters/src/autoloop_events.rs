@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(result.run_id, "r1");
         assert_eq!(result.iterations, 2);
         assert_eq!(result.stop_reason, "max_iterations");
-        assert_eq!(result.cost_usd, 0.08);
+        assert!((result.cost_usd - 0.08).abs() < f64::EPSILON);
     }
 
     #[test]

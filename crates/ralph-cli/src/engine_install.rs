@@ -136,13 +136,12 @@ fn verify_checksum(artifact_path: &Path, checksums_path: &Path, artifact: &str) 
     })?;
     let expected = manifest
         .lines()
-        .filter_map(|line| {
+        .find_map(|line| {
             let mut fields = line.split_whitespace();
             let checksum = fields.next()?;
             let name = fields.next()?.trim_start_matches('*');
             (name == artifact).then_some(checksum)
         })
-        .next()
         .ok_or_else(|| anyhow!("checksum manifest does not contain an entry for {artifact}"))?;
 
     if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {

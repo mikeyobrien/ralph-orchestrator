@@ -606,13 +606,13 @@ hats:
     #[test]
     fn writes_normalized_v2_budgets_with_autoloop_keys_and_units() {
         let cfg: RalphConfig = serde_yaml::from_str(
-            r#"
+            r"
 event_loop:
   max_iterations: 9
   max_runtime_seconds: 12
   max_cost_usd: 3.5
   max_consecutive_failures: 2
-"#,
+",
         )
         .expect("valid v2 config");
         let dir = tempfile::tempdir().unwrap();
@@ -629,10 +629,10 @@ event_loop:
     #[test]
     fn writes_v1_budget_aliases_after_normalization() {
         let mut cfg: RalphConfig = serde_yaml::from_str(
-            r#"
+            r"
 max_runtime: 8
 max_cost: 1.25
-"#,
+",
         )
         .expect("valid v1 config");
         cfg.normalize();

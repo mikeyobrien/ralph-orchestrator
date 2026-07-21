@@ -15,6 +15,7 @@ pub mod autoloop_health;
 mod cli_capture;
 mod config;
 pub mod diagnostics;
+pub mod engine_state;
 mod event_logger;
 mod event_parser;
 mod event_reader;
@@ -66,6 +67,7 @@ pub use config::{
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
+pub use engine_state::{engine_run_dir, engine_state_root};
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};

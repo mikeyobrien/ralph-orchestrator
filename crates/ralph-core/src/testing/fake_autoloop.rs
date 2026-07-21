@@ -238,7 +238,7 @@ fn invocation_script(
                 write_lines(&payload, &step.stream.lines)?;
                 script.push_str(&format!(
                     "stream_path={}\nmkdir -p \"$(dirname \"$stream_path\")\"\ncat {} >> \"$stream_path\"\n",
-                    shell_quote(&step.stream.path),
+                    stream_path_expr(&step.stream.path),
                     shell_quote(&payload),
                 ));
             }
@@ -262,7 +262,7 @@ fn invocation_script(
                     "invocation-{invocation_index}-step-{payload_index}-journal"
                 ));
                 write_lines(&payload, &step.journal)?;
-                script.push_str("journal_path=${JOURNAL_OUT:-./.autoloop/journal.jsonl}\nmkdir -p \"$(dirname \"$journal_path\")\"\n");
+                script.push_str("journal_path=${JOURNAL_OUT:-${AUTOLOOP_STATE_DIR:-./.autoloop}/journal.jsonl}\nmkdir -p \"$(dirname \"$journal_path\")\"\n");
                 script.push_str(&format!(
                     "cat {} >> \"$journal_path\"\n",
                     shell_quote(&payload)
@@ -337,6 +337,20 @@ fn validate_env_name(name: &str) -> io::Result<()> {
     }
 }
 
+/// Shell expression for a stream path. A `${AUTOLOOP_STATE_DIR}/` prefix
+/// expands at runtime like the real engine's state-dir contract: the env var
+/// wins, with autoloop's standalone `.autoloop` default as the fallback.
+fn stream_path_expr(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    match raw.strip_prefix("${AUTOLOOP_STATE_DIR}/") {
+        Some(suffix) => format!(
+            "\"${{AUTOLOOP_STATE_DIR:-./.autoloop}}\"/{}",
+            shell_quote(Path::new(suffix))
+        ),
+        None => shell_quote(path),
+    }
+}
+
 fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
 }
@@ -364,6 +378,8 @@ mod tests {
     fn command(fake: &FakeAutoloop) -> Command {
         let mut command = Command::new(fake.bin_dir().join("autoloop"));
         command.env("ARGV_OUT", fake.argv_out());
+        // Isolate from any ambient engine state configuration.
+        command.env_remove("AUTOLOOP_STATE_DIR");
         command
     }
 
@@ -414,6 +430,89 @@ mod tests {
         assert_eq!(
             fs::read_to_string(workspace.join(".autoloop/runs/live/pi-stream.1.jsonl")).unwrap(),
             "{\"type\":\"one\"}\n{\"type\":\"two\"}\n"
+        );
+    }
+
+    #[test]
+    fn state_dir_env_relocates_tokenized_stream_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"stream":{"path":"${AUTOLOOP_STATE_DIR}/runs/live/pi-stream.1.jsonl","lines":["{\"type\":\"one\"}"]}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let state_dir = workspace.join(".ralph/autoloop");
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .env("AUTOLOOP_STATE_DIR", &state_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(state_dir.join("runs/live/pi-stream.1.jsonl")).unwrap(),
+            "{\"type\":\"one\"}\n"
+        );
+        assert!(
+            !workspace.join(".autoloop").exists(),
+            "state-dir override must not leave a top-level .autoloop"
+        );
+    }
+
+    #[test]
+    fn tokenized_stream_paths_default_to_standalone_state_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"stream":{"path":"${AUTOLOOP_STATE_DIR}/runs/live/pi-stream.1.jsonl","lines":["{\"type\":\"one\"}"]}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .env_remove("AUTOLOOP_STATE_DIR")
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join(".autoloop/runs/live/pi-stream.1.jsonl")).unwrap(),
+            "{\"type\":\"one\"}\n"
+        );
+    }
+
+    #[test]
+    fn journal_honors_state_dir_env_when_journal_out_is_unset() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(temp.path(), r#"{"steps":[{"journal":["{\"entry\":1}"]}]}"#);
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let state_dir = workspace.join(".ralph/autoloop");
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .env_remove("JOURNAL_OUT")
+                .env("AUTOLOOP_STATE_DIR", &state_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(state_dir.join("journal.jsonl")).unwrap(),
+            "{\"entry\":1}\n"
+        );
+        assert!(
+            !workspace.join(".autoloop").exists(),
+            "state-dir override must not leave a top-level .autoloop"
         );
     }
 

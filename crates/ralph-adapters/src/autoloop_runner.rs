@@ -82,20 +82,15 @@ pub enum AutoloopRunError {
 }
 
 /// How to invoke the `autoloop` binary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum AutoloopBin {
     /// Resolve `autoloop` from `PATH` (the default).
+    #[default]
     PathLookup,
     /// Run `node <bin/autoloop>` explicitly (e.g. a checkout's `bin/autoloop`).
     Node(PathBuf),
     /// Run an explicit executable directly.
     Explicit(PathBuf),
-}
-
-impl Default for AutoloopBin {
-    fn default() -> Self {
-        Self::PathLookup
-    }
 }
 
 /// Builder + runner for the `autoloop run` subprocess.
@@ -546,7 +541,7 @@ memory: /tmp/work/.autoloop/memory.jsonl
         );
         assert_eq!(s.memory, PathBuf::from("/tmp/work/.autoloop/memory.jsonl"));
         // No cost_usd line (older autoloop / no usage) defaults to 0.0.
-        assert_eq!(s.cost_usd, 0.0);
+        assert!(s.cost_usd.abs() < f64::EPSILON);
     }
 
     #[test]
@@ -562,7 +557,7 @@ journal: /j/journal.jsonl
 memory: /m/memory.jsonl
 ";
         let s = parse_summary(block).expect("must parse with cost");
-        assert_eq!(s.cost_usd, 0.08);
+        assert!((s.cost_usd - 0.08).abs() < f64::EPSILON);
         assert_eq!(s.iterations, 2);
     }
 
