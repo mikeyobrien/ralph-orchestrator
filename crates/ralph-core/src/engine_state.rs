@@ -14,9 +14,23 @@ pub fn engine_state_root(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".ralph").join("autoloop")
 }
 
-/// The run-scoped state directory for one engine run.
-pub fn engine_run_dir(workspace_root: &Path, run_id: &str) -> PathBuf {
-    engine_state_root(workspace_root).join("runs").join(run_id)
+/// Derives the run-scoped state directory beneath a configured engine root.
+///
+/// Run IDs come from engine events, so accept only one non-empty normal path
+/// component. Invalid IDs are rejected rather than normalized or redirected to
+/// another state root.
+pub fn engine_run_dir(engine_root: &Path, run_id: &str) -> Option<PathBuf> {
+    if run_id.contains(['/', '\\']) {
+        return None;
+    }
+
+    let mut components = Path::new(run_id).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => {
+            Some(engine_root.join("runs").join(run_id))
+        }
+        _ => None,
+    }
 }
 
 /// Environment exports that keep nested engine tools beneath `engine_root`.
@@ -66,10 +80,31 @@ mod tests {
     }
 
     #[test]
-    fn engine_run_dir_is_run_scoped_beneath_the_root() {
-        let run_dir = engine_run_dir(Path::new("/work"), "run-1");
+    fn engine_run_dir_accepts_a_safe_single_component_id() {
+        let root = engine_state_root(Path::new("/work"));
+        let run_dir = engine_run_dir(&root, "run-1").expect("safe run ID");
         assert_eq!(run_dir, PathBuf::from("/work/.ralph/autoloop/runs/run-1"));
-        assert!(run_dir.starts_with(engine_state_root(Path::new("/work"))));
+        assert!(run_dir.starts_with(&root));
+    }
+
+    #[test]
+    fn engine_run_dir_rejects_empty_or_unsafe_ids() {
+        let root = engine_state_root(Path::new("/work"));
+        for run_id in [
+            "",
+            ".",
+            "..",
+            "/absolute",
+            "nested/run",
+            "nested\\run",
+            "../escape",
+        ] {
+            assert_eq!(
+                engine_run_dir(&root, run_id),
+                None,
+                "run ID should be rejected: {run_id:?}"
+            );
+        }
     }
 
     #[test]

@@ -28,7 +28,7 @@ use ralph_adapters::{AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, St
 
 use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
-use ralph_core::sanitize_tui_inline_text;
+use ralph_core::{engine_run_dir, sanitize_tui_inline_text};
 
 /// Per-reader translation context: tracks the current iteration's role label
 /// from `iteration.banner` (autoloop's role ≈ ralph's hat), plus the last-seen
@@ -126,7 +126,7 @@ pub fn apply_autoloop_event(
     if ctx.run_dir.is_none()
         && let (Some(engine_state_root), Some(run_id)) = (&ctx.engine_state_root, &event.run_id)
     {
-        ctx.run_dir = Some(engine_state_root.join("runs").join(run_id));
+        ctx.run_dir = engine_run_dir(engine_state_root, run_id);
     }
 
     match event.kind.as_str() {
@@ -528,6 +528,52 @@ mod tests {
     }
 
     #[test]
+    fn absent_empty_and_unsafe_run_ids_do_not_create_run_state() {
+        let workspace = PathBuf::from("/workspace");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+
+        for event in [
+            ev(r#"{"type":"iteration.start","iteration":1}"#),
+            ev(r#"{"type":"iteration.start","iteration":1,"runId":""}"#),
+            ev(r#"{"type":"iteration.start","iteration":1,"runId":"../escape"}"#),
+            ev(r#"{"type":"iteration.start","iteration":1,"runId":"nested/run"}"#),
+        ] {
+            let state = make_state();
+            let mut ctx = AutoloopMapCtx::new(HashMap::new())
+                .with_workspace(workspace.clone())
+                .with_engine_state_root(engine_root.clone());
+
+            apply_autoloop_event(&event, &state, &mut ctx);
+
+            assert!(ctx.run_dir.is_none(), "invalid run ID established a path");
+            assert!(
+                ctx.stream_tailer.is_none(),
+                "invalid run ID established a stream tailer"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_run_id_creates_run_state_beneath_the_configured_root() {
+        let workspace = PathBuf::from("/workspace");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let expected_run_dir = engine_run_dir(&engine_root, "run-1").unwrap();
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new())
+            .with_workspace(workspace)
+            .with_engine_state_root(engine_root);
+
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"runId":"run-1"}"#),
+            &state,
+            &mut ctx,
+        );
+
+        assert_eq!(ctx.run_dir.as_deref(), Some(expected_run_dir.as_path()));
+        assert!(ctx.stream_tailer.is_some());
+    }
+
+    #[test]
     fn start_before_banner_resolves_live_header_without_engine_suffix() {
         let state = make_state();
         let mut ctx = AutoloopMapCtx::new(HashMap::new());
@@ -869,7 +915,8 @@ mod tests {
     async fn reader_uses_ralph_workspace_when_loop_start_omits_work_dir() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
-        let run_dir = ralph_core::engine_state::engine_run_dir(&workspace, "live-run");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let run_dir = ralph_core::engine_state::engine_run_dir(&engine_root, "live-run").unwrap();
         std::fs::create_dir_all(&run_dir).unwrap();
         let events_path = dir.path().join("events.ndjson");
         append(
@@ -973,7 +1020,9 @@ mod tests {
     async fn backend_output_replaces_the_provisional_live_region() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
-        let run_dir = ralph_core::engine_state::engine_run_dir(&workspace, "reconcile-run");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let run_dir =
+            ralph_core::engine_state::engine_run_dir(&engine_root, "reconcile-run").unwrap();
         std::fs::create_dir_all(&run_dir).unwrap();
         let events_path = dir.path().join("events.ndjson");
         append(
@@ -1050,7 +1099,9 @@ mod tests {
     async fn huge_live_stream_keeps_the_tui_buffer_bounded() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
-        let run_dir = ralph_core::engine_state::engine_run_dir(&workspace, "bounded-run");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let run_dir =
+            ralph_core::engine_state::engine_run_dir(&engine_root, "bounded-run").unwrap();
         std::fs::create_dir_all(&run_dir).unwrap();
         let events_path = dir.path().join("events.ndjson");
         append(
