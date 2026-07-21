@@ -218,11 +218,10 @@ pub fn create_worktree(
     let head = git_ops::get_head_sha(&worktree_path).ok();
 
     tracing::debug!(
-        "Created worktree at {} on branch {} (synced {} untracked, {} modified files)",
-        worktree_path.display(),
-        branch_name,
-        sync_stats.untracked_copied,
-        sync_stats.modified_copied
+        worktree_kind = "parallel",
+        untracked_files = sync_stats.untracked_copied,
+        modified_files = sync_stats.modified_copied,
+        "Created managed worktree"
     );
 
     Ok(Worktree {

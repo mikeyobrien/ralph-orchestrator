@@ -1555,13 +1555,11 @@ async fn run_command(
 
                     // Create the worktree
                     let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
-                        .context("Failed to create worktree for parallel loop")?;
+                        .map_err(|_| {
+                            anyhow::anyhow!("Failed to create managed parallel worktree")
+                        })?;
 
-                    info!(
-                        "Created worktree at {} on branch {}",
-                        worktree.path.display(),
-                        worktree.branch
-                    );
+                    info!(loop_id = %loop_id, branch_kind = "parallel", "Created managed worktree");
 
                     // Create loop context for the worktree
                     let context = LoopContext::worktree(
@@ -1614,11 +1612,7 @@ async fn run_command(
         config.core.workspace_root = loop_context.workspace().to_path_buf();
         // Also update scratchpad path to use worktree location
         config.core.scratchpad.path = loop_context.scratchpad_path().to_string_lossy().to_string();
-        debug!(
-            "Running in worktree: workspace={}, scratchpad={}",
-            config.core.workspace_root.display(),
-            config.core.scratchpad.path
-        );
+        debug!(loop_kind = "parallel", "Running in managed worktree");
     }
 
     // A parallel run may have switched to a newly-created worktree. Validate
@@ -1640,13 +1634,12 @@ async fn run_command(
     .await
     {
         if !loop_context.is_primary()
-            && let Err(clean_err) =
-                remove_worktree(loop_context.repo_root(), loop_context.workspace())
+            && remove_worktree(loop_context.repo_root(), loop_context.workspace()).is_err()
         {
             warn!(
-                "Preflight failed; unable to remove worktree {}: {}",
-                loop_context.workspace().display(),
-                clean_err
+                loop_kind = "parallel",
+                failure_kind = "cleanup",
+                "Preflight failed; unable to remove managed worktree"
             );
         }
         return Err(err);

@@ -170,8 +170,8 @@ fn write_fixture(workspace: &Path, fixture: &Path) {
                 "iterations": 1,
                 "stop_reason": "completed",
                 "cost_usd": 0.01,
-                "journal": "/tmp/autoloop-tui-live-journal.jsonl",
-                "memory": "/tmp/autoloop-tui-live-memory.jsonl"
+                "journal": "${AUTOLOOP_STATE_DIR}/journal.jsonl",
+                "memory": "${AUTOLOOP_STATE_DIR}/memory.jsonl"
             }}
         ]
     });

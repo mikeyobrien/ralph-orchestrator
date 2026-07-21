@@ -13,7 +13,7 @@ A fixture contains one JSON object per non-empty line. Each object describes one
 Unknown fields and malformed JSON are rejected when the fake is built.
 
 ```json
-{"steps":[{"events":["<raw NDJSON LoopEvent line>"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE","then_exit":1}},{"journal":["<raw NDJSON journal line>"]},{"stdout":["<literal stdout line>"]},{"stderr":["[autoloops] [info] <literal engine log line>"]},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/journal.jsonl","memory":"/tmp/memory.jsonl"}},{"exit":0}]}
+{"steps":[{"events":["<raw NDJSON LoopEvent line>"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE","then_exit":1}},{"journal":["<raw NDJSON journal line>"]},{"stdout":["<literal stdout line>"]},{"stderr":["[autoloops] [info] <literal engine log line>"]},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}},{"exit":0}]}
 ```
 
 `cost_usd` and `barrier.then_exit` are optional. All other fields shown for a
@@ -59,8 +59,10 @@ a single physical line; blank lines between invocation objects are allowed.
 
   The `cost_usd` line is omitted when the fixture does not provide it. A
 `${AUTOLOOP_STATE_DIR}/` prefix in `journal` or `memory` expands at runtime,
-using the standalone `./.autoloop` fallback when the variable is unset. Tests
-may set `$SUMMARY_OUT` to record those two resolved paths, one per line.
+using the standalone `./.autoloop` fallback when the variable is unset. Ralph
+runtime success fixtures should use that prefix because Ralph rejects summaries
+that report anything except its exact owned journal and memory files. Tests may
+set `$SUMMARY_OUT` to record those two resolved paths, one per line.
 - **`exit`** immediately terminates with the specified status. If execution
   reaches the end of the steps, the fake exits with status 0.
 
@@ -81,7 +83,7 @@ creates the release file, then the completion event and summary are emitted.
 Its complete fixture is one JSONL line:
 
 ```json
-{"steps":[{"events":["{\"type\":\"iteration.banner\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2,\"allowedRoles\":[\"planner\"]}","{\"type\":\"iteration.start\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2}","{\"type\":\"progress\",\"runId\":\"run-stream\",\"iteration\":1,\"allowedRoles\":[\"planner\"],\"emittedTopic\":\"plan.ready\",\"outcome\":\"continue:routed_event\"}"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE"}},{"events":["{\"type\":\"loop.finish\",\"runId\":\"run-stream\",\"iterations\":1,\"stopReason\":\"completed\",\"costUsd\":0.01}"]},{"summary":{"run_id":"run-stream","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/autoloop-stream-journal.jsonl","memory":"/tmp/autoloop-stream-memory.jsonl"}}]}
+{"steps":[{"events":["{\"type\":\"iteration.banner\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2,\"allowedRoles\":[\"planner\"]}","{\"type\":\"iteration.start\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2}","{\"type\":\"progress\",\"runId\":\"run-stream\",\"iteration\":1,\"allowedRoles\":[\"planner\"],\"emittedTopic\":\"plan.ready\",\"outcome\":\"continue:routed_event\"}"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE"}},{"events":["{\"type\":\"loop.finish\",\"runId\":\"run-stream\",\"iterations\":1,\"stopReason\":\"completed\",\"costUsd\":0.01}"]},{"summary":{"run_id":"run-stream","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}}]}
 ```
 
 A test builds and runs it by prefixing the returned bin directory onto `PATH`:

@@ -14,11 +14,14 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner, parse_events, parse_events_strict, terminal_stop_detail,
+    AutoloopRunner, parse_events, parse_events_strict,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
-    engine_state::{engine_config_overrides, engine_env, prepare_engine_state_root},
+    engine_state::{
+        engine_config_overrides, engine_env, engine_journal_path, engine_memory_path,
+        prepare_engine_state_root,
+    },
     sanitize_tui_inline_text,
 };
 
@@ -102,15 +105,6 @@ struct FailedRunRecovery {
     cost_usd: f64,
 }
 
-fn enrich_engine_error(reason: TerminationReason, events: &[AutoloopEvent]) -> TerminationReason {
-    match reason {
-        TerminationReason::EngineError { detail } => TerminationReason::EngineError {
-            detail: terminal_stop_detail(events).or(detail),
-        },
-        reason => reason,
-    }
-}
-
 /// Recover an engine-provided terminal result after the subprocess exits non-zero.
 ///
 /// A completion reason from a failed process is deliberately rejected: it must
@@ -123,7 +117,7 @@ fn recover_failed_run(events: &[AutoloopEvent]) -> Option<FailedRunRecovery> {
     }
 
     Some(FailedRunRecovery {
-        reason: enrich_engine_error(reason, events),
+        reason,
         iterations: result.iterations,
         cost_usd: result.cost_usd,
     })
@@ -133,6 +127,27 @@ fn read_events(path: &Path) -> Vec<AutoloopEvent> {
     std::fs::read_to_string(path)
         .map(|content| parse_events(&content))
         .unwrap_or_default()
+}
+
+fn validate_success_summary(summary: &AutoloopRunSummary, engine_root: &Path) -> Result<()> {
+    let expected_journal = engine_journal_path(engine_root);
+    let expected_memory = engine_memory_path(engine_root);
+    if summary.journal != expected_journal || summary.memory != expected_memory {
+        bail!("Autoloop summary did not report the expected Ralph-owned state files");
+    }
+
+    for path in [&expected_journal, &expected_memory] {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("Autoloop summary state file is an unsafe symlink");
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => bail!("Ralph could not validate an Autoloop summary state file"),
+        }
+    }
+
+    Ok(())
 }
 
 /// Normalized result of driving the autoloop subprocess.
@@ -428,6 +443,15 @@ pub async fn run_autoloop_engine(
             "Ralph could not validate the Autoloop structured event stream"
         )),
     };
+    let outcome = match outcome {
+        AutoloopOutcome::Completed(summary) => {
+            match validate_success_summary(&summary, &engine_state_root) {
+                Ok(()) => AutoloopOutcome::Completed(summary),
+                Err(error) => AutoloopOutcome::Failed(error),
+            }
+        }
+        outcome => outcome,
+    };
 
     // Normalize every child execution result before coordinating so success,
     // user stop, spawn/wait failures, and non-zero exits all traverse the same
@@ -436,12 +460,7 @@ pub async fn run_autoloop_engine(
     // returned after bookkeeping.
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
-            let mapped_reason = map_stop_reason(&summary.stop_reason);
-            let reason = if matches!(mapped_reason, TerminationReason::EngineError { .. }) {
-                enrich_engine_error(mapped_reason, &read_events(&events_path))
-            } else {
-                mapped_reason
-            };
+            let reason = map_stop_reason(&summary.stop_reason);
             if reason == TerminationReason::CompletionPromise {
                 warn_on_open_ralph_tasks(&identity_context.tasks_path(), &loop_id);
             }
@@ -871,6 +890,15 @@ fn kill_autoloop_group(pid: u32) {
     }
 }
 
+fn prepare_daemon_engine_state(
+    workspace_root: &Path,
+    resolve_engine: impl FnOnce() -> Result<AutoloopBin>,
+) -> Result<AutoloopBin> {
+    let autoloop_bin = resolve_engine()?;
+    prepare_engine_state_root(workspace_root).context("preparing Ralph-owned Autoloop state")?;
+    Ok(autoloop_bin)
+}
+
 /// Start a headless orchestration loop for the Telegram bot daemon.
 ///
 /// This is the daemon's [`ralph_proto::StartLoopFn`] target: it loads config,
@@ -925,13 +953,11 @@ pub async fn start_loop(
         }
     }
 
-    // Reject unsafe owned-root components before scratchpad or lock state can
-    // follow them outside the workspace.
-    prepare_engine_state_root(&workspace_root).context("preparing Ralph-owned Autoloop state")?;
-
     // Resolve once before creating state or acquiring the loop lock, then use
-    // that exact binary for launch.
-    let autoloop_bin = crate::engine_provision::ensure_autoloop_with_provisioning(false, false)?;
+    // that exact binary for launch. Dependency failure must remain state-free.
+    let autoloop_bin = prepare_daemon_engine_state(&workspace_root, || {
+        crate::engine_provision::ensure_autoloop_with_provisioning(false, false)
+    })?;
 
     // Ensure scratchpad directory exists.
     crate::ensure_scratchpad_directory(&config)?;
@@ -1267,11 +1293,11 @@ mod tests {
     }
 
     #[test]
-    fn failed_run_recovers_engine_error_and_detail_from_terminal_events() {
+    fn failed_run_ignores_untrusted_error_log_detail() {
         let events = parse_events(concat!(
             r#"{"type":"iteration.start","iteration":0,"maxIterations":1,"runId":"r1"}"#,
             "\n",
-            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found"}"#,
+            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=untrusted"}"#,
             "\n",
             r#"{"type":"loop.finish","iterations":0,"stopReason":"error","runId":"r1","costUsd":0}"#,
             "\n",
@@ -1280,9 +1306,7 @@ mod tests {
         assert_eq!(
             recover_failed_run(&events),
             Some(FailedRunRecovery {
-                reason: TerminationReason::EngineError {
-                    detail: Some("boom: native CLI not found".to_string()),
-                },
+                reason: engine_stop_error("error"),
                 iterations: 0,
                 cost_usd: 0.0,
             })
@@ -1306,25 +1330,50 @@ mod tests {
     }
 
     #[test]
-    fn completed_backend_failure_enriches_engine_error_detail() {
-        let events = parse_events(
-            r#"{"type":"log","level":"error","message":"loop stop reason=backend_failed completed_iterations=0 detail=backend exploded"}"#,
-        );
-        let reason = enrich_engine_error(map_stop_reason("backend_failed"), &events);
+    fn successful_summary_requires_exact_owned_paths_and_non_symlink_leaves() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = prepare_engine_state_root(workspace.path()).unwrap();
+        let mut summary = test_summary();
+        summary.journal = engine_journal_path(&root);
+        summary.memory = engine_memory_path(&root);
 
-        assert_eq!(
-            reason,
-            TerminationReason::EngineError {
-                detail: Some("backend exploded".to_string()),
-            }
+        validate_success_summary(&summary, &root).unwrap();
+        summary.journal = PathBuf::from("/OUTSIDE/journal.jsonl");
+        assert!(validate_success_summary(&summary, &root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_summary_rejects_symlink_store_leaf() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::NamedTempFile::new().unwrap();
+        let root = prepare_engine_state_root(workspace.path()).unwrap();
+        symlink(external.path(), engine_journal_path(&root)).unwrap();
+        let mut summary = test_summary();
+        summary.journal = engine_journal_path(&root);
+        summary.memory = engine_memory_path(&root);
+
+        let error = validate_success_summary(&summary, &root).unwrap_err();
+        assert!(error.to_string().contains("unsafe symlink"));
+        assert!(
+            !error
+                .to_string()
+                .contains(&external.path().display().to_string())
         );
     }
 
     #[test]
-    fn completed_engine_failure_keeps_stop_literal_without_richer_detail() {
-        let reason = enrich_engine_error(map_stop_reason("auth_failed"), &[]);
+    fn daemon_dependency_failure_creates_no_owned_state() {
+        let workspace = tempfile::tempdir().unwrap();
+        let error = prepare_daemon_engine_state(workspace.path(), || {
+            Err(anyhow::anyhow!("dependency unavailable"))
+        })
+        .unwrap_err();
 
-        assert_eq!(reason, engine_stop_error("auth_failed"));
+        assert!(error.to_string().contains("dependency unavailable"));
+        assert!(!workspace.path().join(".ralph/autoloop").exists());
     }
 
     #[test]

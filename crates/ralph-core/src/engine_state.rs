@@ -17,16 +17,21 @@ pub fn engine_state_root(workspace_root: &Path) -> PathBuf {
 }
 
 /// Creates and resolves Ralph's engine state root without following symlinks in
-/// the owned `.ralph/autoloop` path.
+/// the owned `.ralph/autoloop` tree.
 ///
-/// The workspace itself is canonicalized first. Each owned component is then
-/// inspected before creation and again after creation/canonicalization. This
-/// fails closed if an existing component is a symlink or non-directory, or if
-/// the resolved root is not physically beneath the workspace. Rust's standard
-/// library does not expose portable `openat`-style directory creation, so a
-/// hostile process with concurrent filesystem access can still race these
-/// checks; the repeated checks narrow that window without pretending to offer
-/// stronger guarantees.
+/// The workspace itself is canonicalized first. Each owned root component is
+/// inspected before creation and again after creation/canonicalization. Every
+/// pre-existing descendant is then inspected with symlink metadata and
+/// directories are traversed only after proving that they are not symlinks.
+/// This fails closed if a component or descendant is a symlink, if a root
+/// component is not a directory, or if the resolved root is not physically
+/// beneath the workspace.
+///
+/// Rust's standard library does not expose portable `openat`-style traversal
+/// and subprocess launch, so a hostile process with concurrent filesystem
+/// access can still replace an entry after validation and before or during
+/// launch. The repeated no-follow checks reject pre-existing attacks but cannot
+/// eliminate that unavoidable TOCTOU window.
 pub fn prepare_engine_state_root(workspace_root: &Path) -> io::Result<PathBuf> {
     let workspace = fs::canonicalize(workspace_root).map_err(|error| {
         safe_state_error(error.kind(), "could not resolve the workspace directory")
@@ -52,7 +57,33 @@ pub fn prepare_engine_state_root(workspace_root: &Path) -> io::Result<PathBuf> {
         current = resolved;
     }
 
+    reject_descendant_symlinks(&current)?;
+
     Ok(current)
+}
+
+fn reject_descendant_symlinks(directory: &Path) -> io::Result<()> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        safe_state_error(error.kind(), "could not inspect Ralph-owned engine state")
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            safe_state_error(error.kind(), "could not inspect Ralph-owned engine state")
+        })?;
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| {
+            safe_state_error(error.kind(), "could not inspect Ralph-owned engine state")
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(safe_state_error(
+                io::ErrorKind::InvalidInput,
+                "Ralph-owned engine state contains a symlink",
+            ));
+        }
+        if metadata.is_dir() {
+            reject_descendant_symlinks(&entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn ensure_owned_directory(path: &Path) -> io::Result<()> {
@@ -120,21 +151,44 @@ pub fn engine_run_dir(engine_root: &Path, run_id: &str) -> Option<PathBuf> {
     }
 }
 
+/// The exact journal file owned by an engine state root.
+pub fn engine_journal_path(engine_root: &Path) -> PathBuf {
+    engine_root.join("journal.jsonl")
+}
+
+/// The exact memory file owned by an engine state root.
+pub fn engine_memory_path(engine_root: &Path) -> PathBuf {
+    engine_root.join("memory.jsonl")
+}
+
+fn engine_tasks_path(engine_root: &Path) -> PathBuf {
+    engine_root.join("tasks.jsonl")
+}
+
 /// Environment exports that keep nested engine tools beneath `engine_root`.
 ///
 /// Pass an absolute root so child working-directory handling cannot re-anchor
 /// paths. Top-level native run context also requires
 /// [`engine_config_overrides`].
 pub fn engine_env(engine_root: &Path) -> [(&'static str, String); 4] {
-    let file = |name: &str| engine_root.join(name).to_string_lossy().into_owned();
+    let string = |path: PathBuf| path.to_string_lossy().into_owned();
     [
         (
             "AUTOLOOP_STATE_DIR",
             engine_root.to_string_lossy().into_owned(),
         ),
-        ("AUTOLOOP_JOURNAL_FILE", file("journal.jsonl")),
-        ("AUTOLOOP_MEMORY_FILE", file("memory.jsonl")),
-        ("AUTOLOOP_TASKS_FILE", file("tasks.jsonl")),
+        (
+            "AUTOLOOP_JOURNAL_FILE",
+            string(engine_journal_path(engine_root)),
+        ),
+        (
+            "AUTOLOOP_MEMORY_FILE",
+            string(engine_memory_path(engine_root)),
+        ),
+        (
+            "AUTOLOOP_TASKS_FILE",
+            string(engine_tasks_path(engine_root)),
+        ),
     ]
 }
 
@@ -145,12 +199,15 @@ pub fn engine_env(engine_root: &Path) -> [(&'static str, String); 4] {
 /// top-level `buildLoopContext` currently resolves stores from layered config.
 /// Supplying both surfaces keeps all runtime state under the same owned root.
 pub fn engine_config_overrides(engine_root: &Path) -> [(&'static str, String); 4] {
-    let file = |name: &str| engine_root.join(name).to_string_lossy().into_owned();
+    let string = |path: PathBuf| path.to_string_lossy().into_owned();
     [
         ("core.state_dir", engine_root.to_string_lossy().into_owned()),
-        ("core.journal_file", file("journal.jsonl")),
-        ("core.memory_file", file("memory.jsonl")),
-        ("core.tasks_file", file("tasks.jsonl")),
+        (
+            "core.journal_file",
+            string(engine_journal_path(engine_root)),
+        ),
+        ("core.memory_file", string(engine_memory_path(engine_root))),
+        ("core.tasks_file", string(engine_tasks_path(engine_root))),
     ]
 }
 
@@ -292,5 +349,29 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("contains a symlink"));
         assert_eq!(std::fs::read_dir(external.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_root_rejects_direct_and_nested_descendant_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        for relative in ["journal.jsonl", "runs", "runs/run-1/stream.jsonl"] {
+            let workspace = tempfile::tempdir().unwrap();
+            let external = tempfile::tempdir().unwrap();
+            let root = workspace.path().join(".ralph/autoloop");
+            let leaf = root.join(relative);
+            std::fs::create_dir_all(leaf.parent().unwrap()).unwrap();
+            symlink(external.path(), &leaf).unwrap();
+
+            let error = prepare_engine_state_root(workspace.path()).unwrap_err();
+
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.to_string(),
+                "Ralph-owned engine state contains a symlink"
+            );
+            assert_eq!(std::fs::read_dir(external.path()).unwrap().count(), 0);
+        }
     }
 }

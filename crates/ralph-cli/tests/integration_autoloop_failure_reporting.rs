@@ -14,6 +14,7 @@ const SECRET_STATE_PATH: &str = "/ABSOLUTE_SECRET_STATE";
 const SECRET_STDERR: &str = "RAW_CHILD_STDERR_SECRET_4de9b1";
 const SECRET_STDOUT: &str = "RAW_CHILD_STDOUT_SECRET_1a2b3c";
 const SECRET_PRESET: &str = "PRESET_PATH_SECRET_88aef0";
+const SECRET_TERMINAL_DETAIL: &str = "TERMINAL_DETAIL_TOKEN_/private/sentinel_91ca";
 const RALPH_YML: &str = r#"
 core:
   engine: autoloop
@@ -222,8 +223,8 @@ fn invocation_with_raw_output(
                 "iterations": 1,
                 "stop_reason": "completed",
                 "cost_usd": 0,
-                "journal": format!("{SECRET_STATE_PATH}/journal.jsonl"),
-                "memory": format!("{SECRET_STATE_PATH}/memory.jsonl")
+                "journal": "${AUTOLOOP_STATE_DIR}/journal.jsonl",
+                "memory": "${AUTOLOOP_STATE_DIR}/memory.jsonl"
             }
         }));
     }
@@ -308,28 +309,30 @@ fn successful_process_with_malformed_events_fails_closed() {
 }
 
 #[test]
-fn explicit_engine_error_detail_wins_over_malformed_event_fallback() {
+fn terminal_error_detail_never_reaches_output_or_tracing() {
+    let terminal_log = format!(
+        "{{\"type\":\"log\",\"level\":\"error\",\"message\":\"loop stop reason=error completed_iterations=0 detail={SECRET_TERMINAL_DETAIL}\"}}"
+    );
     let harness = Harness::new(invocation(
         vec![
             r#"{"type":"iteration.start","runId":"rX","iteration":1,"maxIterations":1}"#,
-            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found"}"#,
+            &terminal_log,
             r#"{"type":"loop.finish","iterations":0,"stopReason":"error","runId":"rX","costUsd":0}"#,
         ],
         1,
         false,
     ));
-    let output = harness.run();
+    let output = harness.run_with_diagnostics();
     let output_text = combined_output(&output);
+    let diagnostics = all_file_contents(&harness.workspace.path().join(".ralph/diagnostics"));
 
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        output_text.contains("Loop terminated: Engine error: boom: native CLI not found"),
-        "engine error detail missing from termination headline:\n{output_text}"
+        output_text.contains("Loop terminated: Engine error: error"),
+        "safe engine error category missing:\n{output_text}"
     );
-    assert!(
-        !output_text.contains("malformed JSONL"),
-        "malformed-event fallback overrode the explicit engine error:\n{output_text}"
-    );
+    assert!(!output_text.contains(SECRET_TERMINAL_DETAIL));
+    assert!(!diagnostics.contains(SECRET_TERMINAL_DETAIL));
     harness.assert_fail_closed(&output);
 }
 
@@ -395,6 +398,62 @@ fn missing_preset_error_does_not_expose_its_physical_path() {
     assert!(output_text.contains("configured Autoloop preset is unavailable or invalid"));
     assert!(!output_text.contains(SECRET_PRESET));
     assert!(!output_text.contains(&harness.workspace.path().display().to_string()));
+}
+
+#[test]
+fn symlinked_journal_descendant_is_rejected_before_fake_process_mutates_external_file() {
+    use std::os::unix::fs::symlink;
+
+    let harness = Harness::new(invocation(Vec::new(), 0, false));
+    let external = tempfile::NamedTempFile::new().expect("external journal target");
+    fs::write(external.path(), "unchanged\n").expect("seed external target");
+    fs::create_dir_all(harness.owned_root()).expect("create owned root");
+    symlink(external.path(), harness.owned_root().join("journal.jsonl"))
+        .expect("symlink journal outside workspace");
+
+    let output = harness.run();
+    let output_text = combined_output(&output);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output_text.contains("Ralph-owned engine state contains a symlink"));
+    assert!(!output_text.contains(&external.path().display().to_string()));
+    assert_eq!(
+        fs::read_to_string(external.path()).expect("read external target"),
+        "unchanged\n",
+        "the fake process mutated an external journal through the symlink"
+    );
+}
+
+#[test]
+fn status_zero_summary_with_outside_paths_fails_closed_and_private() {
+    let mut invocation = invocation(Vec::new(), 0, false);
+    invocation["steps"]
+        .as_array_mut()
+        .expect("fixture steps")
+        .insert(
+            1,
+            json!({
+                "summary": {
+                    "run_id": "outside-summary",
+                    "iterations": 1,
+                    "stop_reason": "completed",
+                    "cost_usd": 0,
+                    "journal": format!("{SECRET_STATE_PATH}/journal.jsonl"),
+                    "memory": format!("{SECRET_STATE_PATH}/memory.jsonl")
+                }
+            }),
+        );
+    let harness = Harness::new(invocation);
+
+    let output = harness.run_with_diagnostics();
+    let output_text = combined_output(&output);
+    let diagnostics = all_file_contents(&harness.workspace.path().join(".ralph/diagnostics"));
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output_text.contains("expected Ralph-owned state files"));
+    assert!(!output_text.contains(SECRET_STATE_PATH));
+    assert!(!diagnostics.contains(SECRET_STATE_PATH));
+    harness.assert_fail_closed(&output);
 }
 
 #[test]
