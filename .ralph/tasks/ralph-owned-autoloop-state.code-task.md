@@ -76,10 +76,10 @@ review findings or final gates are complete.
       unit tests 27 passed; failure-reporting fake-process attacks 12 passed;
       affected headless/TUI/merge fake-process suites 5 passed.
 - [x] `cargo fmt --all --check`
-- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`
 - [x] Full `cargo test`: 2730 passed, 37 ignored.
 - [x] Native contracts against
-      `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`: 3 passed,
+      `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`: 4 passed,
       non-skipped.
 - [x] `git diff --check`
 - [x] Inspect `git diff 54430971...HEAD`: state-root behavior and both
