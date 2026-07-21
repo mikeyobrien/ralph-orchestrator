@@ -13,19 +13,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn find_autoloop_root() -> Option<PathBuf> {
-    if let Some(root) = std::env::var_os("AUTOLOOP_ROOT") {
-        let p = PathBuf::from(root);
-        if p.join("bin/autoloop").is_file() {
-            return Some(p);
-        }
-    }
-    for ancestor in Path::new(env!("CARGO_MANIFEST_DIR")).ancestors() {
-        let candidate = ancestor.join("autoloop");
-        if candidate.join("bin/autoloop").is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    let root = std::env::var_os("AUTOLOOP_ROOT")?;
+    let path = PathBuf::from(root);
+    path.join("bin/autoloop").is_file().then_some(path)
 }
 
 fn which(program: &str) -> Option<PathBuf> {
