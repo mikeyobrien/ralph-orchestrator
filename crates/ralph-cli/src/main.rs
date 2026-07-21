@@ -403,7 +403,7 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
     if let Some(parent) = scratchpad_path.parent()
         && !parent.exists()
     {
-        debug!("Creating scratchpad directory: {}", parent.display());
+        debug!("Creating the configured scratchpad directory");
         std::fs::create_dir_all(parent)?;
     }
     Ok(())
@@ -1525,18 +1525,16 @@ async fn run_command(
                 } else if !config.features.parallel {
                     // Parallel loops disabled via config - error out
                     anyhow::bail!(
-                        "Another loop is already running (PID {}, prompt: \"{}\"). \
+                        "Another loop is already running (PID {}). \
                     Parallel loops are disabled in config (features.parallel: false). \
                     Use --exclusive to wait for the lock, or enable parallel loops.",
-                        existing.pid,
-                        existing.prompt.chars().take(50).collect::<String>()
+                        existing.pid
                     );
                 } else {
                     // Auto-spawn into worktree
                     info!(
-                        "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
-                        existing.pid,
-                        existing.prompt.chars().take(50).collect::<String>()
+                        "Loop lock held by PID {}; spawning a managed parallel loop",
+                        existing.pid
                     );
 
                     let worktree_config = WorktreeConfig::default();

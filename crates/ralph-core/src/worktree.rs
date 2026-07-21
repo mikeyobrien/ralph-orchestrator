@@ -280,9 +280,9 @@ pub fn remove_worktree(
             .output()?;
 
         if !output.status.success() {
-            // Non-fatal: branch might already be deleted
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::debug!("Failed to delete branch {}: {}", branch, stderr);
+            // Non-fatal: branch might already be deleted. Git stderr is
+            // untrusted and can contain physical workspace paths.
+            tracing::debug!("Failed to delete managed branch {}", branch);
         }
     }
 
@@ -292,7 +292,7 @@ pub fn remove_worktree(
         .current_dir(repo_root)
         .output();
 
-    tracing::debug!("Removed worktree at {}", worktree_path.display());
+    tracing::debug!("Removed managed worktree");
 
     Ok(())
 }

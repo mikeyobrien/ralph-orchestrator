@@ -283,6 +283,14 @@ fn assert_success(output: &Output) {
     );
 }
 
+fn combined_output(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 fn kill_process_group(pid: u32) {
     let pid = Pid::from_raw(pid.try_into().expect("Ralph PID fits i32"));
     if let Err(error) = killpg(pid, Signal::SIGKILL) {
@@ -292,6 +300,60 @@ fn kill_process_group(pid: u32) {
             "failed to clean Ralph process group"
         );
     }
+}
+
+#[test]
+fn parallel_disabled_lock_contention_does_not_reveal_active_prompt() {
+    let harness = Harness::new(None);
+    let secret = "ACTIVE_PROMPT_SECRET_6f0a";
+    let config_path = harness.workspace.path().join("ralph.yml");
+    let config = fs::read_to_string(&config_path).expect("read ralph.yml");
+    fs::write(
+        &config_path,
+        config.replace(
+            "  auto_merge: false",
+            "  auto_merge: false\n  parallel: false",
+        ),
+    )
+    .expect("disable parallel loops");
+    let guard = LoopLock::try_acquire(harness.workspace.path(), secret)
+        .expect("acquire competing primary lock");
+
+    let output = harness.run(&["-p", "second run"]);
+    drop(guard);
+    let rendered = combined_output(&output);
+
+    assert!(
+        !output.status.success(),
+        "contending run unexpectedly passed"
+    );
+    assert!(rendered.contains("Parallel loops are disabled"));
+    assert!(
+        !rendered.contains(secret),
+        "active prompt leaked: {rendered}"
+    );
+}
+
+#[test]
+fn parallel_enabled_lock_contention_does_not_reveal_active_prompt_or_worktree_path() {
+    let harness = Harness::new(None);
+    let secret = "ACTIVE_PROMPT_SECRET_9c31";
+    let guard = LoopLock::try_acquire(harness.workspace.path(), secret)
+        .expect("acquire competing primary lock");
+
+    let output = harness.run(&["-p", "parallel second run"]);
+    drop(guard);
+    let rendered = combined_output(&output);
+
+    assert_success(&output);
+    assert!(
+        !rendered.contains(secret),
+        "active prompt leaked: {rendered}"
+    );
+    assert!(
+        !rendered.contains(&harness.workspace.path().display().to_string()),
+        "workspace path leaked: {rendered}"
+    );
 }
 
 fn wait_for_barrier(child: &mut Child, ready: &Path, label: &str) {

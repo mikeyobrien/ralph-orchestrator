@@ -457,6 +457,39 @@ fn status_zero_summary_with_outside_paths_fails_closed_and_private() {
 }
 
 #[test]
+fn status_zero_unknown_stop_reason_is_redacted_and_fails_closed() {
+    let secret_reason = "TOKEN_SECRET_/physical/workspace";
+    let mut invocation = invocation(Vec::new(), 0, false);
+    invocation["steps"]
+        .as_array_mut()
+        .expect("fixture steps")
+        .insert(
+            1,
+            json!({
+                "summary": {
+                    "run_id": "unknown-stop",
+                    "iterations": 1,
+                    "stop_reason": secret_reason,
+                    "cost_usd": 0,
+                    "journal": "${AUTOLOOP_STATE_DIR}/journal.jsonl",
+                    "memory": "${AUTOLOOP_STATE_DIR}/memory.jsonl"
+                }
+            }),
+        );
+    let harness = Harness::new(invocation);
+
+    let output = harness.run_with_diagnostics();
+    let output_text = combined_output(&output);
+    let diagnostics = all_file_contents(&harness.workspace.path().join(".ralph/diagnostics"));
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output_text.contains("unknown engine stop reason"));
+    assert!(!output_text.contains(secret_reason));
+    assert!(!diagnostics.contains(secret_reason));
+    harness.assert_fail_closed(&output);
+}
+
+#[test]
 fn symlinked_owned_root_is_rejected_before_external_state_is_written() {
     use std::os::unix::fs::symlink;
 

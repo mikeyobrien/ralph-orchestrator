@@ -139,12 +139,8 @@ pub fn coordinate_completion(
                     info!(loop_id = %lid, "Loop queued for auto-merge");
                     let _ = LoopHistory::from_context(ctx).record_merge_queued();
                 }
-                Ok(CompletionAction::ManualMerge {
-                    loop_id: lid,
-                    worktree_path,
-                    ..
-                }) => {
-                    info!(loop_id = %lid, "Loop completed. To merge manually: cd {} && git merge", worktree_path);
+                Ok(CompletionAction::ManualMerge { loop_id: lid, .. }) => {
+                    info!(loop_id = %lid, "Loop completed; manual merge is required for this managed loop");
                 }
                 Err(e) => warn!("Completion handler failed: {}", e),
             }

@@ -93,7 +93,7 @@ fn map_stop_reason(reason: &str) -> TerminationReason {
         | "parallel_wave_failed"
         | "parallel_wave_invalid" => engine_stop_error(reason),
         _ => TerminationReason::EngineError {
-            detail: Some(format!("unknown engine stop reason: {reason}")),
+            detail: Some("unknown engine stop reason".to_string()),
         },
     }
 }
@@ -1311,6 +1311,20 @@ mod tests {
                 cost_usd: 0.0,
             })
         );
+    }
+
+    #[test]
+    fn unknown_stop_reason_is_replaced_with_a_fixed_safe_category() {
+        let secret = "TOKEN_SECRET_/physical/workspace";
+        let reason = map_stop_reason(secret);
+
+        assert_eq!(
+            reason,
+            TerminationReason::EngineError {
+                detail: Some("unknown engine stop reason".to_string()),
+            }
+        );
+        assert!(!format!("{reason:?}").contains(secret));
     }
 
     #[test]

@@ -203,7 +203,6 @@ impl LoopCompletionHandler {
 
             info!(
                 loop_id = %loop_id,
-                worktree = %worktree_path,
                 committed = ?landing.as_ref().map(|l| l.committed),
                 "Loop completed and enqueued for auto-merge"
             );
@@ -213,8 +212,7 @@ impl LoopCompletionHandler {
             // Leave worktree for manual handling
             info!(
                 loop_id = %loop_id,
-                worktree = %worktree_path,
-                "Loop completed - worktree preserved for manual merge (--no-auto-merge)"
+                "Loop completed - managed worktree preserved for manual merge (--no-auto-merge)"
             );
 
             Ok(CompletionAction::ManualMerge {
