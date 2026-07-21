@@ -27,32 +27,38 @@ review findings or final gates are complete.
 
 ## Remediation slices
 
-- [ ] Make `ralph-core::engine_state` the only production layout seam; validate
-      run IDs and remove consumer-side `runs/<id>` composition.
-- [ ] Redact `AutoloopRunner` command rendering and public spawn errors; add
-      direct and public red-team tests for prompts, paths, tokens, and overrides.
-- [ ] Add distinct runtime integration cases for non-zero process exit,
-      malformed events, and missing/empty/absent run IDs, each with filesystem
-      and output-privacy assertions.
-- [ ] Correct fixture capture guidance and distinguish Ralph-owned runtime state
-      from standalone Autoloop defaults across adjacent user-facing docs.
-- [ ] Record each remediation commit and only then mark its slice complete.
+- [x] `f70b95f8` — make `ralph-core::engine_state` the only production layout
+      seam; validate run IDs and remove consumer-side `runs/<id>` composition.
+- [x] `0314695b` — redact `AutoloopRunner` command rendering and public spawn
+      errors; add direct and public red-team tests for prompts, paths, tokens,
+      and overrides.
+- [x] `6de20edf` — add distinct runtime integration cases for non-zero process
+      exit, malformed events, and missing/empty/absent run IDs, each with
+      filesystem and output-privacy assertions.
+- [x] `01204572` — correct fixture capture guidance and distinguish Ralph-owned
+      runtime state from standalone Autoloop defaults.
+- [x] Record every remediation commit before marking its slice complete.
 
 ## Required gates
 
-- [ ] Focused tests for every changed surface
-- [ ] `cargo fmt --check`
-- [ ] Strict clippy with warnings denied for all touched crates/targets
-- [ ] Full `cargo test`
-- [ ] Relevant native contract tests, non-skipped, against
+- [x] Focused tests for every changed surface
+- [x] `cargo fmt --all --check`
+- [x] Strict clippy with warnings denied for all touched crates/targets
+- [x] Full `cargo test`
+- [x] Relevant native contract tests, non-skipped, against
       `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`
-- [ ] `git diff --check`
-- [ ] Inspect `git diff 54430971...HEAD`
-- [ ] Confirm no tracked/untracked transient artifacts except ignored active-loop
+- [x] `git diff --check`
+- [x] Inspect `git diff 54430971...HEAD`
+- [x] Confirm no tracked/untracked transient artifacts except ignored active-loop
       `.autoloop` runtime and launcher preset
 - [ ] Independent critic verification of every acceptance criterion, including a
       manual fake/local smoke for non-doc changes
 - [ ] New external two-axis review readiness
+
+Builder gates passed on 2026-07-21 using fake/local providers only. The native
+contract suite passed 3 tests and the parity suite passed 1 test with no `skip:`
+output. Full `cargo test` completed successfully; loop-owned logs remain under
+`.autoloop/runs/meta-agent/logs/` and are not tracked.
 
 ## Constraints and coordination
 
