@@ -93,16 +93,18 @@ merge lifecycle, and full headless-stream examples.
 
 ## Capturing a real journal
 
-Run a live loop, then copy its journal directly from the workspace:
+For a loop launched by Ralph, copy the Ralph-owned journal from the workspace:
 
 ```sh
-cp .autoloop/journal.jsonl path/to/captured.journal.jsonl
+cp .ralph/autoloop/journal.jsonl path/to/captured.journal.jsonl
 ```
 
-`RALPH_DIAGNOSTICS` is not required; autoloop writes
-`.autoloop/journal.jsonl` during a normal live run. Preserve the file as JSONL.
-To use its records in a fake-autoloop invocation, JSON-encode each captured line
-as one string in a `journal` step's array.
+`RALPH_DIAGNOSTICS` is not required; Ralph configures Autoloop to write
+`.ralph/autoloop/journal.jsonl` during a normal live run. Standalone Autoloop
+uses its own `.autoloop/journal.jsonl` default unless configured otherwise; the
+fake helper's fallback above intentionally models that standalone default.
+Preserve the file as JSONL. To use its records in a fake-autoloop invocation,
+JSON-encode each captured line as one string in a `journal` step's array.
 
 The existing raw-journal fixture at
 `crates/ralph-adapters/tests/fixtures/autoloop/max_iterations.journal.jsonl`
