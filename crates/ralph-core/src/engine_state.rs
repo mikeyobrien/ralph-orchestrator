@@ -7,11 +7,98 @@
 //! headless, diagnostics) derives run-scoped paths from it instead of
 //! reconstructing a top-level `.autoloop`.
 
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// The canonical engine state root for a Ralph workspace.
 pub fn engine_state_root(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".ralph").join("autoloop")
+}
+
+/// Creates and resolves Ralph's engine state root without following symlinks in
+/// the owned `.ralph/autoloop` path.
+///
+/// The workspace itself is canonicalized first. Each owned component is then
+/// inspected before creation and again after creation/canonicalization. This
+/// fails closed if an existing component is a symlink or non-directory, or if
+/// the resolved root is not physically beneath the workspace. Rust's standard
+/// library does not expose portable `openat`-style directory creation, so a
+/// hostile process with concurrent filesystem access can still race these
+/// checks; the repeated checks narrow that window without pretending to offer
+/// stronger guarantees.
+pub fn prepare_engine_state_root(workspace_root: &Path) -> io::Result<PathBuf> {
+    let workspace = fs::canonicalize(workspace_root).map_err(|error| {
+        safe_state_error(error.kind(), "could not resolve the workspace directory")
+    })?;
+    let mut current = workspace.clone();
+
+    for component in [".ralph", "autoloop"] {
+        let candidate = current.join(component);
+        ensure_owned_directory(&candidate)?;
+        let resolved = fs::canonicalize(&candidate).map_err(|error| {
+            safe_state_error(
+                error.kind(),
+                "could not resolve a Ralph-owned state directory",
+            )
+        })?;
+        if !resolved.starts_with(&workspace) {
+            return Err(safe_state_error(
+                io::ErrorKind::InvalidInput,
+                "Ralph-owned engine state resolves outside the workspace",
+            ));
+        }
+        reject_symlink_or_non_directory(&candidate)?;
+        current = resolved;
+    }
+
+    Ok(current)
+}
+
+fn ensure_owned_directory(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => reject_symlink_or_non_directory(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => match fs::create_dir(path) {
+            Ok(()) => reject_symlink_or_non_directory(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                reject_symlink_or_non_directory(path)
+            }
+            Err(error) => Err(safe_state_error(
+                error.kind(),
+                "could not create a Ralph-owned state directory",
+            )),
+        },
+        Err(error) => Err(safe_state_error(
+            error.kind(),
+            "could not inspect a Ralph-owned state directory",
+        )),
+    }
+}
+
+fn reject_symlink_or_non_directory(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        safe_state_error(
+            error.kind(),
+            "could not inspect a Ralph-owned state directory",
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(safe_state_error(
+            io::ErrorKind::InvalidInput,
+            "Ralph-owned engine state path contains a symlink",
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(safe_state_error(
+            io::ErrorKind::InvalidInput,
+            "Ralph-owned engine state path contains a non-directory",
+        ));
+    }
+    Ok(())
+}
+
+fn safe_state_error(kind: io::ErrorKind, message: &'static str) -> io::Error {
+    io::Error::new(kind, message)
 }
 
 /// Derives the run-scoped state directory beneath a configured engine root.
@@ -172,5 +259,38 @@ mod tests {
             engine_state_root(Path::new(".")),
             PathBuf::from("./.ralph/autoloop")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_root_rejects_ralph_symlink_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        symlink(external.path(), workspace.path().join(".ralph")).unwrap();
+
+        let error = prepare_engine_state_root(workspace.path()).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("contains a symlink"));
+        assert_eq!(std::fs::read_dir(external.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_root_rejects_autoloop_symlink_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::create_dir(workspace.path().join(".ralph")).unwrap();
+        symlink(external.path(), workspace.path().join(".ralph/autoloop")).unwrap();
+
+        let error = prepare_engine_state_root(workspace.path()).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("contains a symlink"));
+        assert_eq!(std::fs::read_dir(external.path()).unwrap().count(), 0);
     }
 }

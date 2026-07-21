@@ -174,12 +174,16 @@ fn doctor_names_vendored_then_path_resolution_and_both_missing_remedies() {
     let vendored_text = rendered(&vendored);
     assert!(vendored.status.success(), "doctor output: {vendored_text}");
     assert!(
-        vendored_text.contains("Autoloop 0.10.1 available (vendored:"),
+        vendored_text.contains("Autoloop 0.10.1 available (Ralph-managed engine)"),
         "doctor output: {vendored_text}"
     );
     assert!(
-        vendored_text.contains(&harness.engine_dir.join("autoloop").display().to_string()),
-        "doctor output: {vendored_text}"
+        !vendored_text.contains(&harness.engine_dir.join("autoloop").display().to_string()),
+        "doctor exposed the physical engine path: {vendored_text}"
+    );
+    assert!(
+        !vendored_text.contains(&harness.workspace.path().display().to_string()),
+        "doctor exposed the physical workspace path: {vendored_text}"
     );
 
     fs::remove_file(harness.engine_dir.join("autoloop")).expect("remove vendored engine");
@@ -187,8 +191,12 @@ fn doctor_names_vendored_then_path_resolution_and_both_missing_remedies() {
     let path_text = rendered(&path);
     assert!(path.status.success(), "doctor output: {path_text}");
     assert!(
-        path_text.contains("Autoloop 0.12.3 available (PATH:"),
+        path_text.contains("Autoloop 0.12.3 available (PATH lookup)"),
         "doctor output: {path_text}"
+    );
+    assert!(
+        !path_text.contains(&harness.bin_dir.display().to_string()),
+        "doctor exposed the physical PATH engine location: {path_text}"
     );
 
     fs::remove_file(harness.bin_dir.join("autoloop")).expect("remove PATH shim");

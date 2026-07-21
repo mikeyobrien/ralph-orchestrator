@@ -18,6 +18,7 @@ pub struct FakeAutoloop {
     bin_dir: PathBuf,
     argv_out: PathBuf,
     env_out: PathBuf,
+    summary_out: PathBuf,
 }
 
 impl FakeAutoloop {
@@ -49,6 +50,19 @@ impl FakeAutoloop {
         Ok(fs::read_to_string(&self.env_out)?
             .lines()
             .map(str::to_owned)
+            .collect())
+    }
+
+    /// Suggested path for recording resolved journal/memory summary paths.
+    pub fn summary_out(&self) -> &Path {
+        &self.summary_out
+    }
+
+    /// Read resolved paths emitted by the latest summary step.
+    pub fn recorded_summary_paths(&self) -> io::Result<Vec<PathBuf>> {
+        Ok(fs::read_to_string(&self.summary_out)?
+            .lines()
+            .map(PathBuf::from)
             .collect())
     }
 }
@@ -181,6 +195,7 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
     let count_path = state_dir.join("invocation-count");
     let argv_out = state_dir.join("argv.out");
     let env_out = state_dir.join("env.out");
+    let summary_out = state_dir.join("summary.out");
     let mut dispatcher = String::from("#!/bin/sh\nset -eu\n");
     dispatcher.push_str(
         "if [ -n \"${ARGV_OUT:-}\" ]; then\n  printf '%s\\n' \"$@\" > \"$ARGV_OUT\"\nfi\nif [ -n \"${ENV_OUT:-}\" ]; then\n  {\n    printf 'AUTOLOOP_STATE_DIR=%s\\n' \"${AUTOLOOP_STATE_DIR:-}\"\n    printf 'AUTOLOOP_JOURNAL_FILE=%s\\n' \"${AUTOLOOP_JOURNAL_FILE:-}\"\n    printf 'AUTOLOOP_MEMORY_FILE=%s\\n' \"${AUTOLOOP_MEMORY_FILE:-}\"\n    printf 'AUTOLOOP_TASKS_FILE=%s\\n' \"${AUTOLOOP_TASKS_FILE:-}\"\n  } > \"$ENV_OUT\"\nfi\n",
@@ -206,6 +221,7 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
         bin_dir,
         argv_out,
         env_out,
+        summary_out,
     })
 }
 
@@ -309,8 +325,13 @@ fn invocation_script(
                 let payload = payload_dir.join(format!(
                     "invocation-{invocation_index}-step-{payload_index}-summary"
                 ));
-                fs::write(&payload, summary_text(&step.summary))?;
-                script.push_str(&format!("cat {}\n", shell_quote(&payload)));
+                fs::write(&payload, summary_prefix(&step.summary))?;
+                let journal = stream_path_expr(Path::new(&step.summary.journal));
+                let memory = stream_path_expr(Path::new(&step.summary.memory));
+                script.push_str(&format!(
+                    "cat {}\nprintf 'journal: %s\\nmemory: %s\\n' {journal} {memory}\nif [ -n \"${{SUMMARY_OUT:-}}\" ]; then printf '%s\\n%s\\n' {journal} {memory} > \"$SUMMARY_OUT\"; fi\n",
+                    shell_quote(&payload)
+                ));
             }
             Step::Exit(step) => script.push_str(&format!("exit {}\n", step.exit)),
         }
@@ -320,7 +341,7 @@ fn invocation_script(
     Ok(script)
 }
 
-fn summary_text(summary: &Summary) -> String {
+fn summary_prefix(summary: &Summary) -> String {
     let mut text = format!(
         "autoloops summary\n===================\nrun_id: {}\niterations: {}\nstop_reason: {}\n",
         summary.run_id, summary.iterations, summary.stop_reason
@@ -328,10 +349,6 @@ fn summary_text(summary: &Summary) -> String {
     if let Some(cost_usd) = &summary.cost_usd {
         text.push_str(&format!("cost_usd: {cost_usd}\n"));
     }
-    text.push_str(&format!(
-        "journal: {}\nmemory: {}\n",
-        summary.journal, summary.memory
-    ));
     text
 }
 
@@ -398,6 +415,7 @@ mod tests {
     fn command(fake: &FakeAutoloop) -> Command {
         let mut command = Command::new(fake.bin_dir().join("autoloop"));
         command.env("ARGV_OUT", fake.argv_out());
+        command.env("SUMMARY_OUT", fake.summary_out());
         // Isolate from any ambient engine state configuration.
         command.env_remove("AUTOLOOP_STATE_DIR");
         command
@@ -665,6 +683,34 @@ mod tests {
         assert!(stdout.contains(
             "autoloops summary\n===================\nrun_id: with-noise\niterations: 2\nstop_reason: completed\n"
         ));
+    }
+
+    #[test]
+    fn summary_paths_expand_the_runtime_state_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"summary":{"run_id":"owned","iterations":1,"stop_reason":"completed","journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let root = temp.path().join("workspace/.ralph/autoloop");
+
+        let output = command(&fake)
+            .env("AUTOLOOP_STATE_DIR", &root)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(&format!(
+            "journal: {}",
+            root.join("journal.jsonl").display()
+        )));
+        assert!(stdout.contains(&format!("memory: {}", root.join("memory.jsonl").display())));
+        assert_eq!(
+            fake.recorded_summary_paths().unwrap(),
+            vec![root.join("journal.jsonl"), root.join("memory.jsonl")]
+        );
     }
 
     #[test]

@@ -227,12 +227,12 @@ mod tests {
         let dir_name = session_dir.file_name().unwrap().to_str().unwrap();
 
         // Verify format: YYYY-MM-DDTHH-MM-SS
-        assert!(dir_name.len() == 19); // 2024-01-21T08-49-56
-        assert!(dir_name.chars().nth(4) == Some('-'));
-        assert!(dir_name.chars().nth(7) == Some('-'));
-        assert!(dir_name.chars().nth(10) == Some('T'));
-        assert!(dir_name.chars().nth(13) == Some('-'));
-        assert!(dir_name.chars().nth(16) == Some('-'));
+        assert_eq!(dir_name.len(), 19); // 2024-01-21T08-49-56
+        assert_eq!(dir_name.chars().nth(4), Some('-'));
+        assert_eq!(dir_name.chars().nth(7), Some('-'));
+        assert_eq!(dir_name.chars().nth(10), Some('T'));
+        assert_eq!(dir_name.chars().nth(13), Some('-'));
+        assert_eq!(dir_name.chars().nth(16), Some('-'));
     }
 
     #[test]

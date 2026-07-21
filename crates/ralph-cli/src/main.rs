@@ -1285,9 +1285,8 @@ pub(crate) fn ensure_autoloop_for_run(
         AutoloopHealth::Missing => anyhow::bail!(
             "autoloop was not found in Ralph's engine directory or on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required). For non-interactive first-run provisioning, set RALPH_AUTO_INSTALL_ENGINE=1"
         ),
-        AutoloopHealth::TooOld { path, version, .. } if !skip_preflight => anyhow::bail!(
-            "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}; run: ralph doctor --install-engine; or set RALPH_AUTO_INSTALL_ENGINE=1 for non-interactive first-run provisioning",
-            path.display()
+        AutoloopHealth::TooOld { version, .. } if !skip_preflight => anyhow::bail!(
+            "The configured autoloop version is {version}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}; run: ralph doctor --install-engine; or set RALPH_AUTO_INSTALL_ENGINE=1 for non-interactive first-run provisioning"
         ),
         AutoloopHealth::TooOld {
             path,
@@ -1295,15 +1294,13 @@ pub(crate) fn ensure_autoloop_for_run(
             source,
         } => {
             eprintln!(
-                "Warning: found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}",
-                path.display()
+                "Warning: the configured autoloop version is {version}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}"
             );
             Ok(autoloop_bin(path, source))
         }
         AutoloopHealth::VersionUnknown { path, source } => {
             eprintln!(
-                "Warning: found autoloop at {}, but its version could not be determined; existence check passed.",
-                path.display()
+                "Warning: the configured autoloop executable exists, but its version could not be determined; existence check passed."
             );
             Ok(autoloop_bin(path, source))
         }
@@ -1467,6 +1464,12 @@ async fn run_command(
     let autoloop_bin =
         engine_provision::ensure_autoloop_with_provisioning(wants_tui, args.skip_preflight)?;
 
+    // Validate and create the owned engine root after dependency gating but
+    // before any normal run state. This rejects a symlinked `.ralph` path before
+    // scratchpad or lock writes can escape the physical workspace boundary.
+    ralph_core::engine_state::prepare_engine_state_root(&config.core.workspace_root)
+        .context("preparing Ralph-owned Autoloop state")?;
+
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
     ensure_scratchpad_directory(&config)?;
@@ -1617,6 +1620,11 @@ async fn run_command(
             config.core.scratchpad.path
         );
     }
+
+    // A parallel run may have switched to a newly-created worktree. Validate
+    // that workspace's owned root before creating its remaining loop state.
+    ralph_core::engine_state::prepare_engine_state_root(&config.core.workspace_root)
+        .context("preparing Ralph-owned Autoloop state")?;
 
     // Ensure directories exist in the loop context
     loop_context

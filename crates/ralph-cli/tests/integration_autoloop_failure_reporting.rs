@@ -13,6 +13,7 @@ const SECRET_PROMPT: &str = "PROMPT_SECRET_NEVER_RENDER_7f6c2a";
 const SECRET_STATE_PATH: &str = "/ABSOLUTE_SECRET_STATE";
 const SECRET_STDERR: &str = "RAW_CHILD_STDERR_SECRET_4de9b1";
 const SECRET_STDOUT: &str = "RAW_CHILD_STDOUT_SECRET_1a2b3c";
+const SECRET_PRESET: &str = "PRESET_PATH_SECRET_88aef0";
 const RALPH_YML: &str = r#"
 core:
   engine: autoloop
@@ -282,6 +283,31 @@ fn nonzero_engine_exit_keeps_state_owned_and_output_private() {
 }
 
 #[test]
+fn successful_process_with_malformed_events_fails_closed() {
+    let harness = Harness::new(invocation(
+        vec![
+            r#"{"type":"loop.finish","iterations":1,"stopReason":"completed","runId":"rX","costUsd":0}"#,
+            "malformed record after a valid completion",
+        ],
+        0,
+        true,
+    ));
+    let output = harness.run();
+    let output_text = combined_output(&output);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        output_text.contains("Loop terminated: Too many malformed JSONL events"),
+        "successful process trusted a stream containing malformed JSONL:\n{output_text}"
+    );
+    assert!(
+        output_text.contains("malformed structured event stream"),
+        "public error did not retain the safe failure category:\n{output_text}"
+    );
+    harness.assert_fail_closed(&output);
+}
+
+#[test]
 fn explicit_engine_error_detail_wins_over_malformed_event_fallback() {
     let harness = Harness::new(invocation(
         vec![
@@ -349,6 +375,54 @@ fn malformed_events_keep_state_owned_and_output_private() {
         "missing malformed-event fallback headline:\n{output_text}"
     );
     harness.assert_fail_closed(&output);
+}
+
+#[test]
+fn missing_preset_error_does_not_expose_its_physical_path() {
+    let harness = Harness::new(invocation(Vec::new(), 0, false));
+    fs::write(
+        harness.workspace.path().join("ralph.yml"),
+        format!(
+            "core:\n  engine: autoloop\n  autoloop_preset: {SECRET_PRESET}\ncli:\n  backend: claude\nfeatures:\n  auto_merge: false\n"
+        ),
+    )
+    .expect("write missing-preset config");
+
+    let output = harness.run();
+    let output_text = combined_output(&output);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output_text.contains("configured Autoloop preset is unavailable or invalid"));
+    assert!(!output_text.contains(SECRET_PRESET));
+    assert!(!output_text.contains(&harness.workspace.path().display().to_string()));
+}
+
+#[test]
+fn symlinked_owned_root_is_rejected_before_external_state_is_written() {
+    use std::os::unix::fs::symlink;
+
+    let harness = Harness::new(invocation(Vec::new(), 0, false));
+    let external = tempfile::tempdir().expect("external target");
+    symlink(external.path(), harness.workspace.path().join(".ralph"))
+        .expect("symlink .ralph outside workspace");
+
+    let output = harness.run();
+    let output_text = combined_output(&output);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output_text.contains("Ralph-owned engine state path contains a symlink"));
+    assert!(!output_text.contains(&external.path().display().to_string()));
+    assert_eq!(
+        fs::read_dir(external.path())
+            .expect("read external target")
+            .count(),
+        0,
+        "Ralph created state through an unsafe .ralph symlink"
+    );
+    assert!(
+        !harness.fake_autoloop.argv_out().exists(),
+        "Autoloop should not run with an unsafe state root"
+    );
 }
 
 #[test]

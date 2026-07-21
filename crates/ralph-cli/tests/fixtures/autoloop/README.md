@@ -37,8 +37,9 @@ a single physical line; blank lines between invocation objects are allowed.
   present, the fake exits with that status after release; it applies only when
   the barrier ran. This supports one fixture serving both normal and
   coordinated-crash test paths.
-- **`journal`** appends its lines to `$JOURNAL_OUT` when that variable is set,
-  otherwise to `./.autoloop/journal.jsonl`. Parent directories are created.
+- **`journal`** appends its lines to `$JOURNAL_OUT` when set. Otherwise it uses
+  `$AUTOLOOP_STATE_DIR/journal.jsonl` when that root is set, and finally falls
+  back to `./.autoloop/journal.jsonl`. Parent directories are created.
 - **`stdout`** and **`stderr`** write their literal lines to the corresponding
   process stream. They can appear anywhere in the steps array, including before
   or after `summary`, so tests can model engine logs and surrounding output
@@ -56,7 +57,10 @@ a single physical line; blank lines between invocation objects are allowed.
   memory: <memory>
   ```
 
-  The `cost_usd` line is omitted when the fixture does not provide it.
+  The `cost_usd` line is omitted when the fixture does not provide it. A
+`${AUTOLOOP_STATE_DIR}/` prefix in `journal` or `memory` expands at runtime,
+using the standalone `./.autoloop` fallback when the variable is unset. Tests
+may set `$SUMMARY_OUT` to record those two resolved paths, one per line.
 - **`exit`** immediately terminates with the specified status. If execution
   reaches the end of the steps, the fake exits with status 0.
 

@@ -71,7 +71,7 @@ impl LockGuard {
 impl Drop for LockGuard {
     fn drop(&mut self) {
         // The Flock is automatically released when dropped.
-        tracing::debug!("Releasing loop lock at {}", self.lock_path.display());
+        tracing::debug!("Releasing the Ralph loop lock");
     }
 }
 
@@ -141,7 +141,7 @@ impl LoopLock {
                     // We got the lock - write our metadata
                     Self::write_metadata(&flock, prompt)?;
 
-                    tracing::debug!("Acquired loop lock at {}", lock_path.display());
+                    tracing::debug!("Acquired the Ralph loop lock");
 
                     Ok(LockGuard {
                         _flock: flock,
@@ -196,7 +196,7 @@ impl LoopLock {
                     // We got the lock - write our metadata
                     Self::write_metadata(&flock, prompt)?;
 
-                    tracing::debug!("Acquired loop lock (blocking) at {}", lock_path.display());
+                    tracing::debug!("Acquired the Ralph loop lock after waiting");
 
                     Ok(LockGuard {
                         _flock: flock,

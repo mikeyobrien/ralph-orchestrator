@@ -429,52 +429,43 @@ fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
                 "autoloop was not found in Ralph's engine directory or on PATH. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required)"
             ),
         ),
-        AutoloopHealth::VersionUnknown { path, source } => CheckResult::warn(
+        AutoloopHealth::VersionUnknown { source, .. } => CheckResult::warn(
             "autoloop",
             format!(
                 "Autoloop available (version unknown; {})",
-                autoloop_source_label(source, &path)
+                autoloop_source_label(source)
             ),
-            format!(
-                "Found autoloop at {}, but its version could not be determined; existence check passed",
-                path.display()
-            ),
+            "The configured autoloop executable exists, but its version could not be determined; existence check passed",
         ),
         AutoloopHealth::TooOld {
-            path,
-            version,
-            source,
+            version, source, ..
         } => CheckResult::fail(
             "autoloop",
             format!(
                 "Autoloop {version} is too old ({})",
-                autoloop_source_label(source, &path)
+                autoloop_source_label(source)
             ),
             format!(
-                "Found autoloop {version} at {}; Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}",
-                path.display()
+                "The configured autoloop version is {version}; Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}"
             ),
         ),
         AutoloopHealth::Ok {
-            path,
-            version,
-            source,
+            version, source, ..
         } => CheckResult::pass(
             "autoloop",
             format!(
                 "Autoloop {version} available ({})",
-                autoloop_source_label(source, &path)
+                autoloop_source_label(source)
             ),
         ),
     }
 }
 
-fn autoloop_source_label(source: AutoloopSource, path: &std::path::Path) -> String {
-    let source = match source {
-        AutoloopSource::Vendored => "vendored",
-        AutoloopSource::PathLookup => "PATH",
-    };
-    format!("{source}: {}", path.display())
+fn autoloop_source_label(source: AutoloopSource) -> &'static str {
+    match source {
+        AutoloopSource::Vendored => "Ralph-managed engine",
+        AutoloopSource::PathLookup => "PATH lookup",
+    }
 }
 
 struct TelegramTokenCheck;
@@ -562,23 +553,31 @@ impl PreflightCheck for PathsExistCheck {
         let mut created = Vec::new();
 
         let scratchpad_path = config.core.resolve_path(&config.core.scratchpad.path);
-        if let Some(parent) = scratchpad_path.parent()
-            && let Err(err) = ensure_directory(parent, &mut created)
-        {
-            return CheckResult::fail(
-                self.name(),
-                "Scratchpad path unavailable",
-                format!("{}", err),
-            );
+        if let Some(parent) = scratchpad_path.parent() {
+            match ensure_directory(parent) {
+                Ok(true) => created.push("scratchpad parent"),
+                Ok(false) => {}
+                Err(err) => {
+                    return CheckResult::fail(
+                        self.name(),
+                        "Scratchpad path unavailable",
+                        format!("{}", err),
+                    );
+                }
+            }
         }
 
         let specs_path = config.core.resolve_path(&config.core.specs_dir);
-        if let Err(err) = ensure_directory(&specs_path, &mut created) {
-            return CheckResult::fail(
-                self.name(),
-                "Specs directory unavailable",
-                format!("{}", err),
-            );
+        match ensure_directory(&specs_path) {
+            Ok(true) => created.push("specs directory"),
+            Ok(false) => {}
+            Err(err) => {
+                return CheckResult::fail(
+                    self.name(),
+                    "Specs directory unavailable",
+                    format!("{}", err),
+                );
+            }
         }
 
         if created.is_empty() {
@@ -1073,17 +1072,17 @@ fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn ensure_directory(path: &Path, created: &mut Vec<String>) -> anyhow::Result<()> {
+fn ensure_directory(path: &Path) -> anyhow::Result<bool> {
     if path.exists() {
         if path.is_dir() {
-            return Ok(());
+            return Ok(false);
         }
-        anyhow::bail!("Path exists but is not a directory: {}", path.display());
+        anyhow::bail!("the configured workspace path exists but is not a directory");
     }
 
-    std::fs::create_dir_all(path)?;
-    created.push(path.display().to_string());
-    Ok(())
+    std::fs::create_dir_all(path)
+        .map_err(|_| anyhow::anyhow!("could not create the configured workspace directory"))?;
+    Ok(true)
 }
 
 fn is_git_workspace(path: &Path) -> bool {
@@ -1244,7 +1243,8 @@ mod tests {
             version: MIN_AUTOLOOP_VERSION.to_string(),
             source: crate::autoloop_health::AutoloopSource::Vendored,
         });
-        assert!(vendored.label.contains("vendored: /managed/autoloop"));
+        assert!(vendored.label.contains("Ralph-managed engine"));
+        assert!(!vendored.label.contains("/managed/autoloop"));
 
         for health in [
             AutoloopHealth::VersionUnknown {
@@ -1258,7 +1258,9 @@ mod tests {
             },
         ] {
             let result = autoloop_check_result(health);
-            assert!(result.label.contains("PATH: /managed/autoloop"));
+            let rendered = format!("{} {}", result.label, result.message.unwrap_or_default());
+            assert!(rendered.contains("PATH lookup"));
+            assert!(!rendered.contains("/managed/autoloop"));
         }
 
         let missing = autoloop_check_result(AutoloopHealth::Missing);

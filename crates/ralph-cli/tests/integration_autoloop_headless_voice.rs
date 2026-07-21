@@ -218,6 +218,10 @@ fn headless_run_uses_ralph_voice_and_gates_engine_noise_by_verbosity() {
         "captured engine stdout leaked:\n{default_output}"
     );
     assert!(
+        !default_output.contains(&harness.workspace.path().display().to_string()),
+        "normal output exposed the physical workspace path:\n{default_output}"
+    );
+    assert!(
         !default_output.as_bytes().contains(&0x1b),
         "--color never emitted ANSI escapes:\n{default_output:?}"
     );
@@ -247,9 +251,17 @@ fn headless_run_uses_ralph_voice_and_gates_engine_noise_by_verbosity() {
     assert_success(&verbose);
     let verbose_output = combined_output(&verbose);
     assert!(
-        verbose_output.contains("[autoloops] [info] planner engine line")
-            && verbose_output.contains("[autoloops] [info] builder engine line"),
-        "verbose output omitted engine info lines:\n{verbose_output}"
+        verbose_output.contains("Autoloop emitted diagnostic output"),
+        "verbose output omitted the safe engine diagnostic category:\n{verbose_output}"
+    );
+    assert!(
+        !verbose_output.contains("planner engine line")
+            && !verbose_output.contains("builder engine line"),
+        "verbose output exposed raw child stderr:\n{verbose_output}"
+    );
+    assert!(
+        !verbose_output.contains(&harness.workspace.path().display().to_string()),
+        "verbose tracing exposed the physical workspace path:\n{verbose_output}"
     );
     assert!(
         !verbose_output.contains("autoloops summary")

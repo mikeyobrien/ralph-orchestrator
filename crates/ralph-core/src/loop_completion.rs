@@ -236,14 +236,10 @@ impl LoopCompletionHandler {
                 if result.committed {
                     debug!(
                         commit = ?result.commit_sha,
-                        handoff = %result.handoff_path.display(),
-                        "Landing completed with auto-commit"
+                        "Landing completed with auto-commit and Ralph-state handoff"
                     );
                 } else {
-                    debug!(
-                        handoff = %result.handoff_path.display(),
-                        "Landing completed (no changes to commit)"
-                    );
+                    debug!("Landing completed with Ralph-state handoff (no changes to commit)");
                 }
                 Some(result)
             }

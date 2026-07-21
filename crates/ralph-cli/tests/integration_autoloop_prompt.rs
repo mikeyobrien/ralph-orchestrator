@@ -144,6 +144,7 @@ impl Harness {
             .env("PATH", path)
             .env("ARGV_OUT", self.fake_autoloop.argv_out())
             .env("ENV_OUT", self.fake_autoloop.env_out())
+            .env("SUMMARY_OUT", self.fake_autoloop.summary_out())
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
             .env_remove("RALPH_CONFIG")
@@ -505,7 +506,7 @@ fn run_inline_prompt_reaches_autoloop_as_positional_argument() {
 }
 
 #[test]
-fn generated_preset_forwards_pi_backend_selection() {
+fn generated_preset_runs_with_all_runtime_paths_beneath_owned_root() {
     let harness = Harness::new(None);
     fs::write(
         harness.workspace.path().join("ralph.yml"),
@@ -519,6 +520,18 @@ fn generated_preset_forwards_pi_backend_selection() {
     let argv = harness.recorded_argv();
     assert!(argv.len() >= 3, "unexpected autoloop argv: {argv:?}");
     assert_eq!(argv[0], "run", "unexpected autoloop argv: {argv:?}");
+    let owned_root = harness
+        .workspace
+        .path()
+        .canonicalize()
+        .expect("canonicalize workspace")
+        .join(".ralph/autoloop");
+    let generated_preset = harness.workspace.path().join(".ralph/autoloop-preset");
+    assert_eq!(
+        fs::canonicalize(&argv[1]).expect("canonicalize generated preset argument"),
+        fs::canonicalize(&generated_preset).expect("canonicalize expected generated preset"),
+        "runtime did not use Ralph's generated preset: {argv:?}"
+    );
     let autoloops_toml = fs::read_to_string(Path::new(&argv[1]).join("autoloops.toml"))
         .expect("read generated autoloops.toml from recorded preset argv");
     assert!(
@@ -528,6 +541,39 @@ fn generated_preset_forwards_pi_backend_selection() {
     assert!(
         autoloops_toml.contains("backend.command = \"pi\""),
         "generated preset did not select the pi command:\n{autoloops_toml}"
+    );
+
+    let events_position = argv
+        .iter()
+        .position(|arg| arg == "--events")
+        .expect("generated-preset run should request structured events");
+    let events_path = PathBuf::from(&argv[events_position + 1]);
+    assert!(events_path.starts_with(&owned_root));
+    assert!(
+        events_path.is_file(),
+        "structured event sink was not written"
+    );
+    assert!(owned_root.join("journal.jsonl").is_file());
+    assert!(
+        owned_root.join("runs/run-test/pi-stream.1.jsonl").is_file(),
+        "run-scoped stream was not written beneath the owned root"
+    );
+    let summary_paths = harness
+        .fake_autoloop
+        .recorded_summary_paths()
+        .expect("fake should record resolved summary paths");
+    assert_eq!(
+        summary_paths,
+        vec![
+            owned_root.join("journal.jsonl"),
+            owned_root.join("memory.jsonl")
+        ]
+    );
+    assert!(
+        summary_paths
+            .iter()
+            .all(|path| path.starts_with(&owned_root)),
+        "summary exposed a path outside the owned root: {summary_paths:?}"
     );
     harness.assert_owned_engine_env(&output);
 }
