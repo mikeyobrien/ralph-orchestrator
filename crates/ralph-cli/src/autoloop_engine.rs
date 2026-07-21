@@ -1483,7 +1483,7 @@ mod tests {
         assert_eq!(
             reason,
             TerminationReason::EngineError {
-                detail: Some("unknown engine stop reason: something_new".to_string()),
+                detail: Some("unknown engine stop reason".to_string()),
             }
         );
         assert_ne!(reason.exit_code(), 0);
