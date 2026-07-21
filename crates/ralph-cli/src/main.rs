@@ -403,7 +403,7 @@ pub(crate) fn ensure_scratchpad_directory(config: &RalphConfig) -> anyhow::Resul
     if let Some(parent) = scratchpad_path.parent()
         && !parent.exists()
     {
-        debug!("Creating scratchpad directory: {}", parent.display());
+        debug!("Creating the configured scratchpad directory");
         std::fs::create_dir_all(parent)?;
     }
     Ok(())
@@ -1285,9 +1285,8 @@ pub(crate) fn ensure_autoloop_for_run(
         AutoloopHealth::Missing => anyhow::bail!(
             "autoloop was not found in Ralph's engine directory or on PATH. Ralph requires @mobrienv/autoloop >= {MIN_AUTOLOOP_VERSION}. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required). For non-interactive first-run provisioning, set RALPH_AUTO_INSTALL_ENGINE=1"
         ),
-        AutoloopHealth::TooOld { path, version, .. } if !skip_preflight => anyhow::bail!(
-            "Found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}; run: ralph doctor --install-engine; or set RALPH_AUTO_INSTALL_ENGINE=1 for non-interactive first-run provisioning",
-            path.display()
+        AutoloopHealth::TooOld { version, .. } if !skip_preflight => anyhow::bail!(
+            "The configured autoloop version is {version}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}; run: ralph doctor --install-engine; or set RALPH_AUTO_INSTALL_ENGINE=1 for non-interactive first-run provisioning"
         ),
         AutoloopHealth::TooOld {
             path,
@@ -1295,15 +1294,13 @@ pub(crate) fn ensure_autoloop_for_run(
             source,
         } => {
             eprintln!(
-                "Warning: found autoloop {version} at {}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}",
-                path.display()
+                "Warning: the configured autoloop version is {version}, but Ralph requires >= {MIN_AUTOLOOP_VERSION}. Proceeding because --skip-preflight was supplied. Update it with: {AUTOLOOP_INSTALL_HINT}"
             );
             Ok(autoloop_bin(path, source))
         }
         AutoloopHealth::VersionUnknown { path, source } => {
             eprintln!(
-                "Warning: found autoloop at {}, but its version could not be determined; existence check passed.",
-                path.display()
+                "Warning: the configured autoloop executable exists, but its version could not be determined; existence check passed."
             );
             Ok(autoloop_bin(path, source))
         }
@@ -1467,6 +1464,12 @@ async fn run_command(
     let autoloop_bin =
         engine_provision::ensure_autoloop_with_provisioning(wants_tui, args.skip_preflight)?;
 
+    // Validate and create the owned engine root after dependency gating but
+    // before any normal run state. This rejects a symlinked `.ralph` path before
+    // scratchpad or lock writes can escape the physical workspace boundary.
+    ralph_core::engine_state::prepare_engine_state_root(&config.core.workspace_root)
+        .context("preparing Ralph-owned Autoloop state")?;
+
     // Ensure scratchpad directory exists (auto-create with depth limit)
     // This is done after dry-run check to avoid creating directories during dry-run
     ensure_scratchpad_directory(&config)?;
@@ -1522,18 +1525,16 @@ async fn run_command(
                 } else if !config.features.parallel {
                     // Parallel loops disabled via config - error out
                     anyhow::bail!(
-                        "Another loop is already running (PID {}, prompt: \"{}\"). \
+                        "Another loop is already running (PID {}). \
                     Parallel loops are disabled in config (features.parallel: false). \
                     Use --exclusive to wait for the lock, or enable parallel loops.",
-                        existing.pid,
-                        existing.prompt.chars().take(50).collect::<String>()
+                        existing.pid
                     );
                 } else {
                     // Auto-spawn into worktree
                     info!(
-                        "Loop lock held by PID {} ({}), spawning parallel loop in worktree",
-                        existing.pid,
-                        existing.prompt.chars().take(50).collect::<String>()
+                        "Loop lock held by PID {}; spawning a managed parallel loop",
+                        existing.pid
                     );
 
                     let worktree_config = WorktreeConfig::default();
@@ -1552,13 +1553,11 @@ async fn run_command(
 
                     // Create the worktree
                     let worktree = create_worktree(workspace_root, &loop_id, &worktree_config)
-                        .context("Failed to create worktree for parallel loop")?;
+                        .map_err(|_| {
+                            anyhow::anyhow!("Failed to create managed parallel worktree")
+                        })?;
 
-                    info!(
-                        "Created worktree at {} on branch {}",
-                        worktree.path.display(),
-                        worktree.branch
-                    );
+                    info!(loop_id = %loop_id, branch_kind = "parallel", "Created managed worktree");
 
                     // Create loop context for the worktree
                     let context = LoopContext::worktree(
@@ -1611,12 +1610,13 @@ async fn run_command(
         config.core.workspace_root = loop_context.workspace().to_path_buf();
         // Also update scratchpad path to use worktree location
         config.core.scratchpad.path = loop_context.scratchpad_path().to_string_lossy().to_string();
-        debug!(
-            "Running in worktree: workspace={}, scratchpad={}",
-            config.core.workspace_root.display(),
-            config.core.scratchpad.path
-        );
+        debug!(loop_kind = "parallel", "Running in managed worktree");
     }
+
+    // A parallel run may have switched to a newly-created worktree. Validate
+    // that workspace's owned root before creating its remaining loop state.
+    ralph_core::engine_state::prepare_engine_state_root(&config.core.workspace_root)
+        .context("preparing Ralph-owned Autoloop state")?;
 
     // Ensure directories exist in the loop context
     loop_context
@@ -1632,13 +1632,12 @@ async fn run_command(
     .await
     {
         if !loop_context.is_primary()
-            && let Err(clean_err) =
-                remove_worktree(loop_context.repo_root(), loop_context.workspace())
+            && remove_worktree(loop_context.repo_root(), loop_context.workspace()).is_err()
         {
             warn!(
-                "Preflight failed; unable to remove worktree {}: {}",
-                loop_context.workspace().display(),
-                clean_err
+                loop_kind = "parallel",
+                failure_kind = "cleanup",
+                "Preflight failed; unable to remove managed worktree"
             );
         }
         return Err(err);

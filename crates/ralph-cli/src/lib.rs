@@ -21,7 +21,7 @@ pub fn clean_diagnostics(workspace_root: &Path, use_colors: bool, dry_run: bool)
     }
 
     if dry_run {
-        println!("{cyan}Dry run mode:{r} Would delete directory and all contents:",);
+        println!("{cyan}Dry run mode:{r} Would delete directory and all contents:");
         println!("  {}", diagnostics_dir.display());
 
         if let Ok(entries) = fs::read_dir(&diagnostics_dir) {

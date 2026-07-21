@@ -28,7 +28,7 @@ use ralph_adapters::{AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, St
 
 use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
-use ralph_core::sanitize_tui_inline_text;
+use ralph_core::{engine_run_dir, sanitize_tui_inline_text};
 
 /// Per-reader translation context: tracks the current iteration's role label
 /// from `iteration.banner` (autoloop's role ≈ ralph's hat), plus the last-seen
@@ -46,6 +46,9 @@ pub struct AutoloopMapCtx {
     role_display_names: HashMap<String, String>,
     /// Workspace root supplied by Ralph when it launches the reader.
     workspace_root: Option<PathBuf>,
+    /// Ralph-owned engine state root supplied by the launch path; run-scoped
+    /// directories are derived beneath it, never from a top-level `.autoloop`.
+    engine_state_root: Option<PathBuf>,
     /// Run-scoped directory derived from an event's documented `runId`.
     run_dir: Option<PathBuf>,
     /// Bounded tailer for the currently active iteration's backend stream.
@@ -66,6 +69,12 @@ impl AutoloopMapCtx {
     /// Uses Ralph's authoritative workspace to locate the active run stream.
     fn with_workspace(mut self, workspace_root: PathBuf) -> Self {
         self.workspace_root = Some(workspace_root);
+        self
+    }
+
+    /// Uses the configured engine state root to derive run-scoped directories.
+    fn with_engine_state_root(mut self, engine_state_root: PathBuf) -> Self {
+        self.engine_state_root = Some(engine_state_root);
         self
     }
 
@@ -111,13 +120,13 @@ pub fn apply_autoloop_event(
     };
     let now = Instant::now();
 
-    // Ralph already knows the workspace it launched the engine in. Runtime
-    // loop.start events do not consistently include workDir, so only depend on
-    // the documented runId to locate the optional provisional stream.
+    // Ralph already knows the engine state root it launched the engine with.
+    // Runtime loop.start events do not consistently include workDir, so only
+    // depend on the documented runId to locate the optional provisional stream.
     if ctx.run_dir.is_none()
-        && let (Some(workspace_root), Some(run_id)) = (&ctx.workspace_root, &event.run_id)
+        && let (Some(engine_state_root), Some(run_id)) = (&ctx.engine_state_root, &event.run_id)
     {
-        ctx.run_dir = Some(workspace_root.join(".autoloop").join("runs").join(run_id));
+        ctx.run_dir = engine_run_dir(engine_state_root, run_id);
     }
 
     match event.kind.as_str() {
@@ -367,6 +376,7 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
 pub async fn run_autoloop_event_reader<S>(
     events_path: PathBuf,
     workspace_root: PathBuf,
+    engine_state_root: PathBuf,
     state: Arc<Mutex<TuiState>>,
     mut cancel_rx: watch::Receiver<bool>,
     role_display_names: HashMap<String, String, S>,
@@ -375,7 +385,8 @@ pub async fn run_autoloop_event_reader<S>(
 {
     let mut tailer = AutoloopEventTailer::new(events_path);
     let mut ctx = AutoloopMapCtx::new(role_display_names.into_iter().collect())
-        .with_workspace(workspace_root);
+        .with_workspace(workspace_root)
+        .with_engine_state_root(engine_state_root);
     let mut saw_terminal = false;
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
@@ -514,6 +525,52 @@ mod tests {
         // Neutral role label until the role announcement arrives.
         assert_eq!(s.iterations[0].hat_display.as_deref(), Some("working"));
         assert_eq!(s.iterations[0].backend, None);
+    }
+
+    #[test]
+    fn absent_empty_and_unsafe_run_ids_do_not_create_run_state() {
+        let workspace = PathBuf::from("/workspace");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+
+        for event in [
+            ev(r#"{"type":"iteration.start","iteration":1}"#),
+            ev(r#"{"type":"iteration.start","iteration":1,"runId":""}"#),
+            ev(r#"{"type":"iteration.start","iteration":1,"runId":"../escape"}"#),
+            ev(r#"{"type":"iteration.start","iteration":1,"runId":"nested/run"}"#),
+        ] {
+            let state = make_state();
+            let mut ctx = AutoloopMapCtx::new(HashMap::new())
+                .with_workspace(workspace.clone())
+                .with_engine_state_root(engine_root.clone());
+
+            apply_autoloop_event(&event, &state, &mut ctx);
+
+            assert!(ctx.run_dir.is_none(), "invalid run ID established a path");
+            assert!(
+                ctx.stream_tailer.is_none(),
+                "invalid run ID established a stream tailer"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_run_id_creates_run_state_beneath_the_configured_root() {
+        let workspace = PathBuf::from("/workspace");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let expected_run_dir = engine_run_dir(&engine_root, "run-1").unwrap();
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::new(HashMap::new())
+            .with_workspace(workspace)
+            .with_engine_state_root(engine_root);
+
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.start","iteration":1,"runId":"run-1"}"#),
+            &state,
+            &mut ctx,
+        );
+
+        assert_eq!(ctx.run_dir.as_deref(), Some(expected_run_dir.as_path()));
+        assert!(ctx.stream_tailer.is_some());
     }
 
     #[test]
@@ -858,7 +915,8 @@ mod tests {
     async fn reader_uses_ralph_workspace_when_loop_start_omits_work_dir() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
-        let run_dir = workspace.join(".autoloop/runs/live-run");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let run_dir = ralph_core::engine_state::engine_run_dir(&engine_root, "live-run").unwrap();
         std::fs::create_dir_all(&run_dir).unwrap();
         let events_path = dir.path().join("events.ndjson");
         append(
@@ -882,10 +940,12 @@ mod tests {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let reader_state = Arc::clone(&state);
         let reader_workspace = workspace.clone();
+        let reader_engine_root = ralph_core::engine_state::engine_state_root(&workspace);
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 events_path,
                 reader_workspace,
+                reader_engine_root,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),
@@ -950,8 +1010,7 @@ mod tests {
         );
         assert!(
             text.iter().all(|line| {
-                !line.contains(&workspace.display().to_string())
-                    && !line.contains(".autoloop/runs/")
+                !line.contains(&workspace.display().to_string()) && !line.contains("autoloop/runs/")
             }),
             "visible tool paths must not expose workspace or private run prefixes: {text:?}"
         );
@@ -961,7 +1020,9 @@ mod tests {
     async fn backend_output_replaces_the_provisional_live_region() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
-        let run_dir = workspace.join(".autoloop/runs/reconcile-run");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let run_dir =
+            ralph_core::engine_state::engine_run_dir(&engine_root, "reconcile-run").unwrap();
         std::fs::create_dir_all(&run_dir).unwrap();
         let events_path = dir.path().join("events.ndjson");
         append(
@@ -992,10 +1053,12 @@ mod tests {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let reader_state = Arc::clone(&state);
         let reader_events = events_path.clone();
+        let reader_engine_root = ralph_core::engine_state::engine_state_root(&workspace);
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 reader_events,
                 workspace,
+                reader_engine_root,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),
@@ -1036,7 +1099,9 @@ mod tests {
     async fn huge_live_stream_keeps_the_tui_buffer_bounded() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
-        let run_dir = workspace.join(".autoloop/runs/bounded-run");
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let run_dir =
+            ralph_core::engine_state::engine_run_dir(&engine_root, "bounded-run").unwrap();
         std::fs::create_dir_all(&run_dir).unwrap();
         let events_path = dir.path().join("events.ndjson");
         append(
@@ -1084,10 +1149,12 @@ mod tests {
         let state = make_state();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let reader_state = Arc::clone(&state);
+        let reader_engine_root = ralph_core::engine_state::engine_state_root(&workspace);
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 events_path,
                 workspace,
+                reader_engine_root,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),
@@ -1132,10 +1199,12 @@ mod tests {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let reader_state = Arc::clone(&state);
         let reader_events = events_path.clone();
+        let reader_engine_root = ralph_core::engine_state::engine_state_root(&workspace);
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 reader_events,
                 workspace,
+                reader_engine_root,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),
@@ -1185,10 +1254,12 @@ mod tests {
         let reader_state = Arc::clone(&state);
         let reader_path = path.clone();
         let workspace = dir.path().to_path_buf();
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 reader_path,
                 workspace,
+                engine_root,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),
@@ -1231,10 +1302,12 @@ mod tests {
         let reader_state = Arc::clone(&state);
         let reader_path = path.clone();
         let workspace = dir.path().to_path_buf();
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
         let handle = tokio::spawn(async move {
             run_autoloop_event_reader(
                 reader_path,
                 workspace,
+                engine_root,
                 reader_state,
                 cancel_rx,
                 HashMap::new(),

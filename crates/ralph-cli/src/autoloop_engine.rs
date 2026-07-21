@@ -14,10 +14,14 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner, parse_events, terminal_stop_detail,
+    AutoloopRunner, parse_events, parse_events_strict,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
+    engine_state::{
+        engine_config_overrides, engine_env, engine_journal_path, engine_memory_path,
+        prepare_engine_state_root,
+    },
     sanitize_tui_inline_text,
 };
 
@@ -89,7 +93,7 @@ fn map_stop_reason(reason: &str) -> TerminationReason {
         | "parallel_wave_failed"
         | "parallel_wave_invalid" => engine_stop_error(reason),
         _ => TerminationReason::EngineError {
-            detail: Some(format!("unknown engine stop reason: {reason}")),
+            detail: Some("unknown engine stop reason".to_string()),
         },
     }
 }
@@ -99,15 +103,6 @@ struct FailedRunRecovery {
     reason: TerminationReason,
     iterations: u32,
     cost_usd: f64,
-}
-
-fn enrich_engine_error(reason: TerminationReason, events: &[AutoloopEvent]) -> TerminationReason {
-    match reason {
-        TerminationReason::EngineError { detail } => TerminationReason::EngineError {
-            detail: terminal_stop_detail(events).or(detail),
-        },
-        reason => reason,
-    }
 }
 
 /// Recover an engine-provided terminal result after the subprocess exits non-zero.
@@ -122,7 +117,7 @@ fn recover_failed_run(events: &[AutoloopEvent]) -> Option<FailedRunRecovery> {
     }
 
     Some(FailedRunRecovery {
-        reason: enrich_engine_error(reason, events),
+        reason,
         iterations: result.iterations,
         cost_usd: result.cost_usd,
     })
@@ -132,6 +127,27 @@ fn read_events(path: &Path) -> Vec<AutoloopEvent> {
     std::fs::read_to_string(path)
         .map(|content| parse_events(&content))
         .unwrap_or_default()
+}
+
+fn validate_success_summary(summary: &AutoloopRunSummary, engine_root: &Path) -> Result<()> {
+    let expected_journal = engine_journal_path(engine_root);
+    let expected_memory = engine_memory_path(engine_root);
+    if summary.journal != expected_journal || summary.memory != expected_memory {
+        bail!("Autoloop summary did not report the expected Ralph-owned state files");
+    }
+
+    for path in [&expected_journal, &expected_memory] {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("Autoloop summary state file is an unsafe symlink");
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => bail!("Ralph could not validate an Autoloop summary state file"),
+        }
+    }
+
+    Ok(())
 }
 
 /// Normalized result of driving the autoloop subprocess.
@@ -201,10 +217,9 @@ fn warn_on_open_ralph_tasks(tasks_path: &Path, loop_id: &str) {
                 );
             }
         }
-        Err(error) => eprintln!(
-            "WARNING: Loop completed, but Ralph could not inspect open tasks at '{}': \
-             {error}. This observation failure does not change loop completion.",
-            tasks_path.display()
+        Err(_) => eprintln!(
+            "WARNING: Loop completed, but Ralph could not inspect its separate task store. \
+             This observation failure does not change loop completion."
         ),
     }
 }
@@ -230,17 +245,13 @@ fn prepare_loop_identity(
             loop_id.to_string()
         } else {
             let marker = context.ralph_dir().join("current-loop-id");
-            let loop_id = std::fs::read_to_string(&marker).with_context(|| {
-                format!(
-                    "Cannot continue: current loop ID marker '{}' is unavailable; pass --loop-id or start a fresh run",
-                    marker.display()
-                )
-            })?;
+            let loop_id = std::fs::read_to_string(&marker).context(
+                "Cannot continue: the current-loop-id marker is unavailable; pass --loop-id or start a fresh run",
+            )?;
             let loop_id = loop_id.trim();
             if loop_id.is_empty() {
                 bail!(
-                    "Cannot continue: current loop ID marker '{}' is blank; pass --loop-id or start a fresh run",
-                    marker.display()
+                    "Cannot continue: the current-loop-id marker is blank; pass --loop-id or start a fresh run"
                 );
             }
             loop_id.to_string()
@@ -250,15 +261,9 @@ fn prepare_loop_identity(
     };
 
     let marker = context.ralph_dir().join("current-loop-id");
-    std::fs::create_dir_all(context.ralph_dir()).with_context(|| {
-        format!(
-            "creating Ralph state directory {}",
-            context.ralph_dir().display()
-        )
-    })?;
-    std::fs::write(&marker, &loop_id)
-        .with_context(|| format!("writing current loop ID marker {}", marker.display()))?;
-    tracing::debug!(loop_id = %loop_id, marker = %marker.display(), "wrote current loop ID marker");
+    std::fs::create_dir_all(context.ralph_dir()).context("creating the Ralph state directory")?;
+    std::fs::write(&marker, &loop_id).context("writing the current loop ID marker")?;
+    tracing::debug!(loop_id = %loop_id, "wrote current loop ID marker");
 
     Ok(loop_id)
 }
@@ -282,8 +287,7 @@ fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Re
     }
 
     let path = resolve(workspace, &event_loop.prompt_file);
-    std::fs::read_to_string(&path)
-        .with_context(|| format!("reading prompt file {}", path.display()))
+    std::fs::read_to_string(&path).context("reading prompt file from the configured workspace")
 }
 
 /// Drive the configured autoloop preset as ralph's engine, returning the mapped
@@ -305,6 +309,8 @@ pub async fn run_autoloop_engine(
     tui: bool,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
+    let engine_state_root =
+        prepare_engine_state_root(&workspace).context("preparing Ralph-owned Autoloop state")?;
     let identity_context = context
         .clone()
         .unwrap_or_else(|| LoopContext::primary(workspace.clone()));
@@ -326,17 +332,19 @@ pub async fn run_autoloop_engine(
             let preset = resolve(&workspace, p);
             if !preset.join("autoloops.toml").is_file() {
                 bail!(
-                    "autoloop preset not found (no autoloops.toml): {}",
-                    preset.display()
+                    "the configured Autoloop preset is unavailable or invalid; select a preset containing autoloops.toml"
                 );
             }
             (preset, true)
         }
         None => {
             let preset = workspace.join(".ralph").join("autoloop-preset");
-            crate::autoloop_preset_gen::generate_preset(&config, &preset)
-                .context("generating an autoloop preset from the hats topology")?;
-            tracing::debug!(preset = %preset.display(), "engine=autoloop: generated preset from hats config");
+            crate::autoloop_preset_gen::generate_preset(&config, &preset).map_err(|_| {
+                anyhow::anyhow!(
+                    "could not generate Ralph's Autoloop preset; verify the workspace state directory is writable"
+                )
+            })?;
+            tracing::debug!("engine=autoloop: generated preset from hats config");
             (preset, false)
         }
     };
@@ -366,21 +374,27 @@ pub async fn run_autoloop_engine(
 
     let prompt = resolve_autoloop_prompt(&workspace, &config.event_loop)?;
 
-    // Structured event sink under .ralph/ — the preferred observability channel.
-    let events_path = workspace.join(".ralph").join("autoloop-events.ndjson");
-    if let Some(parent) = events_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    // Structured event sink beneath the owned engine root — the preferred
+    // observability channel. The root was prepared before any run state.
+    let events_path = engine_state_root.join("events.ndjson");
     let _ = std::fs::remove_file(&events_path);
 
-    tracing::debug!(
-        preset = %preset.display(),
-        "engine=autoloop: driving the autoloop runtime as a subprocess"
-    );
+    tracing::debug!("engine=autoloop: driving the autoloop runtime as a subprocess");
 
+    // Ralph owns the engine's runtime state beneath .ralph/. State-root and
+    // exact-store environment overrides are both required: the root wins over
+    // preset core.state_dir, while exact overrides win over a preset's explicit
+    // journal/memory/tasks paths. Export absolute paths so child cwd handling
+    // cannot re-anchor them.
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
         .events_path(events_path.clone());
+    for (key, value) in engine_env(&engine_state_root) {
+        runner = runner.env(key, value);
+    }
+    for (key, value) in engine_config_overrides(&engine_state_root) {
+        runner = runner.set_override(key, &value);
+    }
     if explicit_preset {
         for (key, value) in crate::autoloop_preset_gen::autoloop_budget_overrides(&config) {
             runner = runner.set_override(key, &value);
@@ -396,6 +410,7 @@ pub async fn run_autoloop_engine(
             runner,
             events_path.clone(),
             workspace.clone(),
+            engine_state_root.clone(),
             role_display_names,
         )
         .await
@@ -415,19 +430,37 @@ pub async fn run_autoloop_engine(
         }
     };
 
+    // Validate the complete structured stream before trusting even a successful
+    // process and summary. Live readers remain lenient so they can keep
+    // rendering, but any malformed nonblank record makes completion fail closed.
+    let outcome = match std::fs::read_to_string(&events_path) {
+        Ok(content) if parse_events_strict(&content).is_err() => AutoloopOutcome::Failed(
+            anyhow::anyhow!("Autoloop produced a malformed structured event stream"),
+        ),
+        Ok(_) => outcome,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => outcome,
+        Err(_) => AutoloopOutcome::Failed(anyhow::anyhow!(
+            "Ralph could not validate the Autoloop structured event stream"
+        )),
+    };
+    let outcome = match outcome {
+        AutoloopOutcome::Completed(summary) => {
+            match validate_success_summary(&summary, &engine_state_root) {
+                Ok(()) => AutoloopOutcome::Completed(summary),
+                Err(error) => AutoloopOutcome::Failed(error),
+            }
+        }
+        outcome => outcome,
+    };
+
     // Normalize every child execution result before coordinating so success,
     // user stop, spawn/wait failures, and non-zero exits all traverse the same
-    // completion path exactly once. On failure, the engine's terminal event is
-    // authoritative when present; malformed JSONL remains the last resort.
-    // The original subprocess diagnostic is still returned after bookkeeping.
+    // completion path exactly once. On failure, a valid engine terminal event
+    // is authoritative when present. The subprocess diagnostic is still
+    // returned after bookkeeping.
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
-            let mapped_reason = map_stop_reason(&summary.stop_reason);
-            let reason = if matches!(mapped_reason, TerminationReason::EngineError { .. }) {
-                enrich_engine_error(mapped_reason, &read_events(&events_path))
-            } else {
-                mapped_reason
-            };
+            let reason = map_stop_reason(&summary.stop_reason);
             if reason == TerminationReason::CompletionPromise {
                 warn_on_open_ralph_tasks(&identity_context.tasks_path(), &loop_id);
             }
@@ -634,29 +667,11 @@ fn print_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) {
     let _ = std::io::stdout().flush();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EngineLogLevel {
-    Error,
-    Warn,
-    Debug,
-}
-
-fn engine_log_level(line: &str) -> EngineLogLevel {
-    if line.contains("[error]") {
-        EngineLogLevel::Error
-    } else if line.contains("[warn]") {
-        EngineLogLevel::Warn
-    } else {
-        EngineLogLevel::Debug
-    }
-}
-
-fn trace_engine_stderr_line(line: &str) {
-    match engine_log_level(line) {
-        EngineLogLevel::Error => tracing::error!(target: "autoloop::engine", "{line}"),
-        EngineLogLevel::Warn => tracing::warn!(target: "autoloop::engine", "{line}"),
-        EngineLogLevel::Debug => tracing::debug!(target: "autoloop::engine", "{line}"),
-    }
+fn trace_engine_diagnostic() {
+    tracing::debug!(
+        target: "autoloop::engine",
+        "Autoloop emitted diagnostic output"
+    );
 }
 
 /// Run autoloop headlessly while live-tailing its structured event stream.
@@ -719,7 +734,7 @@ async fn run_autoloop_headless(
 
     let wait_handle = tokio::spawn(async move {
         let summary = tokio::task::spawn_blocking(move || {
-            runner.wait_with_summary_streaming_stderr(child, trace_engine_stderr_line)
+            runner.wait_with_summary_streaming_stderr(child, trace_engine_diagnostic)
         })
         .await
         .context("autoloop wait task panicked")
@@ -757,6 +772,7 @@ async fn run_autoloop_with_tui(
     runner: AutoloopRunner,
     events_path: PathBuf,
     workspace: PathBuf,
+    engine_state_root: PathBuf,
     role_display_names: HashMap<String, String>,
 ) -> Result<AutoloopOutcome> {
     use ralph_tui::Tui;
@@ -791,6 +807,7 @@ async fn run_autoloop_with_tui(
             ralph_tui::run_autoloop_event_reader(
                 events_path,
                 workspace,
+                engine_state_root,
                 reader_state,
                 cancel_rx,
                 role_display_names,
@@ -831,11 +848,11 @@ async fn run_autoloop_with_tui(
     // If the subprocess is still running (user quit via q or Ctrl+C — neither
     // exits autoloop), stop the whole process group so the backend isn't
     // orphaned. No-op if the run already completed naturally.
-    let killed_by_ralph = if !completed.load(Ordering::SeqCst) {
+    let killed_by_ralph = if completed.load(Ordering::SeqCst) {
+        false
+    } else {
         kill_autoloop_group(child_pid);
         true
-    } else {
-        false
     };
     // Ensure the reader does its final drain even if the TUI exited first (q).
     let _ = terminated_tx.send(true);
@@ -871,6 +888,15 @@ fn kill_autoloop_group(pid: u32) {
     {
         let _ = pid;
     }
+}
+
+fn prepare_daemon_engine_state(
+    workspace_root: &Path,
+    resolve_engine: impl FnOnce() -> Result<AutoloopBin>,
+) -> Result<AutoloopBin> {
+    let autoloop_bin = resolve_engine()?;
+    prepare_engine_state_root(workspace_root).context("preparing Ralph-owned Autoloop state")?;
+    Ok(autoloop_bin)
 }
 
 /// Start a headless orchestration loop for the Telegram bot daemon.
@@ -928,8 +954,10 @@ pub async fn start_loop(
     }
 
     // Resolve once before creating state or acquiring the loop lock, then use
-    // that exact binary for launch.
-    let autoloop_bin = crate::engine_provision::ensure_autoloop_with_provisioning(false, false)?;
+    // that exact binary for launch. Dependency failure must remain state-free.
+    let autoloop_bin = prepare_daemon_engine_state(&workspace_root, || {
+        crate::engine_provision::ensure_autoloop_with_provisioning(false, false)
+    })?;
 
     // Ensure scratchpad directory exists.
     crate::ensure_scratchpad_directory(&config)?;
@@ -963,8 +991,8 @@ mod tests {
 
     fn nonzero_exit(code: Option<i32>) -> anyhow::Error {
         anyhow::Error::new(AutoloopRunError::NonZeroExit {
+            command: "autoloop (PATH lookup): run".to_string(),
             code,
-            stderr_tail: "test stderr".to_string(),
         })
         .context("autoloop run failed")
     }
@@ -978,26 +1006,6 @@ mod tests {
             journal: PathBuf::from("/tmp/journal.jsonl"),
             memory: PathBuf::from("/tmp/memory.jsonl"),
         }
-    }
-
-    #[test]
-    fn engine_stderr_lines_map_to_user_visible_severity() {
-        assert_eq!(
-            engine_log_level("[autoloops] [error] backend failed"),
-            EngineLogLevel::Error
-        );
-        assert_eq!(
-            engine_log_level("[autoloops] [warn] retrying"),
-            EngineLogLevel::Warn
-        );
-        assert_eq!(
-            engine_log_level("[autoloops] [info] started"),
-            EngineLogLevel::Debug
-        );
-        assert_eq!(
-            engine_log_level("unclassified engine output"),
-            EngineLogLevel::Debug
-        );
     }
 
     #[test]
@@ -1265,7 +1273,8 @@ mod tests {
         let error = resolve_autoloop_prompt(workspace.path(), &event_loop).unwrap_err();
 
         assert!(error.to_string().contains("reading prompt file"));
-        assert!(error.to_string().contains("missing.md"));
+        assert!(error.to_string().contains("configured workspace"));
+        assert!(!error.to_string().contains("missing.md"));
     }
 
     #[test]
@@ -1284,11 +1293,11 @@ mod tests {
     }
 
     #[test]
-    fn failed_run_recovers_engine_error_and_detail_from_terminal_events() {
+    fn failed_run_ignores_untrusted_error_log_detail() {
         let events = parse_events(concat!(
             r#"{"type":"iteration.start","iteration":0,"maxIterations":1,"runId":"r1"}"#,
             "\n",
-            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found"}"#,
+            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=untrusted"}"#,
             "\n",
             r#"{"type":"loop.finish","iterations":0,"stopReason":"error","runId":"r1","costUsd":0}"#,
             "\n",
@@ -1297,13 +1306,25 @@ mod tests {
         assert_eq!(
             recover_failed_run(&events),
             Some(FailedRunRecovery {
-                reason: TerminationReason::EngineError {
-                    detail: Some("boom: native CLI not found".to_string()),
-                },
+                reason: engine_stop_error("error"),
                 iterations: 0,
                 cost_usd: 0.0,
             })
         );
+    }
+
+    #[test]
+    fn unknown_stop_reason_is_replaced_with_a_fixed_safe_category() {
+        let secret = "TOKEN_SECRET_/physical/workspace";
+        let reason = map_stop_reason(secret);
+
+        assert_eq!(
+            reason,
+            TerminationReason::EngineError {
+                detail: Some("unknown engine stop reason".to_string()),
+            }
+        );
+        assert!(!format!("{reason:?}").contains(secret));
     }
 
     #[test]
@@ -1323,25 +1344,50 @@ mod tests {
     }
 
     #[test]
-    fn completed_backend_failure_enriches_engine_error_detail() {
-        let events = parse_events(
-            r#"{"type":"log","level":"error","message":"loop stop reason=backend_failed completed_iterations=0 detail=backend exploded"}"#,
-        );
-        let reason = enrich_engine_error(map_stop_reason("backend_failed"), &events);
+    fn successful_summary_requires_exact_owned_paths_and_non_symlink_leaves() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = prepare_engine_state_root(workspace.path()).unwrap();
+        let mut summary = test_summary();
+        summary.journal = engine_journal_path(&root);
+        summary.memory = engine_memory_path(&root);
 
-        assert_eq!(
-            reason,
-            TerminationReason::EngineError {
-                detail: Some("backend exploded".to_string()),
-            }
+        validate_success_summary(&summary, &root).unwrap();
+        summary.journal = PathBuf::from("/OUTSIDE/journal.jsonl");
+        assert!(validate_success_summary(&summary, &root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_summary_rejects_symlink_store_leaf() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::NamedTempFile::new().unwrap();
+        let root = prepare_engine_state_root(workspace.path()).unwrap();
+        symlink(external.path(), engine_journal_path(&root)).unwrap();
+        let mut summary = test_summary();
+        summary.journal = engine_journal_path(&root);
+        summary.memory = engine_memory_path(&root);
+
+        let error = validate_success_summary(&summary, &root).unwrap_err();
+        assert!(error.to_string().contains("unsafe symlink"));
+        assert!(
+            !error
+                .to_string()
+                .contains(&external.path().display().to_string())
         );
     }
 
     #[test]
-    fn completed_engine_failure_keeps_stop_literal_without_richer_detail() {
-        let reason = enrich_engine_error(map_stop_reason("auth_failed"), &[]);
+    fn daemon_dependency_failure_creates_no_owned_state() {
+        let workspace = tempfile::tempdir().unwrap();
+        let error = prepare_daemon_engine_state(workspace.path(), || {
+            Err(anyhow::anyhow!("dependency unavailable"))
+        })
+        .unwrap_err();
 
-        assert_eq!(reason, engine_stop_error("auth_failed"));
+        assert!(error.to_string().contains("dependency unavailable"));
+        assert!(!workspace.path().join(".ralph/autoloop").exists());
     }
 
     #[test]
@@ -1437,7 +1483,7 @@ mod tests {
         assert_eq!(
             reason,
             TerminationReason::EngineError {
-                detail: Some("unknown engine stop reason: something_new".to_string()),
+                detail: Some("unknown engine stop reason".to_string()),
             }
         );
         assert_ne!(reason.exit_code(), 0);

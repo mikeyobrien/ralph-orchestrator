@@ -149,7 +149,10 @@ fn write_fixture(workspace: &Path, fixture: &Path) {
         })
         .to_string(),
     ];
-    let stream_path = format!(".autoloop/runs/{RUN_ID}/claude-stream.1.jsonl");
+    // The fake engine resolves this beneath AUTOLOOP_STATE_DIR, mirroring the
+    // upstream state-dir contract. Ralph must export the .ralph/autoloop root
+    // for the TUI reader to find the live stream at all.
+    let stream_path = format!("${{AUTOLOOP_STATE_DIR}}/runs/{RUN_ID}/claude-stream.1.jsonl");
 
     // Separate stream steps append complete real-format records one at a time,
     // matching the incremental file growth Ralph observes from real autoloop.
@@ -167,8 +170,8 @@ fn write_fixture(workspace: &Path, fixture: &Path) {
                 "iterations": 1,
                 "stop_reason": "completed",
                 "cost_usd": 0.01,
-                "journal": "/tmp/autoloop-tui-live-journal.jsonl",
-                "memory": "/tmp/autoloop-tui-live-memory.jsonl"
+                "journal": "${AUTOLOOP_STATE_DIR}/journal.jsonl",
+                "memory": "${AUTOLOOP_STATE_DIR}/memory.jsonl"
             }}
         ]
     });
@@ -563,5 +566,22 @@ fn tui_shows_incremental_backend_stream_before_iteration_finish_and_reconciles_o
         status.success(),
         "ralph failed with {status:?}; transcript:\n{}",
         String::from_utf8_lossy(&transcript.lock().expect("lock transcript"))
+    );
+
+    // Ralph-owned engine state: the run stream must land beneath
+    // .ralph/autoloop, and the launch must not create a top-level .autoloop.
+    let owned_stream = workspace
+        .path()
+        .join(".ralph/autoloop/runs")
+        .join(RUN_ID)
+        .join("claude-stream.1.jsonl");
+    assert!(
+        owned_stream.is_file(),
+        "engine stream missing from the Ralph-owned root: {}",
+        owned_stream.display()
+    );
+    assert!(
+        !workspace.path().join(".autoloop").exists(),
+        "Ralph-launched run must not create a top-level .autoloop directory"
     );
 }

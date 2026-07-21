@@ -68,13 +68,17 @@ To install the standalone engine manually before the first run:
 ralph doctor --install-engine
 ```
 
-Ralph downloads the engine, verifies its SHA-256 checksum, and installs it at
-`~/.ralph/engine/autoloop`. Set `RALPH_ENGINE_DIR` to install and resolve the
-engine from another directory:
+Ralph downloads the engine, verifies its SHA-256 checksum, and installs the
+executable at `~/.ralph/engine/autoloop`. Set `RALPH_ENGINE_DIR` to install and
+resolve the executable from another directory:
 
 ```bash
 RALPH_ENGINE_DIR=/path/to/engine ralph doctor --install-engine
 ```
+
+The global executable location is separate from runtime state. Ralph owns the
+runtime state root for each project at `<workspace>/.ralph/autoloop`; users do
+not need to configure it.
 
 ## Verify Installation
 

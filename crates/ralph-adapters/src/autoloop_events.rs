@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use thiserror::Error;
 
 /// One decoded `LoopEvent` line. `kind` is the event `type`; the remaining
 /// fields are present only for the event types that carry them.
@@ -116,8 +117,28 @@ pub struct RunResult {
     pub cost_usd: f64,
 }
 
-/// Parse a `--events` NDJSON stream. Complete lines that fail to decode are
-/// skipped (forward-compatible); a partial trailing line is ignored.
+/// A nonblank structured-event record was not valid JSON for the event contract.
+#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
+#[error("structured event stream contains a malformed record")]
+pub struct MalformedEventRecord;
+
+/// Strictly parse a `--events` NDJSON stream.
+///
+/// Every nonblank line must decode as an event. Unknown event types and fields
+/// remain forward-compatible, but malformed JSON and records without a string
+/// `type` fail the complete stream.
+pub fn parse_events_strict(content: &str) -> Result<Vec<AutoloopEvent>, MalformedEventRecord> {
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line.trim()).map_err(|_| MalformedEventRecord))
+        .collect()
+}
+
+/// Leniently parse a `--events` NDJSON stream for live observation.
+///
+/// Complete lines that fail to decode are skipped so a live UI can continue;
+/// run completion must use [`parse_events_strict`] before trusting the result.
 pub fn parse_events(content: &str) -> Vec<AutoloopEvent> {
     let mut out = Vec::new();
     for line in content.lines() {
@@ -140,24 +161,6 @@ pub fn first_pending_ask(events: &[AutoloopEvent]) -> Option<PendingAsk> {
 /// The terminal run result in the stream, if present (last wins).
 pub fn run_result(events: &[AutoloopEvent]) -> Option<RunResult> {
     events.iter().rev().find_map(AutoloopEvent::run_result)
-}
-
-/// The detail from the latest engine error stop log, if present.
-pub fn terminal_stop_detail(events: &[AutoloopEvent]) -> Option<String> {
-    events.iter().rev().find_map(|event| {
-        if event.kind != "log" || event.level.as_deref() != Some("error") {
-            return None;
-        }
-
-        let message = event.message.as_deref()?;
-        if !message.contains("loop stop reason=") {
-            return None;
-        }
-
-        let (_, detail) = message.split_once("detail=")?;
-        let detail = detail.trim();
-        (!detail.is_empty()).then(|| detail.to_owned())
-    })
 }
 
 #[cfg(test)]
@@ -204,7 +207,7 @@ mod tests {
         assert_eq!(result.run_id, "r1");
         assert_eq!(result.iterations, 2);
         assert_eq!(result.stop_reason, "max_iterations");
-        assert_eq!(result.cost_usd, 0.08);
+        assert!((result.cost_usd - 0.08).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -225,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_malformed_and_partial_lines() {
+    fn lenient_parser_skips_malformed_and_partial_lines() {
         let content = concat!(
             r#"{"type":"iteration.start","iteration":1,"maxIterations":1,"runId":"r1"}"#,
             "\n",
@@ -241,33 +244,25 @@ mod tests {
     }
 
     #[test]
-    fn extracts_detail_from_the_latest_engine_error_stop_log() {
+    fn strict_parser_rejects_any_malformed_nonblank_record() {
         let content = concat!(
-            r#"{"type":"iteration.start","iteration":0,"maxIterations":1,"runId":"r1"}"#,
-            "\n",
-            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found"}"#,
-            "\n",
-            r#"{"type":"loop.finish","iterations":0,"stopReason":"error","runId":"r1","costUsd":0}"#,
+            r#"{"type":"iteration.start","runId":"r1"}"#,
+            "\n\n",
+            "not json\n",
+            r#"{"type":"loop.finish","runId":"r1","iterations":1,"stopReason":"completed"}"#,
             "\n",
         );
 
-        assert_eq!(
-            terminal_stop_detail(&parse_events(content)).as_deref(),
-            Some("boom: native CLI not found")
-        );
+        assert_eq!(parse_events_strict(content), Err(MalformedEventRecord));
     }
 
     #[test]
-    fn stop_detail_is_absent_without_an_error_log() {
-        assert!(terminal_stop_detail(&parse_events(SAMPLE)).is_none());
-    }
+    fn strict_parser_accepts_blank_lines_and_unknown_event_fields() {
+        let content = "\n  \n{\"type\":\"future.event\",\"newField\":true}\n";
 
-    #[test]
-    fn stop_detail_is_absent_when_detail_is_blank() {
-        let events = parse_events(
-            r#"{"type":"log","level":"error","message":"loop stop reason=error completed_iterations=0 detail=   "}"#,
-        );
+        let events = parse_events_strict(content).unwrap();
 
-        assert!(terminal_stop_detail(&events).is_none());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "future.event");
     }
 }

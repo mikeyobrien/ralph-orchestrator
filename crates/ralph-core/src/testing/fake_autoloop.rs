@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 pub struct FakeAutoloop {
     bin_dir: PathBuf,
     argv_out: PathBuf,
+    env_out: PathBuf,
+    summary_out: PathBuf,
 }
 
 impl FakeAutoloop {
@@ -35,6 +37,32 @@ impl FakeAutoloop {
         Ok(fs::read_to_string(&self.argv_out)?
             .lines()
             .map(str::to_owned)
+            .collect())
+    }
+
+    /// Suggested path for recording Ralph's engine-state environment exports.
+    pub fn env_out(&self) -> &Path {
+        &self.env_out
+    }
+
+    /// Read engine-state environment exports recorded by the latest invocation.
+    pub fn recorded_engine_env(&self) -> io::Result<Vec<String>> {
+        Ok(fs::read_to_string(&self.env_out)?
+            .lines()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// Suggested path for recording resolved journal/memory summary paths.
+    pub fn summary_out(&self) -> &Path {
+        &self.summary_out
+    }
+
+    /// Read resolved paths emitted by the latest summary step.
+    pub fn recorded_summary_paths(&self) -> io::Result<Vec<PathBuf>> {
+        Ok(fs::read_to_string(&self.summary_out)?
+            .lines()
+            .map(PathBuf::from)
             .collect())
     }
 }
@@ -138,7 +166,8 @@ struct ExitStep {
 /// Build an executable fake `autoloop` from a JSONL invocation fixture.
 ///
 /// Generated files are contained beneath `dir`. At runtime, arguments are
-/// written one per line to `ARGV_OUT` when that variable is set.
+/// written one per line to `ARGV_OUT` and engine-state environment exports are
+/// written to `ENV_OUT` when those variables are set.
 pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloop> {
     let invocations = parse_fixture(fixture)?;
     if invocations.is_empty() {
@@ -165,9 +194,11 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
 
     let count_path = state_dir.join("invocation-count");
     let argv_out = state_dir.join("argv.out");
+    let env_out = state_dir.join("env.out");
+    let summary_out = state_dir.join("summary.out");
     let mut dispatcher = String::from("#!/bin/sh\nset -eu\n");
     dispatcher.push_str(
-        "if [ -n \"${ARGV_OUT:-}\" ]; then\n  printf '%s\\n' \"$@\" > \"$ARGV_OUT\"\nfi\n",
+        "if [ -n \"${ARGV_OUT:-}\" ]; then\n  printf '%s\\n' \"$@\" > \"$ARGV_OUT\"\nfi\nif [ -n \"${ENV_OUT:-}\" ]; then\n  {\n    printf 'AUTOLOOP_STATE_DIR=%s\\n' \"${AUTOLOOP_STATE_DIR:-}\"\n    printf 'AUTOLOOP_JOURNAL_FILE=%s\\n' \"${AUTOLOOP_JOURNAL_FILE:-}\"\n    printf 'AUTOLOOP_MEMORY_FILE=%s\\n' \"${AUTOLOOP_MEMORY_FILE:-}\"\n    printf 'AUTOLOOP_TASKS_FILE=%s\\n' \"${AUTOLOOP_TASKS_FILE:-}\"\n  } > \"$ENV_OUT\"\nfi\n",
     );
     dispatcher.push_str(&format!(
         "count_path={}\ncount=0\nif [ -f \"$count_path\" ]; then count=$(cat \"$count_path\"); fi\ncount=$((count + 1))\nprintf '%s\\n' \"$count\" > \"$count_path\"\n",
@@ -186,7 +217,12 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
     ));
     write_executable(&bin_dir.join("autoloop"), &dispatcher)?;
 
-    Ok(FakeAutoloop { bin_dir, argv_out })
+    Ok(FakeAutoloop {
+        bin_dir,
+        argv_out,
+        env_out,
+        summary_out,
+    })
 }
 
 fn parse_fixture(path: &Path) -> io::Result<Vec<Invocation>> {
@@ -238,7 +274,7 @@ fn invocation_script(
                 write_lines(&payload, &step.stream.lines)?;
                 script.push_str(&format!(
                     "stream_path={}\nmkdir -p \"$(dirname \"$stream_path\")\"\ncat {} >> \"$stream_path\"\n",
-                    shell_quote(&step.stream.path),
+                    stream_path_expr(&step.stream.path),
                     shell_quote(&payload),
                 ));
             }
@@ -262,7 +298,7 @@ fn invocation_script(
                     "invocation-{invocation_index}-step-{payload_index}-journal"
                 ));
                 write_lines(&payload, &step.journal)?;
-                script.push_str("journal_path=${JOURNAL_OUT:-./.autoloop/journal.jsonl}\nmkdir -p \"$(dirname \"$journal_path\")\"\n");
+                script.push_str("journal_path=${JOURNAL_OUT:-${AUTOLOOP_STATE_DIR:-./.autoloop}/journal.jsonl}\nmkdir -p \"$(dirname \"$journal_path\")\"\n");
                 script.push_str(&format!(
                     "cat {} >> \"$journal_path\"\n",
                     shell_quote(&payload)
@@ -289,8 +325,13 @@ fn invocation_script(
                 let payload = payload_dir.join(format!(
                     "invocation-{invocation_index}-step-{payload_index}-summary"
                 ));
-                fs::write(&payload, summary_text(&step.summary))?;
-                script.push_str(&format!("cat {}\n", shell_quote(&payload)));
+                fs::write(&payload, summary_prefix(&step.summary))?;
+                let journal = stream_path_expr(Path::new(&step.summary.journal));
+                let memory = stream_path_expr(Path::new(&step.summary.memory));
+                script.push_str(&format!(
+                    "cat {}\nprintf 'journal: %s\\nmemory: %s\\n' {journal} {memory}\nif [ -n \"${{SUMMARY_OUT:-}}\" ]; then printf '%s\\n%s\\n' {journal} {memory} > \"$SUMMARY_OUT\"; fi\n",
+                    shell_quote(&payload)
+                ));
             }
             Step::Exit(step) => script.push_str(&format!("exit {}\n", step.exit)),
         }
@@ -300,7 +341,7 @@ fn invocation_script(
     Ok(script)
 }
 
-fn summary_text(summary: &Summary) -> String {
+fn summary_prefix(summary: &Summary) -> String {
     let mut text = format!(
         "autoloops summary\n===================\nrun_id: {}\niterations: {}\nstop_reason: {}\n",
         summary.run_id, summary.iterations, summary.stop_reason
@@ -308,10 +349,6 @@ fn summary_text(summary: &Summary) -> String {
     if let Some(cost_usd) = &summary.cost_usd {
         text.push_str(&format!("cost_usd: {cost_usd}\n"));
     }
-    text.push_str(&format!(
-        "journal: {}\nmemory: {}\n",
-        summary.journal, summary.memory
-    ));
     text
 }
 
@@ -334,6 +371,20 @@ fn validate_env_name(name: &str) -> io::Result<()> {
             io::ErrorKind::InvalidData,
             format!("invalid barrier environment variable name: {name}"),
         ))
+    }
+}
+
+/// Shell expression for a stream path. A `${AUTOLOOP_STATE_DIR}/` prefix
+/// expands at runtime like the real engine's state-dir contract: the env var
+/// wins, with autoloop's standalone `.autoloop` default as the fallback.
+fn stream_path_expr(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    match raw.strip_prefix("${AUTOLOOP_STATE_DIR}/") {
+        Some(suffix) => format!(
+            "\"${{AUTOLOOP_STATE_DIR:-./.autoloop}}\"/{}",
+            shell_quote(Path::new(suffix))
+        ),
+        None => shell_quote(path),
     }
 }
 
@@ -364,6 +415,9 @@ mod tests {
     fn command(fake: &FakeAutoloop) -> Command {
         let mut command = Command::new(fake.bin_dir().join("autoloop"));
         command.env("ARGV_OUT", fake.argv_out());
+        command.env("SUMMARY_OUT", fake.summary_out());
+        // Isolate from any ambient engine state configuration.
+        command.env_remove("AUTOLOOP_STATE_DIR");
         command
     }
 
@@ -414,6 +468,89 @@ mod tests {
         assert_eq!(
             fs::read_to_string(workspace.join(".autoloop/runs/live/pi-stream.1.jsonl")).unwrap(),
             "{\"type\":\"one\"}\n{\"type\":\"two\"}\n"
+        );
+    }
+
+    #[test]
+    fn state_dir_env_relocates_tokenized_stream_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"stream":{"path":"${AUTOLOOP_STATE_DIR}/runs/live/pi-stream.1.jsonl","lines":["{\"type\":\"one\"}"]}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let state_dir = workspace.join(".ralph/autoloop");
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .env("AUTOLOOP_STATE_DIR", &state_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(state_dir.join("runs/live/pi-stream.1.jsonl")).unwrap(),
+            "{\"type\":\"one\"}\n"
+        );
+        assert!(
+            !workspace.join(".autoloop").exists(),
+            "state-dir override must not leave a top-level .autoloop"
+        );
+    }
+
+    #[test]
+    fn tokenized_stream_paths_default_to_standalone_state_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"stream":{"path":"${AUTOLOOP_STATE_DIR}/runs/live/pi-stream.1.jsonl","lines":["{\"type\":\"one\"}"]}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .env_remove("AUTOLOOP_STATE_DIR")
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join(".autoloop/runs/live/pi-stream.1.jsonl")).unwrap(),
+            "{\"type\":\"one\"}\n"
+        );
+    }
+
+    #[test]
+    fn journal_honors_state_dir_env_when_journal_out_is_unset() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(temp.path(), r#"{"steps":[{"journal":["{\"entry\":1}"]}]}"#);
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir(&workspace).unwrap();
+        let state_dir = workspace.join(".ralph/autoloop");
+
+        assert!(
+            command(&fake)
+                .current_dir(&workspace)
+                .env_remove("JOURNAL_OUT")
+                .env("AUTOLOOP_STATE_DIR", &state_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            fs::read_to_string(state_dir.join("journal.jsonl")).unwrap(),
+            "{\"entry\":1}\n"
+        );
+        assert!(
+            !workspace.join(".autoloop").exists(),
+            "state-dir override must not leave a top-level .autoloop"
         );
     }
 
@@ -546,6 +683,34 @@ mod tests {
         assert!(stdout.contains(
             "autoloops summary\n===================\nrun_id: with-noise\niterations: 2\nstop_reason: completed\n"
         ));
+    }
+
+    #[test]
+    fn summary_paths_expand_the_runtime_state_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(
+            temp.path(),
+            r#"{"steps":[{"summary":{"run_id":"owned","iterations":1,"stop_reason":"completed","journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}}]}"#,
+        );
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        let root = temp.path().join("workspace/.ralph/autoloop");
+
+        let output = command(&fake)
+            .env("AUTOLOOP_STATE_DIR", &root)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(&format!(
+            "journal: {}",
+            root.join("journal.jsonl").display()
+        )));
+        assert!(stdout.contains(&format!("memory: {}", root.join("memory.jsonl").display())));
+        assert_eq!(
+            fake.recorded_summary_paths().unwrap(),
+            vec![root.join("journal.jsonl"), root.join("memory.jsonl")]
+        );
     }
 
     #[test]

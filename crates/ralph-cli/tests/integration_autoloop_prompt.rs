@@ -143,6 +143,8 @@ impl Harness {
             .current_dir(self.workspace.path())
             .env("PATH", path)
             .env("ARGV_OUT", self.fake_autoloop.argv_out())
+            .env("ENV_OUT", self.fake_autoloop.env_out())
+            .env("SUMMARY_OUT", self.fake_autoloop.summary_out())
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
             .env_remove("RALPH_CONFIG")
@@ -205,6 +207,58 @@ impl Harness {
             .recorded_argv()
             .expect("fake autoloop should record argv")
     }
+
+    fn assert_owned_engine_env(&self, output: &Output) {
+        let root = self
+            .workspace
+            .path()
+            .canonicalize()
+            .expect("canonicalize workspace")
+            .join(".ralph/autoloop");
+        let expected = [
+            format!("AUTOLOOP_STATE_DIR={}", root.display()),
+            format!(
+                "AUTOLOOP_JOURNAL_FILE={}",
+                root.join("journal.jsonl").display()
+            ),
+            format!(
+                "AUTOLOOP_MEMORY_FILE={}",
+                root.join("memory.jsonl").display()
+            ),
+            format!("AUTOLOOP_TASKS_FILE={}", root.join("tasks.jsonl").display()),
+        ];
+        assert_eq!(
+            self.fake_autoloop
+                .recorded_engine_env()
+                .expect("fake autoloop should record engine environment"),
+            expected,
+        );
+        let argv = self.recorded_argv();
+        for override_arg in [
+            format!("core.state_dir={}", root.display()),
+            format!("core.journal_file={}", root.join("journal.jsonl").display()),
+            format!("core.memory_file={}", root.join("memory.jsonl").display()),
+            format!("core.tasks_file={}", root.join("tasks.jsonl").display()),
+        ] {
+            assert!(
+                argv.contains(&override_arg),
+                "missing engine ownership override {override_arg:?} in {argv:?}"
+            );
+        }
+        assert!(
+            !self.workspace.path().join(".autoloop").exists(),
+            "Ralph launch created a top-level .autoloop directory"
+        );
+        let normal_output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !normal_output.contains(&root.display().to_string()),
+            "normal output leaked the physical engine-state path:\n{normal_output}"
+        );
+    }
 }
 
 fn run_git(cwd: &Path, args: &[&str]) {
@@ -229,6 +283,14 @@ fn assert_success(output: &Output) {
     );
 }
 
+fn combined_output(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 fn kill_process_group(pid: u32) {
     let pid = Pid::from_raw(pid.try_into().expect("Ralph PID fits i32"));
     if let Err(error) = killpg(pid, Signal::SIGKILL) {
@@ -238,6 +300,60 @@ fn kill_process_group(pid: u32) {
             "failed to clean Ralph process group"
         );
     }
+}
+
+#[test]
+fn parallel_disabled_lock_contention_does_not_reveal_active_prompt() {
+    let harness = Harness::new(None);
+    let secret = "ACTIVE_PROMPT_SECRET_6f0a";
+    let config_path = harness.workspace.path().join("ralph.yml");
+    let config = fs::read_to_string(&config_path).expect("read ralph.yml");
+    fs::write(
+        &config_path,
+        config.replace(
+            "  auto_merge: false",
+            "  auto_merge: false\n  parallel: false",
+        ),
+    )
+    .expect("disable parallel loops");
+    let guard = LoopLock::try_acquire(harness.workspace.path(), secret)
+        .expect("acquire competing primary lock");
+
+    let output = harness.run(&["-p", "second run"]);
+    drop(guard);
+    let rendered = combined_output(&output);
+
+    assert!(
+        !output.status.success(),
+        "contending run unexpectedly passed"
+    );
+    assert!(rendered.contains("Parallel loops are disabled"));
+    assert!(
+        !rendered.contains(secret),
+        "active prompt leaked: {rendered}"
+    );
+}
+
+#[test]
+fn parallel_enabled_lock_contention_does_not_reveal_active_prompt_or_worktree_path() {
+    let harness = Harness::new(None);
+    let secret = "ACTIVE_PROMPT_SECRET_9c31";
+    let guard = LoopLock::try_acquire(harness.workspace.path(), secret)
+        .expect("acquire competing primary lock");
+
+    let output = harness.run(&["-p", "parallel second run"]);
+    drop(guard);
+    let rendered = combined_output(&output);
+
+    assert_success(&output);
+    assert!(
+        !rendered.contains(secret),
+        "active prompt leaked: {rendered}"
+    );
+    assert!(
+        !rendered.contains(&harness.workspace.path().display().to_string()),
+        "workspace path leaked: {rendered}"
+    );
 }
 
 fn wait_for_barrier(child: &mut Child, ready: &Path, label: &str) {
@@ -448,10 +564,11 @@ fn run_inline_prompt_reaches_autoloop_as_positional_argument() {
 
     assert_success(&output);
     assert_recorded_prompt(&harness, "text");
+    harness.assert_owned_engine_env(&output);
 }
 
 #[test]
-fn generated_preset_forwards_pi_backend_selection() {
+fn generated_preset_runs_with_all_runtime_paths_beneath_owned_root() {
     let harness = Harness::new(None);
     fs::write(
         harness.workspace.path().join("ralph.yml"),
@@ -465,6 +582,18 @@ fn generated_preset_forwards_pi_backend_selection() {
     let argv = harness.recorded_argv();
     assert!(argv.len() >= 3, "unexpected autoloop argv: {argv:?}");
     assert_eq!(argv[0], "run", "unexpected autoloop argv: {argv:?}");
+    let owned_root = harness
+        .workspace
+        .path()
+        .canonicalize()
+        .expect("canonicalize workspace")
+        .join(".ralph/autoloop");
+    let generated_preset = harness.workspace.path().join(".ralph/autoloop-preset");
+    assert_eq!(
+        fs::canonicalize(&argv[1]).expect("canonicalize generated preset argument"),
+        fs::canonicalize(&generated_preset).expect("canonicalize expected generated preset"),
+        "runtime did not use Ralph's generated preset: {argv:?}"
+    );
     let autoloops_toml = fs::read_to_string(Path::new(&argv[1]).join("autoloops.toml"))
         .expect("read generated autoloops.toml from recorded preset argv");
     assert!(
@@ -475,6 +604,40 @@ fn generated_preset_forwards_pi_backend_selection() {
         autoloops_toml.contains("backend.command = \"pi\""),
         "generated preset did not select the pi command:\n{autoloops_toml}"
     );
+
+    let events_position = argv
+        .iter()
+        .position(|arg| arg == "--events")
+        .expect("generated-preset run should request structured events");
+    let events_path = PathBuf::from(&argv[events_position + 1]);
+    assert!(events_path.starts_with(&owned_root));
+    assert!(
+        events_path.is_file(),
+        "structured event sink was not written"
+    );
+    assert!(owned_root.join("journal.jsonl").is_file());
+    assert!(
+        owned_root.join("runs/run-test/pi-stream.1.jsonl").is_file(),
+        "run-scoped stream was not written beneath the owned root"
+    );
+    let summary_paths = harness
+        .fake_autoloop
+        .recorded_summary_paths()
+        .expect("fake should record resolved summary paths");
+    assert_eq!(
+        summary_paths,
+        vec![
+            owned_root.join("journal.jsonl"),
+            owned_root.join("memory.jsonl")
+        ]
+    );
+    assert!(
+        summary_paths
+            .iter()
+            .all(|path| path.starts_with(&owned_root)),
+        "summary exposed a path outside the owned root: {summary_paths:?}"
+    );
+    harness.assert_owned_engine_env(&output);
 }
 
 #[test]

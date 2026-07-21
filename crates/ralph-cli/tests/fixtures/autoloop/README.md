@@ -13,7 +13,7 @@ A fixture contains one JSON object per non-empty line. Each object describes one
 Unknown fields and malformed JSON are rejected when the fake is built.
 
 ```json
-{"steps":[{"events":["<raw NDJSON LoopEvent line>"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE","then_exit":1}},{"journal":["<raw NDJSON journal line>"]},{"stdout":["<literal stdout line>"]},{"stderr":["[autoloops] [info] <literal engine log line>"]},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/journal.jsonl","memory":"/tmp/memory.jsonl"}},{"exit":0}]}
+{"steps":[{"events":["<raw NDJSON LoopEvent line>"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE","then_exit":1}},{"journal":["<raw NDJSON journal line>"]},{"stdout":["<literal stdout line>"]},{"stderr":["[autoloops] [info] <literal engine log line>"]},{"summary":{"run_id":"run-test","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}},{"exit":0}]}
 ```
 
 `cost_usd` and `barrier.then_exit` are optional. All other fields shown for a
@@ -37,8 +37,9 @@ a single physical line; blank lines between invocation objects are allowed.
   present, the fake exits with that status after release; it applies only when
   the barrier ran. This supports one fixture serving both normal and
   coordinated-crash test paths.
-- **`journal`** appends its lines to `$JOURNAL_OUT` when that variable is set,
-  otherwise to `./.autoloop/journal.jsonl`. Parent directories are created.
+- **`journal`** appends its lines to `$JOURNAL_OUT` when set. Otherwise it uses
+  `$AUTOLOOP_STATE_DIR/journal.jsonl` when that root is set, and finally falls
+  back to `./.autoloop/journal.jsonl`. Parent directories are created.
 - **`stdout`** and **`stderr`** write their literal lines to the corresponding
   process stream. They can appear anywhere in the steps array, including before
   or after `summary`, so tests can model engine logs and surrounding output
@@ -56,7 +57,12 @@ a single physical line; blank lines between invocation objects are allowed.
   memory: <memory>
   ```
 
-  The `cost_usd` line is omitted when the fixture does not provide it.
+  The `cost_usd` line is omitted when the fixture does not provide it. A
+`${AUTOLOOP_STATE_DIR}/` prefix in `journal` or `memory` expands at runtime,
+using the standalone `./.autoloop` fallback when the variable is unset. Ralph
+runtime success fixtures should use that prefix because Ralph rejects summaries
+that report anything except its exact owned journal and memory files. Tests may
+set `$SUMMARY_OUT` to record those two resolved paths, one per line.
 - **`exit`** immediately terminates with the specified status. If execution
   reaches the end of the steps, the fake exits with status 0.
 
@@ -77,7 +83,7 @@ creates the release file, then the completion event and summary are emitted.
 Its complete fixture is one JSONL line:
 
 ```json
-{"steps":[{"events":["{\"type\":\"iteration.banner\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2,\"allowedRoles\":[\"planner\"]}","{\"type\":\"iteration.start\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2}","{\"type\":\"progress\",\"runId\":\"run-stream\",\"iteration\":1,\"allowedRoles\":[\"planner\"],\"emittedTopic\":\"plan.ready\",\"outcome\":\"continue:routed_event\"}"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE"}},{"events":["{\"type\":\"loop.finish\",\"runId\":\"run-stream\",\"iterations\":1,\"stopReason\":\"completed\",\"costUsd\":0.01}"]},{"summary":{"run_id":"run-stream","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"/tmp/autoloop-stream-journal.jsonl","memory":"/tmp/autoloop-stream-memory.jsonl"}}]}
+{"steps":[{"events":["{\"type\":\"iteration.banner\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2,\"allowedRoles\":[\"planner\"]}","{\"type\":\"iteration.start\",\"runId\":\"run-stream\",\"iteration\":1,\"maxIterations\":2}","{\"type\":\"progress\",\"runId\":\"run-stream\",\"iteration\":1,\"allowedRoles\":[\"planner\"],\"emittedTopic\":\"plan.ready\",\"outcome\":\"continue:routed_event\"}"]},{"barrier":{"ready_env":"STREAM_READY","release_env":"STREAM_RELEASE"}},{"events":["{\"type\":\"loop.finish\",\"runId\":\"run-stream\",\"iterations\":1,\"stopReason\":\"completed\",\"costUsd\":0.01}"]},{"summary":{"run_id":"run-stream","iterations":1,"stop_reason":"completed","cost_usd":0.01,"journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}}]}
 ```
 
 A test builds and runs it by prefixing the returned bin directory onto `PATH`:
@@ -93,16 +99,18 @@ merge lifecycle, and full headless-stream examples.
 
 ## Capturing a real journal
 
-Run a live loop, then copy its journal directly from the workspace:
+For a loop launched by Ralph, copy the Ralph-owned journal from the workspace:
 
 ```sh
-cp .autoloop/journal.jsonl path/to/captured.journal.jsonl
+cp .ralph/autoloop/journal.jsonl path/to/captured.journal.jsonl
 ```
 
-`RALPH_DIAGNOSTICS` is not required; autoloop writes
-`.autoloop/journal.jsonl` during a normal live run. Preserve the file as JSONL.
-To use its records in a fake-autoloop invocation, JSON-encode each captured line
-as one string in a `journal` step's array.
+`RALPH_DIAGNOSTICS` is not required; Ralph configures Autoloop to write
+`.ralph/autoloop/journal.jsonl` during a normal live run. Standalone Autoloop
+uses its own `.autoloop/journal.jsonl` default unless configured otherwise; the
+fake helper's fallback above intentionally models that standalone default.
+Preserve the file as JSONL. To use its records in a fake-autoloop invocation,
+JSON-encode each captured line as one string in a `journal` step's array.
 
 The existing raw-journal fixture at
 `crates/ralph-adapters/tests/fixtures/autoloop/max_iterations.journal.jsonl`

@@ -186,10 +186,9 @@ impl LandingHandler {
                 Ok(result) => {
                     debug!(
                         loop_id = %loop_id,
-                        path = %result.path.display(),
                         completed = result.completed_tasks,
                         open = result.open_tasks,
-                        "Generated handoff file"
+                        "Generated handoff file in Ralph state"
                     );
                     result.path
                 }

@@ -218,11 +218,10 @@ pub fn create_worktree(
     let head = git_ops::get_head_sha(&worktree_path).ok();
 
     tracing::debug!(
-        "Created worktree at {} on branch {} (synced {} untracked, {} modified files)",
-        worktree_path.display(),
-        branch_name,
-        sync_stats.untracked_copied,
-        sync_stats.modified_copied
+        worktree_kind = "parallel",
+        untracked_files = sync_stats.untracked_copied,
+        modified_files = sync_stats.modified_copied,
+        "Created managed worktree"
     );
 
     Ok(Worktree {
@@ -281,9 +280,9 @@ pub fn remove_worktree(
             .output()?;
 
         if !output.status.success() {
-            // Non-fatal: branch might already be deleted
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::debug!("Failed to delete branch {}: {}", branch, stderr);
+            // Non-fatal: branch might already be deleted. Git stderr is
+            // untrusted and can contain physical workspace paths.
+            tracing::debug!("Failed to delete managed branch {}", branch);
         }
     }
 
@@ -293,7 +292,7 @@ pub fn remove_worktree(
         .current_dir(repo_root)
         .output();
 
-    tracing::debug!("Removed worktree at {}", worktree_path.display());
+    tracing::debug!("Removed managed worktree");
 
     Ok(())
 }

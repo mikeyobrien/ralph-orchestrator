@@ -11,14 +11,17 @@ loop execution, role dispatch, completion judgment, and budgets.
 Ralph 3.0 requires `autoloop >= 0.10.0`. The recommended npm installation
 pulls it in automatically. Cargo, GitHub Releases installer, and prebuilt-binary
 users can just run `ralph run`: first-run provisioning offers to download the
-SHA256-verified standalone engine into `~/.ralph/engine/` interactively. For
-CI and other non-interactive environments, opt in with
+SHA256-verified standalone engine executable into `~/.ralph/engine/`
+interactively. For CI and other non-interactive environments, opt in with
 `RALPH_AUTO_INSTALL_ENGINE=1 ralph run -p "your task"`.
 
 To provision the standalone engine manually, run
 `ralph doctor --install-engine`. No Node runtime is needed. `ralph doctor`
 shows which engine resolution is active; a declined or non-interactive run
-without opt-in fails fast with install guidance.
+without opt-in fails fast with install guidance. The global engine executable
+location (controlled by `RALPH_ENGINE_DIR`) is distinct from per-project
+runtime state: Ralph launches autoloop with a Ralph-owned state root at
+`<workspace>/.ralph/autoloop`.
 
 ## What breaks
 
@@ -55,8 +58,10 @@ without opt-in fails fast with install guidance.
 ## Observability
 
 - TUI and headless runs both render the engine's `--events` stream live.
-- Diagnostics: the run journal is at `.autoloop/journal.jsonl` in the
-  workspace; `ralph`'s own logs remain under `.ralph/diagnostics/`.
+- Engine state: the run journal is at `.ralph/autoloop/journal.jsonl`, with
+  run-scoped state under `.ralph/autoloop/runs/`.
+- Ralph's coordination stores remain separate under `.ralph/agent/`, and its
+  diagnostic logs remain under `.ralph/diagnostics/`.
 
 ## Config migration
 

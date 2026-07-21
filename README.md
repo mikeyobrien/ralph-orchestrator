@@ -57,13 +57,17 @@ To install the standalone engine manually before the first run:
 ralph doctor --install-engine
 ```
 
-Ralph downloads the engine, verifies its SHA-256 checksum, and installs it at
-`~/.ralph/engine/autoloop`. Set `RALPH_ENGINE_DIR` to install and resolve the
-engine from another directory:
+Ralph downloads the engine, verifies its SHA-256 checksum, and installs the
+executable at `~/.ralph/engine/autoloop`. Set `RALPH_ENGINE_DIR` to install and
+resolve the executable from another directory:
 
 ```bash
 RALPH_ENGINE_DIR=/path/to/engine ralph doctor --install-engine
 ```
+
+This global executable location is distinct from runtime state. For each
+project, Ralph launches autoloop with a Ralph-owned state root at
+`<workspace>/.ralph/autoloop`; users do not need to configure that path.
 
 > Homebrew is not currently published from this repository's automated release flow. Prefer npm, Cargo, or the GitHub Releases installer.
 

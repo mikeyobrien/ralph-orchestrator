@@ -122,7 +122,7 @@ pub fn print_termination(
     loop_id: Option<&str>,
 ) {
     let p = Palette::new(use_colors);
-    let (b, r, d, c) = (p.bold, p.reset, p.dim, p.cyan);
+    let (b, r, d, cy) = (p.bold, p.reset, p.dim, p.cyan);
 
     let (color, icon, label): (_, _, Cow<'_, str>) = match reason {
         TerminationReason::CompletionPromise => {
@@ -166,20 +166,20 @@ pub fn print_termination(
     println!("\n{b}+{separator}+{r}");
     println!("{b}|{r} {color}{b}{icon}{r} Loop terminated: {color}{label}{r}");
     println!("{b}+{separator}+{r}");
-    println!("{b}|{r}   Iterations:  {c}{}{r}", state.iterations);
+    println!("{b}|{r}   Iterations:  {cy}{}{r}", state.iterations);
     println!(
-        "{b}|{r}   Elapsed:     {c}{:.1}s{r}",
+        "{b}|{r}   Elapsed:     {cy}{:.1}s{r}",
         state.elapsed.as_secs_f64()
     );
     if state.cost_usd > 0.0 {
-        println!("{b}|{r}   Est. cost:   {c}${:.2}{r}", state.cost_usd);
+        println!("{b}|{r}   Est. cost:   {cy}${:.2}{r}", state.cost_usd);
     }
     println!("{b}+{separator}+{r}");
 
     if let Some(id) = loop_id
         && let Some(cmd) = resume_hint_for(reason, id)
     {
-        println!("  {d}Resume:{r} {c}{cmd}{r}");
+        println!("  {d}Resume:{r} {cy}{cmd}{r}");
     }
 }
 

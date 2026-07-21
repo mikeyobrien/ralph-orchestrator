@@ -308,7 +308,7 @@ impl EventParser {
         }
     }
 
-    fn find_segment<'a>(payload: &'a str, predicate: impl Fn(&str) -> bool) -> Option<&'a str> {
+    fn find_segment(payload: &str, predicate: impl Fn(&str) -> bool) -> Option<&str> {
         payload
             .split(|c| c == '\n' || c == ',')
             .map(str::trim)
