@@ -56,6 +56,10 @@ review findings or final gates are complete.
       it; validate exact owned summary stores and symlink leaves; suppress
       untrusted terminal stop details; preserve daemon dependency ordering; and
       redact parallel-worktree paths and cleanup diagnostics.
+- [x] `626d1926` + `554cda5` — replace unknown stop reasons with a fixed category,
+      remove active prompts and residual worktree/scratchpad paths from runtime
+      diagnostics, and cover both parallel lock-contention branches plus a real
+      fake-process stop-reason attack.
 - [x] Reject any malformed nonblank structured-event record before trusting a
       successful process and summary; cover the exact fake-process case.
 - [x] Redact raw child stderr and physical preset/workspace/state paths from
@@ -73,7 +77,7 @@ review findings or final gates are complete.
       affected headless/TUI/merge fake-process suites 5 passed.
 - [x] `cargo fmt --all --check`
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [x] Full `cargo test`: 2726 passed, 37 ignored.
+- [x] Full `cargo test`: 2730 passed, 37 ignored.
 - [x] Native contracts against
       `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`: 3 passed,
       non-skipped.
@@ -85,7 +89,7 @@ review findings or final gates are complete.
 - [x] Worktree contains no transient tracked/untracked runtime artifacts.
 - [ ] Independent critic verification of every acceptance criterion, including a
       manual fake/local smoke for non-doc changes
-- [ ] New external two-axis review readiness
+- [x] New external two-axis review readiness
 
 Earlier builder evidence predates the final acceptance findings and history
 rewrite, so it is not accepted as current gate evidence. Record fresh exact
