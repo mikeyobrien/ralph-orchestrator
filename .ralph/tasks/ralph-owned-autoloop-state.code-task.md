@@ -40,30 +40,45 @@ review findings or final gates are complete.
 - [x] Rewrite only the local feature history after `54430971` so `a0b51efe`
       precedes every production implementation commit; the post-rewrite tree
       remains `ca21fd61bc0f4e20ce7253159495d137b3e2cc24`.
-- [ ] Remove raw engine stdout/stderr from all normal non-zero error, tracing,
-      headless, and TUI paths; retain command-display red-team coverage and add
-      a behavioral fake-engine secret-output attack test.
-- [ ] Run and repair the exact strict gate:
-      `cargo clippy --all-targets --all-features -- -D warnings`.
-- [ ] Re-run the complete final acceptance matrix, update this ledger with exact
-      results/current references, and mark readiness for external review only.
-- [ ] Record every new remediation commit before marking its slice complete.
+- [x] `c1fb58bd` — remove raw engine stdout/stderr from normal non-zero error,
+      tracing, headless, and TUI paths; add behavioral fake-engine secret-output
+      attacks; reject malformed successful streams and symlink escapes; retain
+      safe diagnostic categories.
+- [x] Run and repair the strict workspace gate:
+      `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+- [x] Re-run the implementation validation matrix and record exact current
+      evidence below. External review remains a separate pending gate.
+- [x] Record every new remediation commit before marking its slice complete.
+
+## Independent review blocker remediation
+
+- [x] Reject any malformed nonblank structured-event record before trusting a
+      successful process and summary; cover the exact fake-process case.
+- [x] Redact raw child stderr and physical preset/workspace/state paths from
+      public failures and tracing while retaining safe categories and actions.
+- [x] Canonicalize the workspace and reject symlinks in both owned-root path
+      components before state creation; cover external-target non-mutation.
+- [x] Correct fake journal precedence documentation.
+- [x] Prove a generated Ralph preset (without an explicit-preset override) keeps
+      events, journal, summary paths, and run streams beneath the owned root.
 
 ## Required gates
 
-- [ ] Focused privacy and failure-matrix tests
-- [ ] `cargo fmt --all --check`
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] Full `cargo test`
-- [ ] Relevant native contract tests, non-skipped, against
-      `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`
-- [ ] `git diff --check`
-- [ ] Inspect `git diff 54430971...HEAD` for retained state-root behavior,
-      both remediation rounds, and no release mutation
-- [ ] Confirm approval artifacts precede production implementation with
-      `git log 54430971..HEAD --reverse --oneline`
-- [ ] Confirm no tracked/untracked transient artifacts except ignored active-loop
-      `.autoloop` runtime and launcher preset
+- [x] Focused privacy and failure matrix: core engine-state 9 passed; adapters
+      376 passed/8 ignored; four CLI integration suites 26 passed; dependency
+      ordering 7 passed; failure reporting 10 passed.
+- [x] `cargo fmt --all --check`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] Full `cargo test`
+- [x] Native contracts against
+      `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`: 3 passed,
+      non-skipped.
+- [x] `git diff --check`
+- [x] Inspect `git diff 54430971...HEAD`: state-root behavior and both
+      remediation rounds retained; no release metadata changed.
+- [x] Approval artifacts precede production implementation in
+      `git log 54430971..HEAD --reverse --oneline`.
+- [x] Worktree contains no transient tracked/untracked runtime artifacts.
 - [ ] Independent critic verification of every acceptance criterion, including a
       manual fake/local smoke for non-doc changes
 - [ ] New external two-axis review readiness
