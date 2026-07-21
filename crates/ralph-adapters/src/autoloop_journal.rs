@@ -1,8 +1,10 @@
 //! Deterministic replay/derivation substrate for autoloop journals.
 //!
-//! Autoloop writes an append-only `journal.jsonl` under `.autoloop/`. Each line
-//! is one JSON object describing a loop lifecycle event. Ralph tails this
-//! journal live to derive run state (run id, iteration count, stop reason).
+//! Autoloop writes an append-only `journal.jsonl` beneath its engine state
+//! root. Standalone autoloop defaults that root to `.autoloop`; Ralph supplies
+//! `.ralph/autoloop`. Each line is one JSON object describing a loop lifecycle
+//! event. Ralph tails this journal live to derive run state (run id, iteration
+//! count, stop reason).
 //! This module provides the *parsing and derivation* half of that contract so
 //! it can be validated against a recorded fixture WITHOUT a live autoloop.
 //!

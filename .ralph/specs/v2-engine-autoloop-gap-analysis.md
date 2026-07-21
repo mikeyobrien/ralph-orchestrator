@@ -327,7 +327,7 @@ exports.
 
 V3 has more authoritative raw contracts but more places to look:
 `.ralph/autoloop-events.ndjson`, `.ralph/history.jsonl`, Ralph diagnostics/TUI
-logs, and `.autoloop/` journal/run files. The old dashboard and parts of
+logs, and `.ralph/autoloop/` journal/run files. The old dashboard and parts of
 `ralph loops logs` still assume V2 paths. `a7e.12`, `f50`, `au2`, and `hav`
 should converge discovery without making private stream files authoritative.
 

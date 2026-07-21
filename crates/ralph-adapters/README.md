@@ -9,7 +9,7 @@ state from implementation details when a supported contract exists.
 | Surface | Ralph use |
 |---|---|
 | `autoloop run --events <path>` NDJSON | `autoloop_events` and `autoloop_event_tailer` decode and incrementally tail structured lifecycle, routing, progress, question, and terminal events. This is the primary live-observation contract. |
-| `.autoloop/journal.jsonl` | `autoloop_journal` replays and tails the append-only journal using its documented record shapes. Code using the journal must go through this adapter rather than reading unrelated run files. |
+| `<engine-state-root>/journal.jsonl` | `autoloop_journal` replays and tails the append-only journal using its documented record shapes. Standalone autoloop defaults the root to `.autoloop`; Ralph launches it at `.ralph/autoloop`. Code using the journal must go through this adapter rather than reading unrelated run files. |
 | Terminal `autoloops summary` block | `autoloop_runner` captures stdout and parses the final run id, iteration count, stop reason, cost, journal path, and memory path. The captured block is protocol data and is not passed through as Ralph output. |
 | Process exit semantics | `autoloop_runner` preserves documented success/non-zero status and bounded stderr diagnostics. The CLI maps that result and terminal events into Ralph termination reasons. |
 | Control channel | Engine control messages are a sanctioned integration boundary when available. Ralph currently controls an interactive child through process lifecycle (including terminating its process group on TUI quit) rather than mutating private engine state. Future pause, resume, guidance, and HITL work must use the engine control channel, not private files. |
@@ -17,11 +17,13 @@ state from implementation details when a supported contract exists.
 ## Undocumented live-stream coupling
 
 `backend_stream_tailer` probes
-`.autoloop/runs/<run>/claude-stream.N.jsonl` and
-`.autoloop/runs/<run>/pi-stream.N.jsonl`. These per-iteration files are
-**undocumented engine internals**, not a stable contract. The run directory is
-currently derived from the `runId` delivered by the supported `--events`
-stream in `ralph-tui/src/autoloop_source.rs`.
+`<engine-state-root>/runs/<run>/claude-stream.N.jsonl` and
+`<engine-state-root>/runs/<run>/pi-stream.N.jsonl`. Standalone autoloop defaults
+that root to `.autoloop`; Ralph supplies `.ralph/autoloop`. These per-iteration
+files are **undocumented engine internals**, not a stable contract. The run
+directory is currently derived beneath the supplied engine state root from the
+`runId` delivered by the supported `--events` stream in
+`ralph-tui/src/autoloop_source.rs`.
 
 This coupling is retained because `--events` reports lifecycle progress but
 does not yet carry the backend's incremental assistant text and tool calls.

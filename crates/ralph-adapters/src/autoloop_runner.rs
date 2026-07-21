@@ -23,8 +23,8 @@
 //! run_id: <id>
 //! iterations: <n>
 //! stop_reason: <reason>
-//! journal: <abs path to .autoloop/journal.jsonl>
-//! memory: <abs path to .autoloop/memory.jsonl>
+//! journal: <abs path to engine-state-root/journal.jsonl>
+//! memory: <abs path to engine-state-root/memory.jsonl>
 //! ```
 
 use std::io::{BufRead, BufReader, Read};
@@ -49,9 +49,9 @@ pub struct AutoloopRunSummary {
     /// when the backend reports no usage (e.g. `command`/`acp`) or the running
     /// autoloop predates the summary `cost_usd` field.
     pub cost_usd: f64,
-    /// Absolute path to the run journal (`.autoloop/journal.jsonl`).
+    /// Absolute path to the journal beneath the configured engine state root.
     pub journal: PathBuf,
-    /// Absolute path to the run memory (`.autoloop/memory.jsonl`).
+    /// Absolute path to the memory store beneath the configured engine state root.
     pub memory: PathBuf,
 }
 
