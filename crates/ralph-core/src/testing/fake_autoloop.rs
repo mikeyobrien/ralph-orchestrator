@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 pub struct FakeAutoloop {
     bin_dir: PathBuf,
     argv_out: PathBuf,
+    env_out: PathBuf,
 }
 
 impl FakeAutoloop {
@@ -33,6 +34,19 @@ impl FakeAutoloop {
     /// Read arguments recorded by the most recent invocation.
     pub fn recorded_argv(&self) -> io::Result<Vec<String>> {
         Ok(fs::read_to_string(&self.argv_out)?
+            .lines()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// Suggested path for recording Ralph's engine-state environment exports.
+    pub fn env_out(&self) -> &Path {
+        &self.env_out
+    }
+
+    /// Read engine-state environment exports recorded by the latest invocation.
+    pub fn recorded_engine_env(&self) -> io::Result<Vec<String>> {
+        Ok(fs::read_to_string(&self.env_out)?
             .lines()
             .map(str::to_owned)
             .collect())
@@ -138,7 +152,8 @@ struct ExitStep {
 /// Build an executable fake `autoloop` from a JSONL invocation fixture.
 ///
 /// Generated files are contained beneath `dir`. At runtime, arguments are
-/// written one per line to `ARGV_OUT` when that variable is set.
+/// written one per line to `ARGV_OUT` and engine-state environment exports are
+/// written to `ENV_OUT` when those variables are set.
 pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloop> {
     let invocations = parse_fixture(fixture)?;
     if invocations.is_empty() {
@@ -165,9 +180,10 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
 
     let count_path = state_dir.join("invocation-count");
     let argv_out = state_dir.join("argv.out");
+    let env_out = state_dir.join("env.out");
     let mut dispatcher = String::from("#!/bin/sh\nset -eu\n");
     dispatcher.push_str(
-        "if [ -n \"${ARGV_OUT:-}\" ]; then\n  printf '%s\\n' \"$@\" > \"$ARGV_OUT\"\nfi\n",
+        "if [ -n \"${ARGV_OUT:-}\" ]; then\n  printf '%s\\n' \"$@\" > \"$ARGV_OUT\"\nfi\nif [ -n \"${ENV_OUT:-}\" ]; then\n  {\n    printf 'AUTOLOOP_STATE_DIR=%s\\n' \"${AUTOLOOP_STATE_DIR:-}\"\n    printf 'AUTOLOOP_JOURNAL_FILE=%s\\n' \"${AUTOLOOP_JOURNAL_FILE:-}\"\n    printf 'AUTOLOOP_MEMORY_FILE=%s\\n' \"${AUTOLOOP_MEMORY_FILE:-}\"\n    printf 'AUTOLOOP_TASKS_FILE=%s\\n' \"${AUTOLOOP_TASKS_FILE:-}\"\n  } > \"$ENV_OUT\"\nfi\n",
     );
     dispatcher.push_str(&format!(
         "count_path={}\ncount=0\nif [ -f \"$count_path\" ]; then count=$(cat \"$count_path\"); fi\ncount=$((count + 1))\nprintf '%s\\n' \"$count\" > \"$count_path\"\n",
@@ -186,7 +202,11 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
     ));
     write_executable(&bin_dir.join("autoloop"), &dispatcher)?;
 
-    Ok(FakeAutoloop { bin_dir, argv_out })
+    Ok(FakeAutoloop {
+        bin_dir,
+        argv_out,
+        env_out,
+    })
 }
 
 fn parse_fixture(path: &Path) -> io::Result<Vec<Invocation>> {

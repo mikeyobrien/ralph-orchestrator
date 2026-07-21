@@ -143,6 +143,7 @@ impl Harness {
             .current_dir(self.workspace.path())
             .env("PATH", path)
             .env("ARGV_OUT", self.fake_autoloop.argv_out())
+            .env("ENV_OUT", self.fake_autoloop.env_out())
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
             .env_remove("RALPH_CONFIG")
@@ -204,6 +205,58 @@ impl Harness {
         self.fake_autoloop
             .recorded_argv()
             .expect("fake autoloop should record argv")
+    }
+
+    fn assert_owned_engine_env(&self, output: &Output) {
+        let root = self
+            .workspace
+            .path()
+            .canonicalize()
+            .expect("canonicalize workspace")
+            .join(".ralph/autoloop");
+        let expected = [
+            format!("AUTOLOOP_STATE_DIR={}", root.display()),
+            format!(
+                "AUTOLOOP_JOURNAL_FILE={}",
+                root.join("journal.jsonl").display()
+            ),
+            format!(
+                "AUTOLOOP_MEMORY_FILE={}",
+                root.join("memory.jsonl").display()
+            ),
+            format!("AUTOLOOP_TASKS_FILE={}", root.join("tasks.jsonl").display()),
+        ];
+        assert_eq!(
+            self.fake_autoloop
+                .recorded_engine_env()
+                .expect("fake autoloop should record engine environment"),
+            expected,
+        );
+        let argv = self.recorded_argv();
+        for override_arg in [
+            format!("core.state_dir={}", root.display()),
+            format!("core.journal_file={}", root.join("journal.jsonl").display()),
+            format!("core.memory_file={}", root.join("memory.jsonl").display()),
+            format!("core.tasks_file={}", root.join("tasks.jsonl").display()),
+        ] {
+            assert!(
+                argv.contains(&override_arg),
+                "missing engine ownership override {override_arg:?} in {argv:?}"
+            );
+        }
+        assert!(
+            !self.workspace.path().join(".autoloop").exists(),
+            "Ralph launch created a top-level .autoloop directory"
+        );
+        let normal_output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !normal_output.contains(&root.display().to_string()),
+            "normal output leaked the physical engine-state path:\n{normal_output}"
+        );
     }
 }
 
@@ -448,6 +501,7 @@ fn run_inline_prompt_reaches_autoloop_as_positional_argument() {
 
     assert_success(&output);
     assert_recorded_prompt(&harness, "text");
+    harness.assert_owned_engine_env(&output);
 }
 
 #[test]
@@ -475,6 +529,7 @@ fn generated_preset_forwards_pi_backend_selection() {
         autoloops_toml.contains("backend.command = \"pi\""),
         "generated preset did not select the pi command:\n{autoloops_toml}"
     );
+    harness.assert_owned_engine_env(&output);
 }
 
 #[test]

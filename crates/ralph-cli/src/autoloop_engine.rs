@@ -18,6 +18,7 @@ use ralph_adapters::{
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
+    engine_state::{engine_config_overrides, engine_env},
     sanitize_tui_inline_text,
 };
 
@@ -390,11 +391,11 @@ pub async fn run_autoloop_engine(
         "engine=autoloop: driving the autoloop runtime as a subprocess"
     );
 
-    // Ralph owns the engine's runtime state: root it beneath .ralph/ via the
-    // supported AUTOLOOP_STATE_DIR contract. The env var takes precedence over
-    // any core.state_dir a preset may declare, so both generated and explicit
-    // presets run with the Ralph-owned root. Exported absolute so the child's
-    // working-directory handling can never re-anchor it.
+    // Ralph owns the engine's runtime state beneath .ralph/. State-root and
+    // exact-store environment overrides are both required: the root wins over
+    // preset core.state_dir, while exact overrides win over a preset's explicit
+    // journal/memory/tasks paths. Export absolute paths so child cwd handling
+    // cannot re-anchor them.
     let engine_state_root = absolute_engine_state_root(&workspace)?;
     std::fs::create_dir_all(&engine_state_root).with_context(|| {
         format!(
@@ -405,11 +406,13 @@ pub async fn run_autoloop_engine(
 
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
-        .events_path(events_path.clone())
-        .env(
-            "AUTOLOOP_STATE_DIR",
-            engine_state_root.to_string_lossy().into_owned(),
-        );
+        .events_path(events_path.clone());
+    for (key, value) in engine_env(&engine_state_root) {
+        runner = runner.env(key, value);
+    }
+    for (key, value) in engine_config_overrides(&engine_state_root) {
+        runner = runner.set_override(key, &value);
+    }
     if explicit_preset {
         for (key, value) in crate::autoloop_preset_gen::autoloop_budget_overrides(&config) {
             runner = runner.set_override(key, &value);
