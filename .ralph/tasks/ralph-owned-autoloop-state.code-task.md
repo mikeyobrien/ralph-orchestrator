@@ -52,6 +52,10 @@ review findings or final gates are complete.
 
 ## Independent review blocker remediation
 
+- [x] `6aa02b6` — reject every pre-existing descendant symlink without following
+      it; validate exact owned summary stores and symlink leaves; suppress
+      untrusted terminal stop details; preserve daemon dependency ordering; and
+      redact parallel-worktree paths and cleanup diagnostics.
 - [x] Reject any malformed nonblank structured-event record before trusting a
       successful process and summary; cover the exact fake-process case.
 - [x] Redact raw child stderr and physical preset/workspace/state paths from
@@ -64,12 +68,12 @@ review findings or final gates are complete.
 
 ## Required gates
 
-- [x] Focused privacy and failure matrix: core engine-state 9 passed; adapters
-      376 passed/8 ignored; four CLI integration suites 26 passed; dependency
-      ordering 7 passed; failure reporting 10 passed.
+- [x] Second-remediation focused matrix: core engine-state 10 passed; CLI engine
+      unit tests 27 passed; failure-reporting fake-process attacks 12 passed;
+      affected headless/TUI/merge fake-process suites 5 passed.
 - [x] `cargo fmt --all --check`
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [x] Full `cargo test`
+- [x] Full `cargo test`: 2726 passed, 37 ignored.
 - [x] Native contracts against
       `/Users/rook/.herdr/worktrees/autoloop/ralph-owned-state-dir`: 3 passed,
       non-skipped.
