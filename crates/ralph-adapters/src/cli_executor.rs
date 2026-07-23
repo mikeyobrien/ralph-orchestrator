@@ -19,7 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tracing::{debug, warn};
 
-const POST_EVENT_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
+const TEXT_POST_EVENT_GRACE_TIMEOUT: Duration = Duration::from_secs(5);
 const TERMINATION_GRACE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Result of a CLI execution.
@@ -183,9 +183,11 @@ impl CliExecutor {
 
             match next_event {
                 Some(StreamEvent::StdoutLine(line)) => {
-                    if line_signals_event_emitted(&line) {
+                    if self.backend.output_format == OutputFormat::Text
+                        && line_signals_event_emitted(&line)
+                    {
                         post_event_deadline.get_or_insert_with(|| {
-                            tokio::time::Instant::now() + POST_EVENT_GRACE_TIMEOUT
+                            tokio::time::Instant::now() + TEXT_POST_EVENT_GRACE_TIMEOUT
                         });
                     }
                     if self.backend.output_format == OutputFormat::CopilotStreamJson {
@@ -203,9 +205,11 @@ impl CliExecutor {
                     accumulated_output.push('\n');
                 }
                 Some(StreamEvent::StderrLine(line)) => {
-                    if line_signals_event_emitted(&line) {
+                    if self.backend.output_format == OutputFormat::Text
+                        && line_signals_event_emitted(&line)
+                    {
                         post_event_deadline.get_or_insert_with(|| {
-                            tokio::time::Instant::now() + POST_EVENT_GRACE_TIMEOUT
+                            tokio::time::Instant::now() + TEXT_POST_EVENT_GRACE_TIMEOUT
                         });
                     }
                     if verbose {
@@ -614,6 +618,61 @@ mod tests {
         );
         assert!(result.output.contains("Event emitted: task.done"));
         assert!(result.output.contains("heartbeat"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_claude_stream_waits_for_result_after_final_assistant_message() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Event emitted: task.done"}]}}'; sleep 6; printf '%s\n' '{"type":"result","duration_ms":6000,"total_cost_usd":0.01,"num_turns":1,"is_error":false}'"#.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_secs(10)))
+            .await
+            .unwrap();
+
+        assert!(
+            !result.timed_out,
+            "Claude stream should receive its terminal result event during the post-assistant quiet window"
+        );
+        assert!(result.success, "Claude stream should exit successfully");
+        assert!(result.output.contains(r#"{"type":"result""#));
+    }
+
+    #[tokio::test]
+    async fn test_execute_claude_stream_still_times_out_without_result() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Event emitted: task.done"}]}}'; sleep 10"#.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_millis(200)))
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Claude stream without a result event should retain inactivity timeout protection"
+        );
+        assert!(!result.success, "Timed-out Claude stream must fail");
     }
 
     #[tokio::test]
