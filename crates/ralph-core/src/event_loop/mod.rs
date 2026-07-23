@@ -2430,7 +2430,7 @@ impl EventLoop {
         for malformed in &result.malformed {
             let payload = format!(
                 "Line {}: {}\nContent: {}",
-                malformed.line_number, malformed.error, &malformed.content
+                malformed.line_number, malformed.error, malformed.content
             );
             let event = Event::new("event.malformed", &payload);
             self.bus.publish(event);
