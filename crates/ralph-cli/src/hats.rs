@@ -31,7 +31,15 @@ pub struct HatsArgs {
 #[derive(Subcommand, Debug)]
 pub enum HatsCommands {
     /// Validate hat topology and report issues
-    Validate,
+    Validate {
+        /// Also sanity-check hat instructions against the topology
+        ///
+        /// Scans each hat's `instructions` (plus `.ralph/agent/<hat-id>.md` when
+        /// present) for event topics and warns when they disagree with the
+        /// hat's `publishes` / `triggers` in the config.
+        #[arg(short = 'i', long = "instructions")]
+        instructions: bool,
+    },
     /// Display hat topology graph
     Graph {
         /// Output format (unicode, ascii, compact, mermaid)
@@ -131,7 +139,15 @@ pub async fn execute(
         Some(HatsCommands::Show(show_args)) => {
             show_hat(&mut stdout, &registry, &show_args.name, use_colors)
         }
-        Some(HatsCommands::Validate) => validate_hats(&mut stdout, &config, &registry, use_colors),
+        Some(HatsCommands::Validate { instructions }) => validate_hats(
+            &mut stdout,
+            &config,
+            &registry,
+            use_colors,
+            instructions
+                .then(|| PathBuf::from(".ralph/agent"))
+                .as_deref(),
+        ),
         Some(HatsCommands::Graph { format, backend }) => {
             graph_hats(&mut stdout, &config, &registry, format, backend.as_deref())
         }
@@ -418,11 +434,18 @@ fn list_hats<W: Write>(writer: &mut W, registry: &HatRegistry, _use_colors: bool
     Ok(())
 }
 
+/// Validates hat topology.
+///
+/// When `instructions_dir` is `Some`, instruction text is also cross-checked
+/// against the topology; instruction files are resolved as
+/// `<instructions_dir>/<hat-id>.md` and appended to the hat's inline
+/// `instructions`. `None` runs topology checks only.
 fn validate_hats<W: Write>(
     writer: &mut W,
     config: &RalphConfig,
     registry: &HatRegistry,
     use_colors: bool,
+    instructions_dir: Option<&Path>,
 ) -> Result<()> {
     writeln!(writer, "Hat Topology Validation")?;
     writeln!(writer, "=======================")?;
@@ -507,6 +530,11 @@ fn validate_hats<W: Write>(
         print_check(writer, CheckResult::Ok, "No dead-end hats", use_colors)?;
     }
 
+    // 4. Instruction sanity (opt-in via --instructions)
+    if let Some(dir) = instructions_dir {
+        warnings += check_instructions(writer, config, registry, use_colors, dir)?;
+    }
+
     writeln!(writer)?;
     if errors > 0 {
         writeln!(
@@ -522,6 +550,163 @@ fn validate_hats<W: Write>(
         writeln!(writer, "Result: Valid")?;
     }
     Ok(())
+}
+
+/// Cross-checks instruction text against hat topology. Returns warning count.
+///
+/// Two low-noise signals, both warnings (instructions are prose; they never
+/// hard-fail validation):
+///   1. `emit <topic>` sites whose topic is not in that hat's `publishes`.
+///   2. Backticked topics that belong to *another* hat (classic copy-paste).
+///
+/// Prose that merely names a topic without backticks is ignored, as are
+/// backticked tokens that aren't topics anywhere in the config.
+fn check_instructions<W: Write>(
+    writer: &mut W,
+    config: &RalphConfig,
+    registry: &HatRegistry,
+    use_colors: bool,
+    instructions_dir: &Path,
+) -> Result<usize> {
+    let mut warnings = 0;
+
+    // Literal topics known to the topology (wildcards excluded: they can't be
+    // mentioned verbatim in prose).
+    let mut known: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for hat in registry.all() {
+        for topic in hat.subscriptions.iter().chain(hat.publishes.iter()) {
+            if !topic.as_str().contains('*') {
+                known.insert(topic.as_str());
+            }
+        }
+    }
+    // Global topics are fair game for any hat to mention.
+    let global: std::collections::HashSet<&str> = config
+        .event_loop
+        .starting_event
+        .as_deref()
+        .into_iter()
+        .chain(std::iter::once(
+            config.event_loop.completion_promise.as_str(),
+        ))
+        .chain(std::iter::once("task.start"))
+        .collect();
+
+    for hat in registry.all() {
+        let mut text = hat.instructions.clone();
+        let file = instructions_dir.join(format!("{}.md", hat.id));
+        if let Ok(extra) = std::fs::read_to_string(&file) {
+            text.push('\n');
+            text.push_str(&extra);
+        }
+
+        if text.trim().is_empty() {
+            print_check(
+                writer,
+                CheckResult::Warn,
+                &format!("Hat '{}' has no instructions", hat.name),
+                use_colors,
+            )?;
+            warnings += 1;
+            continue;
+        }
+
+        let owns = |topic: &str| {
+            hat.publishes
+                .iter()
+                .chain(hat.subscriptions.iter())
+                .any(|t| t.matches_str(topic))
+        };
+
+        let (emits, mentions) = extract_instruction_topics(&text);
+
+        for topic in &emits {
+            if hat.publishes.iter().any(|t| t.matches_str(topic)) {
+                continue;
+            }
+            print_check(
+                writer,
+                CheckResult::Warn,
+                &format!(
+                    "Hat '{}' instructions emit '{}' which is not in its publishes",
+                    hat.name, topic
+                ),
+                use_colors,
+            )?;
+            warnings += 1;
+        }
+
+        for topic in &mentions {
+            if emits.contains(topic) || global.contains(topic.as_str()) || owns(topic) {
+                continue;
+            }
+            if !known.contains(topic.as_str()) {
+                continue; // unknown token: not a topic, stay quiet
+            }
+            print_check(
+                writer,
+                CheckResult::Warn,
+                &format!(
+                    "Hat '{}' instructions reference '{}', which belongs to another hat",
+                    hat.name, topic
+                ),
+                use_colors,
+            )?;
+            warnings += 1;
+        }
+    }
+
+    if warnings == 0 {
+        print_check(
+            writer,
+            CheckResult::Ok,
+            "Instructions consistent with topology",
+            use_colors,
+        )?;
+    }
+
+    Ok(warnings)
+}
+
+/// Splits instruction text into (emitted topics, backticked topic mentions).
+fn extract_instruction_topics(text: &str) -> (Vec<String>, Vec<String>) {
+    let mut emits: Vec<String> = Vec::new();
+    let mut mentions: Vec<String> = Vec::new();
+    let mut after_emit = false;
+
+    for raw in text.split_whitespace() {
+        let token = clean_token(raw);
+        if is_topic_like(token) {
+            let bucket = if after_emit {
+                &mut emits
+            } else {
+                &mut mentions
+            };
+            // Prose mentions need backticks; emit sites speak for themselves.
+            if (after_emit || raw.contains('`')) && !bucket.iter().any(|t| t == token) {
+                bucket.push(token.to_string());
+            }
+        }
+        after_emit = token.eq_ignore_ascii_case("emit") || token.eq_ignore_ascii_case("emits");
+    }
+
+    (emits, mentions)
+}
+
+/// Strips markdown/punctuation wrapping from a whitespace-delimited token.
+fn clean_token(raw: &str) -> &str {
+    raw.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '*'))
+}
+
+/// True for `segment.segment[.segment...]` shaped tokens (event topic shape).
+fn is_topic_like(token: &str) -> bool {
+    token.split('.').count() >= 2
+        && token.split('.').all(|seg| {
+            !seg.is_empty()
+                && seg.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' || c == '*'
+                })
+        })
 }
 
 enum CheckResult {
@@ -1009,7 +1194,7 @@ mod tests {
         let mut buf = Vec::new();
 
         // Validation might exit process on error, so we test warning scenario
-        validate_hats(&mut buf, &config, &registry, false).unwrap();
+        validate_hats(&mut buf, &config, &registry, false, None).unwrap();
         let output = String::from_utf8(buf).unwrap();
 
         // Should warn about build.done having no subscribers
@@ -1119,7 +1304,7 @@ mod tests {
         let config = RalphConfig::default();
         let mut buf = Vec::new();
 
-        validate_hats(&mut buf, &config, &registry, false).unwrap();
+        validate_hats(&mut buf, &config, &registry, false, None).unwrap();
         let output = String::from_utf8(buf).unwrap();
 
         assert!(output.contains("No hats configured"));
@@ -1135,10 +1320,163 @@ mod tests {
         let config = RalphConfig::default();
         let mut buf = Vec::new();
 
-        validate_hats(&mut buf, &config, &registry, false).unwrap();
+        validate_hats(&mut buf, &config, &registry, false, None).unwrap();
         let output = String::from_utf8(buf).unwrap();
 
         assert!(output.contains("No dead-end hats") || output.contains("Result: Valid"));
+    }
+
+    fn hat_with_instructions(name: &str, subs: &[&str], pubs: &[&str], instructions: &str) -> Hat {
+        let mut hat = mock_hat(name, subs, pubs);
+        hat.instructions = instructions.to_string();
+        hat
+    }
+
+    /// Runs instruction checks against a directory that has no files in it, so
+    /// only inline instructions are scanned.
+    fn validate_with_instructions(registry: &HatRegistry) -> String {
+        let config = RalphConfig::default();
+        let mut buf = Vec::new();
+        let dir = tempfile::tempdir().unwrap();
+        let _ = validate_hats(&mut buf, &config, registry, false, Some(dir.path()));
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn test_is_topic_like() {
+        assert!(is_topic_like("plan.done"));
+        assert!(is_topic_like("wave.review.file"));
+        assert!(is_topic_like("build.*"));
+        assert!(!is_topic_like("plan"));
+        assert!(!is_topic_like("Cargo.toml")); // uppercase: not a topic
+        assert!(!is_topic_like("plan..done"));
+    }
+
+    #[test]
+    fn test_extract_instruction_topics() {
+        let text = "Run `ralph tools emit plan.done` when finished.\n\
+                    Do not touch `review.done`; it is owned by the reviewer.\n\
+                    Memories live in .ralph/agent/memories.md and plan.other in prose.";
+        let (emits, mentions) = extract_instruction_topics(text);
+        assert_eq!(emits, vec!["plan.done"]);
+        assert_eq!(mentions, vec!["review.done"]);
+    }
+
+    #[test]
+    fn test_validate_instructions_consistent() {
+        let mut registry = HatRegistry::new();
+        registry.register(hat_with_instructions(
+            "Planner",
+            &["plan.start"],
+            &["plan.done"],
+            "Plan the work, then run `ralph tools emit plan.done`.",
+        ));
+        registry.register(hat_with_instructions(
+            "Builder",
+            &["plan.done"],
+            &[],
+            "Build what `plan.done` describes.",
+        ));
+
+        let output = validate_with_instructions(&registry);
+        assert!(
+            output.contains("Instructions consistent with topology"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_validate_instructions_emit_not_in_publishes() {
+        let mut registry = HatRegistry::new();
+        registry.register(hat_with_instructions(
+            "Planner",
+            &["plan.start"],
+            &["plan.done"],
+            "When done: `ralph tools emit plan.complete`",
+        ));
+
+        let output = validate_with_instructions(&registry);
+        assert!(
+            output.contains("instructions emit 'plan.complete' which is not in its publishes"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_validate_instructions_foreign_topic_mention() {
+        let mut registry = HatRegistry::new();
+        registry.register(hat_with_instructions(
+            "Planner",
+            &["plan.start"],
+            &["plan.done"],
+            "Emit `plan.done`. Also mentions `review.done` by mistake.",
+        ));
+        registry.register(hat_with_instructions(
+            "Reviewer",
+            &["plan.done"],
+            &["review.done"],
+            "Review, then `ralph tools emit review.done`.",
+        ));
+
+        let output = validate_with_instructions(&registry);
+        assert!(
+            output.contains("Planner' instructions reference 'review.done'"),
+            "{output}"
+        );
+        assert!(!output.contains("Reviewer' instructions"), "{output}");
+    }
+
+    #[test]
+    fn test_validate_instructions_missing_instructions() {
+        let mut registry = HatRegistry::new();
+        registry.register(mock_hat("Planner", &["plan.start"], &["plan.done"]));
+
+        let output = validate_with_instructions(&registry);
+        assert!(
+            output.contains("Hat 'Planner' has no instructions"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_validate_instructions_reads_agent_markdown_file() {
+        let mut registry = HatRegistry::new();
+        registry.register(hat_with_instructions(
+            "Planner",
+            &["plan.start"],
+            &["plan.done"],
+            "See the agent doc.",
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Planner.md"),
+            "Finish with `ralph tools emit plan.finished`.",
+        )
+        .unwrap();
+
+        let config = RalphConfig::default();
+        let mut buf = Vec::new();
+        validate_hats(&mut buf, &config, &registry, false, Some(dir.path())).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(
+            output.contains("instructions emit 'plan.finished' which is not in its publishes"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_validate_instructions_off_by_default() {
+        let mut registry = HatRegistry::new();
+        registry.register(mock_hat("Planner", &["plan.start"], &["plan.done"]));
+
+        let config = RalphConfig::default();
+        let mut buf = Vec::new();
+        validate_hats(&mut buf, &config, &registry, false, None).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(!output.contains("no instructions"), "{output}");
     }
 
     #[test]
