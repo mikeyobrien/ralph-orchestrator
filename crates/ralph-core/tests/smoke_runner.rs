@@ -953,6 +953,127 @@ mod kiro_acp_smoke_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// OMP SMOKE TESTS
+// Replay coverage for pre-rendered readable OMP text at the real iteration
+// boundary (SmokeRunner → EventParser). Covers completion, malformed-line
+// recovery, and non-zero-exit propagation. See fixtures/omp/README.md.
+// ═══════════════════════════════════════════════════════════════════════════════
+mod omp_smoke_tests {
+    use super::*;
+
+    fn omp_fixtures_dir() -> PathBuf {
+        fixtures_dir().join("omp")
+    }
+
+    #[test]
+    fn test_omp_fixtures_directory_exists() {
+        assert!(omp_fixtures_dir().exists(), "OMP fixtures dir should exist");
+    }
+
+    #[test]
+    fn test_omp_readme_exists() {
+        assert!(
+            omp_fixtures_dir().join("README.md").exists(),
+            "OMP fixtures README should exist"
+        );
+    }
+
+    #[test]
+    fn test_omp_has_at_least_three_fixtures() {
+        let fixtures = list_fixtures(omp_fixtures_dir()).expect("Should list OMP fixtures");
+        assert!(
+            fixtures.len() >= 3,
+            "Expected >= 3 OMP fixtures, got {}",
+            fixtures.len()
+        );
+    }
+
+    /// AC5: pre-rendered readable OMP text with `<event topic="LOOP_COMPLETE">`
+    /// replays through EventParser and completes (LOOP_COMPLETE detected).
+    #[test]
+    fn test_omp_basic_session_completes() {
+        let fixture = omp_fixtures_dir().join("omp_basic_session.jsonl");
+        assert!(fixture.exists());
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should run OMP basic fixture");
+        assert_eq!(
+            *result.termination_reason(),
+            TerminationReason::Completed,
+            "readable OMP text with LOOP_COMPLETE should complete"
+        );
+        assert!(
+            result.event_count() >= 1,
+            "Expected >= 1 event, got {}",
+            result.event_count()
+        );
+    }
+
+    /// AC5: malformed-line recovery — a garbage line and a broken (incomplete)
+    /// event tag appear before the completion tag. EventParser skips non-event
+    /// text and incomplete tags without aborting, and LOOP_COMPLETE is still
+    /// detected on the later chunk.
+    #[test]
+    fn test_omp_smoke_malformed_line_recovers() {
+        let fixture = omp_fixtures_dir().join("omp_malformed_recovery.jsonl");
+        assert!(fixture.exists());
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should run OMP malformed fixture");
+        assert_eq!(
+            *result.termination_reason(),
+            TerminationReason::Completed,
+            "malformed lines must not abort later LOOP_COMPLETE detection"
+        );
+        assert!(
+            result.event_count() >= 1,
+            "Expected LOOP_COMPLETE despite malformed line, got {} events",
+            result.event_count()
+        );
+    }
+
+    /// AC5: non-zero-exit propagation — a readable OMP session that emits a
+    /// failure event but NO LOOP_COMPLETE (agent exited before completing) must
+    /// NOT be reported as `Completed`. The failure to complete propagates as a
+    /// distinct `FixtureExhausted` termination rather than being silently
+    /// swallowed as a successful completion. (The replay protocol carries only
+    /// terminal-write text — no subprocess exit code — so non-zero exit is
+    /// modeled as the absence of LOOP_COMPLETE; the SmokeRunner distinguishes it
+    /// from a real completion by termination reason.)
+    #[test]
+    fn test_omp_smoke_nonzero_exit_propagates() {
+        let fixture = omp_fixtures_dir().join("omp_nonzero_exit.jsonl");
+        assert!(fixture.exists());
+        let config = SmokeTestConfig::new(&fixture);
+        let result = SmokeRunner::run(&config).expect("Should run OMP nonzero-exit fixture");
+        assert_ne!(
+            *result.termination_reason(),
+            TerminationReason::Completed,
+            "non-zero-exit OMP session must not be silently reported as completed"
+        );
+        assert_eq!(
+            *result.termination_reason(),
+            TerminationReason::FixtureExhausted,
+            "non-completing OMP session should terminate as FixtureExhausted"
+        );
+    }
+
+    #[test]
+    fn test_all_omp_fixtures_are_valid() {
+        let fixtures = list_fixtures(omp_fixtures_dir()).expect("Should list OMP fixtures");
+        assert!(!fixtures.is_empty(), "Expected OMP fixtures");
+        for fixture_path in fixtures {
+            let config = SmokeTestConfig::new(&fixture_path);
+            let result = SmokeRunner::run(&config);
+            assert!(
+                result.is_ok(),
+                "OMP fixture {:?} should be valid: {:?}",
+                fixture_path,
+                result.err()
+            );
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SKILLS SYSTEM SMOKE TESTS
 // Tests that the skills system integrates correctly: discovery, index generation,
 // prompt injection, and backwards compatibility.

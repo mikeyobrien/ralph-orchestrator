@@ -2,14 +2,21 @@
 //!
 //! Agent adapters for the Ralph Orchestrator framework.
 //!
-//! This crate provides implementations for various AI agent backends:
+//! This crate provides implementations for various AI agent backends (the
+//! catalogued set lives in [`ralph_core::backend`] as the single source of
+//! truth, so detection order, validation, help, and install guidance never
+//! drift):
 //! - Claude (Anthropic)
+//! - Kiro / Kiro ACP
 //! - Gemini (Google)
 //! - Codex (OpenAI)
+//! - Amp
+//! - Copilot (GitHub)
+//! - OpenCode
 //! - Forge
 //! - Pi (pi-coding-agent)
 //! - Roo (Roo Code)
-//! - Amp
+//! - OMP (oh-my-pi) — shares the Pi-family stream processor
 //! - Custom commands
 //!
 //! Each adapter implements the common CLI executor interface.
@@ -33,7 +40,7 @@ mod cli_backend;
 mod cli_executor;
 mod copilot_stream;
 mod json_rpc_handler;
-mod pi_stream;
+mod pi_family;
 mod pty_executor;
 pub mod pty_handle;
 mod stream_handler;
@@ -41,19 +48,20 @@ pub mod tool_preview;
 
 pub use acp_executor::AcpExecutor;
 pub use auto_detect::{
-    DEFAULT_PRIORITY, NoBackendError, detect_backend, detect_backend_default, is_backend_available,
+    NoBackendError, default_priority, detect_backend, detect_backend_default, is_backend_available,
 };
 pub use claude_stream::{
     AssistantMessage, ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, Usage, UserContentBlock,
     UserMessage,
 };
-pub use cli_backend::{CliBackend, CustomBackendError, OutputFormat, PromptMode};
+pub use cli_backend::{BackendConstructError, CliBackend, OutputFormat, PromptMode};
 pub use cli_executor::{CliExecutor, ExecutionResult};
 pub use copilot_stream::{CopilotAssistantMessage, CopilotStreamEvent, CopilotStreamParser};
 pub use json_rpc_handler::{JsonRpcStreamHandler, stdout_json_rpc_handler};
-pub use pi_stream::{
-    PiAssistantEvent, PiContentBlock, PiCost, PiSessionState, PiStreamEvent, PiStreamParser,
-    PiToolResult, PiTurnMessage, PiUsage, dispatch_pi_stream_event,
+pub use pi_family::{
+    PiFamilyAssistantEvent, PiFamilyContentBlock, PiFamilyCost, PiFamilyEvent,
+    PiFamilySessionState, PiFamilyStreamParser, PiFamilyToolResult, PiFamilyTurnMessage,
+    PiFamilyUsage, dispatch_pi_family_event,
 };
 pub use pty_executor::{
     CtrlCAction, CtrlCState, PtyConfig, PtyExecutionResult, PtyExecutor, TerminationType,

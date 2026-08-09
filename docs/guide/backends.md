@@ -15,6 +15,8 @@ Ralph supports multiple AI CLI backends. This guide covers setup and selection.
 | Copilot CLI | `copilot` | GitHub |
 | OpenCode | `opencode` | Community |
 | Pi | `pi` | Multi-provider |
+| Roo | `roo` | Roo Code |
+| OMP | `omp` | oh-my-pi, Pi-family |
 
 ## Auto-Detection
 
@@ -35,6 +37,11 @@ Detection order (first available wins):
 7. Copilot
 8. OpenCode
 9. Pi
+10. Roo
+11. OMP
+
+OMP is last because it is the newest catalogued backend; this preserves the
+detection order existing installations rely on.
 
 ## Explicit Selection
 
@@ -59,7 +66,7 @@ Each backend below includes:
 - **Hat YAML** configuration
 - **`ralph doctor`** validation notes
 
-Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `forge`, `amp`, `copilot`, `opencode`, `pi`.
+Backend names (used in YAML and CLI flags): `claude`, `kiro`, `gemini`, `codex`, `forge`, `amp`, `copilot`, `opencode`, `pi`, `roo`, `omp`.
 
 ### Claude Code (`claude`)
 
@@ -351,6 +358,69 @@ hats:
 - `pi --version` must succeed
 - Warns if no provider API key is set
 
+### OMP (`omp`)
+
+[OMP (oh-my-pi)](https://github.com/can1357/oh-my-pi) is a multi-provider coding
+agent and the newest member of the Pi family. Ralph routes OMP through the same
+Pi-family stream processor while keeping its output identity distinct, so a
+command override preserves the correct `OMP` label.
+
+```bash
+# Install — visit the project for current method (Node/Bun)
+# https://github.com/can1357/oh-my-pi
+
+# Verify (tested baseline: omp/17.2.10)
+omp --version
+```
+
+**Auth & env vars:**
+- OMP owns its own providers, models, credentials, tools, extensions, skills,
+  rules, and approval policy. Ralph only selects OMP and threads arguments
+  through; it never interprets them and performs **no** Ralph-side OMP auth.
+- Authenticate via OMP itself (its in-app login or the provider keys OMP reads).
+
+**Exact argv (what Ralph launches):**
+- Headless iteration: `omp -p --mode json --no-session --auto-approve [--model …] <prompt>`
+- Interactive (`ralph plan --backend omp`): `omp --no-session <prompt>` — the
+  autonomous flags (`-p`, `--mode json`, `--auto-approve`) are intentionally
+  omitted so you keep OMP's TUI and approval prompts.
+
+**`--auto-approve` vs OMP's yolo mode:** Ralph passes the documented
+`--auto-approve` flag for autonomous iterations. This is distinct from OMP's own
+`--approval-mode=yolo` alias; Ralph does not depend on OMP's mutable default
+approval mode. To set an explicit OMP permission policy, pass the mode through
+`cli.args` (e.g. `args: ["--approval-mode", "write"]`) — Ralph forwards it
+verbatim and never interprets it.
+
+**Hat YAML / per-hat args:**
+```yaml
+hats:
+  coder:
+    backend: "omp"
+    args: ["--provider", "anthropic", "--model", "claude-sonnet-4"]
+```
+
+Or compose the repo-root overlay with a builtin hat collection (OMP defines no
+hat collection of its own):
+```bash
+ralph run -c ralph.omp.yml -H builtin:code-assist -p "your task"
+```
+
+**Doctor checks:**
+- `omp --version` must succeed
+- No Ralph-side auth check (OMP authenticates itself)
+
+**Notes & limits:**
+- Tested baseline: `omp/17.2.10`. Ralph documents this version but does **not**
+  enforce a hard minimum. A JSON protocol mismatch surfaces as a protocol error
+  (see [Troubleshooting](../reference/troubleshooting.md)).
+- Argument pass-through: `cli.args` are forwarded verbatim to every OMP
+  invocation; OMP interprets them (`--provider`, `--model`, `--profile`,
+  `--max-time`, …).
+- `--no-session` makes each run ephemeral; Ralph does not persist or resume OMP
+  sessions.
+- ACP/RPC: not supported. Ralph uses the OMP JSON stream protocol only.
+
 ## Per-Hat Backend Override
 
 Different hats can use different backends:
@@ -388,13 +458,13 @@ cli:
 
 ## Backend Comparison
 
-| Feature | Claude | Kiro | Gemini | Codex | Pi |
-|---------|--------|------|--------|-------|----|
-| Streaming | Yes | Yes | Yes | Yes | Yes |
-| Tool use | Full | Full | Partial | Partial | Full |
-| Context size | Large | Large | Large | Medium | Large |
-| Speed | Fast | Fast | Fast | Medium | Fast |
-| Cost | $$ | $ | $ | $$ | $ |
+| Feature | Claude | Kiro | Gemini | Codex | Pi | OMP |
+|---------|--------|------|--------|-------|----|-----|
+| Streaming | Yes | Yes | Yes | Yes | Yes | Yes |
+| Tool use | Full | Full | Partial | Partial | Full | Full |
+| Context size | Large | Large | Large | Medium | Large | Large |
+| Speed | Fast | Fast | Fast | Medium | Fast | Medium |
+| Cost | $$ | $ | $ | $$ | $ | $ |
 
 ## Troubleshooting
 

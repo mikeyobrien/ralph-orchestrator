@@ -7,6 +7,8 @@
 use crate::cli_backend::PromptMode;
 use crate::cli_backend::{CliBackend, OutputFormat};
 use crate::copilot_stream::CopilotStreamParser;
+use crate::pi_family::PiFamilySessionState;
+use crate::stream_handler::{SessionResult, StreamHandler};
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
 #[cfg(unix)]
@@ -14,7 +16,7 @@ use nix::unistd::Pid;
 use std::env;
 use std::io::Write;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tracing::{debug, warn};
@@ -33,6 +35,18 @@ pub struct ExecutionResult {
     pub exit_code: Option<i32>,
     /// Whether the execution was terminated due to timeout.
     pub timed_out: bool,
+    /// Parsed assistant text for Pi-family NDJSON backends (the processor owns
+    /// extraction; the mandatory final-text fallback is already applied). `None`
+    /// for backends that keep using raw/normalized output (Claude stream-json,
+    /// Copilot, Text).
+    pub extracted_text: Option<String>,
+    /// Structured session result (metrics + merged `is_error`) for Pi-family
+    /// NDJSON backends. `None` for backends that do not parse a session.
+    pub session_result: Option<SessionResult>,
+    /// Protocol-mismatch error surfaced when a successful Pi-family process
+    /// produced no usable signal or no recoverable assistant text. `None`
+    /// otherwise. When `Some`, `success` is `false` (exit code is preserved).
+    pub protocol_error: Option<String>,
 }
 
 /// Executor for running prompts through CLI backends.
@@ -146,6 +160,26 @@ impl CliExecutor {
         let mut stderr_done = stderr_task.is_none();
         let mut accumulated_output = String::new();
 
+        // Pi-family NDJSON is routed through the shared processor so the
+        // user-facing writer receives readable assistant text (not raw JSON)
+        // while `accumulated_output` still stores the raw stream for loop
+        // post-processing. The processor owns extracted text, metrics, stream
+        // counts, and the two-case protocol-mismatch check (applied at
+        // finalization).
+        let is_pi_family_stream = matches!(
+            self.backend.output_format,
+            OutputFormat::PiStreamJson | OutputFormat::OmpStreamJson
+        );
+        let mut family_state = PiFamilySessionState::new();
+        // OMP diagnostics say OMP even though parsing is shared (design Q1/TR9).
+        family_state.flavor_label =
+            if matches!(self.backend.output_format, OutputFormat::OmpStreamJson) {
+                "OMP"
+            } else {
+                "Pi"
+            };
+        let start_time = Instant::now();
+
         if let Some(duration) = timeout {
             debug!(
                 timeout_secs = duration.as_secs(),
@@ -197,6 +231,13 @@ impl CliExecutor {
                                 writeln!(output_writer)?;
                             }
                         }
+                    } else if is_pi_family_stream {
+                        // Pi-family: route through the shared processor with a
+                        // writer-backed handler so the user sees readable text
+                        // (mirrors the Copilot arm). Raw NDJSON is still
+                        // accumulated below for loop post-processing.
+                        let mut handler = WriterStreamHandler::new(&mut output_writer);
+                        family_state.process_line(&line, &mut handler, verbose);
                     } else {
                         writeln!(output_writer, "{line}")?;
                     }
@@ -242,11 +283,46 @@ impl CliExecutor {
             handle.await.map_err(join_error_to_io)??;
         }
 
+        // Finalize the Pi-family session — applies the mandatory final-text
+        // fallback and the two-case protocol-mismatch check — and surface the
+        // structured result. Non-Pi backends leave these fields `None`.
+        let (success, extracted_text, session_result, protocol_error) = if is_pi_family_stream {
+            let process_success = status.success() && !timed_out;
+            // Snapshot the delta-only text before `finalize` applies the
+            // fallback, so recovered text is streamed to the writer only when
+            // deltas were swallowed (never double-written).
+            let delta_only = family_state.extracted_text().to_string();
+            let summary = family_state.finalize(process_success, start_time.elapsed());
+            if delta_only.is_empty() && !summary.extracted_text.is_empty() {
+                write!(output_writer, "{}", summary.extracted_text)?;
+                output_writer.flush()?;
+            }
+            // Surface a protocol mismatch as a visible, actionable error so a
+            // successful-exit-but-empty/garbage stream is not a silent failure.
+            if let Some(ref reason) = summary.protocol_error {
+                writeln!(output_writer, "[Error] {reason}")?;
+                output_writer.flush()?;
+            }
+            let session_result = summary.session_result;
+            let success = !session_result.is_error;
+            (
+                success,
+                Some(summary.extracted_text),
+                Some(session_result),
+                summary.protocol_error,
+            )
+        } else {
+            (status.success() && !timed_out, None, None, None)
+        };
+
         Ok(ExecutionResult {
             output: accumulated_output,
-            success: status.success() && !timed_out,
+            success,
             exit_code: status.code(),
             timed_out,
+            extracted_text,
+            session_result,
+            protocol_error,
         })
     }
 
@@ -366,6 +442,57 @@ fn inject_ralph_runtime_env(command: &mut Command, workspace_root: &std::path::P
         command.env("TMPDIR", "/var/tmp");
         command.env("TMP", "/var/tmp");
         command.env("TEMP", "/var/tmp");
+    }
+}
+
+/// `StreamHandler` that renders Pi-family events to an arbitrary writer as
+/// readable text.
+///
+/// Used by the no-TUI [`CliExecutor`] so Pi-family NDJSON streams as assistant
+/// text (plus tool/error lines) instead of raw JSON. The processor owns the
+/// accumulated `extracted_text`; this handler only mirrors readable output to
+/// the writer. Write errors are ignored — the writer may be a sink
+/// (`execute_capture`) and must never abort the stream.
+struct WriterStreamHandler<'a, W: Write> {
+    writer: &'a mut W,
+}
+
+impl<'a, W: Write> WriterStreamHandler<'a, W> {
+    fn new(writer: &'a mut W) -> Self {
+        Self { writer }
+    }
+}
+
+impl<W: Write + Send> StreamHandler for WriterStreamHandler<'_, W> {
+    fn on_text(&mut self, text: &str) {
+        let _ = self.writer.write_all(text.as_bytes());
+    }
+
+    fn on_tool_call(&mut self, name: &str, _id: &str, input: &serde_json::Value) {
+        match crate::tool_preview::format_tool_summary(name, input) {
+            Some(summary) => {
+                let _ = writeln!(self.writer, "[Tool] {name}: {summary}");
+            }
+            None => {
+                let _ = writeln!(self.writer, "[Tool] {name}");
+            }
+        }
+    }
+
+    fn on_tool_result(&mut self, _id: &str, output: &str) {
+        let display = crate::tool_preview::format_tool_result(output);
+        if !display.is_empty() {
+            let _ = writeln!(self.writer, "[Result] {display}");
+        }
+    }
+
+    fn on_error(&mut self, error: &str) {
+        let _ = writeln!(self.writer, "[Error] {error}");
+    }
+
+    fn on_complete(&mut self, _result: &SessionResult) {
+        // The no-TUI executor builds the SessionResult via the processor's
+        // `finalize()`; nothing to render here.
     }
 }
 
@@ -728,5 +855,219 @@ mod tests {
         assert!(result.success);
         assert!(result.output.contains("\"assistant.message\""));
         assert_eq!(String::from_utf8(output).unwrap(), "hello from copilot\n");
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_stream_writes_extracted_text() {
+        // Pi-family NDJSON routed through the shared processor. The user-facing
+        // writer must receive readable assistant text (not raw JSON), the
+        // accumulated output must keep the raw NDJSON for loop post-processing,
+        // and the structured result must carry the parsed text + metrics.
+        let backend = CliBackend {
+            command: "printf".to_string(),
+            args: vec![
+                "%s\n%s\n%s\n".to_string(),
+                r#"{"type":"session","version":3}"#.to_string(),
+                r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello from pi"}}"#
+                    .to_string(),
+                r#"{"type":"turn_end","message":{"content":[],"stopReason":"stop"}}"#.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let mut output = Vec::new();
+
+        let result = executor
+            .execute("ignored", &mut output, None, false)
+            .await
+            .unwrap();
+
+        assert!(result.success, "clean Pi stream should succeed");
+        // accumulated_output keeps the raw NDJSON (loop post-processes it).
+        assert!(
+            result.output.contains("text_delta"),
+            "raw NDJSON must be retained in output"
+        );
+        // The user-facing writer gets readable text only — no raw JSON envelope.
+        let written = String::from_utf8(output).unwrap();
+        assert_eq!(written, "hello from pi");
+        assert!(
+            !written.contains("assistantMessageEvent"),
+            "no raw JSON envelope in user-facing output"
+        );
+        // Structured result carries parsed text + metrics from the processor.
+        assert_eq!(result.extracted_text, Some("hello from pi".to_string()));
+        let session = result
+            .session_result
+            .expect("Pi stream must produce a structured session result");
+        assert!(!session.is_error);
+        assert!(
+            result.protocol_error.is_none(),
+            "clean stream must not surface a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_stream_protocol_mismatch_no_usable_events() {
+        // A successful Pi process that emits only header/unknown records must
+        // NOT be a silent empty success. It surfaces a protocol error (case 1)
+        // with success flipped to false and the exit code preserved.
+        let backend = CliBackend {
+            command: "printf".to_string(),
+            args: vec![
+                "%s\n%s\n".to_string(),
+                r#"{"type":"session","version":3}"#.to_string(),
+                r#"{"type":"agent_start"}"#.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let mut output = Vec::new();
+
+        let result = executor
+            .execute("ignored", &mut output, None, false)
+            .await
+            .unwrap();
+
+        // printf exits 0, but the protocol mismatch flips success to false.
+        assert!(
+            !result.success,
+            "header-only stream must not be a silent success"
+        );
+        assert_eq!(result.exit_code, Some(0), "exit code is preserved");
+        let session = result
+            .session_result
+            .expect("Pi stream must still produce a structured session result");
+        assert!(session.is_error);
+        let reason = result
+            .protocol_error
+            .expect("must surface a protocol-mismatch reason");
+        assert!(
+            reason.contains("no usable"),
+            "case-1 wording must be actionable: {reason}"
+        );
+        // The actionable reason is mirrored to the user-facing writer.
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("protocol mismatch"),
+            "mismatch reason must be visible in user-facing output"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_omp_stream_writes_extracted_text() {
+        // OMP routes through the same shared Pi-family processor as Pi (TR6).
+        // The user-facing writer must receive readable assistant text (not raw
+        // JSON), the accumulated output keeps the raw NDJSON, and the structured
+        // result carries parsed text + metrics. `isError` is omitted on the tool
+        // end (OMP-optional, defaults false) and `agent_end` is ignored.
+        let backend = CliBackend {
+            command: "printf".to_string(),
+            args: vec![
+                "%s\n%s\n%s\n%s\n".to_string(),
+                r#"{"type":"session","version":3}"#.to_string(),
+                r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello from omp"}}"#
+                    .to_string(),
+                r#"{"type":"turn_end","message":{"content":[{"type":"text","text":"hello from omp"}],"stopReason":"stop","usage":{"input":9,"output":8,"cacheRead":2,"cacheWrite":1,"cost":{"total":0.04}}}}"#
+                    .to_string(),
+                r#"{"type":"agent_end"}"#.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let mut output = Vec::new();
+
+        let result = executor
+            .execute("ignored", &mut output, None, false)
+            .await
+            .unwrap();
+
+        assert!(result.success, "clean OMP stream should succeed");
+        // Raw NDJSON retained for loop post-processing.
+        assert!(
+            result.output.contains("text_delta"),
+            "raw NDJSON must be retained in output"
+        );
+        assert!(
+            result.output.contains("agent_end"),
+            "OMP agent_end record is retained in the raw stream"
+        );
+        // User-facing writer gets readable text only — no raw JSON envelope.
+        let written = String::from_utf8(output).unwrap();
+        assert_eq!(written, "hello from omp");
+        assert!(
+            !written.contains("assistantMessageEvent"),
+            "no raw JSON envelope in user-facing output"
+        );
+        // Structured result carries parsed text + metrics.
+        assert_eq!(result.extracted_text, Some("hello from omp".to_string()));
+        let session = result
+            .session_result
+            .expect("OMP stream must produce a structured session result");
+        assert!(!session.is_error, "OMP isError defaults false");
+        assert_eq!(session.input_tokens, 11); // peak: input(9) + cacheRead(2)
+        assert_eq!(session.output_tokens, 8);
+        assert_eq!(session.cache_read_tokens, 2);
+        assert_eq!(session.cache_write_tokens, 1);
+        assert!((session.total_cost_usd - 0.04).abs() < 1e-10);
+        assert!(
+            result.protocol_error.is_none(),
+            "clean OMP stream must not surface a protocol error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_omp_stream_protocol_mismatch_no_usable_events() {
+        // OMP shares the two-case mismatch check. A successful process emitting
+        // only lifecycle/header records must NOT be a silent success.
+        let backend = CliBackend {
+            command: "printf".to_string(),
+            args: vec![
+                "%s\n%s\n".to_string(),
+                r#"{"type":"session","version":3}"#.to_string(),
+                r#"{"type":"agent_start"}"#.to_string(),
+                r#"{"type":"agent_end"}"#.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let mut output = Vec::new();
+
+        let result = executor
+            .execute("ignored", &mut output, None, false)
+            .await
+            .unwrap();
+
+        assert!(
+            !result.success,
+            "OMP header-only stream must not be a silent success"
+        );
+        assert_eq!(result.exit_code, Some(0), "exit code is preserved");
+        let reason = result
+            .protocol_error
+            .expect("must surface an OMP protocol-mismatch reason");
+        assert!(reason.contains("no usable"), "case-1 wording: {reason}");
+        // Design Q1 / TR9: OMP diagnostics must say OMP (shared parser, distinct label).
+        assert!(
+            reason.contains("OMP"),
+            "OMP mismatch must be OMP-labelled: {reason}"
+        );
     }
 }

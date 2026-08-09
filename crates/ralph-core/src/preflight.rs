@@ -1,5 +1,6 @@
 //! Preflight checks for validating environment and configuration before running.
 
+use crate::backend;
 use crate::config::ConfigWarning;
 use crate::{RalphConfig, git_ops};
 use async_trait::async_trait;
@@ -1012,10 +1013,10 @@ fn backend_command(backend: &str, override_cmd: Option<&str>) -> Option<String> 
             .map(|value| value.to_string());
     }
 
-    match backend {
-        "kiro" | "kiro-acp" => Some("kiro-cli".to_string()),
-        _ => Some(backend.to_string()),
-    }
+    // Resolve the executable from the core catalog (e.g. kiro/kiro-acp → kiro-cli).
+    // Unknown names return None so the caller reports a missing command rather than
+    // probing an arbitrary name; config validation rejects unknown names first.
+    backend::command_for(backend).map(String::from)
 }
 
 fn command_supports_version(backend: &str) -> bool {
@@ -1129,6 +1130,32 @@ mod tests {
 
     #[cfg(not(unix))]
     fn mark_executable(_path: &std::path::Path) {}
+
+    #[test]
+    fn backend_command_resolves_every_catalog_backend() {
+        // Preflight command resolution must agree with the catalog for every
+        // catalogued backend (covering kiro/kiro-acp → kiro-cli). A newly added
+        // backend must not need a parallel command map here.
+        for metadata in backend::iter() {
+            assert_eq!(
+                backend_command(metadata.id, None).as_deref(),
+                Some(metadata.command),
+                "backend_command({}) should resolve to catalog command",
+                metadata.id
+            );
+        }
+        // Unknown names resolve to None (missing command), not an arbitrary probe.
+        assert!(backend_command("definitely-not-a-backend", None).is_none());
+        // `custom` without a command override also resolves to None — preflight
+        // then reports "Backend command missing / Set cli.command for custom
+        // backend" rather than probing the literal "custom" executable. (Config
+        // validation already requires a command for custom, so this is unreachable
+        // in legal configs, but the fail-closed behavior is locked here.)
+        assert!(
+            backend_command("custom", None).is_none(),
+            "custom without a command override must not resolve to an executable"
+        );
+    }
 
     #[tokio::test]
     async fn report_counts_statuses() {

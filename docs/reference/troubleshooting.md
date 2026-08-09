@@ -675,6 +675,46 @@ Ralph's loop detection triggers when agent output is ≥90% similar to any of th
 
 **Solution**: Ensure Q service is running
 
+#### OMP (oh-my-pi) Errors
+
+**OMP not detected / "agent not found".**
+OMP is the **last** backend in auto-detection order, so a different installed
+backend is selected first. Verify OMP directly, then select it explicitly:
+
+```bash
+omp --version                       # must succeed (tested baseline: omp/17.2.10)
+ralph doctor                        # probes `omp --version`
+ralph run --backend omp -p "..."    # or set cli.backend: omp in ralph.yml
+```
+
+**Authentication.**
+Ralph performs **no** OMP-side authentication and checks no OMP credentials.
+OMP owns its providers, models, credentials, and approval policy; authenticate
+through OMP itself (its in-app login, or the provider keys OMP reads). Unlike
+Pi/Claude, `ralph doctor` will not warn about a missing OMP API key.
+
+**Approval waits / apparent hang.**
+Headless iterations run with `--auto-approve`. An interactive `ralph plan
+--backend omp` deliberately **omits** `--auto-approve` so OMP's own approval
+prompts appear — a pause there is OMP waiting on your approval, not Ralph
+hanging. Ralph passes the documented `--auto-approve` flag; it does not rely on
+OMP's mutable `--approval-mode=yolo` default.
+
+**JSON protocol mismatch.**
+If OMP's JSON output format changes between versions, Ralph reports a protocol
+mismatch (zero actionable events on a successful process, or events with no
+assistant text and a non-tool stop reason — a tool-only turn is *not* a
+mismatch). Check `omp --version` against the tested baseline (`17.2.10`). Ralph
+documents this baseline but enforces **no hard minimum**; downgrade or upgrade
+OMP to a compatible release.
+
+**Argument pass-through.** `cli.args` are forwarded verbatim to every OMP
+invocation (`--provider`, `--model`, `--profile`, `--max-time`, …). An invalid
+OMP flag surfaces as an OMP error, not a Ralph error.
+
+**ACP/RPC not supported.** Ralph uses the OMP JSON stream protocol only; an
+OMP RPC/ACP setup is outside Ralph's scope.
+
 ## Debug Mode
 
 ### Enable Verbose Logging

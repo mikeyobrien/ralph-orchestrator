@@ -1,0 +1,2 @@
+{"ts": 1000, "event": "ux.terminal.write", "data": {"bytes": "U3RhcnRpbmcgT01QIHNlc3Npb24uLi4KRXJyb3I6IHByb3ZpZGVyIHJhdGUgbGltaXQgZXhjZWVkZWQKCjxldmVudCB0b3BpYz0iYnVpbGQuZmFpbGVkIj4KdGVzdHM6IGZhaWwKPC9ldmVudD4K", "stdout": true, "offset_ms": 0}}
+{"ts": 2000, "event": "ux.terminal.write", "data": {"bytes": "QWdlbnQgZXhpdGVkIGJlZm9yZSBjb21wbGV0aW9uIChub24temVybyBleGl0KS4K", "stdout": true, "offset_ms": 1000}}

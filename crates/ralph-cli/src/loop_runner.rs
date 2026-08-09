@@ -8,9 +8,9 @@ use anyhow::{Context, Result};
 use ralph_adapters::{
     AcpExecutor, ClaudeStreamEvent, ClaudeStreamParser, CliBackend, CliExecutor,
     ConsoleStreamHandler, ContentBlock, CopilotStreamParser, JsonRpcStreamHandler,
-    OutputFormat as BackendOutputFormat, PiAssistantEvent, PiContentBlock, PiStreamEvent,
-    PiStreamParser, PrettyStreamHandler, PtyConfig, PtyExecutor, QuietStreamHandler, StreamHandler,
-    TuiStreamHandler,
+    OutputFormat as BackendOutputFormat, PiFamilyAssistantEvent, PiFamilyContentBlock,
+    PiFamilyEvent, PiFamilyStreamParser, PrettyStreamHandler, PtyConfig, PtyExecutor,
+    QuietStreamHandler, StreamHandler, TuiStreamHandler,
 };
 use ralph_core::diagnostics::{HookDisposition, HookRunTelemetryEntry};
 use ralph_core::{
@@ -1698,58 +1698,25 @@ pub async fn run_loop_impl(
         let hat_backend_opt = hat_config_opt.and_then(|c| c.backend.as_ref());
         let hat_backend_args = hat_config_opt.and_then(|c| c.backend_args.clone());
 
-        // Step 2: Resolve effective backend and determine backend name for timeout
-        // Note: backend_name_for_timeout is owned String to avoid lifetime issues with hat_backend reference
+        // Step 2: Resolve effective backend and the backend name used for timeout
+        // resolution. An invalid hat backend fails closed (propagates the error)
+        // rather than silently falling back to the global backend — validation is
+        // the safety net, and a misconfigured hat must never launch another backend.
         let (mut effective_backend, backend_name_for_timeout): (CliBackend, String) =
             match hat_backend_opt {
                 Some(hat_backend) => {
-                    // Hat has custom backend configuration
-                    match CliBackend::from_hat_backend(hat_backend) {
-                        Ok(hat_backend_instance) => {
-                            debug!(
-                                "Using hat-level backend for '{}': {:?}",
-                                display_hat, hat_backend
-                            );
-
-                            // Determine backend name for timeout based on hat backend type
-                            // Use owned String to avoid borrowing issues and improve code clarity
-                            let backend_name = match hat_backend {
-                                ralph_core::HatBackend::Named(name) => name.clone(),
-                                ralph_core::HatBackend::NamedWithArgs { backend_type, .. } => {
-                                    backend_type.clone()
-                                }
-                                ralph_core::HatBackend::KiroAgent { backend_type, .. } => {
-                                    backend_type.clone()
-                                }
-                                // For Custom backends, extract command name from path
-                                // Handles both Unix ("/usr/bin/codex") and commands with args ("ollama run llama3")
-                                ralph_core::HatBackend::Custom { command, .. } => {
-                                    // First split by whitespace to handle commands with arguments
-                                    // e.g., "ollama run llama3" -> "ollama"
-                                    let base_command =
-                                        command.split_whitespace().next().unwrap_or(command);
-                                    // Then extract filename from path
-                                    // e.g., "/usr/bin/codex" -> "codex"
-                                    std::path::Path::new(base_command)
-                                        .file_name()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("custom")
-                                        .to_string()
-                                }
-                            };
-
-                            (hat_backend_instance, backend_name)
-                        }
-                        Err(e) => {
-                            // Failed to create backend from hat config - fall back to global
-                            warn!(
-                                "Failed to create backend from hat configuration for '{}': {}. Falling back to global backend.",
-                                display_hat, e
-                            );
-                            // IMPORTANT: Use global backend name for timeout since we're using global backend
-                            (backend.clone(), config.cli.backend.clone())
-                        }
-                    }
+                    let hat_backend_instance = CliBackend::from_hat_backend(hat_backend)
+                        .with_context(|| {
+                            format!(
+                                "Invalid backend for hat '{}'; aborting iteration (fail-closed)",
+                                display_hat
+                            )
+                        })?;
+                    debug!(
+                        "Using hat-level backend for '{}': {:?}",
+                        display_hat, hat_backend
+                    );
+                    (hat_backend_instance, hat_backend.settings_name())
                 }
                 None => {
                     // No custom backend - use global configuration
@@ -1766,8 +1733,13 @@ pub async fn run_loop_impl(
             effective_backend.args.extend(args);
         }
 
-        // Step 3: Get timeout from config based on actual backend being used
-        let timeout_secs = config.adapter_settings(&backend_name_for_timeout).timeout;
+        // Step 3: R13 per-worker timeout — active hat.timeout, else the resolved
+        // adapter settings timeout for the effective backend (override → default
+        // → built-in 300s). aggregate.timeout is excluded (aggregator-wait only).
+        let timeout_secs = config.per_worker_timeout_secs(
+            hat_config_opt.and_then(|c| c.timeout),
+            &backend_name_for_timeout,
+        );
         let timeout = Some(Duration::from_secs(timeout_secs));
 
         // For TUI mode, get the shared lines buffer for this iteration.
@@ -1828,21 +1800,32 @@ pub async fn run_loop_impl(
                 let result = executor
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
-                Ok(ExecutionOutcome {
-                    output: normalize_cli_output_for_parsing(
-                        effective_backend.output_format,
-                        &result.output,
+                // Pi-family backends carry pre-parsed assistant text + metrics
+                // in the structured result (the processor owns extraction,
+                // including the mandatory final-text fallback). Prefer those over
+                // re-parsing the raw stream; other backends keep normalizing.
+                let (output, metrics) = match (&result.extracted_text, &result.session_result) {
+                    (Some(text), Some(session)) => (text.clone(), Some(session.clone())),
+                    _ => (
+                        normalize_cli_output_for_parsing(
+                            effective_backend.output_format,
+                            &result.output,
+                        ),
+                        None,
                     ),
+                };
+                Ok(ExecutionOutcome {
+                    output,
                     success: result.success,
                     termination: None,
-                    total_cost_usd: 0.0,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cache_write_tokens: 0,
+                    total_cost_usd: metrics.as_ref().map_or(0.0, |m| m.total_cost_usd),
+                    input_tokens: metrics.as_ref().map_or(0, |m| m.input_tokens),
+                    output_tokens: metrics.as_ref().map_or(0, |m| m.output_tokens),
+                    cache_read_tokens: metrics.as_ref().map_or(0, |m| m.cache_read_tokens),
+                    cache_write_tokens: metrics.as_ref().map_or(0, |m| m.cache_write_tokens),
                     context_window: context_window_for_backend(&config, &backend_name_for_timeout),
                     context_tokens: 0,
-                    num_turns: 0,
+                    num_turns: metrics.as_ref().map_or(0, |m| m.num_turns),
                 })
             }
         };
@@ -2509,6 +2492,7 @@ pub async fn run_loop_impl(
                 &wave_events,
                 &mut event_loop,
                 &backend,
+                &config,
                 &ctx,
                 use_colors,
                 enable_rpc,
@@ -4180,7 +4164,8 @@ fn normalize_cli_output_for_parsing(
     match output_format {
         BackendOutputFormat::StreamJson => extract_claude_stream_text(raw_output),
         BackendOutputFormat::CopilotStreamJson => CopilotStreamParser::extract_all_text(raw_output),
-        BackendOutputFormat::PiStreamJson => extract_pi_stream_text(raw_output),
+        // Pi-family text now flows from the structured ExecutionResult (the
+        // shared processor owns extraction), so no raw re-parse arm is needed.
         _ => raw_output.to_string(),
     }
 }
@@ -4200,30 +4185,6 @@ fn extract_claude_stream_text(raw_output: &str) -> String {
                     extracted.push('\n');
                 }
             }
-        }
-    }
-
-    if extracted.is_empty() {
-        raw_output.to_string()
-    } else {
-        extracted
-    }
-}
-
-fn extract_pi_stream_text(raw_output: &str) -> String {
-    let mut extracted = String::new();
-
-    for line in raw_output.lines() {
-        let Some(event) = PiStreamParser::parse_line(line) else {
-            continue;
-        };
-
-        if let PiStreamEvent::MessageUpdate {
-            assistant_message_event,
-        } = event
-            && let PiAssistantEvent::TextDelta { delta } = assistant_message_event
-        {
-            extracted.push_str(&delta);
         }
     }
 
@@ -5180,6 +5141,7 @@ async fn handle_wave_events(
     wave_events: &[ralph_core::Event],
     event_loop: &mut ralph_core::EventLoop,
     backend: &CliBackend,
+    config: &RalphConfig,
     ctx: &LoopContext,
     use_colors: bool,
     enable_rpc: bool,
@@ -5205,7 +5167,27 @@ async fn handle_wave_events(
         tui: tui_state,
     };
 
-    let wave_timeout_secs = detected.timeout_secs();
+    // R13 per-worker timeout: active hat.timeout, else the resolved adapter
+    // settings timeout for the wave's effective backend (override → default →
+    // built-in 300s). aggregate.timeout is excluded (aggregator-wait only).
+    let worker_backend_name = detected
+        .hat_config
+        .backend
+        .as_ref()
+        .map(ralph_core::HatBackend::settings_name)
+        .unwrap_or_else(|| config.cli.backend.clone());
+    let wave_timeout_secs =
+        config.per_worker_timeout_secs(detected.hat_config.timeout, &worker_backend_name);
+
+    // GAP3 aggregator-wait (orthogonal to the per-worker deadline above): if the
+    // wave hat publishes a topic that a separate aggregator hat subscribes to,
+    // and that aggregator has `aggregate.timeout` set, use it for the join_all
+    // wait; otherwise `execute_wave` falls back to the derived
+    // per_worker × ceil(total/concurrency) + 30s. The aggregator is a distinct
+    // concurrency=1 hat activated the iteration after the wave, so the
+    // cross-hat read here is intentional.
+    let aggregate_wait =
+        ralph_core::resolve_aggregate_wait(&detected.hat_config, event_loop.registry());
 
     // Announce wave start to CLI / RPC / TUI
     if out.show_cli {
@@ -5267,6 +5249,8 @@ async fn handle_wave_events(
     let wave_result = execute_wave(
         &detected,
         backend,
+        wave_timeout_secs,
+        aggregate_wait,
         &main_events_file,
         out.show_cli,
         out.use_colors,
@@ -5368,6 +5352,8 @@ async fn handle_wave_events(
 async fn execute_wave(
     wave: &ralph_core::DetectedWave,
     global_backend: &CliBackend,
+    wave_timeout_secs: u64,
+    aggregate_wait: Option<Duration>,
     main_events_file: &Path,
     show_progress: bool,
     use_colors: bool,
@@ -5379,7 +5365,7 @@ async fn execute_wave(
     let concurrency = wave.hat_config.concurrency as usize;
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
 
-    let wave_timeout = Duration::from_secs(wave.timeout_secs());
+    let wave_timeout = Duration::from_secs(wave_timeout_secs);
 
     // Register wave in tracker
     let mut tracker = WaveTracker::new();
@@ -5423,11 +5409,16 @@ async fn execute_wave(
         };
         let prompt = build_wave_worker_prompt(&hat_config, &event, &ctx);
 
-        // Resolve backend for this worker
-        let mut worker_backend = if let Some(ref hat_backend) = hat_config.backend {
-            CliBackend::from_hat_backend(hat_backend).unwrap_or_else(|_| global_backend.clone())
-        } else {
-            global_backend.clone()
+        // Resolve backend for this worker. An invalid hat backend fails closed
+        // (propagates) rather than silently substituting the global backend.
+        let mut worker_backend = match hat_config.backend.as_ref() {
+            Some(hat_backend) => CliBackend::from_hat_backend(hat_backend).with_context(|| {
+                format!(
+                    "Invalid backend for wave hat '{}'; aborting wave (fail-closed)",
+                    hat_config.name
+                )
+            })?,
+            None => global_backend.clone(),
         };
 
         #[cfg(test)]
@@ -5545,9 +5536,16 @@ async fn execute_wave(
     // Compute aggregate timeout: enough wall-clock time for all batches + buffer.
     // With semaphore-based concurrency limiting, total time is bounded by
     // ceil(total / concurrency) * per_worker_timeout.
+    //
+    // GAP3: an explicit aggregator-wait (the separate aggregator hat's
+    // `aggregate.timeout`, resolved via `find_by_trigger` at the call site)
+    // overrides the derived value. Wrap — don't replace — so callers passing
+    // `None` keep byte-identical derived behavior.
     let batches = u64::from(wave.total).div_ceil(concurrency as u64);
-    let aggregate_timeout = Duration::from_secs(wave_timeout.as_secs().saturating_mul(batches))
-        + Duration::from_secs(30);
+    let aggregate_timeout = aggregate_wait.unwrap_or_else(|| {
+        Duration::from_secs(wave_timeout.as_secs().saturating_mul(batches))
+            + Duration::from_secs(30)
+    });
 
     // Collect results with aggregate timeout to prevent indefinite hangs
     let results =
@@ -5924,6 +5922,45 @@ fn forced_test_wave_pty_failure<'a>(worker_backend: &'a CliBackend, key: &str) -
         .find_map(|(name, value)| (name == key).then_some(value.as_str()))
 }
 
+/// Terminate a wave-worker PTY child's whole process group: SIGTERM → bounded
+/// grace → SIGKILL. Mirrors `PtyExecutor::terminate_child`
+/// (`crates/ralph-adapters/src/pty_executor.rs`): portable-pty 0.9.0 spawns the
+/// PTY child as a session leader (`setsid` in its `pre_exec`), so the child's
+/// pid is also its process-group id (`pid == pgid`) and a negative-pgid group
+/// kill reaps OMP-spawned descendants that ignore SIGHUP. The plain
+/// `Box<dyn portable_pty::Child>::kill()` portable-pty provides is single-PID
+/// (`libc::kill(pid, SIGHUP)` then SIGKILL — never a group signal), so it leaks
+/// SIGHUP-immune grandchildren (e.g. `nohup sleep 300`) past the wave-worker
+/// timeout — the OMP lifecycle defect this fixes.
+#[cfg(unix)]
+async fn terminate_wave_worker_pty_group(child: &mut Box<dyn portable_pty::Child + Send + Sync>) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
+    let pid = match child.process_id() {
+        Some(id) => Pid::from_raw(id as i32),
+        None => return, // Already exited.
+    };
+    let pgid = Pid::from_raw(-pid.as_raw());
+
+    debug!(worker_pid = %pid, "Sending SIGTERM to wave-worker PTY process group");
+    let _ = kill(pgid, Signal::SIGTERM);
+
+    // Bounded graceful-exit window (mirrors pty_executor's 2s grace and
+    // cli_executor's TERMINATION_GRACE_TIMEOUT).
+    let grace = Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + grace;
+    while std::time::Instant::now() < deadline {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    debug!(worker_pid = %pid, "Grace expired, sending SIGKILL to wave-worker PTY process group");
+    let _ = kill(pgid, Signal::SIGKILL);
+}
+
 async fn run_wave_worker_pty(
     index: u32,
     worker_backend: &CliBackend,
@@ -6124,17 +6161,51 @@ async fn run_wave_worker_pty(
                 "Wave worker timeout, killing process"
             );
             timed_out = true;
-            let _ = child.kill();
+            // Group-kill the PTY child (negative pgid) so OMP-spawned
+            // descendants that ignore SIGHUP are reaped. `child.kill()` alone
+            // is single-PID (portable-pty SIGHUP/SIGKILL) and leaks them.
+            #[cfg(unix)]
+            terminate_wave_worker_pty_group(&mut child).await;
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+            }
         }
     }
 
-    let (status, _) = tokio::task::spawn_blocking(move || {
-        let status = child.wait();
-        let _ = reader_handle.join();
-        (status, ())
-    })
+    // Bound the post-kill wait so a pathological `child.wait()` cannot consume
+    // a blocking-pool thread indefinitely. The group kill above already
+    // delivered SIGKILL, so the child is dead or imminently dead and this bound
+    // is a safety net — matches cli_executor's bounded `child.wait()`
+    // (cli_executor.rs:342). When the child exits its inherited PTY-slave fd
+    // closes, the master reader hits EOF, and `reader_handle.join()` returns.
+    let wait_bound = Duration::from_secs(5);
+    let (status, _) = match tokio::time::timeout(
+        wait_bound,
+        tokio::task::spawn_blocking(move || {
+            let status = child.wait();
+            let _ = reader_handle.join();
+            (status, ())
+        }),
+    )
     .await
-    .unwrap_or_else(|_| (Err(std::io::Error::other("join task panicked")), ()));
+    {
+        Ok(Ok((status, ()))) => (status, ()),
+        Ok(Err(_)) => (Err(std::io::Error::other("join task panicked")), ()),
+        Err(_) => {
+            warn!(
+                worker = index,
+                wait_bound_secs = wait_bound.as_secs(),
+                "Wave worker child.wait() did not return after group kill"
+            );
+            (
+                Err(std::io::Error::other(
+                    "wave worker did not exit after group kill",
+                )),
+                (),
+            )
+        }
+    };
     let success = status.map(|s| s.success() && !timed_out).unwrap_or(false);
     let duration = start.elapsed();
 
@@ -6215,38 +6286,40 @@ fn extract_readable_delta(line: &str, output_format: BackendOutputFormat) -> Opt
                 }
             })
         }
-        BackendOutputFormat::PiStreamJson => match PiStreamParser::parse_line(line) {
-            Some(PiStreamEvent::MessageUpdate {
-                assistant_message_event: PiAssistantEvent::TextDelta { delta },
-            }) => Some(delta),
-            Some(PiStreamEvent::MessageUpdate {
-                assistant_message_event: PiAssistantEvent::Error { reason },
-            }) => Some(format!("✗ {}\n", truncate_wave_worker_preview(&reason))),
-            Some(PiStreamEvent::ToolExecutionStart {
-                tool_name, args, ..
-            }) => Some(format!("⚙ {tool_name}({args})\n")),
-            Some(PiStreamEvent::ToolExecutionEnd {
-                result, is_error, ..
-            }) => {
-                let output = result
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        PiContentBlock::Text { text } => Some(text.as_str()),
-                        PiContentBlock::Other => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if output.is_empty() {
-                    None
-                } else if is_error {
-                    Some(format!("✗ {}\n", truncate_wave_worker_preview(&output)))
-                } else {
-                    Some(format!("→ {}\n", truncate_wave_worker_preview(&output)))
+        BackendOutputFormat::PiStreamJson | BackendOutputFormat::OmpStreamJson => {
+            match PiFamilyStreamParser::parse_line(line) {
+                Some(PiFamilyEvent::MessageUpdate {
+                    assistant_message_event: PiFamilyAssistantEvent::TextDelta { delta },
+                }) => Some(delta),
+                Some(PiFamilyEvent::MessageUpdate {
+                    assistant_message_event: PiFamilyAssistantEvent::Error { reason },
+                }) => Some(format!("✗ {}\n", truncate_wave_worker_preview(&reason))),
+                Some(PiFamilyEvent::ToolExecutionStart {
+                    tool_name, args, ..
+                }) => Some(format!("⚙ {tool_name}({args})\n")),
+                Some(PiFamilyEvent::ToolExecutionEnd {
+                    result, is_error, ..
+                }) => {
+                    let output = result
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            PiFamilyContentBlock::Text { text } => Some(text.as_str()),
+                            PiFamilyContentBlock::Other => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if output.is_empty() {
+                        None
+                    } else if is_error {
+                        Some(format!("✗ {}\n", truncate_wave_worker_preview(&output)))
+                    } else {
+                        Some(format!("→ {}\n", truncate_wave_worker_preview(&output)))
+                    }
                 }
+                _ => None,
             }
-            _ => None,
-        },
+        }
     }
 }
 
@@ -6360,6 +6433,7 @@ mod tests {
             cache_read_tokens: 30_000,
             cache_write_tokens: 10_000,
             num_turns: 3,
+            protocol_error: None,
         };
 
         assert_eq!(context_tokens_from_pty_result(&pty_result), 90_000);
@@ -9903,21 +9977,6 @@ hats:
     }
 
     #[test]
-    fn test_normalize_cli_output_for_parsing_extracts_pi_text_deltas() {
-        let raw = concat!(
-            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"hello \"}}\n",
-            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"thinking_delta\",\"contentIndex\":0,\"delta\":\"hidden\"}}\n",
-            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"LOOP_COMPLETE\"}}\n",
-            "{\"type\":\"turn_end\",\"message\":{\"usage\":{\"input\":1,\"output\":1,\"cache_read\":0,\"cache_write\":0,\"cost\":{\"input\":0.0,\"output\":0.0,\"total\":0.0}}}}\n"
-        );
-
-        assert_eq!(
-            normalize_cli_output_for_parsing(BackendOutputFormat::PiStreamJson, raw),
-            "hello LOOP_COMPLETE"
-        );
-    }
-
-    #[test]
     fn test_normalize_cli_output_for_parsing_extracts_copilot_stream_text() {
         let raw = concat!(
             "{\"type\":\"assistant.turn_start\",\"data\":{\"turnId\":\"0\"}}\n",
@@ -9947,6 +10006,10 @@ hats:
             WaveWorkerExecutionMode::Pty
         );
         assert_eq!(
+            wave_worker_execution_mode(BackendOutputFormat::OmpStreamJson),
+            WaveWorkerExecutionMode::Pty
+        );
+        assert_eq!(
             wave_worker_execution_mode(BackendOutputFormat::CopilotStreamJson),
             WaveWorkerExecutionMode::Pty
         );
@@ -9971,6 +10034,12 @@ hats:
                 BackendOutputFormat::PiStreamJson,
                 WaveWorkerExecutionMode::Pty,
                 "execution-mode:named:pi",
+            ),
+            (
+                "omp",
+                BackendOutputFormat::OmpStreamJson,
+                WaveWorkerExecutionMode::Pty,
+                "execution-mode:named:omp",
             ),
             (
                 "kiro-acp",
@@ -10122,9 +10191,79 @@ hats:
         assert_eq!(result_delta.as_deref(), Some("→ hi\n\n"));
     }
 
+    #[test]
+    fn test_extract_readable_delta_handles_omp_stream_events() {
+        // OMP shares the Pi-family arm of extract_readable_delta (OmpStreamJson
+        // routes to the same processor). Verifies the widened match covers OMP.
+        let text_delta = extract_readable_delta(
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"Hello from OMP\"}}",
+            BackendOutputFormat::OmpStreamJson,
+        );
+        assert_eq!(text_delta.as_deref(), Some("Hello from OMP"));
+
+        // isError omitted (OMP-optional → default false) → success result shape.
+        let result_delta = extract_readable_delta(
+            "{\"type\":\"tool_execution_end\",\"toolCallId\":\"toolu_1\",\"toolName\":\"bash\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"omp\\n\"}]}}",
+            BackendOutputFormat::OmpStreamJson,
+        );
+        assert_eq!(result_delta.as_deref(), Some("→ omp\n\n"));
+
+        // agent_end is not modeled (Other) → no readable delta.
+        assert_eq!(
+            extract_readable_delta(
+                "{\"type\":\"agent_end\"}",
+                BackendOutputFormat::OmpStreamJson
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_omp_global_backend_routes_through_loop_runner() {
+        // The global `cli.backend: omp` config resolves through the loop's
+        // backend-construction path to an OmpStreamJson backend with the exact
+        // autonomous argv, and the loop's OMP routing (wave execution mode +
+        // readable-delta extraction) selects the shared Pi-family processor.
+        let config = ralph_core::CliConfig {
+            backend: "omp".to_string(),
+            ..Default::default()
+        };
+        let backend = CliBackend::from_config(&config).expect("omp resolves from config");
+        assert_eq!(backend.command, "omp");
+        assert_eq!(backend.output_format, BackendOutputFormat::OmpStreamJson);
+
+        let (_cmd, args, stdin, _temp) = backend.build_command("do work", false);
+        assert!(stdin.is_none());
+        // Autonomous prefix in order, positional prompt last.
+        assert_eq!(
+            &args[..5],
+            &["-p", "--mode", "json", "--no-session", "--auto-approve"]
+        );
+        assert_eq!(args.last(), Some(&"do work".to_string()));
+
+        // OMP routes through the loop's PTY wave path and the Pi-family delta arm.
+        assert_eq!(
+            wave_worker_execution_mode(BackendOutputFormat::OmpStreamJson),
+            WaveWorkerExecutionMode::Pty
+        );
+        let delta = extract_readable_delta(
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"ok\"}}",
+            BackendOutputFormat::OmpStreamJson,
+        );
+        assert_eq!(delta.as_deref(), Some("ok"));
+    }
+
     #[cfg(unix)]
     fn make_test_wave(publishes: Vec<String>) -> ralph_core::DetectedWave {
         make_test_wave_with_timeout(publishes, 30)
+    }
+
+    /// Per-worker timeout for a test wave: the hat-config floor (`hat.timeout`,
+    /// else 300s). Test waves carry no adapter overrides, so this equals the full
+    /// R13 chain that production resolves through `RalphConfig::per_worker_timeout_secs`.
+    #[cfg(unix)]
+    fn wave_per_worker_secs(wave: &ralph_core::DetectedWave) -> u64 {
+        wave.hat_config.timeout.map(u64::from).unwrap_or(300)
     }
 
     #[cfg(unix)]
@@ -10222,9 +10361,19 @@ hats:
 
         let events_file = temp_dir.path().join("events.jsonl");
         let wave = make_test_wave_with_timeout(vec!["review.done".to_string()], timeout_secs);
-        execute_wave(&wave, &backend, &events_file, false, false, None, None)
-            .await
-            .expect("wave execution")
+        execute_wave(
+            &wave,
+            &backend,
+            wave_per_worker_secs(&wave),
+            None,
+            &events_file,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("wave execution")
     }
 
     #[cfg(unix)]
@@ -10251,9 +10400,19 @@ hats:
 
         let events_file = temp_dir.path().join("events.jsonl");
         let wave = make_test_wave(vec!["review.done".to_string()]);
-        execute_wave(&wave, &backend, &events_file, false, false, None, None)
-            .await
-            .expect("wave execution")
+        execute_wave(
+            &wave,
+            &backend,
+            wave_per_worker_secs(&wave),
+            None,
+            &events_file,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("wave execution")
     }
 
     #[cfg(unix)]
@@ -10314,9 +10473,19 @@ hats:
             30,
             task_payload.to_string(),
         );
-        let completed = execute_wave(&wave, &backend, &events_file, false, false, None, None)
-            .await
-            .expect("wave execution");
+        let completed = execute_wave(
+            &wave,
+            &backend,
+            wave_per_worker_secs(&wave),
+            None,
+            &events_file,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("wave execution");
         let captured: CapturedWaveInvocation = serde_json::from_str(
             &std::fs::read_to_string(&worker_capture_path).expect("read captured invocation"),
         )
@@ -10367,6 +10536,8 @@ hats:
         execute_wave(
             &wave,
             &global_backend,
+            wave_per_worker_secs(&wave),
+            None,
             &events_file,
             false,
             false,
@@ -10410,6 +10581,8 @@ hats:
         let completed = execute_wave(
             &wave,
             &missing_global_wave_backend(),
+            wave_per_worker_secs(&wave),
+            None,
             &events_file,
             false,
             false,
@@ -10450,9 +10623,19 @@ hats:
         wave.hat_config.backend_args = backend_args;
         let backend = CliBackend::from_name("kiro-acp").expect("named ACP backend");
 
-        let completed = execute_wave(&wave, &backend, &events_file, false, false, None, None)
-            .await
-            .expect("wave execution");
+        let completed = execute_wave(
+            &wave,
+            &backend,
+            wave_per_worker_secs(&wave),
+            None,
+            &events_file,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("wave execution");
         let captured: CapturedAcpWaveInvocation = serde_json::from_str(
             &std::fs::read_to_string(&worker_capture_path).expect("read captured ACP invocation"),
         )
@@ -10500,6 +10683,8 @@ hats:
         let completed = execute_wave(
             &wave,
             &missing_global_wave_backend(),
+            wave_per_worker_secs(&wave),
+            None,
             &events_file,
             false,
             false,
@@ -10556,6 +10741,24 @@ EOF"#,
 '{{"type":"message_update","assistantMessageEvent":{{"type":"text_delta","contentIndex":0,"delta":"hello from named pi"}}}}' \
 '{{"type":"tool_execution_start","toolCallId":"toolu_1","toolName":"bash","args":{{"command":"echo hi"}}}}' \
 '{{"type":"tool_execution_end","toolCallId":"toolu_1","toolName":"bash","result":{{"content":[{{"type":"text","text":"hi\n"}}]}},"isError":false}}'
+cat <<'EOF' > "$RALPH_EVENTS_FILE"
+{{"topic":"review.done","payload":"{payload}","ts":"2026-01-01T00:00:00Z"}}
+EOF"#,
+        )
+    }
+
+    #[cfg(unix)]
+    fn omp_backend_body(payload: &str) -> String {
+        // OMP shares the Pi-family NDJSON stream. Distinguishing details exercised
+        // here: `isError` is OMITTED on the tool end (OMP-optional → default
+        // false) and an `agent_end` record is emitted (Ralph ignores it).
+        format!(
+            r#"printf '%s\n' \
+'{{"type":"message_update","assistantMessageEvent":{{"type":"text_delta","contentIndex":0,"delta":"hello from named omp"}}}}' \
+'{{"type":"tool_execution_start","toolCallId":"toolu_1","toolName":"bash","args":{{"command":"echo omp"}}}}' \
+'{{"type":"tool_execution_end","toolCallId":"toolu_1","toolName":"bash","result":{{"content":[{{"type":"text","text":"omp\n"}}]}}}}' \
+'{{"type":"turn_end","message":{{"content":[],"usage":{{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{{"total":0.0}}}}}}}}' \
+'{{"type":"agent_end"}}'
 cat <<'EOF' > "$RALPH_EVENTS_FILE"
 {{"topic":"review.done","payload":"{payload}","ts":"2026-01-01T00:00:00Z"}}
 EOF"#,
@@ -11104,6 +11307,344 @@ EOF"#,
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn test_execute_wave_supports_named_omp_backend() {
+        // OMP runs through the loop's wave path (real PtyExecutor) with a fake
+        // `omp` on PATH. Its Pi-family NDJSON stream parses and the worker event
+        // is written. isError-omitted tool end + agent_end prove OMP tolerance.
+        let completed =
+            run_wave_for_named_backend("omp", &omp_backend_body("omp backend ok")).await;
+        assert_single_success_marked(&completed, "omp backend ok", "named-backend:omp");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OMP step-4 focused tests.
+    //
+    // These are named with the plan's focused-filter substrings so
+    // `cargo test -p ralph-cli omp_hat` and `cargo test -p ralph-cli omp_wave`
+    // match them. They reuse the shared wave harness + Pi-family OMP body and
+    // verify per-hat OMP construction, args-once, mixed/inherited backend
+    // resolution, OMP wave success/failure/aggregation, and OmpStreamJson wave
+    // routing — all through the real `execute_wave` production path.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Builds a test wave carrying N payloads (one worker per payload), modeling
+    /// `make_test_wave_with_timeout_and_payload` but with multiple events so wave
+    /// aggregation (N results merged into one `CompletedWave`) can be exercised.
+    #[cfg(unix)]
+    fn make_test_wave_with_payloads(
+        publishes: Vec<String>,
+        timeout_secs: u32,
+        payloads: &[&str],
+    ) -> ralph_core::DetectedWave {
+        let total = payloads.len() as u32;
+        let events = payloads
+            .iter()
+            .enumerate()
+            .map(|(i, payload)| ralph_core::Event {
+                topic: "review.perspective".to_string(),
+                payload: Some(payload.to_string()),
+                ts: "2026-01-01T00:00:00Z".to_string(),
+                wave_id: Some("w-test".to_string()),
+                wave_index: Some(i as u32),
+                wave_total: Some(total),
+            })
+            .collect();
+        ralph_core::DetectedWave {
+            wave_id: "w-test".to_string(),
+            target_hat: "reviewer".into(),
+            hat_config: ralph_core::HatConfig {
+                name: "Reviewer".to_string(),
+                description: Some("Wave worker test".to_string()),
+                triggers: vec!["review.perspective".to_string()],
+                publishes,
+                instructions: "Emit review.done when finished.".to_string(),
+                extra_instructions: vec![],
+                backend: None,
+                backend_args: None,
+                default_publishes: None,
+                max_activations: None,
+                disallowed_tools: vec![],
+                timeout: Some(timeout_secs),
+                concurrency: 1,
+                aggregate: None,
+                scratchpad: None,
+            },
+            events,
+            total,
+        }
+    }
+
+    /// Runs a multi-payload OMP wave (one fake `omp` worker per payload) through
+    /// `execute_wave`, returning the aggregated `CompletedWave`.
+    #[cfg(unix)]
+    async fn run_omp_wave_with_payloads(payloads: &[&str]) -> ralph_core::CompletedWave {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let bin_dir = temp_dir.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("bin dir");
+
+        let mut backend = CliBackend::from_name("omp").expect("omp backend");
+        write_fake_executable(&bin_dir, "omp", &omp_backend_body("omp wave aggregate ok"));
+
+        let existing_path = std::env::var("PATH").unwrap_or_default();
+        let path_value = if existing_path.is_empty() {
+            bin_dir.display().to_string()
+        } else {
+            format!("{}:{}", bin_dir.display(), existing_path)
+        };
+        backend.env_vars.push(("PATH".to_string(), path_value));
+
+        let events_file = temp_dir.path().join("events.jsonl");
+        let wave = make_test_wave_with_payloads(vec!["review.done".to_string()], 30, payloads);
+        execute_wave(
+            &wave,
+            &backend,
+            wave_per_worker_secs(&wave),
+            None,
+            &events_file,
+            false,
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("wave execution")
+    }
+
+    /// Per-hat OMP (`backend: omp`) appends hat runtime args exactly once after
+    /// the autonomous OMP prefix; no prefix flag is duplicated. Global backend is
+    /// intentionally missing, so the worker runs only because the hat backend
+    /// resolves to OMP. AC1 (args once).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_hat_named_backend_appends_runtime_args_once() {
+        let body = invocation_capture_backend_body("omp hat named args once ok");
+        let _fake = install_fake_path_backends(&[("omp", body.as_str())]);
+        let (completed, captured) = run_wave_for_hat_backend_with_capture(
+            ralph_core::HatBackend::Named("omp".to_string()),
+            Some(vec!["--hat-runtime-arg".to_string()]),
+        )
+        .await;
+
+        assert_single_success(&completed, "omp hat named args once ok");
+        assert_named_backend_invocation_contract(
+            &captured,
+            &[
+                "-p",
+                "--mode",
+                "json",
+                "--no-session",
+                "--auto-approve",
+                "--hat-runtime-arg",
+            ],
+            PromptDeliveryExpectation::Positional,
+        );
+        // Args-once guard: the runtime arg and each autonomous-prefix flag appear
+        // exactly once in the captured argv (no per-hat duplication).
+        assert_eq!(
+            captured
+                .args
+                .iter()
+                .filter(|a| *a == "--hat-runtime-arg")
+                .count(),
+            1,
+            "hat runtime arg duplicated: {:?}",
+            captured.args
+        );
+        assert_eq!(
+            captured
+                .args
+                .iter()
+                .filter(|a| *a == "--auto-approve")
+                .count(),
+            1,
+            "auto-approve duplicated: {:?}",
+            captured.args
+        );
+        emit_wave_validation_marker("omp-hat:named:args-once", &["backend"]);
+    }
+
+    /// Per-hat OMP with backend args (`backend: { type: omp, args: [...] }`)
+    /// preserves the backend args AND appends hat runtime args, each once, in
+    /// order — no duplication between backend args and runtime args. AC1.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_hat_named_with_args_preserves_backend_args_once() {
+        let body = invocation_capture_backend_body("omp hat named-with-args ok");
+        let _fake = install_fake_path_backends(&[("omp", body.as_str())]);
+        let (completed, captured) = run_wave_for_hat_backend_with_capture(
+            ralph_core::HatBackend::NamedWithArgs {
+                backend_type: "omp".to_string(),
+                args: vec!["--model".to_string(), "claude-sonnet-5".to_string()],
+            },
+            Some(vec!["--hat-runtime-arg".to_string()]),
+        )
+        .await;
+
+        assert_single_success(&completed, "omp hat named-with-args ok");
+        assert_named_backend_invocation_contract(
+            &captured,
+            &[
+                "-p",
+                "--mode",
+                "json",
+                "--no-session",
+                "--auto-approve",
+                "--model",
+                "claude-sonnet-5",
+                "--hat-runtime-arg",
+            ],
+            PromptDeliveryExpectation::Positional,
+        );
+        // Backend arg and runtime arg each appear exactly once (no cross-dup).
+        assert_eq!(
+            captured.args.iter().filter(|a| *a == "--model").count(),
+            1,
+            "backend --model duplicated: {:?}",
+            captured.args
+        );
+        assert_eq!(
+            captured
+                .args
+                .iter()
+                .filter(|a| *a == "--hat-runtime-arg")
+                .count(),
+            1,
+            "hat runtime arg duplicated: {:?}",
+            captured.args
+        );
+        emit_wave_validation_marker("omp-hat:named-with-args:args-once", &["backend"]);
+    }
+
+    /// Mixed-backend wave: a hat whose backend is OMP overrides the (missing)
+    /// global backend — the worker runs OMP, proving the per-hat backend wins
+    /// and fail-closed resolution does not fall through to a global substitute.
+    /// AC1 (mixed-backend hats).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_hat_backend_overrides_global_mixed_backend() {
+        let body = invocation_capture_backend_body("omp hat overrides global ok");
+        let _fake = install_fake_path_backends(&[("omp", body.as_str())]);
+        // Global backend is an intentionally missing executable; the worker only
+        // succeeds because the per-hat OMP backend resolves and runs the fake.
+        let (completed, captured) = run_wave_for_hat_backend_with_capture(
+            ralph_core::HatBackend::Named("omp".to_string()),
+            None,
+        )
+        .await;
+
+        assert_single_success(&completed, "omp hat overrides global ok");
+        // The captured argv starts with the OMP autonomous prefix, proving the
+        // worker ran OMP (the hat backend), not the missing global backend.
+        assert_eq!(
+            &captured.args.iter().take(5).cloned().collect::<Vec<_>>()[..],
+            &["-p", "--mode", "json", "--no-session", "--auto-approve"],
+            "hat OMP did not override global backend: {:?}",
+            captured.args
+        );
+        emit_wave_validation_marker("omp-hat:mixed:overrides-global", &["backend"]);
+    }
+
+    /// Inherited backend: a wave hat with NO backend override inherits the global
+    /// OmpStreamJson backend. The worker routes through the PTY wave path (the
+    /// shared Pi-family readable-delta behavior) and aggregates a result. AC1.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_hat_inherits_global_omp_output_format() {
+        // OmpStreamJson always routes through the PTY wave worker (shared Pi-family
+        // processor); the global backend (hat backend unset) is inherited as-is.
+        assert_eq!(
+            wave_worker_execution_mode(BackendOutputFormat::OmpStreamJson),
+            WaveWorkerExecutionMode::Pty
+        );
+        let completed = run_wave_for_backend(
+            BackendOutputFormat::OmpStreamJson,
+            &omp_backend_body("omp inherited global ok"),
+        )
+        .await;
+        assert_single_success(&completed, "omp inherited global ok");
+        emit_wave_validation_marker("omp-hat:inherited:omp-stream", &["backend"]);
+    }
+
+    /// OMP wave single-worker success: the Pi-family NDJSON stream (isError
+    /// omitted, agent_end ignored) parses, the worker event is written, and the
+    /// readable deltas route through the shared processor. AC1/plan (success).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_wave_single_worker_success() {
+        // Delta-routing proof (unit-level, inspectably correct): the OMP stream
+        // arm of extract_readable_delta yields readable text/tool deltas.
+        let text_delta = extract_readable_delta(
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"omp wave delta\"}}",
+            BackendOutputFormat::OmpStreamJson,
+        );
+        assert_eq!(text_delta.as_deref(), Some("omp wave delta"));
+
+        let completed =
+            run_wave_for_named_backend("omp", &omp_backend_body("omp wave success ok")).await;
+        assert_single_success_marked(&completed, "omp wave success ok", "omp-wave:success");
+    }
+
+    /// OMP wave worker failure: a worker that emits nothing and stalls past the
+    // per-worker deadline is classified as a wave failure (timeout, no events),
+    /// not a silent success — proving failure propagates through wave execution.
+    /// Plan (worker failure).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_wave_worker_failure_on_timeout() {
+        // `sleep` produces no stdout; with a 2s per-worker deadline the wave
+        // worker times out without emitting events → one WaveFailure.
+        let completed =
+            run_wave_for_backend_with_timeout(BackendOutputFormat::OmpStreamJson, "sleep 30", 2)
+                .await;
+
+        assert!(
+            completed.results.is_empty(),
+            "stalling OMP worker should not produce a result: {completed:?}"
+        );
+        assert_eq!(
+            completed.failures.len(),
+            1,
+            "expected one wave failure: {completed:?}"
+        );
+        assert!(
+            completed.failures[0]
+                .error
+                .to_lowercase()
+                .contains("timed out"),
+            "expected timeout-classified failure: {:?}",
+            completed.failures[0]
+        );
+        emit_wave_validation_marker("omp-wave:failure:timeout", &["backend"]);
+    }
+
+    /// OMP wave aggregation: a multi-payload OMP wave produces one result per
+    /// worker, all aggregated into a single `CompletedWave` (no loss/duplication
+    /// of events). Plan (aggregation).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_omp_wave_aggregates_two_payloads() {
+        let completed =
+            run_omp_wave_with_payloads(&["omp wave payload a", "omp wave payload b"]).await;
+
+        assert!(
+            completed.failures.is_empty(),
+            "unexpected failures: {completed:?}"
+        );
+        assert_eq!(
+            completed.results.len(),
+            2,
+            "expected two aggregated results: {completed:?}"
+        );
+        // Each worker emits exactly one review.done event; none lost/duplicated.
+        for result in &completed.results {
+            assert_eq!(result.events.len(), 1, "unexpected events: {result:?}");
+            assert_eq!(result.events[0].topic.as_str(), "review.done");
+        }
+        emit_wave_validation_marker("omp-wave:aggregation:two-payloads", &["backend"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn test_execute_wave_supports_named_kiro_acp_backend() {
         let _mock = install_mock_acp_executions(vec![MockAcpExecution::success(
             true,
@@ -11143,7 +11684,7 @@ EOF"#,
                     "--output-format",
                     "stream-json",
                     "--setting-sources",
-                    "project,local",
+                    "user,project,local",
                     "--print",
                     "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 ],
@@ -11206,6 +11747,13 @@ EOF"#,
                 prompt_delivery: PromptDeliveryExpectation::PromptFile,
                 marker_id: "invocation-contract:named:roo",
             },
+            NamedBackendInvocationCase {
+                name: "omp",
+                success_payload: "omp invocation contract ok",
+                expected_prefix: &["-p", "--mode", "json", "--no-session", "--auto-approve"],
+                prompt_delivery: PromptDeliveryExpectation::Positional,
+                marker_id: "invocation-contract:named:omp",
+            },
         ] {
             let (completed, captured) =
                 run_wave_for_named_backend_with_capture(case.name, case.success_payload).await;
@@ -11243,7 +11791,7 @@ EOF"#,
                     "--output-format",
                     "stream-json",
                     "--setting-sources",
-                    "project,local",
+                    "user,project,local",
                     "--print",
                     "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 ],
@@ -11298,6 +11846,13 @@ EOF"#,
                 expected_prefix: &["run"],
                 prompt_delivery: PromptDeliveryExpectation::TempFilePositional,
                 marker_id: "large-prompt-contract:named:opencode",
+            },
+            NamedBackendLargePromptCase {
+                name: "omp",
+                success_payload: "omp large prompt contract ok",
+                expected_prefix: &["-p", "--mode", "json", "--no-session", "--auto-approve"],
+                prompt_delivery: PromptDeliveryExpectation::TempFilePositional,
+                marker_id: "large-prompt-contract:named:omp",
             },
         ] {
             let (completed, captured) = run_wave_for_named_backend_with_capture_and_task_payload(
@@ -11386,7 +11941,7 @@ EOF"#,
                         "--output-format",
                         "stream-json",
                         "--setting-sources",
-                        "project,local",
+                        "user,project,local",
                         "--print",
                         "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                         "--model",
@@ -11609,7 +12164,7 @@ EOF"#,
                     "--output-format",
                     "stream-json",
                     "--setting-sources",
-                    "project,local",
+                    "user,project,local",
                     "--print",
                     "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                     "--hat-runtime-arg",
@@ -11745,7 +12300,7 @@ EOF"#,
                     "--output-format",
                     "stream-json",
                     "--setting-sources",
-                    "project,local",
+                    "user,project,local",
                     "--print",
                     "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                     "--model",
@@ -12292,6 +12847,8 @@ EOF"#,
         let completed = execute_wave(
             &wave,
             &missing_global_wave_backend(),
+            wave_per_worker_secs(&wave),
+            None,
             &events_file,
             false,
             false,
@@ -12349,47 +12906,50 @@ EOF"#,
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_execute_wave_falls_back_to_global_backend_when_hat_backend_is_invalid() {
+    async fn test_execute_wave_fails_closed_when_hat_backend_is_invalid() {
+        // TR6: an invalid hat backend must NOT fall back to the global backend.
+        // The wave fails closed — execute_wave returns an error naming the bad
+        // backend and spawns no worker. (Previously it logged and fell back, which
+        // silently launched a different backend than the hat configured.)
         let temp_dir = tempfile::tempdir().expect("temp dir");
-        let worker_path = write_fake_executable(
-            temp_dir.path(),
-            "wave-worker",
-            r#"found_fallback_arg=0
-for arg in "$@"; do
-  if [ "$arg" = "--fallback-arg" ]; then
-    found_fallback_arg=1
-  fi
-done
-if [ "$found_fallback_arg" -ne 1 ]; then
-  echo "missing --fallback-arg: $*" >&2
-  exit 1
-fi
-cat <<'EOF' > "$RALPH_EVENTS_FILE"
-{"topic":"review.done","payload":"hat backend fallback ok","ts":"2026-01-01T00:00:00Z"}
-EOF"#,
-        );
-        let global_backend = CliBackend {
-            command: worker_path.display().to_string(),
-            args: vec![],
-            prompt_mode: ralph_adapters::PromptMode::Arg,
-            prompt_flag: None,
-            output_format: BackendOutputFormat::Text,
-            env_vars: vec![],
-        };
+        let events_file = temp_dir.path().join("events.jsonl");
 
-        let completed = run_wave_for_hat_backend(
-            ralph_core::HatBackend::Named("definitely-invalid-backend".to_string()),
-            Some(vec!["--fallback-arg".to_string()]),
-            global_backend,
+        // The global backend points at a missing executable. If a worker were
+        // spawned with it, execute_wave would synthesize failure events and return
+        // Ok-with-failures — so an Err here proves no fallback spawn happened.
+        let global_backend = missing_global_wave_backend();
+        let mut wave = make_test_wave(vec!["review.done".to_string()]);
+        wave.hat_config.backend = Some(ralph_core::HatBackend::Named(
+            "definitely-invalid-backend".to_string(),
+        ));
+
+        let result = execute_wave(
+            &wave,
+            &global_backend,
+            wave_per_worker_secs(&wave),
+            None,
+            &events_file,
+            false,
+            false,
+            None,
+            None,
         )
         .await;
 
-        assert_single_success_marked(
-            &completed,
-            "hat backend fallback ok",
-            "hat-backend:invalid-fallback",
+        let err = result.expect_err(
+            "invalid hat backend must fail closed, not fall back to the global backend",
         );
-        emit_wave_validation_marker("hat-backend:invalid-fallback", &["error"]);
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("definitely-invalid-backend"),
+            "error should name the invalid backend: {msg}"
+        );
+        // No worker spawned → no result events written.
+        assert!(
+            !events_file.exists(),
+            "fail-closed must not produce wave result events"
+        );
+        emit_wave_validation_marker("hat-backend:invalid-fail-closed", &["error"]);
     }
 
     #[cfg(unix)]
@@ -12572,6 +13132,127 @@ EOF"#,
             "unexpected error: {error}"
         );
         emit_wave_validation_marker("pty:spawn-failure", &["error"]);
+    }
+
+    // --- wave-worker PTY group-kill regression (OMP validation.blocking) -----
+
+    #[cfg(unix)]
+    fn wave_pid_alive(pid: u32) -> bool {
+        // kill(pid, 0) checks process existence without delivering a signal.
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok()
+    }
+
+    /// Mock OMP worker script: spawn a SIGHUP-immune grandchild, record
+    /// `<script_pid>:<grandchild_pid>` to a pid file, then stall on a
+    /// foreground `sleep`. The grandchild (`nohup sleep 300`) ignores SIGHUP
+    /// (defeats the PTY-close hangup backstop) but dies to SIGTERM/SIGKILL, so
+    /// it can ONLY be reaped by a process-GROUP kill (`kill(-pgid)`) — the
+    /// lifecycle `run_wave_worker_pty`'s per-worker timeout must perform.
+    /// portable-pty 0.9.0 spawns the PTY child as a session leader (setsid in
+    /// `pre_exec`), so `pid == pgid` and the backgrounded `nohup` shares that
+    /// group. Under single-PID `child.kill()` (SIGHUP then SIGKILL to the
+    /// direct pid only) the grandchild survives → the test fails; it passes
+    /// only under a negative-pgid group kill.
+    #[cfg(unix)]
+    fn create_stalling_wave_omp_script(dir: &Path) -> (PathBuf, PathBuf) {
+        let script_path = dir.join("mock-wave-omp.sh");
+        let pid_file = dir.join("wave-omp-pids.txt");
+        let script = format!(
+            r#"#!/usr/bin/env bash
+nohup sleep 300 </dev/null >/dev/null 2>&1 &
+echo "$$:$!" >> {pid_file}
+sleep 300
+"#,
+            pid_file = pid_file.display()
+        );
+        std::fs::write(&script_path, &script).unwrap();
+        std::fs::set_permissions(
+            &script_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        (script_path, pid_file)
+    }
+
+    /// Wait until the stalling script has recorded a grandchild pid.
+    #[cfg(unix)]
+    async fn await_wave_grandchild(pid_file: &Path) -> u32 {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(gc) = std::fs::read_to_string(pid_file).ok().and_then(|c| {
+                c.lines()
+                    .rfind(|l| !l.is_empty())
+                    .and_then(|line| line.split(':').nth(1).and_then(|s| s.parse::<u32>().ok()))
+            }) {
+                return gc;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "mock wave OMP script never recorded a grandchild pid"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Poll until the grandchild is reaped; fail loudly if it survives (orphan
+    /// leak after the wave-worker timeout).
+    #[cfg(unix)]
+    async fn assert_wave_grandchild_reaped(grandchild: u32) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        loop {
+            if !wave_pid_alive(grandchild) {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "OMP wave-worker grandchild {grandchild} still alive after per-worker timeout — \
+                 process-GROUP kill did not reach the descendant (single-PID termination leaks an \
+                 orphan)"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// RED under single-PID `child.kill()` (grandchild survives SIGHUP); GREEN
+    /// once the wave-worker timeout performs a negative-pgid group kill.
+    /// Guards the third process-cleanup path — the wave-PTY path — which
+    /// `omp_process_cleanup.rs` never exercises (it covers only
+    /// `CliExecutor` + `PtyExecutor::run_observe`).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_wave_worker_pty_reaps_omp_grandchild_on_timeout() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let (script, pid_file) = create_stalling_wave_omp_script(temp_dir.path());
+        let worker_events_path = temp_dir.path().join("wave-events.jsonl");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let backend = CliBackend {
+            command: script.display().to_string(),
+            args: vec![],
+            prompt_mode: ralph_adapters::PromptMode::Arg,
+            prompt_flag: None,
+            output_format: BackendOutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+
+        // wave_timeout (1s) is well above grandchild-spawn time (~ms). The
+        // stalling script emits no stdout, so `stream_result` blocks on
+        // `line_rx.recv()` and the timeout branch fires → terminate the child.
+        let (_index, _outcome) = run_wave_worker_pty(
+            0,
+            &backend,
+            "review",
+            &worker_events_path,
+            Duration::from_secs(1),
+            tx,
+            None,
+            None,
+        )
+        .await;
+
+        let grandchild = await_wave_grandchild(&pid_file).await;
+        assert_wave_grandchild_reaped(grandchild).await;
+        emit_wave_validation_marker("pty:wave-group-reap:omp-grandchild", &["lifecycle", "wave"]);
     }
 
     #[cfg(unix)]

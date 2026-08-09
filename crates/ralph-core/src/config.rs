@@ -326,28 +326,24 @@ impl Default for RalphConfig {
     }
 }
 
-/// V1 adapter settings per backend.
+/// Per-backend adapter settings: a shared default plus named overrides.
+///
+/// Replaces the historic typed vendor fields (`claude`/`gemini`/`kiro`/…), which
+/// silently dropped settings for any backend without a field — Pi, Roo, Copilot,
+/// and OpenCode inherited `claude` via a catch-all — and could not accommodate a
+/// new backend without a schema change. The flattened `overrides` map keeps the
+/// natural YAML shape (`adapters.claude: …`, `adapters.pi: …`) while accepting
+/// every catalogued backend name. Validation rejects override keys that are
+/// neither a catalogued backend nor the `custom` selector.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AdaptersConfig {
-    /// Claude adapter settings.
+    /// Settings applied to every backend without an explicit override.
     #[serde(default)]
-    pub claude: AdapterSettings,
+    pub default: AdapterSettings,
 
-    /// Gemini adapter settings.
-    #[serde(default)]
-    pub gemini: AdapterSettings,
-
-    /// Kiro adapter settings.
-    #[serde(default)]
-    pub kiro: AdapterSettings,
-
-    /// Codex adapter settings.
-    #[serde(default)]
-    pub codex: AdapterSettings,
-
-    /// Amp adapter settings.
-    #[serde(default)]
-    pub amp: AdapterSettings,
+    /// Per-backend overrides keyed by backend selector (e.g. `claude`, `pi`).
+    #[serde(flatten)]
+    pub overrides: HashMap<String, AdapterSettings>,
 }
 
 /// Per-adapter settings.
@@ -512,9 +508,19 @@ impl RalphConfig {
     pub fn validate(&self) -> Result<Vec<ConfigWarning>, ConfigError> {
         let mut warnings = Vec::new();
 
-        // Skip all warnings if suppressed
-        if self.suppress_warnings {
-            return Ok(warnings);
+        // Correctness checks below run unconditionally — `_suppress_warnings` only
+        // hides *warnings*, never backend/routing/safety errors.
+
+        // Global backend selector must be `auto`, `custom`, or a catalogued name.
+        let global_backend = self.cli.backend.as_str();
+        if global_backend != "auto"
+            && global_backend != "custom"
+            && !crate::backend::is_named(global_backend)
+        {
+            return Err(ConfigError::UnknownGlobalBackend {
+                backend: global_backend.to_string(),
+                valid_names: valid_global_backend_names(),
+            });
         }
 
         // Check for mutual exclusivity of prompt and prompt_file in config
@@ -532,60 +538,108 @@ impl RalphConfig {
             return Err(ConfigError::InvalidCompletionPromise);
         }
 
-        // Check custom backend has a command
+        // `custom` selector requires a command; named backends honor an override.
         if self.cli.backend == "custom" && self.cli.command.as_ref().is_none_or(String::is_empty) {
             return Err(ConfigError::CustomBackendRequiresCommand);
         }
 
-        // Check for deferred features
-        if self.archive_prompts {
-            warnings.push(ConfigWarning::DeferredFeature {
-                field: "archive_prompts".to_string(),
-                message: "Feature not yet available in v2".to_string(),
-            });
+        // `agent_priority` entries must be catalogued (detectable) backends.
+        for entry in &self.agent_priority {
+            if !crate::backend::is_named(entry) {
+                return Err(ConfigError::UnknownPriorityEntry {
+                    entry: entry.clone(),
+                    valid_names: valid_priority_names(),
+                });
+            }
         }
 
-        if self.enable_metrics {
-            warnings.push(ConfigWarning::DeferredFeature {
-                field: "enable_metrics".to_string(),
-                message: "Feature not yet available in v2".to_string(),
-            });
+        // Adapter override keys must be a catalogued backend or `custom` (`auto` is
+        // a detection selector, not an override target).
+        for key in self.adapters.overrides.keys() {
+            if key != "custom" && !crate::backend::is_named(key) {
+                return Err(ConfigError::UnknownAdapterOverride {
+                    key: key.clone(),
+                    valid_names: valid_override_names(),
+                });
+            }
         }
 
-        // Check for dropped fields
-        if self.max_tokens.is_some() {
-            warnings.push(ConfigWarning::DroppedField {
-                field: "max_tokens".to_string(),
-                reason: "Token limits are controlled by the CLI tool".to_string(),
-            });
-        }
+        // Warnings are collected only when not suppressed; correctness checks above
+        // and below always run regardless of `_suppress_warnings`.
+        if !self.suppress_warnings {
+            // Check for deferred features
+            if self.archive_prompts {
+                warnings.push(ConfigWarning::DeferredFeature {
+                    field: "archive_prompts".to_string(),
+                    message: "Feature not yet available in v2".to_string(),
+                });
+            }
 
-        if self.retry_delay.is_some() {
-            warnings.push(ConfigWarning::DroppedField {
-                field: "retry_delay".to_string(),
-                reason: "Retry logic handled differently in v2".to_string(),
-            });
-        }
+            if self.enable_metrics {
+                warnings.push(ConfigWarning::DeferredFeature {
+                    field: "enable_metrics".to_string(),
+                    message: "Feature not yet available in v2".to_string(),
+                });
+            }
 
-        if let Some(threshold) = self.event_loop.mutation_score_warn_threshold
-            && !(0.0..=100.0).contains(&threshold)
-        {
-            warnings.push(ConfigWarning::InvalidValue {
-                field: "event_loop.mutation_score_warn_threshold".to_string(),
-                message: "Value must be between 0 and 100".to_string(),
-            });
-        }
+            // Check for dropped fields
+            if self.max_tokens.is_some() {
+                warnings.push(ConfigWarning::DroppedField {
+                    field: "max_tokens".to_string(),
+                    reason: "Token limits are controlled by the CLI tool".to_string(),
+                });
+            }
 
-        // Check adapter tool_permissions (dropped field)
-        if self.adapters.claude.tool_permissions.is_some()
-            || self.adapters.gemini.tool_permissions.is_some()
-            || self.adapters.codex.tool_permissions.is_some()
-            || self.adapters.amp.tool_permissions.is_some()
-        {
-            warnings.push(ConfigWarning::DroppedField {
-                field: "adapters.*.tool_permissions".to_string(),
-                reason: "CLI tool manages its own permissions".to_string(),
-            });
+            if self.retry_delay.is_some() {
+                warnings.push(ConfigWarning::DroppedField {
+                    field: "retry_delay".to_string(),
+                    reason: "Retry logic handled differently in v2".to_string(),
+                });
+            }
+
+            if let Some(threshold) = self.event_loop.mutation_score_warn_threshold
+                && !(0.0..=100.0).contains(&threshold)
+            {
+                warnings.push(ConfigWarning::InvalidValue {
+                    field: "event_loop.mutation_score_warn_threshold".to_string(),
+                    message: "Value must be between 0 and 100".to_string(),
+                });
+            }
+
+            // Check adapter tool_permissions (dropped field) on the default settings
+            // and every named override.
+            if self.adapters.default.tool_permissions.is_some()
+                || self
+                    .adapters
+                    .overrides
+                    .values()
+                    .any(|settings| settings.tool_permissions.is_some())
+            {
+                warnings.push(ConfigWarning::DroppedField {
+                    field: "adapters.*.tool_permissions".to_string(),
+                    reason: "CLI tool manages its own permissions".to_string(),
+                });
+            }
+
+            // One-time migration notice: Pi, Roo, Copilot, and OpenCode previously
+            // inherited `adapters.claude` via a catch-all; they now resolve to
+            // `adapters.default` unless given their own override. Per the design
+            // trigger, warn only when `adapters.claude` is set and none of those
+            // inheritors has its own override.
+            if self.adapters.overrides.contains_key("claude") {
+                const INHERITORS: &[&str] = &["pi", "roo", "copilot", "opencode"];
+                let affected: Vec<&str> = INHERITORS
+                    .iter()
+                    .copied()
+                    .filter(|name| !self.adapters.overrides.contains_key(*name))
+                    .collect();
+                if affected.len() == INHERITORS.len() {
+                    warnings.push(ConfigWarning::ClaudeFallbackMigration {
+                        backends: affected.iter().map(|s| s.to_string()).collect(),
+                        default_timeout_secs: self.adapters.default.timeout,
+                    });
+                }
+            }
         }
 
         // Validate RObot config
@@ -619,6 +673,41 @@ impl RalphConfig {
                 return Err(ConfigError::AggregateOnConcurrentHat {
                     hat: hat_id.clone(),
                 });
+            }
+        }
+
+        // Validate each hat's backend selector. Named and named-with-args backends
+        // must reference a catalogued backend; Kiro-agent forms must use a supported
+        // Kiro mode; custom command forms must carry a non-empty command.
+        for (hat_id, hat_config) in &self.hats {
+            if let Some(hat_backend) = &hat_config.backend {
+                match hat_backend {
+                    HatBackend::Named(name)
+                    | HatBackend::NamedWithArgs {
+                        backend_type: name, ..
+                    } => {
+                        if !crate::backend::is_named(name) {
+                            return Err(ConfigError::UnknownHatBackend {
+                                hat: hat_id.clone(),
+                                backend: name.clone(),
+                                valid_names: valid_override_names(),
+                            });
+                        }
+                    }
+                    HatBackend::KiroAgent { backend_type, .. } => {
+                        if backend_type != "kiro" && backend_type != "kiro-acp" {
+                            return Err(ConfigError::InvalidKiroBackendType {
+                                hat: hat_id.clone(),
+                                backend_type: backend_type.clone(),
+                            });
+                        }
+                    }
+                    HatBackend::Custom { command, .. } => {
+                        if command.trim().is_empty() {
+                            return Err(ConfigError::CustomBackendRequiresCommand);
+                        }
+                    }
+                }
             }
         }
 
@@ -814,30 +903,64 @@ impl RalphConfig {
     }
 
     /// Returns the agent priority list for auto-detection.
-    /// If empty, returns the default priority order.
+    ///
+    /// If `agent_priority` is empty, falls back to the catalog's canonical detection
+    /// order ([`crate::backend::default_priority`]); otherwise returns the user's
+    /// list (entries are validated by [`validate`](Self::validate)).
     pub fn get_agent_priority(&self) -> Vec<&str> {
         if self.agent_priority.is_empty() {
-            vec![
-                "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot",
-                "opencode", "pi", "roo",
-            ]
+            crate::backend::default_priority()
         } else {
             self.agent_priority.iter().map(String::as_str).collect()
         }
     }
 
     /// Gets the adapter settings for a specific backend.
-    #[allow(clippy::match_same_arms)] // Explicit match arms for each backend improves readability
+    ///
+    /// Returns the backend's override when present, otherwise the shared `default`.
+    /// Unrelated backends no longer fall back to Claude's settings.
     pub fn adapter_settings(&self, backend: &str) -> &AdapterSettings {
-        match backend {
-            "claude" => &self.adapters.claude,
-            "gemini" => &self.adapters.gemini,
-            "kiro" => &self.adapters.kiro,
-            "codex" => &self.adapters.codex,
-            "amp" => &self.adapters.amp,
-            _ => &self.adapters.claude, // Default fallback
-        }
+        self.adapters
+            .overrides
+            .get(backend)
+            .unwrap_or(&self.adapters.default)
     }
+
+    /// R13 per-worker execution timeout in seconds.
+    ///
+    /// Precedence: an active `hat.timeout`, else the resolved adapter settings
+    /// timeout for `backend_name` (per-backend override → shared `default` →
+    /// built-in 300s). `hat.aggregate.timeout` is deliberately **excluded**:
+    /// it governs the separate aggregator-wait budget (see Step 4), not each
+    /// worker's own deadline. Both the ordinary iteration path and wave workers
+    /// resolve their deadline through this single chain.
+    pub fn per_worker_timeout_secs(&self, hat_timeout: Option<u32>, backend_name: &str) -> u64 {
+        hat_timeout
+            .map(u64::from)
+            .unwrap_or_else(|| self.adapter_settings(backend_name).timeout)
+    }
+}
+
+/// Catalogued backends plus the `auto` and `custom` selectors — every acceptable
+/// global `cli.backend` value, formatted for error messages.
+fn valid_global_backend_names() -> String {
+    let mut names = crate::backend::valid_names();
+    names.extend_from_slice(&["auto", "custom"]);
+    names.join(", ")
+}
+
+/// Catalogued backends plus `custom` — every acceptable adapter-override key and
+/// named-hat backend (`auto` is a detection selector, not an override target).
+fn valid_override_names() -> String {
+    let mut names = crate::backend::valid_names();
+    names.push("custom");
+    names.join(", ")
+}
+
+/// Catalogued backends only — the acceptable `agent_priority` entries, since only
+/// named backends are auto-detectable.
+fn valid_priority_names() -> String {
+    crate::backend::valid_names().join(", ")
 }
 
 /// Configuration warnings emitted during validation.
@@ -849,6 +972,14 @@ pub enum ConfigWarning {
     DroppedField { field: String, reason: String },
     /// Field has an invalid value.
     InvalidValue { field: String, message: String },
+    /// One-time migration notice: backends that previously inherited
+    /// `adapters.claude` now resolve to `adapters.default` unless overridden.
+    ClaudeFallbackMigration {
+        backends: Vec<String>,
+        /// The effective `adapters.default.timeout` (seconds) those backends now
+        /// resolve to, so the message stays truthful if the default was customized.
+        default_timeout_secs: u64,
+    },
 }
 
 impl std::fmt::Display for ConfigWarning {
@@ -861,6 +992,18 @@ impl std::fmt::Display for ConfigWarning {
             }
             ConfigWarning::DroppedField { field, reason } => {
                 write!(f, "Warning [{field}]: Field ignored - {reason}")
+            }
+            ConfigWarning::ClaudeFallbackMigration {
+                backends,
+                default_timeout_secs,
+            } => {
+                write!(
+                    f,
+                    "Warning [adapters.claude]: {} no longer inherit 'adapters.claude' and now use 'adapters.default' ({}s). Move per-backend overrides to their own key (e.g. 'adapters.{}') to keep their settings.",
+                    backends.join(", "),
+                    default_timeout_secs,
+                    backends.first().map(String::as_str).unwrap_or("pi")
+                )
             }
         }
     }
@@ -1838,6 +1981,29 @@ impl HatBackend {
             HatBackend::Custom { .. } => "custom".to_string(),
         }
     }
+
+    /// Backend name used to look up adapter settings (`adapters.<name>`) and the
+    /// R13 per-worker timeout for this hat backend.
+    ///
+    /// `Named`, `NamedWithArgs`, and `KiroAgent` expose their declared backend
+    /// name. `Custom` reduces to the command basename so an override keyed on the
+    /// executable name still applies — `/usr/bin/codex` → `codex`, and a command
+    /// with leading args `ollama run llama3` → `ollama`.
+    pub fn settings_name(&self) -> String {
+        match self {
+            HatBackend::Named(name) => name.clone(),
+            HatBackend::NamedWithArgs { backend_type, .. } => backend_type.clone(),
+            HatBackend::KiroAgent { backend_type, .. } => backend_type.clone(),
+            HatBackend::Custom { command, .. } => {
+                let base_command = command.split_whitespace().next().unwrap_or(command);
+                std::path::Path::new(base_command)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("custom")
+                    .to_string()
+            }
+        }
+    }
 }
 
 /// Configuration for a single hat.
@@ -2199,6 +2365,38 @@ pub enum ConfigError {
         "Hat '{hat}' has both 'aggregate' and 'concurrency > 1'. An aggregator hat cannot also be a concurrent worker.\nFix: remove 'aggregate' or set 'concurrency' to 1."
     )]
     AggregateOnConcurrentHat { hat: String },
+
+    #[error(
+        "Unknown global backend '{backend}'. Valid backends: {valid_names}.\nFix: set 'cli.backend' to one of the listed names, 'auto', or 'custom'.\nSee: docs/guide/configuration.md"
+    )]
+    UnknownGlobalBackend {
+        backend: String,
+        valid_names: String,
+    },
+
+    #[error(
+        "Unknown agent_priority entry '{entry}'. Valid backends: {valid_names}.\nFix: keep only catalogued backend names in 'agent_priority'.\nSee: docs/guide/configuration.md"
+    )]
+    UnknownPriorityEntry { entry: String, valid_names: String },
+
+    #[error(
+        "Unknown adapter override '{key}'. Valid override keys: {valid_names}.\nFix: rename the key under 'adapters' to a catalogued backend or 'custom'.\nSee: docs/guide/configuration.md"
+    )]
+    UnknownAdapterOverride { key: String, valid_names: String },
+
+    #[error(
+        "Hat '{hat}' uses unknown backend '{backend}'. Valid backends: {valid_names}.\nFix: set the hat 'backend' to a catalogued name, a Kiro agent form, or a custom command.\nSee: docs/guide/configuration.md"
+    )]
+    UnknownHatBackend {
+        hat: String,
+        backend: String,
+        valid_names: String,
+    },
+
+    #[error(
+        "Hat '{hat}' has Kiro backend type '{backend_type}'. Supported Kiro modes: kiro, kiro-acp.\nFix: set 'type' to 'kiro' or 'kiro-acp'.\nSee: docs/guide/configuration.md"
+    )]
+    InvalidKiroBackendType { hat: String, backend_type: String },
 }
 
 #[cfg(test)]
@@ -2368,11 +2566,13 @@ agent_priority: [gemini, claude, codex]
     fn test_default_agent_priority() {
         let config = RalphConfig::default();
         let priority = config.get_agent_priority();
+        // The legacy five-name stale default is replaced by the full catalog order.
+        assert_eq!(priority, crate::backend::default_priority());
         assert_eq!(
             priority,
             vec![
                 "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot",
-                "opencode", "pi", "roo"
+                "opencode", "pi", "roo", "omp"
             ]
         );
     }
@@ -2407,7 +2607,7 @@ adapters:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let warnings = config.validate().unwrap();
 
-        assert_eq!(warnings.len(), 3);
+        // max_tokens, retry_delay, and adapter tool_permissions are flagged as dropped.
         assert!(warnings.iter().any(
             |w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "max_tokens")
         ));
@@ -2417,6 +2617,13 @@ adapters:
         assert!(warnings
             .iter()
             .any(|w| matches!(w, ConfigWarning::DroppedField { field, .. } if field == "adapters.*.tool_permissions")));
+        // Setting `adapters.claude` also triggers the one-time Claude-fallback
+        // migration notice (pi/roo/copilot/opencode now resolve to adapters.default).
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, ConfigWarning::ClaudeFallbackMigration { .. }))
+        );
     }
 
     #[test]
@@ -2453,6 +2660,463 @@ adapters:
         let gemini = config.adapter_settings("gemini");
         assert_eq!(gemini.timeout, 300);
         assert!(!gemini.enabled);
+    }
+
+    // ---- Step 1 TR3: generic AdaptersConfig (default + flattened overrides) ----
+
+    #[test]
+    fn test_adapter_settings_default_for_unconfigured_backend() {
+        // Pi has no override and must NOT inherit Claude — it resolves to default (300s).
+        let yaml = r"
+adapters:
+  claude:
+    timeout: 999
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let pi = config.adapter_settings("pi");
+        assert_eq!(
+            pi.timeout, 300,
+            "unconfigured backend must use adapters.default, not inherit claude"
+        );
+        assert!(pi.enabled);
+        // Claude override is still honored for claude itself.
+        assert_eq!(config.adapter_settings("claude").timeout, 999);
+    }
+
+    #[test]
+    fn test_adapter_settings_override_keys_visible_via_flatten() {
+        // pi/roo/copilot/opencode overrides used to be silently dropped; flatten
+        // makes them visible (later tests confirm unknown keys are rejected).
+        let yaml = r"
+adapters:
+  pi:
+    timeout: 120
+  roo:
+    timeout: 240
+    enabled: false
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.adapter_settings("pi").timeout, 120);
+        assert_eq!(config.adapter_settings("roo").timeout, 240);
+        assert!(!config.adapter_settings("roo").enabled);
+    }
+
+    #[test]
+    fn test_adapter_settings_cover_every_catalog_backend() {
+        // Catalog conformance matrix — settings surface (TR#11). The generic
+        // `adapters.default` + flattened `overrides` design must give EVERY
+        // catalogued backend a settings surface with no per-backend
+        // special-casing: a future catalogued backend inherits
+        // `adapters.default` automatically and honors its own override key. This
+        // is the settings cell of the matrix whose construction / interactive /
+        // detection / help cells live in `ralph-adapters::cli_backend`.
+        use crate::backend;
+
+        // 1) Unconfigured: every catalogued backend inherits `adapters.default`.
+        let yaml = "adapters:\n  default:\n    timeout: 314\n";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        for metadata in backend::iter() {
+            assert_eq!(
+                config.adapter_settings(metadata.id).timeout,
+                314,
+                "unconfigured {} should inherit adapters.default",
+                metadata.id
+            );
+        }
+
+        // 2) An override keyed by ANY catalogued backend id is honored (not
+        // silently dropped), proving the surface is keyed by catalog id, not a
+        // hand list. Distinct timeouts detect a missing or colliding key.
+        let mut yaml = String::from("adapters:\n  default:\n    timeout: 314\n");
+        for (i, metadata) in backend::iter().enumerate() {
+            yaml.push_str(&format!("  {}:\n    timeout: {}\n", metadata.id, 400 + i));
+        }
+        let config: RalphConfig = serde_yaml::from_str(&yaml).unwrap();
+        for (i, metadata) in backend::iter().enumerate() {
+            assert_eq!(
+                config.adapter_settings(metadata.id).timeout,
+                400 + i as u64,
+                "override for {} must be honored",
+                metadata.id
+            );
+        }
+    }
+
+    // ---- Step 1 TR5: R13 per-worker timeout resolution ----
+
+    #[test]
+    fn test_per_worker_timeout_hat_timeout_wins() {
+        // Active hat.timeout overrides the backend's own override (999s) and the
+        // default (300s).
+        let yaml = r"
+adapters:
+  claude:
+    timeout: 999
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.per_worker_timeout_secs(Some(50), "claude"), 50);
+    }
+
+    #[test]
+    fn test_per_worker_timeout_uses_backend_override_when_hat_timeout_absent() {
+        // No hat.timeout → the backend's own override (claude=999), not default.
+        let yaml = r"
+adapters:
+  claude:
+    timeout: 999
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.per_worker_timeout_secs(None, "claude"), 999);
+    }
+
+    #[test]
+    fn test_per_worker_timeout_uses_default_then_builtin_300() {
+        // pi has no override → adapters.default, which itself defaults to 300s.
+        let yaml = r"
+adapters:
+  claude:
+    timeout: 999
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.per_worker_timeout_secs(None, "pi"), 300);
+
+        // A non-default `adapters.default.timeout` is honored for unconfigured backends.
+        let yaml_with_default = r"
+adapters:
+  default:
+    timeout: 450
+";
+        let config_default: RalphConfig = serde_yaml::from_str(yaml_with_default).unwrap();
+        assert_eq!(config_default.per_worker_timeout_secs(None, "pi"), 450);
+    }
+
+    #[test]
+    fn test_hat_backend_settings_name() {
+        // Declared names pass through for every named variant.
+        assert_eq!(
+            HatBackend::Named("claude".to_string()).settings_name(),
+            "claude"
+        );
+        assert_eq!(
+            HatBackend::NamedWithArgs {
+                backend_type: "gemini".to_string(),
+                args: vec![],
+            }
+            .settings_name(),
+            "gemini"
+        );
+        assert_eq!(
+            HatBackend::KiroAgent {
+                backend_type: "kiro".to_string(),
+                agent: "agent-1".to_string(),
+                args: vec![],
+            }
+            .settings_name(),
+            "kiro"
+        );
+        // Custom uses the command basename so an override keyed on the executable
+        // name still applies.
+        assert_eq!(
+            HatBackend::Custom {
+                command: "ollama".to_string(),
+                args: vec![],
+            }
+            .settings_name(),
+            "ollama"
+        );
+        // Commands with leading args keep only the program name.
+        assert_eq!(
+            HatBackend::Custom {
+                command: "ollama run llama3".to_string(),
+                args: vec![],
+            }
+            .settings_name(),
+            "ollama"
+        );
+        // Absolute/relative paths reduce to the file name.
+        assert_eq!(
+            HatBackend::Custom {
+                command: "/usr/bin/codex".to_string(),
+                args: vec![],
+            }
+            .settings_name(),
+            "codex"
+        );
+    }
+
+    // ---- Step 1 TR4: validation overhaul (correctness runs even if suppressed) ----
+
+    #[test]
+    fn test_validate_rejects_unknown_global_backend() {
+        let yaml = r"
+cli:
+  backend: ompp
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        match config.validate().unwrap_err() {
+            ConfigError::UnknownGlobalBackend {
+                backend,
+                valid_names,
+            } => {
+                assert_eq!(backend, "ompp");
+                assert!(!valid_names.is_empty(), "valid_names must be non-empty");
+                // The actionable list must name a catalogued backend plus selectors.
+                assert!(
+                    valid_names.contains("claude"),
+                    "valid_names should list claude: {valid_names}"
+                );
+                assert!(
+                    valid_names.contains("roo"),
+                    "valid_names should list roo: {valid_names}"
+                );
+                assert!(
+                    valid_names.contains("auto"),
+                    "valid_names should list the auto selector: {valid_names}"
+                );
+            }
+            other => panic!("expected UnknownGlobalBackend, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_accepts_selectors_and_named_backends() {
+        for yaml in [
+            r"cli: { backend: auto }",
+            r"cli: { backend: custom, command: my-tool }",
+            r"cli: { backend: roo }",
+        ] {
+            let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.validate().is_ok(), "should accept: {yaml}");
+        }
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_agent_priority() {
+        let yaml = r"
+agent_priority: [claude, bogus]
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        match config.validate().unwrap_err() {
+            ConfigError::UnknownPriorityEntry { entry, valid_names } => {
+                assert_eq!(entry, "bogus");
+                assert!(!valid_names.is_empty(), "valid_names must be non-empty");
+                assert!(
+                    valid_names.contains("roo"),
+                    "valid_names should list roo: {valid_names}"
+                );
+            }
+            other => panic!("expected UnknownPriorityEntry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_adapter_override() {
+        let yaml = r"
+adapters:
+  bogusbackend:
+    timeout: 300
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::UnknownAdapterOverride { ref key, .. } if key == "bogusbackend"
+        ));
+    }
+
+    #[test]
+    fn test_validate_accepts_custom_and_catalogued_overrides() {
+        let yaml = r"
+adapters:
+  custom:
+    timeout: 200
+  roo:
+    timeout: 100
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_hat_backend_named() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "x"
+    backend: "ompp"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::UnknownHatBackend { ref backend, .. } if backend == "ompp"
+        ));
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_hat_backend_named_with_args() {
+        // The map form (`{ type: <name>, args: [...] }`) hits the NamedWithArgs arm of
+        // the or-pattern, distinct from the string `Named` form tested above.
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "x"
+    backend:
+      type: ompp
+      args: ["-m", "x"]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConfigError::UnknownHatBackend { ref backend, .. } if backend == "ompp"
+        ));
+    }
+
+    #[test]
+    fn test_validate_rejects_hat_custom_with_empty_command() {
+        // A hat Custom command form must carry a non-empty command.
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "x"
+    backend:
+      command: ""
+      args: []
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::CustomBackendRequiresCommand)
+        ));
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_kiro_backend_type() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "x"
+    backend:
+      type: bogus
+      agent: foo
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidKiroBackendType { ref backend_type, .. } if backend_type == "bogus"
+        ));
+    }
+
+    #[test]
+    fn test_validate_accepts_valid_hat_backends() {
+        // Named (roo), NamedWithArgs (codex), both Kiro modes, and Custom command form.
+        let yaml = r#"
+hats:
+  a: { name: "A", description: "x", backend: "roo" }
+  b: { name: "B", description: "x", backend: { type: codex, args: ["-m", "x"] } }
+  c: { name: "C", description: "x", backend: { type: kiro, agent: foo } }
+  d: { name: "D", description: "x", backend: { type: kiro-acp, agent: bar } }
+  e: { name: "E", description: "x", backend: { command: my-tool, args: [] } }
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let result = config.validate();
+        assert!(result.is_ok(), "valid hat backends should pass: {result:?}");
+    }
+
+    #[test]
+    fn test_suppress_warnings_does_not_suppress_correctness_errors() {
+        // Suppression hides warnings but MUST NOT hide backend correctness errors.
+        let yaml = r"
+_suppress_warnings: true
+cli:
+  backend: ompp
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::UnknownGlobalBackend { .. })
+        ));
+    }
+
+    #[test]
+    fn test_suppress_warnings_still_suppresses_pure_warnings() {
+        // A config with only warning conditions and suppression returns no warnings.
+        let yaml = r"
+_suppress_warnings: true
+archive_prompts: true
+max_tokens: 4096
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_claude_fallback_migration_warning() {
+        // adapters.claude set, none of pi/roo/copilot/opencode overridden -> warn for all 4.
+        let yaml = r"
+adapters:
+  claude:
+    timeout: 600
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let warnings = config.validate().unwrap();
+        let migration = warnings.iter().find_map(|w| match w {
+            ConfigWarning::ClaudeFallbackMigration {
+                backends,
+                default_timeout_secs,
+            } => Some((backends.clone(), *default_timeout_secs)),
+            _ => None,
+        });
+        let (backends, default_timeout_secs) =
+            migration.expect("expected a ClaudeFallbackMigration warning");
+        for name in ["pi", "roo", "copilot", "opencode"] {
+            assert!(
+                backends.contains(&name.to_string()),
+                "expected {name} among affected backends, got {backends:?}"
+            );
+        }
+        // The reported default timeout mirrors adapters.default (300s when unset).
+        assert_eq!(default_timeout_secs, 300);
+    }
+
+    #[test]
+    fn test_no_migration_warning_when_inheritor_has_override() {
+        // pi has its own override -> the "none has its own override" trigger is false.
+        let yaml = r"
+adapters:
+  claude:
+    timeout: 600
+  pi:
+    timeout: 120
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let warnings = config.validate().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, ConfigWarning::ClaudeFallbackMigration { .. })),
+            "no migration warning when an inheritor has its own override"
+        );
+    }
+
+    #[test]
+    fn test_migration_warning_suppressed_under_suppress_warnings() {
+        let yaml = r"
+_suppress_warnings: true
+adapters:
+  claude:
+    timeout: 600
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(
+            config.validate().unwrap().is_empty(),
+            "migration warning must be suppressed"
+        );
     }
 
     #[test]

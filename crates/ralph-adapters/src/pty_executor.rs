@@ -23,7 +23,7 @@ use crate::cli_backend::{CliBackend, OutputFormat};
 use crate::copilot_stream::{
     CopilotStreamParser, CopilotStreamState, dispatch_copilot_stream_event,
 };
-use crate::pi_stream::{PiSessionState, PiStreamParser, dispatch_pi_stream_event};
+use crate::pi_family::PiFamilySessionState;
 use crate::stream_handler::{SessionResult, StreamHandler};
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
@@ -70,6 +70,10 @@ pub struct PtyExecutionResult {
     /// Cache-write tokens reported separately for display/cost diagnostics; do
     /// not add to `input_tokens` when computing context utilization.
     pub cache_write_tokens: u64,
+    /// Protocol-mismatch error surfaced when a successful Pi-family process
+    /// produced no usable signal or no recoverable assistant text. `None` on a
+    /// clean stream or a failed process. When `Some`, `success` is `false`.
+    pub protocol_error: Option<String>,
     /// Number of turns reported by the session (0 when unknown).
     pub num_turns: u32,
 }
@@ -667,23 +671,34 @@ impl PtyExecutor {
 
         // StreamJson format uses NDJSON line parsing (Claude)
         // CopilotStreamJson format uses JSONL line parsing (Copilot prompt mode)
-        // PiStreamJson format uses NDJSON line parsing (Pi)
+        // PiStreamJson / OmpStreamJson share one NDJSON processor (Pi family)
         // Text format streams raw output directly to handler
         let is_stream_json = output_format == OutputFormat::StreamJson;
         let is_copilot_stream = output_format == OutputFormat::CopilotStreamJson;
-        let is_pi_stream = output_format == OutputFormat::PiStreamJson;
-        // Pi thinking deltas are noisy for plain console output but useful in TUI.
-        let show_pi_thinking = is_pi_stream && self.tui_mode;
-        let is_real_pi_backend = self.backend.command == "pi";
+        // Pi-family (Pi + OMP) shares one NDJSON processor; both flavors route
+        // through the same parse branches and finalization below.
+        let is_pi_family_stream = matches!(
+            output_format,
+            OutputFormat::PiStreamJson | OutputFormat::OmpStreamJson
+        );
+        // Pi-family thinking deltas are noisy for plain console output but useful in TUI.
+        let show_pi_thinking = is_pi_family_stream && self.tui_mode;
+        // Presentation label derived from the output flavor (not the command) so
+        // a command override keeps the correct Pi/OMP identity (design §5).
+        let pi_family_label: &'static str = match output_format {
+            OutputFormat::OmpStreamJson => "OMP",
+            OutputFormat::PiStreamJson => "Pi",
+            _ => "Pi-family",
+        };
 
-        if is_pi_stream && is_real_pi_backend {
+        if is_pi_family_stream {
             let configured_provider =
                 extract_cli_flag_value(&self.backend.args, "--provider", "-p")
                     .unwrap_or_else(|| "auto".to_string());
             let configured_model = extract_cli_flag_value(&self.backend.args, "--model", "-m")
                 .unwrap_or_else(|| "default".to_string());
             handler.on_text(&format!(
-                "Pi configured: provider={configured_provider}, model={configured_model}\n"
+                "{pi_family_label} configured: provider={configured_provider}, model={configured_model}\n"
             ));
         }
 
@@ -713,12 +728,13 @@ impl PtyExecutor {
         let mut line_buffer = String::new();
         // Accumulate extracted text from NDJSON for event parsing
         let mut extracted_text = String::new();
-        // Pi session state for accumulating cost/turns (wall-clock for duration)
-        let mut pi_state = PiSessionState::new();
+        // Pi-family session state for accumulating cost/turns (wall-clock for duration)
+        let mut family_state = PiFamilySessionState::new();
+        family_state.flavor_label = pi_family_label;
+        let mut copilot_state = CopilotStreamState::new();
         // Claude session state: peak input/cache tokens across turns, plus a
         // cumulative output_tokens sum (see `ClaudeSessionState` for rationale).
         let mut claude_state = ClaudeSessionState::new();
-        let mut copilot_state = CopilotStreamState::new();
         let mut completion: Option<SessionResult> = None;
         let context_window = self.context_window;
         let start_time = Instant::now();
@@ -850,7 +866,7 @@ impl PtyExecutor {
                                             completion = Some(session_result);
                                         }
                                     }
-                                } else if is_pi_stream {
+                                } else if is_pi_family_stream {
                                     // PiStreamJson format: Parse NDJSON lines from pi
                                     line_buffer.push_str(text);
 
@@ -858,15 +874,7 @@ impl PtyExecutor {
                                         let line = line_buffer[..newline_pos].to_string();
                                         line_buffer = line_buffer[newline_pos + 1..].to_string();
 
-                                        if let Some(event) = PiStreamParser::parse_line(&line) {
-                                            dispatch_pi_stream_event(
-                                                event,
-                                                handler,
-                                                &mut extracted_text,
-                                                &mut pi_state,
-                                                show_pi_thinking,
-                                            );
-                                        }
+                                        family_state.process_line(&line, handler, show_pi_thinking);
                                     }
                                 } else {
                                     // Text format: Stream raw output directly to handler
@@ -899,16 +907,9 @@ impl PtyExecutor {
                                 ) {
                                     completion = Some(session_result);
                                 }
-                            } else if is_pi_stream && !line_buffer.is_empty()
-                                && let Some(event) = PiStreamParser::parse_line(&line_buffer)
-                            {
-                                dispatch_pi_stream_event(
-                                    event,
-                                    handler,
-                                    &mut extracted_text,
-                                    &mut pi_state,
-                                    show_pi_thinking,
-                                );
+                            } else if is_pi_family_stream && !line_buffer.is_empty() {
+                                family_state
+                                    .process_line(&line_buffer, handler, show_pi_thinking);
                             }
                             break;
                         }
@@ -983,21 +984,13 @@ impl PtyExecutor {
                                         completion = Some(session_result);
                                     }
                                 }
-                            } else if is_pi_stream {
+                            } else if is_pi_family_stream {
                                 // PiStreamJson: parse NDJSON lines
                                 line_buffer.push_str(text);
                                 while let Some(newline_pos) = line_buffer.find('\n') {
                                     let line = line_buffer[..newline_pos].to_string();
                                     line_buffer = line_buffer[newline_pos + 1..].to_string();
-                                    if let Some(event) = PiStreamParser::parse_line(&line) {
-                                        dispatch_pi_stream_event(
-                                            event,
-                                            handler,
-                                            &mut extracted_text,
-                                            &mut pi_state,
-                                            show_pi_thinking,
-                                        );
-                                    }
+                                    family_state.process_line(&line, handler, show_pi_thinking);
                                 }
                             } else {
                                 // Text: stream raw output to handler
@@ -1049,21 +1042,13 @@ impl PtyExecutor {
                                             &mut copilot_state,
                                         );
                                     }
-                                } else if is_pi_stream {
+                                } else if is_pi_family_stream {
                                     // PiStreamJson: parse NDJSON lines
                                     line_buffer.push_str(text);
                                     while let Some(newline_pos) = line_buffer.find('\n') {
                                         let line = line_buffer[..newline_pos].to_string();
                                         line_buffer = line_buffer[newline_pos + 1..].to_string();
-                                        if let Some(event) = PiStreamParser::parse_line(&line) {
-                                            dispatch_pi_stream_event(
-                                                event,
-                                                handler,
-                                                &mut extracted_text,
-                                                &mut pi_state,
-                                                show_pi_thinking,
-                                            );
-                                        }
+                                        family_state.process_line(&line, handler, show_pi_thinking);
                                     }
                                 } else {
                                     // Text: stream raw output to handler
@@ -1102,55 +1087,61 @@ impl PtyExecutor {
                     ) {
                         completion = Some(session_result);
                     }
-                } else if is_pi_stream
-                    && !line_buffer.is_empty()
-                    && let Some(event) = PiStreamParser::parse_line(&line_buffer)
-                {
-                    dispatch_pi_stream_event(
-                        event,
-                        handler,
-                        &mut extracted_text,
-                        &mut pi_state,
-                        show_pi_thinking,
-                    );
+                } else if is_pi_family_stream && !line_buffer.is_empty() {
+                    family_state.process_line(&line_buffer, handler, show_pi_thinking);
                 }
 
                 let final_termination = resolve_termination_type(exit_code, termination);
 
-                // Synthesize on_complete for Pi sessions (pi has no dedicated result event)
-                if is_pi_stream {
-                    if is_real_pi_backend {
-                        let stream_provider =
-                            pi_state.stream_provider.as_deref().unwrap_or("unknown");
-                        let stream_model = pi_state.stream_model.as_deref().unwrap_or("unknown");
-                        handler.on_text(&format!(
-                            "Pi stream: provider={stream_provider}, model={stream_model}\n"
-                        ));
+                // Finalize Pi-family sessions through the single shared helper
+                // (applies the mandatory final-text fallback + the two-case
+                // protocol-mismatch check). pi has no dedicated result event, so
+                // on_complete + completion are synthesized from the summary and
+                // `success` reflects any mismatch / stream error.
+                let mut pi_protocol_error: Option<String> = None;
+                let mut pi_success = status.success();
+                if is_pi_family_stream {
+                    let stream_provider =
+                        family_state.stream_provider.as_deref().unwrap_or("unknown");
+                    let stream_model = family_state.stream_model.as_deref().unwrap_or("unknown");
+                    handler.on_text(&format!(
+                        "{pi_family_label} stream: provider={stream_provider}, model={stream_model}\n"
+                    ));
+                    // Snapshot delta-only text before finalize applies the
+                    // mandatory turn_end fallback, so recovered text is surfaced
+                    // to the display only when deltas were swallowed (parity with
+                    // the no-TUI executor — never double-written).
+                    let delta_only = family_state.extracted_text().to_string();
+                    let summary = family_state.finalize(status.success(), start_time.elapsed());
+                    pi_success = !summary.session_result.is_error;
+                    if delta_only.is_empty() && !summary.extracted_text.is_empty() {
+                        handler.on_text(&summary.extracted_text);
                     }
-                    let session_result = SessionResult {
-                        duration_ms: start_time.elapsed().as_millis() as u64,
-                        total_cost_usd: pi_state.total_cost_usd,
-                        num_turns: pi_state.num_turns,
-                        is_error: !status.success(),
-                        input_tokens: pi_state.peak_input_tokens,
-                        output_tokens: pi_state.output_tokens,
-                        cache_read_tokens: pi_state.cache_read_tokens,
-                        cache_write_tokens: pi_state.cache_write_tokens,
-                        context_window,
-                    };
-                    handler.on_complete(&session_result);
-                    completion = Some(session_result);
+                    if let Some(ref reason) = summary.protocol_error {
+                        handler.on_error(reason);
+                    }
+                    handler.on_complete(&summary.session_result);
+                    completion = Some(summary.session_result.clone());
+                    pi_protocol_error = summary.protocol_error;
                 }
 
-                // Pass extracted_text for event parsing from NDJSON
-                return Ok(build_result(
+                // Pi-family processor owns the extracted text; the loop-local
+                // `extracted_text` only accumulates Claude/Copilot NDJSON.
+                let result_text = if is_pi_family_stream {
+                    family_state.extracted_text.clone()
+                } else {
+                    extracted_text
+                };
+                let mut result = build_result(
                     &output,
-                    status.success(),
+                    pi_success,
                     Some(exit_code),
                     final_termination,
-                    extracted_text,
+                    result_text,
                     completion.as_ref(),
-                ));
+                );
+                result.protocol_error = pi_protocol_error;
+                return Ok(result);
             }
         }
 
@@ -1175,39 +1166,52 @@ impl PtyExecutor {
             }
         };
 
-        // Synthesize on_complete for Pi sessions (pi has no dedicated result event)
-        if is_pi_stream {
-            if is_real_pi_backend {
-                let stream_provider = pi_state.stream_provider.as_deref().unwrap_or("unknown");
-                let stream_model = pi_state.stream_model.as_deref().unwrap_or("unknown");
-                handler.on_text(&format!(
-                    "Pi stream: provider={stream_provider}, model={stream_model}\n"
-                ));
+        // Finalize Pi-family sessions through the single shared helper (applies
+        // the mandatory final-text fallback + the two-case protocol-mismatch
+        // check). pi has no dedicated result event, so on_complete + completion
+        // are synthesized from the summary and `success` reflects any mismatch.
+        let mut pi_protocol_error: Option<String> = None;
+        let mut pi_success = success;
+        if is_pi_family_stream {
+            let stream_provider = family_state.stream_provider.as_deref().unwrap_or("unknown");
+            let stream_model = family_state.stream_model.as_deref().unwrap_or("unknown");
+            handler.on_text(&format!(
+                "{pi_family_label} stream: provider={stream_provider}, model={stream_model}\n"
+            ));
+            // Snapshot delta-only text before finalize applies the mandatory
+            // turn_end fallback, so recovered text is surfaced to the display
+            // only when deltas were swallowed (parity with the no-TUI executor).
+            let delta_only = family_state.extracted_text().to_string();
+            let summary = family_state.finalize(success, start_time.elapsed());
+            pi_success = !summary.session_result.is_error;
+            if delta_only.is_empty() && !summary.extracted_text.is_empty() {
+                handler.on_text(&summary.extracted_text);
             }
-            let session_result = SessionResult {
-                duration_ms: start_time.elapsed().as_millis() as u64,
-                total_cost_usd: pi_state.total_cost_usd,
-                num_turns: pi_state.num_turns,
-                is_error: !success,
-                input_tokens: pi_state.peak_input_tokens,
-                output_tokens: pi_state.output_tokens,
-                cache_read_tokens: pi_state.cache_read_tokens,
-                cache_write_tokens: pi_state.cache_write_tokens,
-                context_window,
-            };
-            handler.on_complete(&session_result);
-            completion = Some(session_result);
+            if let Some(ref reason) = summary.protocol_error {
+                handler.on_error(reason);
+            }
+            handler.on_complete(&summary.session_result);
+            completion = Some(summary.session_result.clone());
+            pi_protocol_error = summary.protocol_error;
         }
 
-        // Pass extracted_text for event parsing from NDJSON
-        Ok(build_result(
+        // Pi-family processor owns the extracted text; the loop-local
+        // `extracted_text` only accumulates Claude/Copilot NDJSON.
+        let result_text = if is_pi_family_stream {
+            family_state.extracted_text.clone()
+        } else {
+            extracted_text
+        };
+        let mut result = build_result(
             &output,
-            success,
+            pi_success,
             exit_code,
             final_termination,
-            extracted_text,
+            result_text,
             completion.as_ref(),
-        ))
+        );
+        result.protocol_error = pi_protocol_error;
+        Ok(result)
     }
 
     /// Runs in interactive mode (bidirectional I/O).
@@ -1695,9 +1699,20 @@ impl PtyExecutor {
             None => return Ok(()), // Already exited
         };
 
+        // portable-pty 0.9.0 spawns the PTY child as a session leader: it calls
+        // `libc::setsid()` in the child's `pre_exec` (before exec), so the
+        // child's pid is also its process-group id (`pid == pgid`). Kill the
+        // whole group — not just the direct child — so OMP-spawned descendants
+        // and grandchildren are reaped (PTY GAP). This mirrors
+        // `cli_executor`'s `command.process_group(0)` + negative-pgid kills.
+        // (portable-pty 0.9.0's `CommandBuilder` exposes no pre_spawn/
+        // before_spawn hook, and setsid is already guaranteed in the child, so
+        // negating the captured pid is sufficient — no extra hook required.)
+        let pgid = Pid::from_raw(-pid.as_raw());
+
         if graceful {
-            debug!(pid = %pid, "Sending SIGTERM");
-            let _ = kill(pid, Signal::SIGTERM);
+            debug!(pid = %pid, "Sending SIGTERM to process group");
+            let _ = kill(pgid, Signal::SIGTERM);
 
             // Wait up to 5 seconds for graceful exit (reduced from 5s for better UX)
             let grace_period = Duration::from_secs(2);
@@ -1716,11 +1731,11 @@ impl PtyExecutor {
             }
 
             // Still running after grace period - force kill
-            debug!(pid = %pid, "Grace period expired, sending SIGKILL");
+            debug!(pid = %pid, "Grace period expired, sending SIGKILL to process group");
         }
 
-        debug!(pid = %pid, "Sending SIGKILL");
-        let _ = kill(pid, Signal::SIGKILL);
+        debug!(pid = %pid, "Sending SIGKILL to process group");
+        let _ = kill(pgid, Signal::SIGKILL);
         Ok(())
     }
 
@@ -2026,6 +2041,7 @@ fn build_result(
         output_tokens,
         cache_read_tokens,
         cache_write_tokens,
+        protocol_error: None,
         num_turns,
     }
 }
@@ -2223,6 +2239,7 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            protocol_error: None,
             num_turns: 0,
         };
 

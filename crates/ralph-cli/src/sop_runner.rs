@@ -6,7 +6,7 @@
 //! 2. Build a prompt with the SOP content wrapped in XML tags
 //! 3. Spawn an interactive session with the backend
 
-use ralph_adapters::{CliBackend, CustomBackendError, NoBackendError, detect_backend_default};
+use ralph_adapters::{BackendConstructError, CliBackend, NoBackendError, detect_backend_default};
 use ralph_core::RalphConfig;
 
 use crate::backend_support;
@@ -89,9 +89,10 @@ pub enum SopRunError {
     SpawnError(#[from] std::io::Error),
 }
 
-impl From<CustomBackendError> for SopRunError {
-    fn from(_: CustomBackendError) -> Self {
-        SopRunError::UnknownBackend(backend_support::unknown_backend_message("custom"))
+impl From<BackendConstructError> for SopRunError {
+    fn from(err: BackendConstructError) -> Self {
+        // Preserve the real unrecognized name instead of hard-coding "custom".
+        SopRunError::UnknownBackend(err.to_string())
     }
 }
 
@@ -207,7 +208,8 @@ pub fn run_sop(config: SopRunConfig) -> Result<(), SopRunError> {
 /// Precedence (highest to lowest):
 /// 1. CLI flag (`--backend`)
 /// 2. Config file (`cli.backend` in ralph.yml)
-/// 3. Auto-detect (first available from claude → kiro → gemini → codex → amp)
+/// 3. Auto-detect (first available catalogued backend, in detection order —
+///    see `ralph_core::backend::default_priority`)
 fn resolve_backend(
     flag_override: Option<&str>,
     config: Option<&RalphConfig>,
@@ -418,6 +420,39 @@ mod tests {
     fn test_resolve_backend_accepts_kiro_acp_flag() {
         let backend = resolve_backend(Some("kiro-acp"), None, None).expect("backend");
         assert_eq!(backend, "kiro-acp");
+    }
+
+    /// `ralph plan --backend omp` must resolve to the omp backend (AC1). The
+    /// interactive spawn itself is exercised below.
+    #[test]
+    fn test_resolve_backend_accepts_omp_flag() {
+        let backend = resolve_backend(Some("omp"), None, None).expect("backend");
+        assert_eq!(backend, "omp");
+    }
+
+    /// AC4: `ralph plan --backend omp` (and interactive code-task generation)
+    /// spawn the OMP TUI with exactly `omp --no-session <prompt>` and NO
+    /// autonomous flags. This asserts the argv through the same path `run_sop`
+    /// uses (`for_interactive_prompt` → `spawn_interactive`'s
+    /// `build_command(prompt, true)`), so the SOP wiring cannot silently regress
+    /// to leaking `-p`/`--mode json`/`--auto-approve`.
+    #[test]
+    fn omp_interactive_spawn_argv_carries_no_autonomous_flags() {
+        let backend = CliBackend::for_interactive_prompt("omp").expect("omp interactive");
+        // `true` = interactive, exactly as `spawn_interactive` calls it.
+        let (command, args, stdin, _temp) = backend.build_command("plan this feature", true);
+
+        assert_eq!(command, "omp");
+        assert_eq!(
+            args,
+            vec!["--no-session".to_string(), "plan this feature".to_string()]
+        );
+        assert!(stdin.is_none());
+        // Forbidden autonomous flags must not leak into the interactive argv.
+        assert!(!args.contains(&"-p".to_string()));
+        assert!(!args.contains(&"--mode".to_string()));
+        assert!(!args.contains(&"json".to_string()));
+        assert!(!args.contains(&"--auto-approve".to_string()));
     }
 
     #[test]
