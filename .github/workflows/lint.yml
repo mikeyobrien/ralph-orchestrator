@@ -23,6 +23,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          # This workflow intentionally uses `pull_request_target` so fork PRs get
+          # immediate format feedback without maintainer approval. The job is
+          # fmt-only (no secrets via `permissions: {}`, no build/script execution),
+          # so checking out the fork head is safe here. actions/checkout@v4 refuses
+          # fork checkout under `pull_request_target` by default (pwn-request
+          # protection); opt in explicitly.
+          allow-unsafe-pr-checkout: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
