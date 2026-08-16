@@ -23,6 +23,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          # Required for pull_request_target: this workflow deliberately
+          # checks out the fork's head SHA (no secrets, permissions:{}),
+          # so opt into checking out fork PR code here.
+          allow-unsafe-pr-checkout: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
