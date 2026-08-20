@@ -123,6 +123,33 @@ fn recover_failed_run(events: &[AutoloopEvent]) -> Option<FailedRunRecovery> {
     })
 }
 
+/// The first run id named by the structured event stream, if any.
+///
+/// `loop.start` carries `runId`, so the id is available even when the run was
+/// interrupted before a terminal `loop.finish`/`summary` event was emitted —
+/// the exact case `ralph resume` exists for.
+fn first_stated_run_id(events: &[AutoloopEvent]) -> Option<String> {
+    events
+        .iter()
+        .find_map(|event| event.run_id.clone())
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
+/// Persist the most recent engine run id beneath Ralph's state directory so
+/// `ralph resume` can continue the run in place.
+///
+/// Mirrors the `current-loop-id` marker convention: a plain-text file in
+/// `.ralph/`. Only writes when the stream named an id; otherwise the previous
+/// marker (if any) is left untouched.
+fn persist_current_run_id(ralph_dir: &Path, run_id: &str) -> Result<()> {
+    std::fs::create_dir_all(ralph_dir).context("creating the Ralph state directory")?;
+    std::fs::write(ralph_dir.join("current-run-id"), run_id.trim())
+        .context("writing the current run ID marker")?;
+    tracing::debug!(run_id = run_id.trim(), "wrote current run ID marker");
+    Ok(())
+}
+
 fn read_events(path: &Path) -> Vec<AutoloopEvent> {
     std::fs::read_to_string(path)
         .map(|content| parse_events(&content))
@@ -495,6 +522,14 @@ pub async fn run_autoloop_engine(
             )
         }
     };
+
+    // #344: record the engine run id before any completion coordination so
+    // `ralph resume` can continue the run in place. Persist even for stopped
+    // or failed runs: the `loop.start` event already named the run, and those
+    // are exactly the interruptions native resume exists to recover from.
+    if let Some(run_id) = first_stated_run_id(&read_events(&events_path)) {
+        persist_current_run_id(&identity_context.ralph_dir(), &run_id)?;
+    }
 
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
 
@@ -1487,5 +1522,53 @@ mod tests {
             }
         );
         assert_ne!(reason.exit_code(), 0);
+    }
+
+    #[test]
+    fn first_stated_run_id_picks_the_first_named_run_and_trims() {
+        let events = ralph_adapters::parse_events(concat!(
+            r#"{"type":"loop.start","runId":" run-paused ","iteration":0}"#,
+            "\n",
+            r#"{"type":"loop.finish","runId":"run-other","iterations":1,"stopReason":"completed"}"#,
+            "\n",
+        ));
+        assert_eq!(
+            first_stated_run_id(&events),
+            Some("run-paused".to_string()),
+            "must return the first named run id, trimmed"
+        );
+
+        let blank = ralph_adapters::parse_events(
+            r#"{"type":"loop.start","iteration":0}
+{"type":"iteration.start","runId":"   ","iteration":1}"#,
+        );
+        assert_eq!(
+            first_stated_run_id(&blank),
+            None,
+            "blank ids must be ignored"
+        );
+
+        assert_eq!(first_stated_run_id(&[]), None, "empty stream yields no id");
+    }
+
+    #[test]
+    fn persist_current_run_id_writes_marker_under_ralph_dir() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let ralph_dir = dir.path().join(".ralph");
+        persist_current_run_id(&ralph_dir, " run-abc123 \n").expect("persist run id");
+
+        let marker = ralph_dir.join("current-run-id");
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("read marker"),
+            "run-abc123",
+            "marker must store the trimmed id"
+        );
+
+        // A second write replaces the previous id (last run wins).
+        persist_current_run_id(&ralph_dir, "run-def456").expect("re-persist");
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("read marker"),
+            "run-def456"
+        );
     }
 }

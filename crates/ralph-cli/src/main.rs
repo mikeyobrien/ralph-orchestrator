@@ -544,8 +544,12 @@ enum Commands {
     /// Interactive walkthrough of hats, hat collections, and workflow
     Tutorial(TutorialArgs),
 
-    /// Direct loop resume is not yet supported; use `ralph run --continue`.
-    #[command(hide = true)]
+    /// Continue the most recent engine run in place (`autoloop resume`).
+    ///
+    /// Reads `.ralph/current-run-id` recorded by the last `ralph run` and
+    /// invokes `autoloop resume <run-id>` so no completed work is redone.
+    /// Unlike `ralph run --continue` (which continues Ralph coordination
+    /// state), this resumes the native autoloop engine run itself.
     Resume,
 
     /// View event history for debugging
@@ -1727,10 +1731,65 @@ fn clear_restart_request_signal(workspace_root: &std::path::Path) {
     let _ = std::fs::remove_file(&restart_path);
 }
 
+/// Continue the most recent engine run in place.
+///
+/// Reads the `.ralph/current-run-id` marker left by the last `ralph run` and
+/// drives `autoloop resume <run-id>` so completed work is not redone. The
+/// subprocess inherits stdio; exit status propagates.
 fn resume_command() -> Result<()> {
-    anyhow::bail!(
-        "direct loop resume is not yet supported (tracked #344); use `ralph run --continue` to continue Ralph coordination state. Advanced escape hatch: `autoloop resume <run-id>` resumes the engine directly"
-    )
+    let workspace = resolve_workspace_root(None);
+    let marker = workspace.join(".ralph/current-run-id");
+    let run_id = std::fs::read_to_string(&marker)
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    if run_id.is_empty() {
+        anyhow::bail!(
+            "no engine run to resume at {} — run `ralph run` first so a native autoloop run_id is recorded. \
+             Note `ralph run --continue` is a different operation: it continues Ralph coordination state, \
+             not the engine run.",
+            marker.display()
+        );
+    }
+
+    // Same engine gate and resolution as `ralph run`: provision when absent,
+    // honoring the interactive consent prompt exactly like run preflight.
+    let interactive = has_interactive_terminal();
+    let engine_bin =
+        crate::engine_provision::ensure_autoloop_with_provisioning(interactive, false)?;
+    let engine_root = ralph_core::engine_state::prepare_engine_state_root(&workspace)
+        .context("preparing Ralph-owned Autoloop state")?;
+
+    let mut command = match &engine_bin {
+        ralph_adapters::AutoloopBin::PathLookup => std::process::Command::new("autoloop"),
+        ralph_adapters::AutoloopBin::Node(path) => {
+            let mut cmd = std::process::Command::new("node");
+            cmd.arg(path);
+            cmd
+        }
+        ralph_adapters::AutoloopBin::Explicit(path) => std::process::Command::new(path),
+    };
+    command
+        .arg("resume")
+        .arg(&run_id)
+        .current_dir(&workspace)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+    for (key, value) in ralph_core::engine_state::engine_env(&engine_root) {
+        command.env(key, value);
+    }
+    tracing::info!(run_id = %run_id, workspace = %workspace.display(), "launching `autoloop resume`");
+
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("spawning `autoloop resume {run_id}`"))?;
+    let status = child
+        .wait()
+        .context("waiting for `autoloop resume` to finish")?;
+    if let Some(code) = status.code() {
+        std::process::exit(code);
+    }
+    Ok(())
 }
 
 fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
