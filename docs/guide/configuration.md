@@ -259,7 +259,10 @@ core:
     path: .ralph/agent/scratchpad.md
 ```
 
-> **Solo mode safety:** If scratchpad is disabled (`enabled: false`) but no hats are defined, Ralph force-enables it with a warning. Scratchpad is the only continuity mechanism in solo mode.
+> **v3 engine boundary:** `core.scratchpad` remains accepted configuration and
+> its directory is prepared by Ralph, but autoloop owns iteration continuity
+> and completion. Disabling or enabling this field does not select an engine
+> mode.
 
 ### memories
 
@@ -369,7 +372,8 @@ Specialized personas for hat-based mode.
 | `scratchpad` | string or object | No | Per-hat scratchpad override (inherits `core.scratchpad` if omitted) |
 | `instructions` | string | Yes | Hat-specific prompt |
 
-Each hat can override the global scratchpad with its own `scratchpad` field. Like the core-level setting, it accepts a plain string or a structured object:
+Each hat can still declare a `scratchpad` field in Ralph's retained config
+model. It accepts a plain string or a structured object:
 
 ```yaml
 hats:
@@ -388,7 +392,9 @@ hats:
     # ...
 ```
 
-**Resolution order:** hat override → `core.scratchpad` → defaults.
+**Configuration resolution:** hat override → `core.scratchpad` → defaults.
+The generated v3 autoloop topology does not currently translate these per-hat
+scratchpad fields, so do not rely on them for engine continuity.
 
 ## Example Configurations
 
@@ -447,7 +453,7 @@ tasks:
   enabled: false
 ```
 
-### With Per-Hat Scratchpads
+### Retained Per-Hat Scratchpad Configuration
 
 ```yaml
 cli:

@@ -1,0 +1,16 @@
+---
+source: crates/ralph-cli/tests/integration_autoloop_headless_voice.rs
+expression: piped_stdout
+---
+Iteration 1/2 started | Planning Lead
+Iteration 1/2 finished | Planning Lead | emitted build.task | cost $0.0100 iteration, $0.0100 total
+Iteration 2/2 started | Build Crew
+Iteration 2/2 finished | Build Crew | emitted task.complete | cost $0.0200 iteration, $0.0300 total
+
++----------------------------------------------------------+
+| ? Loop terminated: Completion promise detected
++----------------------------------------------------------+
+|   Iterations:  2
+|   Elapsed:     [ELAPSED]
+|   Est. cost:   $0.03
++----------------------------------------------------------+

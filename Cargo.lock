@@ -2748,7 +2748,7 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "ralph-adapters"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -2774,7 +2774,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-api"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2798,7 +2798,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-bench"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2814,7 +2814,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-cli"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2823,6 +2823,7 @@ dependencies = [
  "crossterm 0.28.1",
  "futures",
  "indicatif",
+ "insta",
  "keyring",
  "mimalloc",
  "nix 0.29.0",
@@ -2841,16 +2842,18 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vt100",
 ]
 
 [[package]]
 name = "ralph-core"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2875,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-e2e"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2895,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-proto"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2907,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-telegram"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2927,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "ralph-tui"
-version = "2.9.3"
+version = "3.0.0"
 dependencies = [
  "ansi-to-tui",
  "anyhow",

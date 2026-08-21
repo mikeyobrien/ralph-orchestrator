@@ -490,6 +490,17 @@ fn terminate_bounded_child(child: &mut std::process::Child) -> std::io::Result<(
     child.kill()
 }
 
+/// Disposition of one hooks BDD scenario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HooksBddScenarioStatus {
+    /// Ralph's runtime behavior satisfies the acceptance criterion.
+    Passed,
+    /// Ralph's runtime behavior does not satisfy the acceptance criterion.
+    Failed,
+    /// The acceptance criterion belongs to the v3 autoloop engine, not Ralph.
+    Descoped,
+}
+
 /// Result of executing one hooks BDD scenario.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HooksBddScenarioResult {
@@ -499,9 +510,9 @@ pub struct HooksBddScenarioResult {
     pub scenario_name: String,
     /// Feature file name.
     pub feature_file: String,
-    /// Whether the scenario passed.
-    pub passed: bool,
-    /// Pass/fail reason for terminal output.
+    /// Acceptance-criterion disposition.
+    pub status: HooksBddScenarioStatus,
+    /// Result reason for terminal output.
     pub message: String,
     /// Runtime artifacts scaffolded and/or produced during evaluation.
     pub artifacts: HooksBddScenarioArtifacts,
@@ -522,17 +533,31 @@ impl HooksBddRunResults {
 
     /// Number of passed scenarios.
     pub fn passed_count(&self) -> usize {
-        self.results.iter().filter(|result| result.passed).count()
+        self.results
+            .iter()
+            .filter(|result| result.status == HooksBddScenarioStatus::Passed)
+            .count()
     }
 
     /// Number of failed scenarios.
     pub fn failed_count(&self) -> usize {
-        self.results.iter().filter(|result| !result.passed).count()
+        self.results
+            .iter()
+            .filter(|result| result.status == HooksBddScenarioStatus::Failed)
+            .count()
     }
 
-    /// Returns true when every scenario passed.
+    /// Number of scenarios owned by the v3 autoloop engine rather than Ralph.
+    pub fn descoped_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|result| result.status == HooksBddScenarioStatus::Descoped)
+            .count()
+    }
+
+    /// Returns true when no scenario failed.
     pub fn all_passed(&self) -> bool {
-        self.results.iter().all(|result| result.passed)
+        self.failed_count() == 0
     }
 }
 
@@ -671,27 +696,14 @@ fn dispatch_ac_evaluator(
     ac_id: &str,
 ) -> fn(&HooksBddScenario, &mut HooksBddIntegrationHarness, bool) -> HooksBddScenarioResult {
     match ac_id {
-        // AC-01..AC-03: Scope, lifecycle events, pre/post phases
-        "AC-01" => evaluate_ac_01,
-        "AC-02" => evaluate_ac_02,
-        "AC-03" => evaluate_ac_03,
-        // AC-04..AC-06: Ordering, stdin contract, timeout
-        "AC-04" => evaluate_ac_04,
-        "AC-05" => evaluate_ac_05,
-        "AC-06" => evaluate_ac_06,
-        // AC-07..AC-18: Safeguards, dispositions, suspend/resume, mutation, telemetry
-        "AC-07" => evaluate_ac_07,
-        "AC-08" => evaluate_ac_08,
-        "AC-09" => evaluate_ac_09,
-        "AC-10" => evaluate_ac_10,
-        "AC-11" => evaluate_ac_11,
-        "AC-12" => evaluate_ac_12,
-        "AC-13" => evaluate_ac_13,
-        "AC-14" => evaluate_ac_14,
-        "AC-15" => evaluate_ac_15,
-        "AC-16" => evaluate_ac_16,
-        "AC-17" => evaluate_ac_17,
-        "AC-18" => evaluate_ac_18,
+        // These ACs are certified by the real ralph-core/ralph-cli tests mapped in
+        // `runtime_test_cases_for_ac`, not by inspecting implementation source.
+        "AC-01" | "AC-02" | "AC-03" | "AC-04" | "AC-05" | "AC-06" | "AC-07" | "AC-10" | "AC-11"
+        | "AC-12" | "AC-17" | "AC-18" => evaluate_runtime_certified,
+        // AC-08 (warn), AC-09 (block), AC-13..AC-15 (mutation), and AC-16
+        // (telemetry completeness) execute inside the autoloop harness in v3.
+        // Ralph is the observation plane, so these criteria are engine-owned.
+        "AC-08" | "AC-09" | "AC-13" | "AC-14" | "AC-15" | "AC-16" => evaluate_descoped_to_engine,
         _ => evaluate_unmapped_acceptance,
     }
 }
@@ -699,49 +711,58 @@ fn dispatch_ac_evaluator(
 fn build_scenario_result(
     scenario: &HooksBddScenario,
     harness: &HooksBddIntegrationHarness,
-    passed: bool,
+    status: HooksBddScenarioStatus,
     message: String,
 ) -> HooksBddScenarioResult {
     HooksBddScenarioResult {
         scenario_id: scenario.scenario_id.clone(),
         scenario_name: scenario.scenario_name.clone(),
         feature_file: scenario.feature_file.clone(),
-        passed,
+        status,
         message,
         artifacts: harness.artifacts().clone(),
     }
 }
 
-/// Green evaluator wrapper that validates acceptance context and returns pass/fail.
-fn evaluate_green_acceptance(
+fn evaluate_descoped_to_engine(
+    scenario: &HooksBddScenario,
+    harness: &mut HooksBddIntegrationHarness,
+    _ci_safe_mode: bool,
+) -> HooksBddScenarioResult {
+    build_scenario_result(
+        scenario,
+        harness,
+        HooksBddScenarioStatus::Descoped,
+        format!(
+            "{}: DESCOPED to autoloop engine — hooks run inside the autoloop harness in v3 (engine-owned; autoloop hooks parity territory, autoloop#38 per .ralph/specs/v3-autoloops-cutover.spec.md). Not certified by Ralph tests.",
+            scenario.scenario_id
+        ),
+    )
+}
+
+/// Certifies an AC by running its mapped ralph-core/ralph-cli runtime tests.
+fn evaluate_runtime_certified(
     scenario: &HooksBddScenario,
     harness: &mut HooksBddIntegrationHarness,
     ci_safe_mode: bool,
-    context_guard: fn(bool, &str) -> Result<(), String>,
-    evaluation: fn(&mut HooksBddIntegrationHarness) -> Result<(), String>,
 ) -> HooksBddScenarioResult {
-    // Guard CI-safe mode requirement
-    if let Err(msg) = context_guard(ci_safe_mode, &scenario.scenario_id) {
-        return build_scenario_result(scenario, harness, false, msg);
+    if let Err(msg) = validate_acceptance_context(ci_safe_mode, &scenario.scenario_id) {
+        return build_scenario_result(scenario, harness, HooksBddScenarioStatus::Failed, msg);
     }
 
     if let Err(msg) = assert_runtime_integration_coverage(&scenario.scenario_id, harness) {
-        return build_scenario_result(scenario, harness, false, msg);
+        return build_scenario_result(scenario, harness, HooksBddScenarioStatus::Failed, msg);
     }
 
-    // Run the AC-specific evaluation assertions.
-    match evaluation(harness) {
-        Ok(()) => build_scenario_result(
-            scenario,
-            harness,
-            true,
-            format!(
-                "{}: acceptance criterion verified green",
-                scenario.scenario_id
-            ),
+    build_scenario_result(
+        scenario,
+        harness,
+        HooksBddScenarioStatus::Passed,
+        format!(
+            "{}: acceptance criterion verified green by runtime tests",
+            scenario.scenario_id
         ),
-        Err(msg) => build_scenario_result(scenario, harness, false, msg),
-    }
+    )
 }
 
 /// Validates that CI-safe mode is enabled for the evaluation.
@@ -797,14 +818,6 @@ fn runtime_test_cases_for_ac(ac_id: &str) -> Vec<RuntimeTestCase> {
             package: "ralph-core",
             filter: "run_truncates_stdout_and_stderr_at_max_output_bytes",
         }],
-        "AC-08" => vec![RuntimeTestCase {
-            package: "ralph-e2e",
-            filter: "test_v3_ac08_autoloop_hook_warn_policy_evidence",
-        }],
-        "AC-09" => vec![RuntimeTestCase {
-            package: "ralph-e2e",
-            filter: "test_v3_ac09_autoloop_hook_block_policy_evidence",
-        }],
         "AC-10" => vec![RuntimeTestCase {
             package: "ralph-core",
             filter: "test_suspend_state_record_serializes_v1_schema_shape",
@@ -823,28 +836,10 @@ fn runtime_test_cases_for_ac(ac_id: &str) -> Vec<RuntimeTestCase> {
                 filter: "test_resume_loop_is_idempotent_when_resume_already_requested",
             },
         ],
-        "AC-13" => vec![RuntimeTestCase {
-            package: "ralph-e2e",
-            filter: "test_v3_ac13_autoloop_hooks_do_not_parse_metadata_mutations",
-        }],
-        "AC-14" => vec![RuntimeTestCase {
-            package: "ralph-e2e",
-            filter: "test_v3_ac14_metadata_mutation_surface_is_descoped_to_autoloop_hook_contract",
-        }],
-        "AC-15" => vec![RuntimeTestCase {
-            package: "ralph-e2e",
-            filter: "test_v3_ac15_json_mutation_format_is_descoped_with_old_runtime",
-        }],
-        "AC-16" => vec![
-            RuntimeTestCase {
-                package: "ralph-e2e",
-                filter: "test_v3_ac16_autoloop_hook_telemetry_evidence",
-            },
-            RuntimeTestCase {
-                package: "ralph-core",
-                filter: "test_diagnostics_collector_logs_hook_run_telemetry",
-            },
-        ],
+        // AC-08/09/13/14/15/16 are deliberately absent: their shared evaluator
+        // reports them as engine-owned without running Ralph integration coverage.
+        // `test_diagnostics_collector_logs_hook_run_telemetry` still runs in the
+        // ralph-core suite, but it cannot certify AC-16 without a live dispatch path.
         "AC-17" => vec![RuntimeTestCase {
             package: "ralph-cli",
             filter: "test_hooks_validate_json_success_report_and_exit_code",
@@ -978,1344 +973,11 @@ fn evaluate_unmapped_acceptance(
     build_scenario_result(
         scenario,
         harness,
-        false,
+        HooksBddScenarioStatus::Failed,
         format!(
             "{}: no evaluator implemented - scenario is pending",
             scenario.scenario_id
         ),
-    )
-}
-
-// =============================================================================
-// Source evidence helpers (Step 2.1)
-// =============================================================================
-
-fn load_workspace_source_file(relative_path: &str) -> Result<String, String> {
-    let relative = Path::new(relative_path);
-
-    let source_path = if relative.is_absolute() {
-        relative.to_path_buf()
-    } else {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let manifest_workspace_root = manifest_dir
-            .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .ok_or_else(|| {
-                format!(
-                    "failed to derive workspace root from CARGO_MANIFEST_DIR={}",
-                    manifest_dir.display()
-                )
-            })?;
-
-        let manifest_candidate = manifest_workspace_root.join(relative);
-        if manifest_candidate.is_file() {
-            manifest_candidate
-        } else if let Some(discovered_root) = find_workspace_root() {
-            let discovered_candidate = discovered_root.join(relative);
-            if discovered_candidate.is_file() {
-                discovered_candidate
-            } else {
-                return Err(format!(
-                    "source evidence file not found: {} (checked {} and {})",
-                    relative_path,
-                    manifest_candidate.display(),
-                    discovered_candidate.display()
-                ));
-            }
-        } else {
-            return Err(format!(
-                "source evidence file not found: {} (checked {})",
-                relative_path,
-                manifest_candidate.display()
-            ));
-        }
-    };
-
-    fs::read_to_string(&source_path).map_err(|source| {
-        format!(
-            "failed to read source evidence file {}: {source}",
-            source_path.display()
-        )
-    })
-}
-
-fn assert_required_source_snippets(
-    source_file: &str,
-    source_content: &str,
-    required_snippets: &[(&str, &str)],
-) -> Result<(), String> {
-    let missing: Vec<String> = required_snippets
-        .iter()
-        .filter_map(|(description, snippet)| {
-            (!source_content.contains(snippet))
-                .then_some(format!("{description} (snippet: `{snippet}`)"))
-        })
-        .collect();
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    Err(format!(
-        "source evidence assertion failed for {source_file}: missing {}",
-        missing.join(", ")
-    ))
-}
-
-fn assert_workspace_source_contains(
-    relative_path: &str,
-    required_snippets: &[(&str, &str)],
-) -> Result<(), String> {
-    let source_content = load_workspace_source_file(relative_path)?;
-    assert_required_source_snippets(relative_path, &source_content, required_snippets)
-}
-
-fn assert_workspace_source_not_contains(
-    relative_path: &str,
-    forbidden_snippets: &[(&str, &str)],
-) -> Result<(), String> {
-    let source_content = load_workspace_source_file(relative_path)?;
-    let present: Vec<String> = forbidden_snippets
-        .iter()
-        .filter_map(|(description, snippet)| {
-            source_content
-                .contains(snippet)
-                .then_some(format!("{description} (snippet: `{snippet}`)"))
-        })
-        .collect();
-
-    if present.is_empty() {
-        return Ok(());
-    }
-
-    Err(format!(
-        "source evidence assertion failed for {relative_path}: unexpected {}",
-        present.join(", ")
-    ))
-}
-
-// =============================================================================
-// AC-01: Per-project scope only
-// =============================================================================
-
-fn evaluate_ac_01(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/config.rs",
-                &[
-                    (
-                        "RalphConfig carries hooks config at project scope",
-                        "pub hooks: HooksConfig,",
-                    ),
-                    (
-                        "RalphConfig default initializes hooks without global source",
-                        "hooks: HooksConfig::default(),",
-                    ),
-                    (
-                        "hooks docs explicitly describe per-project scope",
-                        "Controls per-project orchestrator lifecycle hooks.",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/engine.rs",
-                &[
-                    (
-                        "HookEngine is constructed directly from HooksConfig",
-                        "pub fn new(config: &HooksConfig) -> Self {",
-                    ),
-                    (
-                        "HookEngine clones defaults from project config",
-                        "defaults: config.defaults.clone(),",
-                    ),
-                    (
-                        "HookEngine clones event map from project config",
-                        "hooks_by_phase_event: config.events.clone(),",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-02: Mandatory lifecycle events supported
-// =============================================================================
-
-fn evaluate_ac_02(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/config.rs",
-                &[
-                    (
-                        "pre.loop.start phase-event parses",
-                        "\"pre.loop.start\" => Some(Self::PreLoopStart),",
-                    ),
-                    (
-                        "post.loop.start phase-event parses",
-                        "\"post.loop.start\" => Some(Self::PostLoopStart),",
-                    ),
-                    (
-                        "pre.iteration.start phase-event parses",
-                        "\"pre.iteration.start\" => Some(Self::PreIterationStart),",
-                    ),
-                    (
-                        "post.iteration.start phase-event parses",
-                        "\"post.iteration.start\" => Some(Self::PostIterationStart),",
-                    ),
-                    (
-                        "pre.plan.created phase-event parses",
-                        "\"pre.plan.created\" => Some(Self::PrePlanCreated),",
-                    ),
-                    (
-                        "post.plan.created phase-event parses",
-                        "\"post.plan.created\" => Some(Self::PostPlanCreated),",
-                    ),
-                    (
-                        "pre.human.interact phase-event parses",
-                        "\"pre.human.interact\" => Some(Self::PreHumanInteract),",
-                    ),
-                    (
-                        "post.human.interact phase-event parses",
-                        "\"post.human.interact\" => Some(Self::PostHumanInteract),",
-                    ),
-                    (
-                        "pre.loop.complete phase-event parses",
-                        "\"pre.loop.complete\" => Some(Self::PreLoopComplete),",
-                    ),
-                    (
-                        "post.loop.complete phase-event parses",
-                        "\"post.loop.complete\" => Some(Self::PostLoopComplete),",
-                    ),
-                    (
-                        "pre.loop.error phase-event parses",
-                        "\"pre.loop.error\" => Some(Self::PreLoopError),",
-                    ),
-                    (
-                        "post.loop.error phase-event parses",
-                        "\"post.loop.error\" => Some(Self::PostLoopError),",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/engine.rs",
-                &[
-                    (
-                        "phase-event resolver dispatches parsed canonical keys",
-                        "HookPhaseEvent::parse(phase_event)",
-                    ),
-                    ("payload builder carries phase", "phase: phase.to_string(),"),
-                    ("payload builder carries event", "event: event.to_string(),"),
-                    (
-                        "payload builder carries canonical phase_event",
-                        "phase_event: phase_event.as_str().to_string(),",
-                    ),
-                    (
-                        "payload includes loop block",
-                        "loop_context: HookPayloadLoop {",
-                    ),
-                    (
-                        "payload includes iteration block",
-                        "iteration: HookPayloadIteration {",
-                    ),
-                    (
-                        "payload includes context block",
-                        "context: HookPayloadContext {",
-                    ),
-                    (
-                        "payload includes metadata block",
-                        "metadata: HookPayloadMetadata {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-03: Pre/post phase support
-// =============================================================================
-
-fn evaluate_ac_03(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/config.rs",
-                &[
-                    (
-                        "pre.loop.start serde key exists",
-                        "#[serde(rename = \"pre.loop.start\")]",
-                    ),
-                    (
-                        "post.loop.start serde key exists",
-                        "#[serde(rename = \"post.loop.start\")]",
-                    ),
-                    (
-                        "pre.iteration.start serde key exists",
-                        "#[serde(rename = \"pre.iteration.start\")]",
-                    ),
-                    (
-                        "post.iteration.start serde key exists",
-                        "#[serde(rename = \"post.iteration.start\")]",
-                    ),
-                    (
-                        "pre.plan.created serde key exists",
-                        "#[serde(rename = \"pre.plan.created\")]",
-                    ),
-                    (
-                        "post.plan.created serde key exists",
-                        "#[serde(rename = \"post.plan.created\")]",
-                    ),
-                    (
-                        "pre.human.interact serde key exists",
-                        "#[serde(rename = \"pre.human.interact\")]",
-                    ),
-                    (
-                        "post.human.interact serde key exists",
-                        "#[serde(rename = \"post.human.interact\")]",
-                    ),
-                    (
-                        "pre.loop.complete serde key exists",
-                        "#[serde(rename = \"pre.loop.complete\")]",
-                    ),
-                    (
-                        "post.loop.complete serde key exists",
-                        "#[serde(rename = \"post.loop.complete\")]",
-                    ),
-                    (
-                        "pre.loop.error serde key exists",
-                        "#[serde(rename = \"pre.loop.error\")]",
-                    ),
-                    (
-                        "post.loop.error serde key exists",
-                        "#[serde(rename = \"post.loop.error\")]",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/engine.rs",
-                &[
-                    (
-                        "phase/event splitting helper exists",
-                        "fn split_phase_event(phase_event: HookPhaseEvent) -> (&'static str, &'static str) {",
-                    ),
-                    (
-                        "split helper derives phase and event from canonical key",
-                        "phase_event.as_str().split_once('.')",
-                    ),
-                    (
-                        "payload build uses split pre/post phase",
-                        "let (phase, event) = split_phase_event(phase_event);",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-04: Deterministic ordering
-// =============================================================================
-
-fn evaluate_ac_04(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/config.rs",
-                &[(
-                    "phase-event hook lists preserve declaration order via Vec",
-                    "pub events: HashMap<HookPhaseEvent, Vec<HookSpec>>,",
-                )],
-            )?;
-
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/engine.rs",
-                &[
-                    (
-                        "resolved hook spec stores declaration order",
-                        "pub declaration_order: usize,",
-                    ),
-                    (
-                        "resolver enumerates hooks in declaration order",
-                        ".enumerate()",
-                    ),
-                    (
-                        "resolver forwards declaration order into resolved spec",
-                        "ResolvedHookSpec::from_spec(",
-                    ),
-                    (
-                        "engine unit test guards declaration-order contract",
-                        "fn resolve_phase_event_preserves_declaration_order() {",
-                    ),
-                    (
-                        "declaration order assertion for first hook",
-                        "assert_eq!(resolved[0].declaration_order, 0);",
-                    ),
-                    (
-                        "declaration order assertion for second hook",
-                        "assert_eq!(resolved[1].declaration_order, 1);",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-05: JSON stdin contract
-// =============================================================================
-
-fn evaluate_ac_05(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/executor.rs",
-                &[
-                    (
-                        "HookRunRequest carries JSON stdin payload contract",
-                        "pub stdin_payload: serde_json::Value,",
-                    ),
-                    (
-                        "executor configures child stdin as piped",
-                        "command.stdin(Stdio::piped());",
-                    ),
-                    (
-                        "executor writes stdin payload before waiting for completion",
-                        "write_stdin_payload(",
-                    ),
-                    (
-                        "stdin payload is serialized as JSON bytes",
-                        "serde_json::to_vec(stdin_payload)",
-                    ),
-                    (
-                        "serialized payload bytes are written to child stdin",
-                        "stdin.write_all(&payload)",
-                    ),
-                    (
-                        "unit test verifies JSON payload delivery to stdin",
-                        "fn run_writes_json_payload_to_hook_stdin() {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-06: Timeout safeguard
-// =============================================================================
-
-fn evaluate_ac_06(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/executor.rs",
-                &[
-                    (
-                        "HookRunRequest carries per-hook timeout guardrail",
-                        "pub timeout_seconds: u64,",
-                    ),
-                    (
-                        "run path forwards request timeout into completion wait",
-                        "request.timeout_seconds,",
-                    ),
-                    (
-                        "wait loop derives timeout duration budget",
-                        "let timeout = Duration::from_secs(timeout_seconds);",
-                    ),
-                    (
-                        "timeout path terminates long-running process",
-                        "let status = terminate_for_timeout(",
-                    ),
-                    (
-                        "executor captures timed_out result from wait path",
-                        "let (status, timed_out) = wait_for_completion(",
-                    ),
-                    (
-                        "unit test verifies timeout safeguard behavior",
-                        "fn run_marks_timed_out_when_command_exceeds_timeout() {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-07: Output truncation safeguard
-// =============================================================================
-
-fn evaluate_ac_07(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/executor.rs",
-                &[
-                    (
-                        "HookRunRequest carries max_output_bytes safeguard",
-                        "pub max_output_bytes: u64,",
-                    ),
-                    (
-                        "stdout collector enforces configured output byte limit",
-                        "spawn_stream_collector(child.stdout.take(), request.max_output_bytes);",
-                    ),
-                    (
-                        "stderr collector enforces configured output byte limit",
-                        "spawn_stream_collector(child.stderr.take(), request.max_output_bytes);",
-                    ),
-                    (
-                        "stream capture derives per-stream capture limit from max_output_bytes",
-                        "let capture_limit = usize::try_from(max_output_bytes).unwrap_or(usize::MAX);",
-                    ),
-                    (
-                        "capture path marks output as truncated when bytes exceed limit",
-                        "truncated = true;",
-                    ),
-                    (
-                        "unit test verifies stdout/stderr truncation behavior",
-                        "fn run_truncates_stdout_and_stderr_at_max_output_bytes() {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-fn evaluate_ac_08(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/config.rs",
-                &[
-                    (
-                        "HookOnError enum exposes warn policy",
-                        "pub enum HookOnError {",
-                    ),
-                    (
-                        "warn policy documents continue-on-failure behavior",
-                        "/// Continue orchestration and record warning telemetry.",
-                    ),
-                    ("warn policy variant exists", "Warn,"),
-                    (
-                        "hook validation requires explicit warn|block|suspend policy",
-                        "is required in v1 (warn | block | suspend)",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "autoloop hook failures are detected from exit status or spawn error",
-                        "const failed = result.status !== 0 || result.error;",
-                    ),
-                    (
-                        "non-strict hook failures are logged as warnings",
-                        "log(loop, \"warn\", msg);",
-                    ),
-                    (
-                        "only strict pre-run hook failures abort the run",
-                        "if (loop.hooks.strict && name === \"pre_run\") {",
-                    ),
-                    (
-                        "non-strict hook failures fall through without throwing",
-                        "log(loop, \"debug\", `hook ${name} ok`);",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/config-helpers.ts",
-                &[(
-                    "autoloop strict mode defaults to non-blocking hook failures",
-                    "strict: config.get(cfg, \"hooks.strict\", \"false\") === \"true\",",
-                )],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-fn evaluate_ac_09(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/config.rs",
-                &[
-                    (
-                        "HookOnError enum exposes block policy",
-                        "pub enum HookOnError {",
-                    ),
-                    (
-                        "block policy documents lifecycle-action failure behavior",
-                        "/// Stop the current lifecycle action as a failure.",
-                    ),
-                    ("block policy variant exists", "Block,"),
-                    (
-                        "hook validation requires explicit warn|block|suspend policy",
-                        "is required in v1 (warn | block | suspend)",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "autoloop hook failures are detected from exit status or spawn error",
-                        "const failed = result.status !== 0 || result.error;",
-                    ),
-                    (
-                        "strict pre-run failures abort the run",
-                        "if (loop.hooks.strict && name === \"pre_run\") {",
-                    ),
-                    (
-                        "strict pre-run failure raises an aborting error",
-                        "throw new Error(`Aborting run: ${msg}`);",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/config-helpers.ts",
-                &[(
-                    "autoloop exposes strict hook policy in runtime config",
-                    "strict: config.get(cfg, \"hooks.strict\", \"false\") === \"true\",",
-                )],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/core/src/config-schema.ts",
-                &[(
-                    "strict hook policy is part of the autoloop config schema",
-                    "strict: \"false\",",
-                )],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-fn evaluate_ac_10(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/suspend_state.rs",
-                &[
-                    (
-                        "suspend-state record persists per-hook suspend mode",
-                        "pub suspend_mode: HookSuspendMode,",
-                    ),
-                    (
-                        "suspend-state constructor marks lifecycle state as suspended",
-                        "state: SuspendLifecycleState::Suspended,",
-                    ),
-                    (
-                        "suspend-state schema test asserts wait_for_resume serialization",
-                        "assert_eq!(value[\"suspend_mode\"], \"wait_for_resume\");",
-                    ),
-                    (
-                        "suspend-state store models resume gate as single-use signal artifact",
-                        "/// Consume a single-use resume signal file.",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-fn evaluate_ac_11(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-cli/src/loops.rs",
-                &[
-                    ("loops CLI exposes resume subcommand", "Resume(ResumeArgs),"),
-                    (
-                        "loops command handler routes resume requests",
-                        "Some(LoopsCommands::Resume(resume_args)) => resume_loop(resume_args),",
-                    ),
-                    (
-                        "resume command resolves suspend-state store at loop workspace root",
-                        "let suspend_state_store = SuspendStateStore::new(&target_root);",
-                    ),
-                    (
-                        "resume command reads persisted suspend-state before resuming",
-                        ".read_suspend_state()",
-                    ),
-                    (
-                        "resume command writes resume-requested signal artifact",
-                        ".write_resume_requested()",
-                    ),
-                    (
-                        "resume command reports continuation from suspended boundary",
-                        "The loop will continue from the suspended boundary.",
-                    ),
-                    (
-                        "in-place resume test verifies resume signal creation",
-                        "fn test_resume_loop_writes_resume_signal_for_in_place_loop() {",
-                    ),
-                    (
-                        "worktree resume test verifies resume targets resolved loop worktree",
-                        "fn test_resume_loop_resolves_partial_id_and_targets_worktree() {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-fn evaluate_ac_12(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/hooks/suspend_state.rs",
-                &[
-                    (
-                        "suspend-state store exposes resume-requested probe",
-                        "pub fn is_resume_requested(&self) -> bool {",
-                    ),
-                    (
-                        "suspend-state store consumes resume signal via single-use operation",
-                        "pub fn consume_resume_requested(&self) -> Result<bool, SuspendStateStoreError> {",
-                    ),
-                    (
-                        "resume signal consumption removes resume-requested artifact",
-                        "remove_if_exists(&self.resume_requested_path(), \"consume resume signal\")",
-                    ),
-                    (
-                        "store unit test verifies resume signal single-use behavior",
-                        "fn test_resume_signal_is_single_use() {",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "crates/ralph-cli/src/loops.rs",
-                &[
-                    (
-                        "resume command checks for already-requested resume signal",
-                        "let resume_already_requested = suspend_state_store.is_resume_requested();",
-                    ),
-                    (
-                        "already-requested resume against unsuspended loop returns informative no-op",
-                        "The loop is not currently suspended; no action taken.",
-                    ),
-                    (
-                        "already-requested resume while suspended returns informative wait message",
-                        "Resume was already requested for loop '{}'. Waiting for the loop to continue.",
-                    ),
-                    (
-                        "non-suspended loop resume request returns informative no-op",
-                        "Loop '{}' is not currently suspended. Nothing to resume.",
-                    ),
-                    (
-                        "idempotency regression test covers repeat resume request",
-                        "fn test_resume_loop_is_idempotent_when_resume_already_requested() {",
-                    ),
-                    (
-                        "non-suspended regression test covers no-op resume path",
-                        "fn test_resume_loop_noops_for_non_suspended_loop() {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-13: Mutation opt-in only
-// =============================================================================
-
-fn evaluate_ac_13(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "autoloop hook output is captured as output telemetry",
-                        "(result.stdout ?? \"\") +",
-                    ),
-                    (
-                        "autoloop hook output is appended to journal as hook.output",
-                        "\"hook.output\",",
-                    ),
-                    (
-                        "hook output records hook identifier",
-                        "\"hook\": ${JSON.stringify(name)}, \"exit_code\": ${result.status ?? -1}, \"output\": ${JSON.stringify(combined.trim())}",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_not_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "autoloop hooks must not parse stdout as a metadata mutation payload",
-                        "JSON.parse",
-                    ),
-                    (
-                        "autoloop hooks must not merge stdout into hook_metadata",
-                        "hook_metadata",
-                    ),
-                    (
-                        "autoloop hooks must not expose the old mutation parser type",
-                        "HookMutationParseOutcome",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-14: Metadata-only mutation surface
-// =============================================================================
-
-fn evaluate_ac_14(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                ".ralph/specs/v3-autoloops-cutover.spec.md",
-                &[
-                    (
-                        "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
-                        "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
-                    ),
-                    (
-                        "old hook engine disposition points to autoloop parity work",
-                        "**Blocker** — acts inside the iteration; → **#38**",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "current autoloop hook surface passes environment, not mutable payloads",
-                        "export interface HookEnv {",
-                    ),
-                    (
-                        "current autoloop hook env carries run identity",
-                        "AUTOLOOP_RUN_ID: string;",
-                    ),
-                    (
-                        "current autoloop hook env carries iteration identity when present",
-                        "AUTOLOOP_ITERATION?: string;",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-15: JSON-only mutation format
-// =============================================================================
-
-fn evaluate_ac_15(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                ".ralph/specs/v3-autoloops-cutover.spec.md",
-                &[
-                    (
-                        "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
-                        "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
-                    ),
-                    (
-                        "old hook engine disposition points to autoloop parity work",
-                        "**Blocker** — acts inside the iteration; → **#38**",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_not_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "current autoloop hooks must not enforce old JSON-only mutation stdout parsing",
-                        "serde_json::from_str",
-                    ),
-                    (
-                        "current autoloop hooks must not expose old invalid-mutation failure type",
-                        "InvalidMutationOutput",
-                    ),
-                    (
-                        "current autoloop hooks must not expose old mutation parser type",
-                        "HookMutationParseOutcome",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-16: Hook telemetry completeness
-// =============================================================================
-
-fn evaluate_ac_16(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/diagnostics/hook_runs.rs",
-                &[
-                    (
-                        "telemetry schema defines structured hook-run entry",
-                        "pub struct HookRunTelemetryEntry {",
-                    ),
-                    (
-                        "telemetry captures canonical phase-event key",
-                        "pub phase_event: String,",
-                    ),
-                    ("telemetry captures hook name", "pub hook_name: String,"),
-                    (
-                        "telemetry captures lifecycle timing bounds",
-                        "pub started_at: DateTime<Utc>,",
-                    ),
-                    (
-                        "telemetry captures duration in milliseconds",
-                        "pub duration_ms: u64,",
-                    ),
-                    (
-                        "telemetry captures process exit code",
-                        "pub exit_code: Option<i32>,",
-                    ),
-                    (
-                        "telemetry captures timeout indicator",
-                        "pub timed_out: bool,",
-                    ),
-                    (
-                        "telemetry captures stdout payload with truncation metadata",
-                        "pub stdout: HookStreamOutput,",
-                    ),
-                    (
-                        "telemetry captures stderr payload with truncation metadata",
-                        "pub stderr: HookStreamOutput,",
-                    ),
-                    (
-                        "telemetry captures final disposition",
-                        "pub disposition: HookDisposition,",
-                    ),
-                    (
-                        "telemetry captures suspend mode used for failures",
-                        "pub suspend_mode: HookSuspendMode,",
-                    ),
-                    (
-                        "telemetry captures retry attempt index",
-                        "pub retry_attempt: u32,",
-                    ),
-                    (
-                        "telemetry captures retry attempt ceiling",
-                        "pub retry_max_attempts: u32,",
-                    ),
-                    (
-                        "telemetry builder maps executor output into entry",
-                        "pub fn from_run_result(",
-                    ),
-                    (
-                        "hook-run logger writes to hook-runs diagnostics file",
-                        "let log_file = session_dir.join(\"hook-runs.jsonl\");",
-                    ),
-                    (
-                        "hook-run logger serializes telemetry entries as JSON",
-                        "serde_json::to_writer(&mut self.writer, entry)?;",
-                    ),
-                    (
-                        "hook-run logger uses newline-delimited records",
-                        "self.writer.write_all(b\"\\n\")?;",
-                    ),
-                    (
-                        "telemetry unit test verifies required serialized fields",
-                        "fn telemetry_entry_serializes_required_fields() {",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/hooks.ts",
-                &[
-                    (
-                        "autoloop appends hook output telemetry to the journal",
-                        "appendEvent(",
-                    ),
-                    (
-                        "autoloop hook telemetry is typed as hook.output",
-                        "\"hook.output\",",
-                    ),
-                    (
-                        "autoloop hook telemetry includes hook name",
-                        "\"hook\": ${JSON.stringify(name)}, \"exit_code\": ${result.status ?? -1}, \"output\": ${JSON.stringify(combined.trim())}",
-                    ),
-                    (
-                        "autoloop hook telemetry includes exit code",
-                        "\"exit_code\": ${result.status ?? -1}",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "../autoloop/packages/harness/src/iteration.ts",
-                &[
-                    (
-                        "autoloop runs pre-iteration hooks with iteration metadata",
-                        "runHook(\n    loop,\n    \"pre_iteration\",",
-                    ),
-                    (
-                        "autoloop runs post-iteration hooks with before/after git metadata",
-                        "runHook(\n    loop,\n    \"post_iteration\",",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-17: Validation command
-// =============================================================================
-
-fn evaluate_ac_17(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-cli/src/hooks.rs",
-                &[
-                    (
-                        "hooks namespace defines validate subcommand",
-                        "Validate(ValidateArgs),",
-                    ),
-                    (
-                        "hooks validate supports machine-readable format selection",
-                        "pub enum HooksValidateFormat {",
-                    ),
-                    ("hooks validate includes human format", "Human,"),
-                    ("hooks validate includes json format", "Json,"),
-                    (
-                        "hooks validate defaults --format to human",
-                        "#[arg(long, value_enum, default_value_t = HooksValidateFormat::Human)]",
-                    ),
-                    (
-                        "hooks command execution routes validate subcommand",
-                        "HooksCommands::Validate(validate_args) => {",
-                    ),
-                    (
-                        "validate subcommand delegates to execute_validate implementation",
-                        "execute_validate(config_sources, hats_source, validate_args, use_colors).await",
-                    ),
-                    (
-                        "validate command loads a structured report from current config sources",
-                        "let report = build_report(config_sources, hats_source).await;",
-                    ),
-                    (
-                        "json mode renders report as pretty-printed JSON",
-                        "serde_json::to_string_pretty(&report)?",
-                    ),
-                    (
-                        "human mode renders report with human formatter",
-                        "print_human_report(&report, use_colors);",
-                    ),
-                    (
-                        "validate command exits non-zero when report fails",
-                        "std::process::exit(1);",
-                    ),
-                    (
-                        "report builder runs semantic config validation",
-                        "if let Err(error) = config.validate() {",
-                    ),
-                    (
-                        "semantic validation failure is captured as hooks diagnostic",
-                        "report.push_diagnostic(\"hooks.semantic\", error.to_string(), None, None, None);",
-                    ),
-                    (
-                        "report builder includes duplicate hook-name validation",
-                        "validate_duplicate_names(&config, &mut report);",
-                    ),
-                    (
-                        "report builder includes command resolvability validation",
-                        "validate_command_resolvability(&config, &mut report);",
-                    ),
-                ],
-            )?;
-
-            assert_workspace_source_contains(
-                "crates/ralph-cli/src/main.rs",
-                &[
-                    (
-                        "top-level CLI command enum registers hooks namespace",
-                        "Hooks(hooks::HooksArgs),",
-                    ),
-                    (
-                        "main command dispatcher routes hooks invocations",
-                        "Some(Commands::Hooks(args)) => {",
-                    ),
-                    (
-                        "hooks dispatcher invokes hooks::execute handler",
-                        "hooks::execute(",
-                    ),
-                    (
-                        "hooks dispatcher forwards color preference to validation output",
-                        "cli.color.should_use_colors(),",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
-    )
-}
-
-// =============================================================================
-// AC-18: Preflight integration
-// =============================================================================
-
-fn evaluate_ac_18(
-    scenario: &HooksBddScenario,
-    harness: &mut HooksBddIntegrationHarness,
-    ci_safe_mode: bool,
-) -> HooksBddScenarioResult {
-    evaluate_green_acceptance(
-        scenario,
-        harness,
-        ci_safe_mode,
-        validate_acceptance_context,
-        |_harness| {
-            assert_workspace_source_contains(
-                "crates/ralph-core/src/preflight.rs",
-                &[
-                    (
-                        "preflight default checks register hooks validation check",
-                        "Box::new(HooksValidationCheck),",
-                    ),
-                    (
-                        "hooks preflight check type exists",
-                        "struct HooksValidationCheck;",
-                    ),
-                    (
-                        "hooks preflight check is named hooks for skip-list integration",
-                        "\"hooks\"",
-                    ),
-                    (
-                        "hooks preflight check skips when hooks are disabled",
-                        "if !config.hooks.enabled {",
-                    ),
-                    (
-                        "disabled hooks preflight result is a passing skip status",
-                        "return CheckResult::pass(self.name(), \"Hooks disabled (skipping)\");",
-                    ),
-                    (
-                        "hooks preflight check validates duplicate names",
-                        "validate_hook_duplicate_names(config, &mut diagnostics);",
-                    ),
-                    (
-                        "hooks preflight check validates command resolvability",
-                        "validate_hook_command_resolvability(config, &mut diagnostics);",
-                    ),
-                    (
-                        "hooks preflight check reports pass label with checked hook count",
-                        "\"Hooks validation passed ({} hook(s))\"",
-                    ),
-                    (
-                        "hooks preflight check reports failing diagnostics count",
-                        "\"Hooks validation failed ({} issue(s))\"",
-                    ),
-                    (
-                        "unit test verifies hooks check registration in default preflight set",
-                        "fn default_checks_include_hooks_check_name() {",
-                    ),
-                    (
-                        "unit test verifies hooks check skip behavior when disabled",
-                        "async fn hooks_check_skips_when_hooks_are_disabled() {",
-                    ),
-                    (
-                        "unit test verifies hooks check emits actionable failures",
-                        "async fn hooks_check_fails_with_actionable_duplicate_and_command_diagnostics() {",
-                    ),
-                    (
-                        "unit test verifies selected preflight checks can omit hooks failures",
-                        "async fn run_selected_can_skip_hooks_check_failures() {",
-                    ),
-                ],
-            )?;
-
-            Ok(())
-        },
     )
 }
 
@@ -2475,6 +1137,39 @@ mod tests {
             tags: vec![scenario_id.to_string()],
             steps: vec![],
         }
+    }
+
+    fn synthetic_result(status: HooksBddScenarioStatus) -> HooksBddScenarioResult {
+        HooksBddScenarioResult {
+            scenario_id: "AC-90".to_string(),
+            scenario_name: "Synthetic result".to_string(),
+            feature_file: "hooks/synthetic.feature".to_string(),
+            status,
+            message: "synthetic result".to_string(),
+            artifacts: HooksBddScenarioArtifacts::default(),
+        }
+    }
+
+    #[test]
+    fn run_results_count_descoped_separately_without_failing() {
+        let mut results = HooksBddRunResults {
+            results: vec![
+                synthetic_result(HooksBddScenarioStatus::Passed),
+                synthetic_result(HooksBddScenarioStatus::Descoped),
+            ],
+        };
+
+        assert_eq!(results.total_count(), 2);
+        assert_eq!(results.passed_count(), 1);
+        assert_eq!(results.failed_count(), 0);
+        assert_eq!(results.descoped_count(), 1);
+        assert!(results.all_passed());
+
+        results
+            .results
+            .push(synthetic_result(HooksBddScenarioStatus::Failed));
+        assert_eq!(results.failed_count(), 1);
+        assert!(!results.all_passed());
     }
 
     #[test]
@@ -2709,71 +1404,22 @@ mod tests {
     }
 
     #[test]
-    fn load_workspace_source_file_reads_workspace_relative_path() {
-        let source = load_workspace_source_file("crates/ralph-e2e/src/hooks_bdd.rs")
-            .expect("should load source file from workspace root");
-
-        assert!(source.contains("run_hooks_bdd_suite"));
-    }
-
-    #[test]
-    fn assert_workspace_source_contains_reports_missing_snippets() {
-        let error = assert_workspace_source_contains(
-            "crates/ralph-core/src/config.rs",
-            &[(
-                "nonexistent marker",
-                "__never_present_marker_for_hooks_bdd_test__",
-            )],
-        )
-        .expect_err("missing snippet should fail");
-
-        assert!(error.contains("source evidence assertion failed"));
-        assert!(error.contains("crates/ralph-core/src/config.rs"));
-        assert!(error.contains("nonexistent marker"));
-        assert!(error.contains("__never_present_marker_for_hooks_bdd_test__"));
-    }
-
-    #[test]
-    fn evaluate_green_acceptance_reports_actionable_missing_evidence_failures() {
+    fn evaluate_runtime_certified_rejects_non_ci_safe_mode() {
         let scenario = HooksBddScenario {
             scenario_id: "AC-01".to_string(),
-            scenario_name: "AC-01 synthetic missing evidence".to_string(),
+            scenario_name: "AC-01 synthetic context failure".to_string(),
             feature_file: "hooks/scope-and-dispatch.feature".to_string(),
             tags: vec!["AC-01".to_string()],
             steps: vec![],
         };
 
-        let mut harness = HooksBddIntegrationHarness::new(&scenario, true);
-        let result = evaluate_green_acceptance(
-            &scenario,
-            &mut harness,
-            true,
-            validate_acceptance_context,
-            |_harness| {
-                assert_required_source_snippets(
-                    "crates/ralph-core/src/config.rs",
-                    "pub hooks: HooksConfig,\n",
-                    &[(
-                        "hooks defaults preserve project scope",
-                        "hooks: HooksConfig::default(),",
-                    )],
-                )
-            },
-        );
+        let mut harness = HooksBddIntegrationHarness::new(&scenario, false);
+        let result = evaluate_runtime_certified(&scenario, &mut harness, false);
 
-        assert!(!result.passed);
+        assert_eq!(result.status, HooksBddScenarioStatus::Failed);
         assert_eq!(result.scenario_id, "AC-01");
-        assert!(
-            result
-                .message
-                .contains("source evidence assertion failed for crates/ralph-core/src/config.rs")
-        );
-        assert!(
-            result
-                .message
-                .contains("hooks defaults preserve project scope")
-        );
-        assert!(result.message.contains("hooks: HooksConfig::default(),"));
+        assert!(result.message.contains("CI-safe mode required"));
+        assert!(result.message.contains("--mock"));
     }
 
     #[test]
@@ -2783,7 +1429,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
         assert!(results.results[0].message.contains("verified green"));
     }
 
@@ -2804,7 +1450,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -2814,7 +1460,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -2824,7 +1470,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -2834,67 +1480,30 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_08_warn_policy() {
-        let config = HooksBddConfig::new(Some("AC-08".to_string()), true);
+    fn assert_ac_descoped_to_engine(ac_id: &str) {
+        let config = HooksBddConfig::new(Some(ac_id.to_string()), true);
         let results = run_hooks_bdd_suite(&config).expect("suite should run");
 
         assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.descoped_count(), 1);
+        assert_eq!(results.passed_count(), 0);
+        assert_eq!(results.failed_count(), 0);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Descoped);
+        assert!(results.results[0].message.contains("DESCOPED"));
+        assert!(results.results[0].message.contains("engine"));
     }
 
     #[test]
-    fn test_v3_ac08_autoloop_hook_warn_policy_evidence() {
-        assert_workspace_source_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[
-                (
-                    "autoloop hook failures are detected from exit status or spawn error",
-                    "const failed = result.status !== 0 || result.error;",
-                ),
-                (
-                    "non-strict hook failures are logged as warnings",
-                    "log(loop, \"warn\", msg);",
-                ),
-                (
-                    "only strict pre-run hook failures abort the run",
-                    "if (loop.hooks.strict && name === \"pre_run\") {",
-                ),
-            ],
-        )
-        .expect("AC-08 autoloop warn evidence should exist");
+    fn run_hooks_bdd_suite_reports_ac_08_descoped_to_engine() {
+        assert_ac_descoped_to_engine("AC-08");
     }
 
     #[test]
-    fn run_hooks_bdd_suite_passes_ac_09_block_policy() {
-        let config = HooksBddConfig::new(Some("AC-09".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn test_v3_ac09_autoloop_hook_block_policy_evidence() {
-        assert_workspace_source_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[
-                (
-                    "strict pre-run failures abort the run",
-                    "if (loop.hooks.strict && name === \"pre_run\") {",
-                ),
-                (
-                    "strict pre-run failure raises an aborting error",
-                    "throw new Error(`Aborting run: ${msg}`);",
-                ),
-            ],
-        )
-        .expect("AC-09 autoloop block evidence should exist");
+    fn run_hooks_bdd_suite_reports_ac_09_descoped_to_engine() {
+        assert_ac_descoped_to_engine("AC-09");
     }
 
     #[test]
@@ -2904,7 +1513,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -2914,7 +1523,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -2924,135 +1533,27 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
-    fn run_hooks_bdd_suite_passes_ac_13_mutation_opt_in() {
-        let config = HooksBddConfig::new(Some("AC-13".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+    fn run_hooks_bdd_suite_reports_ac_13_descoped_to_engine() {
+        assert_ac_descoped_to_engine("AC-13");
     }
 
     #[test]
-    fn test_v3_ac13_autoloop_hooks_do_not_parse_metadata_mutations() {
-        assert_workspace_source_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[(
-                "autoloop hook output is appended to journal as hook.output",
-                "\"hook.output\",",
-            )],
-        )
-        .expect("AC-13 hook output evidence should exist");
-        assert_workspace_source_not_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[
-                (
-                    "autoloop hooks must not parse stdout as a metadata mutation payload",
-                    "JSON.parse",
-                ),
-                (
-                    "autoloop hooks must not merge stdout into hook_metadata",
-                    "hook_metadata",
-                ),
-            ],
-        )
-        .expect("AC-13 old mutation parser evidence should be absent");
+    fn run_hooks_bdd_suite_reports_ac_14_descoped_to_engine() {
+        assert_ac_descoped_to_engine("AC-14");
     }
 
     #[test]
-    fn run_hooks_bdd_suite_passes_ac_14_metadata_mutation() {
-        let config = HooksBddConfig::new(Some("AC-14".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+    fn run_hooks_bdd_suite_reports_ac_15_descoped_to_engine() {
+        assert_ac_descoped_to_engine("AC-15");
     }
 
     #[test]
-    fn test_v3_ac14_metadata_mutation_surface_is_descoped_to_autoloop_hook_contract() {
-        assert_workspace_source_contains(
-            ".ralph/specs/v3-autoloops-cutover.spec.md",
-            &[(
-                "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
-                "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
-            )],
-        )
-        .expect("AC-14 cutover evidence should exist");
-        assert_workspace_source_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[(
-                "current autoloop hook surface passes environment, not mutable payloads",
-                "export interface HookEnv {",
-            )],
-        )
-        .expect("AC-14 autoloop hook contract evidence should exist");
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_15_json_mutation_format() {
-        let config = HooksBddConfig::new(Some("AC-15".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn test_v3_ac15_json_mutation_format_is_descoped_with_old_runtime() {
-        assert_workspace_source_contains(
-            ".ralph/specs/v3-autoloops-cutover.spec.md",
-            &[(
-                "old Ralph lifecycle hook engine is explicitly tracked as a cutover blocker",
-                "**Lifecycle hooks engine** (phase hooks, suspend/resume, I/O mutation)",
-            )],
-        )
-        .expect("AC-15 cutover evidence should exist");
-        assert_workspace_source_not_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[(
-                "current autoloop hooks must not expose old mutation parser type",
-                "HookMutationParseOutcome",
-            )],
-        )
-        .expect("AC-15 old mutation parser evidence should be absent");
-    }
-
-    #[test]
-    fn run_hooks_bdd_suite_passes_ac_16_telemetry_completeness() {
-        let config = HooksBddConfig::new(Some("AC-16".to_string()), true);
-        let results = run_hooks_bdd_suite(&config).expect("suite should run");
-
-        assert_eq!(results.total_count(), 1);
-        assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
-    }
-
-    #[test]
-    fn test_v3_ac16_autoloop_hook_telemetry_evidence() {
-        assert_workspace_source_contains(
-            "../autoloop/packages/harness/src/hooks.ts",
-            &[
-                (
-                    "autoloop appends hook output telemetry to the journal",
-                    "appendEvent(",
-                ),
-                (
-                    "autoloop hook telemetry is typed as hook.output",
-                    "\"hook.output\",",
-                ),
-                (
-                    "autoloop hook telemetry includes hook name",
-                    "\"hook\": ${JSON.stringify(name)}, \"exit_code\": ${result.status ?? -1}, \"output\": ${JSON.stringify(combined.trim())}",
-                ),
-            ],
-        )
-        .expect("AC-16 autoloop hook telemetry evidence should exist");
+    fn run_hooks_bdd_suite_reports_ac_16_descoped_to_engine() {
+        assert_ac_descoped_to_engine("AC-16");
     }
 
     #[test]
@@ -3062,7 +1563,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -3072,7 +1573,7 @@ mod tests {
 
         assert_eq!(results.total_count(), 1);
         assert_eq!(results.passed_count(), 1);
-        assert!(results.results[0].passed);
+        assert_eq!(results.results[0].status, HooksBddScenarioStatus::Passed);
     }
 
     #[test]
@@ -3095,7 +1596,7 @@ mod tests {
         let result = eval_fn(&scenario, &mut harness, true);
 
         // AC-99 should fail with "no evaluator implemented" message
-        assert!(!result.passed);
+        assert_eq!(result.status, HooksBddScenarioStatus::Failed);
         assert!(result.message.contains("no evaluator implemented"));
     }
 
@@ -3141,14 +1642,14 @@ Feature: Example
 
     #[test]
     fn dispatch_ac_evaluator_routes_to_correct_function() {
-        // Verify dispatch map returns different evaluator functions for different ACs
-        // AC-01 and AC-04 use different evaluators (scope vs ordering)
+        // Runtime-certified ACs share one evaluator; unknown IDs use the fallback.
         let ac01_eval = dispatch_ac_evaluator("AC-01");
+        let ac02_eval = dispatch_ac_evaluator("AC-02");
+        let ac03_eval = dispatch_ac_evaluator("AC-03");
         let ac04_eval = dispatch_ac_evaluator("AC-04");
         let ac07_eval = dispatch_ac_evaluator("AC-07");
         let unknown_eval = dispatch_ac_evaluator("AC-99");
 
-        // AC-01 should pass (green), AC-07 should fail (pending), AC-99 should fail (unmapped)
         let scenario_ac01 = HooksBddScenario {
             scenario_id: "AC-01".to_string(),
             scenario_name: "AC-01 Test".to_string(),
@@ -3200,22 +1701,21 @@ Feature: Example
         let mut harness_99 = HooksBddIntegrationHarness::new(&scenario_ac99, true);
 
         let result_01 = ac01_eval(&scenario_ac01, &mut harness_01, true);
-        let result_02 = ac01_eval(&scenario_ac02, &mut harness_02, true);
-        let result_03 = ac01_eval(&scenario_ac03, &mut harness_03, true);
+        let result_02 = ac02_eval(&scenario_ac02, &mut harness_02, true);
+        let result_03 = ac03_eval(&scenario_ac03, &mut harness_03, true);
         let result_04 = ac04_eval(&scenario_ac04, &mut harness_04, true);
         let result_07 = ac07_eval(&scenario_ac07, &mut harness_07, true);
         let result_99 = unknown_eval(&scenario_ac99, &mut harness_99, true);
 
-        // AC-01, AC-02, AC-03, AC-04, AC-05, AC-06, AC-07 are green (all implemented)
-        assert!(result_01.passed);
-        assert!(result_02.passed);
-        assert!(result_03.passed);
-        assert!(result_04.passed);
-        // AC-07 now passes (was pending, now implemented)
-        assert!(result_07.passed);
+        // Mapped ACs are runtime-certified and unknown ACs fail closed.
+        assert_eq!(result_01.status, HooksBddScenarioStatus::Passed);
+        assert_eq!(result_02.status, HooksBddScenarioStatus::Passed);
+        assert_eq!(result_03.status, HooksBddScenarioStatus::Passed);
+        assert_eq!(result_04.status, HooksBddScenarioStatus::Passed);
+        assert_eq!(result_07.status, HooksBddScenarioStatus::Passed);
         assert!(result_07.message.contains("verified green"));
         // AC-99 is unmapped (no such AC exists)
-        assert!(!result_99.passed);
+        assert_eq!(result_99.status, HooksBddScenarioStatus::Failed);
         assert!(result_99.message.contains("no evaluator implemented"));
     }
 }

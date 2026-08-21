@@ -95,13 +95,11 @@ ralph run [OPTIONS]
 | `--dry-run` | Show what would execute |
 | `--no-tui` | Disable TUI mode |
 | `-a, --autonomous` | Force headless mode |
-| `--idle-timeout <SECS>` | TUI idle timeout |
 | `--exclusive` | Wait for primary loop slot |
 | `--no-auto-merge` | Skip automatic merge after worktree loops complete |
 | `--skip-preflight` | Skip auto preflight checks (even when `features.preflight.enabled: true`) |
-| `--record-session <FILE>` | Record session JSONL |
-| `-q, --quiet` | Suppress streaming output |
-| `--continue` | Resume from existing state |
+| `--continue` | Re-drive autoloop using existing Ralph state (true engine run-ID resume is pending #344) |
+| `--loop-id <ID>` | Select the existing Ralph loop state used with `--continue` |
 
 ### ralph init
 
@@ -325,6 +323,10 @@ ralph hats [OPTIONS] [COMMAND]
 
 Run the web dashboard.
 
+> **Live-state limitation:** The dashboard does **not** render live loop state
+> under the v3 autoloop engine yet. The autoloop event parser port is tracked by
+> `ga3-c4-dashboard-dead-svf`. `ralph web` prints this caveat at startup.
+
 ```bash
 ralph web [OPTIONS]
 ```
@@ -368,27 +370,6 @@ ralph bot [OPTIONS] <COMMAND>
 - `test [MESSAGE]`
 - `token set <TOKEN> [--config <path>]`
 - `daemon`
-
-### ralph wave
-
-Dispatch wave events for parallel hat execution.
-
-```bash
-ralph wave emit <TOPIC> --payloads <ITEM>...
-```
-
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `<TOPIC>` | Event topic targeting a wave-capable hat |
-| `--payloads <ITEM>...` | One or more payloads, each becomes a separate event |
-
-Each payload becomes an event tagged with a shared `wave_id`. The loop runner spawns parallel backend instances bounded by the target hat's `concurrency` setting.
-
-Blocked when `RALPH_WAVE_WORKER=1` (prevents nested waves).
-
-See [Agent Waves](../advanced/agent-waves.md) for full details.
 
 ### ralph tools
 
@@ -437,7 +418,8 @@ ralph tools skill <SUBCOMMAND>
 
 #### ralph tools interact
 
-Interact with human via Telegram progress/proactiveness hooks.
+Retained Telegram progress/proactiveness command surface. It is not relayed
+into autoloop-backed `ralph run` pending autoloop#345.
 
 ### ralph completions
 
@@ -456,7 +438,7 @@ Supported shells: `bash`, `elvish`, `fish`, `powershell`, `zsh`.
 | 0 | Completion promise reached (`LOOP_COMPLETE`) |
 | 1 | Failure or stop condition (failure/cancelled/throttled state) |
 | 2 | Runtime limits reached (`max-iterations`, `max-runtime`, or `max-cost`) |
-| 3 | Loop requested restart |
+| 3 | Reserved restart exit code; restart is not currently supported under the autoloop engine |
 | 130 | Interrupted by signal (Ctrl-C / SIGINT) |
 
 ## Environment Variables
@@ -466,10 +448,7 @@ Supported shells: `bash`, `elvish`, `fish`, `powershell`, `zsh`.
 | `RALPH_DIAGNOSTICS` | Set to `1` to enable diagnostics |
 | `RALPH_CONFIG` | Default config file path |
 | `NO_COLOR` | Disable color output |
-| `RALPH_WAVE_WORKER` | Set to `1` inside wave workers (blocks nested waves) |
-| `RALPH_WAVE_ID` | Wave correlation ID (set on wave workers) |
-| `RALPH_WAVE_INDEX` | 0-based worker index within the wave |
-| `RALPH_EVENTS_FILE` | Per-worker events file path (set on wave workers) |
+| `RALPH_EVENTS_FILE` | Events file target used by `ralph emit` |
 
 ## Shell Completion
 

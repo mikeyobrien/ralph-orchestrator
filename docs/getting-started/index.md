@@ -12,7 +12,7 @@ Welcome to Ralph Orchestrator! This section will help you get up and running qui
 
 Before you begin, ensure you have:
 
-- **Rust 1.75+** (if building from source)
+- **Current stable Rust** (Edition 2024; if building from source)
 - **At least one AI CLI tool** installed:
     - [Claude Code](https://github.com/anthropics/claude-code) (recommended)
     - [Kiro](https://kiro.dev/)

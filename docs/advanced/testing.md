@@ -6,9 +6,8 @@ Comprehensive testing approaches for Ralph development and validation.
 
 | Type | Purpose | Speed | Cost |
 |------|---------|-------|------|
-| Unit Tests | Test individual functions | Fast | Free |
-| Smoke Tests | Replay recorded sessions | Fast | Free |
-| E2E Tests | Validate against real backends | Slow | API costs |
+| Unit/Integration Tests | Exercise Rust crates and runtime entry points | Fast | Free |
+| Legacy E2E Inventory | Retained cassette/live-backend scenarios; not a v3 GA gate | Varies | Varies |
 | TUI Validation | Verify terminal rendering | Medium | Free |
 
 ## Running Tests
@@ -19,78 +18,39 @@ Comprehensive testing approaches for Ralph development and validation.
 cargo test
 ```
 
-This includes unit tests and smoke tests (344+ tests total).
-
-### Smoke Tests Only
+This runs the workspace's current unit, integration, and documentation tests.
+For the focused CLI/core gate:
 
 ```bash
-cargo test -p ralph-core smoke_runner
+cargo test -p ralph-cli -p ralph-core
 ```
 
-### Kiro-Specific Tests
+## Legacy E2E Inventory
+
+The `ralph-e2e` binary and cassette scenarios target the deleted in-house
+orchestration loop. They remain useful as an inventory while replacement v3
+coverage is tracked in `.ralph/specs/v3-ga-readiness.spec.md`, but they are not
+a v3 GA regression gate. List the scenarios without running backends:
 
 ```bash
-cargo test -p ralph-core kiro
-```
-
-### E2E Tests
-
-```bash
-# All backends
-cargo run -p ralph-e2e -- all
-
-# Specific backend
-cargo run -p ralph-e2e -- claude
-
-# List scenarios
 cargo run -p ralph-e2e -- --list
 ```
 
-## Smoke Tests
-
-Smoke tests use recorded JSONL fixtures instead of live API calls — fast, free, deterministic.
-
-### How They Work
-
-1. Record a session to JSONL
-2. Replay during tests
-3. Verify expected behavior
-
-### Fixture Locations
-
-```
-crates/ralph-core/tests/fixtures/
-├── basic_session.jsonl          # Claude CLI session
-└── kiro/                         # Kiro sessions
-    ├── basic.jsonl
-    ├── tool_use.jsonl
-    └── autonomous.jsonl
-```
-
-### Recording New Fixtures
+The CLI still accepts live-backend and cassette modes. Running them can be
+useful while porting a scenario, but a failing legacy scenario does not by
+itself describe the autoloop-backed runtime:
 
 ```bash
-# Record a session
-ralph run -c ralph.yml --record-session session.jsonl -p "your prompt"
+# Legacy live-backend scenarios (may incur API cost)
+cargo run -p ralph-e2e -- claude
 
-# Or capture raw CLI output
-claude -p "your prompt" 2>&1 | tee output.txt
-```
-
-### Fixture Format
-
-JSONL with one event per line:
-
-```json
-{"type":"output","content":"Starting task...","timestamp":"2024-01-21T10:00:00Z"}
-{"type":"tool_call","tool":"read_file","args":{"path":"src/lib.rs"}}
-{"type":"tool_result","result":"...contents..."}
-{"type":"output","content":"LOOP_COMPLETE"}
+# Legacy cassette suite; currently not expected to be the v3 gate
+cargo run -p ralph-e2e -- --mock
 ```
 
 ## E2E Tests
 
-End-to-end tests validate against real AI backends.
+The retained harness groups scenarios by backend and capability.
 
 ### Test Tiers
 
@@ -140,7 +100,9 @@ For E2E test development, use isolated config:
 ralph run -c ralph.e2e.yml -p "fix e2e tests"
 ```
 
-This uses separate scratchpad to avoid pollution.
+This retained development config uses a separate Ralph scratchpad path. That
+path is coordination state; autoloop still owns engine iteration state and
+completion.
 
 ## TUI Validation
 
@@ -204,10 +166,10 @@ cargo clippy --all-targets --all-features
 
 ## Pre-commit Hooks
 
-Install hooks:
+Install hooks from a normal clone (the script expects `.git` to be a directory):
 
 ```bash
-./scripts/setup-hooks.sh
+bash ./scripts/setup-hooks.sh
 ```
 
 Hooks run CI-parity Rust checks before each commit:
@@ -219,21 +181,14 @@ Hooks run CI-parity Rust checks before each commit:
 
 ## Testing Human-in-the-Loop (Telegram)
 
-To test custom hats that use `human.interact` without a real Telegram bot, point Ralph at a mock Telegram Bot API server:
+Telegram relay is inactive for autoloop-backed `ralph run` pending
+autoloop#345. Test the retained crate with mocked bot behavior:
 
 ```bash
-# Start a mock server
-docker run -d -p 8081:8081 ghcr.io/nickolay/telegram-test-api:latest
-
-# Point Ralph at it
-export RALPH_TELEGRAM_API_URL="http://localhost:8081"
-export RALPH_TELEGRAM_BOT_TOKEN="test-token"
-
-# Run your loop
-ralph run -p "your prompt" --max-iterations 5
+cargo test -p ralph-telegram
 ```
 
-Or set `RObot.telegram.api_url` in your `ralph.yml`. See the full [Telegram testing guide](../guide/telegram.md#testing-with-a-mock-telegram-server) for details.
+See the [Telegram guide](../guide/telegram.md) for the exact v3 limitation.
 
 ## Testing Best Practices
 
@@ -243,21 +198,24 @@ Or set `RObot.telegram.api_url` in your `ralph.yml`. See the full [Telegram test
 cargo test  # Always run before declaring done
 ```
 
-### 2. Prefer Smoke Tests
+### 2. Prefer Runtime Integration Tests
 
-For new features, create replay fixtures rather than relying on live APIs.
+Exercise real v3 entry points and autoloop adapter contracts rather than
+source-only assertions or old replay fixtures.
 
-### 3. Use E2E for Integration
+### 3. Treat Legacy E2E as Inventory
 
-E2E tests are expensive but catch integration issues.
+Use the GA-readiness R-matrix to choose replacement coverage. Do not make the
+legacy cassette suite a v3 gate.
 
 ### 4. Validate TUI Changes
 
 After modifying `ralph-tui`, use TUI validation.
 
-### 5. Keep Fixtures Updated
+### 5. Keep Documented Gates Current
 
-When behavior changes, update corresponding fixtures.
+When runtime contracts change, update the focused crate tests and the
+GA-readiness R-matrix.
 
 ## Creating New Tests
 
@@ -272,13 +230,12 @@ fn test_event_parsing() {
 }
 ```
 
-### Smoke Test
+### Integration Test
 
-1. Record session: `--record-session fixture.jsonl`
-2. Place in `tests/fixtures/`
-3. Add test case referencing fixture
+Add a Rust integration test under the owning crate's `tests/` directory and
+exercise the real autoloop-backed entry point or adapter contract.
 
-### E2E Scenario
+### Legacy E2E Scenario
 
 ```rust
 pub struct MyScenario;

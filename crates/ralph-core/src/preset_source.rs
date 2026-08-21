@@ -858,48 +858,4 @@ prompt = "be done"
         );
         assert_eq!(inverted.get("r2").unwrap(), &vec!["a.second".to_string()]);
     }
-
-    /// Smoke test against the real autoloop `autocode` preset shipped in the
-    /// sibling workspace. Skipped when the fixtures aren't present so CI on a
-    /// bare clone still passes.
-    #[test]
-    fn autoloop_source_loads_real_autocode_fixture_when_available() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../autoloop/packages/presets/presets/autocode");
-        if !fixture.is_dir() {
-            eprintln!("skip: {} not present", fixture.display());
-            return;
-        }
-
-        let overlay = TomlPresetSource::new()
-            .load(&fixture)
-            .expect("real autocode preset must load");
-
-        let hats = overlay
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("hats".into()))
-            .and_then(Value::as_mapping)
-            .expect("hats mapping populated");
-
-        for expected in ["planner", "builder", "critic", "finalizer"] {
-            assert!(
-                hats.contains_key(Value::String(expected.into())),
-                "missing hat: {expected}"
-            );
-        }
-
-        let event_loop = overlay
-            .as_mapping()
-            .unwrap()
-            .get(Value::String("event_loop".into()))
-            .and_then(Value::as_mapping)
-            .expect("event_loop overlay populated");
-        assert_eq!(
-            event_loop
-                .get(Value::String("completion_promise".into()))
-                .and_then(Value::as_str),
-            Some("task.complete")
-        );
-    }
 }

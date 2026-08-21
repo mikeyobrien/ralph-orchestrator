@@ -191,9 +191,7 @@ impl LoopRegistry {
 
     /// Gets a loop entry by ID.
     pub fn get(&self, id: &str) -> Result<Option<LoopEntry>, RegistryError> {
-        self.with_lock(|data| {
-            data.loops.iter().find(|e| e.id == id).cloned()
-        })
+        self.with_lock(|data| data.loops.iter().find(|e| e.id == id).cloned())
     }
 
     /// Lists all active loops (after cleaning stale entries).
@@ -235,12 +233,8 @@ impl LoopRegistry {
 
         let file = crate::utils::open_read_write(&self.registry_path)?;
 
-        let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
-            RegistryError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("flock failed: {}", errno),
-            ))
-        })?;
+        let flock = Flock::lock(file, FlockArg::LockExclusive)
+            .map_err(|(_, errno)| RegistryError::Io(crate::utils::flock_io_error(errno)))?;
 
         let mut data = self.read_data_from_file(&flock)?;
 

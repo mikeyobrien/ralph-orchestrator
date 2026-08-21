@@ -1,10 +1,11 @@
 # Wave Review: Parallel Specialized Code Review
-# Pattern: Dispatch specialized review perspectives as a wave, synthesize findings
+# Pattern: One review event routes to three declarative autoloop reviewer branches,
+# then aggregate waits for all findings before synthesis.
 #
 # 3 Hats:
-# - Coordinator: Reads the prompt and dispatches specialized reviewers as a wave
-# - Reviewer: Specialized reviewer running in parallel (concurrency: 3)
-# - Synthesizer: Aggregates findings from all reviewers into final report
+# - Coordinator: Records the review scope and emits one review event
+# - Reviewer: Three autoloop-managed branches, selected by [branch i/N]
+# - Synthesizer: Waits for every branch and combines their findings
 #
 # Usage:
 #   ralph run --hats presets/wave-review.yml --prompt "Review the authentication module"
@@ -28,34 +29,27 @@ core:
 hats:
   coordinator:
     name: "📋 Coordinator"
-    description: "Reads the review scope and dispatches specialized reviewers as a wave."
+    description: "Records the review scope and starts declarative reviewer branches."
     triggers: ["review.start"]
     publishes: ["review.perspective"]
     instructions: |
-      ## COORDINATOR MODE — Dispatch Specialized Reviewers
+      ## COORDINATOR MODE — Scope the Review
 
-      Analyze the prompt to determine what to review, then dispatch specialized
-      review perspectives as a wave. Each payload should describe the reviewer's
-      specialty and what to focus on.
+      Analyze the prompt to determine exactly what should be reviewed. The
+      reviewer role's declarative concurrency starts three specialized branches
+      automatically when you publish one review.perspective event.
 
       ### Process
-      1. Read the prompt to understand review scope
-      2. Identify what files and areas are involved
-      3. Dispatch specialized reviewers as a wave:
-
-      ```bash
-      ralph wave emit review.perspective --payloads \
-        "ROLE: Rust Reviewer. Focus on idiomatic Rust, ownership/borrowing correctness, error handling with Result/Option, unsafe usage, performance (allocations, cloning), and Clippy-level issues. Review all .rs files in scope." \
-        "ROLE: Frontend Reviewer. Focus on React component patterns, accessibility (a11y), CSS/Tailwind usage, state management, bundle size impact, and browser compatibility. Review all frontend code in scope." \
-        "ROLE: Documentation Reviewer. Focus on README accuracy, doc comment coverage, API documentation completeness, example correctness, changelog entries, and user-facing messaging. Review all docs and comments in scope."
-      ```
+      1. Read the prompt to understand the review scope
+      2. Identify the files, components, and user-visible behavior involved
+      3. Write concise scope notes to `.ralph/agent/review-scope.md`
+      4. Use the event tool from the live harness instructions to publish exactly
+         one review.perspective event summarizing the scope file you wrote
 
       ### Constraints
-      - Always dispatch at least 2 specialized reviewers
-      - Each payload must clearly state the reviewer's ROLE and FOCUS area
-      - Tailor the specialties to the code being reviewed
-      - You may substitute or add specialties (e.g., Security, Database, API Design) based on what's relevant
-      - IMPORTANT: You MUST use `ralph wave emit` to dispatch reviewers. Do NOT use the Agent tool or any other parallelism mechanism. The wave system handles parallel execution.
+      - Do not launch reviewers or parallel workers yourself
+      - Publish exactly one review.perspective event
+      - Keep the scope factual; the reviewer branches own the findings
 
   reviewer:
     name: "🔍 Reviewer"
@@ -67,23 +61,33 @@ hats:
     instructions: |
       ## REVIEWER MODE — Specialized Review
 
-      You are a specialized code reviewer. Your payload describes your ROLE and
-      FOCUS area. Review the codebase strictly from that perspective.
+      You are one branch of a declarative three-way review. Your objective starts
+      with `[branch i/N]`. Use i to select exactly one specialty from this list:
+      1. Rust/backend — correctness, error handling, safety, performance, and tests
+      2. Frontend/a11y — component behavior, accessibility, state, CSS, and browsers
+      3. Docs/API — public contracts, documentation, examples, and user messaging
 
       ### Process
-      1. Read your assigned role and focus area from the event payload
-      2. Identify files relevant to your specialty
-      3. Review thoroughly from your expert perspective
-      4. Publish structured findings
+      1. Read `.ralph/agent/review-scope.md`
+      2. Select the i-th specialty from the fixed list above
+      3. Identify files relevant to that specialty and review them thoroughly
+      4. Use the event tool from the live harness instructions to publish one
+         review.done event with structured findings
 
-      ### Output Format
-      Publish your findings:
-      ```bash
-      ralph emit review.done "## [Your Role]\n\n### Critical\n- ...\n\n### Warnings\n- ...\n\n### Suggestions\n- ..."
-      ```
+      ### Findings Format
+      ## [Specialty]
+
+      ### Critical
+      - ...
+
+      ### Warnings
+      - ...
+
+      ### Suggestions
+      - ...
 
       ### Constraints
-      - Stay in your lane: only review from your assigned perspective
+      - Stay in your lane: review only from your selected perspective
       - Be specific: cite file paths and line numbers
       - Distinguish critical issues from nice-to-haves
       - If your specialty has no relevant code in scope, say so briefly
@@ -112,7 +116,7 @@ hats:
       3. Note where multiple reviewers flagged the same area
       4. Identify cross-cutting themes
       5. Write the report to `.ralph/agent/review-report.md`
-      6. Publish review.complete
+      6. Use the event tool from the live harness instructions to publish review.complete
 
       ### Report Format
       ```markdown

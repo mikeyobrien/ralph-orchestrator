@@ -16,7 +16,7 @@ use crate::handoff::{HandoffError, HandoffWriter};
 use crate::loop_context::LoopContext;
 use crate::task_store::TaskStore;
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Result of the landing sequence.
 #[derive(Debug, Clone)]
@@ -119,7 +119,7 @@ impl LandingHandler {
         let workspace = self.context.workspace();
         let loop_id = self.context.loop_id().unwrap_or("primary").to_string();
 
-        info!(loop_id = %loop_id, "Beginning landing sequence");
+        debug!(loop_id = %loop_id, "Beginning landing sequence");
 
         // Step 1: Verify task state
         let open_tasks = self.verify_tasks();
@@ -137,7 +137,7 @@ impl LandingHandler {
             match auto_commit_changes(workspace, &loop_id) {
                 Ok(result) => {
                     if result.committed {
-                        info!(
+                        debug!(
                             loop_id = %loop_id,
                             commit = ?result.commit_sha,
                             files = result.files_staged,
@@ -184,12 +184,11 @@ impl LandingHandler {
             let writer = HandoffWriter::new(self.context.clone());
             match writer.write(prompt) {
                 Ok(result) => {
-                    info!(
+                    debug!(
                         loop_id = %loop_id,
-                        path = %result.path.display(),
                         completed = result.completed_tasks,
                         open = result.open_tasks,
-                        "Generated handoff file"
+                        "Generated handoff file in Ralph state"
                     );
                     result.path
                 }

@@ -134,8 +134,7 @@ pub fn format_duration(duration: Duration) -> String {
 /// On Unix, returns a single empty extension (executables have no required extension).
 pub fn executable_extensions() -> Vec<OsString> {
     if cfg!(windows) {
-        let exts =
-            std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+        let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
         exts.split(';')
             .filter(|ext| !ext.trim().is_empty())
             .map(|ext| OsString::from(ext.trim().to_string()))
@@ -168,13 +167,27 @@ pub fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+/// Converts a flock errno into an `io::Error`.
+#[cfg(unix)]
+pub fn flock_io_error(errno: nix::errno::Errno) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, format!("flock failed: {}", errno))
+}
+
+/// Returns `true` if the errno indicates the lock is held by another process.
+#[cfg(unix)]
+pub fn is_lock_contention(errno: nix::errno::Errno) -> bool {
+    errno == nix::errno::Errno::EWOULDBLOCK || errno == nix::errno::Errno::EAGAIN
+}
+
 /// Clones a usable `File` handle from a `nix::fcntl::Flock`.
 ///
 /// `Flock` doesn't expose the inner `File` directly, so we duplicate the
 /// file descriptor to obtain an independent handle that can be seeked and
 /// read/written while the lock is held.
 #[cfg(unix)]
-pub fn clone_file_from_flock(flock: &nix::fcntl::Flock<std::fs::File>) -> io::Result<std::fs::File> {
+pub fn clone_file_from_flock(
+    flock: &nix::fcntl::Flock<std::fs::File>,
+) -> io::Result<std::fs::File> {
     use std::os::fd::AsFd;
     let owned_fd = flock
         .as_fd()
@@ -202,9 +215,12 @@ pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
 }
 
 /// Serializes a value as JSON and writes it as a single JSONL line.
-pub fn write_jsonl_line(writer: &mut impl std::io::Write, value: &impl serde::Serialize) -> io::Result<()> {
-    let json = serde_json::to_string(value)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+pub fn write_jsonl_line(
+    writer: &mut impl std::io::Write,
+    value: &impl serde::Serialize,
+) -> io::Result<()> {
+    let json =
+        serde_json::to_string(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     writeln!(writer, "{}", json)
 }
 

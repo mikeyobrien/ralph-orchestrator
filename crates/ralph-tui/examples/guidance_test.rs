@@ -19,8 +19,10 @@ async fn main() -> anyhow::Result<()> {
     let test_dir = PathBuf::from(home).join(".ralph-guidance-test");
     std::fs::create_dir_all(&test_dir)?;
     let events_path = test_dir.join("events.jsonl");
+    let urgent_steer_path = test_dir.join("urgent-steer.json");
     // Clean previous test data
     let _ = std::fs::remove_file(&events_path);
+    let _ = std::fs::remove_file(&urgent_steer_path);
 
     // Create termination channel
     let (_terminated_tx, terminated_rx) = tokio::sync::watch::channel(false);
@@ -28,7 +30,8 @@ async fn main() -> anyhow::Result<()> {
     // Build TUI
     let tui = Tui::new()
         .with_termination_signal(terminated_rx)
-        .with_events_path(events_path.clone());
+        .with_events_path(events_path.clone())
+        .with_urgent_steer_path(urgent_steer_path.clone());
 
     let state = tui.state();
 

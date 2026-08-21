@@ -40,6 +40,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 futures.workspace = true
 regex.workspace = true
+sha2.workspace = true
 keyring.workspace = true
 
 # For raw mode handling in PTY mode
@@ -66,6 +67,11 @@ mimalloc = { version = "0.1", default-features = false }
 # For Unix process group and signal handling
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
+
+[dev-dependencies]
+insta = { version = "1.40", features = ["filters"] }
+ralph-core = { workspace = true, features = ["test-support"] }
+vt100.workspace = true
 
 [[example]]
 name = "calculator"

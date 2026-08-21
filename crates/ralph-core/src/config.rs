@@ -451,7 +451,7 @@ impl RalphConfig {
                 value = mi,
                 "Normalizing v1 field"
             );
-            self.event_loop.max_iterations = mi;
+            self.event_loop.max_iterations = Some(mi);
             normalized_count += 1;
         }
 
@@ -511,6 +511,13 @@ impl RalphConfig {
     /// Returns a list of warnings that should be displayed to the user.
     pub fn validate(&self) -> Result<Vec<ConfigWarning>, ConfigError> {
         let mut warnings = Vec::new();
+
+        // Hard validation must run before warning suppression.
+        if self.core.engine != "autoloop" {
+            return Err(ConfigError::InvalidEngine {
+                engine: self.core.engine.clone(),
+            });
+        }
 
         // Skip all warnings if suppressed
         if self.suppress_warnings {
@@ -590,6 +597,12 @@ impl RalphConfig {
 
         // Validate RObot config
         self.robot.validate()?;
+        if self.robot.enabled {
+            warnings.push(ConfigWarning::DeferredFeature {
+                field: "RObot.enabled".to_string(),
+                message: ROBOT_HITL_INACTIVE_WARNING.to_string(),
+            });
+        }
 
         // Validate hooks config semantics (v1 guardrails)
         self.validate_hooks()?;
@@ -866,6 +879,9 @@ impl std::fmt::Display for ConfigWarning {
     }
 }
 
+/// Canonical warning shown when RObot is enabled with the autoloop engine.
+pub const ROBOT_HITL_INACTIVE_WARNING: &str = "Telegram HITL relay is INACTIVE under the autoloop engine (pending autoloop#345): bot commands/status work, but agent questions are not relayed.";
+
 /// Event loop configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventLoopConfig {
@@ -881,8 +897,11 @@ pub struct EventLoopConfig {
     pub completion_promise: String,
 
     /// Maximum number of iterations before timeout.
-    #[serde(default = "default_max_iterations")]
-    pub max_iterations: u32,
+    ///
+    /// `None` preserves that the user did not configure this value, allowing an
+    /// explicit autoloop preset to own its iteration budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u32>,
 
     /// Maximum runtime in seconds.
     #[serde(default = "default_max_runtime")]
@@ -999,13 +1018,20 @@ fn default_max_failures() -> u32 {
     5
 }
 
+impl EventLoopConfig {
+    /// Returns the configured iteration budget or Ralph's generated-preset default.
+    pub fn effective_max_iterations(&self) -> u32 {
+        self.max_iterations.unwrap_or_else(default_max_iterations)
+    }
+}
+
 impl Default for EventLoopConfig {
     fn default() -> Self {
         Self {
             prompt: None,
             prompt_file: default_prompt_file(),
             completion_promise: default_completion_promise(),
-            max_iterations: default_max_iterations(),
+            max_iterations: None,
             max_runtime_seconds: default_max_runtime(),
             max_cost_usd: None,
             max_consecutive_failures: default_max_failures(),
@@ -1051,10 +1077,8 @@ pub struct CoreConfig {
     #[serde(skip)]
     pub workspace_root: std::path::PathBuf,
 
-    /// Orchestration engine selector. As of the v3 cutover the autoloop runtime
-    /// is the sole engine; the in-house event loop has been removed. This field
-    /// is retained for config compatibility but no longer switches engines —
-    /// every run drives autoloop regardless of its value.
+    /// Orchestration engine selector. The only valid value is `autoloop` because
+    /// the in-house event loop was removed in v3.
     #[serde(default = "default_engine")]
     pub engine: String,
 
@@ -1070,8 +1094,6 @@ fn default_specs_dir() -> String {
 }
 
 fn default_engine() -> String {
-    // v3: autoloop is the sole orchestration engine. The in-house event loop was
-    // deleted; this field is retained for config compatibility but is inert.
     "autoloop".to_string()
 }
 
@@ -2172,6 +2194,11 @@ pub enum ConfigError {
     InvalidCompletionPromise,
 
     #[error(
+        "Invalid core.engine '{engine}': the in-house engine was removed in v3; remove the field or set autoloop."
+    )]
+    InvalidEngine { engine: String },
+
+    #[error(
         "Custom backend requires a command.\nFix: set 'cli.command' in your config (or run `ralph init --backend custom`).\nSee: docs/reference/troubleshooting.md#custom-backend-command"
     )]
     CustomBackendRequiresCommand,
@@ -2231,11 +2258,24 @@ mod tests {
         let config = RalphConfig::default();
         // Default config has no custom hats (uses default planner+builder)
         assert!(config.hats.is_empty());
-        assert_eq!(config.event_loop.max_iterations, 100);
+        assert_eq!(config.event_loop.max_iterations, None);
+        assert_eq!(config.event_loop.effective_max_iterations(), 100);
         assert!(!config.verbose);
         assert!(!config.features.preflight.enabled);
         assert!(!config.features.preflight.strict);
         assert!(config.features.preflight.skip.is_empty());
+    }
+
+    #[test]
+    fn max_iterations_tracks_whether_yaml_set_it() {
+        let unset: RalphConfig = serde_yaml::from_str("event_loop: {}\n").unwrap();
+        assert_eq!(unset.event_loop.max_iterations, None);
+        assert_eq!(unset.event_loop.effective_max_iterations(), 100);
+
+        let explicit: RalphConfig =
+            serde_yaml::from_str("event_loop:\n  max_iterations: 7\n").unwrap();
+        assert_eq!(explicit.event_loop.max_iterations, Some(7));
+        assert_eq!(explicit.event_loop.effective_max_iterations(), 7);
     }
 
     #[test]
@@ -2357,9 +2397,10 @@ verbose: true
 "#;
         let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
 
-        // Before normalization, v2 fields have defaults
+        // Before normalization, the v2 field remains unset.
         assert_eq!(config.cli.backend, "claude"); // default
-        assert_eq!(config.event_loop.max_iterations, 100); // default
+        assert_eq!(config.event_loop.max_iterations, None);
+        assert_eq!(config.event_loop.effective_max_iterations(), 100);
 
         // Normalize v1 -> v2
         config.normalize();
@@ -2368,7 +2409,7 @@ verbose: true
         assert_eq!(config.cli.backend, "gemini");
         assert_eq!(config.event_loop.prompt_file, "TASK.md");
         assert_eq!(config.event_loop.completion_promise, "RALPH_DONE");
-        assert_eq!(config.event_loop.max_iterations, 75);
+        assert_eq!(config.event_loop.max_iterations, Some(75));
         assert_eq!(config.event_loop.max_runtime_seconds, 7200);
         assert_eq!(config.event_loop.max_cost_usd, Some(10.0));
         assert!(config.verbose);
@@ -2396,6 +2437,48 @@ agent_priority: [gemini, claude, codex]
                 "opencode", "pi", "roo"
             ]
         );
+    }
+
+    #[test]
+    fn core_engine_rejects_removed_ralph_engine() {
+        let config: RalphConfig = serde_yaml::from_str("core:\n  engine: ralph\n").unwrap();
+
+        let error = config.validate().unwrap_err();
+
+        assert!(matches!(
+            error,
+            ConfigError::InvalidEngine { ref engine } if engine == "ralph"
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Invalid core.engine 'ralph': the in-house engine was removed in v3; remove the field or set autoloop."
+        );
+    }
+
+    #[test]
+    fn core_engine_accepts_autoloop() {
+        let config: RalphConfig = serde_yaml::from_str("core:\n  engine: autoloop\n").unwrap();
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn core_engine_accepts_unset_default() {
+        let config: RalphConfig = serde_yaml::from_str("{}\n").unwrap();
+
+        assert_eq!(config.core.engine, "autoloop");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn core_engine_validation_is_not_suppressed() {
+        let config: RalphConfig =
+            serde_yaml::from_str("_suppress_warnings: true\ncore:\n  engine: ralph\n").unwrap();
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidEngine { ref engine }) if engine == "ralph"
+        ));
     }
 
     #[test]
@@ -3596,6 +3679,39 @@ RObot:
 
         // Validation should pass
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_robot_enabled_warns_that_autoloop_hitl_is_inactive() {
+        let yaml = r#"
+RObot:
+  enabled: true
+  timeout_seconds: 300
+  telegram:
+    bot_token: "123456:ABC-DEF"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let warnings = config.validate().unwrap();
+
+        assert!(warnings.iter().any(|warning| {
+            let warning = warning.to_string();
+            warning.contains("Telegram HITL relay is INACTIVE under the autoloop engine")
+                && warning.contains("autoloop#345")
+                && warning.contains("bot commands/status work")
+                && warning.contains("agent questions are not relayed")
+        }));
+    }
+
+    #[test]
+    fn test_robot_disabled_does_not_warn_that_autoloop_hitl_is_inactive() {
+        let config: RalphConfig = serde_yaml::from_str("RObot:\n  enabled: false\n").unwrap();
+        let warnings = config.validate().unwrap();
+
+        assert!(!warnings.iter().any(|warning| {
+            warning
+                .to_string()
+                .contains("Telegram HITL relay is INACTIVE")
+        }));
     }
 
     #[test]

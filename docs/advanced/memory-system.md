@@ -5,7 +5,7 @@
 
 ## Overview
 
-Ralph's memory system provides persistent learning across orchestration sessions, stored in `.agent/memories.md`.
+Ralph's memory system provides persistent learning across orchestration sessions, stored in `.ralph/agent/memories.md`.
 
 ## Memory Types
 
@@ -19,8 +19,13 @@ Ralph's memory system provides persistent learning across orchestration sessions
 ```yaml
 memories:
   enabled: true  # Default
-  path: .agent/memories.md
+  inject: auto
+  budget: 2000   # Maximum tokens to inject; 0 means unlimited
 ```
+
+The storage path is fixed at `.ralph/agent/memories.md`; `memories` has no
+configurable `path` key. The other supported key is `filter`, which controls
+which memories are injected.
 
 ## See Also
 

@@ -50,7 +50,9 @@ fn stdout_summary_and_journal_agree_for_a_real_run() {
         return;
     }
     let Some(autoloop_root) = find_autoloop_root() else {
-        eprintln!("skip: autoloop checkout not found (set AUTOLOOP_ROOT or place a sibling 'autoloop')");
+        eprintln!(
+            "skip: autoloop checkout not found (set AUTOLOOP_ROOT or place a sibling 'autoloop')"
+        );
         return;
     };
     let bin = autoloop_root.join("bin/autoloop");
@@ -84,7 +86,10 @@ fn stdout_summary_and_journal_agree_for_a_real_run() {
         }
     }
     fs::write(work.join("index.html"), "<p>Hello</p>\n").expect("write index");
-    let _ = Command::new("git").args(["add", "."]).current_dir(work).status();
+    let _ = Command::new("git")
+        .args(["add", "."])
+        .current_dir(work)
+        .status();
     let _ = Command::new("git")
         .args(["commit", "-q", "-m", "init"])
         .current_dir(work)
@@ -143,7 +148,10 @@ fn stdout_summary_and_journal_agree_for_a_real_run() {
     // The live-state view must also reflect a completed run.
     let state = tailer.state();
     assert!(state.completed, "live state should mark the run completed");
-    assert_eq!(state.stop_reason.as_deref(), Some(stdout_summary.stop_reason.as_str()));
+    assert_eq!(
+        state.stop_reason.as_deref(),
+        Some(stdout_summary.stop_reason.as_str())
+    );
 
     eprintln!(
         "parity ok: run_id={} iterations={} stop_reason={}",

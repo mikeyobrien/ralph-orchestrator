@@ -5,7 +5,9 @@
 
 ## Overview
 
-Ralph's task system provides runtime work tracking through `.agent/tasks.jsonl`, replacing the legacy scratchpad mechanism.
+Ralph's task system provides runtime work tracking through
+`.ralph/agent/tasks.jsonl`. It is independent of `core.scratchpad` and does
+not replace it.
 
 ## Task Lifecycle
 
@@ -19,15 +21,20 @@ Ralph's task system provides runtime work tracking through `.agent/tasks.jsonl`,
 ```yaml
 tasks:
   enabled: true  # Default
-  path: .agent/tasks.jsonl
+  path: .ralph/agent/tasks.jsonl
 ```
+
+Under v3, these are Ralph coordination records. Autoloop's canonical task
+store uses a different format and is the only task store in the engine's
+completion gate; Ralph may only warn about its own open records after autoloop
+completes.
 
 ## CLI Commands
 
 ```bash
-ralph task list              # Show current tasks
-ralph task add "description" # Add new task
-ralph task complete <id>     # Mark task complete
+ralph tools task list              # Show current tasks
+ralph tools task add "description" # Add a runtime task
+ralph tools task close <id>        # Close a completed task
 ```
 
 ## See Also

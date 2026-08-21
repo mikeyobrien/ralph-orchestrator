@@ -7,26 +7,15 @@
 //! Skips when node or the autoloop checkout is absent.
 
 use ralph_adapters::{
-    AutoloopBin, AutoloopRunner, first_pending_ask, parse_events,
-    events_run_result,
+    AutoloopBin, AutoloopRunner, events_run_result, first_pending_ask, parse_events,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn find_autoloop_root() -> Option<PathBuf> {
-    if let Some(root) = std::env::var_os("AUTOLOOP_ROOT") {
-        let p = PathBuf::from(root);
-        if p.join("bin/autoloop").is_file() {
-            return Some(p);
-        }
-    }
-    for ancestor in Path::new(env!("CARGO_MANIFEST_DIR")).ancestors() {
-        let candidate = ancestor.join("autoloop");
-        if candidate.join("bin/autoloop").is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    let root = std::env::var_os("AUTOLOOP_ROOT")?;
+    let path = PathBuf::from(root);
+    path.join("bin/autoloop").is_file().then_some(path)
 }
 
 fn which(program: &str) -> Option<PathBuf> {
@@ -130,7 +119,10 @@ fn setup(fixture_name: &str) -> Option<Env> {
         }
     }
     fs::write(work.path().join("index.html"), "<p>hi</p>\n").unwrap();
-    let _ = Command::new("git").args(["add", "."]).current_dir(work.path()).status();
+    let _ = Command::new("git")
+        .args(["add", "."])
+        .current_dir(work.path())
+        .status();
     let _ = Command::new("git")
         .args(["commit", "-q", "-m", "init"])
         .current_dir(work.path())
@@ -146,14 +138,107 @@ fn setup(fixture_name: &str) -> Option<Env> {
     perms.set_mode(0o755);
     fs::set_permissions(&wrapper, perms).unwrap();
 
-    Some(Env { work, bin, preset, wrapper, fixture })
+    Some(Env {
+        work,
+        bin,
+        preset,
+        wrapper,
+        fixture,
+    })
 }
 
 fn runner(env: &Env) -> AutoloopRunner {
     AutoloopRunner::new(&env.preset, "native contract", env.work.path())
         .bin(AutoloopBin::Node(env.bin.clone()))
         .backend(env.wrapper.to_string_lossy().into_owned())
-        .env("MOCK_FIXTURE_PATH", env.fixture.to_string_lossy().into_owned())
+        .env(
+            "MOCK_FIXTURE_PATH",
+            env.fixture.to_string_lossy().into_owned(),
+        )
+}
+
+#[test]
+fn ralph_owned_state_overrides_native_preset_paths() {
+    let Some(env) = setup("routed-event-and-promise.json") else {
+        return;
+    };
+    let owned_root = env.work.path().join(".ralph/autoloop");
+    let agent_root = env.work.path().join(".ralph/agent");
+    std::fs::create_dir_all(&agent_root).unwrap();
+    let ralph_tasks = agent_root.join("tasks.jsonl");
+    let ralph_memory = agent_root.join("memories.md");
+    std::fs::write(&ralph_tasks, "ralph-task-sentinel\n").unwrap();
+    std::fs::write(&ralph_memory, "ralph-memory-sentinel\n").unwrap();
+
+    // The stock native preset explicitly declares core.state_dir plus journal
+    // and memory files under .autoloop. Top-level buildLoopContext consumes CLI
+    // config overrides; environment exports keep nested tools on the same root.
+    std::fs::create_dir_all(&owned_root).unwrap();
+    let events_path = owned_root.join("events.ndjson");
+    let summary = runner(&env)
+        .env(
+            "AUTOLOOP_STATE_DIR",
+            owned_root.to_string_lossy().into_owned(),
+        )
+        .env(
+            "AUTOLOOP_JOURNAL_FILE",
+            owned_root
+                .join("journal.jsonl")
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .env(
+            "AUTOLOOP_MEMORY_FILE",
+            owned_root
+                .join("memory.jsonl")
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .env(
+            "AUTOLOOP_TASKS_FILE",
+            owned_root
+                .join("tasks.jsonl")
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .set_override("core.state_dir", &owned_root.to_string_lossy())
+        .set_override(
+            "core.journal_file",
+            &owned_root.join("journal.jsonl").to_string_lossy(),
+        )
+        .set_override(
+            "core.memory_file",
+            &owned_root.join("memory.jsonl").to_string_lossy(),
+        )
+        .set_override(
+            "core.tasks_file",
+            &owned_root.join("tasks.jsonl").to_string_lossy(),
+        )
+        .events_path(&events_path)
+        .max_iterations(3)
+        .run()
+        .expect("autoloop run with Ralph-owned state should succeed");
+
+    assert_eq!(summary.journal, owned_root.join("journal.jsonl"));
+    assert_eq!(summary.memory, owned_root.join("memory.jsonl"));
+    assert!(summary.journal.is_file());
+    assert!(events_path.is_file());
+    assert!(
+        owned_root.join("runs").join(&summary.run_id).is_dir(),
+        "run-scoped state must resolve beneath the Ralph-owned root"
+    );
+    assert!(
+        !env.work.path().join(".autoloop").exists(),
+        "explicit native preset escaped to a top-level .autoloop"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ralph_tasks).unwrap(),
+        "ralph-task-sentinel\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ralph_memory).unwrap(),
+        "ralph-memory-sentinel\n"
+    );
 }
 
 #[test]
@@ -176,7 +261,9 @@ fn ralph_consumes_the_structured_events_stream() {
     // The resolved `progress` event (routing + outcome) is on the stream — it
     // is NOT in the journal, so this proves native consumption of #30.
     assert!(
-        events.iter().any(|e| e.kind == "progress" && e.outcome.is_some()),
+        events
+            .iter()
+            .any(|e| e.kind == "progress" && e.outcome.is_some()),
         "stream should carry resolved progress events"
     );
 
@@ -219,11 +306,11 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
     let responder_work = work.clone();
     let responder = std::thread::spawn(move || {
         for _ in 0..200 {
-            if let Ok(content) = std::fs::read_to_string(&responder_events) {
-                if let Some(ask) = first_pending_ask(&parse_events(&content)) {
-                    deliver_respond(&responder_work, &ask.run_id, &ask.question_id, answer);
-                    return true;
-                }
+            if let Ok(content) = std::fs::read_to_string(&responder_events)
+                && let Some(ask) = first_pending_ask(&parse_events(&content))
+            {
+                deliver_respond(&responder_work, &ask.run_id, &ask.question_id, answer);
+                return true;
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
@@ -239,7 +326,10 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
         .expect("autoloop run should succeed");
 
     let delivered = responder.join().unwrap();
-    assert!(delivered, "responder should have observed ask.pending and replied");
+    assert!(
+        delivered,
+        "responder should have observed ask.pending and replied"
+    );
 
     // The run completed normally (the ask was answered, not timed out).
     assert!(!summary.stop_reason.is_empty());
@@ -252,8 +342,14 @@ fn ralph_drives_the_hitl_round_trip_via_control_respond() {
         journal.contains(r#""topic": "ask.answered""#),
         "the human response should have been delivered and recorded"
     );
-    assert!(journal.contains(answer), "the answer text should be in the journal");
-    assert!(!journal.contains(r#""topic": "ask.timeout""#), "should not have timed out");
+    assert!(
+        journal.contains(answer),
+        "the answer text should be in the journal"
+    );
+    assert!(
+        !journal.contains(r#""topic": "ask.timeout""#),
+        "should not have timed out"
+    );
 
     eprintln!("hitl round-trip ok: stop_reason={}", summary.stop_reason);
 }

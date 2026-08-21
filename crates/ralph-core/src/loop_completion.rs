@@ -203,7 +203,6 @@ impl LoopCompletionHandler {
 
             info!(
                 loop_id = %loop_id,
-                worktree = %worktree_path,
                 committed = ?landing.as_ref().map(|l| l.committed),
                 "Loop completed and enqueued for auto-merge"
             );
@@ -213,8 +212,7 @@ impl LoopCompletionHandler {
             // Leave worktree for manual handling
             info!(
                 loop_id = %loop_id,
-                worktree = %worktree_path,
-                "Loop completed - worktree preserved for manual merge (--no-auto-merge)"
+                "Loop completed - managed worktree preserved for manual merge (--no-auto-merge)"
             );
 
             Ok(CompletionAction::ManualMerge {
@@ -234,16 +232,12 @@ impl LoopCompletionHandler {
         match handler.land(prompt) {
             Ok(result) => {
                 if result.committed {
-                    info!(
+                    debug!(
                         commit = ?result.commit_sha,
-                        handoff = %result.handoff_path.display(),
-                        "Landing completed with auto-commit"
+                        "Landing completed with auto-commit and Ralph-state handoff"
                     );
                 } else {
-                    debug!(
-                        handoff = %result.handoff_path.display(),
-                        "Landing completed (no changes to commit)"
-                    );
+                    debug!("Landing completed with Ralph-state handoff (no changes to commit)");
                 }
                 Some(result)
             }

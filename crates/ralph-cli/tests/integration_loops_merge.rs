@@ -45,34 +45,7 @@ fn setup_workspace() -> Result<TempDir> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Initialize git repo
-    Command::new("git")
-        .args(["init"])
-        .current_dir(temp_path)
-        .output()?;
-
-    Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output()?;
-
-    Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output()?;
-
-    // Create initial commit
-    fs::write(temp_path.join("README.md"), "# Test Repo")?;
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(temp_path)
-        .output()?;
-    Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(temp_path)
-        .output()?;
-
-    // Create .ralph directory
+    ralph_core::testing::init_test_repo(temp_path, &[]);
     fs::create_dir_all(temp_path.join(".ralph"))?;
 
     Ok(temp_dir)
@@ -102,7 +75,7 @@ fn test_merge_queue_transition_queued_to_merging() -> Result<()> {
     let temp_path = temp_dir.path();
 
     // Given: A loop in "queued" state
-    let ts = chrono::Utc::now().to_rfc3339();
+    let ts = ralph_core::utils::now_rfc3339();
     write_merge_queue_entry(
         temp_path,
         &format!(

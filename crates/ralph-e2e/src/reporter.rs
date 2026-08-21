@@ -29,7 +29,7 @@
 use crate::analyzer::{
     AnalyzedResult, Diagnosis, FailureType, PassedAnalysis, QualityScore, Recommendation, Severity,
 };
-use crate::models::TestResult;
+use crate::models::{SkippedScenario, TestResult};
 use crate::runner::{ProgressEvent, RunResults};
 use chrono::{DateTime, Utc};
 use colored::Colorize;
@@ -194,7 +194,7 @@ impl TerminalReporter {
 
         let passed = results.passed_count();
         let failed = results.failed_count();
-        let skipped = results.skipped_count;
+        let skipped = results.skipped_count();
         let total = results.total_count();
 
         // Determine verdict emoji and color
@@ -468,7 +468,7 @@ mod tests {
                 },
             ],
             duration: Duration::from_secs(8),
-            skipped_count: 0,
+            skipped: vec![],
         }
     }
 
@@ -557,7 +557,7 @@ mod tests {
                 duration: Duration::from_secs(1),
             }],
             duration: Duration::from_secs(1),
-            skipped_count: 0,
+            skipped: vec![],
         };
 
         let reporter = TerminalReporter::new();
@@ -585,7 +585,7 @@ mod tests {
                 duration: Duration::from_secs(1),
             }],
             duration: Duration::from_secs(1),
-            skipped_count: 0,
+            skipped: vec![],
         };
 
         let reporter = TerminalReporter::new();
@@ -662,6 +662,9 @@ pub struct TestReport {
 
     /// Individual test results with analysis.
     pub results: Vec<AnalyzedResultData>,
+
+    /// Scenarios intentionally not executed, with reasons.
+    pub skipped: Vec<SkippedScenario>,
 
     /// Prioritized recommendations.
     pub recommendations: Vec<Recommendation>,
@@ -830,6 +833,9 @@ impl MarkdownReporter {
         // Summary section
         self.write_summary(&mut report, results, analyzed);
 
+        // Skipped scenarios remain visible rather than silently green.
+        self.write_skipped_tests(&mut report, results);
+
         // Failed tests section
         self.write_failed_tests(&mut report, results, analyzed);
 
@@ -893,8 +899,8 @@ impl MarkdownReporter {
         report.push_str("|--------|-------|\n");
         report.push_str(&format!("| ✅ Passed | {} |\n", results.passed_count()));
         report.push_str(&format!("| ❌ Failed | {} |\n", results.failed_count()));
-        if results.skipped_count > 0 {
-            report.push_str(&format!("| ⏭️ Skipped | {} |\n", results.skipped_count));
+        if results.skipped_count() > 0 {
+            report.push_str(&format!("| ⏭️ Skipped | {} |\n", results.skipped_count()));
         }
         report.push('\n');
 
@@ -961,6 +967,23 @@ impl MarkdownReporter {
             ("🟠 Acceptable", acceptable),
             ("🔴 Suboptimal", suboptimal),
         ]
+    }
+
+    fn write_skipped_tests(&self, report: &mut String, results: &RunResults) {
+        if results.skipped.is_empty() {
+            return;
+        }
+
+        report.push_str("## ⏭️ Skipped Tests\n\n");
+        report.push_str("| Test | Tier | Reason |\n");
+        report.push_str("|------|------|--------|\n");
+        for skipped in &results.skipped {
+            report.push_str(&format!(
+                "| {} | {} | {} |\n",
+                skipped.scenario_id, skipped.tier, skipped.reason
+            ));
+        }
+        report.push_str("\n---\n\n");
     }
 
     fn write_failed_tests(
@@ -1149,6 +1172,29 @@ impl MarkdownReporter {
             for result in needs_attention {
                 self.write_passed_test_with_warnings(report, result);
             }
+        }
+
+        // Assertion evidence for successful scenarios. This keeps smoke-test
+        // reports auditable instead of reducing successful runs to a green name.
+        for result in &passed {
+            if result.assertions.is_empty() {
+                continue;
+            }
+            report.push_str(&format!("### ✅ `{}` Assertions\n\n", result.scenario_id));
+            report.push_str("| Assertion | Status | Expected | Actual |\n");
+            report.push_str("|-----------|--------|----------|--------|\n");
+            for assertion in &result.assertions {
+                let status = if assertion.passed {
+                    "✅ PASS"
+                } else {
+                    "❌ FAIL"
+                };
+                report.push_str(&format!(
+                    "| {} | {} | {} | {} |\n",
+                    assertion.name, status, assertion.expected, assertion.actual
+                ));
+            }
+            report.push('\n');
         }
 
         // Optimal tests (collapsed)
@@ -1465,6 +1511,7 @@ impl JsonReporter {
             verdict,
             summary,
             results: result_data,
+            skipped: results.skipped.clone(),
             recommendations,
         }
     }
@@ -1522,7 +1569,7 @@ impl JsonReporter {
             total: results.total_count(),
             passed: results.passed_count(),
             failed: results.failed_count(),
-            skipped: results.skipped_count,
+            skipped: results.skipped_count(),
             quality_breakdown,
             by_tier,
             by_backend,
@@ -1720,7 +1767,7 @@ mod reporter_tests {
         RunResults {
             results: vec![mock_passed_result()],
             duration: Duration::from_secs(12),
-            skipped_count: 0,
+            skipped: vec![],
         }
     }
 
@@ -1728,7 +1775,12 @@ mod reporter_tests {
         RunResults {
             results: vec![mock_passed_result(), mock_failed_result()],
             duration: Duration::from_secs(57),
-            skipped_count: 1,
+            skipped: vec![SkippedScenario {
+                scenario_id: "legacy-skipped".to_string(),
+                scenario_description: "Legacy scenario".to_string(),
+                tier: "Legacy".to_string(),
+                reason: "not supported".to_string(),
+            }],
         }
     }
 
@@ -1821,6 +1873,7 @@ mod reporter_tests {
         assert!(report.contains("All tests passed"));
         assert!(report.contains("✅ Passed | 1"));
         assert!(report.contains("❌ Failed | 0"));
+        assert!(report.contains("Response received | ✅ PASS"));
     }
 
     #[test]
@@ -1834,6 +1887,8 @@ mod reporter_tests {
         assert!(report.contains("✅ Passed | 1"));
         assert!(report.contains("❌ Failed | 1"));
         assert!(report.contains("⏭️ Skipped | 1"));
+        assert!(report.contains("legacy-skipped"));
+        assert!(report.contains("not supported"));
     }
 
     #[test]
@@ -1882,7 +1937,7 @@ mod reporter_tests {
         let results = RunResults {
             results: vec![mock_passed_result()],
             duration: Duration::from_secs(38),
-            skipped_count: 0,
+            skipped: vec![],
         };
         let analyzed = vec![mock_analyzed_with_warnings()];
         let report = reporter.generate(&results, Some(&analyzed));
@@ -1962,10 +2017,12 @@ mod reporter_tests {
 
         let parsed: TestReport = serde_json::from_str(&json).unwrap();
         assert!(!parsed.passed);
-        assert_eq!(parsed.summary.total, 2);
+        assert_eq!(parsed.summary.total, 3);
         assert_eq!(parsed.summary.passed, 1);
         assert_eq!(parsed.summary.failed, 1);
         assert_eq!(parsed.summary.skipped, 1);
+        assert_eq!(parsed.skipped[0].scenario_id, "legacy-skipped");
+        assert_eq!(parsed.skipped[0].reason, "not supported");
     }
 
     #[test]
@@ -2160,6 +2217,7 @@ mod reporter_tests {
             verdict: "All tests passed".to_string(),
             summary: ReportSummary::default(),
             results: vec![],
+            skipped: vec![],
             recommendations: vec![],
         };
 

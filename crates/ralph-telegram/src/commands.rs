@@ -43,12 +43,19 @@ fn parse_command(text: &str) -> (&str, &str) {
 }
 
 fn truncate_with_ellipsis(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
+    let char_count = input.chars().count();
+    if char_count <= max_chars {
         input.to_string()
+    } else if max_chars < 3 {
+        input.chars().take(max_chars).collect()
     } else {
-        let mut truncated: String = input.chars().take(max_chars).collect();
-        truncated.push_str("...");
-        truncated
+        let keep = max_chars - 3;
+        let byte_idx = input
+            .char_indices()
+            .nth(keep)
+            .map(|(idx, _)| idx)
+            .unwrap_or(input.len());
+        format!("{}...", &input[..byte_idx])
     }
 }
 
@@ -63,8 +70,8 @@ fn cmd_help() -> String {
         "/tail — Last 20 events",
         "/model — Show current backend/model",
         "/models — Show configured model options",
-        "/restart — Restart the orchestration loop",
-        "/stop — Stop the orchestration loop",
+        "/restart — Unsupported under the autoloop engine",
+        "/stop — Unsupported under the autoloop engine",
         "/help — This message",
     ]
     .join("\n")
@@ -597,68 +604,16 @@ fn cmd_memories(workspace_root: &Path) -> String {
     lines.join("\n")
 }
 
-/// `/restart` — Request a restart of the orchestration loop.
-///
-/// Writes a signal file (`.ralph/restart-requested`) that the event loop
-/// checks at each iteration boundary. When detected, the loop terminates
-/// and the process exec-replaces itself with the same CLI arguments.
-fn cmd_restart(workspace_root: &Path) -> String {
-    let restart_path = workspace_root.join(".ralph/restart-requested");
-
-    // Check if a loop is actually running
-    let state = match lock_state(workspace_root) {
-        Ok(state) => state,
-        Err(e) => {
-            return format!(
-                "Failed to check lock state: {}",
-                escape_html(&e.to_string())
-            );
-        }
-    };
-    if state != LockState::Active {
-        return "No active loop to restart.".to_string();
-    }
-
-    match std::fs::write(&restart_path, "") {
-        Ok(()) => {
-            "Restart requested. The loop will restart at the next iteration boundary.".to_string()
-        }
-        Err(e) => format!(
-            "Failed to write restart signal: {}",
-            escape_html(&e.to_string())
-        ),
-    }
+/// `/restart` — Report that loop restart is unavailable under autoloop.
+fn cmd_restart(_workspace_root: &Path) -> String {
+    "Restart is NOT supported under the autoloop engine (pending engine restart support). No restart was requested."
+        .to_string()
 }
 
-/// `/stop` — Request a stop of the orchestration loop.
-///
-/// Writes a signal file (`.ralph/stop-requested`) that the event loop
-/// checks at each iteration boundary. When detected, the loop terminates
-/// gracefully with `TerminationReason::Stopped`.
-fn cmd_stop(workspace_root: &Path) -> String {
-    let stop_path = workspace_root.join(".ralph/stop-requested");
-
-    // Check if a loop is actually running
-    let state = match lock_state(workspace_root) {
-        Ok(state) => state,
-        Err(e) => {
-            return format!(
-                "Failed to check lock state: {}",
-                escape_html(&e.to_string())
-            );
-        }
-    };
-    if state != LockState::Active {
-        return "No active loop to stop.".to_string();
-    }
-
-    match std::fs::write(&stop_path, "") {
-        Ok(()) => "Stop requested. The loop will stop at the next iteration boundary.".to_string(),
-        Err(e) => format!(
-            "Failed to write stop signal: {}",
-            escape_html(&e.to_string())
-        ),
-    }
+/// `/stop` — Report that loop stop is unavailable under autoloop.
+fn cmd_stop(_workspace_root: &Path) -> String {
+    "Stop is NOT supported under the autoloop engine (pending engine stop support). No stop was requested."
+        .to_string()
 }
 
 /// `/tail` — Last 20 lines of the current events file.
@@ -1014,24 +969,36 @@ mod tests {
     }
 
     #[test]
-    fn cmd_restart_no_active_loop() {
+    fn cmd_restart_is_unsupported_without_active_loop() {
         let dir = TempDir::new().unwrap();
         setup_workspace(&dir);
+
         let result = cmd_restart(dir.path());
-        assert!(result.contains("No active loop"));
+
+        assert_eq!(
+            result,
+            "Restart is NOT supported under the autoloop engine (pending engine restart support). No restart was requested."
+        );
+        assert!(!dir.path().join(".ralph/restart-requested").exists());
     }
 
     #[test]
-    fn cmd_stop_no_active_loop() {
+    fn cmd_stop_is_unsupported_without_active_loop() {
         let dir = TempDir::new().unwrap();
         setup_workspace(&dir);
+
         let result = cmd_stop(dir.path());
-        assert!(result.contains("No active loop"));
+
+        assert_eq!(
+            result,
+            "Stop is NOT supported under the autoloop engine (pending engine stop support). No stop was requested."
+        );
+        assert!(!dir.path().join(".ralph/stop-requested").exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn cmd_restart_writes_signal_file() {
+    fn cmd_restart_reports_unsupported_without_writing_signal_file() {
         use nix::fcntl::{Flock, FlockArg};
 
         let dir = TempDir::new().unwrap();
@@ -1054,16 +1021,16 @@ mod tests {
         let _flock = Flock::lock(file, FlockArg::LockExclusiveNonblock).unwrap();
 
         let result = cmd_restart(dir.path());
-        assert!(result.contains("Restart requested"));
-
-        // Verify signal file was created
-        let restart_path = dir.path().join(".ralph/restart-requested");
-        assert!(restart_path.exists());
+        assert_eq!(
+            result,
+            "Restart is NOT supported under the autoloop engine (pending engine restart support). No restart was requested."
+        );
+        assert!(!dir.path().join(".ralph/restart-requested").exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn cmd_stop_writes_signal_file() {
+    fn cmd_stop_reports_unsupported_without_writing_signal_file() {
         use nix::fcntl::{Flock, FlockArg};
 
         let dir = TempDir::new().unwrap();
@@ -1086,11 +1053,11 @@ mod tests {
         let _flock = Flock::lock(file, FlockArg::LockExclusiveNonblock).unwrap();
 
         let result = cmd_stop(dir.path());
-        assert!(result.contains("Stop requested"));
-
-        // Verify signal file was created
-        let stop_path = dir.path().join(".ralph/stop-requested");
-        assert!(stop_path.exists());
+        assert_eq!(
+            result,
+            "Stop is NOT supported under the autoloop engine (pending engine stop support). No stop was requested."
+        );
+        assert!(!dir.path().join(".ralph/stop-requested").exists());
     }
 
     #[test]
@@ -1108,15 +1075,15 @@ mod tests {
     }
 
     #[test]
-    fn cmd_help_lists_restart() {
+    fn cmd_help_marks_restart_unsupported() {
         let result = cmd_help();
-        assert!(result.contains("/restart"));
+        assert!(result.contains("/restart — Unsupported under the autoloop engine"));
     }
 
     #[test]
-    fn cmd_help_lists_stop() {
+    fn cmd_help_marks_stop_unsupported() {
         let result = cmd_help();
-        assert!(result.contains("/stop"));
+        assert!(result.contains("/stop — Unsupported under the autoloop engine"));
     }
 
     #[test]

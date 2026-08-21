@@ -71,10 +71,7 @@ fn git_ok(output: Output) -> Result<Output, GitOpsError> {
 /// Like [`git_output`] but returns `Err` instead of `None` on failure,
 /// including the stderr (or stdout if stderr is empty) in the error message.
 pub fn git_output_strict(path: &Path, args: &[&str]) -> Result<String, GitOpsError> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()?;
+    let output = Command::new("git").args(args).current_dir(path).output()?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -278,8 +275,13 @@ pub fn clean_stashes(path: impl AsRef<Path>) -> Result<usize, GitOpsError> {
         return Ok(0);
     }
 
-    git_ok(Command::new("git").args(["stash", "clear"]).current_dir(path).output()?)
-        .map_err(|e| e.with_context("Failed to clear stashes"))?;
+    git_ok(
+        Command::new("git")
+            .args(["stash", "clear"])
+            .current_dir(path)
+            .output()?,
+    )
+    .map_err(|e| e.with_context("Failed to clear stashes"))?;
 
     Ok(stash_count)
 }
@@ -300,8 +302,13 @@ pub fn prune_remote_refs(path: impl AsRef<Path>) -> Result<(), GitOpsError> {
         return Ok(());
     }
 
-    git_ok(Command::new("git").args(["remote", "prune", "origin"]).current_dir(path).output()?)
-        .map_err(|e| e.with_context("Failed to prune remote refs"))?;
+    git_ok(
+        Command::new("git")
+            .args(["remote", "prune", "origin"])
+            .current_dir(path)
+            .output()?,
+    )
+    .map_err(|e| e.with_context("Failed to prune remote refs"))?;
 
     Ok(())
 }

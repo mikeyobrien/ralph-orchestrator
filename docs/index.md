@@ -5,7 +5,7 @@
 **Hat-based orchestration framework that keeps AI agents in a loop until the task is done.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/mikeyobrien/ralph-orchestrator/blob/main/LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75+-orange)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org/)
 [![Build](https://img.shields.io/github/actions/workflow/status/mikeyobrien/ralph-orchestrator/ci.yml?branch=main&label=CI)](https://github.com/mikeyobrien/ralph-orchestrator/actions)
 
 > "Me fail English? That's unpossible!" - Ralph Wiggum
@@ -112,17 +112,19 @@ Ralph iterates until it outputs `LOOP_COMPLETE` or hits the iteration limit.
 
 ## Architecture
 
-Ralph is organized as a Cargo workspace with seven crates:
+Ralph is organized as a Cargo workspace with nine crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `ralph-proto` | Protocol types: Event, Hat, Topic |
-| `ralph-core` | Business logic: EventLoop, Config |
-| `ralph-adapters` | CLI backend integrations |
-| `ralph-tui` | Terminal UI with ratatui |
-| `ralph-cli` | Binary entry point |
-| `ralph-e2e` | End-to-end testing |
-| `ralph-bench` | Benchmarking |
+| `ralph-cli` | CLI/TUI frontend, autoloop launch, completion and merge coordination |
+| `ralph-core` | Shared configuration and coordination state |
+| `ralph-adapters` | Autoloop process, journal, event-stream, and summary adapters |
+| `ralph-tui` | Ratatui observation UI |
+| `ralph-proto` | Shared protocol definitions |
+| `ralph-telegram` | Retained Telegram components; not connected to `ralph run` under v3 pending autoloop#345 |
+| `ralph-e2e` | Legacy E2E scenario inventory and test framework |
+| `ralph-bench` | Benchmarking support |
+| `ralph-api` | Rust RPC API used by the web dashboard |
 
 ## Community
 

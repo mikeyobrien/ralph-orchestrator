@@ -1,6 +1,8 @@
 # Memories & Tasks
 
-Ralph uses two complementary systems for persistent state: memories for cross-session learning, and tasks for runtime work tracking.
+Ralph exposes memories for cross-session learning and tasks for runtime work
+tracking. These features and `core.scratchpad` are independently configurable.
+Autoloop keeps separate canonical run state and owns engine completion.
 
 ## Overview
 
@@ -9,7 +11,8 @@ Ralph uses two complementary systems for persistent state: memories for cross-se
 | **Memories** | `.ralph/agent/memories.md` | Accumulated wisdom across sessions |
 | **Tasks** | `.ralph/agent/tasks.jsonl` | Runtime work items |
 
-Both are enabled by default and work together to replace the legacy scratchpad.
+Both are enabled by default. They do not enable, disable, or replace
+`core.scratchpad`.
 
 ## Memories
 
@@ -117,11 +120,11 @@ ralph tools task close task-123
 
 ### Task Workflow
 
-1. Ralph creates tasks from the prompt/plan
-2. Tasks are worked in priority order
-3. Dependencies are respected (blocked tasks wait)
-4. Completed tasks are closed
-5. Loop ends when no tasks remain
+Ralph task records can be created, prioritized, blocked, and closed through the
+CLI. Under v3 they are coordination/observation records: their JSONL format is
+incompatible with autoloop's task format, so they do not control when the
+engine stops. Autoloop's canonical task store and completion event determine
+engine completion.
 
 ### Task Closure Rules
 
@@ -150,20 +153,26 @@ ralph tools task close task-123  # No tests run!
 | **When created** | When something is learned | When work is identified |
 | **When removed** | Rarely | When completed |
 
-## Legacy Scratchpad Mode
+## Independent Configuration
 
-To disable memories and tasks (legacy mode):
+Disabling memories or Ralph tasks does not select a special scratchpad mode:
 
 ```yaml
 memories:
   enabled: false
 tasks:
   enabled: false
+core:
+  scratchpad:
+    enabled: true
+    path: .ralph/agent/scratchpad.md
 ```
 
-In this mode, `.agent/scratchpad.md` is used for all state.
-
-In hat-based configurations, scratchpad is configurable per-hat. Each hat can set a custom scratchpad path, disable scratchpad entirely, or inherit the global `core.scratchpad` setting. See [Per-Hat Scratchpads](../guide/configuration.md#with-per-hat-scratchpads) for details.
+`core.scratchpad` is retained configuration and defaults to enabled. The v3
+autoloop harness owns cross-iteration engine state; do not use combinations of
+these Ralph flags as a completion or continuity mode switch. Per-hat
+scratchpad fields remain accepted by the Ralph config model but are not
+translated into the generated autoloop topology.
 
 ## File Formats
 

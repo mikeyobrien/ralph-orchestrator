@@ -10,7 +10,10 @@
 //! [`AutoloopEvent`] keyed by `kind` — every field ralph consumes is optional,
 //! so unknown event types decode losslessly and forward-compatibly.
 
+use std::path::PathBuf;
+
 use serde::Deserialize;
+use thiserror::Error;
 
 /// One decoded `LoopEvent` line. `kind` is the event `type`; the remaining
 /// fields are present only for the event types that carry them.
@@ -20,6 +23,10 @@ pub struct AutoloopEvent {
     pub kind: String,
     #[serde(rename = "runId", default)]
     pub run_id: Option<String>,
+    /// Optional workspace metadata. Current runtime `loop.start` events may
+    /// omit it, so callers must not rely on it to locate local run state.
+    #[serde(rename = "workDir", default)]
+    pub work_dir: Option<PathBuf>,
     #[serde(default)]
     pub iteration: Option<u32>,
     /// Present on `loop.finish` / `summary`.
@@ -40,6 +47,12 @@ pub struct AutoloopEvent {
     pub emitted_topic: Option<String>,
     #[serde(default)]
     pub outcome: Option<String>,
+    /// Present on `log`.
+    #[serde(default)]
+    pub level: Option<String>,
+    /// Present on `log`.
+    #[serde(default)]
+    pub message: Option<String>,
     /// Roles allowed to act this iteration; present on `progress`. The first is
     /// the active role, used to label the iteration (autoloop's role ≈ ralph's hat).
     #[serde(rename = "allowedRoles", default)]
@@ -104,8 +117,28 @@ pub struct RunResult {
     pub cost_usd: f64,
 }
 
-/// Parse a `--events` NDJSON stream. Complete lines that fail to decode are
-/// skipped (forward-compatible); a partial trailing line is ignored.
+/// A nonblank structured-event record was not valid JSON for the event contract.
+#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
+#[error("structured event stream contains a malformed record")]
+pub struct MalformedEventRecord;
+
+/// Strictly parse a `--events` NDJSON stream.
+///
+/// Every nonblank line must decode as an event. Unknown event types and fields
+/// remain forward-compatible, but malformed JSON and records without a string
+/// `type` fail the complete stream.
+pub fn parse_events_strict(content: &str) -> Result<Vec<AutoloopEvent>, MalformedEventRecord> {
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line.trim()).map_err(|_| MalformedEventRecord))
+        .collect()
+}
+
+/// Leniently parse a `--events` NDJSON stream for live observation.
+///
+/// Complete lines that fail to decode are skipped so a live UI can continue;
+/// run completion must use [`parse_events_strict`] before trusting the result.
 pub fn parse_events(content: &str) -> Vec<AutoloopEvent> {
     let mut out = Vec::new();
     for line in content.lines() {
@@ -157,12 +190,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_loop_start_run_directory_fields() {
+        let events =
+            parse_events(r#"{"type":"loop.start","runId":"live-run","workDir":"/tmp/workspace"}"#);
+
+        assert_eq!(events[0].run_id.as_deref(), Some("live-run"));
+        assert_eq!(
+            events[0].work_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/workspace"))
+        );
+    }
+
+    #[test]
     fn derives_the_machine_readable_run_result() {
         let result = run_result(&parse_events(SAMPLE)).unwrap();
         assert_eq!(result.run_id, "r1");
         assert_eq!(result.iterations, 2);
         assert_eq!(result.stop_reason, "max_iterations");
-        assert_eq!(result.cost_usd, 0.08);
+        assert!((result.cost_usd - 0.08).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -183,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_malformed_and_partial_lines() {
+    fn lenient_parser_skips_malformed_and_partial_lines() {
         let content = concat!(
             r#"{"type":"iteration.start","iteration":1,"maxIterations":1,"runId":"r1"}"#,
             "\n",
@@ -196,5 +241,28 @@ mod tests {
         // The two valid complete lines decode; malformed + partial are skipped.
         assert_eq!(events.len(), 2);
         assert_eq!(run_result(&events).unwrap().stop_reason, "completed");
+    }
+
+    #[test]
+    fn strict_parser_rejects_any_malformed_nonblank_record() {
+        let content = concat!(
+            r#"{"type":"iteration.start","runId":"r1"}"#,
+            "\n\n",
+            "not json\n",
+            r#"{"type":"loop.finish","runId":"r1","iterations":1,"stopReason":"completed"}"#,
+            "\n",
+        );
+
+        assert_eq!(parse_events_strict(content), Err(MalformedEventRecord));
+    }
+
+    #[test]
+    fn strict_parser_accepts_blank_lines_and_unknown_event_fields() {
+        let content = "\n  \n{\"type\":\"future.event\",\"newField\":true}\n";
+
+        let events = parse_events_strict(content).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "future.event");
     }
 }

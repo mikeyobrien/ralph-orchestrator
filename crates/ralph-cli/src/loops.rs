@@ -26,7 +26,8 @@ use clap::{Parser, Subcommand};
 
 use ralph_core::worktree::{list_ralph_worktrees, remove_worktree};
 use ralph_core::{
-    LoopRegistry, MergeButtonState, MergeQueue, MergeState, SuspendStateStore, merge_button_state,
+    LoopRegistry, MergeButtonState, MergeQueue, MergeState, SuspendStateStore, git_output,
+    git_output_strict, git_ref_exists, git_remote_exists, git_run, merge_button_state,
     truncate_with_ellipsis,
 };
 
@@ -334,7 +335,7 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
                     id: "(primary)".to_string(),
                     status: "running".to_string(),
                     location: "(in-place)".to_string(),
-                    prompt: truncate(&metadata.prompt, 40),
+                    prompt: truncate_with_ellipsis(&metadata.prompt, 40),
                     age: None,   // Primary loop age not easily available
                     merge: None, // Primary loop doesn't have merge state
                 });
@@ -363,7 +364,7 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
             id: entry.id.clone(),
             status: status.to_string(),
             location,
-            prompt: truncate(&entry.prompt, 40),
+            prompt: truncate_with_ellipsis(&entry.prompt, 40),
             age: None, // Registry doesn't track start time
             merge: None,
         });
@@ -415,7 +416,7 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
                 id: entry.loop_id.clone(),
                 status: status.to_string(),
                 location,
-                prompt: truncate(&entry.prompt, 40),
+                prompt: truncate_with_ellipsis(&entry.prompt, 40),
                 age,
                 merge: merge_status,
             });
@@ -492,23 +493,20 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
     );
     println!("{}", "-".repeat(88));
 
+    let palette = crate::display::Palette::new(use_colors);
     for row in rows {
-        let status_display = if use_colors {
-            colorize_status(&row.status)
-        } else {
-            row.status.clone()
-        };
+        let status_display = colorize_status(&row.status, &palette);
 
         let age_display = row.age.as_deref().unwrap_or("-");
         let merge_display = row.merge.as_deref().unwrap_or("-");
 
         println!(
             "{:<20} {:<12} {:<8} {:<8} {:<20} {}",
-            truncate(&row.id, 20),
+            truncate_with_ellipsis(&row.id, 20),
             status_display,
             merge_display,
             age_display,
-            truncate(&row.location, 20),
+            truncate_with_ellipsis(&row.location, 20),
             row.prompt
         );
     }
@@ -541,20 +539,17 @@ struct LoopRow {
     merge: Option<String>,
 }
 
-fn colorize_status(status: &str) -> String {
-    match status {
-        "running" => format!("\x1b[32m{}\x1b[0m", status), // green
-        "merging" => format!("\x1b[33m{}\x1b[0m", status), // yellow
-        "merged" => format!("\x1b[34m{}\x1b[0m", status),  // blue
-        "needs-review" | "crashed" => format!("\x1b[31m{}\x1b[0m", status), // red
-        "orphan" | "discarded" => format!("\x1b[90m{}\x1b[0m", status), // gray
-        "queued" => format!("\x1b[36m{}\x1b[0m", status), // cyan
-        _ => status.to_string(),
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    truncate_with_ellipsis(s, max)
+fn colorize_status(status: &str, p: &crate::display::Palette) -> String {
+    let color = match status {
+        "running" => p.green,
+        "merging" => p.yellow,
+        "merged" => p.blue,
+        "needs-review" | "crashed" => p.red,
+        "orphan" | "discarded" => p.gray,
+        "queued" => p.cyan,
+        _ => return status.to_string(),
+    };
+    format!("{color}{status}{}", p.reset)
 }
 
 fn shorten_path(path: &str) -> String {
@@ -656,9 +651,9 @@ fn show_history(args: HistoryArgs) -> Result<()> {
                 let data = event.get("data").map(|v| v.to_string()).unwrap_or_default();
                 println!(
                     "{:<25} {:<20} {}",
-                    truncate(ts, 25),
+                    truncate_with_ellipsis(ts, 25),
                     event_type,
-                    truncate(&data, 35)
+                    truncate_with_ellipsis(&data, 35)
                 );
             }
         }
@@ -795,29 +790,13 @@ fn stop_loop(args: StopArgs) -> Result<()> {
         let registry = LoopRegistry::new(&cwd);
         if let Ok(Some(entry)) = registry.get(&loop_id) {
             if is_process_alive(entry.pid) {
-                #[cfg(unix)]
-                {
-                    use nix::sys::signal::{Signal, kill};
-                    use nix::unistd::Pid;
-
-                    let signal = if args.force {
-                        Signal::SIGKILL
-                    } else {
-                        Signal::SIGTERM
-                    };
-                    println!(
-                        "Worktree gone. Sending {} to orphan loop '{}' (PID {})...",
-                        if args.force { "SIGKILL" } else { "SIGTERM" },
-                        loop_id,
-                        entry.pid
-                    );
-                    kill(Pid::from_raw(entry.pid as i32), signal)
-                        .context("Failed to send signal to orphan loop")?;
-                }
-                #[cfg(not(unix))]
-                {
-                    bail!("Signal sending not supported on this platform");
-                }
+                let signal_name = if args.force { "SIGKILL" } else { "SIGTERM" };
+                println!(
+                    "Worktree gone. Sending {} to orphan loop '{}' (PID {})...",
+                    signal_name, loop_id, entry.pid
+                );
+                send_signal(entry.pid, args.force)
+                    .context("Failed to send signal to orphan loop")?;
 
                 let wait_timeout = orphan_stop_wait_timeout(args.force);
                 if !wait_for_process_exit(entry.pid, wait_timeout) {
@@ -859,25 +838,13 @@ fn stop_loop(args: StopArgs) -> Result<()> {
     }
 
     if args.force {
-        #[cfg(unix)]
-        {
-            use nix::sys::signal::{Signal, kill};
-            use nix::unistd::Pid;
-
-            println!(
-                "Sending SIGKILL to loop '{}' (PID {})...",
-                loop_id, metadata.pid
-            );
-            kill(Pid::from_raw(metadata.pid as i32), Signal::SIGKILL)
-                .context("Failed to send SIGKILL")?;
-            println!("Signal sent.");
-            return Ok(());
-        }
-
-        #[cfg(not(unix))]
-        {
-            bail!("--force is only supported on Unix systems");
-        }
+        println!(
+            "Sending SIGKILL to loop '{}' (PID {})...",
+            loop_id, metadata.pid
+        );
+        send_signal(metadata.pid, true)?;
+        println!("Signal sent.");
+        return Ok(());
     }
 
     let stop_path = target_root.join(".ralph/stop-requested");
@@ -1261,21 +1228,18 @@ fn rebase_loop_branch(cwd: &Path, target: &ReviewableLoop, base_branch: &str) ->
             );
         }
 
-        run_git_checked(
-            worktree_path,
-            &["rebase", base_branch],
-            &format!(
+        git_run(worktree_path, &["rebase", base_branch]).with_context(|| {
+            format!(
                 "Failed to rebase loop '{}' in worktree {}",
                 target.loop_id,
                 worktree_path.display()
-            ),
-        )
+            )
+        })?;
+        Ok(())
     } else if current_branch(cwd).as_deref() == Some(target.branch.as_str()) {
-        run_git_checked(
-            cwd,
-            &["rebase", base_branch],
-            &format!("Failed to rebase loop '{}'", target.loop_id),
-        )
+        git_run(cwd, &["rebase", base_branch])
+            .with_context(|| format!("Failed to rebase loop '{}'", target.loop_id))?;
+        Ok(())
     } else {
         let rebase_root = cwd.join(".worktrees").join(".rebase");
         std::fs::create_dir_all(&rebase_root)
@@ -1286,32 +1250,26 @@ fn rebase_loop_branch(cwd: &Path, target: &ReviewableLoop, base_branch: &str) ->
             .context("Failed to create temporary rebase worktree directory")?;
         let temp_path = temp.keep();
         let temp_path_arg = temp_path.to_string_lossy().to_string();
-        run_git_checked(
-            cwd,
-            &["worktree", "add", &temp_path_arg, &target.branch],
-            &format!(
+        git_run(cwd, &["worktree", "add", &temp_path_arg, &target.branch]).with_context(|| {
+            format!(
                 "Failed to create temporary worktree for loop '{}'",
                 target.loop_id
-            ),
-        )?;
-        if let Err(err) = run_git_checked(
-            &temp_path,
-            &["rebase", base_branch],
-            &format!("Failed to rebase loop '{}'", target.loop_id),
-        ) {
+            )
+        })?;
+        if let Err(err) = git_run(&temp_path, &["rebase", base_branch])
+            .with_context(|| format!("Failed to rebase loop '{}'", target.loop_id))
+        {
             bail!(
                 "{err}\nTemporary rebase worktree left at {}. Resolve with `git rebase --continue` there or abort with `git rebase --abort`.",
                 temp_path.display()
             );
         }
-        run_git_checked(
-            cwd,
-            &["worktree", "remove", "--force", &temp_path_arg],
-            &format!(
+        git_run(cwd, &["worktree", "remove", "--force", &temp_path_arg]).with_context(|| {
+            format!(
                 "Failed to remove temporary worktree for loop '{}'",
                 target.loop_id
-            ),
-        )?;
+            )
+        })?;
         Ok(())
     }
 }
@@ -1324,11 +1282,9 @@ fn fetch_remote(cwd: &Path, remote: &str) -> Result<()> {
         );
     }
 
-    run_git_checked(
-        cwd,
-        &["fetch", remote],
-        &format!("Failed to fetch remote '{}'", remote),
-    )
+    git_run(cwd, &["fetch", remote])
+        .with_context(|| format!("Failed to fetch remote '{}'", remote))?;
+    Ok(())
 }
 
 fn push_branch_for_review(
@@ -1342,11 +1298,9 @@ fn push_branch_for_review(
     }
 
     let refspec = format!("{branch}:refs/heads/{remote_branch}");
-    run_git_checked(
-        cwd,
-        &["push", "--set-upstream", remote, &refspec],
-        &format!("Failed to push branch '{}' to remote '{}'", branch, remote),
-    )
+    git_run(cwd, &["push", "--set-upstream", remote, &refspec])
+        .with_context(|| format!("Failed to push branch '{}' to remote '{}'", branch, remote))?;
+    Ok(())
 }
 
 fn push_rebased_branch(cwd: &Path, remote: &str, branch: &str) -> Result<()> {
@@ -1356,14 +1310,13 @@ fn push_rebased_branch(cwd: &Path, remote: &str, branch: &str) -> Result<()> {
 
     let remote_branch = rebased_push_remote_branch(cwd, remote, branch);
     let refspec = format!("{branch}:refs/heads/{remote_branch}");
-    run_git_checked(
-        cwd,
-        &["push", "--force-with-lease", remote, &refspec],
-        &format!(
+    git_run(cwd, &["push", "--force-with-lease", remote, &refspec]).with_context(|| {
+        format!(
             "Failed to push rebased branch '{}' to remote '{}/{}'",
             branch, remote, remote_branch
-        ),
-    )
+        )
+    })?;
+    Ok(())
 }
 
 fn rebased_push_remote_branch(cwd: &Path, remote: &str, branch: &str) -> String {
@@ -1406,12 +1359,12 @@ fn write_review_summary(
 
     let range = format!("{base_branch}..{branch}");
     let diff_range = format!("{base_branch}...{branch}");
-    let commits = git_output_checked(cwd, &["log", "--oneline", &range])
-        .unwrap_or_else(|err| format!("Unavailable: {err}\n"));
-    let diff_stat = git_output_checked(cwd, &["diff", "--stat", &diff_range])
-        .unwrap_or_else(|err| format!("Unavailable: {err}\n"));
-    let head = git_output_checked(cwd, &["rev-parse", "--short", branch])
-        .unwrap_or_else(|_| "unknown\n".to_string());
+    let commits = git_output_strict(cwd, &["log", "--oneline", &range])
+        .unwrap_or_else(|err| format!("Unavailable: {err}"));
+    let diff_stat = git_output_strict(cwd, &["diff", "--stat", &diff_range])
+        .unwrap_or_else(|err| format!("Unavailable: {err}"));
+    let head = git_output_strict(cwd, &["rev-parse", "--short", branch])
+        .unwrap_or_else(|_| "unknown".to_string());
     let handoff_path = worktree_path
         .map(|path| path.join(".ralph/agent/handoff.md"))
         .filter(|path| path.exists());
@@ -1424,7 +1377,7 @@ fn write_review_summary(
     content.push_str(&format!(
         "- **Local branch:** `{branch}`\n- **Remote branch:** `{remote}/{remote_branch}`\n- **Base:** `{base_branch}`\n- **HEAD:** `{}`\n- **Published:** `{}`\n",
         head.trim(),
-        chrono::Utc::now().to_rfc3339()
+        ralph_core::utils::now_rfc3339()
     ));
     if let Some(path) = worktree_path {
         content.push_str(&format!("- **Worktree:** `{}`\n", path.display()));
@@ -1507,78 +1460,10 @@ fn default_review_base_branch(cwd: &std::path::Path, remote: &str) -> String {
     "main".to_string()
 }
 
-fn git_ref_exists(cwd: &std::path::Path, reference: &str) -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--verify", "--quiet", reference])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-fn git_remote_exists(cwd: &std::path::Path, remote: &str) -> bool {
-    Command::new("git")
-        .args(["remote", "get-url", remote])
-        .current_dir(cwd)
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
 fn current_branch(cwd: &std::path::Path) -> Option<String> {
     git_output(cwd, &["branch", "--show-current"])
         .map(|output| output.trim().to_string())
         .filter(|branch| !branch.is_empty())
-}
-
-fn git_output(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        None
-    }
-}
-
-fn git_output_checked(cwd: &std::path::Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .with_context(|| format!("Failed to run git {}", args.join(" ")))?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git {} failed: {}", args.join(" "), stderr.trim());
-    }
-}
-
-fn run_git_checked(cwd: &std::path::Path, args: &[&str], context: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .with_context(|| format!("{}: failed to run git {}", context, args.join(" ")))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let detail = if stderr.trim().is_empty() {
-        stdout.trim()
-    } else {
-        stderr.trim()
-    };
-    bail!("{}: {}", context, detail);
 }
 
 fn loop_branch(loop_id: &str) -> String {
@@ -1608,6 +1493,28 @@ fn ensure_loop_not_running(cwd: &Path, loop_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn send_signal(pid: u32, force: bool) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{Signal, kill};
+        use nix::unistd::Pid;
+
+        let signal = if force {
+            Signal::SIGKILL
+        } else {
+            Signal::SIGTERM
+        };
+        kill(Pid::from_raw(pid as i32), signal).context("Failed to send signal")?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, force);
+        bail!("Signal sending not supported on this platform");
+    }
 }
 
 fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
@@ -1835,56 +1742,14 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate() {
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello world", 8), "hello...");
-        assert_eq!(truncate("hi", 2), "hi");
-    }
-
-    #[test]
-    fn test_truncate_utf8() {
-        // Test Chinese characters (3 bytes each in UTF-8)
-        assert_eq!(truncate("hello", 10), "hello");
-
-        // Chinese: "回" is bytes 0-2, "归" is bytes 3-5, "是" is bytes 6-8
-        // "回归是一个中文词语" has 9 chars
-        // With max=6, we should get 3 chars + "..."
-        let long_chinese = "回归是一个中文词语";
-        assert_eq!(truncate(long_chinese, 6), "回归是...");
-
-        // With max=9, char count is equal so unchanged
-        assert_eq!(truncate(long_chinese, 9), long_chinese);
-
-        // Emojis (4 bytes each) - "🎉🎊🎁🎄" has 4 chars, 16 bytes
-        // With max=3, we want 0 chars + "..." (3-3=0 chars before ellipsis)
-        let emoji = "🎉🎊🎁🎄";
-        assert_eq!(truncate(emoji, 3), "...");
-
-        // With max=5 (more than 4 chars), should return unchanged
-        assert_eq!(truncate(emoji, 5), emoji);
-
-        // With max=4, exactly 4 chars, unchanged
-        assert_eq!(truncate(emoji, 4), emoji);
-
-        // Mixed ASCII and non-ASCII - "hi回hi🎉" = 6 chars
-        // With max=5, we should get 2 chars + "..."
-        let mixed = "hi回hi🎉";
-        assert_eq!(truncate(mixed, 5), "hi...");
-
-        // With max=6, exactly 6 chars, unchanged
-        assert_eq!(truncate(mixed, 6), mixed);
-
-        // Test with max < 3 (edge case)
-        assert_eq!(truncate("hello", 2), "he");
-    }
-
-    #[test]
     fn test_colorize_status() {
-        // Just verify it returns something with escape codes for colored statuses
-        assert!(colorize_status("running").contains("\x1b["));
-        assert!(colorize_status("merged").contains("\x1b["));
-        // Unknown status returns as-is
-        assert_eq!(colorize_status("unknown"), "unknown");
+        let p = crate::display::Palette::new(true);
+        assert!(colorize_status("running", &p).contains("\x1b["));
+        assert!(colorize_status("merged", &p).contains("\x1b["));
+        assert_eq!(colorize_status("unknown", &p), "unknown");
+
+        let no_color = crate::display::Palette::new(false);
+        assert_eq!(colorize_status("running", &no_color), "running");
     }
 
     #[test]

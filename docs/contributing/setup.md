@@ -6,7 +6,7 @@ Set up your environment for Ralph development.
 
 ### Required
 
-- **Rust 1.75+** — Install via [rustup](https://rustup.rs/)
+- **Current stable Rust** — the workspace uses Edition 2024 and does not declare an explicit MSRV; install via [rustup](https://rustup.rs/)
 - **Git** — For version control
 
 ### Optional
@@ -32,7 +32,7 @@ cargo build --release
 ## Install Git Hooks
 
 ```bash
-./scripts/setup-hooks.sh
+bash ./scripts/setup-hooks.sh
 ```
 
 This installs pre-commit hooks that mirror CI Rust checks:
@@ -48,8 +48,8 @@ This installs pre-commit hooks that mirror CI Rust checks:
 # Run tests
 cargo test
 
-# Run smoke tests
-cargo test -p ralph-core smoke_runner
+# Run the focused CLI/core gate
+cargo test -p ralph-cli -p ralph-core
 
 # Check formatting
 cargo fmt --check
@@ -64,8 +64,8 @@ cargo clippy --all-targets --all-features
 ralph-orchestrator/
 ├── crates/                    # Cargo workspace crates
 │   ├── ralph-proto/           # Protocol types
-│   ├── ralph-core/            # Orchestration engine
-│   ├── ralph-adapters/        # CLI backends
+│   ├── ralph-core/            # Shared config and coordination state
+│   ├── ralph-adapters/        # Autoloop process/contract adapters
 │   ├── ralph-tui/             # Terminal UI
 │   ├── ralph-cli/             # Binary entry point
 │   ├── ralph-e2e/             # E2E testing
@@ -133,21 +133,27 @@ cargo run --release --bin ralph -- run -p "test prompt"
 ./target/release/ralph run -p "test prompt"
 ```
 
-## Testing with Fixtures
+## Runtime Integration Testing
 
-Smoke tests use JSONL fixtures:
+Prefer integration tests that exercise the real autoloop-backed CLI or adapter
+contracts:
 
 ```bash
-# Run smoke tests
-cargo test -p ralph-core smoke_runner
-
-# Record a new fixture
-cargo run --bin ralph -- run --record-session fixture.jsonl -p "your prompt"
+cargo test -p ralph-cli -p ralph-core
 ```
 
-## E2E Testing
+The old replay-fixture workflow is not wired into `ralph run` under v3.
 
-Requires a live AI backend:
+## Legacy E2E Inventory
+
+The retained scenarios target the deleted in-house loop and are not a v3 GA
+gate. List them without starting a backend:
+
+```bash
+cargo run -p ralph-e2e -- --list
+```
+
+Live legacy scenarios require an AI backend:
 
 ```bash
 # Run E2E tests

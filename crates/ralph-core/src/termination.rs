@@ -24,8 +24,14 @@ pub enum TerminationReason {
     LoopStale,
     /// Too many consecutive malformed JSONL lines in events file.
     ValidationFailure,
+    /// The engine reported an unrecoverable error.
+    EngineError { detail: Option<String> },
     /// Manually stopped.
     Stopped,
+    /// Execution was suspended by the engine without completing or failing.
+    Suspended,
+    /// Completion was deliberately held by the engine.
+    CompletionHeld,
     /// Interrupted by signal (SIGINT/SIGTERM).
     Interrupted,
     /// Restart requested via Telegram `/restart` command.
@@ -40,7 +46,7 @@ impl TerminationReason {
     /// Returns the exit code for this termination reason per spec.
     ///
     /// Per spec "Loop Termination" section:
-    /// - 0: Completion promise detected (success)
+    /// - 0: Completion promise detected or manually stopped (clean exit)
     /// - 1: Consecutive failures or unrecoverable error (failure)
     /// - 2: Max iterations, max runtime, or max cost exceeded (limit)
     /// - 130: User interrupt (SIGINT = 128 + 2)
@@ -51,8 +57,11 @@ impl TerminationReason {
             | TerminationReason::LoopThrashing
             | TerminationReason::LoopStale
             | TerminationReason::ValidationFailure
-            | TerminationReason::Stopped
+            | TerminationReason::EngineError { .. }
             | TerminationReason::WorkspaceGone => 1,
+            TerminationReason::Stopped
+            | TerminationReason::Suspended
+            | TerminationReason::CompletionHeld => 0,
             TerminationReason::MaxIterations
             | TerminationReason::MaxRuntime
             | TerminationReason::MaxCost => 2,
@@ -78,7 +87,10 @@ impl TerminationReason {
             TerminationReason::LoopThrashing => "loop_thrashing",
             TerminationReason::LoopStale => "loop_stale",
             TerminationReason::ValidationFailure => "validation_failure",
+            TerminationReason::EngineError { .. } => "error",
             TerminationReason::Stopped => "stopped",
+            TerminationReason::Suspended => "suspended",
+            TerminationReason::CompletionHeld => "completion_held",
             TerminationReason::Interrupted => "interrupted",
             TerminationReason::RestartRequested => "restart_requested",
             TerminationReason::WorkspaceGone => "workspace_gone",
@@ -89,5 +101,98 @@ impl TerminationReason {
     /// Returns true if this is a successful completion (not an error or limit).
     pub fn is_success(&self) -> bool {
         matches!(self, TerminationReason::CompletionPromise)
+    }
+
+    /// Snake-case label for loop history records.
+    ///
+    /// Differs from [`as_str`](Self::as_str) only for `CompletionPromise`
+    /// (`"completion_promise"` vs `"completed"`) to preserve the existing
+    /// JSONL history format.
+    pub fn history_label(&self) -> &'static str {
+        match self {
+            TerminationReason::CompletionPromise => "completion_promise",
+            other => other.as_str(),
+        }
+    }
+
+    /// Short human-readable description for merge-queue review entries.
+    pub fn review_description(&self) -> &'static str {
+        match self {
+            TerminationReason::CompletionPromise => "completed",
+            TerminationReason::MaxIterations => "max iterations reached",
+            TerminationReason::MaxRuntime => "max runtime exceeded",
+            TerminationReason::MaxCost => "max cost exceeded",
+            TerminationReason::ConsecutiveFailures => "consecutive failures",
+            TerminationReason::LoopThrashing => "loop thrashing detected",
+            TerminationReason::LoopStale => "stale loop detected",
+            TerminationReason::ValidationFailure => "validation failure",
+            TerminationReason::EngineError { .. } => "engine error",
+            TerminationReason::Stopped => "manually stopped",
+            TerminationReason::Suspended => "suspended by engine",
+            TerminationReason::CompletionHeld => "completion held by engine",
+            TerminationReason::Interrupted => "interrupted by signal",
+            TerminationReason::RestartRequested => "restart requested",
+            TerminationReason::WorkspaceGone => "workspace directory removed",
+            TerminationReason::Cancelled => "cancelled by human",
+        }
+    }
+}
+
+impl std::fmt::Display for TerminationReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.review_description())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_matches_review_description() {
+        let reason = TerminationReason::MaxIterations;
+        assert_eq!(format!("{reason}"), reason.review_description());
+    }
+
+    #[test]
+    fn display_completion_promise() {
+        assert_eq!(
+            format!("{}", TerminationReason::CompletionPromise),
+            "completed"
+        );
+    }
+
+    #[test]
+    fn manually_stopped_is_a_clean_exit() {
+        assert_eq!(TerminationReason::Stopped.exit_code(), 0);
+    }
+
+    #[test]
+    fn intentional_non_completion_states_exit_cleanly_but_are_not_success() {
+        for reason in [
+            TerminationReason::Suspended,
+            TerminationReason::CompletionHeld,
+        ] {
+            assert_eq!(reason.exit_code(), 0);
+            assert!(!reason.is_success());
+        }
+        assert_eq!(TerminationReason::Suspended.as_str(), "suspended");
+        assert_eq!(
+            TerminationReason::CompletionHeld.as_str(),
+            "completion_held"
+        );
+    }
+
+    #[test]
+    fn engine_error_has_failure_contract() {
+        let reason = TerminationReason::EngineError {
+            detail: Some("boom".to_string()),
+        };
+
+        assert_eq!(reason.exit_code(), 1);
+        assert_eq!(reason.as_str(), "error");
+        assert_eq!(reason.history_label(), "error");
+        assert_eq!(reason.review_description(), "engine error");
+        assert!(!reason.is_success());
     }
 }

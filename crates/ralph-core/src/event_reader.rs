@@ -644,7 +644,8 @@ mod tests {
         // once the producer finishes the line. This is the exact failure mode
         // that breaks tailing autoloop's non-fsync'd journal in v3.
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"{\"topic\":\"first\",\"ts\":\"t0\"}\n").unwrap();
+        file.write_all(b"{\"topic\":\"first\",\"ts\":\"t0\"}\n")
+            .unwrap();
         // Partial second line, mid-append, no trailing newline yet.
         file.write_all(b"{\"topic\":\"second\",\"ts\"").unwrap();
         file.flush().unwrap();
@@ -681,8 +682,10 @@ mod tests {
         // `len() + 1`, or the position drifts by one per CRLF line and
         // eventually mis-frames subsequent reads.
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"{\"topic\":\"a\",\"ts\":\"t0\"}\r\n").unwrap();
-        file.write_all(b"{\"topic\":\"b\",\"ts\":\"t1\"}\r\n").unwrap();
+        file.write_all(b"{\"topic\":\"a\",\"ts\":\"t0\"}\r\n")
+            .unwrap();
+        file.write_all(b"{\"topic\":\"b\",\"ts\":\"t1\"}\r\n")
+            .unwrap();
         file.flush().unwrap();
 
         let mut reader = EventReader::new(file.path());

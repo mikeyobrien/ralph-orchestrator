@@ -32,6 +32,7 @@ pub mod autoloop_event_tailer;
 pub mod autoloop_events;
 pub mod autoloop_journal;
 mod autoloop_runner;
+pub mod backend_stream_tailer;
 mod claude_stream;
 mod cli_backend;
 mod cli_executor;
@@ -49,8 +50,8 @@ pub use auto_detect::{
 };
 pub use autoloop_event_tailer::AutoloopEventTailer;
 pub use autoloop_events::{
-    AutoloopEvent, PendingAsk, RunResult, first_pending_ask, parse_events,
-    run_result as events_run_result,
+    AutoloopEvent, MalformedEventRecord, PendingAsk, RunResult, first_pending_ask, parse_events,
+    parse_events_strict, run_result as events_run_result,
 };
 pub use autoloop_journal::{
     AutoloopJournalTailer, AutoloopRecord, JournalError, JournalReplay, LiveRunState, RunSummary,
@@ -59,6 +60,7 @@ pub use autoloop_journal::{
 pub use autoloop_runner::{
     AutoloopBin, AutoloopRunError, AutoloopRunSummary, AutoloopRunner, parse_summary,
 };
+pub use backend_stream_tailer::{BackendStreamTailer, StreamLine};
 pub use claude_stream::{
     AssistantMessage, ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, Usage, UserContentBlock,
     UserMessage,

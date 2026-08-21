@@ -220,21 +220,33 @@ impl SummaryWriter {
     }
 
     /// Returns a human-readable status based on termination reason.
-    fn status_text(&self, reason: &TerminationReason) -> &'static str {
+    fn status_text(&self, reason: &TerminationReason) -> String {
         match reason {
-            TerminationReason::CompletionPromise => "Completed successfully",
-            TerminationReason::MaxIterations => "Stopped: max iterations reached",
-            TerminationReason::MaxRuntime => "Stopped: max runtime exceeded",
-            TerminationReason::MaxCost => "Stopped: max cost exceeded",
-            TerminationReason::ConsecutiveFailures => "Failed: too many consecutive failures",
-            TerminationReason::LoopThrashing => "Failed: loop thrashing detected",
-            TerminationReason::LoopStale => "Failed: stale loop detected",
-            TerminationReason::ValidationFailure => "Failed: too many malformed JSONL events",
-            TerminationReason::Stopped => "Stopped manually",
-            TerminationReason::Interrupted => "Interrupted by signal",
-            TerminationReason::RestartRequested => "Restarting by human request",
-            TerminationReason::WorkspaceGone => "Failed: workspace directory removed",
-            TerminationReason::Cancelled => "Cancelled gracefully (human rejection or timeout)",
+            TerminationReason::CompletionPromise => "Completed successfully".to_string(),
+            TerminationReason::MaxIterations => "Stopped: max iterations reached".to_string(),
+            TerminationReason::MaxRuntime => "Stopped: max runtime exceeded".to_string(),
+            TerminationReason::MaxCost => "Stopped: max cost exceeded".to_string(),
+            TerminationReason::ConsecutiveFailures => {
+                "Failed: too many consecutive failures".to_string()
+            }
+            TerminationReason::LoopThrashing => "Failed: loop thrashing detected".to_string(),
+            TerminationReason::LoopStale => "Failed: stale loop detected".to_string(),
+            TerminationReason::ValidationFailure => {
+                "Failed: too many malformed JSONL events".to_string()
+            }
+            TerminationReason::EngineError { detail } => detail.as_ref().map_or_else(
+                || "Failed: engine error".to_string(),
+                |detail| format!("Failed: engine error: {detail}"),
+            ),
+            TerminationReason::Stopped => "Stopped manually".to_string(),
+            TerminationReason::Suspended => "Suspended by engine without completion".to_string(),
+            TerminationReason::CompletionHeld => "Completion held by engine".to_string(),
+            TerminationReason::Interrupted => "Interrupted by signal".to_string(),
+            TerminationReason::RestartRequested => "Restarting by human request".to_string(),
+            TerminationReason::WorkspaceGone => "Failed: workspace directory removed".to_string(),
+            TerminationReason::Cancelled => {
+                "Cancelled gracefully (human rejection or timeout)".to_string()
+            }
         }
     }
 
@@ -327,6 +339,16 @@ mod tests {
         assert_eq!(
             writer.status_text(&TerminationReason::Interrupted),
             "Interrupted by signal"
+        );
+        assert_eq!(
+            writer.status_text(&TerminationReason::EngineError { detail: None }),
+            "Failed: engine error"
+        );
+        assert_eq!(
+            writer.status_text(&TerminationReason::EngineError {
+                detail: Some("boom: native CLI not found".to_string()),
+            }),
+            "Failed: engine error: boom: native CLI not found"
         );
     }
 

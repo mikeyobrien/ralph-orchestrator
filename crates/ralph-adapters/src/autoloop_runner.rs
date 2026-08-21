@@ -1,13 +1,13 @@
 //! Adapter that drives the `autoloop` CLI as a subprocess.
 //!
-//! [`AutoloopRunner`] assembles an `autoloop run <preset> "<prompt>"` invocation,
-//! spawns it in a working directory, waits for completion, and parses the
+//! [`AutoloopRunner`] assembles an `autoloop run <preset> [options] "<prompt>"`
+//! invocation, spawns it in a working directory, waits for completion, and parses the
 //! "autoloops summary" block that autoloop prints to stdout on exit.
 //!
 //! # Invocation contract
 //!
 //! ```text
-//! autoloop run <preset-dir> "<prompt>" -b <backend> --set key=value ...
+//! autoloop run <preset-dir> -b <backend> --set key=value ... "<prompt>"
 //! ```
 //!
 //! Note the `-b` single-token gotcha: the backend value MUST be passed as ONE
@@ -23,17 +23,15 @@
 //! run_id: <id>
 //! iterations: <n>
 //! stop_reason: <reason>
-//! journal: <abs path to .autoloop/journal.jsonl>
-//! memory: <abs path to .autoloop/memory.jsonl>
+//! journal: <abs path to engine-state-root/journal.jsonl>
+//! memory: <abs path to engine-state-root/memory.jsonl>
 //! ```
 
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 use thiserror::Error;
-
-/// Maximum number of trailing stderr bytes captured in error messages.
-const STDERR_TAIL_BYTES: usize = 4096;
 
 /// A parsed `autoloops summary` block.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,9 +46,9 @@ pub struct AutoloopRunSummary {
     /// when the backend reports no usage (e.g. `command`/`acp`) or the running
     /// autoloop predates the summary `cost_usd` field.
     pub cost_usd: f64,
-    /// Absolute path to the run journal (`.autoloop/journal.jsonl`).
+    /// Absolute path to the journal beneath the configured engine state root.
     pub journal: PathBuf,
-    /// Absolute path to the run memory (`.autoloop/memory.jsonl`).
+    /// Absolute path to the memory store beneath the configured engine state root.
     pub memory: PathBuf,
 }
 
@@ -66,13 +64,13 @@ pub enum AutoloopRunError {
         source: std::io::Error,
     },
 
-    /// The process exited non-zero. Captures the exit code and a tail of stderr.
-    #[error("autoloop exited with code {code:?}; stderr tail:\n{stderr_tail}")]
+    /// The process exited non-zero.
+    #[error("{command} failed (exit code {code:?}); verify the engine configuration and retry")]
     NonZeroExit {
+        /// Privacy-safe executable and action description.
+        command: String,
         /// The process exit code, if available.
         code: Option<i32>,
-        /// The last bytes of stderr, for diagnostics.
-        stderr_tail: String,
     },
 
     /// The process succeeded but stdout did not contain a parseable summary block.
@@ -81,20 +79,15 @@ pub enum AutoloopRunError {
 }
 
 /// How to invoke the `autoloop` binary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum AutoloopBin {
     /// Resolve `autoloop` from `PATH` (the default).
+    #[default]
     PathLookup,
     /// Run `node <bin/autoloop>` explicitly (e.g. a checkout's `bin/autoloop`).
     Node(PathBuf),
     /// Run an explicit executable directly.
     Explicit(PathBuf),
-}
-
-impl Default for AutoloopBin {
-    fn default() -> Self {
-        Self::PathLookup
-    }
 }
 
 /// Builder + runner for the `autoloop run` subprocess.
@@ -204,12 +197,14 @@ impl AutoloopRunner {
 
     /// Assembles the full argv (excluding the program itself).
     ///
-    /// Layout: `[<node bin>?] run <preset> <prompt> [-b <backend>] [--set kv]...`
+    /// Layout: `[<node bin>?] run <preset> [-b <backend>] [--set kv]... [--events path] <prompt>`.
+    ///
+    /// The positional prompt must remain last because autoloop parses it as a
+    /// variadic argument; options placed after it can be consumed as prompt text.
     fn build_args(&self) -> Vec<String> {
         let (_program, mut args) = self.program_and_prefix();
         args.push("run".to_string());
         args.push(self.preset_dir.to_string_lossy().into_owned());
-        args.push(self.prompt.clone());
 
         if let Some(backend) = &self.backend {
             args.push("-b".to_string());
@@ -227,6 +222,7 @@ impl AutoloopRunner {
             args.push(events.to_string_lossy().into_owned());
         }
 
+        args.push(self.prompt.clone());
         args
     }
 
@@ -272,25 +268,31 @@ impl AutoloopRunner {
             .current_dir(&self.working_dir)
             .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .output()
-            .map_err(|source| AutoloopRunError::Spawn { command, source })?;
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: command.clone(),
+                source,
+            })?;
 
         if !output.status.success() {
             return Err(AutoloopRunError::NonZeroExit {
+                command,
                 code: output.status.code(),
-                stderr_tail: stderr_tail(&output.stderr),
             });
         }
 
         Ok(())
     }
 
-    /// A human-readable representation of the command, for error messages.
+    /// Privacy-safe invocation context for error messages.
+    ///
+    /// Arguments are deliberately omitted because they can contain prompts,
+    /// credentials, arbitrary overrides, and physical filesystem paths.
     fn command_display(&self) -> String {
-        let (program, _) = self.program_and_prefix();
-        let args = self.build_args();
-        let mut parts = vec![program];
-        parts.extend(args);
-        parts.join(" ")
+        match &self.bin {
+            AutoloopBin::PathLookup => "autoloop (PATH lookup): run".to_string(),
+            AutoloopBin::Node(_) => "Node-hosted autoloop: run".to_string(),
+            AutoloopBin::Explicit(_) => "configured autoloop executable: run".to_string(),
+        }
     }
 
     /// Spawns `autoloop run`, waits for it to finish, and parses the summary.
@@ -357,10 +359,7 @@ impl AutoloopRunner {
     /// - [`AutoloopRunError::NonZeroExit`] if autoloop exited non-zero.
     /// - [`AutoloopRunError::UnparseableSummary`] if the summary block is absent
     ///   or malformed.
-    pub fn wait_with_summary(
-        &self,
-        child: Child,
-    ) -> Result<AutoloopRunSummary, AutoloopRunError> {
+    pub fn wait_with_summary(&self, child: Child) -> Result<AutoloopRunSummary, AutoloopRunError> {
         let output = child
             .wait_with_output()
             .map_err(|source| AutoloopRunError::Spawn {
@@ -368,22 +367,91 @@ impl AutoloopRunner {
                 source,
             })?;
 
-        if !output.status.success() {
+        self.summary_from_output(output.status, &output.stdout)
+    }
+
+    /// Waits for a spawned child while notifying `on_diagnostic` for each stderr line.
+    ///
+    /// The callback runs on a dedicated blocking reader thread so stderr is
+    /// drained live without risking a full child pipe. Raw child text never
+    /// crosses the callback contract. stdout remains captured and is used only
+    /// for summary parsing.
+    pub fn wait_with_summary_streaming_stderr<F>(
+        &self,
+        mut child: Child,
+        on_diagnostic: F,
+    ) -> Result<AutoloopRunSummary, AutoloopRunError>
+    where
+        F: FnMut() + Send + 'static,
+    {
+        let stderr = child.stderr.take().ok_or_else(|| AutoloopRunError::Spawn {
+            command: self.command_display(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "spawned autoloop child has no piped stderr",
+            ),
+        })?;
+        let stderr_reader = std::thread::spawn(move || read_stderr(stderr, on_diagnostic));
+
+        // With stderr taken by the reader thread, wait_with_output drains only
+        // stdout. Both pipes are therefore consumed concurrently.
+        let output_result = child
+            .wait_with_output()
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source,
+            });
+        stderr_reader
+            .join()
+            .map_err(|_| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source: std::io::Error::other("autoloop stderr reader thread panicked"),
+            })?
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: self.command_display(),
+                source,
+            })?;
+        let output = output_result?;
+
+        self.summary_from_output(output.status, &output.stdout)
+    }
+
+    fn summary_from_output(
+        &self,
+        status: std::process::ExitStatus,
+        stdout: &[u8],
+    ) -> Result<AutoloopRunSummary, AutoloopRunError> {
+        if !status.success() {
             return Err(AutoloopRunError::NonZeroExit {
-                code: output.status.code(),
-                stderr_tail: stderr_tail(&output.stderr),
+                command: self.command_display(),
+                code: status.code(),
             });
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(stdout);
         parse_summary(&stdout).ok_or(AutoloopRunError::UnparseableSummary)
     }
 }
 
-/// Returns a UTF-8 tail of `bytes`, at most [`STDERR_TAIL_BYTES`] long.
-fn stderr_tail(bytes: &[u8]) -> String {
-    let start = bytes.len().saturating_sub(STDERR_TAIL_BYTES);
-    String::from_utf8_lossy(&bytes[start..]).into_owned()
+/// Drains stderr line-by-line without exposing child text to the callback.
+fn read_stderr<R, F>(stderr: R, mut on_diagnostic: F) -> std::io::Result<()>
+where
+    R: Read,
+    F: FnMut(),
+{
+    let mut reader = BufReader::new(stderr);
+    let mut line = Vec::new();
+
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+
+        on_diagnostic();
+    }
+
+    Ok(())
 }
 
 /// Parses an `autoloops summary` block out of arbitrary stdout.
@@ -469,6 +537,16 @@ memory: /tmp/work/.autoloop/memory.jsonl
 ";
 
     #[test]
+    fn stderr_reader_notifies_without_forwarding_child_text() {
+        let input = "first\r\nsecond\nlast-without-newline";
+        let mut notifications = 0;
+
+        read_stderr(input.as_bytes(), || notifications += 1).expect("stderr should be readable");
+
+        assert_eq!(notifications, 3);
+    }
+
+    #[test]
     fn parses_clean_summary_block() {
         let s = parse_summary(SAMPLE).expect("must parse");
         assert_eq!(s.run_id, "run-abc123");
@@ -480,7 +558,7 @@ memory: /tmp/work/.autoloop/memory.jsonl
         );
         assert_eq!(s.memory, PathBuf::from("/tmp/work/.autoloop/memory.jsonl"));
         // No cost_usd line (older autoloop / no usage) defaults to 0.0.
-        assert_eq!(s.cost_usd, 0.0);
+        assert!(s.cost_usd.abs() < f64::EPSILON);
     }
 
     #[test]
@@ -496,7 +574,7 @@ journal: /j/journal.jsonl
 memory: /m/memory.jsonl
 ";
         let s = parse_summary(block).expect("must parse with cost");
-        assert_eq!(s.cost_usd, 0.08);
+        assert!((s.cost_usd - 0.08).abs() < f64::EPSILON);
         assert_eq!(s.iterations, 2);
     }
 
@@ -571,24 +649,31 @@ journal: /j
     }
 
     #[test]
-    fn build_args_keeps_backend_as_single_token() {
+    fn build_args_places_all_options_before_prompt() {
         let runner = AutoloopRunner::new("/presets/autocode", "do the thing", "/work")
             .backend("node x.js")
-            .max_iterations(3);
-        let args = runner.build_args();
+            .max_iterations(3)
+            .set_override("event_loop.max_runtime", "12000")
+            .events_path("/tmp/events.jsonl");
 
-        // Locate -b and assert the following element is the whole backend string.
-        let b_pos = args.iter().position(|a| a == "-b").expect("-b present");
-        assert_eq!(args[b_pos + 1], "node x.js");
-
-        // run <preset> <prompt> ...
-        assert_eq!(args[0], "run");
-        assert_eq!(args[1], "/presets/autocode");
-        assert_eq!(args[2], "do the thing");
-
-        // --set override present in order.
-        let set_pos = args.iter().position(|a| a == "--set").expect("--set present");
-        assert_eq!(args[set_pos + 1], "event_loop.max_iterations=3");
+        assert_eq!(
+            runner.build_args(),
+            vec![
+                "run",
+                "/presets/autocode",
+                "-b",
+                // The multi-word backend remains exactly one argv element.
+                "node x.js",
+                "--set",
+                "event_loop.max_iterations=3",
+                "--set",
+                "event_loop.max_runtime=12000",
+                "--events",
+                "/tmp/events.jsonl",
+                // Prompt is last so variadic prompt parsing cannot absorb options.
+                "do the thing",
+            ]
+        );
     }
 
     #[test]
@@ -598,8 +683,108 @@ journal: /j
         let (program, _) = runner.program_and_prefix();
         assert_eq!(program, "node");
         let args = runner.build_args();
-        assert_eq!(args[0], "/checkout/bin/autoloop");
-        assert_eq!(args[1], "run");
+        assert_eq!(args, vec!["/checkout/bin/autoloop", "run", "/p", "x"]);
+    }
+
+    fn assert_no_sensitive_markers(rendered: &str) {
+        for secret in [
+            "/ABSOLUTE/",
+            "PROMPT_SECRET_MARKER",
+            "PRESET_SECRET_MARKER",
+            "WORKSPACE_SECRET_MARKER",
+            "SCRIPT_SECRET_MARKER",
+            "EXECUTABLE_SECRET_MARKER",
+            "BACKEND_CREDENTIAL_SECRET_MARKER",
+            "EVENTS_SECRET_MARKER",
+            "STATE_SECRET_MARKER",
+            "JOURNAL_SECRET_MARKER",
+            "MEMORY_SECRET_MARKER",
+            "TASKS_SECRET_MARKER",
+            "ARBITRARY_OVERRIDE_SECRET_MARKER",
+            "core.state_dir",
+            "core.journal_file",
+            "core.memory_file",
+            "core.tasks_file",
+            "arbitrary.secret",
+            "ACCESS_TOKEN_SECRET_KEY",
+            "TOKEN_CREDENTIAL_SECRET_MARKER",
+        ] {
+            assert!(!rendered.contains(secret), "diagnostic exposed {secret}");
+        }
+    }
+
+    #[test]
+    fn command_display_identifies_invocation_without_sensitive_arguments() {
+        let sensitive_runner = AutoloopRunner::new(
+            "/ABSOLUTE/PRESET_SECRET_MARKER",
+            "PROMPT_SECRET_MARKER do not expose",
+            "/ABSOLUTE/WORKSPACE_SECRET_MARKER",
+        )
+        .backend("BACKEND_CREDENTIAL_SECRET_MARKER")
+        .events_path("/ABSOLUTE/EVENTS_SECRET_MARKER.jsonl")
+        .set_override("core.state_dir", "/ABSOLUTE/STATE_SECRET_MARKER")
+        .set_override("core.journal_file", "/ABSOLUTE/JOURNAL_SECRET_MARKER")
+        .set_override("core.memory_file", "/ABSOLUTE/MEMORY_SECRET_MARKER")
+        .set_override("core.tasks_file", "/ABSOLUTE/TASKS_SECRET_MARKER")
+        .set_override("arbitrary.secret", "ARBITRARY_OVERRIDE_SECRET_MARKER")
+        .env("ACCESS_TOKEN_SECRET_KEY", "TOKEN_CREDENTIAL_SECRET_MARKER");
+
+        let displays = [
+            sensitive_runner.command_display(),
+            sensitive_runner
+                .clone()
+                .bin(AutoloopBin::Node(PathBuf::from(
+                    "/ABSOLUTE/SCRIPT_SECRET_MARKER",
+                )))
+                .command_display(),
+            sensitive_runner
+                .bin(AutoloopBin::Explicit(PathBuf::from(
+                    "/ABSOLUTE/EXECUTABLE_SECRET_MARKER",
+                )))
+                .command_display(),
+        ];
+        assert_eq!(
+            displays,
+            [
+                "autoloop (PATH lookup): run",
+                "Node-hosted autoloop: run",
+                "configured autoloop executable: run",
+            ]
+        );
+        for display in &displays {
+            assert_no_sensitive_markers(display);
+        }
+    }
+
+    #[test]
+    fn spawn_error_excludes_sensitive_arguments_and_paths() {
+        let work = tempfile::tempdir().expect("temp working directory");
+        let nonexistent_executable = work.path().join("EXECUTABLE_SECRET_MARKER");
+        let runner = AutoloopRunner::new(
+            work.path().join("PRESET_SECRET_MARKER"),
+            "PROMPT_SECRET_MARKER do not expose",
+            work.path(),
+        )
+        .bin(AutoloopBin::Explicit(nonexistent_executable))
+        .backend("BACKEND_CREDENTIAL_SECRET_MARKER")
+        .events_path(work.path().join("EVENTS_SECRET_MARKER.jsonl"))
+        .set_override("core.state_dir", "STATE_SECRET_MARKER")
+        .set_override("core.journal_file", "JOURNAL_SECRET_MARKER")
+        .set_override("core.memory_file", "MEMORY_SECRET_MARKER")
+        .set_override("core.tasks_file", "TASKS_SECRET_MARKER")
+        .set_override("arbitrary.secret", "ARBITRARY_OVERRIDE_SECRET_MARKER")
+        .env("ACCESS_TOKEN_SECRET_KEY", "TOKEN_CREDENTIAL_SECRET_MARKER");
+
+        let error = runner
+            .spawn()
+            .expect_err("nonexistent executable must fail");
+        let rendered = error.to_string();
+        assert!(rendered.contains("configured autoloop executable: run"));
+        assert_no_sensitive_markers(&rendered);
+        assert!(
+            !rendered.contains(&work.path().to_string_lossy().into_owned()),
+            "spawn error exposed the absolute working directory"
+        );
     }
 
     #[test]
@@ -724,10 +909,7 @@ journal: /j
         let wrapper = work.join("mock-wrapper.sh");
         fs::write(
             &wrapper,
-            format!(
-                "#!/usr/bin/env bash\nexec node {} \"$@\"\n",
-                mock.display()
-            ),
+            format!("#!/usr/bin/env bash\nexec node {} \"$@\"\n", mock.display()),
         )
         .expect("write wrapper");
         let mut perms = fs::metadata(&wrapper).unwrap().permissions();

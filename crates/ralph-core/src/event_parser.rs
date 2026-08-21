@@ -308,7 +308,7 @@ impl EventParser {
         }
     }
 
-    fn find_segment<'a>(payload: &'a str, predicate: impl Fn(&str) -> bool) -> Option<&'a str> {
+    fn find_segment(payload: &str, predicate: impl Fn(&str) -> bool) -> Option<&str> {
         payload
             .split(|c| c == '\n' || c == ',')
             .map(str::trim)
@@ -338,8 +338,9 @@ impl EventParser {
     }
 
     fn parse_complexity_evidence(clean_payload: &str) -> Option<f64> {
-        let segment =
-            Self::find_segment(clean_payload, |s| s.to_lowercase().starts_with("complexity:"))?;
+        let segment = Self::find_segment(clean_payload, |s| {
+            s.to_lowercase().starts_with("complexity:")
+        })?;
         Self::extract_first_number(segment)
     }
 
@@ -377,9 +378,7 @@ impl EventParser {
     }
 
     fn parse_specs_evidence(clean_payload: &str) -> Option<bool> {
-        Self::find_pass_fail_segment(clean_payload, |s| {
-            s.to_lowercase().starts_with("specs:")
-        })
+        Self::find_pass_fail_segment(clean_payload, |s| s.to_lowercase().starts_with("specs:"))
     }
 
     fn extract_percentage(segment: &str) -> Option<f64> {
@@ -489,7 +488,10 @@ impl EventParser {
         };
         let mut seen = false;
 
-        for segment in clean_payload.split(|c| c == '\n' || c == ',').map(str::trim) {
+        for segment in clean_payload
+            .split(|c| c == '\n' || c == ',')
+            .map(str::trim)
+        {
             if segment.is_empty() {
                 continue;
             }

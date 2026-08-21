@@ -126,6 +126,6 @@ mod tests {
         // auto-detect may fail (no backends installed in CI), but it shouldn't
         // return the literal "auto" string.
         let result = resolve_backend(None, Some(&config), None);
-        assert!(result.as_deref() != Ok("auto"));
+        assert_ne!(result.as_deref(), Ok("auto"));
     }
 }

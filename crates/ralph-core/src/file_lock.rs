@@ -112,10 +112,7 @@ impl FileLock {
                     _flock: flock,
                     _lock_type: lock_type,
                 }),
-                Err((_, errno)) => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("flock failed: {}", errno),
-                )),
+                Err((_, errno)) => Err(crate::utils::flock_io_error(errno)),
             }
         }
 
@@ -135,7 +132,6 @@ impl FileLock {
 
         #[cfg(unix)]
         {
-            use nix::errno::Errno;
             use nix::fcntl::{Flock, FlockArg};
 
             let arg = match lock_type {
@@ -148,13 +144,8 @@ impl FileLock {
                     _flock: flock,
                     _lock_type: lock_type,
                 })),
-                Err((_, errno)) if errno == Errno::EWOULDBLOCK || errno == Errno::EAGAIN => {
-                    Ok(None)
-                }
-                Err((_, errno)) => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("flock failed: {}", errno),
-                )),
+                Err((_, errno)) if crate::utils::is_lock_contention(errno) => Ok(None),
+                Err((_, errno)) => Err(crate::utils::flock_io_error(errno)),
             }
         }
 

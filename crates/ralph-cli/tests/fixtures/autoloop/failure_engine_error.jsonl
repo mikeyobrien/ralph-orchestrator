@@ -1,0 +1,1 @@
+{"steps":[{"events":["{\"type\":\"iteration.start\",\"runId\":\"rX\",\"iteration\":1,\"maxIterations\":1}","{\"type\":\"log\",\"level\":\"error\",\"message\":\"loop stop reason=error completed_iterations=0 detail=boom: native CLI not found\"}","{\"type\":\"loop.finish\",\"iterations\":0,\"stopReason\":\"error\",\"runId\":\"rX\",\"costUsd\":0}"]},{"exit":1}]}

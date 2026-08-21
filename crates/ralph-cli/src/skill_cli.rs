@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ralph_core::{RalphConfig, SkillRegistry};
+use ralph_core::{RalphConfig, SkillRegistry, truncate_with_ellipsis};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -110,15 +110,15 @@ fn execute_list(root: &Path, args: ListArgs) -> Result<()> {
             println!("{}", "-".repeat(112));
 
             for skill in skills {
-                let name = crate::display::truncate(&skill.name, 24);
+                let name = truncate_with_ellipsis(&skill.name, 24);
                 let source = format_source(skill);
-                let source_truncated = crate::display::truncate(&source, 28);
+                let source_truncated = truncate_with_ellipsis(&source, 28);
                 let description = if skill.description.is_empty() {
                     "(no description)".to_string()
                 } else {
                     skill.description.clone()
                 };
-                let description_truncated = crate::display::truncate(&description, 60);
+                let description_truncated = truncate_with_ellipsis(&description, 60);
 
                 println!(
                     "{:<24} {:<28} {:<60}",

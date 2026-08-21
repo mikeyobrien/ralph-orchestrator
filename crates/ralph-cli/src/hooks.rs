@@ -6,11 +6,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use ralph_core::RalphConfig;
+use ralph_core::preflight::{hook_path_override, resolve_hook_command, resolve_hook_cwd};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
-use std::env;
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 
 use crate::{ConfigSource, HatsSource, preflight};
 
@@ -223,94 +221,6 @@ fn validate_command_resolvability(config: &RalphConfig, report: &mut HooksValida
         }
     }
 }
-
-fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
-    env_map
-        .get("PATH")
-        .or_else(|| env_map.get("Path"))
-        .map(String::as_str)
-}
-
-fn resolve_hook_cwd(workspace_root: &Path, hook_cwd: Option<&Path>) -> PathBuf {
-    match hook_cwd {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => workspace_root.join(path),
-        None => workspace_root.to_path_buf(),
-    }
-}
-
-fn resolve_hook_command(
-    command: &str,
-    cwd: &Path,
-    path_override: Option<&str>,
-) -> std::result::Result<PathBuf, String> {
-    let command_path = Path::new(command);
-    if command_path.is_absolute() || command_path.components().count() > 1 {
-        let resolved = if command_path.is_absolute() {
-            command_path.to_path_buf()
-        } else {
-            cwd.join(command_path)
-        };
-
-        if !resolved.exists() {
-            return Err(format!(
-                "Command '{command}' resolves to '{}' but the file does not exist.",
-                resolved.display()
-            ));
-        }
-
-        if !is_executable_file(&resolved) {
-            return Err(format!(
-                "Command '{command}' resolves to '{}' but it is not executable.",
-                resolved.display()
-            ));
-        }
-
-        return Ok(resolved);
-    }
-
-    let path_value = path_override
-        .map(OsString::from)
-        .or_else(|| env::var_os("PATH"))
-        .ok_or_else(|| {
-            format!(
-                "PATH is not set while resolving command '{command}'. Set PATH in the environment or hook env override."
-            )
-        })?;
-
-    let extensions = executable_extensions();
-    let mut seen_paths = HashSet::new();
-
-    for dir in env::split_paths(&path_value) {
-        if !seen_paths.insert(dir.clone()) {
-            continue;
-        }
-
-        for extension in &extensions {
-            let candidate = if extension.is_empty() {
-                dir.join(command)
-            } else {
-                dir.join(format!("{command}{}", extension.to_string_lossy()))
-            };
-
-            if is_executable_file(&candidate) {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let path_source = if path_override.is_some() {
-        "hook env PATH"
-    } else {
-        "process PATH"
-    };
-
-    Err(format!(
-        "Command '{command}' was not found in {path_source}."
-    ))
-}
-
-use ralph_core::utils::{executable_extensions, is_executable_file};
 
 fn non_empty_trimmed(value: &str) -> Option<String> {
     let trimmed = value.trim();

@@ -1,5 +1,12 @@
 # Migration from v1
 
+!!! warning "Historical v2 document"
+    This page records the v1→v2 migration. V3 replaced the in-house event
+    loop described below with autoloop as the engine. Current `ralph run`
+    translates hats into an autoloop topology; Ralph is the TUI frontend and
+    observation/coordination plane. Use the current architecture and CLI guides
+    for v3 behavior.
+
 Guide for migrating from the Python-based Ralph v1 to the Rust-based v2.
 
 ## Overview

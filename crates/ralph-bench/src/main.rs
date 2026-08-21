@@ -320,6 +320,7 @@ async fn cmd_run(
 /// Run the orchestration loop for a single benchmark task.
 ///
 /// Returns (iterations, termination_reason) tuple.
+#[allow(clippy::unused_async)] // Keeps the benchmark runner's async call shape for future event-loop work.
 async fn run_task_loop(
     task: &ralph_core::TaskDefinition,
     _workspace: &ralph_core::TaskWorkspace,

@@ -71,7 +71,7 @@ impl LockGuard {
 impl Drop for LockGuard {
     fn drop(&mut self) {
         // The Flock is automatically released when dropped.
-        tracing::debug!("Releasing loop lock at {}", self.lock_path.display());
+        tracing::debug!("Releasing the Ralph loop lock");
     }
 }
 
@@ -141,7 +141,7 @@ impl LoopLock {
                     // We got the lock - write our metadata
                     Self::write_metadata(&flock, prompt)?;
 
-                    tracing::debug!("Acquired loop lock at {}", lock_path.display());
+                    tracing::debug!("Acquired the Ralph loop lock");
 
                     Ok(LockGuard {
                         _flock: flock,
@@ -149,17 +149,11 @@ impl LoopLock {
                     })
                 }
                 Err((file, errno)) => {
-                    use nix::errno::Errno;
-                    // EWOULDBLOCK and EAGAIN are the same on some platforms (macOS)
-                    if errno == Errno::EWOULDBLOCK || errno == Errno::EAGAIN {
-                        // Lock is held by another process - read their metadata
+                    if crate::utils::is_lock_contention(errno) {
                         let metadata = Self::read_metadata(&file)?;
                         Err(LockError::AlreadyLocked(metadata))
                     } else {
-                        Err(LockError::Io(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("flock failed: {}", errno),
-                        )))
+                        Err(LockError::Io(crate::utils::flock_io_error(errno)))
                     }
                 }
             }
@@ -202,17 +196,14 @@ impl LoopLock {
                     // We got the lock - write our metadata
                     Self::write_metadata(&flock, prompt)?;
 
-                    tracing::debug!("Acquired loop lock (blocking) at {}", lock_path.display());
+                    tracing::debug!("Acquired the Ralph loop lock after waiting");
 
                     Ok(LockGuard {
                         _flock: flock,
                         lock_path,
                     })
                 }
-                Err((_, errno)) => Err(LockError::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("flock failed: {}", errno),
-                ))),
+                Err((_, errno)) => Err(LockError::Io(crate::utils::flock_io_error(errno))),
             }
         }
 
@@ -261,7 +252,6 @@ impl LoopLock {
 
         #[cfg(unix)]
         {
-            use nix::errno::Errno;
             use nix::fcntl::{Flock, FlockArg};
 
             match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
@@ -270,13 +260,10 @@ impl LoopLock {
                     Ok(false)
                 }
                 Err((_, errno)) => {
-                    if errno == Errno::EWOULDBLOCK || errno == Errno::EAGAIN {
+                    if crate::utils::is_lock_contention(errno) {
                         Ok(true)
                     } else {
-                        Err(LockError::Io(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("flock failed: {}", errno),
-                        )))
+                        Err(LockError::Io(crate::utils::flock_io_error(errno)))
                     }
                 }
             }

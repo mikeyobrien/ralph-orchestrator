@@ -245,7 +245,11 @@ impl MergeQueue {
 
     /// Marks a loop as being merged.
     pub fn mark_merging(&self, loop_id: &str, pid: u32) -> Result<(), MergeQueueError> {
-        self.validate_transition(loop_id, MergeState::Merging, &[MergeState::Queued, MergeState::NeedsReview])?;
+        self.validate_transition(
+            loop_id,
+            MergeState::Merging,
+            &[MergeState::Queued, MergeState::NeedsReview],
+        )?;
         self.append_event(&MergeEvent::new(loop_id, MergeEventType::Merging { pid }))
     }
 
@@ -271,9 +275,35 @@ impl MergeQueue {
         ))
     }
 
+    /// Moves merges owned by dead processes to manual review.
+    ///
+    /// Returns the loop IDs that were recovered.
+    pub fn recover_stale_merges(&self) -> Result<Vec<String>, MergeQueueError> {
+        let stale_entries = self
+            .list_by_state(MergeState::Merging)?
+            .into_iter()
+            .filter(|entry| entry.merge_pid.is_none_or(|pid| !is_process_alive(pid)));
+        let mut recovered = Vec::new();
+
+        for entry in stale_entries {
+            let reason = match entry.merge_pid {
+                Some(pid) => format!("merge process died (pid {pid} not running)"),
+                None => "merge process died (pid missing)".to_string(),
+            };
+            self.mark_needs_review(&entry.loop_id, &reason)?;
+            recovered.push(entry.loop_id);
+        }
+
+        Ok(recovered)
+    }
+
     /// Marks a loop as discarded.
     pub fn discard(&self, loop_id: &str, reason: Option<&str>) -> Result<(), MergeQueueError> {
-        self.validate_transition(loop_id, MergeState::Discarded, &[MergeState::Queued, MergeState::NeedsReview])?;
+        self.validate_transition(
+            loop_id,
+            MergeState::Discarded,
+            &[MergeState::Queued, MergeState::NeedsReview],
+        )?;
         self.append_event(&MergeEvent::new(
             loop_id,
             MergeEventType::Discarded {
@@ -431,12 +461,8 @@ impl MergeQueue {
 
         let file = File::open(&self.queue_path)?;
 
-        let flock = Flock::lock(file, FlockArg::LockShared).map_err(|(_, errno)| {
-            MergeQueueError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("flock failed: {}", errno),
-            ))
-        })?;
+        let flock = Flock::lock(file, FlockArg::LockShared)
+            .map_err(|(_, errno)| MergeQueueError::Io(crate::utils::flock_io_error(errno)))?;
 
         f(&crate::utils::clone_file_from_flock(&flock)?)
     }
@@ -461,12 +487,8 @@ impl MergeQueue {
 
         let file = crate::utils::open_read_write(&self.queue_path)?;
 
-        let flock = Flock::lock(file, FlockArg::LockExclusive).map_err(|(_, errno)| {
-            MergeQueueError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("flock failed: {}", errno),
-            ))
-        })?;
+        let flock = Flock::lock(file, FlockArg::LockExclusive)
+            .map_err(|(_, errno)| MergeQueueError::Io(crate::utils::flock_io_error(errno)))?;
 
         f(crate::utils::clone_file_from_flock(&flock)?)
     }
@@ -738,6 +760,87 @@ mod tests {
             entry.failure_reason,
             Some("Conflicting changes in src/auth.rs".to_string())
         );
+    }
+
+    #[test]
+    fn test_recover_stale_merges_marks_dead_pid_needs_review() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+        let dead_pid = u32::MAX - 1;
+
+        queue.enqueue("loop-stale", "test").unwrap();
+        queue.mark_merging("loop-stale", dead_pid).unwrap();
+
+        let recovered = queue.recover_stale_merges().unwrap();
+
+        assert_eq!(recovered, vec!["loop-stale"]);
+        let entry = queue.get_entry("loop-stale").unwrap().unwrap();
+        assert_eq!(entry.state, MergeState::NeedsReview);
+        assert!(
+            entry
+                .failure_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains(&dead_pid.to_string()))
+        );
+    }
+
+    #[test]
+    fn test_recover_stale_merges_leaves_live_pid_merging() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+        let live_pid = std::process::id();
+
+        queue.enqueue("loop-live", "test").unwrap();
+        queue.mark_merging("loop-live", live_pid).unwrap();
+
+        let recovered = queue.recover_stale_merges().unwrap();
+
+        assert!(recovered.is_empty());
+        let entry = queue.get_entry("loop-live").unwrap().unwrap();
+        assert_eq!(entry.state, MergeState::Merging);
+        assert_eq!(entry.merge_pid, Some(live_pid));
+    }
+
+    #[test]
+    fn test_recover_stale_merges_leaves_non_merging_entries_untouched() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+
+        queue.enqueue("loop-queued", "queued").unwrap();
+        queue.enqueue("loop-merged", "merged").unwrap();
+        queue
+            .mark_merging("loop-merged", std::process::id())
+            .unwrap();
+        queue.mark_merged("loop-merged", "commit").unwrap();
+
+        let recovered = queue.recover_stale_merges().unwrap();
+
+        assert!(recovered.is_empty());
+        assert_eq!(
+            queue.get_entry("loop-queued").unwrap().unwrap().state,
+            MergeState::Queued
+        );
+        assert_eq!(
+            queue.get_entry("loop-merged").unwrap().unwrap().state,
+            MergeState::Merged
+        );
+    }
+
+    #[test]
+    fn test_recovered_stale_merge_can_be_retried() {
+        let temp_dir = TempDir::new().unwrap();
+        let queue = MergeQueue::new(temp_dir.path());
+
+        queue.enqueue("loop-recovered", "test").unwrap();
+        queue.mark_merging("loop-recovered", u32::MAX - 1).unwrap();
+        queue.recover_stale_merges().unwrap();
+
+        let retry_pid = std::process::id();
+        queue.mark_merging("loop-recovered", retry_pid).unwrap();
+
+        let entry = queue.get_entry("loop-recovered").unwrap().unwrap();
+        assert_eq!(entry.state, MergeState::Merging);
+        assert_eq!(entry.merge_pid, Some(retry_pid));
     }
 
     #[test]

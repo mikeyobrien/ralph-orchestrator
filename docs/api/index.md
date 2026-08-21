@@ -6,11 +6,11 @@ Technical reference documentation for Ralph's crates.
 
 | Crate | Purpose | Documentation |
 |-------|---------|---------------|
-| [ralph-proto](ralph-proto.md) | Protocol types: Event, Hat, Topic | Core data structures |
-| [ralph-core](ralph-core.md) | Orchestration engine | EventLoop, Config |
-| [ralph-adapters](ralph-adapters.md) | CLI backends | Backend integrations |
-| [ralph-tui](ralph-tui.md) | Terminal UI | TUI components |
-| [ralph-cli](ralph-cli.md) | Binary entry point | CLI commands |
+| [ralph-proto](ralph-proto.md) | Shared protocol definitions | Events, hats, topics |
+| [ralph-core](ralph-core.md) | Shared configuration and coordination state | Config, memories, tasks, registry, merge queue |
+| [ralph-adapters](ralph-adapters.md) | Autoloop process and artifact integration | Journal, event-stream, and summary adapters |
+| [ralph-tui](ralph-tui.md) | Terminal observation UI | TUI components |
+| [ralph-cli](ralph-cli.md) | CLI frontend and autoloop launcher | Commands, completion, and merge coordination |
 
 ## Quick Links
 
@@ -23,22 +23,24 @@ use ralph_proto::{Event, Topic, EventBus};
 // Hats
 use ralph_proto::{Hat, HatId};
 
-// Configuration
-use ralph_core::config::{Config, EventLoopConfig, CliConfig};
+// Configuration and coordination
+use ralph_core::{CliConfig, EventLoopConfig, RalphConfig};
 ```
 
 ### Common Operations
 
 ```rust
-// Load configuration
-let config = Config::load("ralph.yml")?;
+// Construct the public configuration type
+use ralph_core::RalphConfig;
 
-// Create event loop
-let event_loop = EventLoop::new(config);
-
-// Run orchestration
-event_loop.run().await?;
+let config = RalphConfig::default();
+assert_eq!(config.core.specs_dir, ".ralph/specs/");
 ```
+
+Application execution starts through `ralph-cli`, which translates supported
+configuration into an autoloop preset and launches autoloop. Autoloop owns role
+dispatch and completion judgment; Ralph observes its journal, event stream, and
+summary and coordinates the TUI, registry, worktrees, and merge queue.
 
 ## Rust Documentation
 

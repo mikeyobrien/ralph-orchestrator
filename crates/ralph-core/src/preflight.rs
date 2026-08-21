@@ -1,5 +1,8 @@
 //! Preflight checks for validating environment and configuration before running.
 
+use crate::autoloop_health::{
+    AUTOLOOP_INSTALL_HINT, AutoloopHealth, AutoloopSource, MIN_AUTOLOOP_VERSION, check_autoloop,
+};
 use crate::config::ConfigWarning;
 use crate::{RalphConfig, git_ops};
 use async_trait::async_trait;
@@ -107,7 +110,9 @@ impl PreflightRunner {
             checks: vec![
                 Box::new(ConfigValidCheck),
                 Box::new(HooksValidationCheck),
+                Box::new(ConsecutiveFailureBudgetCheck),
                 Box::new(BackendAvailableCheck),
+                Box::new(AutoloopAvailableCheck),
                 Box::new(TelegramTokenCheck),
                 Box::new(GitCleanCheck),
                 Box::new(PathsExistCheck),
@@ -188,17 +193,20 @@ impl PreflightCheck for HooksValidationCheck {
             return CheckResult::pass(self.name(), "Hooks disabled (skipping)");
         }
 
+        let configured_hooks = count_configured_hooks(config);
+        if configured_hooks == 0 {
+            return CheckResult::pass(self.name(), "No hooks configured");
+        }
+
         let mut diagnostics = Vec::new();
         validate_hook_duplicate_names(config, &mut diagnostics);
         validate_hook_command_resolvability(config, &mut diagnostics);
 
         if diagnostics.is_empty() {
-            CheckResult::pass(
+            CheckResult::warn(
                 self.name(),
-                format!(
-                    "Hooks validation passed ({} hook(s))",
-                    count_configured_hooks(config)
-                ),
+                format!("Configured hooks are inert ({configured_hooks} hook(s))"),
+                "WARNING: lifecycle hooks are NOT executed under the autoloop engine pending the engine bridge.",
             )
         } else {
             CheckResult::fail(
@@ -207,6 +215,26 @@ impl PreflightCheck for HooksValidationCheck {
                 diagnostics.join("\n"),
             )
         }
+    }
+}
+
+struct ConsecutiveFailureBudgetCheck;
+
+#[async_trait]
+impl PreflightCheck for ConsecutiveFailureBudgetCheck {
+    fn name(&self) -> &'static str {
+        "failure-budget"
+    }
+
+    async fn run(&self, config: &RalphConfig) -> CheckResult {
+        let value = config.event_loop.max_consecutive_failures;
+        CheckResult::warn(
+            self.name(),
+            format!("Consecutive-failure budget is not enforced ({value})"),
+            format!(
+                "event_loop.max_consecutive_failures={value} is not enforced; the loop has no equivalent consecutive-failure budget."
+            ),
+        )
     }
 }
 
@@ -271,7 +299,9 @@ fn validate_hook_command_resolvability(config: &RalphConfig, diagnostics: &mut V
     }
 }
 
-pub fn hook_path_override(env_map: &HashMap<String, String>) -> Option<&str> {
+pub fn hook_path_override<S: std::hash::BuildHasher>(
+    env_map: &HashMap<String, String, S>,
+) -> Option<&str> {
     env_map
         .get("PATH")
         .or_else(|| env_map.get("Path"))
@@ -352,7 +382,9 @@ pub fn resolve_hook_command(
         "process PATH"
     };
 
-    Err(format!("Command '{command}' was not found in {path_source}."))
+    Err(format!(
+        "Command '{command}' was not found in {path_source}."
+    ))
 }
 
 use crate::utils::{executable_extensions, find_executable, is_executable_file};
@@ -372,6 +404,67 @@ impl PreflightCheck for BackendAvailableCheck {
         }
 
         check_named_backend(self.name(), config, backend)
+    }
+}
+
+struct AutoloopAvailableCheck;
+
+#[async_trait]
+impl PreflightCheck for AutoloopAvailableCheck {
+    fn name(&self) -> &'static str {
+        "autoloop"
+    }
+
+    async fn run(&self, _config: &RalphConfig) -> CheckResult {
+        autoloop_check_result(check_autoloop())
+    }
+}
+
+fn autoloop_check_result(health: AutoloopHealth) -> CheckResult {
+    match health {
+        AutoloopHealth::Missing => CheckResult::fail(
+            "autoloop",
+            "Autoloop not found",
+            format!(
+                "autoloop was not found in Ralph's engine directory or on PATH. Install it with: {AUTOLOOP_INSTALL_HINT}; or run: ralph doctor --install-engine (no Node required)"
+            ),
+        ),
+        AutoloopHealth::VersionUnknown { source, .. } => CheckResult::warn(
+            "autoloop",
+            format!(
+                "Autoloop available (version unknown; {})",
+                autoloop_source_label(source)
+            ),
+            "The configured autoloop executable exists, but its version could not be determined; existence check passed",
+        ),
+        AutoloopHealth::TooOld {
+            version, source, ..
+        } => CheckResult::fail(
+            "autoloop",
+            format!(
+                "Autoloop {version} is too old ({})",
+                autoloop_source_label(source)
+            ),
+            format!(
+                "The configured autoloop version is {version}; Ralph requires >= {MIN_AUTOLOOP_VERSION}. Update it with: {AUTOLOOP_INSTALL_HINT}"
+            ),
+        ),
+        AutoloopHealth::Ok {
+            version, source, ..
+        } => CheckResult::pass(
+            "autoloop",
+            format!(
+                "Autoloop {version} available ({})",
+                autoloop_source_label(source)
+            ),
+        ),
+    }
+}
+
+fn autoloop_source_label(source: AutoloopSource) -> &'static str {
+    match source {
+        AutoloopSource::Vendored => "Ralph-managed engine",
+        AutoloopSource::PathLookup => "PATH lookup",
     }
 }
 
@@ -460,23 +553,31 @@ impl PreflightCheck for PathsExistCheck {
         let mut created = Vec::new();
 
         let scratchpad_path = config.core.resolve_path(&config.core.scratchpad.path);
-        if let Some(parent) = scratchpad_path.parent()
-            && let Err(err) = ensure_directory(parent, &mut created)
-        {
-            return CheckResult::fail(
-                self.name(),
-                "Scratchpad path unavailable",
-                format!("{}", err),
-            );
+        if let Some(parent) = scratchpad_path.parent() {
+            match ensure_directory(parent) {
+                Ok(true) => created.push("scratchpad parent"),
+                Ok(false) => {}
+                Err(err) => {
+                    return CheckResult::fail(
+                        self.name(),
+                        "Scratchpad path unavailable",
+                        format!("{}", err),
+                    );
+                }
+            }
         }
 
         let specs_path = config.core.resolve_path(&config.core.specs_dir);
-        if let Err(err) = ensure_directory(&specs_path, &mut created) {
-            return CheckResult::fail(
-                self.name(),
-                "Specs directory unavailable",
-                format!("{}", err),
-            );
+        match ensure_directory(&specs_path) {
+            Ok(true) => created.push("specs directory"),
+            Ok(false) => {}
+            Err(err) => {
+                return CheckResult::fail(
+                    self.name(),
+                    "Specs directory unavailable",
+                    format!("{}", err),
+                );
+            }
         }
 
         if created.is_empty() {
@@ -971,17 +1072,17 @@ fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn ensure_directory(path: &Path, created: &mut Vec<String>) -> anyhow::Result<()> {
+fn ensure_directory(path: &Path) -> anyhow::Result<bool> {
     if path.exists() {
         if path.is_dir() {
-            return Ok(());
+            return Ok(false);
         }
-        anyhow::bail!("Path exists but is not a directory: {}", path.display());
+        anyhow::bail!("the configured workspace path exists but is not a directory");
     }
 
-    std::fs::create_dir_all(path)?;
-    created.push(path.display().to_string());
-    Ok(())
+    std::fs::create_dir_all(path)
+        .map_err(|_| anyhow::anyhow!("could not create the configured workspace directory"))?;
+    Ok(true)
 }
 
 fn is_git_workspace(path: &Path) -> bool {
@@ -1045,11 +1146,128 @@ mod tests {
     }
 
     #[test]
-    fn default_checks_include_hooks_check_name() {
+    fn default_checks_include_hooks_failure_budget_and_autoloop_check_names() {
         let runner = PreflightRunner::default_checks();
         let check_names = runner.check_names();
 
         assert!(check_names.contains(&"hooks"));
+        assert!(check_names.contains(&"failure-budget"));
+        assert!(check_names.contains(&"autoloop"));
+    }
+
+    #[tokio::test]
+    async fn failure_budget_check_warns_with_configured_value_and_engine_limitation() {
+        let mut config = RalphConfig::default();
+        config.event_loop.max_consecutive_failures = 17;
+
+        let result = ConsecutiveFailureBudgetCheck.run(&config).await;
+
+        assert_eq!(result.name, "failure-budget");
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(result.label.contains("not enforced (17)"));
+        let message = result.message.expect("expected unsupported-budget warning");
+        assert!(message.contains("event_loop.max_consecutive_failures=17"));
+        assert!(message.contains("is not enforced"));
+        assert!(message.contains("the loop has no equivalent consecutive-failure budget"));
+        assert!(!message.contains("autoloop"));
+        assert!(!message.contains("0.10"));
+    }
+
+    #[tokio::test]
+    async fn failure_budget_check_warns_for_the_default_value() {
+        let config = RalphConfig::default();
+        let expected = config.event_loop.max_consecutive_failures;
+
+        let result = ConsecutiveFailureBudgetCheck.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(
+            result
+                .message
+                .expect("expected unsupported-budget warning")
+                .contains(&format!("max_consecutive_failures={expected}"))
+        );
+    }
+
+    #[test]
+    fn autoloop_check_result_maps_all_health_states() {
+        let path = PathBuf::from("/opt/autoloop/bin/autoloop");
+        let cases = [
+            (
+                AutoloopHealth::Missing,
+                CheckStatus::Fail,
+                AUTOLOOP_INSTALL_HINT,
+            ),
+            (
+                AutoloopHealth::VersionUnknown {
+                    path: path.clone(),
+                    source: crate::autoloop_health::AutoloopSource::PathLookup,
+                },
+                CheckStatus::Warn,
+                "version could not be determined",
+            ),
+            (
+                AutoloopHealth::TooOld {
+                    path: path.clone(),
+                    version: "0.9.2".to_string(),
+                    source: crate::autoloop_health::AutoloopSource::PathLookup,
+                },
+                CheckStatus::Fail,
+                MIN_AUTOLOOP_VERSION,
+            ),
+            (
+                AutoloopHealth::Ok {
+                    path,
+                    version: MIN_AUTOLOOP_VERSION.to_string(),
+                    source: crate::autoloop_health::AutoloopSource::PathLookup,
+                },
+                CheckStatus::Pass,
+                MIN_AUTOLOOP_VERSION,
+            ),
+        ];
+
+        for (health, status, expected_text) in cases {
+            let result = autoloop_check_result(health);
+            let rendered = format!("{} {}", result.label, result.message.unwrap_or_default());
+            assert_eq!(result.name, "autoloop");
+            assert_eq!(result.status, status);
+            assert!(rendered.contains(expected_text), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn autoloop_check_result_names_source_and_both_install_routes() {
+        let path = PathBuf::from("/managed/autoloop");
+        let vendored = autoloop_check_result(AutoloopHealth::Ok {
+            path: path.clone(),
+            version: MIN_AUTOLOOP_VERSION.to_string(),
+            source: crate::autoloop_health::AutoloopSource::Vendored,
+        });
+        assert!(vendored.label.contains("Ralph-managed engine"));
+        assert!(!vendored.label.contains("/managed/autoloop"));
+
+        for health in [
+            AutoloopHealth::VersionUnknown {
+                path: path.clone(),
+                source: crate::autoloop_health::AutoloopSource::PathLookup,
+            },
+            AutoloopHealth::TooOld {
+                path,
+                version: "0.9.2".to_string(),
+                source: crate::autoloop_health::AutoloopSource::PathLookup,
+            },
+        ] {
+            let result = autoloop_check_result(health);
+            let rendered = format!("{} {}", result.label, result.message.unwrap_or_default());
+            assert!(rendered.contains("PATH lookup"));
+            assert!(!rendered.contains("/managed/autoloop"));
+        }
+
+        let missing = autoloop_check_result(AutoloopHealth::Missing);
+        let guidance = missing.message.expect("missing engine guidance");
+        assert!(guidance.contains(AUTOLOOP_INSTALL_HINT));
+        assert!(guidance.contains("ralph doctor --install-engine"));
+        assert!(guidance.contains("no Node required"));
     }
 
     #[tokio::test]
@@ -1065,7 +1283,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hooks_check_passes_with_resolvable_executable_command() {
+    async fn hooks_check_does_not_warn_when_enabled_but_empty() {
+        let mut config = RalphConfig::default();
+        config.hooks.enabled = true;
+        let check = HooksValidationCheck;
+
+        let result = check.run(&config).await;
+
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert_eq!(result.label, "No hooks configured");
+        assert!(result.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn hooks_check_warns_that_resolvable_configured_hooks_are_inert() {
         let temp = tempfile::tempdir().expect("tempdir");
         let script_dir = temp.path().join("scripts/hooks");
         std::fs::create_dir_all(&script_dir).expect("create script directory");
@@ -1085,10 +1316,13 @@ mod tests {
         let check = HooksValidationCheck;
         let result = check.run(&config).await;
 
-        assert_eq!(result.status, CheckStatus::Pass);
-        assert!(result.label.contains("Hooks validation passed"));
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(result.label.contains("Configured hooks are inert"));
         assert!(result.label.contains("1 hook(s)"));
-        assert!(result.message.is_none());
+        let message = result.message.expect("expected inert-hooks warning");
+        assert!(message.contains("lifecycle hooks are NOT executed"));
+        assert!(message.contains("autoloop engine"));
+        assert!(message.contains("pending the engine bridge"));
     }
 
     #[tokio::test]

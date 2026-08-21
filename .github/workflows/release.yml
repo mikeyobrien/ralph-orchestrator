@@ -342,6 +342,8 @@ jobs:
       contents: read
       id-token: write  # Required for npm OIDC trusted publishing
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Install cached dist
         uses: actions/download-artifact@v4
         with:
@@ -365,14 +367,36 @@ jobs:
           # Uses OIDC trusted publishing (no NPM_TOKEN needed)
           pkg="target/distrib/ralph-cli-npm-package.tar.gz"
 
-          if [ -f "$pkg" ]; then
-            echo "Publishing $pkg with provenance..."
-            npm publish "$pkg" --access public --provenance
-            echo "npm package published successfully!"
-          else
-            echo "Warning: ralph-cli npm package not found"
+          if [ ! -f "$pkg" ]; then
+            echo "::error::ralph-cli npm package not found"
             exit 1
           fi
+
+          autoloop_min_version="$(
+            sed -nE 's/^pub const MIN_AUTOLOOP_VERSION: &str = "([^"]+)";$/\1/p' \
+              crates/ralph-core/src/autoloop_health.rs
+          )"
+          if [ -z "$autoloop_min_version" ]; then
+            echo "::error::Could not read MIN_AUTOLOOP_VERSION from ralph-core"
+            exit 1
+          fi
+
+          package_root="$(mktemp -d)"
+          tar -xzf "$pkg" -C "$package_root"
+          package_json="$(find "$package_root" -type f -name package.json -print -quit)"
+          if [ -z "$package_json" ]; then
+            echo "::error::Extracted ralph-cli npm package has no package.json"
+            exit 1
+          fi
+          package_dir="$(dirname "$package_json")"
+
+          npm pkg set \
+            "dependencies.@mobrienv/autoloop=>=$autoloop_min_version" \
+            --prefix "$package_dir"
+
+          echo "Publishing $package_dir with provenance..."
+          npm publish "$package_dir" --access public --provenance
+          echo "npm package published successfully!"
 
   # Smoke test: verify `cargo install ralph-cli` works from crates.io
   smoke-test-install:

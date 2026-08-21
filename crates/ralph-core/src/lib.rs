@@ -10,10 +10,12 @@
 //! - Terminal capture for session recording
 //! - Benchmark task definitions and workspace isolation
 
+pub mod autoloop_health;
 #[cfg(feature = "recording")]
 mod cli_capture;
 mod config;
 pub mod diagnostics;
+pub mod engine_state;
 mod event_logger;
 mod event_parser;
 mod event_reader;
@@ -44,10 +46,10 @@ mod session_recorder;
 pub mod skill;
 pub mod skill_registry;
 mod summary_writer;
-mod termination;
 pub mod task;
 pub mod task_definition;
 pub mod task_store;
+mod termination;
 pub mod testing;
 mod text;
 mod urgent_steer;
@@ -59,21 +61,22 @@ pub mod worktree;
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
     CliConfig, ConfigError, CoreConfig, EventLoopConfig, EventMetadata, FeaturesConfig, HatBackend,
-    HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig, RobotMode,
-    ScratchpadConfig, SkillOverride, SkillsConfig, resolve_context_window,
+    HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, ROBOT_HITL_INACTIVE_WARNING,
+    RalphConfig, RobotMode, ScratchpadConfig, SkillOverride, SkillsConfig, resolve_context_window,
     resolve_context_window_for_backend,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
+pub use engine_state::{engine_run_dir, engine_state_root};
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
-pub use termination::TerminationReason;
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
 pub use file_lock::{FileLock, LockGuard as FileLockGuard, LockedFile};
 pub use git_ops::{
     AutoCommitResult, GitOpsError, auto_commit_changes, clean_stashes, get_commit_summary,
-    get_current_branch, get_head_sha, get_recent_files, has_uncommitted_changes,
-    is_working_tree_clean, prune_remote_refs,
+    get_current_branch, get_head_sha, get_recent_files, git_output, git_output_strict,
+    git_ref_exists, git_remote_exists, git_run, has_uncommitted_changes, is_working_tree_clean,
+    prune_remote_refs,
 };
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hat_registry::HatRegistry;
@@ -126,6 +129,7 @@ pub use task_definition::{
     TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
 };
 pub use task_store::TaskStore;
+pub use termination::TerminationReason;
 pub use text::{sanitize_tui_block_text, sanitize_tui_inline_text, truncate_with_ellipsis};
 pub use urgent_steer::{UrgentSteerRecord, UrgentSteerStore};
 pub use workspace::{

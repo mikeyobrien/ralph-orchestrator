@@ -169,7 +169,7 @@ Create an Axum web app with:
 ```markdown
 ## Constraints
 - Use Axum (not Actix)
-- Rust 1.75+
+- Current stable Rust
 - No external API calls
 ```
 
@@ -196,11 +196,15 @@ ralph run --continue
 
 ### Check Metrics
 
-After completion, check `.agent/` for:
+After completion, Ralph coordination artifacts may exist under
+`.ralph/agent/`:
 
-- `scratchpad.md` - Iteration state (per-hat scratchpads may also exist)
-- `memories.md` - Persistent learning
-- `tasks.jsonl` - Task tracking
+- `memories.md` - Ralph persistent learning
+- `tasks.jsonl` - Ralph runtime tracking, separate from autoloop completion
+- `scratchpad.md` - Retained configurable Ralph state path
+
+Autoloop owns the canonical run state and completion judgment; these files are
+not a transcript of the engine's internal task store.
 
 ## Common Issues
 

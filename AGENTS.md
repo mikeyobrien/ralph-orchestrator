@@ -9,32 +9,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo build
 cargo test
-cargo test -p ralph-core test_name           # Run single test
-cargo test -p ralph-core smoke_runner        # Smoke tests (replay-based)
-cargo run -p ralph-e2e -- --mock             # E2E tests (CI-safe)
-./scripts/setup-hooks.sh                     # Install pre-commit hooks (once)
+cargo test -p ralph-cli -p ralph-core        # Focused CLI/core gate
+cargo test -p ralph-core test_core_config_defaults  # Run one named test
 ```
 
-**IMPORTANT**: Run `cargo test` before declaring any task done. Smoke test after code changes.
+**IMPORTANT**: Run `cargo test` before declaring any task done.
 
 ### Web Dashboard
 
 ```bash
-ralph web                                    # Launch both servers (backend:3000, frontend:5173)
+ralph web                                    # Launch Rust API (:3000) + frontend (:5173)
 npm install                                  # Install all dependencies
-npm run dev                                  # Dev mode (both)
-npm run dev:server                           # Backend only
-npm run dev:web                              # Frontend only
-npm run test:server                          # Backend tests
+npm run dev                                  # Frontend only (default)
+npm run dev:api                              # Rust RPC API only
+npm run dev:web                              # Frontend only (explicit)
+npm run test:server                          # Deprecated Node backend tests
 ```
 
 ## Architecture
 
+**autoloop is the engine; Ralph is the TUI frontend and observation/coordination
+plane.** Ralph never re-implements engine judgment. It observes autoloop's
+contracts (journal, `--events`, and summary) and coordinates around them through
+the merge queue, worktrees, loop registry, TUI, and—once implemented—HITL relay.
+
 ```
-ralph-cli      → CLI entry point, commands (run, plan, task, loops, web)
-ralph-core     → Orchestration logic, event loop, hats, memories, tasks
-ralph-adapters → Backend integrations (Claude, Kiro, Gemini, Codex, Roo, etc.)
-ralph-telegram → Telegram bot for human-in-the-loop communication
+ralph-cli      → CLI/TUI frontend, autoloop launch, completion and merge coordination
+ralph-core     → Shared config and coordination state (memories, tasks, registry, merge queue)
+ralph-adapters → Autoloop process integration and journal/event/summary contracts
+ralph-telegram → Telegram relay components (inactive with the autoloop engine; see RObot below)
 ralph-tui      → Terminal UI (ratatui-based)
 ralph-e2e      → End-to-end test framework
 ralph-proto    → Protocol definitions
@@ -57,8 +60,12 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 
 ### Code Locations
 
-- **Event loop**: `crates/ralph-core/src/event_loop/mod.rs`
-- **Hat system**: `crates/ralph-core/src/hatless_ralph.rs`
+- **Autoloop engine driver**: `crates/ralph-cli/src/autoloop_engine.rs`
+- **Autoloop preset generation**: `crates/ralph-cli/src/autoloop_preset_gen.rs`
+- **Completion coordination**: `crates/ralph-cli/src/completion_coord.rs`
+- **Merge processing**: `crates/ralph-cli/src/merge_processing.rs`
+- **Autoloop adapters**: `crates/ralph-adapters/src/autoloop_runner.rs`, `autoloop_events.rs`, `autoloop_journal.rs`, `autoloop_event_tailer.rs`
+- **Autoloop dependency health**: `crates/ralph-core/src/autoloop_health.rs`
 - **Memory system**: `crates/ralph-core/src/memory.rs`, `memory_store.rs`
 - **Task system**: `crates/ralph-core/src/task.rs`, `task_store.rs`
 - **Lock coordination**: `crates/ralph-core/src/worktree.rs`
@@ -67,8 +74,6 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 - **CLI commands**: `crates/ralph-cli/src/loops.rs`, `task_cli.rs`
 - **Telegram integration**: `crates/ralph-telegram/src/` (bot, service, state, handler)
 - **RObot config**: `crates/ralph-core/src/config.rs` (`RobotConfig`, `TelegramBotConfig`)
-- **Wave system**: `crates/ralph-core/src/wave_tracker.rs`, `wave_detection.rs`, `wave_prompt.rs`
-- **Wave CLI**: `crates/ralph-cli/src/wave.rs`
 - **Web server**: `backend/ralph-web-server/src/` (tRPC routes in `api/`, runners in `runner/`)
 - **Web dashboard**: `frontend/ralph-web/src/` (React components in `components/`)
 
@@ -100,22 +105,13 @@ frontend/      → Web dashboard (@ralph-web/dashboard) - React + Vite + Tailwin
 - Create code tasks in `.ralph/tasks/` using `.code-task.md` extension
 - Work step-by-step: spec → dogfood spec → implement → dogfood implementation → done
 
-### Memories and Tasks (Default Mode)
+### Memories, Tasks, and Scratchpad
 
-Memories and tasks are enabled by default. Both must be enabled/disabled together:
-
-When enabled (default):
-- Scratchpad is disabled
-- Tasks replace scratchpad for completion verification
-- Loop terminates when no open tasks + consecutive LOOP_COMPLETE
-
-To disable (legacy scratchpad mode):
-```yaml
-memories:
-  enabled: false
-tasks:
-  enabled: false
-```
+Memories, Ralph tasks, and `core.scratchpad` are enabled by default and are
+independently configurable. Under the v3 engine, autoloop owns completion
+judgment using its canonical task store. Ralph may inspect its own task store
+for coordination and warnings, but those tasks do not participate in the
+engine's completion gate because the two task formats are incompatible.
 
 ## Parallel Loops
 
@@ -149,11 +145,9 @@ ralph run -p "Add footer after </p>" --max-iterations 5
 ralph loops
 ```
 
-## Agent Waves (Intra-Loop Parallelism)
+## Autoloop Role Concurrency
 
-Waves enable a single hat to process multiple work items in parallel within one iteration.
-
-### Hat Config Fields
+Hat concurrency and aggregation are translated into the generated autoloop topology:
 
 ```yaml
 hats:
@@ -161,111 +155,56 @@ hats:
     name: "Reviewer"
     triggers: ["review.file"]
     publishes: ["review.done"]
-    concurrency: 4              # Max parallel workers (default: 1)
+    concurrency: 4              # Declarative parallel branches
     instructions: "..."
 
   synthesizer:
     triggers: ["review.done"]
     publishes: ["review.complete"]
-    aggregate:                   # Buffer results until all arrive
+    aggregate:                   # Wait for all branch results
       mode: wait_for_all
-      timeout: 300               # Seconds to wait
+      timeout: 300               # Seconds
 ```
 
-- `concurrency > 1` enables wave execution for a hat
-- `aggregate` makes a hat wait for all wave results before activating
-- A hat cannot have both `concurrency > 1` and `aggregate`
-
-### Wave Dispatch
-
-Agents dispatch waves via CLI:
-```bash
-ralph wave emit review.file --payloads "src/main.rs" "src/lib.rs" "src/config.rs"
-```
-
-### How It Works
-
-1. Agent emits wave events (tagged with shared `wave_id`)
-2. Loop runner detects wave events, resolves target hat
-3. Spawns N parallel backend instances (up to `concurrency` limit)
-4. Each worker gets: focused prompt, per-worker events file, wave env vars
-5. Results merged back to main events file
-6. Aggregator hat picks up results on next iteration
-
-### Key Code Locations
-
-- **Wave CLI**: `crates/ralph-cli/src/wave.rs`
-- **Wave detection**: `crates/ralph-core/src/wave_detection.rs`
-- **Worker prompt**: `crates/ralph-core/src/wave_prompt.rs`
-- **Wave tracker**: `crates/ralph-core/src/wave_tracker.rs`
-- **Loop integration**: `crates/ralph-cli/src/loop_runner.rs` (`execute_wave`)
+- `concurrency > 1` maps to autoloop per-role `concurrency`; routing one event to the role
+  launches that many declarative branches, each prefixed with `[branch i/N]`.
+- `aggregate` maps to autoloop role aggregation; Ralph's timeout seconds are converted to
+  `timeout_ms` in the generated topology.
+- A hat cannot have both `concurrency > 1` and `aggregate`.
+- Agents publish normal handoff events through the live autoloop harness event tool; autoloop
+  owns parallel dispatch and result aggregation.
 
 ### Presets
 
-- `presets/wave-review.yml` — Scatter-gather code review
+- `presets/wave-review.yml` — Declarative autoloop-concurrency scatter-gather review
 
-## Smoke Tests (Replay-Based)
+## Legacy E2E Scenario Inventory
 
-Smoke tests use recorded JSONL fixtures instead of live API calls:
-
-```bash
-cargo test -p ralph-core smoke_runner        # All smoke tests
-cargo test -p ralph-core kiro                # Kiro-specific
-```
-
-**Fixtures location:** `crates/ralph-core/tests/fixtures/`
-
-### Recording New Fixtures
+The legacy cassette E2E scenarios target the deleted in-house loop and are not
+a v3 GA gate. Their inventory remains available while replacement coverage is
+tracked in the v3 GA-readiness R-matrix:
 
 ```bash
-cargo run --bin ralph -- run -c ralph.claude.yml --record-session session.jsonl -p "your prompt"
+cargo run -p ralph-e2e -- --list
 ```
-
-## E2E Testing
-
-```bash
-cargo run -p ralph-e2e -- claude             # Live API tests
-cargo run -p ralph-e2e -- --mock             # CI-safe mock mode
-cargo run -p ralph-e2e -- --mock --filter connect  # Filter scenarios
-cargo run -p ralph-e2e -- --list             # List scenarios
-```
-
-Reports generated in `.e2e-tests/`.
 
 ## RObot (Human-in-the-Loop)
 
-Ralph supports human interaction during orchestration via Telegram. Agents can ask questions and humans can send proactive guidance.
-
-### Configuration
+**Telegram HITL is inactive under the autoloop engine pending autoloop#345.**
+The `ralph-telegram` crate, `ralph bot` command, and configuration surface
+remain in the tree for when the engine relay lands, but an autoloop-backed
+`ralph run` does not currently relay agent questions or human guidance.
 
 ```yaml
-# ralph.yml
+# Reserved configuration shape in ralph.yml
 RObot:
   enabled: true
-  timeout_seconds: 300    # How long to block waiting for a response
+  timeout_seconds: 300
   telegram:
-    bot_token: "your-token"  # Or set RALPH_TELEGRAM_BOT_TOKEN env var
+    bot_token: "your-token"  # Or RALPH_TELEGRAM_BOT_TOKEN
 ```
 
-### Event Types
-
-| Event / Command | Direction | Purpose |
-|-------|-----------|---------|
-| `human.interact` | Agent to Human | Agent asks a question; loop blocks until response or timeout |
-| `human.response` | Human to Agent | Reply to a `human.interact` question |
-| `human.guidance` | Human to Agent | Proactive guidance injected as `## ROBOT GUIDANCE` in prompt |
-| `ralph tools interact progress` | Agent to Human | Non-blocking progress notification via Telegram (no event, direct send) |
-
-### How It Works
-
-- The Telegram bot starts only on the **primary loop** (the one holding `.ralph/loop.lock`)
-- When an agent emits `human.interact`, the event loop sends the question via Telegram and **blocks**
-- Responses are published as `human.response` events on the bus
-- Proactive messages become `human.guidance` events, squashed into a numbered list in the prompt
-- Send failures retry with exponential backoff (3 attempts); if all fail, treated as timeout
-- Parallel loops route messages via reply-to, `@loop-id` prefix, or default to primary
-
-See `crates/ralph-telegram/README.md` for setup instructions.
+See `crates/ralph-telegram/README.md` for the retained bot setup.
 
 ## Diagnostics
 
@@ -289,7 +228,7 @@ ralph clean --diagnostics
 
 - Run `cargo test` before declaring any task done
 - Backwards compatibility doesn't matter — it adds clutter for no reason
-- Prefer replay-based smoke tests over live API calls for CI
+- Use current Rust integration gates; do not treat legacy cassette E2E as a v3 gate
 - BDD/Cucumber tests MUST exercise real runtime code paths via integration tests (not placeholder/source-only assertions)
 - Run python tests using a .venv
 - You MUST not commit ephemeral files

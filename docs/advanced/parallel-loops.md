@@ -9,8 +9,8 @@ When you start a Ralph loop:
 1. **First loop** acquires `.ralph/loop.lock` and runs in-place (the primary loop)
 2. **Additional loops** automatically spawn into `.worktrees/<loop-id>/`
 3. **Each loop** has isolated events, tasks, and scratchpad
-4. **Memories are shared** — symlinked back to the main repo's `.agent/memories.md`
-5. **On completion**, worktree loops are preserved for manual handling by default, or queued for merge-ralph when auto-merge is enabled
+4. **Memories are shared** — symlinked back to the main repo's `.ralph/agent/memories.md`
+5. **On engine completion**, Ralph preserves worktree loops for manual handling by default, or queues them for merge processing when auto-merge is enabled
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@ When you start a Ralph loop:
 │           ↓                    │           ↓                       │
 │     Primary loop               │  .worktrees/ralph-20250124-a3f2/  │
 │           ↓                    │           ↓                       │
-│     LOOP_COMPLETE              │     LOOP_COMPLETE → review/merge  │
+│   autoloop completes           │   autoloop completes → merge queue │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -69,14 +69,15 @@ project/
 │   ├── loops.json         # Loop registry
 │   ├── merge-queue.jsonl  # Merge event log
 │   └── events.jsonl       # Primary loop events
-├── .agent/
+├── .ralph/agent/
 │   └── memories.md        # Shared across all loops
 └── .worktrees/
     └── ralph-20250124-a3f2/
         ├── .ralph/events.jsonl    # Loop-isolated
-        ├── .agent/
-        │   ├── memories.md → ../../.agent/memories.md  # Symlink
-        │   └── scratchpad.md      # Loop-isolated
+        ├── .ralph/agent/
+        │   ├── memories.md        # Symlink to main repo
+        │   ├── tasks.jsonl        # Loop-isolated Ralph tracking
+        │   └── scratchpad.md      # Loop-isolated Ralph path
         └── [project files]
 ```
 

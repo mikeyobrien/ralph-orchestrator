@@ -80,6 +80,50 @@ jobs:
   # Hooks mutation testing is expensive (~20min). Run locally with:
   #   ./scripts/hooks-mutation-gate.sh
 
+  # Engine contract tests against a REAL autoloop build (GA gate D5).
+  # Without this job the opt-in contract/parity tests skip on every CI run
+  # and ralph is never exercised against the actual engine.
+  engine-contract:
+    name: Engine contract (real autoloop)
+    runs-on: ubuntu-latest
+    needs: check-embedded-files
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out autoloop engine
+        uses: actions/checkout@v4
+        with:
+          repository: mikeyobrien/autoloop
+          path: autoloop
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build autoloop
+        working-directory: autoloop
+        run: |
+          npm ci
+          npm run build
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Run contract + parity tests (must not skip)
+        env:
+          AUTOLOOP_ROOT: ${{ github.workspace }}/autoloop
+        run: |
+          set -o pipefail
+          cargo test -p ralph-adapters \
+            --test autoloop_native_contract_integration \
+            --test autoloop_parity_integration \
+            -- --nocapture 2>&1 | tee contract-tests.log
+          # The tests skip silently when prerequisites are missing; a skip
+          # here means the job is misconfigured, not that ralph passed.
+          if grep -q "^skip:" contract-tests.log; then
+            echo "::error::contract tests skipped — AUTOLOOP_ROOT/node wiring is broken"
+            exit 1
+          fi
+
   # Verify the crate can be packaged (catches include_str! issues)
   # Only runs on PRs - main pushes are either merges (already verified) or
   # version bumps (Release workflow handles publishing with correct deps)

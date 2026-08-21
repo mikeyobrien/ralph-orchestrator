@@ -43,13 +43,13 @@ pub use crate::executor::{
 };
 pub use crate::hooks_bdd::{
     HooksBddConfig, HooksBddError, HooksBddRunResults, HooksBddScenario, HooksBddScenarioResult,
-    discover_hooks_bdd_scenarios, run_hooks_bdd_suite,
+    HooksBddScenarioStatus, discover_hooks_bdd_scenarios, run_hooks_bdd_suite,
 };
 pub use crate::mock::{
     CassetteError, CassetteResolver, DEFAULT_CASSETTE_DIR, MockConfig, build_mock_cli_args,
 };
 pub use crate::mock_cli::{MockCliError, run as run_mock_cli};
-pub use crate::models::{Assertion, ReportFormat, TestResult};
+pub use crate::models::{Assertion, ReportFormat, SkippedScenario, TestResult};
 pub use crate::reporter::{
     AnalyzedResultData, BackendSummary, JsonReporter, MarkdownReporter, QualityBreakdown,
     ReportSummary, ReportWriter, ReporterError, TerminalReporter, TestReport, TierSummary,
@@ -58,6 +58,8 @@ pub use crate::reporter::{
 pub use crate::runner::{
     ProgressCallback, ProgressEvent, RunConfig, RunResults, RunnerError, TestRunner,
 };
+#[cfg(unix)]
+pub use crate::scenarios::EngineCompletionScenario;
 pub use crate::scenarios::{
     // Core traits and helpers
     Assertions,

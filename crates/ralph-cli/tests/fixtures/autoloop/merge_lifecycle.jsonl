@@ -1,0 +1,1 @@
+{"steps":[{"summary":{"run_id":"run-merge-lifecycle","iterations":1,"stop_reason":"completed","journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}}]}

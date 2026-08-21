@@ -14,16 +14,22 @@
 //! | `hats.<id>.publishes`                   | `[[role]] emits`                  |
 //! | `hats.<id>.instructions`                | `roles/<id>.md` (`prompt_file`)   |
 //! | `hats.<id>.triggers` (inverted)         | `[handoff] <event> = [role, ...]` |
+//! | `hats.<id>.concurrency` (when > 1)      | `[[role]] concurrency`            |
+//! | `hats.<id>.aggregate`                   | `[[role]] aggregate`              |
 //! | `event_loop.completion_promise`         | `event_loop.completion_promise`   |
 //! | `event_loop.required_events`            | `event_loop.required_events`      |
 //! | `event_loop.max_iterations`             | `event_loop.max_iterations`       |
-//! | `core.guardrails`                       | `harness.md`                      |
+//! | `event_loop.max_runtime_seconds`         | `event_loop.max_runtime` (ms)     |
+//! | `event_loop.max_cost_usd`                | `event_loop.max_cost_usd`         |
+//! | `core.guardrails`                        | `harness.md`                      |
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
+use ralph_adapters::{CliBackend, PromptMode};
 use ralph_core::RalphConfig;
 
 /// autoloop's completion-event convention (ralph signals completion by the
@@ -89,6 +95,18 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
             topo.push_str(&format!("name = {}\n", q(&hat.name)));
         }
         topo.push_str(&format!("emits = {}\n", arr(&hat.publishes)));
+        if hat.concurrency > 1 {
+            topo.push_str(&format!("concurrency = {}\n", hat.concurrency));
+        }
+        if let Some(aggregate) = &hat.aggregate {
+            // Ralph's aggregate schema currently accepts only wait_for_all.
+            let mode = "wait_for_all";
+            let timeout_ms = u64::from(aggregate.timeout) * 1_000;
+            topo.push_str(&format!(
+                "aggregate = {{ mode = {}, timeout_ms = {timeout_ms} }}\n",
+                q(mode)
+            ));
+        }
         topo.push_str(&format!("prompt_file = {}\n\n", q(&role_file)));
     }
     topo.push_str("[handoff]\n");
@@ -137,11 +155,188 @@ fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Map Ralph's normalized loop budgets to autoloop 0.10.x config overrides.
+///
+/// Autoloop duration values are milliseconds. There is no autoloop equivalent
+/// for Ralph's consecutive-failure budget, so it is deliberately omitted and
+/// reported by the shared preflight checks rather than approximated with a
+/// differently-behaving limit.
+pub(crate) fn autoloop_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
+    let el = &config.event_loop;
+    let mut overrides = Vec::new();
+    if let Some(max_iterations) = el.max_iterations {
+        overrides.push(("event_loop.max_iterations", max_iterations.to_string()));
+    }
+    overrides.extend(autoloop_non_iteration_budget_overrides(config));
+    overrides
+}
+
+fn autoloop_non_iteration_budget_overrides(config: &RalphConfig) -> Vec<(&'static str, String)> {
+    let el = &config.event_loop;
+    let mut overrides = vec![(
+        "event_loop.max_runtime",
+        Duration::from_secs(el.max_runtime_seconds)
+            .as_millis()
+            .to_string(),
+    )];
+    if let Some(max_cost_usd) = el.max_cost_usd {
+        overrides.push(("event_loop.max_cost_usd", max_cost_usd.to_string()));
+    }
+    overrides
+}
+
+const SUPPORTED_AUTOLOOP_BACKENDS: &str =
+    "claude, pi, kiro, kiro-acp, gemini, codex, forge, amp, copilot, opencode, custom";
+
+fn unsupported_backend(name: &str, reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "backend {name:?} {reason}; supported autoloop backends: {SUPPORTED_AUTOLOOP_BACKENDS}"
+        ),
+    )
+}
+
+fn backend_args_csv(name: &str, args: &[String]) -> io::Result<Option<String>> {
+    if let Some(arg) = args.iter().find(|arg| arg.contains(',')) {
+        return Err(unsupported_backend(
+            name,
+            &format!(
+                "has argument {arg:?} containing a comma, which autoloop backend.args cannot represent"
+            ),
+        ));
+    }
+    Ok((!args.is_empty()).then(|| args.join(",")))
+}
+
+/// Translate Ralph's resolved CLI backend into autoloop 0.10.x config keys.
+///
+/// Command backends reuse [`CliBackend`] so their headless command, arguments,
+/// prompt flag, and configured overrides remain defined in one place.
+pub(crate) fn autoloop_backend_spec(
+    config: &RalphConfig,
+) -> io::Result<Vec<(&'static str, String)>> {
+    let cli = &config.cli;
+    let command = |default: &str| cli.command.clone().unwrap_or_else(|| default.to_string());
+
+    match cli.backend.as_str() {
+        "claude" => {
+            if !cli.args.is_empty() {
+                return Err(unsupported_backend(
+                    "claude",
+                    &format!(
+                        "cannot receive CLI args {:?} through the claude-sdk backend; use the custom backend or an explicit core.autoloop_preset",
+                        cli.args
+                    ),
+                ));
+            }
+            Ok(vec![
+                ("backend.kind", "claude-sdk".to_string()),
+                ("backend.command", command("claude")),
+            ])
+        }
+        "pi" => {
+            let mut spec = vec![
+                ("backend.kind", "pi".to_string()),
+                ("backend.command", command("pi")),
+            ];
+            if let Some(args) = backend_args_csv("pi", &cli.args)? {
+                spec.push(("backend.args", args));
+            }
+            Ok(spec)
+        }
+        "kiro" | "kiro-acp" => {
+            let mut spec = vec![
+                ("backend.kind", "acp".to_string()),
+                ("backend.provider", "kiro".to_string()),
+                ("backend.command", command("kiro-cli")),
+            ];
+            if let Some(args) = backend_args_csv(&cli.backend, &cli.args)? {
+                spec.push(("backend.args", format!("acp,{args}")));
+            }
+            Ok(spec)
+        }
+        "roo" => Err(unsupported_backend(
+            "roo",
+            "is unsupported under the autoloop engine because roo requires --prompt-file <path>",
+        )),
+        "auto" | "" => Err(unsupported_backend(
+            &cli.backend,
+            "was not resolved before autoloop preset generation",
+        )),
+        "gemini" | "codex" | "forge" | "amp" | "copilot" | "opencode" | "custom" => {
+            let mut backend = CliBackend::from_config(cli).map_err(|error| {
+                unsupported_backend(&cli.backend, &format!("cannot be configured: {error}"))
+            })?;
+
+            // Copilot's JSONL flag exists for Ralph's output parser. The
+            // autoloop command backend consumes plain text instead.
+            if cli.backend == "copilot" {
+                let parser_args = backend
+                    .args
+                    .windows(2)
+                    .position(|args| args[0] == "--output-format" && args[1] == "json")
+                    .ok_or_else(|| {
+                        unsupported_backend(
+                            "copilot",
+                            "is missing its expected parser output-format arguments",
+                        )
+                    })?;
+                backend.args.drain(parser_args..parser_args + 2);
+            }
+
+            let prompt_mode = match backend.prompt_mode {
+                PromptMode::Arg => {
+                    if let Some(flag) = backend.prompt_flag {
+                        backend.args.push(flag);
+                    }
+                    "arg"
+                }
+                PromptMode::Stdin => "stdin",
+                PromptMode::NoPrompt => {
+                    return Err(unsupported_backend(
+                        &cli.backend,
+                        "does not provide a prompt delivery mode supported by autoloop",
+                    ));
+                }
+            };
+
+            let args = backend_args_csv(&cli.backend, &backend.args)?;
+            let mut spec = vec![
+                ("backend.kind", "command".to_string()),
+                ("backend.command", backend.command),
+            ];
+            if let Some(args) = args {
+                spec.push(("backend.args", args));
+            }
+            spec.push(("backend.prompt_mode", prompt_mode.to_string()));
+            Ok(spec)
+        }
+        name => Err(unsupported_backend(name, "is not recognized")),
+    }
+}
+
 /// Write `autoloops.toml` from ralph's event-loop config.
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
-    auto.push_str(&format!("event_loop.max_iterations = {}\n", el.max_iterations));
+
+    // Deliberately do not set `core.tasks_file` to Ralph's
+    // `.ralph/agent/tasks.jsonl`. Ralph stores snapshot records with `title`,
+    // lifecycle statuses such as `in_progress`/`closed`/`failed`, priorities,
+    // dependencies, and loop IDs. autoloop's append-only records instead use
+    // `type = "task"`, `text`, and `open`/`done`. Sharing the path would make
+    // autoloop silently ignore Ralph records and risk corrupting the file with
+    // mixed formats. autoloop therefore keeps its canonical task store and
+    // remains the sole authority for its completion gate; Ralph only warns
+    // observationally about its separate open tasks after engine completion.
+    auto.push_str(&format!(
+        "event_loop.max_iterations = {}\n",
+        el.effective_max_iterations()
+    ));
+    for (key, value) in autoloop_non_iteration_budget_overrides(config) {
+        auto.push_str(&format!("{key} = {value}\n"));
+    }
     auto.push_str(&format!(
         "event_loop.completion_event = {}\n",
         q(COMPLETION_EVENT)
@@ -155,6 +350,10 @@ fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
             "event_loop.required_events = {}\n",
             arr(&el.required_events)
         ));
+    }
+    auto.push('\n');
+    for (key, value) in autoloop_backend_spec(config)? {
+        auto.push_str(&format!("{key} = {}\n", q(&value)));
     }
     auto.push_str("\nharness.instructions_file = \"harness.md\"\n");
     fs::write(dir.join("autoloops.toml"), auto.as_bytes())
@@ -177,11 +376,17 @@ fn starting_role(config: &RalphConfig, hats: &[(&String, &ralph_core::HatConfig)
         .clone()
         .unwrap_or_else(|| "task.start".to_string());
     for (id, hat) in hats {
-        if hat.triggers.iter().any(|t| *t == start_event || t == "task.start") {
+        if hat
+            .triggers
+            .iter()
+            .any(|t| *t == start_event || t == "task.start")
+        {
             return (*id).clone();
         }
     }
-    hats.first().map(|(id, _)| (*id).clone()).unwrap_or_default()
+    hats.first()
+        .map(|(id, _)| (*id).clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -223,6 +428,43 @@ hats:
     }
 
     #[test]
+    fn generated_preset_writes_effective_default_max_iterations() {
+        let cfg = RalphConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("event_loop.max_iterations = 100\n"));
+    }
+
+    #[test]
+    fn explicit_preset_does_not_override_unset_max_iterations() {
+        let cfg = RalphConfig::default();
+
+        let overrides = autoloop_budget_overrides(&cfg);
+
+        assert!(
+            !overrides
+                .iter()
+                .any(|(key, _)| *key == "event_loop.max_iterations")
+        );
+    }
+
+    #[test]
+    fn explicit_preset_forwards_user_set_max_iterations() {
+        let cfg: RalphConfig = serde_yaml::from_str("event_loop:\n  max_iterations: 7\n").unwrap();
+
+        let overrides = autoloop_budget_overrides(&cfg);
+
+        assert!(
+            overrides
+                .iter()
+                .any(|(key, value)| { *key == "event_loop.max_iterations" && value == "7" })
+        );
+    }
+
+    #[test]
     fn writes_a_valid_preset_shape_from_hats() {
         let cfg = config_with_hats();
         let dir = tempfile::tempdir().unwrap();
@@ -254,5 +496,326 @@ hats:
         // The generated preset is loadable by ralph's own autoloop preset reader
         // (round-trip sanity against preset_source's detector).
         assert!(dir.path().join("topology.toml").is_file());
+    }
+
+    #[test]
+    fn writes_hat_concurrency_above_sequential_default() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  reviewer:
+    name: Reviewer
+    description: "reviews"
+    triggers: ["review.ready"]
+    publishes: ["review.done"]
+    instructions: "Review it."
+    concurrency: 4
+"#,
+        )
+        .expect("valid concurrent hat config");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(topo.contains("id = \"reviewer\"\n"));
+        assert!(topo.contains("concurrency = 4\n"));
+    }
+
+    #[test]
+    fn omits_hat_concurrency_at_sequential_default() {
+        let cfg = config_with_hats();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(!topo.contains("concurrency ="));
+    }
+
+    #[test]
+    fn writes_hat_aggregate_with_millisecond_timeout() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  synthesizer:
+    name: Synthesizer
+    description: "synthesizes"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    instructions: "Synthesize it."
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#,
+        )
+        .expect("valid aggregate hat config");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        assert!(topo.contains("id = \"synthesizer\"\n"));
+        assert!(topo.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n"));
+    }
+
+    #[test]
+    fn ports_wave_review_preset_to_declarative_autoloop_topology() {
+        let preset_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../presets/wave-review.yml");
+        let yaml = fs::read_to_string(&preset_path).expect("wave review preset should be readable");
+        let mut cfg: RalphConfig =
+            serde_yaml::from_str(&yaml).expect("wave review preset should parse");
+        cfg.normalize();
+        cfg.validate()
+            .expect("wave review preset should pass config validation");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).expect("wave review preset should generate");
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        let reviewer = topo
+            .split("[[role]]\n")
+            .find(|block| block.lines().any(|line| line == "id = \"reviewer\""))
+            .expect("reviewer role should be generated");
+        assert!(reviewer.contains("concurrency = 3\n"));
+
+        let synthesizer = topo
+            .split("[[role]]\n")
+            .find(|block| block.lines().any(|line| line == "id = \"synthesizer\""))
+            .expect("synthesizer role should be generated");
+        assert!(
+            synthesizer.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n")
+        );
+        assert!(topo.contains("\"review.perspective\" = [\"reviewer\"]\n"));
+        assert!(topo.contains("\"review.done\" = [\"synthesizer\"]\n"));
+    }
+
+    #[test]
+    fn keeps_incompatible_ralph_and_autoloop_task_stores_separate() {
+        let cfg = RalphConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(!auto.contains("core.tasks_file"));
+        assert!(!auto.contains(".ralph/agent/tasks.jsonl"));
+    }
+
+    #[test]
+    fn writes_normalized_v2_budgets_with_autoloop_keys_and_units() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r"
+event_loop:
+  max_iterations: 9
+  max_runtime_seconds: 12
+  max_cost_usd: 3.5
+  max_consecutive_failures: 2
+",
+        )
+        .expect("valid v2 config");
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("event_loop.max_iterations = 9\n"));
+        assert!(auto.contains("event_loop.max_runtime = 12000\n"));
+        assert!(auto.contains("event_loop.max_cost_usd = 3.5\n"));
+        assert!(!auto.contains("max_consecutive_failures"));
+    }
+
+    #[test]
+    fn writes_v1_budget_aliases_after_normalization() {
+        let mut cfg: RalphConfig = serde_yaml::from_str(
+            r"
+max_runtime: 8
+max_cost: 1.25
+",
+        )
+        .expect("valid v1 config");
+        cfg.normalize();
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("event_loop.max_runtime = 8000\n"));
+        assert!(auto.contains("event_loop.max_cost_usd = 1.25\n"));
+    }
+
+    fn generated_autoloops(backend: &str) -> String {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = backend.to_string();
+        let dir = tempfile::tempdir().unwrap();
+        generate_preset(&cfg, dir.path()).unwrap();
+        fs::read_to_string(dir.path().join("autoloops.toml")).unwrap()
+    }
+
+    #[test]
+    fn writes_claude_sdk_backend_without_cli_args() {
+        let auto = generated_autoloops("claude");
+
+        assert!(auto.contains("backend.kind = \"claude-sdk\"\n"));
+        assert!(auto.contains("backend.command = \"claude\"\n"));
+        assert!(!auto.contains("backend.args ="));
+    }
+
+    #[test]
+    fn rejects_claude_cli_args_that_the_sdk_cannot_receive() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "claude".to_string();
+        cfg.cli.args = vec!["--model".to_string(), "claude-opus".to_string()];
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = generate_preset(&cfg, dir.path()).unwrap_err().to_string();
+
+        assert!(error.contains("claude"));
+        assert!(error.contains("--model"));
+        assert!(error.contains("claude-opus"));
+        assert!(error.contains("cannot receive CLI args"));
+        assert!(error.contains("custom"));
+        assert!(error.contains("core.autoloop_preset"));
+    }
+
+    #[test]
+    fn writes_pi_backend() {
+        let auto = generated_autoloops("pi");
+
+        assert!(auto.contains("backend.kind = \"pi\"\n"));
+        assert!(auto.contains("backend.command = \"pi\"\n"));
+        assert!(!auto.contains("backend.args ="));
+    }
+
+    #[test]
+    fn forwards_pi_cli_args() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "pi".to_string();
+        cfg.cli.args = vec!["--provider".to_string(), "openai-codex".to_string()];
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("backend.args = \"--provider,openai-codex\"\n"));
+    }
+
+    #[test]
+    fn writes_kiro_backends_as_acp() {
+        for backend in ["kiro", "kiro-acp"] {
+            let auto = generated_autoloops(backend);
+
+            assert!(auto.contains("backend.kind = \"acp\"\n"));
+            assert!(auto.contains("backend.provider = \"kiro\"\n"));
+            assert!(auto.contains("backend.command = \"kiro-cli\"\n"));
+            assert!(!auto.contains("backend.args ="));
+        }
+    }
+
+    #[test]
+    fn forwards_kiro_cli_args_after_the_acp_provider_default() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "kiro".to_string();
+        cfg.cli.args = vec!["--trust-all-tools".to_string()];
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("backend.args = \"acp,--trust-all-tools\"\n"));
+    }
+
+    #[test]
+    fn writes_gemini_command_backend_from_adapter_template() {
+        let auto = generated_autoloops("gemini");
+
+        assert!(auto.contains("backend.kind = \"command\"\n"));
+        assert!(auto.contains("backend.command = \"gemini\"\n"));
+        assert!(auto.contains("backend.args = \"--yolo,-p\"\n"));
+        assert!(auto.contains("backend.prompt_mode = \"arg\"\n"));
+    }
+
+    #[test]
+    fn removes_copilot_parser_only_output_format_args() {
+        let auto = generated_autoloops("copilot");
+
+        assert!(auto.contains("backend.args = \"--allow-all-tools,-p\"\n"));
+        assert!(!auto.contains("--output-format"));
+    }
+
+    #[test]
+    fn writes_custom_command_args_with_prompt_flag_last() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "custom".to_string();
+        cfg.cli.command = Some("my-agent".to_string());
+        cfg.cli.args = vec![
+            "--verbose".to_string(),
+            "--model".to_string(),
+            "fast".to_string(),
+        ];
+        cfg.cli.prompt_flag = Some("--prompt".to_string());
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("backend.kind = \"command\"\n"));
+        assert!(auto.contains("backend.command = \"my-agent\"\n"));
+        assert!(auto.contains("backend.args = \"--verbose,--model,fast,--prompt\"\n"));
+        assert!(auto.contains("backend.prompt_mode = \"arg\"\n"));
+    }
+
+    #[test]
+    fn rejects_roo_with_supported_backend_list() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "roo".to_string();
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = generate_preset(&cfg, dir.path()).unwrap_err().to_string();
+
+        assert!(error.contains("roo"));
+        assert!(error.contains("unsupported under the autoloop engine"));
+        assert!(error.contains(SUPPORTED_AUTOLOOP_BACKENDS));
+    }
+
+    #[test]
+    fn rejects_unknown_backend_with_supported_backend_list() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "smaug".to_string();
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = generate_preset(&cfg, dir.path()).unwrap_err().to_string();
+
+        assert!(error.contains("smaug"));
+        assert!(error.contains(SUPPORTED_AUTOLOOP_BACKENDS));
+    }
+
+    #[test]
+    fn rejects_command_argument_containing_a_comma() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "gemini".to_string();
+        cfg.cli.args = vec!["--setting-sources".to_string(), "project,local".to_string()];
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = generate_preset(&cfg, dir.path()).unwrap_err().to_string();
+
+        assert!(error.contains("gemini"));
+        assert!(error.contains("project,local"));
+        assert!(error.contains("comma"));
+    }
+
+    #[test]
+    fn rejects_pi_argument_containing_a_comma() {
+        let mut cfg = RalphConfig::default();
+        cfg.cli.backend = "pi".to_string();
+        cfg.cli.args = vec!["--provider".to_string(), "openai,codex".to_string()];
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = generate_preset(&cfg, dir.path()).unwrap_err().to_string();
+
+        assert!(error.contains("pi"));
+        assert!(error.contains("openai,codex"));
+        assert!(error.contains("comma"));
     }
 }

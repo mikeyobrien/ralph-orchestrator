@@ -29,10 +29,7 @@ impl Widget for Footer<'_> {
         if let Some(question) = &self.state.pending_ask {
             let line = Line::from(vec![
                 Span::raw(" "),
-                Span::styled(
-                    "\u{26A0} HUMAN ASK: ",
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled("\u{26A0} HUMAN ASK: ", Style::default().fg(Color::Yellow)),
                 Span::raw(question.as_str()),
             ]);
             Paragraph::new(line).render(inner_area, buf);
@@ -106,7 +103,10 @@ impl Widget for Footer<'_> {
 
         // If search state has an active query, render search display
         if let Some(query) = &self.state.search_state.query {
-            let match_info = if self.state.search_state.matches.is_empty() {
+            let match_info = if query.is_empty() {
+                // Still typing the query; no count to show yet.
+                String::new()
+            } else if self.state.search_state.matches.is_empty() {
                 "no matches".to_string()
             } else {
                 format!(
@@ -161,7 +161,10 @@ impl Widget for Footer<'_> {
 
         // Show total elapsed time (default to 00:00 if loop hasn't started)
         let elapsed_display = if let Some(elapsed) = self.state.get_loop_elapsed() {
-            format!("Total Time Elapsed: {}", ralph_core::utils::format_elapsed(elapsed))
+            format!(
+                "Total Time Elapsed: {}",
+                ralph_core::utils::format_elapsed(elapsed)
+            )
         } else {
             "Total Time Elapsed: 00:00".to_string()
         };

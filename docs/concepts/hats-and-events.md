@@ -254,7 +254,6 @@ hats:
 
 ## Next Steps
 
-- Explore [Presets](../guide/presets.md) for ready-made hat workflows
-- Learn about [Agent Waves](../advanced/agent-waves.md) for parallel hat execution
+- Explore [Presets](../guide/presets.md) for ready-made hat workflows and autoloop role concurrency
 - Learn about [Memories & Tasks](memories-and-tasks.md)
 - Understand [Backpressure](backpressure.md) for quality gates

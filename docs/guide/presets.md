@@ -110,12 +110,10 @@ Parallel perspectives merged into one result.
 
 Example: `pr-review`
 
-### 4) Scatter-Gather (Waves)
-One hat dispatches, parallel workers execute, an aggregator synthesizes.
+### 4) Scatter-Gather (Autoloop Role Concurrency)
+A hat with `concurrency > 1` becomes declarative parallel branches in the generated autoloop topology; a downstream hat with `aggregate` waits for their results. Autoloop owns dispatch and aggregation.
 
 Example: `wave-review`
-
-See [Agent Waves](../advanced/agent-waves.md) for details.
 
 ### 5) Extended End-to-End Orchestration
 Large multi-stage pipelines from idea through implementation.

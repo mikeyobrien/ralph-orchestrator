@@ -8,11 +8,11 @@ use crossterm::{
     QueueableCommand,
     style::{self, Color},
 };
+use ralph_core::{sanitize_tui_block_text, sanitize_tui_inline_text};
 use ratatui::{
     style::{Color as RatatuiColor, Style},
     text::{Line, Span},
 };
-use ralph_core::{sanitize_tui_block_text, sanitize_tui_inline_text};
 use std::{
     io::{self, Write},
     sync::{Arc, Mutex},
