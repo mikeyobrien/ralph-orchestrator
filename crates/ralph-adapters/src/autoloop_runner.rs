@@ -33,6 +33,8 @@ use std::process::{Child, Command, Stdio};
 
 use thiserror::Error;
 
+use crate::autoloop_backend::AutoloopBackendMapping;
+
 /// A parsed `autoloops summary` block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AutoloopRunSummary {
@@ -170,6 +172,18 @@ impl AutoloopRunner {
     /// Sets the `-b <backend>` override. Passed as a single argv element.
     pub fn backend(mut self, backend: impl Into<String>) -> Self {
         self.backend = Some(backend.into());
+        self
+    }
+
+    /// Applies a lossless Ralph-to-Autoloop backend mapping.
+    pub fn mapped_backend(mut self, mapping: AutoloopBackendMapping) -> Self {
+        self.backend = mapping.selector;
+        self.set_overrides.extend(
+            mapping
+                .set_overrides
+                .into_iter()
+                .map(|(key, value)| format!("{key}={value}")),
+        );
         self
     }
 
@@ -875,6 +889,20 @@ journal: /j
             runner.control_command_display("respond"),
             "Node-hosted autoloop: control respond"
         );
+    }
+
+    #[test]
+    fn mapped_backend_adds_native_selector_and_structured_overrides() {
+        let runner = AutoloopRunner::new("/p", "x", "/w").mapped_backend(AutoloopBackendMapping {
+            selector: Some("claude-sdk".to_string()),
+            set_overrides: vec![("backend.timeout_ms".to_string(), "300000".to_string())],
+        });
+        let args = runner.build_args();
+
+        let backend = args.iter().position(|arg| arg == "-b").unwrap();
+        assert_eq!(args[backend + 1], "claude-sdk");
+        let setting = args.iter().position(|arg| arg == "--set").unwrap();
+        assert_eq!(args[setting + 1], "backend.timeout_ms=300000");
     }
 
     /// Opt-in smoke test that drives the real autoloop binary against the
