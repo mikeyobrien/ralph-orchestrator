@@ -2807,6 +2807,7 @@ dependencies = [
  "ralph-proto",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
