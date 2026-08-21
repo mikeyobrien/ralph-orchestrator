@@ -1701,6 +1701,7 @@ async fn run_command(
         args.loop_id.clone(),
         color_mode.should_use_colors(),
         wants_tui,
+        args.rpc,
     )
     .await?;
 
@@ -1849,6 +1850,7 @@ async fn resume_command(
         None, // Deprecated resume command doesn't support --loop-id
         color_mode.should_use_colors(),
         wants_tui,
+        args.rpc,
     )
     .await?;
     let exit_code = reason.exit_code();

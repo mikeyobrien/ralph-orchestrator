@@ -152,6 +152,18 @@ impl Task {
         self.status = TaskStatus::Open;
         self.closed = None;
     }
+
+    /// Marks the task as closed (completed) and records a close timestamp.
+    pub fn close(&mut self) {
+        self.status = TaskStatus::Closed;
+        self.closed = Some(chrono::Utc::now().to_rfc3339());
+    }
+
+    /// Marks the task as failed and records a close timestamp.
+    pub fn fail(&mut self) {
+        self.status = TaskStatus::Failed;
+        self.closed = Some(chrono::Utc::now().to_rfc3339());
+    }
 }
 
 #[cfg(test)]

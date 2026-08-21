@@ -150,6 +150,17 @@ pub fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Opens `path` for appending, creating it if it does not yet exist.
+///
+/// Shared by the diagnostics loggers (`hook-runs.jsonl`, `orchestration.jsonl`,
+/// `performance.jsonl`) so the create+append open pattern lives in one place.
+pub fn open_append(path: impl AsRef<Path>) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+}
+
 /// Serializes a value as JSON and writes it as a single JSONL line.
 pub fn write_jsonl_line(writer: &mut impl std::io::Write, value: &impl serde::Serialize) -> io::Result<()> {
     let json = serde_json::to_string(value)
