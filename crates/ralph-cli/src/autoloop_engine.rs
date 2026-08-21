@@ -14,7 +14,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner, parse_events, parse_events_strict,
+    AutoloopRunner, map_ralph_backend, parse_events, parse_events_strict,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
@@ -386,8 +386,16 @@ pub async fn run_autoloop_engine(
     // preset core.state_dir, while exact overrides win over a preset's explicit
     // journal/memory/tasks paths. Export absolute paths so child cwd handling
     // cannot re-anchor them.
+    let backend_mapping =
+        map_ralph_backend(&config).context("mapping ralph backend configuration to Autoloop")?;
+    tracing::debug!(
+        ralph_backend = %config.cli.backend,
+        autoloop_backend = %backend_mapping.selector.as_deref().unwrap_or("command"),
+        "engine=autoloop: forwarding backend selection"
+    );
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
+        .mapped_backend(backend_mapping)
         .events_path(events_path.clone());
     for (key, value) in engine_env(&engine_state_root) {
         runner = runner.env(key, value);
