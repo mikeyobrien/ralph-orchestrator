@@ -18,6 +18,8 @@ use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
 use tracing::info;
 
+mod autoloop_task;
+
 /// Ralph Benchmark Harness - Record, replay, and benchmark orchestration loops
 #[derive(Parser, Debug)]
 #[command(name = "ralph-bench", version, about)]
@@ -247,7 +249,7 @@ async fn cmd_run(
 
         // Run the orchestration loop for this task
         let (iterations, termination_reason) =
-            run_task_loop(task, &workspace, record_path.as_ref(), record_ux)
+            autoloop_task::run_task_loop(task, &workspace, record_path.as_ref(), record_ux)
                 .await
                 .with_context(|| format!("Failed to run task '{}'", task.name))?;
 
@@ -315,30 +317,6 @@ async fn cmd_run(
     }
 
     Ok(())
-}
-
-/// Run the orchestration loop for a single benchmark task.
-///
-/// Returns (iterations, termination_reason) tuple.
-#[allow(clippy::unused_async)] // Keeps the benchmark runner's async call shape for future event-loop work.
-async fn run_task_loop(
-    task: &ralph_core::TaskDefinition,
-    _workspace: &ralph_core::TaskWorkspace,
-    _record_path: Option<&PathBuf>,
-    _record_ux: bool,
-) -> Result<(u32, String)> {
-    // v3 cutover: the in-house EventLoop engine has been removed. The bench
-    // harness previously drove `ralph_core::EventLoop` directly; porting it to
-    // the autoloop engine is descoped to #346. Fail loudly rather than returning
-    // a misleading success — a no-op "pass" would run verification against an
-    // untouched workspace and report bogus verdicts.
-    //
-    // see #346 — re-implement bench task execution on the autoloop engine.
-    anyhow::bail!(
-        "ralph-bench task execution requires the autoloop engine port (#346); \
-         task '{}' cannot run",
-        task.name
-    )
 }
 
 /// Replay a recorded session
