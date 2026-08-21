@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use ralph_adapters::{AutoloopRunner, events_run_result, parse_events};
+use ralph_adapters::{AutoloopRunSummary, AutoloopRunner, events_run_result, parse_events};
 use ralph_core::{LoopContext, RalphConfig, RunStats, TerminationReason};
 
 use crate::completion_coord::coordinate_completion;
@@ -121,6 +121,28 @@ pub async fn run_autoloop_engine(
     let runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .events_path(events_path.clone());
 
+    let mut current_events_guard = None;
+    let robot_service = if !tui {
+        if let Some(loop_context) = context.as_ref()
+            && config.robot.enabled
+            && loop_context.is_primary()
+        {
+            current_events_guard = Some(
+                crate::autoloop_robot::CurrentEventsGuard::install(&workspace, &events_path)
+                    .context("installing Autoloop current-events marker")?,
+            );
+            let service = crate::autoloop_robot::create_robot_service(&config, loop_context);
+            if service.is_none() {
+                current_events_guard = None;
+            }
+            service
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let start = Instant::now();
     let summary = if tui {
         // In-process TUI: render the autoloop run live by tailing its --events
@@ -129,6 +151,10 @@ pub async fn run_autoloop_engine(
         run_autoloop_with_tui(runner, events_path.clone(), workspace.clone())
             .await
             .context("autoloop TUI run failed")?
+    } else if let Some(service) = robot_service {
+        run_autoloop_with_robot(runner, events_path.clone(), service)
+            .await
+            .context("autoloop RObot run failed")?
     } else {
         // Headless: AutoloopRunner::run blocks on the subprocess; keep the async
         // runtime free. Unchanged from the pre-TUI path.
@@ -137,6 +163,7 @@ pub async fn run_autoloop_engine(
             .context("autoloop run task panicked")?
             .context("autoloop run failed")?
     };
+    drop(current_events_guard);
 
     if let Ok(content) = std::fs::read_to_string(&events_path) {
         if let Some(result) = events_run_result(&parse_events(&content)) {
@@ -147,7 +174,8 @@ pub async fn run_autoloop_engine(
         }
     }
 
-    let reason = map_stop_reason(&summary.stop_reason);
+    let reason = take_requested_termination(&workspace)
+        .unwrap_or_else(|| map_stop_reason(&summary.stop_reason));
 
     // Mirror the in-house engine's completion bookkeeping so parallel-loop
     // coordination (merge queue, registry, landing) works under the autoloop
@@ -179,6 +207,121 @@ pub async fn run_autoloop_engine(
     );
 
     Ok(reason)
+}
+
+fn take_requested_termination(workspace: &Path) -> Option<TerminationReason> {
+    let ralph_dir = workspace.join(".ralph");
+    let restart = ralph_dir.join("restart-requested");
+    if restart.exists() {
+        let _ = std::fs::remove_file(restart);
+        return Some(TerminationReason::RestartRequested);
+    }
+    let stop = ralph_dir.join("stop-requested");
+    if stop.exists() {
+        let _ = std::fs::remove_file(stop);
+        return Some(TerminationReason::Stopped);
+    }
+    None
+}
+
+/// Run Autoloop headlessly while relaying RObot asks and guidance through its
+/// file-backed control protocol.
+async fn run_autoloop_with_robot(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+    service: Box<dyn ralph_proto::RobotService>,
+) -> Result<AutoloopRunSummary> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Isolate the subprocess tree so cancelling the daemon future can stop both
+    // Autoloop and its backend rather than orphaning either process.
+    let runner = runner.own_process_group(true);
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let done = Arc::new(AtomicBool::new(false));
+    let robot_shutdown = service.shutdown_flag();
+    let mut process_guard = AutoloopProcessGuard::new(
+        child.id(),
+        Arc::clone(&done),
+        Arc::clone(&robot_shutdown),
+    );
+
+    let wait_runner = runner.clone();
+    let mut wait_handle = tokio::task::spawn_blocking(move || wait_runner.wait_with_summary(child));
+
+    let bridge_runner = runner.clone();
+    let bridge_done = Arc::clone(&done);
+    let mut bridge_handle = tokio::task::spawn_blocking(move || {
+        crate::autoloop_robot::run_bridge(service, bridge_runner, events_path, bridge_done)
+    });
+
+    tokio::select! {
+        summary = &mut wait_handle => {
+            process_guard.disarm();
+            done.store(true, Ordering::Release);
+            robot_shutdown.store(true, Ordering::Release);
+            let bridge_result = bridge_handle
+                .await
+                .context("Autoloop RObot bridge panicked")?;
+            let summary = summary
+                .context("autoloop wait task panicked")?
+                .context("autoloop run failed")?;
+            bridge_result?;
+            Ok(summary)
+        }
+        bridge = &mut bridge_handle => {
+            process_guard.terminate();
+            done.store(true, Ordering::Release);
+            robot_shutdown.store(true, Ordering::Release);
+            let bridge_result = bridge.context("Autoloop RObot bridge panicked")?;
+            let _ = wait_handle.await;
+            bridge_result?;
+            anyhow::bail!("Autoloop RObot bridge stopped before the subprocess")
+        }
+    }
+}
+
+struct AutoloopProcessGuard {
+    pid: u32,
+    armed: bool,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    robot_shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AutoloopProcessGuard {
+    fn new(
+        pid: u32,
+        done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        robot_shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            pid,
+            armed: true,
+            done,
+            robot_shutdown,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn terminate(&mut self) {
+        if self.armed {
+            use std::sync::atomic::Ordering;
+
+            self.done.store(true, Ordering::Release);
+            self.robot_shutdown.store(true, Ordering::Release);
+            kill_autoloop_group(self.pid);
+            self.armed = false;
+        }
+    }
+}
+
+impl Drop for AutoloopProcessGuard {
+    fn drop(&mut self) {
+        self.terminate();
+    }
 }
 
 /// Run the autoloop subprocess with the in-process live TUI.
@@ -296,10 +439,17 @@ fn kill_autoloop_group(pid: u32) {
         let _ = killpg(pgid, Signal::SIGTERM);
         // Detached escalation: hard-kill the group if it ignores SIGTERM. A
         // SIGKILL to an already-dead group is ESRCH and harmless.
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let _ = killpg(pgid, Signal::SIGKILL);
-        });
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let _ = killpg(pgid, Signal::SIGKILL);
+            });
+        } else {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let _ = killpg(pgid, Signal::SIGKILL);
+            });
+        }
     }
     #[cfg(not(unix))]
     {
@@ -313,8 +463,6 @@ fn kill_autoloop_group(pid: u32) {
 /// applies the supplied prompt, forces autonomous/headless mode, acquires the
 /// primary loop lock, and drives the autoloop engine.
 ///
-/// Note: human-in-the-loop robot wiring under the autoloop engine is descoped
-/// to #345. The loop still runs; in-loop Telegram interaction is not yet routed.
 pub async fn start_loop(
     prompt: String,
     workspace_root: PathBuf,
@@ -374,7 +522,23 @@ pub async fn start_loop(
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
     // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
-    run_autoloop_engine(config, Some(loop_context), None, None, false, false).await
+    // A Telegram `/restart` interrupts Autoloop through its control channel and
+    // reruns the same daemon prompt without terminating the daemon process.
+    loop {
+        let reason = run_autoloop_engine(
+            config.clone(),
+            Some(loop_context.clone()),
+            None,
+            None,
+            false,
+            false,
+        )
+        .await?;
+        if reason == TerminationReason::RestartRequested {
+            continue;
+        }
+        return Ok(reason);
+    }
 }
 
 #[cfg(test)]
@@ -416,5 +580,26 @@ mod tests {
             map_stop_reason("something_new"),
             TerminationReason::Stopped
         ));
+    }
+
+    #[test]
+    fn requested_termination_markers_override_reason_and_are_consumed() {
+        let temp = tempfile::tempdir().unwrap();
+        let ralph_dir = temp.path().join(".ralph");
+        std::fs::create_dir_all(&ralph_dir).unwrap();
+
+        std::fs::write(ralph_dir.join("stop-requested"), "").unwrap();
+        assert_eq!(
+            take_requested_termination(temp.path()),
+            Some(TerminationReason::Stopped)
+        );
+        assert_eq!(take_requested_termination(temp.path()), None);
+
+        std::fs::write(ralph_dir.join("restart-requested"), "").unwrap();
+        assert_eq!(
+            take_requested_termination(temp.path()),
+            Some(TerminationReason::RestartRequested)
+        );
+        assert_eq!(take_requested_termination(temp.path()), None);
     }
 }

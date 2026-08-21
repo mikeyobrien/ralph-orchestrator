@@ -626,7 +626,11 @@ impl TelegramService {
     /// `"human.response"`. On response, removes the pending question and
     /// returns the response message. On timeout, removes the pending question
     /// and returns `None`.
-    pub fn wait_for_response(&self, events_path: &Path) -> TelegramResult<Option<String>> {
+    pub fn wait_for_response(
+        &self,
+        events_path: &Path,
+        start_position: Option<u64>,
+    ) -> TelegramResult<Option<String>> {
         let poll_interval = Duration::from_millis(250);
         let deadline = if self.timeout_secs == 0 {
             None
@@ -635,11 +639,13 @@ impl TelegramService {
         };
 
         // Track file position to only read new lines
-        let initial_pos = if events_path.exists() {
-            std::fs::metadata(events_path).map(|m| m.len()).unwrap_or(0)
-        } else {
-            0
-        };
+        let initial_pos = start_position.unwrap_or_else(|| {
+            if events_path.exists() {
+                std::fs::metadata(events_path).map(|m| m.len()).unwrap_or(0)
+            } else {
+                0
+            }
+        });
         let mut file_pos = initial_pos;
 
         info!(
@@ -789,8 +795,16 @@ impl ralph_proto::RobotService for TelegramService {
         Ok(TelegramService::send_question(self, payload)?)
     }
 
-    fn wait_for_response(&self, events_path: &Path) -> anyhow::Result<Option<String>> {
-        Ok(TelegramService::wait_for_response(self, events_path)?)
+    fn wait_for_response(
+        &self,
+        events_path: &Path,
+        start_position: Option<u64>,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(TelegramService::wait_for_response(
+            self,
+            events_path,
+            start_position,
+        )?)
     }
 
     fn response_events_are_durable(&self) -> bool {
@@ -1125,7 +1139,7 @@ mod tests {
             file.flush().unwrap();
         });
 
-        let result = service.wait_for_response(&events_path).unwrap();
+        let result = service.wait_for_response(&events_path, None).unwrap();
         writer.join().unwrap();
 
         assert_eq!(result, Some("Go with plan A".to_string()));
@@ -1136,6 +1150,23 @@ mod tests {
             !state.pending_questions.contains_key("main"),
             "pending question should be removed after response"
         );
+    }
+
+    #[test]
+    fn wait_for_response_honors_caller_position_for_preexisting_response() {
+        let dir = TempDir::new().unwrap();
+        let service = test_service(&dir);
+        let events_path = dir.path().join("events.jsonl");
+        std::fs::write(
+            &events_path,
+            r#"{"topic":"human.response","payload":"Immediate answer"}
+"#,
+        )
+        .unwrap();
+
+        let result = service.wait_for_response(&events_path, Some(0)).unwrap();
+
+        assert_eq!(result, Some("Immediate answer".to_string()));
     }
 
     #[test]
@@ -1170,7 +1201,7 @@ mod tests {
         });
 
         let start = Instant::now();
-        let result = service.wait_for_response(&events_path).unwrap();
+        let result = service.wait_for_response(&events_path, None).unwrap();
         writer.join().unwrap();
 
         assert_eq!(result, Some("Keep going".to_string()));
@@ -1199,7 +1230,7 @@ mod tests {
         // Store a pending question
         service.send_question("Will this timeout?").unwrap();
 
-        let result = service.wait_for_response(&events_path).unwrap();
+        let result = service.wait_for_response(&events_path, None).unwrap();
         assert_eq!(result, None, "should return None on timeout");
 
         // Pending question should be removed even on timeout
@@ -1400,7 +1431,7 @@ mod tests {
         service.shutdown_flag().store(true, Ordering::Relaxed);
 
         let start = Instant::now();
-        let result = service.wait_for_response(&events_path).unwrap();
+        let result = service.wait_for_response(&events_path, None).unwrap();
         let elapsed = start.elapsed();
 
         assert_eq!(result, None, "should return None when shutdown flag is set");

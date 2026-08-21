@@ -230,6 +230,60 @@ impl AutoloopRunner {
         args
     }
 
+    /// Deliver an answer to a blocking Autoloop `human.ask`.
+    pub fn respond(
+        &self,
+        run_id: &str,
+        question_id: &str,
+        answer: &str,
+    ) -> Result<(), AutoloopRunError> {
+        self.run_control(["respond", run_id, question_id, answer])
+    }
+
+    /// Queue operator guidance for a running Autoloop.
+    pub fn guide(&self, run_id: &str, message: &str) -> Result<(), AutoloopRunError> {
+        self.run_control(["guide", run_id, message])
+    }
+
+    /// Interrupt a running Autoloop through its control channel.
+    pub fn interrupt(&self, run_id: &str, reason: &str) -> Result<(), AutoloopRunError> {
+        self.run_control(["interrupt", run_id, "--reason", reason])
+    }
+
+    fn control_args<'a>(&self, args: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let (_program, mut command_args) = self.program_and_prefix();
+        command_args.push("control".to_string());
+        command_args.extend(args.into_iter().map(str::to_string));
+        command_args
+    }
+
+    fn run_control<'a>(
+        &self,
+        args: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), AutoloopRunError> {
+        let (program, _) = self.program_and_prefix();
+        let args = self.control_args(args);
+        let command = std::iter::once(program.as_str())
+            .chain(args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let output = Command::new(&program)
+            .args(&args)
+            .current_dir(&self.working_dir)
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+            .map_err(|source| AutoloopRunError::Spawn { command, source })?;
+
+        if !output.status.success() {
+            return Err(AutoloopRunError::NonZeroExit {
+                code: output.status.code(),
+                stderr_tail: stderr_tail(&output.stderr),
+            });
+        }
+
+        Ok(())
+    }
+
     /// A human-readable representation of the command, for error messages.
     fn command_display(&self) -> String {
         let (program, _) = self.program_and_prefix();
@@ -557,6 +611,34 @@ journal: /j
         let first = args.iter().position(|a| a == "a.b=1").unwrap();
         let second = args.iter().position(|a| a == "c.d=2").unwrap();
         assert!(first < second);
+    }
+
+    #[test]
+    fn control_args_preserve_each_payload_as_one_argument() {
+        let runner = AutoloopRunner::new("/p", "x", "/w")
+            .bin(AutoloopBin::Node(PathBuf::from("/checkout/bin/autoloop")));
+
+        assert_eq!(
+            runner.control_args(["respond", "run-1", "ask-1", "use option A"]),
+            vec![
+                "/checkout/bin/autoloop",
+                "control",
+                "respond",
+                "run-1",
+                "ask-1",
+                "use option A",
+            ]
+        );
+        assert_eq!(
+            runner.control_args(["guide", "run-1", "focus on cancellation"]),
+            vec![
+                "/checkout/bin/autoloop",
+                "control",
+                "guide",
+                "run-1",
+                "focus on cancellation",
+            ]
+        );
     }
 
     /// Opt-in smoke test that drives the real autoloop binary against the
