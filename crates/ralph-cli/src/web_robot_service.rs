@@ -605,8 +605,9 @@ mod tests {
         write_correlated_response(&dir, "response", "approved");
         let response_path = response_path(&dir);
 
-        let response = RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
-            .expect("wait for response");
+        let response =
+            RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
+                .expect("wait for response");
 
         assert_eq!(response, Some("approved".to_string()));
         assert!(
@@ -725,8 +726,9 @@ mod tests {
             .send_question("Need approval?")
             .expect("send question");
 
-        let response = RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
-            .expect("wait for response");
+        let response =
+            RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
+                .expect("wait for response");
 
         assert_eq!(response, None);
         assert!(
@@ -773,8 +775,9 @@ mod tests {
         service.shutdown_flag().store(true, Ordering::Relaxed);
 
         let start = Instant::now();
-        let response = RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
-            .expect("wait for response");
+        let response =
+            RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
+                .expect("wait for response");
 
         assert_eq!(response, None);
         assert!(start.elapsed() < Duration::from_secs(1));
