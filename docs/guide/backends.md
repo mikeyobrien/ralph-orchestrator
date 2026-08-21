@@ -300,8 +300,20 @@ opencode --version
 ```
 
 **Auth & env vars:**
-- Set one of: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
+- Set one of: `OPENCODE_API_KEY`, `ORCAROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - OpenCode can proxy multiple providers; use the env var matching your provider
+
+**OrcaRouter (optional):**
+
+OpenCode reads provider definitions from the [models.dev](https://models.dev) registry, which includes OrcaRouter as a first-class provider (`ORCAROUTER_API_KEY`). Route any `orcarouter/*` model through the [OrcaRouter](https://www.orcarouter.ai) gateway:
+
+```yaml
+hats:
+  strategist:
+    backend:
+      type: "opencode"
+      args: ["-m", "orcarouter/auto"]
+```
 
 **Hat YAML:**
 ```yaml
@@ -312,7 +324,7 @@ hats:
 
 **Doctor checks:**
 - `opencode --version` must succeed
-- Warns if none of `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` are set
+- Warns if none of `OPENCODE_API_KEY`, `ORCAROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` are set
 
 ### Pi (`pi`)
 
@@ -327,9 +339,21 @@ pi --version
 ```
 
 **Auth & env vars:**
-- Set one of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or any supported provider key
+- Set one of: `ORCAROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or any supported provider key
 - Pi routes to the provider specified via `--provider` (default: google)
 - Pass API key explicitly with `--api-key` or rely on provider-specific env vars
+
+**OrcaRouter (optional):**
+
+Pi supports [models.dev](https://models.dev) providers, including OrcaRouter as a named provider. Route through the [OrcaRouter](https://www.orcarouter.ai) gateway with `--provider orcarouter`:
+
+```yaml
+hats:
+  coder:
+    backend:
+      type: "pi"
+      args: ["--provider", "orcarouter", "--model", "orcarouter/auto"]
+```
 
 **Hat YAML:**
 ```yaml
