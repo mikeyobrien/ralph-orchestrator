@@ -1680,6 +1680,7 @@ async fn run_command(
         args.continue_mode,
         color_mode.should_use_colors(),
         wants_tui,
+        args.rpc,
     )
     .await?;
 

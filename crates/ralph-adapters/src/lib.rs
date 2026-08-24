@@ -31,6 +31,7 @@ mod auto_detect;
 pub mod autoloop_event_tailer;
 pub mod autoloop_events;
 pub mod autoloop_journal;
+pub mod autoloop_rpc;
 mod autoloop_runner;
 pub mod backend_stream_tailer;
 mod claude_stream;
@@ -57,6 +58,7 @@ pub use autoloop_journal::{
     AutoloopJournalTailer, AutoloopRecord, JournalError, JournalReplay, LiveRunState, RunSummary,
     TailError, derive_run_summary, replay_journal,
 };
+pub use autoloop_rpc::AutoloopRpcMapper;
 pub use autoloop_runner::{
     AutoloopBin, AutoloopRunError, AutoloopRunSummary, AutoloopRunner, parse_summary,
 };

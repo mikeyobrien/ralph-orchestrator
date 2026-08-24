@@ -13,8 +13,8 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
-    AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner, parse_events, parse_events_strict,
+    AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRpcMapper, AutoloopRunError,
+    AutoloopRunSummary, AutoloopRunner, parse_events, parse_events_strict,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
@@ -334,6 +334,7 @@ pub async fn run_autoloop_engine(
     continue_mode: bool,
     use_colors: bool,
     tui: bool,
+    rpc: bool,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
     let engine_state_root =
@@ -451,7 +452,23 @@ pub async fn run_autoloop_engine(
     };
 
     let start = Instant::now();
-    let outcome = if tui {
+    let outcome = if rpc {
+        // RPC mode (#343): emit ralph's JSON-RPC `RpcEvent` stream on stdout by
+        // live-tailing the same --events file and translating it through
+        // `AutoloopRpcMapper`. stdout is kept protocol-clean (logs go to stderr,
+        // and no human-readable summary is printed anywhere in RPC mode).
+        let max_iterations = Some(config.event_loop.max_iterations);
+        let summary = run_autoloop_with_rpc(
+            runner,
+            events_path.clone(),
+            prompt.clone(),
+            rpc_backend_label(&config),
+            max_iterations,
+        )
+        .await
+        .context("autoloop RPC run failed")?;
+        interpret_autoloop_result(Ok(summary), false)
+    } else if tui {
         // In-process TUI: render the autoloop run live by tailing its --events
         // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
         // child (see run_autoloop_with_tui).
@@ -512,7 +529,8 @@ pub async fn run_autoloop_engine(
     // user stop, spawn/wait failures, and non-zero exits all traverse the same
     // completion path exactly once. On failure, a valid engine terminal event
     // is authoritative when present. The subprocess diagnostic is still
-    // returned after bookkeeping.
+    // returned after bookkeeping. RPC mode never prints a human-readable
+    // summary: stdout is the RpcEvent protocol channel (#343).
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
             // A human /stop or /restart through the HITL bridge wins over the
@@ -1043,6 +1061,143 @@ async fn run_autoloop_with_tui(
     Ok(interpret_autoloop_result(summary, killed_by_ralph))
 }
 
+/// Backend label placed on the RPC `LoopStarted`/`IterationStart` events.
+///
+/// ralph's backend selection is not yet forwarded to autoloop (#347), so the
+/// subprocess uses autoloop's default backend. Report that honestly as
+/// `"autoloop"` when ralph's own selection is unset/auto; otherwise echo the
+/// configured name so RPC consumers see what the user asked for.
+fn rpc_backend_label(config: &RalphConfig) -> String {
+    let backend = &config.cli.backend;
+    if backend.is_empty() || backend == "auto" {
+        "autoloop".to_string()
+    } else {
+        backend.clone()
+    }
+}
+
+/// Current wall-clock time as Unix milliseconds.
+fn now_unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Serialize an [`RpcEvent`] as a JSON line to stdout and flush so RPC consumers
+/// see each event promptly. stdout is the protocol channel in `--rpc` mode
+/// (logs are routed to stderr at startup), so nothing else writes here.
+fn emit_rpc(event: &ralph_proto::json_rpc::RpcEvent) {
+    use std::io::Write;
+    let line = ralph_proto::json_rpc::emit_event_line(event);
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(line.as_bytes());
+    let _ = out.flush();
+}
+
+/// Run the autoloop subprocess in RPC mode: translate its `--events` stream into
+/// ralph's JSON-RPC [`RpcEvent`](ralph_proto::json_rpc::RpcEvent) contract on
+/// stdout (#343).
+///
+/// This is the `--rpc` counterpart to [`run_autoloop_with_tui`]: instead of
+/// rendering the tailed `--events` file into a TUI, it maps each event through
+/// [`AutoloopRpcMapper`] and emits the resulting `RpcEvent`s as JSON lines. A
+/// leading `LoopStarted` frames the run (prompt/backend/max-iterations are
+/// engine-side knowledge absent from the coarse `--events` stream); the mapper
+/// supplies everything derivable from the stream through the terminal
+/// `LoopTerminated`.
+///
+/// Mirrors the TUI reader's cancel/final-drain discipline: autoloop writes the
+/// terminal `loop.finish` synchronously just before exit, so after the wait task
+/// signals completion the reader performs one final `poll()` (plus a
+/// `finalize()`) to capture it.
+async fn run_autoloop_with_rpc(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+    prompt: String,
+    backend: String,
+    max_iterations: Option<u32>,
+) -> Result<ralph_adapters::AutoloopRunSummary> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use ralph_proto::json_rpc::RpcEvent;
+    use tokio::sync::watch;
+
+    let started_at = now_unix_millis();
+    emit_rpc(&RpcEvent::LoopStarted {
+        prompt,
+        max_iterations,
+        backend: backend.clone(),
+        workspace_root: None,
+        started_at,
+    });
+
+    // Signals subprocess completion so the reader stops tailing and does its
+    // final drain.
+    let (done_tx, mut done_rx) = watch::channel(false);
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
+
+    let completed = Arc::new(AtomicBool::new(false));
+    let wait_handle = {
+        let done_tx = done_tx.clone();
+        let completed = Arc::clone(&completed);
+        tokio::spawn(async move {
+            let summary = tokio::task::spawn_blocking(move || runner.wait_with_summary(child))
+                .await
+                .context("autoloop wait task panicked")?;
+            completed.store(true, Ordering::SeqCst);
+            let _ = done_tx.send(true);
+            summary.context("autoloop run failed")
+        })
+    };
+
+    // Reader: tail the --events file, translate to RpcEvents, emit to stdout.
+    let mut tailer = AutoloopEventTailer::new(&events_path);
+    let mut mapper = AutoloopRpcMapper::new(started_at, backend);
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = done_rx.changed() => {
+                if *done_rx.borrow() {
+                    break;
+                }
+            }
+
+            _ = ticker.tick() => {
+                drain_rpc_events(&mut tailer, &mut mapper);
+            }
+        }
+    }
+
+    // Final drain: capture the terminal loop.finish written just before exit,
+    // then flush a summary-only terminal if no loop.finish ever arrived.
+    drain_rpc_events(&mut tailer, &mut mapper);
+    if let Some(terminal) = mapper.finalize() {
+        emit_rpc(&terminal);
+    }
+
+    wait_handle.await.context("autoloop wait join failed")?
+}
+
+/// Poll the tailer once and emit every translated [`RpcEvent`] to stdout.
+fn drain_rpc_events(tailer: &mut AutoloopEventTailer, mapper: &mut AutoloopRpcMapper) {
+    match tailer.poll() {
+        Ok(events) => {
+            for event in &events {
+                for rpc in mapper.map(event) {
+                    emit_rpc(&rpc);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "autoloop RPC reader poll failed");
+        }
+    }
+}
+
 /// Stop the autoloop subprocess tree: SIGTERM the whole process group, then
 /// escalate to SIGKILL after a short grace so autoloop and its backend agent can
 /// exit cleanly (flush, release locks) first. `pid` is the group leader's pid
@@ -1154,7 +1309,8 @@ pub async fn start_loop(
 
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
-    // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
+    // Drive the loop headlessly via the autoloop engine (daemon: never a TUI,
+    // never RPC).
     loop {
         let reason = run_autoloop_engine(
             config.clone(),
@@ -1162,6 +1318,7 @@ pub async fn start_loop(
             Some(loop_context.clone()),
             None,
             None,
+            false,
             false,
             false,
             false,
