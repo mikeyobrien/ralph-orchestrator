@@ -1488,4 +1488,72 @@ mod tests {
         );
         assert_ne!(reason.exit_code(), 0);
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tui_quit_kills_the_autoloop_process_tree() {
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ready = dir.path().join("ready");
+        let child_ready = dir.path().join("child-ready");
+        let markers = dir.path().join("terminated");
+        let script = r#"
+            trap 'printf "parent\n" >> "$MARKERS"; exit 0' TERM
+            sh -c '
+                trap '\''printf "child\n" >> "$MARKERS"; exit 0'\'' TERM
+                touch "$CHILD_READY"
+                while :; do sleep 1; done
+            ' &
+            while [ ! -f "$CHILD_READY" ]; do sleep 0.01; done
+            touch "$READY"
+            while :; do sleep 1; done
+        "#;
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .env("READY", &ready)
+            .env("CHILD_READY", &child_ready)
+            .env("MARKERS", &markers)
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !ready.is_file() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("parent and descendant should become ready");
+
+        // This is the same path run_autoloop_with_tui takes after q/Ctrl+C.
+        kill_autoloop_group(pid);
+
+        tokio::time::timeout(Duration::from_secs(4), async {
+            loop {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("autoloop process-group leader should exit");
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let content = std::fs::read_to_string(&markers).unwrap_or_default();
+                if content.contains("parent") && content.contains("child") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("SIGTERM should reach both the parent and backend descendant");
+    }
 }
