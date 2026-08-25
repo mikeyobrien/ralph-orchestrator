@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>メモリとタスク — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">メモリとタスク</a></h1>
+<p>Ralph は、永続的な状態のために 2 つの補完的なシステムを使います。セッションをまたいだ
+学習のための「メモリ」と、ランタイムの作業追跡のための「タスク」です。</p>
+<h2 id="_2"><a class="toclink" href="#_2">概要</a></h2>
+<table>
+<thead>
+<tr>
+<th>システム</th>
+<th>保存場所</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>メモリ</strong></td>
+<td><code>.ralph/agent/memories.md</code></td>
+<td>セッションをまたいで蓄積された知恵</td>
+</tr>
+<tr>
+<td><strong>タスク</strong></td>
+<td><code>.ralph/agent/tasks.jsonl</code></td>
+<td>ランタイムの作業項目</td>
+</tr>
+</tbody>
+</table>
+<p>どちらも既定で有効であり、協働してレガシーのスクラッチパッドを置き換えます。</p>
+<h2 id="_3"><a class="toclink" href="#_3">メモリ</a></h2>
+<p>メモリは、セッションをまたいで学習を永続化します。Ralph が覚えておくべきパターン、決定、
+修正、コンテキストを捉えます。</p>
+<h3 id="_4"><a class="toclink" href="#_4">メモリの種類</a></h3>
+<table>
+<thead>
+<tr>
+<th>種類</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pattern</code></td>
+<td>発見されたコードベースの慣習</td>
+</tr>
+<tr>
+<td><code>decision</code></td>
+<td>アーキテクチャの選択とその根拠</td>
+</tr>
+<tr>
+<td><code>fix</code></td>
+<td>繰り返し起きる問題への解決策</td>
+</tr>
+<tr>
+<td><code>context</code></td>
+<td>プロジェクト固有の知識</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_5"><a class="toclink" href="#_5">メモリの作成</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># pattern: 発見された慣習</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;All API handlers return Result&lt;Json&lt;T&gt;, AppError&gt;&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-t<span class="w"> </span>pattern<span class="w"> </span>--tags<span class="w"> </span>api,error-handling
+
+<span class="c1"># decision: アーキテクチャの選択</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;Chose JSONL over SQLite: simpler, git-friendly&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-t<span class="w"> </span>decision<span class="w"> </span>--tags<span class="w"> </span>storage,architecture
+
+<span class="c1"># fix: 繰り返し起きる問題の解決策</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;cargo test hangs: kill orphan postgres&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-t<span class="w"> </span>fix<span class="w"> </span>--tags<span class="w"> </span>testing,postgres
+
+<span class="c1"># context: プロジェクトの知識</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;The /legacy folder is deprecated, use /v2&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-t<span class="w"> </span>context<span class="w"> </span>--tags<span class="w"> </span>api,migration
+</code></pre></div>
+
+<h3 id="_6"><a class="toclink" href="#_6">メモリの検索</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 広い検索</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>search<span class="w"> </span><span class="s2">&quot;api&quot;</span>
+
+<span class="c1"># 種類で絞り込む</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>search<span class="w"> </span>-t<span class="w"> </span>fix<span class="w"> </span><span class="s2">&quot;error&quot;</span>
+
+<span class="c1"># タグで絞り込む</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>search<span class="w"> </span>--tags<span class="w"> </span>api,auth
+
+<span class="c1"># すべてのメモリを一覧する</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>list
+
+<span class="c1"># 最近の修正を一覧する</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>list<span class="w"> </span>-t<span class="w"> </span>fix<span class="w"> </span>--last<span class="w"> </span><span class="m">10</span>
+</code></pre></div>
+
+<h3 id="_7"><a class="toclink" href="#_7">メモリの注入</a></h3>
+<p>メモリは各イテレーションの開始時に自動的に注入されます。</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">memories</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">inject</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">      </span><span class="c1"># auto, manual, または none</span>
+<span class="w">  </span><span class="nt">budget</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2000</span><span class="w">      </span><span class="c1"># 注入する最大トークン数</span>
+<span class="w">  </span><span class="nt">filter</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">types</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span><span class="w">       </span><span class="c1"># 種類で絞り込む（空 = すべて）</span>
+<span class="w">    </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span><span class="w">        </span><span class="c1"># タグで絞り込む（空 = すべて）</span>
+<span class="w">    </span><span class="nt">recent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span><span class="w">       </span><span class="c1"># 日数制限（0 = 制限なし）</span>
+</code></pre></div>
+
+<h3 id="_8"><a class="toclink" href="#_8">メモリのベストプラクティス</a></h3>
+<ol>
+<li><strong>具体的にする</strong> — 「良いパターンがある」ではなく「バレルエクスポートを使う」</li>
+<li><strong>なぜかを含める</strong> — 単に「X を使う」ではなく「Y だから X を選んだ」</li>
+<li><strong>メモリごとに 1 つの概念</strong> — 複雑な学びは分割する</li>
+<li><strong>一貫してタグ付けする</strong> — 既存のタグを再利用する</li>
+</ol>
+<h2 id="_9"><a class="toclink" href="#_9">タスク</a></h2>
+<p>タスクは、オーケストレーション中のランタイムの作業項目を追跡します。</p>
+<h3 id="_10"><a class="toclink" href="#_10">タスクの作成</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 基本的なタスク</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;Implement user authentication&quot;</span>
+
+<span class="c1"># 優先度付き（1〜5、1 = 最高）</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;Fix critical bug&quot;</span><span class="w"> </span>-p<span class="w"> </span><span class="m">1</span>
+
+<span class="c1"># 依存関係付き</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;Deploy to production&quot;</span><span class="w"> </span>--blocked-by<span class="w"> </span>setup-infra
+</code></pre></div>
+
+<h3 id="_11"><a class="toclink" href="#_11">タスクの管理</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># すべてのタスクを一覧する</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>list
+
+<span class="c1"># ブロックされていないタスクのみを一覧する</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>ready
+
+<span class="c1"># 完了したタスクをクローズする</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>close<span class="w"> </span>task-123
+</code></pre></div>
+
+<h3 id="_12"><a class="toclink" href="#_12">タスクのワークフロー</a></h3>
+<ol>
+<li>Ralph がプロンプト/計画からタスクを作成する</li>
+<li>タスクは優先度順に処理される</li>
+<li>依存関係が尊重される（ブロックされたタスクは待つ）</li>
+<li>完了したタスクはクローズされる</li>
+<li>タスクが残っていなければループが終わる</li>
+</ol>
+<h3 id="_13"><a class="toclink" href="#_13">タスクのクローズ規則</a></h3>
+<p>タスクは、次の場合にのみクローズしなければなりません。</p>
+<ol>
+<li>実装が実際に完了している</li>
+<li>テストが通る</li>
+<li>ビルドが成功する（該当する場合）</li>
+<li>完了の証拠が存在する</li>
+</ol>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 良い: 証拠付きでクローズ</span>
+cargo<span class="w"> </span><span class="nb">test</span><span class="w">  </span><span class="c1"># 通る</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>close<span class="w"> </span>task-123
+
+<span class="c1"># 悪い: 検証なしでクローズ</span>
+ralph<span class="w"> </span>tools<span class="w"> </span>task<span class="w"> </span>close<span class="w"> </span>task-123<span class="w">  </span><span class="c1"># テストを実行していない！</span>
+</code></pre></div>
+
+<h2 id="vs"><a class="toclink" href="#vs">メモリ vs タスク</a></h2>
+<table>
+<thead>
+<tr>
+<th>観点</th>
+<th>メモリ</th>
+<th>タスク</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>永続性</strong></td>
+<td>セッションをまたぐ</td>
+<td>単一セッション</td>
+</tr>
+<tr>
+<td><strong>目的</strong></td>
+<td>学習</td>
+<td>作業追跡</td>
+</tr>
+<tr>
+<td><strong>作成される時</strong></td>
+<td>何かを学んだとき</td>
+<td>作業が特定されたとき</td>
+</tr>
+<tr>
+<td><strong>削除される時</strong></td>
+<td>まれ</td>
+<td>完了したとき</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_14"><a class="toclink" href="#_14">レガシースクラッチパッドモード</a></h2>
+<p>メモリとタスクを無効にする（レガシーモード）には:</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">memories</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="nt">tasks</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</code></pre></div>
+
+<p>このモードでは、すべての状態に <code>.agent/scratchpad.md</code> が使われます。</p>
+<p>ハットベースの設定では、スクラッチパッドはハットごとに設定可能です。各ハットは、カスタムの
+スクラッチパッドパスを設定したり、スクラッチパッドを完全に無効にしたり、グローバルな
+<code>core.scratchpad</code> 設定を継承したりできます。詳細は
+<a href="../guide/configuration.ja.html#with-per-hat-scratchpads">ハットごとのスクラッチパッド</a>
+を参照してください。</p>
+<h2 id="_15"><a class="toclink" href="#_15">ファイル形式</a></h2>
+<h3 id="memoriesmd"><a class="toclink" href="#memoriesmd">memories.md</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="gh"># Memories</span>
+
+<span class="gu">## Patterns</span>
+
+<span class="gu">### mem-1737372000-a1b2</span>
+<span class="k">&gt; </span><span class="ge">All API handlers return Result&lt;Json&lt;T&gt;, AppError&gt;</span>
+&lt;!-- tags: api, error-handling | created: 2024-01-20 --&gt;
+
+<span class="gu">## Decisions</span>
+
+<span class="gu">### mem-1737372100-c3d4</span>
+<span class="k">&gt; </span><span class="ge">Chose JSONL over SQLite for simplicity</span>
+&lt;!-- tags: storage | created: 2024-01-20 --&gt;
+</code></pre></div>
+
+<h3 id="tasksjsonl"><a class="toclink" href="#tasksjsonl">tasks.jsonl</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="s2">&quot;task-001&quot;</span><span class="p">,</span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="s2">&quot;Implement auth&quot;</span><span class="p">,</span><span class="nt">&quot;priority&quot;</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="s2">&quot;open&quot;</span><span class="p">,</span><span class="nt">&quot;created&quot;</span><span class="p">:</span><span class="s2">&quot;2024-01-20T10:00:00Z&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="s2">&quot;task-002&quot;</span><span class="p">,</span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="s2">&quot;Add tests&quot;</span><span class="p">,</span><span class="nt">&quot;priority&quot;</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="s2">&quot;open&quot;</span><span class="p">,</span><span class="nt">&quot;blocked_by&quot;</span><span class="p">:[</span><span class="s2">&quot;task-001&quot;</span><span class="p">],</span><span class="nt">&quot;created&quot;</span><span class="p">:</span><span class="s2">&quot;2024-01-20T10:01:00Z&quot;</span><span class="p">}</span>
+</code></pre></div>
+
+<h2 id="_16"><a class="toclink" href="#_16">ハットとの統合</a></h2>
+<p>ハットはメモリとタスクを使えます。</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">builder</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;task.start&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">1. Check memories for relevant patterns</span>
+<span class="w">      </span><span class="no">2. Pick a task from `ralph tools task ready`</span>
+<span class="w">      </span><span class="no">3. Implement the task</span>
+<span class="w">      </span><span class="no">4. Record learnings as memories</span>
+<span class="w">      </span><span class="no">5. Close the task with `ralph tools task close &lt;id&gt;`</span>
+</code></pre></div>
+
+<h2 id="_17"><a class="toclink" href="#_17">次のステップ</a></h2>
+<ul>
+<li>品質ゲートについて <a href="backpressure.ja.html">バックプレッシャー</a> を学ぶ</li>
+<li>完全なオプションは <a href="../guide/configuration.ja.html">設定</a> を見る</li>
+<li><a href="../advanced/memory-system.ja.html">メモリシステム</a> を深く探る</li>
+</ul>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>
