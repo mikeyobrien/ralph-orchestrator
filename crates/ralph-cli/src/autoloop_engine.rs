@@ -1765,6 +1765,8 @@ mod tests {
             Some(TerminationReason::RestartRequested)
         );
         assert_eq!(take_requested_termination(temp.path()), None);
+    }
+
     #[test]
     fn first_stated_run_id_picks_the_first_named_run_and_trims() {
         let events = ralph_adapters::parse_events(concat!(

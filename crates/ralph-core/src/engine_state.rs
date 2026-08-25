@@ -59,7 +59,45 @@ pub fn prepare_engine_state_root(workspace_root: &Path) -> io::Result<PathBuf> {
 
     reject_descendant_symlinks(&current)?;
 
+    ensure_autoloop_compat_link(&workspace)?;
+
     Ok(current)
+}
+
+/// Expose a workspace-level `.autoloop` compatibility link to the owned root.
+///
+/// Autoloop's own discovery surfaces (`autoloop resume`, `autoloop loops`,
+/// `autoloop list`) locate run state only at `<project>/.autoloop`; they read
+/// neither `AUTOLOOP_STATE_DIR` nor `--set core.state_dir`. Ralph deliberately
+/// owns engine state beneath `.ralph/autoloop`, so a relative workspace-level
+/// `.autoloop` → `.ralph/autoloop` link is the compatibility seam that keeps
+/// native resume discoverable while the real state stays Ralph-owned. The link
+/// is idempotent and never replaces a pre-existing entry (for example, state a
+/// user created by running standalone autoloop in the same directory).
+#[cfg(unix)]
+fn ensure_autoloop_compat_link(workspace: &Path) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let link = workspace.join(".autoloop");
+    match fs::symlink_metadata(&link) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => symlink(".ralph/autoloop", &link)
+            .map_err(|error| {
+                safe_state_error(
+                    error.kind(),
+                    "could not expose the .autoloop compatibility link",
+                )
+            }),
+        Err(error) => Err(safe_state_error(
+            error.kind(),
+            "could not inspect the .autoloop compatibility link",
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_autoloop_compat_link(_workspace: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 fn reject_descendant_symlinks(directory: &Path) -> io::Result<()> {
@@ -198,16 +236,46 @@ pub fn engine_env(engine_root: &Path) -> [(&'static str, String); 4] {
 /// Autoloop's nested tools consume the environment exports above, while its
 /// top-level `buildLoopContext` currently resolves stores from layered config.
 /// Supplying both surfaces keeps all runtime state under the same owned root.
+///
+/// The override values are emitted as paths **relative to the workspace**
+/// (`.ralph/autoloop/...`): the engine resolves `core.*` store paths by joining
+/// them onto its working directory (the workspace), so absolute values would
+/// double up into `<workspace><workspace>/..../`. Env exports stay absolute on
+/// purpose — nested engine tools spawn with their own run-scoped cwd, where a
+/// relative value would re-anchor against the wrong directory.
 pub fn engine_config_overrides(engine_root: &Path) -> [(&'static str, String); 4] {
-    let string = |path: PathBuf| path.to_string_lossy().into_owned();
+    // Relativize only the owned layout `<workspace>/.ralph/autoloop`, where the
+    // workspace is the root's grandparent. Any other root shape keeps absolute
+    // values rather than being silently re-anchored.
+    let owned_layout = engine_root
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .is_some_and(|component| component == ".ralph");
+    let workspace_relative = |path: &Path| {
+        let workspace = if owned_layout {
+            engine_root.parent().and_then(Path::parent)
+        } else {
+            None
+        };
+        match workspace.and_then(|workspace| path.strip_prefix(workspace).ok()) {
+            Some(relative) => relative.to_string_lossy().into_owned(),
+            None => path.to_string_lossy().into_owned(),
+        }
+    };
     [
-        ("core.state_dir", engine_root.to_string_lossy().into_owned()),
+        ("core.state_dir", workspace_relative(engine_root)),
         (
             "core.journal_file",
-            string(engine_journal_path(engine_root)),
+            workspace_relative(&engine_journal_path(engine_root)),
         ),
-        ("core.memory_file", string(engine_memory_path(engine_root))),
-        ("core.tasks_file", string(engine_tasks_path(engine_root))),
+        (
+            "core.memory_file",
+            workspace_relative(&engine_memory_path(engine_root)),
+        ),
+        (
+            "core.tasks_file",
+            workspace_relative(&engine_tasks_path(engine_root)),
+        ),
     ]
 }
 
@@ -279,20 +347,62 @@ mod tests {
         assert_eq!(
             engine_config_overrides(Path::new("/work/.ralph/autoloop")),
             [
-                ("core.state_dir", "/work/.ralph/autoloop".to_string()),
+                ("core.state_dir", ".ralph/autoloop".to_string()),
                 (
                     "core.journal_file",
-                    "/work/.ralph/autoloop/journal.jsonl".to_string()
+                    ".ralph/autoloop/journal.jsonl".to_string()
                 ),
                 (
                     "core.memory_file",
-                    "/work/.ralph/autoloop/memory.jsonl".to_string()
+                    ".ralph/autoloop/memory.jsonl".to_string()
                 ),
-                (
-                    "core.tasks_file",
-                    "/work/.ralph/autoloop/tasks.jsonl".to_string()
-                ),
+                ("core.tasks_file", ".ralph/autoloop/tasks.jsonl".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn config_overrides_fall_back_to_absolute_when_root_has_no_workspace_prefix() {
+        // A root that is not shaped like `<workspace>/.ralph/autoloop` cannot be
+        // relativized; the value stays absolute rather than being silently
+        // re-anchored.
+        assert_eq!(
+            engine_config_overrides(Path::new("/solo/.autoloop"))[0],
+            ("core.state_dir", "/solo/.autoloop".to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_engine_state_root_exposes_autoloop_compat_link() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = prepare_engine_state_root(workspace.path()).unwrap();
+        assert_eq!(
+            root,
+            workspace
+                .path()
+                .join(".ralph/autoloop")
+                .canonicalize()
+                .unwrap()
+        );
+
+        // The workspace-level `.autoloop` compatibility link now resolves to the
+        // Ralph-owned root so `autoloop resume` discovery works.
+        let link = workspace.path().join(".autoloop");
+        let metadata = std::fs::symlink_metadata(&link).unwrap();
+        assert!(metadata.file_type().is_symlink());
+        assert_eq!(
+            std::fs::canonicalize(&link).unwrap(),
+            root,
+            ".autoloop link must resolve to the owned engine root"
+        );
+
+        // Idempotent: a second preparation leaves the link untouched.
+        std::fs::write(link.join("touch-probe"), "x").unwrap();
+        let _ = prepare_engine_state_root(workspace.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(link.join("touch-probe")).unwrap(),
+            "x"
         );
     }
 
