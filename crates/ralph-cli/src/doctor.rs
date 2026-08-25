@@ -371,15 +371,18 @@ fn auth_env_vars(backend: &str) -> Option<Vec<&'static str>> {
         "kiro-acp" => Some(vec!["KIRO_API_KEY"]),
         "opencode" => Some(vec![
             "OPENCODE_API_KEY",
+            "ORCAROUTER_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
         ]),
         "pi" => Some(vec![
+            "ORCAROUTER_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "GEMINI_API_KEY",
         ]),
         "roo" => Some(vec![
+            "ORCAROUTER_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "GEMINI_API_KEY",
@@ -697,6 +700,33 @@ mod tests {
         });
 
         assert_eq!(check.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn orcarouter_api_key_satisfies_opencode_pi_roo_auth_hints() {
+        for backend in ["opencode", "pi", "roo"] {
+            let backends = vec![backend.to_string()];
+            let check = auth_hint_check(&backends, |key| match key {
+                "ORCAROUTER_API_KEY" => Some("present".to_string()),
+                _ => None,
+            });
+            assert_eq!(
+                check.status,
+                CheckStatus::Pass,
+                "ORCAROUTER_API_KEY should satisfy {backend} auth hint"
+            );
+        }
+    }
+
+    #[test]
+    fn orcarouter_api_key_listed_in_auth_env_vars_for_models_dev_backends() {
+        for backend in ["opencode", "pi", "roo"] {
+            let envs = auth_env_vars(backend).expect("known backend");
+            assert!(
+                envs.contains(&"ORCAROUTER_API_KEY"),
+                "{backend} auth env vars should include ORCAROUTER_API_KEY: {envs:?}"
+            );
+        }
     }
 
     #[test]
