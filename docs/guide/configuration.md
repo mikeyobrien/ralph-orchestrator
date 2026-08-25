@@ -219,7 +219,7 @@ Backend configuration.
 
 **Backend values:**
 - `claude` — Claude Code
-- `kiro` — Kiro
+- `kiro` / `kiro-acp` — Kiro (both invoke the `kiro-cli` binary)
 - `gemini` — Gemini CLI
 - `codex` — Codex
 - `forge` — Forge
@@ -227,11 +227,49 @@ Backend configuration.
 - `copilot` — Copilot CLI
 - `opencode` — OpenCode
 - `pi` — Pi
-- `custom` — Custom adapter/backend
+- `roo` — Roo
+- `omp` — OMP (oh-my-pi); Pi-family stream, OMP owns auth/providers/models
+- `custom` — Custom adapter/backend (requires `cli.command`)
+- `auto` — Pick the first available backend by priority (the default detection order)
 
 **Prompt mode values:**
 - `arg` — Pass as CLI argument: `cli -p "prompt"`
 - `stdin` — Pass via stdin: `echo "prompt" | cli`
+
+### adapters
+
+Per-backend execution settings. A shared `default` applies to every backend; a
+per-backend key overrides it for that backend only.
+
+```yaml
+adapters:
+  default:
+    timeout: 300        # seconds; applied to every backend without its own override
+    enabled: true       # included in auto-detection
+  claude:
+    timeout: 600        # claude-specific override
+  pi:
+    timeout: 120        # pi-specific override
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `default.timeout` | integer | `300` | Inactivity timeout (seconds) for any backend without an override |
+| `default.enabled` | boolean | `true` | Whether a backend participates in auto-detection |
+| `<backend>.timeout` | integer | `default.timeout` | Per-backend timeout override |
+| `<backend>.enabled` | boolean | `default.enabled` | Per-backend auto-detection override |
+
+Override keys must be a catalogued backend name or `custom`; an unknown key is a
+validation error. `enabled: false` skips a backend only during auto-detection —
+selecting it explicitly (`cli.backend: <name>`) still works.
+
+> **Migration notice — `adapters.claude` no longer inherits.** Previously Pi, Roo,
+> Copilot, and OpenCode silently inherited the `adapters.claude` settings through a
+> catch-all fallback. They now resolve to `adapters.default` (300 s) unless given
+> their own override. If you raised `adapters.claude.timeout` to tune one of those
+> backends, move the setting to its own key (for example `adapters.pi.timeout`) to
+> preserve it. Ralph emits a one-time `ClaudeFallbackMigration` warning when
+> `adapters.claude` is set and none of those backends has its own override.
 
 ### core
 

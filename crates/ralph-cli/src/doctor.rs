@@ -2,8 +2,10 @@
 
 use anyhow::Result;
 use clap::Parser;
-use ralph_adapters::{CliBackend, DEFAULT_PRIORITY};
-use ralph_core::{CheckResult, CheckStatus, ConfigError, HatBackend, PreflightReport, RalphConfig};
+use ralph_adapters::CliBackend;
+use ralph_core::{
+    CheckResult, CheckStatus, ConfigError, HatBackend, PreflightReport, RalphConfig, backend,
+};
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
@@ -87,13 +89,12 @@ where
 
     match config.cli.backend.trim() {
         "auto" => {
-            for backend in DEFAULT_PRIORITY {
-                let command = command_for_backend(backend);
+            for metadata in backend::iter() {
                 push_backend_check(
                     &mut checks,
                     &mut seen,
-                    backend,
-                    &command,
+                    metadata.id,
+                    metadata.command,
                     false,
                     CommandCheckMode::Version,
                     &command_version_ok,
@@ -110,7 +111,7 @@ where
                 CheckResult::fail(
                     "backend:auto",
                     "No supported backend found",
-                    format!("Checked: {}", DEFAULT_PRIORITY.join(", ")),
+                    format!("Checked: {}", backend::default_priority().join(", ")),
                 )
             };
             checks.push(summary);
@@ -328,8 +329,8 @@ fn auth_backend_names(config: &RalphConfig) -> Vec<String> {
 
     match config.cli.backend.trim() {
         "auto" => {
-            for backend in DEFAULT_PRIORITY {
-                names.insert((*backend).to_string());
+            for id in backend::default_priority() {
+                names.insert((*id).to_string());
             }
         }
         "custom" => {
@@ -391,12 +392,6 @@ fn auth_env_vars(backend: &str) -> Option<Vec<&'static str>> {
     }
 }
 
-fn command_for_backend(backend: &str) -> String {
-    CliBackend::from_name(backend)
-        .map(|backend| backend.command)
-        .unwrap_or_else(|_| backend.to_string())
-}
-
 fn command_for_named_backend(
     backend: &str,
     command_override: Option<&str>,
@@ -413,15 +408,12 @@ fn command_for_named_backend(
         .map_err(|_| format!("Unknown backend: {backend}"))
 }
 
-fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
-    if backend != "custom" {
-        return backend.to_lowercase();
-    }
-
-    let Some(command) = command else {
-        return "custom".to_string();
-    };
-
+/// Basename of `command` with any Windows executable extension stripped.
+///
+/// Case is preserved so an unrecognized command (e.g. `my-cli.exe`) keeps its
+/// original spelling in check labels; recognized commands are matched
+/// case-insensitively against the catalog in [`canonical_backend_name`].
+fn strip_executable_extension(command: &str) -> String {
     let basename = Path::new(command)
         .file_name()
         .and_then(|name| name.to_str())
@@ -436,21 +428,28 @@ fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
             break;
         }
     }
+    normalized
+}
 
-    let normalized_lower = normalized.to_lowercase();
-    match normalized_lower.as_str() {
-        "kiro-cli" => "kiro".to_string(),
-        "claude" => "claude".to_string(),
-        "gemini" => "gemini".to_string(),
-        "codex" => "codex".to_string(),
-        "forge" => "forge".to_string(),
-        "amp" => "amp".to_string(),
-        "copilot" => "copilot".to_string(),
-        "opencode" => "opencode".to_string(),
-        "pi" => "pi".to_string(),
-        "roo" => "roo".to_string(),
-        _ => normalized,
+fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
+    if backend != "custom" {
+        return backend.to_lowercase();
     }
+
+    let Some(command) = command else {
+        return "custom".to_string();
+    };
+
+    let basename = strip_executable_extension(command);
+
+    // Reverse-map the command basename to the first catalog backend that uses it
+    // (catalog order puts `kiro` before `kiro-acp`, so `kiro-cli` → `kiro`).
+    let lookup = basename.to_lowercase();
+    if let Some(metadata) = backend::iter().find(|metadata| metadata.command == lookup.as_str()) {
+        return metadata.id.to_string();
+    }
+
+    basename
 }
 
 fn backend_check_name(backend: &str, command: &str) -> String {
@@ -742,6 +741,109 @@ mod tests {
         assert_eq!(
             canonical_backend_name("custom", Some("my-cli.exe")),
             "my-cli"
+        );
+    }
+
+    #[test]
+    fn canonical_name_maps_each_unique_catalog_command_to_first_id() {
+        // The reverse command→id map is derived from the catalog, so every
+        // distinct command basename canonicalizes to the first backend that uses
+        // it (kiro-cli → kiro, since kiro precedes kiro-acp). Adding a backend to
+        // the catalog must not require editing a parallel match here.
+        use std::collections::HashSet;
+        let mut seen_commands: HashSet<&str> = HashSet::new();
+        for metadata in ralph_core::backend::iter() {
+            if !seen_commands.insert(metadata.command) {
+                continue; // kiro-acp shares kiro-cli with kiro
+            }
+            assert_eq!(
+                canonical_backend_name("custom", Some(metadata.command)),
+                metadata.id,
+                "command {} should canonicalize to {}",
+                metadata.command,
+                metadata.id
+            );
+            // Case-insensitive and extension-tolerant.
+            assert_eq!(
+                canonical_backend_name("custom", Some(&metadata.command.to_uppercase())),
+                metadata.id,
+                "uppercase command {} should still canonicalize to {}",
+                metadata.command,
+                metadata.id
+            );
+        }
+    }
+
+    #[test]
+    fn auto_backend_checks_cover_every_catalog_backend() {
+        // `backend_checks` in auto mode must iterate the whole catalog, so a newly
+        // catalogued backend is checked without a parallel edit here. The check name
+        // is `backend:{id}` (or `backend:{id}@{command}` when id ≠ command, e.g. kiro).
+        let mut config = RalphConfig::default();
+        config.cli.backend = "auto".to_string();
+        let checks = backend_checks(&config, |_| false, |_| false);
+        for metadata in ralph_core::backend::iter() {
+            let exact = format!("backend:{}", metadata.id);
+            let with_command = format!("backend:{}@{}", metadata.id, metadata.command);
+            assert!(
+                checks
+                    .iter()
+                    .any(|check| check.name == exact || check.name == with_command),
+                "auto backend checks missing {} (got {:?})",
+                metadata.id,
+                checks.iter().map(|c| c.name.as_str()).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OMP auth boundary (R14 / AC11): doctor must NOT enumerate OMP's provider
+    // env vars as proof of auth, and missing env vars must stay a *warning*
+    // (the "authenticate via the CLI" hint) — never a hard executable failure.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn auth_env_vars_returns_none_for_omp() {
+        // OMP authenticates through its own CLI; Ralph must not mirror pi/roo's
+        // Some(vec![ANTHROPIC, OPENAI, GEMINI]) subset for omp.
+        assert_eq!(auth_env_vars("omp"), None);
+    }
+
+    #[test]
+    fn auth_hint_for_omp_is_a_warning_not_a_failure() {
+        // With no provider env vars set, omp routes to the generic CLI hint and
+        // produces a warning — not a failure (no false hard auth failure).
+        let check = auth_hint_check(&["omp".to_string()], |_| None);
+
+        assert_eq!(
+            check.status,
+            CheckStatus::Warn,
+            "omp auth absence must be a warning, not a failure"
+        );
+        let message = check.message.as_deref().unwrap_or("");
+        assert!(
+            message.contains("omp: authenticate via the CLI"),
+            "omp must get the CLI-native auth hint: {message}"
+        );
+    }
+
+    #[test]
+    fn backend_check_for_omp_passes_when_command_available() {
+        // The executable check for a named omp backend passes when `omp --version`
+        // succeeds (Demo: controlled-PATH `ralph doctor` executable pass). Inject
+        // the version probe so this does not depend on OMP being installed.
+        let mut config = RalphConfig::default();
+        config.cli.backend = "omp".to_string();
+        let checks = backend_checks(&config, |cmd| cmd == "omp", |_| false);
+
+        let omp = checks
+            .iter()
+            .find(|check| check.name == "backend:omp")
+            .expect("expected a backend:omp check");
+        assert_eq!(
+            omp.status,
+            CheckStatus::Pass,
+            "omp executable check must pass when `omp --version` succeeds"
         );
     }
 }

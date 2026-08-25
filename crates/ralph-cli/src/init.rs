@@ -35,9 +35,6 @@ pub enum InitError {
     YamlError(String),
 }
 
-/// Valid backend names.
-const VALID_BACKENDS: &[&str] = backend_support::VALID_BACKENDS;
-
 /// Generates the minimal config template for a given backend.
 fn generate_template(backend: &str) -> String {
     format!(
@@ -91,14 +88,15 @@ fn check_file_exists(force: bool) -> Result<(), InitError> {
 /// Initializes ralph.yml from a minimal backend template.
 ///
 /// # Arguments
-/// * `backend` - The backend name (claude, kiro, gemini, codex, forge, amp, copilot, opencode, pi, custom)
+/// * `backend` - The backend name (any catalogued backend id or `custom`; run
+///   `ralph doctor` for the full list)
 /// * `force` - If true, overwrite existing ralph.yml
 ///
 /// # Errors
 /// Returns error if file exists (without force) or backend is invalid.
 pub fn init_from_backend(backend: &str, force: bool) -> Result<(), InitError> {
     // Validate backend
-    if !VALID_BACKENDS.contains(&backend) {
+    if !backend_support::is_known_backend(backend) {
         return Err(InitError::UnknownBackend(
             backend_support::unknown_backend_message(backend),
         ));
@@ -134,7 +132,7 @@ pub fn init_from_preset(
 
     // Validate backend if provided
     if let Some(backend) = backend_override
-        && !VALID_BACKENDS.contains(&backend)
+        && !backend_support::is_known_backend(backend)
     {
         return Err(InitError::UnknownBackend(
             backend_support::unknown_backend_message(backend),
@@ -240,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_template_is_valid_yaml() {
-        for backend in VALID_BACKENDS {
+        for backend in backend_support::valid_backend_names() {
             let template = generate_template(backend);
             let result: Result<serde_yaml::Value, _> = serde_yaml::from_str(&template);
             assert!(
@@ -285,6 +283,26 @@ mod tests {
         // but we can test the validation logic
         let result = init_from_backend("invalid-backend", false);
         assert!(matches!(result, Err(InitError::UnknownBackend(_))));
+    }
+
+    #[test]
+    fn init_from_backend_accepts_every_catalogued_backend() {
+        // `roo` was rejected by init even though it is a catalogued backend; every
+        // catalog name must generate a valid template now that validation derives
+        // from the catalog. Driven from the catalog so a newly added backend
+        // (e.g. OMP) is covered without editing a parallel list here.
+        for metadata in ralph_core::backend::iter() {
+            let backend = metadata.id;
+            let temp_dir = TempDir::new().expect("create temp dir");
+            let _cwd = CwdGuard::set(temp_dir.path());
+            init_from_backend(backend, false)
+                .unwrap_or_else(|e| panic!("init should accept catalogued backend {backend}: {e}"));
+            let content = fs::read_to_string("ralph.yml").expect("read ralph.yml");
+            assert!(
+                content.contains(&format!("backend: \"{backend}\"")),
+                "ralph.yml for {backend}: {content}"
+            );
+        }
     }
 
     #[test]

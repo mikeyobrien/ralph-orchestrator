@@ -282,6 +282,7 @@ fn test_ralph_emit_writes_to_marker_specified_file() -> Result<()> {
         .arg("test payload")
         .current_dir(temp_path)
         .env_remove("RALPH_WORKSPACE_ROOT")
+        .env_remove("RALPH_EVENTS_FILE")
         .output()?;
 
     assert!(
@@ -348,6 +349,7 @@ fn test_ralph_emit_fallback_without_marker() -> Result<()> {
         .arg("fallback payload")
         .current_dir(temp_path)
         .env_remove("RALPH_WORKSPACE_ROOT")
+        .env_remove("RALPH_EVENTS_FILE")
         .output()?;
 
     assert!(

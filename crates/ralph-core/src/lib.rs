@@ -10,6 +10,7 @@
 //! - Terminal capture for session recording
 //! - Benchmark task definitions and workspace isolation
 
+pub mod backend;
 #[cfg(feature = "recording")]
 mod cli_capture;
 mod config;
@@ -59,6 +60,7 @@ pub mod wave_tracker;
 pub mod workspace;
 pub mod worktree;
 
+pub use backend::BackendMetadata;
 #[cfg(feature = "recording")]
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
@@ -134,7 +136,7 @@ pub use task_definition::{
 pub use task_store::TaskStore;
 pub use text::{floor_char_boundary, truncate_with_ellipsis};
 pub use urgent_steer::{UrgentSteerRecord, UrgentSteerStore};
-pub use wave_detection::{DetectedWave, detect_wave_events};
+pub use wave_detection::{DetectedWave, detect_wave_events, resolve_aggregate_wait};
 pub use wave_prompt::{WaveWorkerContext, build_wave_worker_prompt};
 pub use wave_tracker::{CompletedWave, WaveFailure, WaveProgress, WaveResult, WaveTracker};
 pub use workspace::{

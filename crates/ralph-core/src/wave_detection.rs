@@ -8,6 +8,7 @@ use crate::event_reader::Event;
 use crate::hat_registry::HatRegistry;
 use ralph_proto::HatId;
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// A detected wave ready for execution.
 #[derive(Debug)]
@@ -22,24 +23,6 @@ pub struct DetectedWave {
     pub events: Vec<Event>,
     /// Total expected events in the wave.
     pub total: u32,
-}
-
-impl DetectedWave {
-    /// Returns the effective timeout in seconds for wave workers.
-    ///
-    /// Priority: hat.timeout > hat.aggregate.timeout > 300s default.
-    pub fn timeout_secs(&self) -> u64 {
-        self.hat_config
-            .timeout
-            .map(u64::from)
-            .or_else(|| {
-                self.hat_config
-                    .aggregate
-                    .as_ref()
-                    .map(|a| u64::from(a.timeout))
-            })
-            .unwrap_or(300)
-    }
 }
 
 /// Detect wave events from a set of events.
@@ -117,6 +100,29 @@ pub fn detect_wave_events(events: &[Event], registry: &HatRegistry) -> Option<De
         events: sorted_events,
         total: wave_total,
     })
+}
+
+/// Resolve the GAP3 aggregator-wait for a wave's `join_all`.
+///
+/// The aggregator-wait is **orthogonal** to the per-worker deadline (R13):
+/// R13 bounds each worker (`hat.timeout → override → default → 300s`, no
+/// `aggregate`), while GAP3 bounds the `join_all` that collects every worker's
+/// result. The aggregator is a *separate* `concurrency: 1` hat that subscribes
+/// (via `triggers`) to the wave hat's first `publishes` topic and activates the
+/// iteration after the wave — so the cross-hat read at the wave-execution call
+/// site is intentional, not a layering defect.
+///
+/// Returns `Some(aggregator.aggregate.timeout)` when the wave hat publishes a
+/// topic that a registered aggregator subscribes to and that aggregator has an
+/// `aggregate` block. Returns `None` otherwise (no `publishes`, no subscriber,
+/// or the resolved hat has `aggregate` unset), so the caller falls back to the
+/// derived `per_worker_timeout × ceil(total / concurrency) + 30s`.
+pub fn resolve_aggregate_wait(wave_hat: &HatConfig, registry: &HatRegistry) -> Option<Duration> {
+    let publish_topic = wave_hat.publishes.first()?;
+    let aggregator_id = registry.find_by_trigger(publish_topic)?;
+    let aggregator = registry.get_config(aggregator_id)?;
+    let aggregate = aggregator.aggregate.as_ref()?;
+    Some(Duration::from_secs(u64::from(aggregate.timeout)))
 }
 
 #[cfg(test)]
@@ -245,5 +251,105 @@ mod tests {
         let events = vec![make_wave_event("unknown.topic", "payload", "w-abc", 0, 1)];
 
         assert!(detect_wave_events(&events, &registry).is_none());
+    }
+
+    // --- GAP3 aggregator-wait resolution (resolve_aggregate_wait) ---
+
+    #[test]
+    fn test_resolve_aggregate_wait_uses_aggregator_timeout_independent_of_per_worker() {
+        // The wave hat (reviewer) has its own per-worker timeout (30s, R13), but
+        // the aggregator-wait (GAP3) must come from the *separate* aggregator
+        // hat's aggregate.timeout (120s), resolved via reviewer's publishes
+        // topic. This proves R13 and GAP3 are orthogonal.
+        let yaml = r#"
+            hats:
+              reviewer:
+                name: "Reviewer"
+                triggers: ["review.file"]
+                publishes: ["review.done"]
+                instructions: "Review files"
+                concurrency: 4
+                timeout: 30
+              synthesizer:
+                name: "Synthesizer"
+                triggers: ["review.done"]
+                publishes: ["review.complete"]
+                instructions: "Synthesize"
+                aggregate:
+                  mode: wait_for_all
+                  timeout: 120
+        "#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let reviewer = registry.get_config(&HatId::new("reviewer")).unwrap();
+
+        let wait = resolve_aggregate_wait(reviewer, &registry);
+
+        // Aggregator's aggregate.timeout wins, NOT the wave hat's per-worker 30s.
+        assert_eq!(wait, Some(Duration::from_mins(2)));
+        assert_ne!(wait, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn test_resolve_aggregate_wait_no_subscriber_returns_none() {
+        // Wave hat publishes a topic that no hat subscribes to → no aggregator.
+        let yaml = r#"
+            hats:
+              reviewer:
+                name: "Reviewer"
+                triggers: ["review.file"]
+                publishes: ["review.done"]
+                instructions: "Review files"
+                concurrency: 4
+        "#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let reviewer = registry.get_config(&HatId::new("reviewer")).unwrap();
+
+        assert_eq!(resolve_aggregate_wait(reviewer, &registry), None);
+    }
+
+    #[test]
+    fn test_resolve_aggregate_wait_aggregate_unset_returns_none() {
+        // A hat subscribes to review.done but has no `aggregate` block — it is not
+        // an aggregator, so the wait falls back to the derived formula (None).
+        let yaml = r#"
+            hats:
+              reviewer:
+                name: "Reviewer"
+                triggers: ["review.file"]
+                publishes: ["review.done"]
+                instructions: "Review files"
+                concurrency: 4
+              observer:
+                name: "Observer"
+                triggers: ["review.done"]
+                publishes: ["review.seen"]
+                instructions: "Observe"
+        "#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let reviewer = registry.get_config(&HatId::new("reviewer")).unwrap();
+
+        assert_eq!(resolve_aggregate_wait(reviewer, &registry), None);
+    }
+
+    #[test]
+    fn test_resolve_aggregate_wait_no_publishes_returns_none() {
+        // Wave hat publishes nothing → nothing to resolve an aggregator from.
+        let yaml = r#"
+            hats:
+              reviewer:
+                name: "Reviewer"
+                triggers: ["review.file"]
+                publishes: []
+                instructions: "Review files"
+                concurrency: 4
+        "#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let reviewer = registry.get_config(&HatId::new("reviewer")).unwrap();
+
+        assert_eq!(resolve_aggregate_wait(reviewer, &registry), None);
     }
 }

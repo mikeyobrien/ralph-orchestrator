@@ -7,22 +7,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use tracing::debug;
 
-/// Default priority order for backend detection.
-pub const DEFAULT_PRIORITY: &[&str] = &[
-    "claude", "kiro", "kiro-acp", "gemini", "codex", "forge", "amp", "copilot", "opencode", "pi",
-    "roo",
-];
-
-/// Maps backend config names to their actual CLI command names.
-///
-/// Some backends have CLI binaries with different names than their config identifiers.
-/// For example, the "kiro" backend uses the "kiro-cli" binary.
-fn detection_command(backend: &str) -> &str {
-    match backend {
-        "kiro" | "kiro-acp" => "kiro-cli",
-        _ => backend,
-    }
-}
+pub use ralph_core::backend::default_priority;
 
 /// Cached detection result for session duration.
 static DETECTED_BACKEND: OnceLock<Option<String>> = OnceLock::new();
@@ -47,25 +32,21 @@ impl std::fmt::Display for NoBackendError {
         writeln!(f, "See: docs/reference/troubleshooting.md#agent-not-found")?;
         writeln!(f)?;
         writeln!(f, "Install one of the following:")?;
-        writeln!(
-            f,
-            "  • Claude CLI:   https://docs.anthropic.com/claude-code"
-        )?;
-        writeln!(f, "  • Kiro CLI:     https://kiro.dev")?;
-        writeln!(f, "  • Gemini CLI:   https://cloud.google.com/gemini")?;
-        writeln!(f, "  • Codex CLI:    https://openai.com/codex")?;
-        writeln!(
-            f,
-            "  • Forge CLI:    https://github.com/tailcallhq/forgecode"
-        )?;
-        writeln!(f, "  • Amp CLI:      https://amp.dev")?;
-        writeln!(f, "  • Copilot CLI:  https://docs.github.com/copilot")?;
-        writeln!(f, "  • OpenCode CLI: https://opencode.ai")?;
-        writeln!(
-            f,
-            "  • Pi CLI:       https://github.com/anthropics/pi-coding-agent"
-        )?;
-        writeln!(f, "  • Roo CLI:      https://github.com/RooVetGit/Roo-Code")?;
+        // Render install guidance from the core catalog so the list (and the Pi
+        // URL) never drifts. `kiro` and `kiro-acp` share the `kiro-cli` binary,
+        // so list each command once.
+        let mut seen_commands: Vec<&str> = Vec::new();
+        for metadata in ralph_core::backend::iter() {
+            if seen_commands.contains(&metadata.command) {
+                continue;
+            }
+            seen_commands.push(metadata.command);
+            writeln!(
+                f,
+                "  • {} CLI: {}",
+                metadata.display_name, metadata.install_url
+            )?;
+        }
         Ok(())
     }
 }
@@ -75,10 +56,11 @@ impl std::error::Error for NoBackendError {}
 /// Checks if a backend is available by running its version command.
 ///
 /// Each backend is detected by running `<command> --version` and checking
-/// for exit code 0. The command may differ from the backend name (e.g.,
-/// "kiro" backend uses "kiro-cli" command).
+/// for exit code 0. The command is resolved from the core catalog (e.g. the
+/// `kiro`/`kiro-acp` backends use the `kiro-cli` binary); an unrecognized name
+/// falls back to probing itself.
 pub fn is_backend_available(backend: &str) -> bool {
-    let command = detection_command(backend);
+    let command = ralph_core::backend::command_for(backend).unwrap_or(backend);
     let result = Command::new(command).arg("--version").output();
 
     match result {
@@ -155,7 +137,7 @@ where
 
 /// Detects a backend using default priority and all adapters enabled.
 pub fn detect_backend_default() -> Result<String, NoBackendError> {
-    detect_backend(DEFAULT_PRIORITY, |_| true)
+    detect_backend(&default_priority(), |_| true)
 }
 
 #[cfg(test)]
@@ -203,88 +185,68 @@ mod tests {
     }
 
     #[test]
-    fn test_detection_command_kiro() {
-        // Kiro backend uses kiro-cli as the command
-        assert_eq!(detection_command("kiro"), "kiro-cli");
-    }
-
-    #[test]
-    fn test_detection_command_others() {
-        // Other backends use their name as the command
-        assert_eq!(detection_command("claude"), "claude");
-        assert_eq!(detection_command("gemini"), "gemini");
-        assert_eq!(detection_command("codex"), "codex");
-        assert_eq!(detection_command("forge"), "forge");
-        assert_eq!(detection_command("amp"), "amp");
-        assert_eq!(detection_command("pi"), "pi");
-        assert_eq!(detection_command("roo"), "roo");
-    }
-
-    #[test]
-    fn test_default_priority_includes_pi() {
+    fn no_backend_error_install_urls_come_from_catalog() {
+        // The no-backend install list must be derived from the core catalog so it
+        // never drifts. The Pi URL in particular was stale
+        // (github.com/anthropics/pi-coding-agent); the catalog corrected it to the
+        // npm registry.
+        let err = NoBackendError {
+            checked: vec!["claude".to_string()],
+        };
+        let msg = format!("{}", err);
         assert!(
-            DEFAULT_PRIORITY.contains(&"pi"),
-            "DEFAULT_PRIORITY should include 'pi'"
+            msg.contains("npmjs.com"),
+            "Pi install URL should be the npm registry: {msg}"
         );
-    }
 
-    #[test]
-    fn test_default_priority_includes_forge_near_plain_text_backends() {
-        let codex_pos = DEFAULT_PRIORITY
-            .iter()
-            .position(|backend| *backend == "codex")
-            .expect("codex should be in DEFAULT_PRIORITY");
-        let forge_pos = DEFAULT_PRIORITY
-            .iter()
-            .position(|backend| *backend == "forge")
-            .expect("forge should be in DEFAULT_PRIORITY");
-        let amp_pos = DEFAULT_PRIORITY
-            .iter()
-            .position(|backend| *backend == "amp")
-            .expect("amp should be in DEFAULT_PRIORITY");
-
-        assert_eq!(
-            forge_pos,
-            codex_pos + 1,
-            "Forge should be immediately after Codex in DEFAULT_PRIORITY"
-        );
-        assert_eq!(
-            amp_pos,
-            forge_pos + 1,
-            "Amp should follow Forge in DEFAULT_PRIORITY"
-        );
-    }
-
-    #[test]
-    fn test_default_priority_pi_is_second_to_last() {
-        let len = DEFAULT_PRIORITY.len();
-        assert_eq!(
-            DEFAULT_PRIORITY[len - 2],
-            "pi",
-            "Pi should be second-to-last in DEFAULT_PRIORITY"
-        );
-    }
-
-    #[test]
-    fn test_default_priority_includes_roo() {
         assert!(
-            DEFAULT_PRIORITY.contains(&"roo"),
-            "DEFAULT_PRIORITY should include 'roo'"
+            !msg.contains("anthropics/pi-coding-agent"),
+            "stale Pi URL must be gone: {msg}"
         );
-    }
-
-    #[test]
-    fn test_default_priority_roo_is_last() {
+        // Every catalog backend is listed by display name AND install URL, mirroring
+        // the Display's command-dedup: kiro and kiro-acp share kiro-cli, so only the
+        // first (kiro) is rendered — kiro-acp's "Kiro ACP" name is intentionally absent.
+        let mut seen_commands: Vec<&str> = Vec::new();
+        for metadata in ralph_core::backend::iter() {
+            if seen_commands.contains(&metadata.command) {
+                continue;
+            }
+            seen_commands.push(metadata.command);
+            assert!(
+                msg.contains(metadata.display_name),
+                "missing display name for {}: {msg}",
+                metadata.id
+            );
+            assert!(
+                msg.contains(metadata.install_url),
+                "missing install URL for {}: {msg}",
+                metadata.id
+            );
+        }
+        // Dedup-by-command: kiro and kiro-acp share the kiro-cli binary / kiro.dev
+        // URL, so the install list must render that line exactly once.
+        let kiro_dev_count = msg.matches("https://kiro.dev").count();
         assert_eq!(
-            DEFAULT_PRIORITY.last(),
-            Some(&"roo"),
-            "Roo should be the last entry in DEFAULT_PRIORITY"
+            kiro_dev_count, 1,
+            "kiro.dev should appear exactly once (got {kiro_dev_count}): {msg}"
         );
     }
 
     #[test]
-    fn test_detection_command_roo() {
-        assert_eq!(detection_command("roo"), "roo");
+    fn default_priority_preserves_pi_roo_omp_tail_placement() {
+        // Structural invariant of the catalog-derived detection order: the tail
+        // is stable at pi, roo, omp (omp appended last after roo). A reorder
+        // that broke tail placement would fail here.
+        let priority = default_priority();
+        assert!(priority.contains(&"pi"), "priority should include 'pi'");
+        assert!(priority.contains(&"roo"), "priority should include 'roo'");
+        assert!(priority.contains(&"omp"), "priority should include 'omp'");
+        let len = priority.len();
+        assert_eq!(
+            &priority[len - 3..],
+            &["pi", "roo", "omp"],
+            "tail order must be pi, roo, omp"
+        );
     }
 
     #[test]
