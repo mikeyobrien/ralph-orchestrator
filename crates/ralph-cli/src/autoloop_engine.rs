@@ -402,23 +402,21 @@ pub async fn run_autoloop_engine(
     }
 
     let mut current_events_guard = None;
-    let robot_service = if !tui {
-        if let Some(loop_context) = context.as_ref()
-            && config.robot.enabled
-            && loop_context.is_primary()
-        {
-            current_events_guard = Some(
-                crate::autoloop_robot::CurrentEventsGuard::install(&workspace)
-                    .context("installing Autoloop current-events marker")?,
-            );
-            let service = crate::autoloop_robot::create_robot_service(&config, loop_context);
-            if service.is_none() {
-                current_events_guard = None;
-            }
-            service
-        } else {
-            None
+    let robot_service = if tui {
+        None
+    } else if let Some(loop_context) = context.as_ref()
+        && config.robot.enabled
+        && loop_context.is_primary()
+    {
+        current_events_guard = Some(
+            crate::autoloop_robot::CurrentEventsGuard::install(&workspace)
+                .context("installing Autoloop current-events marker")?,
+        );
+        let service = crate::autoloop_robot::create_robot_service(&config, loop_context);
+        if service.is_none() {
+            current_events_guard = None;
         }
+        service
     } else {
         None
     };
