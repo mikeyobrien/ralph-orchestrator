@@ -597,12 +597,6 @@ impl RalphConfig {
 
         // Validate RObot config
         self.robot.validate()?;
-        if self.robot.enabled {
-            warnings.push(ConfigWarning::DeferredFeature {
-                field: "RObot.enabled".to_string(),
-                message: ROBOT_HITL_INACTIVE_WARNING.to_string(),
-            });
-        }
 
         // Validate hooks config semantics (v1 guardrails)
         self.validate_hooks()?;
@@ -878,9 +872,6 @@ impl std::fmt::Display for ConfigWarning {
         }
     }
 }
-
-/// Canonical warning shown when RObot is enabled with the autoloop engine.
-pub const ROBOT_HITL_INACTIVE_WARNING: &str = "Telegram HITL relay is INACTIVE under the autoloop engine (pending autoloop#345): bot commands/status work, but agent questions are not relayed.";
 
 /// Event loop configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3682,7 +3673,7 @@ RObot:
     }
 
     #[test]
-    fn test_robot_enabled_warns_that_autoloop_hitl_is_inactive() {
+    fn test_robot_enabled_does_not_warn_that_autoloop_hitl_is_inactive() {
         let yaml = r#"
 RObot:
   enabled: true
@@ -3693,12 +3684,10 @@ RObot:
         let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
         let warnings = config.validate().unwrap();
 
-        assert!(warnings.iter().any(|warning| {
-            let warning = warning.to_string();
-            warning.contains("Telegram HITL relay is INACTIVE under the autoloop engine")
-                && warning.contains("autoloop#345")
-                && warning.contains("bot commands/status work")
-                && warning.contains("agent questions are not relayed")
+        assert!(!warnings.iter().any(|warning| {
+            warning
+                .to_string()
+                .contains("Telegram HITL relay is INACTIVE")
         }));
     }
 

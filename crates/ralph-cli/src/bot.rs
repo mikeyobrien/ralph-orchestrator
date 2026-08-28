@@ -381,7 +381,7 @@ async fn bot_status(use_colors: bool) -> Result<()> {
     // Check RObot enabled
     let robot_enabled = is_robot_enabled();
     if robot_enabled {
-        print_warning(use_colors, &robot_enabled_status_message());
+        print_success(use_colors, "RObot: enabled in ralph.yml");
     } else {
         print_status(use_colors, "RObot: not enabled in ralph.yml");
     }
@@ -1087,13 +1087,6 @@ fn print_error(use_colors: bool, msg: &str) {
     }
 }
 
-fn robot_enabled_status_message() -> String {
-    format!(
-        "RObot: enabled in ralph.yml; {}",
-        ralph_core::ROBOT_HITL_INACTIVE_WARNING
-    )
-}
-
 fn format_warning(use_colors: bool, msg: &str) -> String {
     if use_colors {
         format!("  \x1b[33m!\x1b[0m {}", msg)
@@ -1155,18 +1148,7 @@ mod tests {
     }
 
     #[test]
-    fn test_robot_status_enabled_renders_inactive_hitl_caveat() {
-        assert_eq!(
-            format_warning(false, &robot_enabled_status_message()),
-            format!(
-                "  WARN: RObot: enabled in ralph.yml; {}",
-                ralph_core::ROBOT_HITL_INACTIVE_WARNING
-            )
-        );
-    }
-
-    #[test]
-    fn test_daemon_config_warnings_include_inactive_hitl_caveat() {
+    fn test_daemon_config_warnings_omit_inactive_hitl_caveat() {
         let config: RalphConfig = serde_yaml::from_str(
             r#"
 RObot:
@@ -1180,12 +1162,10 @@ RObot:
 
         let warnings = daemon_config_warnings(&config).unwrap();
 
-        assert_eq!(
-            warnings,
-            vec![format!(
-                "Warning [RObot.enabled]: {}",
-                ralph_core::ROBOT_HITL_INACTIVE_WARNING
-            )]
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.contains("HITL relay is INACTIVE"))
         );
     }
 

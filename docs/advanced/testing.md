@@ -181,14 +181,15 @@ Hooks run CI-parity Rust checks before each commit:
 
 ## Testing Human-in-the-Loop (Telegram)
 
-Telegram relay is inactive for autoloop-backed `ralph run` pending
-autoloop#345. Test the retained crate with mocked bot behavior:
+Test the Telegram crate with mocked bot behavior, and the CLI HITL bridge
+with a fake Autoloop control executable:
 
 ```bash
 cargo test -p ralph-telegram
+cargo test -p ralph-cli autoloop_robot
 ```
 
-See the [Telegram guide](../guide/telegram.md) for the exact v3 limitation.
+See the [Telegram guide](../guide/telegram.md).
 
 ## Testing Best Practices
 
