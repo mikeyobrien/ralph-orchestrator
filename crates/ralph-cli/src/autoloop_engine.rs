@@ -20,10 +20,12 @@ use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
     engine_state::{
         engine_config_overrides, engine_env, engine_journal_path, engine_memory_path,
-        prepare_engine_state_root,
+        persist_current_run_id, prepare_engine_state_root, read_current_run_id,
     },
     sanitize_tui_inline_text,
 };
+
+use crate::rpc_events::RpcEventMapper;
 
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
 use crate::display::Palette;
@@ -290,6 +292,15 @@ fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Re
     std::fs::read_to_string(&path).context("reading prompt file from the configured workspace")
 }
 
+/// How Ralph observes and continues an Autoloop engine process.
+pub struct AutoloopLaunch {
+    pub continue_mode: bool,
+    pub native_resume: bool,
+    pub use_colors: bool,
+    pub tui: bool,
+    pub rpc: bool,
+}
+
 /// Drive the configured autoloop preset as ralph's engine, returning the mapped
 /// [`TerminationReason`].
 ///
@@ -304,9 +315,7 @@ pub async fn run_autoloop_engine(
     context: Option<LoopContext>,
     auto_merge_override: Option<bool>,
     loop_id: Option<String>,
-    continue_mode: bool,
-    use_colors: bool,
-    tui: bool,
+    launch: AutoloopLaunch,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
     let engine_state_root =
@@ -314,7 +323,8 @@ pub async fn run_autoloop_engine(
     let identity_context = context
         .clone()
         .unwrap_or_else(|| LoopContext::primary(workspace.clone()));
-    let loop_id = prepare_loop_identity(&identity_context, continue_mode, loop_id.as_deref())?;
+    let loop_id =
+        prepare_loop_identity(&identity_context, launch.continue_mode, loop_id.as_deref())?;
 
     if let Ok(merge_loop_id) = std::env::var("RALPH_MERGE_LOOP_ID") {
         let repo_root = context
@@ -372,7 +382,11 @@ pub async fn run_autoloop_engine(
             .collect()
     };
 
-    let prompt = resolve_autoloop_prompt(&workspace, &config.event_loop)?;
+    let prompt = if launch.native_resume {
+        String::new()
+    } else {
+        resolve_autoloop_prompt(&workspace, &config.event_loop)?
+    };
 
     // Structured event sink beneath the owned engine root — the preferred
     // observability channel. The root was prepared before any run state.
@@ -389,6 +403,16 @@ pub async fn run_autoloop_engine(
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
         .events_path(events_path.clone());
+    if launch.native_resume {
+        let run_id = read_current_run_id(&engine_state_root)
+            .context("reading the persisted Autoloop run_id")?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Ralph has no persisted Autoloop run_id. Start a loop with `ralph run` before `ralph resume`."
+                )
+            })?;
+        runner = runner.resume(run_id);
+    }
     for (key, value) in engine_env(&engine_state_root) {
         runner = runner.env(key, value);
     }
@@ -402,7 +426,7 @@ pub async fn run_autoloop_engine(
     }
 
     let mut current_events_guard = None;
-    let robot_service = if tui {
+    let robot_service = if launch.tui {
         None
     } else if let Some(loop_context) = context.as_ref()
         && config.robot.enabled
@@ -422,7 +446,21 @@ pub async fn run_autoloop_engine(
     };
 
     let start = Instant::now();
-    let outcome = if tui {
+    let outcome = if launch.rpc {
+        match run_autoloop_rpc(
+            runner,
+            events_path.clone(),
+            prompt.clone(),
+            config.cli.backend.clone(),
+            config.event_loop.max_iterations,
+            role_display_names,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => AutoloopOutcome::Failed(error.context("autoloop RPC run failed")),
+        }
+    } else if launch.tui {
         // In-process TUI: render the autoloop run live by tailing its --events
         // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
         // child (see run_autoloop_with_tui).
@@ -445,7 +483,7 @@ pub async fn run_autoloop_engine(
             workspace.clone(),
             service,
             role_display_names,
-            use_colors,
+            launch.use_colors,
         )
         .await
         {
@@ -456,8 +494,13 @@ pub async fn run_autoloop_engine(
         // Headless observes the same structured engine event stream as the TUI.
         // Keep the blocking child wait off the async runtime while a sibling
         // task tails and flushes live progress to stdout.
-        match run_autoloop_headless(runner, events_path.clone(), role_display_names, use_colors)
-            .await
+        match run_autoloop_headless(
+            runner,
+            events_path.clone(),
+            role_display_names,
+            launch.use_colors,
+        )
+        .await
         {
             Ok(outcome) => outcome,
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop headless run failed")),
@@ -534,6 +577,8 @@ pub async fn run_autoloop_engine(
         }
     };
 
+    persist_run_id_from_outcome(&engine_state_root, &events_path);
+
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
 
     coordinate_completion(
@@ -544,7 +589,8 @@ pub async fn run_autoloop_engine(
         &prompt,
         auto_merge,
         &loop_id,
-        use_colors,
+        launch.use_colors,
+        !launch.rpc,
     );
 
     match failure {
@@ -785,6 +831,100 @@ async fn run_autoloop_headless(
     reader_handle
         .await
         .context("headless autoloop event reader task failed")?;
+
+    Ok(interpret_autoloop_result(summary, false))
+}
+
+fn persist_run_id_from_outcome(engine_state_root: &Path, events_path: &Path) {
+    if let Some(run_id) = read_events(events_path)
+        .iter()
+        .rev()
+        .find_map(|event| event.run_id.clone())
+    {
+        let _ = persist_current_run_id(engine_state_root, &run_id);
+    }
+}
+
+/// Headless Autoloop run that serializes the same `--events` file as `RpcEvent` JSON lines.
+async fn run_autoloop_rpc(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+    prompt: String,
+    backend: String,
+    max_iterations: Option<u32>,
+    role_display_names: HashMap<String, String>,
+) -> Result<AutoloopOutcome> {
+    use ralph_proto::json_rpc::emit_event_line;
+    use tokio::sync::watch;
+
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let (terminated_tx, mut terminated_rx) = watch::channel(false);
+
+    let reader_handle = tokio::spawn(async move {
+        let mut tailer = AutoloopEventTailer::new(events_path);
+        let mut mapper = RpcEventMapper::new(prompt, backend, max_iterations, role_display_names);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
+
+        let emit = |event: ralph_proto::json_rpc::RpcEvent| {
+            print!("{}", emit_event_line(&event));
+            let _ = std::io::stdout().flush();
+        };
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = terminated_rx.changed() => {
+                    if *terminated_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = ticker.tick() => {
+                    match tailer.poll() {
+                        Ok(events) => {
+                            for event in &events {
+                                for rpc_event in mapper.map(event) {
+                                    emit(rpc_event);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "RPC autoloop event reader poll failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        match tailer.poll() {
+            Ok(events) => {
+                for event in &events {
+                    for rpc_event in mapper.map(event) {
+                        emit(rpc_event);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "RPC autoloop event reader final drain failed");
+            }
+        }
+    });
+
+    let wait_handle = tokio::spawn(async move {
+        let summary = tokio::task::spawn_blocking(move || {
+            runner.wait_with_summary_streaming_stderr(child, trace_engine_diagnostic)
+        })
+        .await
+        .context("autoloop wait task panicked")
+        .and_then(|summary| summary.context("autoloop run failed"));
+        let _ = terminated_tx.send(true);
+        summary
+    });
+
+    let summary = wait_handle.await.context("autoloop wait join failed")?;
+    reader_handle
+        .await
+        .context("RPC autoloop event reader task failed")?;
 
     Ok(interpret_autoloop_result(summary, false))
 }
@@ -1192,9 +1332,13 @@ pub async fn start_loop(
             Some(loop_context.clone()),
             None,
             None,
-            false,
-            false,
-            false,
+            AutoloopLaunch {
+                continue_mode: false,
+                native_resume: false,
+                use_colors: false,
+                tui: false,
+                rpc: false,
+            },
         )
         .await?;
         if reason == TerminationReason::RestartRequested {

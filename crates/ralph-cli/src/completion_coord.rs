@@ -65,6 +65,7 @@ pub fn coordinate_completion(
     auto_merge: bool,
     loop_id: &str,
     use_colors: bool,
+    print_banner: bool,
 ) {
     let repo_root = context
         .map(|c| c.repo_root().to_path_buf())
@@ -158,8 +159,10 @@ pub fn coordinate_completion(
         }
     }
 
-    // 7. Console termination banner.
-    print_termination(reason, state, use_colors, Some(loop_id));
+    // 7. Console termination banner. RPC mode keeps stdout as `RpcEvent` lines.
+    if print_banner {
+        print_termination(reason, state, use_colors, Some(loop_id));
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +195,7 @@ mod tests {
             false,
             "test-loop",
             false,
+            true,
         );
     }
 

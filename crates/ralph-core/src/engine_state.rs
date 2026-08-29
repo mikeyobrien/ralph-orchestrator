@@ -161,6 +161,38 @@ pub fn engine_memory_path(engine_root: &Path) -> PathBuf {
     engine_root.join("memory.jsonl")
 }
 
+/// Path of the last Autoloop `run_id` Ralph persisted for `ralph resume`.
+pub fn current_run_id_path(engine_root: &Path) -> PathBuf {
+    engine_root.join("current-run-id")
+}
+
+/// Persist a safe Autoloop `run_id` for a later native resume.
+pub fn persist_current_run_id(engine_root: &Path, run_id: &str) -> io::Result<()> {
+    if engine_run_dir(engine_root, run_id).is_none() {
+        return Err(safe_state_error(
+            io::ErrorKind::InvalidInput,
+            "Autoloop run_id is not safe to persist",
+        ));
+    }
+    fs::write(current_run_id_path(engine_root), format!("{run_id}\n"))
+}
+
+/// Read the persisted Autoloop `run_id`, if Ralph has completed a run here.
+pub fn read_current_run_id(engine_root: &Path) -> io::Result<Option<String>> {
+    match fs::read_to_string(current_run_id_path(engine_root)) {
+        Ok(contents) => {
+            let run_id = contents.trim();
+            if run_id.is_empty() || engine_run_dir(engine_root, run_id).is_none() {
+                Ok(None)
+            } else {
+                Ok(Some(run_id.to_string()))
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn engine_tasks_path(engine_root: &Path) -> PathBuf {
     engine_root.join("tasks.jsonl")
 }
@@ -249,6 +281,16 @@ mod tests {
                 "run ID should be rejected: {run_id:?}"
             );
         }
+    }
+
+    #[test]
+    fn persist_current_run_id_rejects_unsafe_ids_and_round_trips_safe_ones() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        assert!(persist_current_run_id(root, "../escape").is_err());
+        persist_current_run_id(root, "run-9").unwrap();
+        assert_eq!(read_current_run_id(root).unwrap().as_deref(), Some("run-9"));
+        assert_eq!(current_run_id_path(root), root.join("current-run-id"));
     }
 
     #[test]
