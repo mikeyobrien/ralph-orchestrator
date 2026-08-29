@@ -401,6 +401,26 @@ pub async fn run_autoloop_engine(
         }
     }
 
+    let mut current_events_guard = None;
+    let robot_service = if tui {
+        None
+    } else if let Some(loop_context) = context.as_ref()
+        && config.robot.enabled
+        && loop_context.is_primary()
+    {
+        current_events_guard = Some(
+            crate::autoloop_robot::CurrentEventsGuard::install(&workspace)
+                .context("installing Autoloop current-events marker")?,
+        );
+        let service = crate::autoloop_robot::create_robot_service(&config, loop_context);
+        if service.is_none() {
+            current_events_guard = None;
+        }
+        service
+    } else {
+        None
+    };
+
     let start = Instant::now();
     let outcome = if tui {
         // In-process TUI: render the autoloop run live by tailing its --events
@@ -418,6 +438,20 @@ pub async fn run_autoloop_engine(
             Ok(outcome) => outcome,
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop TUI run failed")),
         }
+    } else if let Some(service) = robot_service {
+        match run_autoloop_with_robot(
+            runner,
+            events_path.clone(),
+            workspace.clone(),
+            service,
+            role_display_names,
+            use_colors,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => AutoloopOutcome::Failed(error.context("autoloop RObot run failed")),
+        }
     } else {
         // Headless observes the same structured engine event stream as the TUI.
         // Keep the blocking child wait off the async runtime while a sibling
@@ -429,6 +463,7 @@ pub async fn run_autoloop_engine(
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop headless run failed")),
         }
     };
+    drop(current_events_guard);
 
     // Validate the complete structured stream before trusting even a successful
     // process and summary. Live readers remain lenient so they can keep
@@ -460,7 +495,10 @@ pub async fn run_autoloop_engine(
     // returned after bookkeeping.
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
-            let reason = map_stop_reason(&summary.stop_reason);
+            // A human /stop or /restart through the HITL bridge wins over the
+            // engine's own terminal reason and is consumed exactly once.
+            let reason = take_requested_termination(&workspace)
+                .unwrap_or_else(|| map_stop_reason(&summary.stop_reason));
             if reason == TerminationReason::CompletionPromise {
                 warn_on_open_ralph_tasks(&identity_context.tasks_path(), &loop_id);
             }
@@ -751,6 +789,175 @@ async fn run_autoloop_headless(
     Ok(interpret_autoloop_result(summary, false))
 }
 
+fn take_requested_termination(workspace: &Path) -> Option<TerminationReason> {
+    let ralph_dir = workspace.join(".ralph");
+    let restart = ralph_dir.join("restart-requested");
+    if restart.exists() {
+        let _ = std::fs::remove_file(restart);
+        return Some(TerminationReason::RestartRequested);
+    }
+    let stop = ralph_dir.join("stop-requested");
+    if stop.exists() {
+        let _ = std::fs::remove_file(stop);
+        return Some(TerminationReason::Stopped);
+    }
+    None
+}
+
+/// Run Autoloop headlessly while relaying RObot asks and guidance through its
+/// file-backed control protocol. Also prints the same structured progress
+/// lines as the plain headless path.
+async fn run_autoloop_with_robot(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+    workspace: PathBuf,
+    service: Box<dyn ralph_proto::RobotService>,
+    role_display_names: HashMap<String, String>,
+    use_colors: bool,
+) -> Result<AutoloopOutcome> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::watch;
+
+    let runner = runner.own_process_group(true);
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let done = Arc::new(AtomicBool::new(false));
+    let robot_shutdown = service.shutdown_flag();
+    let mut process_guard =
+        AutoloopProcessGuard::new(child.id(), Arc::clone(&done), Arc::clone(&robot_shutdown));
+
+    let (terminated_tx, mut terminated_rx) = watch::channel(false);
+    let printer_events = events_path.clone();
+    let printer_handle = tokio::spawn(async move {
+        let mut tailer = AutoloopEventTailer::new(printer_events);
+        let mut ctx = HeadlessPrintCtx::new(role_display_names, use_colors);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = terminated_rx.changed() => {
+                    if *terminated_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = ticker.tick() => {
+                    match tailer.poll() {
+                        Ok(events) => {
+                            for event in &events {
+                                print_headless_event(event, &mut ctx);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "RObot autoloop event reader poll failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        match tailer.poll() {
+            Ok(events) => {
+                for event in &events {
+                    print_headless_event(event, &mut ctx);
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "RObot autoloop event reader final drain failed");
+            }
+        }
+    });
+
+    let wait_runner = runner.clone();
+    let mut wait_handle = tokio::task::spawn_blocking(move || {
+        wait_runner.wait_with_summary_streaming_stderr(child, trace_engine_diagnostic)
+    });
+
+    let bridge_runner = runner.clone();
+    let bridge_done = Arc::clone(&done);
+    let mut bridge_handle = tokio::task::spawn_blocking(move || {
+        crate::autoloop_robot::run_bridge(
+            service,
+            bridge_runner,
+            events_path,
+            workspace,
+            bridge_done,
+        )
+    });
+
+    tokio::select! {
+        summary = &mut wait_handle => {
+            process_guard.disarm();
+            done.store(true, Ordering::Release);
+            robot_shutdown.store(true, Ordering::Release);
+            let _ = terminated_tx.send(true);
+            let bridge_result = bridge_handle
+                .await
+                .context("Autoloop RObot bridge panicked")?;
+            let _ = printer_handle.await;
+            let summary = summary
+                .context("autoloop wait task panicked")?
+                .context("autoloop run failed")?;
+            bridge_result?;
+            Ok(interpret_autoloop_result(Ok(summary), false))
+        }
+        bridge = &mut bridge_handle => {
+            process_guard.terminate();
+            done.store(true, Ordering::Release);
+            robot_shutdown.store(true, Ordering::Release);
+            let _ = terminated_tx.send(true);
+            let _ = printer_handle.await;
+            let bridge_result = bridge.context("Autoloop RObot bridge panicked")?;
+            let _ = wait_handle.await;
+            bridge_result?;
+            anyhow::bail!("Autoloop RObot bridge stopped before the subprocess")
+        }
+    }
+}
+
+struct AutoloopProcessGuard {
+    pid: u32,
+    armed: bool,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    robot_shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AutoloopProcessGuard {
+    fn new(
+        pid: u32,
+        done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        robot_shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            pid,
+            armed: true,
+            done,
+            robot_shutdown,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn terminate(&mut self) {
+        if self.armed {
+            use std::sync::atomic::Ordering;
+
+            self.done.store(true, Ordering::Release);
+            self.robot_shutdown.store(true, Ordering::Release);
+            kill_autoloop_group(self.pid);
+            self.armed = false;
+        }
+    }
+}
+
+impl Drop for AutoloopProcessGuard {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
 /// Run the autoloop subprocess with the in-process live TUI.
 ///
 /// The TUI renders inside this (parent) process, concurrent with the `autoloop
@@ -878,11 +1085,19 @@ fn kill_autoloop_group(pid: u32) {
         let pgid = Pid::from_raw(pid as i32);
         let _ = killpg(pgid, Signal::SIGTERM);
         // Detached escalation: hard-kill the group if it ignores SIGTERM. A
-        // SIGKILL to an already-dead group is ESRCH and harmless.
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let _ = killpg(pgid, Signal::SIGKILL);
-        });
+        // SIGKILL to an already-dead group is ESRCH and harmless. Drop may
+        // run off the async runtime (spawn_blocking), so fall back to a thread.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let _ = killpg(pgid, Signal::SIGKILL);
+            });
+        } else {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let _ = killpg(pgid, Signal::SIGKILL);
+            });
+        }
     }
     #[cfg(not(unix))]
     {
@@ -903,10 +1118,8 @@ fn prepare_daemon_engine_state(
 ///
 /// This is the daemon's [`ralph_proto::StartLoopFn`] target: it loads config,
 /// applies the supplied prompt, forces autonomous/headless mode, acquires the
-/// primary loop lock, and drives the autoloop engine.
-///
-/// Note: human-in-the-loop robot wiring under the autoloop engine is descoped
-/// to #345. The loop still runs; in-loop Telegram interaction is not yet routed.
+/// primary loop lock, and drives the autoloop engine. When `RObot.enabled` is
+/// set, the HITL bridge relays Autoloop `ask.pending` through Telegram/Web.
 pub async fn start_loop(
     prompt: String,
     workspace_root: PathBuf,
@@ -972,17 +1185,23 @@ pub async fn start_loop(
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
     // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
-    run_autoloop_engine(
-        config,
-        autoloop_bin,
-        Some(loop_context),
-        None,
-        None,
-        false,
-        false,
-        false,
-    )
-    .await
+    loop {
+        let reason = run_autoloop_engine(
+            config.clone(),
+            autoloop_bin.clone(),
+            Some(loop_context.clone()),
+            None,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await?;
+        if reason == TerminationReason::RestartRequested {
+            continue;
+        }
+        return Ok(reason);
+    }
 }
 
 #[cfg(test)]
@@ -1487,5 +1706,26 @@ mod tests {
             }
         );
         assert_ne!(reason.exit_code(), 0);
+    }
+
+    #[test]
+    fn requested_termination_markers_override_reason_and_are_consumed() {
+        let temp = tempfile::tempdir().unwrap();
+        let ralph_dir = temp.path().join(".ralph");
+        std::fs::create_dir_all(&ralph_dir).unwrap();
+
+        std::fs::write(ralph_dir.join("stop-requested"), "").unwrap();
+        assert_eq!(
+            take_requested_termination(temp.path()),
+            Some(TerminationReason::Stopped)
+        );
+        assert_eq!(take_requested_termination(temp.path()), None);
+
+        std::fs::write(ralph_dir.join("restart-requested"), "").unwrap();
+        assert_eq!(
+            take_requested_termination(temp.path()),
+            Some(TerminationReason::RestartRequested)
+        );
+        assert_eq!(take_requested_termination(temp.path()), None);
     }
 }

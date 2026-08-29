@@ -320,7 +320,7 @@ pub struct TuiState {
     // ========================================================================
     /// Pending human ask surfaced in the footer (autoloop `ask.pending`). Display
     /// only: there is no back-channel to answer through the autoloop subprocess
-    /// here (HITL answering is #345).
+    /// here (answers go through the RObot Autoloop control bridge).
     pub pending_ask: Option<String>,
     /// True when the TUI is driven by the autoloop `--events` source rather than
     /// the in-house event bus. Suppresses guidance/steer affordances that have no

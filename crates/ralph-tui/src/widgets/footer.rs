@@ -25,7 +25,7 @@ impl Widget for Footer<'_> {
         block.render(area, buf);
 
         // A pending human ask (autoloop HITL) is the most important thing to
-        // surface — the run is blocked on it. Display only; answering is #345.
+        // surface — the run is blocked on it. Display only; answers go through RObot.
         if let Some(question) = &self.state.pending_ask {
             let line = Line::from(vec![
                 Span::raw(" "),

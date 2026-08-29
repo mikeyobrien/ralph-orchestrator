@@ -226,6 +226,71 @@ impl AutoloopRunner {
         args
     }
 
+    /// Deliver an answer to a blocking Autoloop `human.ask`.
+    pub fn respond(
+        &self,
+        run_id: &str,
+        question_id: &str,
+        answer: &str,
+    ) -> Result<(), AutoloopRunError> {
+        self.run_control(["respond", run_id, question_id, answer], "respond")
+    }
+
+    /// Queue operator guidance for a running Autoloop.
+    pub fn guide(&self, run_id: &str, message: &str) -> Result<(), AutoloopRunError> {
+        self.run_control(["guide", run_id, message], "guide")
+    }
+
+    /// Interrupt a running Autoloop through its control channel.
+    pub fn interrupt(&self, run_id: &str, reason: &str) -> Result<(), AutoloopRunError> {
+        self.run_control(["interrupt", run_id, "--reason", reason], "interrupt")
+    }
+
+    fn control_args<'a>(&self, args: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let (_program, mut command_args) = self.program_and_prefix();
+        command_args.push("control".to_string());
+        command_args.extend(args.into_iter().map(str::to_string));
+        command_args
+    }
+
+    fn control_command_display(&self, verb: &str) -> String {
+        match &self.bin {
+            AutoloopBin::PathLookup => format!("autoloop (PATH lookup): control {verb}"),
+            AutoloopBin::Node(_) => format!("Node-hosted autoloop: control {verb}"),
+            AutoloopBin::Explicit(_) => {
+                format!("configured autoloop executable: control {verb}")
+            }
+        }
+    }
+
+    fn run_control<'a>(
+        &self,
+        args: impl IntoIterator<Item = &'a str>,
+        verb: &str,
+    ) -> Result<(), AutoloopRunError> {
+        let (program, _) = self.program_and_prefix();
+        let args = self.control_args(args);
+        let command = self.control_command_display(verb);
+        let output = Command::new(&program)
+            .args(&args)
+            .current_dir(&self.working_dir)
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+            .map_err(|source| AutoloopRunError::Spawn {
+                command: command.clone(),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(AutoloopRunError::NonZeroExit {
+                command,
+                code: output.status.code(),
+            });
+        }
+
+        Ok(())
+    }
+
     /// Privacy-safe invocation context for error messages.
     ///
     /// Arguments are deliberately omitted because they can contain prompts,
@@ -739,6 +804,38 @@ journal: /j
         let first = args.iter().position(|a| a == "a.b=1").unwrap();
         let second = args.iter().position(|a| a == "c.d=2").unwrap();
         assert!(first < second);
+    }
+
+    #[test]
+    fn control_args_preserve_each_payload_as_one_argument() {
+        let runner = AutoloopRunner::new("/p", "x", "/w")
+            .bin(AutoloopBin::Node(PathBuf::from("/checkout/bin/autoloop")));
+
+        assert_eq!(
+            runner.control_args(["respond", "run-1", "ask-1", "use option A"]),
+            vec![
+                "/checkout/bin/autoloop",
+                "control",
+                "respond",
+                "run-1",
+                "ask-1",
+                "use option A",
+            ]
+        );
+        assert_eq!(
+            runner.control_args(["guide", "run-1", "focus on cancellation"]),
+            vec![
+                "/checkout/bin/autoloop",
+                "control",
+                "guide",
+                "run-1",
+                "focus on cancellation",
+            ]
+        );
+        assert_eq!(
+            runner.control_command_display("respond"),
+            "Node-hosted autoloop: control respond"
+        );
     }
 
     /// Opt-in smoke test that drives the real autoloop binary against the

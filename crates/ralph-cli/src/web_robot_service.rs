@@ -1,7 +1,4 @@
-// v3 cutover: the in-house engine's `create_robot_service` was the only caller
-// of this web RObot service. Re-wiring human-in-the-loop RObot onto the autoloop
-// engine is tracked in #345; until then this module is retained but unused.
-#![allow(dead_code)]
+//! File-backed RObot service used by the Autoloop HITL bridge.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -491,7 +488,11 @@ impl RobotService for WebRobotService {
         WebRobotService::send_question(self, payload)
     }
 
-    fn wait_for_response(&self, events_path: &Path) -> Result<Option<String>> {
+    fn wait_for_response(
+        &self,
+        events_path: &Path,
+        _start_position: Option<u64>,
+    ) -> Result<Option<String>> {
         let _ = events_path;
         WebRobotService::wait_for_response(self)
     }
@@ -604,8 +605,9 @@ mod tests {
         write_correlated_response(&dir, "response", "approved");
         let response_path = response_path(&dir);
 
-        let response = RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"))
-            .expect("wait for response");
+        let response =
+            RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
+                .expect("wait for response");
 
         assert_eq!(response, Some("approved".to_string()));
         assert!(
@@ -632,7 +634,7 @@ mod tests {
             .expect("reuse question");
         let reused_question = read_json(&dir.path().join(".ralph/api/robot-question.json"));
         let response =
-            RobotService::wait_for_response(&restarted, Path::new("unused-events.jsonl"))
+            RobotService::wait_for_response(&restarted, Path::new("unused-events.jsonl"), None)
                 .expect("wait for response");
 
         assert_eq!(reused_id, original_id);
@@ -724,8 +726,9 @@ mod tests {
             .send_question("Need approval?")
             .expect("send question");
 
-        let response = RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"))
-            .expect("wait for response");
+        let response =
+            RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
+                .expect("wait for response");
 
         assert_eq!(response, None);
         assert!(
@@ -751,7 +754,7 @@ mod tests {
         });
 
         let start = Instant::now();
-        let response = RobotService::wait_for_response(&service, &events_path(&dir))
+        let response = RobotService::wait_for_response(&service, &events_path(&dir), None)
             .expect("wait for response");
         writer.join().expect("join writer");
 
@@ -772,8 +775,9 @@ mod tests {
         service.shutdown_flag().store(true, Ordering::Relaxed);
 
         let start = Instant::now();
-        let response = RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"))
-            .expect("wait for response");
+        let response =
+            RobotService::wait_for_response(&service, Path::new("unused-events.jsonl"), None)
+                .expect("wait for response");
 
         assert_eq!(response, None);
         assert!(start.elapsed() < Duration::from_secs(1));
@@ -796,7 +800,7 @@ mod tests {
                 .expect("write complete response");
         });
 
-        let response = RobotService::wait_for_response(&service, &events_path(&dir))
+        let response = RobotService::wait_for_response(&service, &events_path(&dir), None)
             .expect("wait for response");
         writer.join().expect("join writer");
 
@@ -829,7 +833,7 @@ mod tests {
                 .expect("write complete response");
         });
 
-        let response = RobotService::wait_for_response(&service, &events_path(&dir))
+        let response = RobotService::wait_for_response(&service, &events_path(&dir), None)
             .expect("wait for response");
         writer.join().expect("join writer");
 
