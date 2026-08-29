@@ -111,6 +111,8 @@ pub struct AutoloopRunner {
     /// left off for headless so the child stays in ralph's foreground group and
     /// receives terminal SIGINT normally.
     own_process_group: bool,
+    /// When set, invoke `autoloop resume <run_id>` instead of `autoloop run`.
+    resume_run_id: Option<String>,
 }
 
 impl AutoloopRunner {
@@ -133,7 +135,14 @@ impl AutoloopRunner {
             events_path: None,
             env: Vec::new(),
             own_process_group: false,
+            resume_run_id: None,
         }
+    }
+
+    /// Continue a persisted Autoloop run instead of starting a new one.
+    pub fn resume(mut self, run_id: impl Into<String>) -> Self {
+        self.resume_run_id = Some(run_id.into());
+        self
     }
 
     /// Spawn the child as the leader of a new process group (Unix only), so its
@@ -197,12 +206,24 @@ impl AutoloopRunner {
 
     /// Assembles the full argv (excluding the program itself).
     ///
-    /// Layout: `[<node bin>?] run <preset> [-b <backend>] [--set kv]... [--events path] <prompt>`.
+    /// Fresh runs: `[<node bin>?] run <preset> [-b <backend>] [--set kv]... [--events path] <prompt>`.
+    /// Resume: `[<node bin>?] resume <run_id> [--events path]`.
     ///
-    /// The positional prompt must remain last because autoloop parses it as a
-    /// variadic argument; options placed after it can be consumed as prompt text.
+    /// The positional prompt must remain last on `run` because autoloop parses
+    /// it as a variadic argument; options placed after it can be consumed as
+    /// prompt text.
     fn build_args(&self) -> Vec<String> {
         let (_program, mut args) = self.program_and_prefix();
+        if let Some(run_id) = &self.resume_run_id {
+            args.push("resume".to_string());
+            args.push(run_id.clone());
+            if let Some(events) = &self.events_path {
+                args.push("--events".to_string());
+                args.push(events.to_string_lossy().into_owned());
+            }
+            return args;
+        }
+
         args.push("run".to_string());
         args.push(self.preset_dir.to_string_lossy().into_owned());
 
@@ -296,10 +317,15 @@ impl AutoloopRunner {
     /// Arguments are deliberately omitted because they can contain prompts,
     /// credentials, arbitrary overrides, and physical filesystem paths.
     fn command_display(&self) -> String {
+        let action = if self.resume_run_id.is_some() {
+            "resume"
+        } else {
+            "run"
+        };
         match &self.bin {
-            AutoloopBin::PathLookup => "autoloop (PATH lookup): run".to_string(),
-            AutoloopBin::Node(_) => "Node-hosted autoloop: run".to_string(),
-            AutoloopBin::Explicit(_) => "configured autoloop executable: run".to_string(),
+            AutoloopBin::PathLookup => format!("autoloop (PATH lookup): {action}"),
+            AutoloopBin::Node(_) => format!("Node-hosted autoloop: {action}"),
+            AutoloopBin::Explicit(_) => format!("configured autoloop executable: {action}"),
         }
     }
 
@@ -692,6 +718,19 @@ journal: /j
         assert_eq!(program, "node");
         let args = runner.build_args();
         assert_eq!(args, vec!["/checkout/bin/autoloop", "run", "/p", "x"]);
+    }
+
+    #[test]
+    fn resume_args_are_run_id_and_events_without_a_prompt() {
+        let runner = AutoloopRunner::new("/presets/autocode", "unused prompt", "/work")
+            .events_path("/tmp/events.jsonl")
+            .resume("run-abc123");
+
+        assert_eq!(
+            runner.build_args(),
+            vec!["resume", "run-abc123", "--events", "/tmp/events.jsonl",]
+        );
+        assert!(runner.command_display().contains("resume"));
     }
 
     fn assert_no_sensitive_markers(rendered: &str) {
