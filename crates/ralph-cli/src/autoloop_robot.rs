@@ -155,7 +155,9 @@ fn run_bridge_inner(
     let human_events = CurrentEventsGuard::human_events_path(workspace);
     let ralph_dir = workspace.join(".ralph");
     let mut autoloop_pos = 0;
-    let mut human_pos = 0;
+    let mut human_pos = fs::metadata(&human_events)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
     let mut run_id: Option<String> = None;
     let mut pending_guidance = Vec::new();
     let mut handled_questions = std::collections::HashSet::new();
@@ -584,6 +586,77 @@ mod tests {
             1
         );
         assert!(!log.contains("control respond"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ignores_guidance_written_before_the_bridge_starts() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path();
+        fs::create_dir_all(workspace.join(".ralph")).unwrap();
+        let events_path = workspace.join(".ralph/autoloop-events.ndjson");
+        let human_events = CurrentEventsGuard::human_events_path(workspace);
+        let (fake_bin, control_log) = fake_control_bin(workspace);
+        fs::write(
+            &human_events,
+            concat!(
+                r#"{"topic":"human.guidance","payload":"stale leftover"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        fs::write(
+            &events_path,
+            concat!(
+                r#"{"type":"iteration.start","runId":"run-9","iteration":1}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let runner = AutoloopRunner::new(workspace, "prompt", workspace)
+            .bin(ralph_adapters::AutoloopBin::Explicit(fake_bin))
+            .env("CONTROL_LOG", control_log.to_string_lossy().into_owned());
+        let robot: Box<dyn RobotService> = Box::new(FakeRobot {
+            state: Arc::new(FakeState::default()),
+            shutdown: Arc::new(AtomicBool::new(false)),
+        });
+        let done = Arc::new(AtomicBool::new(false));
+
+        let bridge_done = done.clone();
+        let bridge_events = events_path;
+        let bridge_workspace = workspace.to_path_buf();
+        let bridge = std::thread::spawn(move || {
+            run_bridge(robot, runner, bridge_events, bridge_workspace, bridge_done).unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        let mut human = fs::OpenOptions::new()
+            .append(true)
+            .open(&human_events)
+            .unwrap();
+        writeln!(
+            human,
+            r#"{{"topic":"human.guidance","payload":"fresh this run"}}"#
+        )
+        .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if fs::read_to_string(&control_log)
+                .unwrap_or_default()
+                .contains("control guide run-9 fresh this run")
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        done.store(true, Ordering::Release);
+        bridge.join().unwrap();
+
+        let log = fs::read_to_string(&control_log).unwrap_or_default();
+        assert!(!log.contains("stale leftover"));
+        assert_eq!(log.matches("control guide run-9 fresh this run").count(), 1);
     }
 
     #[test]

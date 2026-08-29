@@ -70,8 +70,8 @@ fn cmd_help() -> String {
         "/tail — Last 20 events",
         "/model — Show current backend/model",
         "/models — Show configured model options",
-        "/restart — Unsupported under the autoloop engine",
-        "/stop — Unsupported under the autoloop engine",
+        "/restart — Request a loop restart",
+        "/stop — Request a loop stop",
         "/help — This message",
     ]
     .join("\n")
@@ -604,16 +604,39 @@ fn cmd_memories(workspace_root: &Path) -> String {
     lines.join("\n")
 }
 
-/// `/restart` — Report that loop restart is unavailable under autoloop.
-fn cmd_restart(_workspace_root: &Path) -> String {
-    "Restart is NOT supported under the autoloop engine (pending engine restart support). No restart was requested."
-        .to_string()
+fn request_loop_control(workspace_root: &Path, marker_name: &str, action: &str) -> String {
+    match lock_state(workspace_root) {
+        Ok(LockState::Active) => {
+            let ralph_dir = workspace_root.join(".ralph");
+            if let Err(error) = std::fs::create_dir_all(&ralph_dir) {
+                return format!(
+                    "Failed to request {action}: {}",
+                    escape_html(&error.to_string())
+                );
+            }
+            let marker = ralph_dir.join(marker_name);
+            if let Err(error) = std::fs::write(&marker, "") {
+                return format!(
+                    "Failed to request {action}: {}",
+                    escape_html(&error.to_string())
+                );
+            }
+            format!("{action} requested.")
+        }
+        Ok(_) => format!("No running loop. No {action} was requested."),
+        Err(error) => format!(
+            "Failed to inspect loop lock: {}",
+            escape_html(&error.to_string())
+        ),
+    }
 }
 
-/// `/stop` — Report that loop stop is unavailable under autoloop.
-fn cmd_stop(_workspace_root: &Path) -> String {
-    "Stop is NOT supported under the autoloop engine (pending engine stop support). No stop was requested."
-        .to_string()
+fn cmd_restart(workspace_root: &Path) -> String {
+    request_loop_control(workspace_root, "restart-requested", "Restart")
+}
+
+fn cmd_stop(workspace_root: &Path) -> String {
+    request_loop_control(workspace_root, "stop-requested", "Stop")
 }
 
 /// `/tail` — Last 20 lines of the current events file.
@@ -969,42 +992,31 @@ mod tests {
     }
 
     #[test]
-    fn cmd_restart_is_unsupported_without_active_loop() {
+    fn cmd_restart_is_a_noop_without_a_running_loop() {
         let dir = TempDir::new().unwrap();
         setup_workspace(&dir);
 
         let result = cmd_restart(dir.path());
 
-        assert_eq!(
-            result,
-            "Restart is NOT supported under the autoloop engine (pending engine restart support). No restart was requested."
-        );
+        assert_eq!(result, "No running loop. No Restart was requested.");
         assert!(!dir.path().join(".ralph/restart-requested").exists());
     }
 
     #[test]
-    fn cmd_stop_is_unsupported_without_active_loop() {
+    fn cmd_stop_is_a_noop_without_a_running_loop() {
         let dir = TempDir::new().unwrap();
         setup_workspace(&dir);
 
         let result = cmd_stop(dir.path());
 
-        assert_eq!(
-            result,
-            "Stop is NOT supported under the autoloop engine (pending engine stop support). No stop was requested."
-        );
+        assert_eq!(result, "No running loop. No Stop was requested.");
         assert!(!dir.path().join(".ralph/stop-requested").exists());
     }
 
     #[cfg(unix)]
-    #[test]
-    fn cmd_restart_reports_unsupported_without_writing_signal_file() {
+    fn hold_active_loop_lock(dir: &TempDir) -> nix::fcntl::Flock<std::fs::File> {
         use nix::fcntl::{Flock, FlockArg};
 
-        let dir = TempDir::new().unwrap();
-        setup_workspace(&dir);
-
-        // Create lock file to simulate active loop
         let lock = serde_json::json!({
             "pid": 12345,
             "started": "2026-01-30T10:00:00Z",
@@ -1012,52 +1024,36 @@ mod tests {
         });
         let lock_path = dir.path().join(".ralph/loop.lock");
         std::fs::write(&lock_path, serde_json::to_string(&lock).unwrap()).unwrap();
-
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(&lock_path)
             .unwrap();
-        let _flock = Flock::lock(file, FlockArg::LockExclusiveNonblock).unwrap();
-
-        let result = cmd_restart(dir.path());
-        assert_eq!(
-            result,
-            "Restart is NOT supported under the autoloop engine (pending engine restart support). No restart was requested."
-        );
-        assert!(!dir.path().join(".ralph/restart-requested").exists());
+        Flock::lock(file, FlockArg::LockExclusiveNonblock).unwrap()
     }
 
     #[cfg(unix)]
     #[test]
-    fn cmd_stop_reports_unsupported_without_writing_signal_file() {
-        use nix::fcntl::{Flock, FlockArg};
-
+    fn cmd_restart_writes_restart_marker_for_an_active_loop() {
         let dir = TempDir::new().unwrap();
         setup_workspace(&dir);
+        let _flock = hold_active_loop_lock(&dir);
 
-        // Create lock file to simulate active loop
-        let lock = serde_json::json!({
-            "pid": 12345,
-            "started": "2026-01-30T10:00:00Z",
-            "prompt": "Test prompt"
-        });
-        let lock_path = dir.path().join(".ralph/loop.lock");
-        std::fs::write(&lock_path, serde_json::to_string(&lock).unwrap()).unwrap();
+        let result = cmd_restart(dir.path());
+        assert_eq!(result, "Restart requested.");
+        assert!(dir.path().join(".ralph/restart-requested").exists());
+    }
 
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&lock_path)
-            .unwrap();
-        let _flock = Flock::lock(file, FlockArg::LockExclusiveNonblock).unwrap();
+    #[cfg(unix)]
+    #[test]
+    fn cmd_stop_writes_stop_marker_for_an_active_loop() {
+        let dir = TempDir::new().unwrap();
+        setup_workspace(&dir);
+        let _flock = hold_active_loop_lock(&dir);
 
         let result = cmd_stop(dir.path());
-        assert_eq!(
-            result,
-            "Stop is NOT supported under the autoloop engine (pending engine stop support). No stop was requested."
-        );
-        assert!(!dir.path().join(".ralph/stop-requested").exists());
+        assert_eq!(result, "Stop requested.");
+        assert!(dir.path().join(".ralph/stop-requested").exists());
     }
 
     #[test]
@@ -1075,15 +1071,15 @@ mod tests {
     }
 
     #[test]
-    fn cmd_help_marks_restart_unsupported() {
+    fn cmd_help_lists_restart() {
         let result = cmd_help();
-        assert!(result.contains("/restart — Unsupported under the autoloop engine"));
+        assert!(result.contains("/restart — Request a loop restart"));
     }
 
     #[test]
-    fn cmd_help_marks_stop_unsupported() {
+    fn cmd_help_lists_stop() {
         let result = cmd_help();
-        assert!(result.contains("/stop — Unsupported under the autoloop engine"));
+        assert!(result.contains("/stop — Request a loop stop"));
     }
 
     #[test]

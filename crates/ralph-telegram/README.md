@@ -65,8 +65,8 @@ Available commands while the standalone daemon is running:
 - `/tail` — last 20 retained events
 - `/model` — current backend/model (runtime or config fallback)
 - `/models` — configured model options found in `ralph*.yml`
-- `/restart` — reports that restart is unsupported under the autoloop engine
-- `/stop` — reports that stop is unsupported under the autoloop engine
+- `/restart` — write `.ralph/restart-requested` when a loop is running
+- `/stop` — write `.ralph/stop-requested` when a loop is running
 - `/help` — list available commands
 
 ## Reserved Relay Design (Not Current v3 Behavior)
