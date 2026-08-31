@@ -298,6 +298,67 @@ event_loop:
 }
 
 #[test]
+fn test_completion_promise_on_final_iteration_takes_priority_over_max_iterations() {
+    // Per issue #369: when the final allowed iteration outputs the completion promise,
+    // the loop should terminate with CompletionPromise, not MaxIterations.
+    let yaml = r"
+event_loop:
+  max_iterations: 1
+  completion_promise: LOOP_COMPLETE
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("builder");
+    let reason = event_loop.process_output(&hat_id, "LOOP_COMPLETE\n", true);
+
+    assert_eq!(
+        reason,
+        Some(TerminationReason::CompletionPromise),
+        "Completion promise on the final iteration must take priority over MaxIterations"
+    );
+}
+
+#[test]
+fn test_completion_promise_under_max_iterations_still_terminates() {
+    // Sanity check: completion promise on an iteration below the limit still terminates.
+    let yaml = r"
+event_loop:
+  max_iterations: 5
+  completion_promise: LOOP_COMPLETE
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("builder");
+    let reason = event_loop.process_output(&hat_id, "All done.\nLOOP_COMPLETE", true);
+
+    assert_eq!(reason, Some(TerminationReason::CompletionPromise));
+}
+
+#[test]
+fn test_max_iterations_still_fires_when_completion_absent_on_final_iteration() {
+    // Regression guard: when the final iteration produces NO completion promise,
+    // MaxIterations should still fire.
+    let yaml = r"
+event_loop:
+  max_iterations: 2
+  completion_promise: LOOP_COMPLETE
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+    event_loop.initialize("Test");
+
+    let hat_id = HatId::new("builder");
+    event_loop.process_output(&hat_id, "iteration 1 output", true);
+    let reason = event_loop.process_output(&hat_id, "iteration 2 output, no promise", true);
+
+    assert_eq!(reason, Some(TerminationReason::MaxIterations));
+}
+
+#[test]
 fn test_persisted_loop_state_round_trips_iteration_cost_and_last_hat() {
     use tempfile::TempDir;
 
@@ -661,27 +722,19 @@ fn test_completion_promise_requires_last_event() {
 }
 
 #[test]
-fn test_builder_cannot_terminate_loop() {
-    // Per spec: completion requires an emitted event; output-only tokens are ignored
+fn test_text_completion_promise_triggers_termination_from_any_hat() {
+    // Completion promise in output text should terminate the loop, regardless of hat.
+    // Mirrors the text-fallback path used by `loop_runner` so completion works on the
+    // final allowed iteration (see issue #369). Note: `RalphConfig::default()` has
+    // max_iterations > 1, so the iteration limit does not mask the completion signal.
     let config = RalphConfig::default();
     let mut event_loop = EventLoop::new(config);
     event_loop.initialize("Test");
 
-    // Builder output containing completion promise - should be IGNORED
     let hat_id = HatId::new("builder");
     let reason = event_loop.process_output(&hat_id, "Done!\nLOOP_COMPLETE", true);
 
-    // Builder cannot terminate, so no termination reason
-    assert_eq!(reason, None);
-
-    // Completion event should still terminate
-    let temp_dir = tempfile::tempdir().unwrap();
-    let events_path = temp_dir.path().join("events.jsonl");
-    event_loop.event_reader = crate::event_reader::EventReader::new(&events_path);
-    write_event_to_jsonl(&events_path, "LOOP_COMPLETE", "Done");
-    let _ = event_loop.process_events_from_jsonl();
-    let completion = event_loop.check_completion_event();
-    assert_eq!(completion, Some(TerminationReason::CompletionPromise));
+    assert_eq!(reason, Some(TerminationReason::CompletionPromise));
 }
 
 #[test]
