@@ -2064,8 +2064,6 @@ impl EventLoop {
             self.state.consecutive_failures += 1;
         }
 
-        let _ = output;
-
         // File-modification audit: detect when a hat with disallowed Edit/Write tools
         // modified files. This is hard enforcement — emits a scope_violation event.
         self.audit_file_modifications(hat_id);
@@ -2073,6 +2071,20 @@ impl EventLoop {
         // Events are ONLY read from the JSONL file written by `ralph emit`.
         // This enforces tool use and prevents confabulation (agent claiming to emit without actually doing so).
         // See process_events_from_jsonl() for event processing.
+
+        // Completion takes priority over MaxIterations at the boundary iteration:
+        // if the iteration that just finished emitted the configured completion promise,
+        // surface that as the termination reason before checking iteration limits. This
+        // mirrors the text-fallback path in loop_runner so completion is detected even
+        // when the final allowed iteration produces the promise. See issue #369.
+        if EventParser::contains_promise(output, &self.config.event_loop.completion_promise) {
+            self.request_completion_from_text_fallback();
+            if let Some(reason) = self.check_completion_event() {
+                return Some(reason);
+            }
+            // Completion was rejected (persistent mode, missing required events, etc.).
+            // Fall through to check_termination() below to enforce budget limits.
+        }
 
         // Check termination conditions
         self.check_termination()
