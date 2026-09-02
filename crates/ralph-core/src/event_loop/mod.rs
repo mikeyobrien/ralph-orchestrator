@@ -482,6 +482,15 @@ impl EventLoop {
         &self.state
     }
 
+    /// Reclassifies the current iteration as successful when durable success
+    /// evidence becomes available after `process_output`.
+    ///
+    /// Some executors can only determine transport-level failure before the
+    /// caller has had a chance to validate events written to JSONL.
+    pub fn reconcile_iteration_success(&mut self) {
+        self.state.consecutive_failures = 0;
+    }
+
     /// Record this iteration's context-token usage for `hat`.
     ///
     /// Passthrough to `LoopState::record_iteration_tokens` — preserves the
