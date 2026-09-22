@@ -9,8 +9,11 @@
 use serde::Deserialize;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::time::{Duration, Instant};
 
 /// A materialized fixture-driven fake `autoloop` executable.
 #[derive(Debug)]
@@ -393,18 +396,99 @@ fn shell_quote(path: &Path) -> String {
 }
 
 fn write_executable(path: &Path, contents: &str) -> io::Result<()> {
-    fs::write(path, contents)?;
+    // Scope the handle so the write descriptor is closed before this function
+    // returns. An open write descriptor on a script makes `exec` fail with
+    // ETXTBSY, and a descriptor inherited by a concurrent fork extends that
+    // window past this call; `fixture_spawn` is the matching guard.
+    {
+        let mut file = fs::File::create(path)?;
+        file.write_all(contents.as_bytes())?;
+    }
     let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions)
 }
 
+/// How long a fixture exec may stay `ETXTBSY` before the error is surfaced.
+const EXEC_BUSY_RETRY_BUDGET: Duration = Duration::from_secs(2);
+
+/// Pause between `ETXTBSY` retries. The window is a fork's fork-to-exec span,
+/// so it is short; the loop is bounded by [`EXEC_BUSY_RETRY_BUDGET`].
+const EXEC_BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+
+/// Spawn a fixture-built command, retrying a transient `ETXTBSY`.
+///
+/// `exec` of a script fails with `ETXTBSY` for as long as any descriptor on it
+/// is open for writing. Writing the fixture closes its own descriptor, but a
+/// thread that forks during that write window leaks its inherited copy of the
+/// descriptor into the child, which keeps the script write-locked until that
+/// child execs. Under a parallel suite the next exec can land in that window,
+/// so retry it instead of failing a green test.
+///
+/// The retry is time-bounded on purpose: a script that stays write-locked for
+/// longer than the budget is a real fault (a genuine writer, a stale
+/// descriptor), and its original `ETXTBSY` is returned rather than masked.
+///
+/// The parameter is `&mut Command` because `Command`'s builder methods return
+/// `&mut Command`, so a chained build can be handed over without rebinding.
+pub fn fixture_spawn(command: &mut Command) -> io::Result<Child> {
+    spawn_with_busy_retry(command, EXEC_BUSY_RETRY_BUDGET)
+}
+
+/// [`fixture_spawn`] plus `wait`, matching `Command::status`.
+pub fn fixture_status(command: &mut Command) -> io::Result<ExitStatus> {
+    fixture_spawn(command)?.wait()
+}
+
+/// [`fixture_spawn`] plus captured output, matching `Command::output`.
+pub fn fixture_output(command: &mut Command) -> io::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    fixture_spawn(command)?.wait_with_output()
+}
+
+fn spawn_with_busy_retry(command: &mut Command, budget: Duration) -> io::Result<Child> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(error) if is_executable_busy(&error) && Instant::now() < deadline => {
+                std::thread::sleep(EXEC_BUSY_RETRY_INTERVAL);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_executable_busy(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::ExecutableFileBusy
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
+    use std::process::Command;
+    use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    /// Open `path` for writing (append, so the fixture bytes survive) and keep
+    /// that descriptor open until the returned sender is dropped. This is the
+    /// kernel state a concurrent `fork` in another test thread leaks when it
+    /// inherits the fixture's write descriptor.
+    fn hold_write_descriptor(
+        path: &Path,
+    ) -> (mpsc::Receiver<()>, mpsc::Sender<()>, thread::JoinHandle<()>) {
+        let (opened_tx, opened_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let path = path.to_path_buf();
+        let handle = thread::spawn(move || {
+            let file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            opened_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+            drop(file);
+        });
+        (opened_rx, release_tx, handle)
+    }
 
     fn fixture(dir: &Path, contents: &str) -> PathBuf {
         let path = dir.join("fixture.jsonl");
@@ -431,10 +515,13 @@ mod tests {
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
         let events = temp.path().join("events.ndjson");
 
-        let output = command(&fake)
-            .args(["run", "--events", events.to_str().unwrap(), "--flag"])
-            .output()
-            .unwrap();
+        let output = fixture_output(command(&fake).args([
+            "run",
+            "--events",
+            events.to_str().unwrap(),
+            "--flag",
+        ]))
+        .unwrap();
 
         assert!(output.status.success());
         assert_eq!(
@@ -459,9 +546,7 @@ mod tests {
         fs::create_dir(&workspace).unwrap();
 
         assert!(
-            command(&fake)
-                .current_dir(&workspace)
-                .status()
+            fixture_status(command(&fake).current_dir(&workspace))
                 .unwrap()
                 .success()
         );
@@ -484,12 +569,13 @@ mod tests {
         let state_dir = workspace.join(".ralph/autoloop");
 
         assert!(
-            command(&fake)
-                .current_dir(&workspace)
-                .env("AUTOLOOP_STATE_DIR", &state_dir)
-                .status()
-                .unwrap()
-                .success()
+            fixture_status(
+                command(&fake)
+                    .current_dir(&workspace)
+                    .env("AUTOLOOP_STATE_DIR", &state_dir)
+            )
+            .unwrap()
+            .success()
         );
         assert_eq!(
             fs::read_to_string(state_dir.join("runs/live/pi-stream.1.jsonl")).unwrap(),
@@ -513,12 +599,13 @@ mod tests {
         fs::create_dir(&workspace).unwrap();
 
         assert!(
-            command(&fake)
-                .current_dir(&workspace)
-                .env_remove("AUTOLOOP_STATE_DIR")
-                .status()
-                .unwrap()
-                .success()
+            fixture_status(
+                command(&fake)
+                    .current_dir(&workspace)
+                    .env_remove("AUTOLOOP_STATE_DIR")
+            )
+            .unwrap()
+            .success()
         );
         assert_eq!(
             fs::read_to_string(workspace.join(".autoloop/runs/live/pi-stream.1.jsonl")).unwrap(),
@@ -536,13 +623,14 @@ mod tests {
         let state_dir = workspace.join(".ralph/autoloop");
 
         assert!(
-            command(&fake)
-                .current_dir(&workspace)
-                .env_remove("JOURNAL_OUT")
-                .env("AUTOLOOP_STATE_DIR", &state_dir)
-                .status()
-                .unwrap()
-                .success()
+            fixture_status(
+                command(&fake)
+                    .current_dir(&workspace)
+                    .env_remove("JOURNAL_OUT")
+                    .env("AUTOLOOP_STATE_DIR", &state_dir)
+            )
+            .unwrap()
+            .success()
         );
         assert_eq!(
             fs::read_to_string(state_dir.join("journal.jsonl")).unwrap(),
@@ -560,7 +648,7 @@ mod tests {
         let fixture = fixture(temp.path(), r#"{"steps":[{"events":["{}"]}]}"#);
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
 
-        let output = command(&fake).arg("run").output().unwrap();
+        let output = fixture_output(command(&fake).arg("run")).unwrap();
 
         assert_eq!(output.status.code(), Some(64));
         assert!(
@@ -578,11 +666,12 @@ mod tests {
         );
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
 
-        let output = command(&fake)
-            .env_remove("TEST_READY")
-            .env_remove("TEST_RELEASE")
-            .output()
-            .unwrap();
+        let output = fixture_output(
+            command(&fake)
+                .env_remove("TEST_READY")
+                .env_remove("TEST_RELEASE"),
+        )
+        .unwrap();
 
         assert!(output.status.success());
         assert!(String::from_utf8_lossy(&output.stdout).contains("run_id: skipped"));
@@ -598,11 +687,12 @@ mod tests {
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
         let ready = temp.path().join("ready");
         let release = temp.path().join("release");
-        let mut child = command(&fake)
-            .env("TEST_READY", &ready)
-            .env("TEST_RELEASE", &release)
-            .spawn()
-            .unwrap();
+        let mut child = fixture_spawn(
+            command(&fake)
+                .env("TEST_READY", &ready)
+                .env("TEST_RELEASE", &release),
+        )
+        .unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while !ready.exists() && Instant::now() < deadline {
@@ -622,9 +712,7 @@ mod tests {
         let workspace = temp.path().join("workspace");
         fs::create_dir(&workspace).unwrap();
         assert!(
-            command(&fake_one)
-                .current_dir(&workspace)
-                .status()
+            fixture_status(command(&fake_one).current_dir(&workspace))
                 .unwrap()
                 .success()
         );
@@ -636,9 +724,7 @@ mod tests {
         let fake_two = build_fake_autoloop(&temp.path().join("fake-two"), &fixture).unwrap();
         let override_path = temp.path().join("custom/journal.jsonl");
         assert!(
-            command(&fake_two)
-                .env("JOURNAL_OUT", &override_path)
-                .status()
+            fixture_status(command(&fake_two).env("JOURNAL_OUT", &override_path))
                 .unwrap()
                 .success()
         );
@@ -657,7 +743,7 @@ mod tests {
         );
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
 
-        let output = command(&fake).output().unwrap();
+        let output = fixture_output(&mut command(&fake)).unwrap();
 
         assert!(output.status.success());
         assert_eq!(
@@ -695,10 +781,7 @@ mod tests {
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
         let root = temp.path().join("workspace/.ralph/autoloop");
 
-        let output = command(&fake)
-            .env("AUTOLOOP_STATE_DIR", &root)
-            .output()
-            .unwrap();
+        let output = fixture_output(command(&fake).env("AUTOLOOP_STATE_DIR", &root)).unwrap();
 
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).unwrap();
@@ -726,8 +809,8 @@ mod tests {
         );
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
 
-        let first = command(&fake).output().unwrap();
-        let second = command(&fake).output().unwrap();
+        let first = fixture_output(&mut command(&fake)).unwrap();
+        let second = fixture_output(&mut command(&fake)).unwrap();
 
         assert_eq!(
             String::from_utf8(first.stdout).unwrap(),
@@ -752,11 +835,66 @@ mod tests {
         );
         let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
 
-        assert_eq!(command(&fake).status().unwrap().code(), Some(7));
+        assert_eq!(fixture_status(&mut command(&fake)).unwrap().code(), Some(7));
         for _ in 0..2 {
-            let output = command(&fake).stdout(Stdio::piped()).output().unwrap();
+            let output = fixture_output(&mut command(&fake)).unwrap();
             assert_eq!(output.status.code(), Some(3));
             assert!(String::from_utf8_lossy(&output.stdout).contains("run_id: last"));
         }
+    }
+
+    #[test]
+    fn fixture_exec_retries_a_transient_executable_busy() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(temp.path(), r#"{"steps":[{"exit":0}]}"#);
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+
+        let (opened, release, holder) = hold_write_descriptor(&fake.bin_dir().join("autoloop"));
+        opened.recv().unwrap();
+
+        // The hazard, measured: while any descriptor holds the script open for
+        // writing, a raw exec is rejected with ETXTBSY.
+        let busy = Command::new(fake.bin_dir().join("autoloop"))
+            .status()
+            .unwrap_err();
+        assert_eq!(busy.kind(), io::ErrorKind::ExecutableFileBusy);
+
+        // The fixture helper rides the transient out rather than failing a
+        // green suite: it retries until the holder releases the descriptor.
+        let exec = thread::spawn(move || fixture_status(&mut command(&fake)));
+        thread::sleep(Duration::from_millis(50));
+        release.send(()).unwrap();
+        assert!(exec.join().unwrap().unwrap().success());
+        holder.join().unwrap();
+    }
+
+    #[test]
+    fn fixture_exec_reports_a_persistent_executable_busy() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(temp.path(), r#"{"steps":[{"exit":0}]}"#);
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+
+        let (opened, release, holder) = hold_write_descriptor(&fake.bin_dir().join("autoloop"));
+        opened.recv().unwrap();
+
+        let budget = Duration::from_millis(80);
+        let started = Instant::now();
+        let error = spawn_with_busy_retry(&mut command(&fake), budget).unwrap_err();
+        let waited = started.elapsed();
+
+        // Bounded, and loud: a script that stays write-locked past the budget
+        // still surfaces the original error instead of being masked.
+        assert_eq!(error.kind(), io::ErrorKind::ExecutableFileBusy);
+        assert!(
+            waited >= Duration::from_millis(50),
+            "expected retries, waited {waited:?}"
+        );
+        assert!(
+            waited < Duration::from_secs(2),
+            "retry must be bounded, waited {waited:?}"
+        );
+
+        drop(release);
+        holder.join().unwrap();
     }
 }
