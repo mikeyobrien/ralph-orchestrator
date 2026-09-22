@@ -535,13 +535,65 @@ false of the engine this branch ships against:
 | Installed `@mobrienv/autoloop` 0.11.0 | no | `jev`, `typesafe`, `noul`, and `routes_file` each occur 0 times across 6041 package files; a clean repo's `autoloop config show --preset code-assist` prints no `[routing]` section and 0 `jev` matches |
 | npm registry | no newer release | `npm view @mobrienv/autoloop dist-tags.latest` is `0.11.0`, published 2026-09-10, which predates the `main` commit above |
 
+The block also survives translation into an engine that cannot read it. Measured
+this round on 0.11.0:
+
+```bash
+# D. what the installed engine does with an enabled [routing.jev] and a missing catalog
+# probe preset: a copy of the bundled autofix preset plus
+#   [routing.jev] enabled = true, routes_file = "does-not-exist-routes.json",
+#   model = "jev-1.13.0", min_confidence = 0.8, timeout_ms = 5000
+# backend.kind = "command", backend.command = a script that prints LOOP_COMPLETE
+unset TYPESAFE_API_KEY
+autoloop run /tmp/jev-probe/preset --no-worktree --max-iterations 1; echo "EXIT=$?"
+autoloop doctor 2>&1 | tail -2
+echo "routing records: $(grep -c '"topic": "routing' .autoloop/journal.jsonl)"
+autoloop config show --preset /tmp/jev-probe/sentinel --json \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['config']['routing'])"
+```
+
+```text
+[autoloops] [info] loop start run_id=sleek-flame max_iterations=1
+iteration 1/1
+role: diagnoser │ event: loop.start │ next: cause.found, diagnosis.blocked, task.complete
+── backend stdout (last 2 of 2 lines) ──
+LOOP_COMPLETE
+
+[progress] ts=2026-09-22T20:13:32.065Z run_id=sleek-flame iter=1 role=diagnoser recent=loop.start outcome=complete:completion_promise
+[progress] ts=2026-09-22T20:13:32.066Z run_id=sleek-flame iter=1 role=(none) recent=completion.provisional outcome=provisional:awaiting_acceptance
+[autoloops] [info] loop complete reason=completion_promise
+stop_reason: completion_promise
+EXIT=0
+0 failure(s), 1 warning(s)
+routing records: 0
+{'jev': {'enabled': 'true', 'routes_file': 'does-not-exist-routes.json', 'model': 'sentinel-xyz', 'min_confidence': '0.8', 'timeout_ms': '5000'}}
+```
+
+The captured block is verbatim except that `run_id` and `ts` are regenerated on
+every run, and four summary lines (`autoloops summary` through `cost_usd`) are
+elided above the stop reason. Every other line reproduces on re-run.
+
+The last line resolves a sentinel copy of the same preset with `model =
+"sentinel-xyz"` in place of `jev-1.13.0`. The substituted value returns through
+the resolved config intact, so the loader keeps every key the file declares and
+the block is genuinely carried, not merely defaulted. The resolved config
+holds the enabled block verbatim, the run completes normally at exit 0 with
+`stop_reason completion_promise`, and the journal records no routing decision.
+An enabled block with a missing catalog and no credential is inert on 0.11.0
+rather than fail-closed, because no code in the package reads it.
+
 Two consequences for the later steps:
 
 - Step 9 cannot "confirm each path by execution" for `[routing.jev]` on the
-  installed engine, because no reader for the block exists there. Ralph can
-  still emit the block and fail closed, but a live-path confirmation needs an
-  engine build newer than 0.11.0, and until one is published that half of
-  Step 9's demo is blocked on an unreleased engine rather than on Ralph code.
+  installed engine, because no reader for the block exists there. Step 9 must
+  gate on engine capability rather than on translation alone: when routing is
+  enabled, refuse to start before the backend launches if the engine predates
+  the reader, and name the engine version and the missing reader in the refusal.
+  Failing closed on a path that cannot carry the block does not cover this case,
+  because here the block is carried, accepted, and ignored, and the operator
+  would read routing as on. A live-path confirmation needs an engine build newer
+  than 0.11.0, so that half of Step 9's demo is blocked on an unreleased engine
+  rather than on Ralph code.
 - Step 11's seam table gains this RFC as candidate evidence, and its "filed
   upstream issue" branch now has a live counterpart to link.
 
