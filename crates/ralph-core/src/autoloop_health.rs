@@ -126,7 +126,10 @@ fn is_executable(path: &Path) -> bool {
 /// the executable itself. The latter supports standalone release binaries.
 ///
 /// Walking upward from the resolved binary supports npm's global symlink
-/// layout as well as package-manager stores and direct package checkouts.
+/// layout as well as package-manager stores and direct package checkouts. The
+/// `--version` exec goes through [`crate::utils::output_with_busy_retry`]: a
+/// real binary is spawned once, while a script written moments earlier can be
+/// `ETXTBSY` for the fork-to-exec span of a concurrent child in another thread.
 fn probe_version(bin_path: &Path) -> Option<String> {
     let start = if bin_path.is_dir() {
         bin_path
@@ -152,7 +155,9 @@ fn probe_version(bin_path: &Path) -> Option<String> {
             .map(str::to_owned);
     }
 
-    let output = Command::new(bin_path).arg("--version").output().ok()?;
+    let mut command = Command::new(bin_path);
+    command.arg("--version");
+    let output = crate::utils::output_with_busy_retry(&mut command).ok()?;
     let stdout = String::from_utf8(output.stdout).ok()?;
     extract_version(&stdout)
 }
@@ -332,6 +337,47 @@ mod tests {
                 source: AutoloopSource::Vendored,
             }
         );
+    }
+
+    /// The health probe execs a script the test just wrote, which is the same
+    /// kernel hazard the fixture module guards: any open write descriptor on
+    /// that file makes `execve` fail with `ETXTBSY` until the writer closes.
+    #[cfg(unix)]
+    #[test]
+    fn autoloop_health_rides_out_a_transient_executable_busy() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let temp = tempfile::tempdir().unwrap();
+        let binary = temp.path().join("autoloop");
+        write_binary(&binary, "printf 'autoloop 0.10.1\\n'");
+
+        // Hold a write descriptor on the script, so the first exec is
+        // rejected with `ETXTBSY` no matter how the suite is scheduled.
+        let (opened_tx, opened_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let held = binary.clone();
+        let holder = thread::spawn(move || {
+            let file = fs::OpenOptions::new().append(true).open(&held).unwrap();
+            opened_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+            drop(file);
+        });
+        opened_rx.recv().unwrap();
+
+        let probe = thread::spawn(move || check_autoloop_at(&binary, AutoloopSource::Vendored));
+        thread::sleep(Duration::from_millis(50));
+        release_tx.send(()).unwrap();
+
+        // Without the retry this is `VersionUnknown`: the busy exec error is
+        // mapped to `None`, so the reason has to be legible here.
+        let health = probe.join().unwrap();
+        assert!(
+            matches!(&health, AutoloopHealth::Ok { version, .. } if version == "0.10.1"),
+            "probe must ride out the held write descriptor, got {health:?}"
+        );
+        holder.join().unwrap();
     }
 
     #[cfg(unix)]

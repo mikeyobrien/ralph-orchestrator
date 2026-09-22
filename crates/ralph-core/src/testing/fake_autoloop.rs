@@ -12,8 +12,9 @@ use std::io;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Child, Command, ExitStatus, Output};
+
+use crate::utils::{EXEC_BUSY_RETRY_BUDGET, output_with_busy_retry, spawn_with_busy_retry};
 
 /// A materialized fixture-driven fake `autoloop` executable.
 #[derive(Debug)]
@@ -418,13 +419,6 @@ fn write_executable(path: &Path, contents: &str) -> io::Result<()> {
     fs::set_permissions(path, permissions)
 }
 
-/// How long a fixture exec may stay `ETXTBSY` before the error is surfaced.
-const EXEC_BUSY_RETRY_BUDGET: Duration = Duration::from_secs(2);
-
-/// Pause between `ETXTBSY` retries. The window is a fork's fork-to-exec span,
-/// so it is short; the loop is bounded by [`EXEC_BUSY_RETRY_BUDGET`].
-const EXEC_BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(2);
-
 /// Spawn a fixture-built command, retrying a transient `ETXTBSY`.
 ///
 /// `exec` of a script fails with `ETXTBSY` for as long as any descriptor on it
@@ -436,12 +430,10 @@ const EXEC_BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 /// by the fixture: the generated invocation scripts are read by `sh`, which
 /// cannot hit this failure mode.
 ///
-/// The retry is time-bounded on purpose: a script that stays write-locked for
-/// longer than the budget is a real fault (a genuine writer, a stale
-/// descriptor), and its original `ETXTBSY` is returned rather than masked.
-///
-/// The parameter is `&mut Command` because `Command`'s builder methods return
-/// `&mut Command`, so a chained build can be handed over without rebinding.
+/// The guard lives in [`crate::utils`] so every exec of a just-written file in
+/// this crate shares one bounded budget; a file that stays write-locked for
+/// longer than the budget is a real fault, and its original `ETXTBSY` is
+/// returned rather than masked.
 pub fn fixture_spawn(command: &mut Command) -> io::Result<Child> {
     spawn_with_busy_retry(command, EXEC_BUSY_RETRY_BUDGET)
 }
@@ -453,28 +445,7 @@ pub fn fixture_status(command: &mut Command) -> io::Result<ExitStatus> {
 
 /// [`fixture_spawn`] plus captured output, matching `Command::output`.
 pub fn fixture_output(command: &mut Command) -> io::Result<Output> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    fixture_spawn(command)?.wait_with_output()
-}
-
-fn spawn_with_busy_retry(command: &mut Command, budget: Duration) -> io::Result<Child> {
-    let deadline = Instant::now() + budget;
-    loop {
-        match command.spawn() {
-            Ok(child) => return Ok(child),
-            Err(error) if is_executable_busy(&error) && Instant::now() < deadline => {
-                std::thread::sleep(EXEC_BUSY_RETRY_INTERVAL);
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn is_executable_busy(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::ExecutableFileBusy
+    output_with_busy_retry(command)
 }
 
 #[cfg(test)]

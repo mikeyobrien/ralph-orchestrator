@@ -7,7 +7,8 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -361,6 +362,57 @@ pub fn strip_ansi_from_bytes(bytes: &[u8]) -> String {
 /// Strips ANSI escape sequences from a string.
 pub fn strip_ansi(s: &str) -> String {
     strip_ansi_from_bytes(s.as_bytes())
+}
+
+/// How long an `execve` of a freshly written file may stay `ETXTBSY` before
+/// the error is surfaced.
+pub const EXEC_BUSY_RETRY_BUDGET: Duration = Duration::from_secs(2);
+
+/// Pause between `ETXTBSY` retries. The window is a fork's fork-to-exec span,
+/// so it is short; the loop is bounded by [`EXEC_BUSY_RETRY_BUDGET`].
+const EXEC_BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+
+/// Whether a spawn failure is the transient "text file busy" `execve` error.
+pub fn is_executable_busy(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::ExecutableFileBusy
+}
+
+/// Spawn a command, retrying a transient `ETXTBSY`.
+///
+/// `exec` of a file fails with `ETXTBSY` for as long as any descriptor on it is
+/// open for writing. A writer closes its own descriptor promptly, but a thread
+/// that forks during that write window leaks its inherited copy into the child,
+/// which keeps the file write-locked until that child execs. Exec'ing a file
+/// that was written moments earlier can therefore fail intermittently under a
+/// parallel suite, so retry it instead of failing unrelated work on a file the
+/// caller already finished writing.
+///
+/// The retry is time-bounded on purpose: a file that stays write-locked past
+/// the budget is a real fault (a genuine writer, a stale descriptor), and its
+/// original `ETXTBSY` is returned rather than masked.
+///
+/// The parameter is `&mut Command` because `Command`'s builder methods return
+/// `&mut Command`, so a chained build can be handed over without rebinding.
+pub fn spawn_with_busy_retry(command: &mut Command, budget: Duration) -> io::Result<Child> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(error) if is_executable_busy(&error) && Instant::now() < deadline => {
+                std::thread::sleep(EXEC_BUSY_RETRY_INTERVAL);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// [`Command::output`] with the shared [`spawn_with_busy_retry`] guard.
+pub fn output_with_busy_retry(command: &mut Command) -> io::Result<Output> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    spawn_with_busy_retry(command, EXEC_BUSY_RETRY_BUDGET)?.wait_with_output()
 }
 
 #[cfg(test)]
