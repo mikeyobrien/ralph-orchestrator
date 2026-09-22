@@ -482,6 +482,18 @@ mod tests {
         .unwrap();
         events.flush().unwrap();
 
+        // The bridge tails the human events file from the length it sees at
+        // startup, so guidance written before the bridge starts counts as
+        // history and is never forwarded. Wait until the bridge has taken the
+        // pending question, which proves startup finished, before writing.
+        let ready = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < ready {
+            if !state.questions.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         let mut human = File::create(&human_events).unwrap();
         writeln!(
             human,
@@ -500,10 +512,15 @@ mod tests {
             writeln!(file, r#"{{"topic":"human.response","payload":"Use A"}}"#).unwrap();
         });
 
+        // Wait for both relayed lines before asserting. The bridge reads the
+        // human events file on its own poll cycle, so the reply can reach the
+        // control log before the guidance line does.
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while std::time::Instant::now() < deadline {
             let log = fs::read_to_string(&control_log).unwrap_or_default();
-            if log.contains("control respond run-9 ask-9 Use A") {
+            let guided = log.contains("control guide run-9 check cancellation");
+            let responded = log.contains("control respond run-9 ask-9 Use A");
+            if guided && responded {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
