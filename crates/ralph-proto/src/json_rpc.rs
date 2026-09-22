@@ -330,7 +330,7 @@ pub enum RpcEvent {
         error: Option<String>,
     },
 
-    /// A generic orchestration event from the EventBus.
+    /// A generic orchestration event from the Autoloop engine.
     /// Maps ralph_proto::Event topics to RPC for observability.
     OrchestrationEvent {
         /// Event topic (e.g., "build.task", "build.done", "loop.terminate").

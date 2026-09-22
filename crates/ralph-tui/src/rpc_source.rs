@@ -5,7 +5,7 @@
 //! - Parses each line as an `RpcEvent`
 //! - Translates events into `TuiState` mutations
 //!
-//! This replaces the in-process `EventBus` observer when running in subprocess mode.
+//! This replaces the in-process observer when running in subprocess mode.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

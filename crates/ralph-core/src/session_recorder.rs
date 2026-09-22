@@ -1,8 +1,7 @@
 //! Session recorder for writing events to JSONL files.
 //!
-//! `SessionRecorder` captures events from both the EventBus (routing events)
-//! and UX captures (terminal output) into a unified JSONL format for replay
-//! and analysis.
+//! `SessionRecorder` captures routing events and UX captures (terminal
+//! output) into a unified JSONL format for replay and analysis.
 
 use ralph_proto::{Event, UxEvent};
 use serde::{Deserialize, Serialize};
@@ -41,7 +40,7 @@ impl Record {
         }
     }
 
-    /// Creates a record for an EventBus event.
+    /// Creates a record for a routing (`bus.publish`) event.
     pub fn from_bus_event(event: &Event) -> Self {
         Self::new("bus.publish", event)
     }
@@ -103,7 +102,7 @@ impl Record {
 
 /// Records session events to a JSONL output.
 ///
-/// The recorder is thread-safe and can be used as an EventBus observer.
+/// The recorder is thread-safe and can be used as a routing-event observer.
 /// It writes each event as a JSON line immediately for crash resilience.
 ///
 /// # Example
@@ -145,7 +144,7 @@ impl<W: Write> SessionRecorder<W> {
         }
     }
 
-    /// Records an EventBus event.
+    /// Records a routing (`bus.publish`) event.
     pub fn record_bus_event(&self, event: &Event) {
         let record = Record::from_bus_event(event);
         self.write_record(&record);
@@ -204,7 +203,7 @@ impl<W: Write> SessionRecorder<W> {
 }
 
 impl<W: Write + Send + 'static> SessionRecorder<W> {
-    /// Creates an observer closure suitable for EventBus::set_observer.
+    /// Creates an observer closure that records routing events.
     ///
     /// The returned closure holds a reference to this recorder and calls
     /// `record_bus_event` for each event received.
@@ -214,7 +213,6 @@ impl<W: Write + Send + 'static> SessionRecorder<W> {
     /// ```ignore
     /// let recorder = Arc::new(SessionRecorder::new(file));
     /// let observer = SessionRecorder::make_observer(Arc::clone(&recorder));
-    /// event_bus.set_observer(observer);
     /// ```
     pub fn make_observer(recorder: std::sync::Arc<Self>) -> impl Fn(&Event) + Send + 'static {
         move |event| {

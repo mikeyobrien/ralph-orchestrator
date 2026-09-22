@@ -12,7 +12,7 @@
 //! The TUI operates in three modes:
 //!
 //! 1. **In-process** (default): Embedded in the orchestration loop. Receives
-//!    events via an `EventBus` observer closure and streaming output via
+//!    events via an observer closure and streaming output via
 //!    shared `Arc<Mutex<Vec<Line>>>` handles.
 //!
 //! 2. **RPC client**: Connects to a running `ralph-api` server over HTTP/WS

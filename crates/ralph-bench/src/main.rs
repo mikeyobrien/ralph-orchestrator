@@ -3,7 +3,7 @@
 //! Benchmark harness for the Ralph Orchestrator.
 //!
 //! This crate provides:
-//! - Recording sessions by observing EventBus events
+//! - Recording sessions from the run's Autoloop event stream
 //! - Replaying sessions with timing and UX output control
 //! - Batch benchmarking with isolated workspaces
 //! - Metrics collection for benchmark comparison
