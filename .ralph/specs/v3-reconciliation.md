@@ -284,8 +284,24 @@ the two beads, the two required behaviors, the July reproduction evidence, and
 ten verification steps, including the render under load the brief requires. Its
 provenance is a loop sweep, so it lands through a normal commit inside
 `port-tui-stream-history`. Porting it does not retroactively justify the sweep
-that first committed it. The file carries no frontmatter, unlike the other
-`.ralph/tasks/*.code-task.md` documents.
+that first committed it. The file carries no frontmatter. Four other tracked
+`.ralph/tasks/*.code-task.md` docs at `HEAD` carry none either:
+`backend-agnostic-e2e`, `context-window-utilization`,
+`manual-live-harness-smoke`, and `multi-loop-concurrency`.
+
+```bash
+git ls-tree --name-only HEAD .ralph/tasks/ | grep '\.code-task\.md$' | while read f; do
+  [ "$(git show HEAD:"$f" | head -1)" = "---" ] || echo "$f"
+done
+```
+
+```text
+.ralph/tasks/backend-agnostic-e2e.code-task.md
+.ralph/tasks/context-window-utilization.code-task.md
+.ralph/tasks/manual-live-harness-smoke.code-task.md
+.ralph/tasks/multi-loop-concurrency.code-task.md
+.ralph/tasks/tui-stream-history-backpressure.code-task.md
+```
 
 ## Port plan
 
@@ -408,19 +424,51 @@ are byte-identical to the rollup tip: `autoloops.toml`, `DOGFOOD.md`,
 `.ralph/tasks/tui-stream-history-backpressure.code-task.md`, and
 `presets/README.md`.
 
-Eight paths differ, and every difference is this branch's own adaptation. Four
+Eight paths differ, and every difference is this branch's own adaptation. Five
 carry the Ralph-owned state root, so `HEAD` reads and writes `.ralph/autoloop`
 where the rollup reads `.autoloop`: `presets/live-harness-smoke/README.md`,
 `presets/live-harness-smoke/scripts/require_smoke_handoff.py`,
-`tools/smoke-live-harnesses.sh`, and
-`.ralph/tasks/manual-live-harness-smoke.code-task.md`. Three carry analyzer fixes
-on the ported bytes, all behavior preserving:
+`tools/smoke-live-harnesses.sh`,
+`.ralph/tasks/manual-live-harness-smoke.code-task.md`, and
+`tools/tests/test_smoke_live_harnesses.py`. Three carry analyzer fixes on the
+ported bytes, all behavior preserving:
 `tools/smoke_live_harness_results.py` fixes a dataclass-alias collision and a
 `None` guard, `tools/smoke_process_group.py` drops an unused import and uses
 `contextlib.suppress`, and `require_smoke_handoff.py` imports `NoReturn` instead
-of annotating with a string. `.github/workflows/ci.yml` differs cosmetically:
-`HEAD` folds the unittest invocation with `>-` and the rollup writes it on one
-line. The command is the same.
+of annotating with a string. `require_smoke_handoff.py` is the one path in both
+groups, so the two groups name eight distinct files with `ci.yml`. That file
+differs cosmetically: `HEAD` folds the unittest invocation with `>-` and the
+rollup writes it on one line. The command is the same.
+
+```bash
+for p in $(git diff --name-only HEAD origin/wip/v3-prerelease-rollup -- \
+  presets/live-harness-smoke tools/smoke-live-harnesses.sh \
+  tools/smoke_live_harness_results.py tools/smoke_process_group.py \
+  tools/tests/test_smoke_live_harnesses.py presets/README.md \
+  .ralph/specs/manual-live-harness-smoke.spec.md \
+  .ralph/tasks/manual-live-harness-smoke.code-task.md \
+  .github/workflows/ci.yml); do
+  printf '%s %s %s\n' "$(git show HEAD:"$p" | grep -c '\.ralph/autoloop')" \
+    "$(git show origin/wip/v3-prerelease-rollup:"$p" | grep -c '\.ralph/autoloop')" "$p"
+done | sort -k1,1nr
+```
+
+```text
+11 0 tools/tests/test_smoke_live_harnesses.py
+4 0 presets/live-harness-smoke/README.md
+2 0 tools/smoke-live-harnesses.sh
+1 0 presets/live-harness-smoke/scripts/require_smoke_handoff.py
+1 0 .ralph/tasks/manual-live-harness-smoke.code-task.md
+0 0 .github/workflows/ci.yml
+0 0 tools/smoke_live_harness_results.py
+0 0 tools/smoke_process_group.py
+```
+
+`test_smoke_live_harnesses.py` also differs from the rollup tip in two
+behavior-preserving edits the state root does not explain: its import order puts
+`textwrap` before `time` where the rollup puts `time` first, and it narrows with
+`if match is None: self.fail(combined)` where the rollup calls
+`self.assertIsNotNone(match, combined)`.
 
 The ported tooling runs.
 
