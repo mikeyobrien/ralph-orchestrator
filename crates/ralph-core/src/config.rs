@@ -1287,7 +1287,10 @@ pub struct CliConfig {
 }
 
 fn default_backend() -> String {
-    "claude".to_string()
+    // "auto" defers to PATH-based detection (run/doctor/preflight all resolve
+    // it) so zero-config machines without claude still find an installed
+    // backend. Explicit `cli.backend` in ralph.yml / ~/.ralph/config.yml wins.
+    "auto".to_string()
 }
 
 fn default_prompt_mode() -> String {
@@ -2478,6 +2481,53 @@ mod tests {
     }
 
     #[test]
+    fn test_default_backend_is_auto() {
+        // Zero-config default must be "auto" so entrypoints (run, doctor,
+        // preflight) resolve the backend via PATH detection instead of
+        // hardcoding claude (which may not be installed).
+        let config = RalphConfig::default();
+        assert_eq!(config.cli.backend, "auto");
+    }
+
+    #[test]
+    fn test_explicit_cli_backend_overrides_auto_default() {
+        // An explicit cli.backend in ralph.yml / ~/.ralph/config.yml must win
+        // over the "auto" serde default (explicit-config precedence).
+        let yaml = r#"
+cli:
+  backend: "gemini"
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.cli.backend, "gemini");
+    }
+
+    #[test]
+    fn test_auto_default_uses_catalog_priority_with_all_adapters_enabled() {
+        // With the "auto" default, the run/doctor/preflight resolution path
+        // consults get_agent_priority() (catalog order when unset) and the
+        // per-adapter enabled flag. The catalog must include every shipped
+        // backend (e.g. pi) and detection must be enabled by default, so a
+        // machine with only `pi` installed resolves Backend: pi.
+        let config = RalphConfig::default();
+        let priority = config.get_agent_priority();
+        assert_eq!(priority, crate::backend::default_priority());
+        assert!(priority.contains(&"pi"));
+        assert!(priority.contains(&"claude"));
+        // claude still wins the priority order when installed.
+        assert_eq!(priority.first(), Some(&"claude"));
+        assert!(config.adapter_settings("pi").enabled);
+        assert!(config.adapter_settings("claude").enabled);
+    }
+
+    #[test]
+    fn test_auto_default_passes_validation() {
+        // validate() accepts the new "auto" default without warnings.
+        let config = RalphConfig::default();
+        let warnings = config.validate().expect("validation should succeed");
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
     fn test_parse_yaml_with_custom_hats() {
         let yaml = r#"
 event_loop:
@@ -2535,7 +2585,7 @@ verbose: true
         let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
 
         // Before normalization, v2 fields have defaults
-        assert_eq!(config.cli.backend, "claude"); // default
+        assert_eq!(config.cli.backend, "auto"); // default (auto-detection)
         assert_eq!(config.event_loop.max_iterations, 100); // default
 
         // Normalize v1 -> v2

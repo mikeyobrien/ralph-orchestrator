@@ -232,6 +232,11 @@ Backend configuration.
 - `custom` — Custom adapter/backend (requires `cli.command`)
 - `auto` — Pick the first available backend by priority (the default detection order)
 
+**Default:** `cli.backend` defaults to `auto`. With no explicit backend in
+`ralph.yml` or `~/.ralph/config.yml`, Ralph detects the first installed backend
+at startup (see [backends.md](backends.md) for the detection order). Set
+`cli.backend` explicitly to pin one.
+
 **Prompt mode values:**
 - `arg` — Pass as CLI argument: `cli -p "prompt"`
 - `stdin` — Pass via stdin: `echo "prompt" | cli`

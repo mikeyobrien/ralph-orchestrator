@@ -45,7 +45,9 @@ detection order existing installations rely on.
 
 ## Explicit Selection
 
-Override auto-detection:
+By default (`cli.backend: "auto"`, the zero-config default), Ralph picks the
+first available backend from the detection order above at startup. Override
+auto-detection:
 
 ```bash
 # Via CLI
