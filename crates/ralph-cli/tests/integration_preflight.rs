@@ -4,10 +4,14 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
+mod support;
+
 fn ralph_preflight(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ralph"))
         .args(args)
         .current_dir(temp_path)
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .output()
         .expect("Failed to execute ralph preflight command")
 }

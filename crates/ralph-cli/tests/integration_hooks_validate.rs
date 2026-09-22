@@ -6,11 +6,15 @@ use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
+mod support;
+
 fn ralph_hooks_validate(temp_path: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ralph"))
         .args(["--color", "never"])
         .args(args)
         .current_dir(temp_path)
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("Failed to execute ralph hooks validate command")

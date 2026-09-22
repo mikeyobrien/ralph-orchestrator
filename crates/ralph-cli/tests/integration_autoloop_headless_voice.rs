@@ -106,6 +106,13 @@ impl Harness {
             .env("PATH", &self.path)
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
+            // The landing auto-commit runs `git commit` in the workspace, which
+            // has no stored identity. Supply one so the run is deterministic
+            // instead of depending on the machine's git config.
+            .env("GIT_AUTHOR_NAME", "Ralph Test")
+            .env("GIT_AUTHOR_EMAIL", "ralph@example.invalid")
+            .env("GIT_COMMITTER_NAME", "Ralph Test")
+            .env("GIT_COMMITTER_EMAIL", "ralph@example.invalid")
             .env("ARGV_OUT", self.fake_autoloop.argv_out())
             .env_remove("NO_COLOR")
             .env_remove("RALPH_CONFIG")

@@ -10,6 +10,8 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
+mod support;
+
 const MIN_AUTOLOOPS_TOML: &str = r#"
 event_loop.max_iterations = 17
 event_loop.completion_event = "task.complete"
@@ -61,6 +63,8 @@ fn run_ralph(cwd: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ralph"))
         .args(args)
         .current_dir(cwd)
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .output()
         .expect("execute ralph")
 }

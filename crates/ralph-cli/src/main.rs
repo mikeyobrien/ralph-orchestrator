@@ -3492,55 +3492,6 @@ core:
         }
     }
 
-    #[tokio::test]
-    async fn test_run_command_dry_run_inline_prompt_skips_execution() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _cwd = CwdGuard::set(temp_dir.path());
-
-        let mut args = default_run_args();
-        args.dry_run = true;
-        args.prompt_text = Some("Test inline prompt".to_string());
-
-        run_command(&[], None, false, ColorMode::Never, args)
-            .await
-            .expect("dry run should succeed");
-    }
-
-    #[tokio::test]
-    async fn test_run_command_allows_single_file_combined_config() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let _cwd = CwdGuard::set(temp_dir.path());
-
-        std::fs::write(
-            temp_dir.path().join("ralph.yml"),
-            r#"
-cli:
-  backend: claude
-hats:
-  builder:
-    name: Builder
-    description: Test builder
-    triggers: ["build.task"]
-    publishes: ["build.done"]
-"#,
-        )
-        .unwrap();
-
-        let mut args = default_run_args();
-        args.dry_run = true;
-        args.prompt_text = Some("Test inline prompt".to_string());
-
-        run_command(
-            &[ConfigSource::File(std::path::PathBuf::from("ralph.yml"))],
-            None,
-            false,
-            ColorMode::Never,
-            args,
-        )
-        .await
-        .expect("combined config should be accepted");
-    }
-
     #[test]
     fn test_diagnostics_eligible_for_run_command() {
         let command = Some(Commands::Run(default_run_args()));

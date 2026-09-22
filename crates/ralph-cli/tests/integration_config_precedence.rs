@@ -11,6 +11,8 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
+mod support;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +103,8 @@ fn test_combined_config_dry_run_succeeds() {
             "--no-tui",
         ])
         .current_dir(dir.path())
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("execute ralph");
@@ -150,6 +154,8 @@ fn test_hats_file_overrides_combined_config_hats() {
             "json",
         ])
         .current_dir(dir.path())
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("execute ralph");
@@ -224,6 +230,8 @@ fn test_hats_file_event_loop_completion_promise_overrides_combined_config() {
             "--no-tui",
         ])
         .current_dir(dir.path())
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("execute ralph");
@@ -315,6 +323,8 @@ hats:
             "--no-tui",
         ])
         .current_dir(dir.path())
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("execute ralph");
@@ -376,6 +386,8 @@ fn test_core_specs_dir_cli_override_applies_last() {
             "--no-tui",
         ])
         .current_dir(dir.path())
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("execute ralph");
@@ -424,6 +436,8 @@ fn test_builtin_hats_source_overrides_combined_config_hats() {
             "json",
         ])
         .current_dir(dir.path())
+        .env("HOME", support::isolated_home())
+        .env("USERPROFILE", support::isolated_home())
         .env("NO_COLOR", "1")
         .output()
         .expect("execute ralph");
