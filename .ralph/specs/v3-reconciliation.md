@@ -23,6 +23,10 @@ classifies every rollup-only commit, and names the ports that follow.
 - Revision 4 re-measures every state claim in the classification table and in
   Why the ports take final content at `56690c0`, and labels each one with the
   commit it was measured at. It changes no verdict.
+- Revision 5 corrects two false state claims revision 4 introduced: the size of
+  the `comm -12` overlap set at `56690c0` (25 paths, not 24) and a sentence that
+  attributed our `80309dc` tree's missing `sha2` edge to the rollup tip, which
+  carries it. It changes no verdict.
 
 ## Method
 
@@ -189,9 +193,10 @@ Cargo.lock
 already contains every base-branch change up to the merge base. At `80309dc`,
 the classification commit, `Cargo.lock` was the only file both sides had changed
 after it, and our two TUI files were byte-identical to the merge base. At
-`56690c0` both sides also carry the two landed ports, so that `comm` set has
-grown to 24 paths. That does not weaken the structural argument; it means the
-argument's measurement commit has to be named.
+`56690c0` both sides also carry the two landed ports and the smoke cluster, so
+that `comm` set has grown to 25 paths (`comm -12` and `grep -Fxf` over the same
+two file lists both print 25). That does not weaken the structural argument; it
+means the argument's measurement commit has to be named.
 
 ```bash
 git diff --stat 2e1fc52 80309dc -- crates/ralph-tui/src/autoloop_source.rs \
@@ -567,9 +572,11 @@ git diff --numstat HEAD origin/wip/v3-prerelease-rollup -- \
 `reader_engine_root` counts: 8 at `80309dc`, 14 at `56690c0`, 12 at the rollup
 tip. The `sha2` package sits at `Cargo.lock:3657` at `80309dc` and `:3658` at
 `56690c0`; the `ralph-adapters` edge is at `Cargo.lock:2766` and
-`crates/ralph-adapters/Cargo.toml:19` at `56690c0`. The rollup tip carries no
-`sha2` edge for `ralph-adapters` at `80309dc` either, which is why the lock has
-to move with the manifest.
+`crates/ralph-adapters/Cargo.toml:19` at `56690c0`. Our `80309dc` tree carried
+neither: no `sha2` line in `crates/ralph-adapters/Cargo.toml`, and no `"sha2"`
+entry in the lock's `ralph-adapters` block. That is why the lock has to move
+with the manifest. The rollup tip carries both, so the port takes them from
+there.
 
 ### The ported surfaces still run green at `56690c0`
 
@@ -597,3 +604,31 @@ claims in Why the ports take final content, the `reader_engine_root` reading, an
 the swept-doc section now name the commit they were measured at and state the
 landed reading. The header's revision-3 bullet now claims only that the landed
 state was re-measured, which is what revision 3 did.
+
+### What revision 5 changed
+
+Revision 4 was rejected at `a04126e` for two false state claims. Both were
+introduced by revision 4 itself, and both are one-line fixes.
+
+**The `comm` set size.** The sentence closing Why the ports take final content
+said the set "has grown to 24 paths". It is 25 at `56690c0`. `comm -12` over the
+two `git diff --name-only` lists prints 25, and `grep -Fxf` over the same two
+lists prints 25. The 24 is the set with `Cargo.lock` removed, which is not what
+the sentence counted, because its previous clause counts `Cargo.lock` as part of
+the set.
+
+**The `sha2` attribution.** The sentence said "the rollup tip carries no `sha2`
+edge for `ralph-adapters` at `80309dc` either". That attributed our tree's state
+to the rollup tip. The rollup tip carries the edge twice: `sha2.workspace = true`
+at `crates/ralph-adapters/Cargo.toml:19` and `"sha2"` inside its `Cargo.lock`
+`ralph-adapters` block. Our `80309dc` tree carried neither, which is the claim
+the paragraph needs.
+
+The rest of the revision-4 text was re-measured at `56690c0` and holds: 22 rows
+tallied 16 `port` / 4 `already-covered` / 2 `superseded`, the nine smoke paths
+absent at `80309dc` and present at `56690c0`, line counts 881/881, 2242/2053,
+419/377, 1032/896, 83/83, `reader_engine_root` 8/14/12, the `sha2` package at
+`Cargo.lock:3657` and `:3658`, the `ralph-adapters` edge at `Cargo.lock:2766`
+inside the block at `:2750`, the TUI numstat `0 189`, and the four
+`already-covered` paths byte-identical to the rollup tip. No verdict changes and
+no source is edited.
