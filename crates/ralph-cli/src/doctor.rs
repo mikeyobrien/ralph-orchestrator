@@ -12,7 +12,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
-use crate::{ConfigSource, HatsSource};
+use crate::{ConfigSource, HatsSource, config_resolution::home_dir_from_env};
 
 /// Run first-run diagnostics and environment validation.
 #[derive(Parser, Debug)]
@@ -51,7 +51,11 @@ pub async fn execute(
     checks.extend(backend_checks);
 
     let auth_backends = auth_backend_names(&config);
-    checks.push(auth_hint_check(&auth_backends, |key| env::var(key).ok()));
+    checks.push(auth_hint_check(
+        &auth_backends,
+        |key| env::var(key).ok(),
+        credential_store_probe(),
+    ));
 
     checks.extend(other_checks);
 
@@ -261,12 +265,15 @@ fn push_backend_check<F, G>(
     });
 }
 
-fn auth_hint_check<F>(_backends: &[String], _env_lookup: F) -> CheckResult
+fn auth_hint_check<F, S>(_backends: &[String], _env_lookup: F, _store_probe: S) -> CheckResult
 where
     F: Fn(&str) -> Option<String>,
+    S: Fn(&str) -> bool,
 {
     let env_lookup = _env_lookup;
+    let store_probe = _store_probe;
     let mut missing = Vec::new();
+    let mut store_notes = Vec::new();
 
     let mut backends: Vec<String> = _backends
         .iter()
@@ -277,6 +284,9 @@ where
 
     for backend in backends {
         let Some(envs) = auth_env_vars(&backend) else {
+            if store_probe(&backend) {
+                continue;
+            }
             missing.push(format!("{backend}: authenticate via the CLI"));
             continue;
         };
@@ -285,11 +295,30 @@ where
             continue;
         }
 
+        // Env-var auth is unset, but the backend's CLI may own its own
+        // credential store (e.g. `pi auth`, `claude login`). Probe it
+        // read-only before warning; warn only when neither is found.
+        if store_probe(&backend) {
+            store_notes.push(format!(
+                "{backend}: env-var auth not set (CLI credential store detected)"
+            ));
+            continue;
+        }
+
         missing.push(format!("{backend}: set {}", envs.join(" or ")));
     }
 
     if missing.is_empty() {
-        CheckResult::pass("auth", "Auth hints satisfied")
+        if store_notes.is_empty() {
+            CheckResult::pass("auth", "Auth hints satisfied")
+        } else {
+            CheckResult {
+                name: "auth".to_string(),
+                label: "Auth hints satisfied".to_string(),
+                status: CheckStatus::Pass,
+                message: Some(store_notes.join("\n")),
+            }
+        }
     } else {
         CheckResult::warn(
             "auth",
@@ -297,6 +326,40 @@ where
             missing.join("\n"),
         )
     }
+}
+
+/// Builds a read-only credential-store probe rooted at the user's home dir.
+fn credential_store_probe() -> impl Fn(&str) -> bool {
+    let home = home_dir_from_env();
+    move |backend| credential_store_detected(backend, home.as_deref())
+}
+
+/// Cheap, read-only check for backends whose CLI owns its own credential
+/// store. Returns `false` (inconclusive) for unknown backends so env-var
+/// hints remain the fallback.
+fn credential_store_detected(backend: &str, home: Option<&Path>) -> bool {
+    let Some(home) = home else {
+        return false;
+    };
+
+    match backend {
+        // `pi auth` writes ~/.pi/agent/auth.json.
+        "pi" => non_empty_file(&home.join(".pi").join("agent").join("auth.json")),
+        // Claude Code writes ~/.claude/.credentials.json on Linux; on macOS
+        // tokens live in the Keychain, but ~/.claude.json carries the OAuth
+        // account state. Both are cheap file stats.
+        "claude" => {
+            non_empty_file(&home.join(".claude").join(".credentials.json"))
+                || non_empty_file(&home.join(".claude.json"))
+        }
+        _ => false,
+    }
+}
+
+fn non_empty_file(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
 }
 
 fn hat_collection_check(_config: &RalphConfig) -> CheckResult {
@@ -683,7 +746,7 @@ mod tests {
         let check = auth_hint_check(&backends, |key| match key {
             "OPENAI_API_KEY" => Some("present".to_string()),
             _ => None,
-        });
+        }, |_| false);
 
         assert_eq!(check.status, CheckStatus::Warn);
         assert!(check.message.as_deref().unwrap_or("").contains("gemini"));
@@ -696,9 +759,92 @@ mod tests {
             "OPENAI_API_KEY" => Some("present".to_string()),
             "GEMINI_API_KEY" => Some("present".to_string()),
             _ => None,
-        });
+        }, |_| false);
 
         assert_eq!(check.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn auth_hint_passes_with_store_note_when_store_detected_and_env_missing() {
+        // pi authenticated via its own credential store, no env vars: the auth
+        // check must NOT warn — it passes with an informational note.
+        let backends = vec!["pi".to_string()];
+        let check = auth_hint_check(&backends, |_| None, |backend| backend == "pi");
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        let message = check.message.as_deref().unwrap_or("");
+        assert!(
+            message.contains("env-var auth not set (CLI credential store detected)"),
+            "expected store-detected INFO note, got: {message}"
+        );
+        assert!(message.contains("pi"));
+    }
+
+    #[test]
+    fn auth_hint_warns_when_neither_store_nor_env() {
+        let backends = vec!["pi".to_string()];
+        let check = auth_hint_check(&backends, |_| None, |_| false);
+
+        assert_eq!(check.status, CheckStatus::Warn);
+        let message = check.message.as_deref().unwrap_or("");
+        assert!(message.contains("pi: set ORCAROUTER_API_KEY"), "{message}");
+    }
+
+    #[test]
+    fn auth_hint_env_still_wins_over_store_note() {
+        // With env vars set, no note is needed even when a store also exists.
+        let backends = vec!["claude".to_string()];
+        let check = auth_hint_check(
+            &backends,
+            |key| (key == "ANTHROPIC_API_KEY").then(|| "present".to_string()),
+            |_| true,
+        );
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert!(check.message.is_none());
+    }
+
+    #[test]
+    fn credential_store_detected_for_pi_auth_json() {
+        let home = tempfile::tempdir().expect("temp home");
+        let auth = home.path().join(".pi").join("agent");
+        std::fs::create_dir_all(&auth).unwrap();
+        std::fs::write(auth.join("auth.json"), r#"{"tokens":{}}"#).unwrap();
+
+        assert!(credential_store_detected("pi", Some(home.path())));
+    }
+
+    #[test]
+    fn credential_store_rejects_missing_or_empty_pi_store() {
+        let home = tempfile::tempdir().expect("temp home");
+        assert!(!credential_store_detected("pi", Some(home.path())));
+
+        let auth = home.path().join(".pi").join("agent");
+        std::fs::create_dir_all(&auth).unwrap();
+        std::fs::write(auth.join("auth.json"), "").unwrap();
+        assert!(!credential_store_detected("pi", Some(home.path())));
+    }
+
+    #[test]
+    fn credential_store_detected_for_claude_credential_files() {
+        let home = tempfile::tempdir().expect("temp home");
+        assert!(!credential_store_detected("claude", Some(home.path())));
+
+        let claude_dir = home.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join(".credentials.json"), r#"{"accessToken":"x"}"#).unwrap();
+        assert!(credential_store_detected("claude", Some(home.path())));
+
+        // ~/.claude.json (OAuth account state) also counts.
+        let home2 = tempfile::tempdir().expect("temp home");
+        std::fs::write(home2.path().join(".claude.json"), r#"{"oauthAccount":{}}"#).unwrap();
+        assert!(credential_store_detected("claude", Some(home2.path())));
+    }
+
+    #[test]
+    fn credential_store_unknown_backends_and_missing_home_are_inconclusive() {
+        assert!(!credential_store_detected("gemini", Some(Path::new("/nonexistent-home"))));
+        assert!(!credential_store_detected("codex", None));
     }
 
     #[test]
@@ -708,7 +854,7 @@ mod tests {
             let check = auth_hint_check(&backends, |key| match key {
                 "ORCAROUTER_API_KEY" => Some("present".to_string()),
                 _ => None,
-            });
+            }, |_| false);
             assert_eq!(
                 check.status,
                 CheckStatus::Pass,
@@ -813,7 +959,7 @@ mod tests {
     fn auth_hint_for_omp_is_a_warning_not_a_failure() {
         // With no provider env vars set, omp routes to the generic CLI hint and
         // produces a warning — not a failure (no false hard auth failure).
-        let check = auth_hint_check(&["omp".to_string()], |_| None);
+        let check = auth_hint_check(&["omp".to_string()], |_| None, |_| false);
 
         assert_eq!(
             check.status,
