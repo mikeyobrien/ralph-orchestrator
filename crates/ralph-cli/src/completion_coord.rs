@@ -54,7 +54,7 @@ pub fn mark_merge_run_started(repo_root: &Path, merge_loop_id: &str, pid: u32) {
 ///
 /// `state` carries the iteration count / elapsed time surfaced by whichever
 /// engine ran the loop. `context` is `None` only for ad-hoc runs with no loop
-/// identity (no merge-queue / registry participation in that case).
+/// identity (no merge-queue / registry participation, and no summary home).
 #[allow(clippy::too_many_arguments)]
 pub fn coordinate_completion(
     reason: &TerminationReason,
@@ -71,17 +71,23 @@ pub fn coordinate_completion(
         .map(|c| c.repo_root().to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // 1. Summary file.
-    let summary_writer = SummaryWriter::default();
-    let scratchpad_path = Path::new(scratchpad);
-    let scratchpad_opt = if scratchpad_path.exists() {
-        Some(scratchpad_path)
-    } else {
-        None
-    };
-    let final_commit = get_commit_summary(&repo_root).ok();
-    if let Err(e) = summary_writer.write(reason, state, scratchpad_opt, final_commit.as_deref()) {
-        warn!("Failed to write summary file: {}", e);
+    // 1. Summary file. The destination belongs to the loop, not to the process
+    // cwd: a loop context carries its own `.ralph/agent` home. A run with no
+    // context has no loop home, so it writes no summary rather than inventing
+    // one under whatever directory the process happens to run in.
+    if let Some(ctx) = context {
+        let summary_writer = SummaryWriter::from_context(ctx);
+        let scratchpad_path = Path::new(scratchpad);
+        let scratchpad_opt = if scratchpad_path.exists() {
+            Some(scratchpad_path)
+        } else {
+            None
+        };
+        let final_commit = get_commit_summary(&repo_root).ok();
+        if let Err(e) = summary_writer.write(reason, state, scratchpad_opt, final_commit.as_deref())
+        {
+            warn!("Failed to write summary file: {}", e);
+        }
     }
 
     // 2. Loop history.
@@ -182,9 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_without_context_is_a_noop_for_merge_state() {
-        // No loop context => no registry / merge-queue participation, just the
-        // summary + banner. Should not panic.
+    fn coordinate_without_context_writes_nothing_and_does_not_panic() {
+        // No loop context => no registry / merge-queue participation and no
+        // `.ralph/agent` home, so no summary file is written relative to the
+        // process cwd. Only the banner runs. Should not panic.
         let state = RunStats::default();
         coordinate_completion(
             &TerminationReason::MaxIterations,
