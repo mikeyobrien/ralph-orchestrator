@@ -210,14 +210,23 @@ pub fn build_fake_autoloop(dir: &Path, fixture: &Path) -> io::Result<FakeAutoloo
     dispatcher.push_str("case \"$count\" in\n");
     for index in 1..=invocations.len() {
         dispatcher.push_str(&format!(
-            "  {index}) exec {} \"$@\" ;;\n",
+            "  {index}) invocation_script={} ;;\n",
             shell_quote(&state_dir.join(format!("invocation-{index}.sh")))
         ));
     }
     dispatcher.push_str(&format!(
-        "  *) exec {} \"$@\" ;;\nesac\n",
+        "  *) invocation_script={} ;;\nesac\n",
         shell_quote(&state_dir.join(format!("invocation-{}.sh", invocations.len())))
     ));
+    // Read the selected script with `sh` instead of `exec`ing it. `exec` of a
+    // fixture-written file is rejected with ETXTBSY for as long as any
+    // descriptor on it is open for writing, and under a parallel suite a fork
+    // can leak an inherited copy of that descriptor past the writer's own
+    // close. That failure happens one process deeper than `fixture_spawn` can
+    // see, because the outer spawn of `bin/autoloop` succeeds; passing the
+    // script to the interpreter has no such failure mode. The exit status still
+    // propagates, since the invocation is the shell's last command.
+    dispatcher.push_str("sh \"$invocation_script\" \"$@\"\n");
     write_executable(&bin_dir.join("autoloop"), &dispatcher)?;
 
     Ok(FakeAutoloop {
@@ -423,7 +432,9 @@ const EXEC_BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 /// thread that forks during that write window leaks its inherited copy of the
 /// descriptor into the child, which keeps the script write-locked until that
 /// child execs. Under a parallel suite the next exec can land in that window,
-/// so retry it instead of failing a green test.
+/// so retry it instead of failing a green test. Only `bin/autoloop` is exec'd
+/// by the fixture: the generated invocation scripts are read by `sh`, which
+/// cannot hit this failure mode.
 ///
 /// The retry is time-bounded on purpose: a script that stays write-locked for
 /// longer than the budget is a real fault (a genuine writer, a stale
@@ -442,7 +453,10 @@ pub fn fixture_status(command: &mut Command) -> io::Result<ExitStatus> {
 
 /// [`fixture_spawn`] plus captured output, matching `Command::output`.
 pub fn fixture_output(command: &mut Command) -> io::Result<Output> {
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     fixture_spawn(command)?.wait_with_output()
 }
 
@@ -893,6 +907,33 @@ mod tests {
             waited < Duration::from_secs(2),
             "retry must be bounded, waited {waited:?}"
         );
+
+        drop(release);
+        holder.join().unwrap();
+    }
+
+    #[test]
+    fn dispatcher_reads_the_invocation_script_instead_of_exec_ing_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = fixture(temp.path(), r#"{"steps":[{"stdout":["inner"]}]}"#);
+        let fake = build_fake_autoloop(&temp.path().join("fake"), &fixture).unwrap();
+        // `argv_out` lives in the state dir beside the generated scripts.
+        let invocation = fake.argv_out().parent().unwrap().join("invocation-1.sh");
+
+        let (opened, release, holder) = hold_write_descriptor(&invocation);
+        opened.recv().unwrap();
+
+        // The hazard is live: exec'ing the invocation script as a file is
+        // rejected while the descriptor is held, and the outer spawn of
+        // `bin/autoloop` has no way to observe that inner failure.
+        let busy = Command::new(&invocation).status().unwrap_err();
+        assert_eq!(busy.kind(), io::ErrorKind::ExecutableFileBusy);
+
+        // The dispatcher hands the script to `sh` instead, so the same held
+        // descriptor cannot fail the invocation and the exit status survives.
+        let output = fixture_output(&mut command(&fake)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "inner\n");
 
         drop(release);
         holder.join().unwrap();
