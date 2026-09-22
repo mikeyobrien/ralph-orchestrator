@@ -60,7 +60,9 @@ pub enum HatsCommands {
     Show(ShowArgs),
     /// List all presets discoverable on this system (both YAML and TOML formats).
     ///
-    /// Walks the same resolver paths used by `-H <name>`:
+    /// Includes the builtin hat collections (shown with a `builtin:` prefix so
+    /// each row is copy-pasteable into `ralph run -H <name>`), plus everything
+    /// found on the filesystem via the same resolver paths used by `-H <name>`:
     ///   1. `./presets/<name>/`
     ///   2. `$XDG_CONFIG_HOME/ralph/presets/<name>/`
     ///   3. `$HOME/.config/ralph/presets/<name>/`
@@ -190,11 +192,35 @@ pub struct DiscoveredPreset {
     pub description: Option<String>,
 }
 
+/// Synthetic source tag for builtin presets surfaced by `hats list-presets`.
+const BUILTIN_SOURCE: &str = "builtin";
+
+/// The builtin hat collections, as `DiscoveredPreset` entries.
+///
+/// Names carry the `builtin:` prefix so every row in `hats list-presets` is
+/// copy-pasteable into `ralph run -H <PRESET> -P PROMPT.md`. These are always
+/// available (compiled into the binary), independent of filesystem discovery.
+fn builtin_discovered_presets() -> Vec<DiscoveredPreset> {
+    crate::presets::list_presets()
+        .iter()
+        .map(|p| DiscoveredPreset {
+            name: format!("builtin:{}", p.name),
+            path: PathBuf::from("<embedded>"),
+            source: BUILTIN_SOURCE,
+            format: PresetFormat::Yaml,
+            description: Some(p.description.to_string()),
+        })
+        .collect()
+}
+
 /// Walk the preset resolver paths and return every preset found.
 ///
 /// Covers BOTH preset formats:
 /// - YAML single-file presets (`<root>/*.yml`)
 /// - TOML multi-file preset directories (`<root>/<name>/autoloops.toml + topology.toml`)
+///
+/// The builtin hat collections are always appended (source `builtin`), so the
+/// listing is never empty.
 ///
 /// Roots, in order:
 /// 1. `./presets/` (project-local)
@@ -224,7 +250,9 @@ pub(crate) fn discover_presets() -> Vec<DiscoveredPreset> {
         roots.push(("env", PathBuf::from(explicit)));
     }
 
-    discover_in_roots(&roots)
+    let mut presets = discover_in_roots(&roots);
+    presets.extend(builtin_discovered_presets());
+    presets
 }
 
 /// Inner discovery that takes explicit roots so tests can exercise the logic
@@ -1703,6 +1731,33 @@ mod tests {
         assert!(presets.is_empty());
     }
 
+    #[test]
+    fn test_builtin_discovered_presets_are_prefixed_and_typed() {
+        let builtins = builtin_discovered_presets();
+        assert_eq!(builtins.len(), 6, "expected the 6 public builtin presets");
+        for p in &builtins {
+            assert!(p.name.starts_with("builtin:"), "got {}", p.name);
+            assert_eq!(p.source, "builtin");
+            assert_eq!(p.format, PresetFormat::Yaml);
+            let desc = p.description.as_deref().unwrap_or_default();
+            assert!(!desc.is_empty(), "builtin {} lacks description", p.name);
+        }
+        let names: Vec<_> = builtins.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"builtin:code-assist"));
+        assert!(names.contains(&"builtin:research"));
+    }
+
+    #[test]
+    fn test_list_presets_table_shows_builtins_copy_pasteable() {
+        let presets = builtin_discovered_presets();
+        let mut buf = Vec::new();
+        list_presets_table(&mut buf, &presets, false).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("builtin:code-assist"));
+        assert!(output.contains("builtin:debug"));
+        assert!(output.contains("builtin:research"));
+        assert!(output.contains("Run a preset with:  ralph run -H <PRESET> -P PROMPT.md"));
+    }
     #[test]
     fn test_list_presets_table_empty_prints_search_paths() {
         let mut buf = Vec::new();

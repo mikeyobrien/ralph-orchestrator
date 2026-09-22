@@ -16,9 +16,6 @@ event_loop:
   max_runtime_seconds: 900
   starting_event: "task.start"
 
-cli:
-  backend: "claude"
-
 core:
   specs_dir: ".ralph/specs/"
 

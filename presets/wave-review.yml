@@ -16,9 +16,6 @@ event_loop:
   max_iterations: 20
   max_runtime_seconds: 3600
 
-cli:
-  backend: "claude"
-
 core:
   guardrails:
     - "Each reviewer stays in their specialty — do not review outside your domain"

@@ -15,9 +15,6 @@ event_loop:
   max_runtime_seconds: 3600
   starting_event: "review.start"  # Ralph publishes this after coordination
 
-cli:
-  backend: "claude"
-
 core:
   specs_dir: ".ralph/specs/"
 
