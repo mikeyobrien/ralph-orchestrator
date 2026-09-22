@@ -3,11 +3,16 @@
 Phase 1 of the v3 completion brief. This record enumerates the two v3 deltas,
 classifies every rollup-only commit, and names the ports that follow.
 
-- Branch: `v3/complete` at `80309dc`
+- Branch: `v3/complete`
 - Date: 2026-09-22
 - Rollup under review: `origin/wip/v3-prerelease-rollup` at `6e2545d`
 - Merge base of `v3/complete` and the rollup: `2e1fc52`
+- Classification measured at `80309dc`, re-verified at `44afa19`
 - Source edits made by this record: none
+- Revision 2 corrects the port mechanism. The critic rejected revision 1 at
+  `44afa19` for a false overlap claim, an inapplicable replay mechanism, and a
+  wrong leaf count. The 22-row classification was confirmed sound and is
+  unchanged.
 
 ## Method
 
@@ -63,22 +68,22 @@ Newest first, which is `git log` order.
 
 | Commit | Subject | Verdict | Evidence and reason |
 | --- | --- | --- | --- |
-| `6e2545d` | Merge WIP live harness smoke preset | port | Merge that lands the smoke cluster. Porting the eleven leaf commits below covers it. `git cat-file -e HEAD:presets/live-harness-smoke` fails, so the cluster is absent from `HEAD`. |
-| `7c9b0ff` | Merge WIP TUI stream history and backpressure fixes | port | Merge that lands the TUI cluster. Porting `de2eaa4`, `e275303`, `86066b6`, and `5b7876c` covers it. |
+| `6e2545d` | Merge WIP live harness smoke preset | port | Merge that lands the smoke cluster. Porting the ten leaf commits below covers it. `git cat-file -e HEAD:presets/live-harness-smoke` fails, so the cluster is absent from `HEAD`. |
+| `7c9b0ff` | Merge WIP TUI stream history and backpressure fixes | port | Merge that lands the TUI cluster. Covered by taking the rollup tip content of the two TUI files. The commits cannot be replayed; see Why the ports take final content. |
 | `c90001e` | Merge WIP Ralph-owned Autoloop state | already-covered | The merge delta is 2 lines in `.ralph/tasks/ralph-owned-autoloop-state.code-task.md`. The code lives at `crates/ralph-core/src/engine_state.rs`, present in `HEAD` with 419 lines against the rollup's 377. `HEAD` tests assert `.ralph/autoloop` is the state root and that no top-level `.autoloop` appears. |
 | `3322fd7` | docs(engine): correct final gate evidence | superseded | Bookkeeping in the same code-task doc. It rewrites a clippy invocation and a pass count. No effect on the shipped tree. |
 | `2242eec` | fix(smoke): harden live provider safety gates | port | Adds `tools/smoke_process_group.py` and rewrites the runner. `git cat-file -e HEAD:tools/smoke_process_group.py` fails. |
 | `5b7876c` | fix(tui): bound stream identities and lifecycle lines | port | `crates/ralph-adapters/src/backend_stream_tailer.rs` is 514 lines in `HEAD` and 881 in the rollup. `Cargo.lock` adds `sha2` to `ralph-adapters`. |
-| `1e67e52` | chore: auto-commit before merge (loop primary) | superseded | It is not a change. It swept a then-untracked `.ralph/tasks/tui-stream-history-backpressure.code-task.md`. It is live evidence for `landing-untracked-sweep-yxv`, not a port. |
+| `1e67e52` | chore: auto-commit before merge (loop primary) | superseded | It is not a change. It swept a then-untracked `.ralph/tasks/tui-stream-history-backpressure.code-task.md`. It is live evidence for `landing-untracked-sweep-yxv`, not a port. The swept doc itself is ported with the TUI cluster; see The swept code-task doc. |
 | `faa2b71` | fix(smoke): validate canonical completion without retries | port | Part of the smoke cluster. Absent from `HEAD`. |
 | `86066b6` | fix(tui): protect reconciled history under line pressure | port | `crates/ralph-tui/src/autoloop_source.rs` is 1331 lines in `HEAD` and 2053 in the rollup. |
 | `ebeb81f` | fix(smoke): abort immediately on missing provider handoff | port | Adds `presets/live-harness-smoke/scripts/require_smoke_handoff.py`. Absent from `HEAD`. |
 | `1a2a43d` | fix(smoke): render executable contracts for every role | port | Rewrites the six role contracts. Absent from `HEAD`. |
 | `0a5f660` | fix(smoke): resolve provider-visible run evidence path | port | Adds the manual spec and code-task docs. Absent from `HEAD`. |
-| `49434db` | chore: satisfy strict touched-crate clippy | already-covered | `autoloop_events.rs` and `autoloop_native_contract_integration.rs` are identical between `HEAD` and the rollup by `git diff --numstat`. Its `autoloop_runner.rs` hunk sits on a pre-resume base and is superseded by `HEAD`, which carries `AutoloopRunner::resume` at 1032 lines against the rollup's 896. Its two TUI hunks ride with the TUI port. |
+| `49434db` | chore: satisfy strict touched-crate clippy | already-covered | `autoloop_events.rs` and `autoloop_native_contract_integration.rs` are identical between `HEAD` and the rollup by `git diff --numstat`. Its `autoloop_runner.rs` hunk sits on a pre-resume base and is superseded by `HEAD`, which carries `AutoloopRunner::resume` at 1032 lines against the rollup's 896. Its two TUI hunks are already inside the rollup tip content the TUI port takes. |
 | `3d4b8ca` | fix: satisfy clippy lifetime lint | already-covered | `crates/ralph-core/src/event_parser.rs` is identical between `HEAD` and the rollup. |
-| `2ac3c1f` | style: apply workspace rustfmt | already-covered | `crates/ralph-tui/src/widgets/help.rs` is identical between `HEAD` and the rollup. The `backend_stream_tailer.rs` hunk rides with the TUI port. |
-| `e275303` | fix: preserve bounded TUI stream history | port | Same file pair as `86066b6`. 348 insertions against the rollup's merge base. |
+| `2ac3c1f` | style: apply workspace rustfmt | already-covered | `crates/ralph-tui/src/widgets/help.rs` is identical between `HEAD` and the rollup. Its `backend_stream_tailer.rs` hunk is already inside the rollup tip content the TUI port takes. |
+| `e275303` | fix: preserve bounded TUI stream history | port | Same file pair as `86066b6`. 348 insertions against the rollup's merge base. Ported by final content, not replayed. |
 | `de2eaa4` | fix: bound backend stream identity and backpressure | port | 342 insertions across `backend_stream_tailer.rs` and `autoloop_source.rs`. |
 | `3c8eaed` | docs(presets): explain manual live smoke | port | Adds the `presets/README.md` section and the preset README. |
 | `91b094d` | test(smoke): cover fake live harness matrix | port | Adds `tools/tests/test_smoke_live_harnesses.py` and a CI step. |
@@ -117,18 +122,133 @@ edc2b32 feat(adapters): add OMP (oh-my-pi) backend (#358)
 No port is needed for the catalog itself. Phase 2c Jev work must build on
 `crates/ralph-core/src/backend.rs`.
 
+## Why the ports take final content, not commits
+
+The rollup's clusters are commit stacks, not replayable patches. The TUI stack
+(`de2eaa4`, `e275303`, `86066b6`, `5b7876c`) is a linear chain based on
+`aff233d`, where `autoloop_source.rs` is 1258 lines. The base branch grew that
+file to 1331 lines at `2e1fc52` before the merge base, so replaying the stack
+applies against a stale file.
+
+Measured in a throwaway worktree at `44afa19`, removed afterwards:
+
+```bash
+git worktree add --detach /tmp/v3-cherry-test HEAD
+git cherry-pick --no-commit de2eaa4   # APPLIED
+git cherry-pick --no-commit e275303   # CONFLICT (content) in autoloop_source.rs
+```
+
+The conflict is the state seam this reconciliation exists to protect. The rollup
+side of the hunk replaces
+
+```rust
+let reader_engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+```
+
+with `let reader_workspace = workspace.clone();`, which drops the
+`.ralph/autoloop` state-root threading. `5b7876c` alone conflicts in three paths:
+`(modify/delete): .ralph/tasks/tui-stream-history-backpressure.code-task.md
+ deleted in HEAD and modified in 5b7876c`, plus content conflicts in both
+source files.
+
+The replacement mechanism is to take the rollup tip's content of each wanted
+path. That is lossless here, and the reason is structural rather than
+file-by-file.
+
+```bash
+git merge-base --is-ancestor 2e1fc52 HEAD && echo "ancestor of HEAD"
+git merge-base --is-ancestor 2e1fc52 origin/wip/v3-prerelease-rollup && echo "ancestor of rollup tip"
+comm -12 <(git diff --name-only 2e1fc52 HEAD | sort) \
+         <(git diff --name-only 2e1fc52 origin/wip/v3-prerelease-rollup | sort)
+```
+
+```text
+ancestor of HEAD
+ancestor of rollup tip
+Cargo.lock
+```
+
+`2e1fc52` is the merge base and an ancestor of both tips, so the rollup tip
+already contains every base-branch change up to the merge base. `Cargo.lock` is
+the only file both sides changed after it, and our two TUI files are
+byte-identical to the merge base.
+
+```bash
+git diff --stat 2e1fc52 HEAD -- crates/ralph-tui/src/autoloop_source.rs \
+  crates/ralph-adapters/src/backend_stream_tailer.rs
+```
+
+```text
+(no output)
+```
+
+So for every wanted path except `Cargo.lock`, taking the rollup tip's content
+loses nothing of ours. `Cargo.lock` is not taken. `cargo` regenerates it, and the
+`sha2` line needs no lock change because `sha2` is already resolved in our lock
+at `Cargo.lock:3657`.
+
+The rollup tip also carries the seam in the other direction.
+
+```bash
+git show HEAD:crates/ralph-tui/src/autoloop_source.rs | grep -c reader_engine_root
+git show origin/wip/v3-prerelease-rollup:crates/ralph-tui/src/autoloop_source.rs | grep -c reader_engine_root
+```
+
+```text
+8
+12
+```
+
+`run_autoloop_event_reader` keeps the same six parameters in both trees:
+`events_path, workspace_root, engine_state_root, state, cancel_rx, role_display_names`.
+
+Measured compile and test evidence for the swap, in a detached worktree at
+`44afa19` with the rollup tip content of the two TUI files and the `sha2` line:
+
+```bash
+cargo check -p ralph-tui -p ralph-adapters   # Finished in 12.66s
+cargo test -p ralph-adapters -p ralph-tui    # 382 passed, 273 passed, 0 failed
+```
+
+Raw transcript at `logs/step-02-port-mechanism.md`. The render-under-load proof
+the brief requires is not measured here. It belongs to
+`port-tui-stream-history`.
+
+## The swept code-task doc
+
+`.ralph/tasks/tui-stream-history-backpressure.code-task.md` is absent from `HEAD`
+and present in the rollup at 83 lines. `1e67e52`, the landing auto-commit sweep,
+created it. `5b7876c` appends 5 lines.
+
+Port it with the TUI cluster. It is the acceptance spec for that work: it names
+the two beads, the two required behaviors, the July reproduction evidence, and
+ten verification steps, including the render under load the brief requires. Its
+provenance is a loop sweep, so it lands through a normal commit inside
+`port-tui-stream-history`. Porting it does not retroactively justify the sweep
+that first committed it. The file carries no frontmatter, unlike the other
+`.ralph/tasks/*.code-task.md` documents.
+
 ## Port plan
 
-Two commits, one per cluster. The verification task follows both.
+Two commits, one per cluster. Both take rollup tip content. Neither replays a
+commit. The verification task follows both.
 
-1. `port-tui-stream-history` (`task-1790097924-b4fc`). Port `de2eaa4`,
-   `e275303`, `86066b6`, `5b7876c`, and the two TUI hunks from `2ac3c1f` and
-   `49434db`. Add `sha2.workspace = true` to `crates/ralph-adapters/Cargo.toml`.
-   `sha2 = "0.10"` is already a workspace dependency at `Cargo.toml:100`.
-2. `port-live-harness-smoke` (`task-1790097924-c8bd`). Port `e0178bf`,
-   `830ecfe`, `47f8dfd`, `91b094d`, `3c8eaed`, `0a5f660`, `1a2a43d`, `ebeb81f`,
-   `faa2b71`, and `2242eec`, including the `presets/README.md` entry and the
-   `ci.yml` step. Leave `tools/smoke-core-presets.sh` alone, since it already
+1. `port-tui-stream-history` (`task-1790097924-b4fc`). Take the rollup tip
+   content of `crates/ralph-tui/src/autoloop_source.rs` (2053 lines) and
+   `crates/ralph-adapters/src/backend_stream_tailer.rs` (881 lines). Add
+   `sha2.workspace = true` to `crates/ralph-adapters/Cargo.toml`; it is the only
+   change to that file. Port
+   `.ralph/tasks/tui-stream-history-backpressure.code-task.md`. Leave
+   `Cargo.lock` to `cargo`. Prove the bounding with a render under load.
+2. `port-live-harness-smoke` (`task-1790097924-c8bd`). Take the rollup tip
+   content of `presets/live-harness-smoke/` (12 files),
+   `tools/smoke-live-harnesses.sh`, `tools/smoke_live_harness_results.py`,
+   `tools/smoke_process_group.py`, `tools/tests/test_smoke_live_harnesses.py`,
+   `.ralph/specs/manual-live-harness-smoke.spec.md`,
+   `.ralph/tasks/manual-live-harness-smoke.code-task.md`, the `presets/README.md`
+   section (7 added lines), and the `.github/workflows/ci.yml` step (6 added
+   lines). Every one of those paths is absent from `HEAD` or untouched by us
+   since `2e1fc52`. Leave `tools/smoke-core-presets.sh` alone, since it already
    exists in both trees.
 3. `verify-reconciliation` (`task-1790097924-daa7`). Confirm every row above is
    settled and that `v3/complete` is not behind the rollup on any wanted
@@ -136,8 +256,10 @@ Two commits, one per cluster. The verification task follows both.
 
 ## Unmeasured and inferred
 
-- Whether the TUI port applies cleanly is inferred, not measured. The merge base
-  is `2e1fc52`, and the files changed on both sides since then are
-  `autoloop_source.rs` and `backend_stream_tailer.rs`. The port task proves it.
+- The rollup tip content of the two TUI files and the `sha2` line compiles and
+  passes `cargo test -p ralph-adapters -p ralph-tui` at `44afa19`. Measured.
+  Transcript at `logs/step-02-port-mechanism.md`.
+- The render-under-load proof for bounded stream history is not measured here.
+  It belongs to `port-tui-stream-history`.
 - Whether autoloop 0.11.0 breaks a preset mapping remains unverified. It belongs
   to Step 12, as the remnant log records.
