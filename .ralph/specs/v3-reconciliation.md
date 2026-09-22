@@ -27,6 +27,10 @@ classifies every rollup-only commit, and names the ports that follow.
   the `comm -12` overlap set at `56690c0` (25 paths, not 24) and a sentence that
   attributed our `80309dc` tree's missing `sha2` edge to the rollup tip, which
   carries it. It changes no verdict.
+- Revision 6 corrects two false state claims the revision-5 critic found in
+  revision-3 text: the smoke cluster carries the state root in five paths, not
+  four, and five tracked `.ralph/tasks/*.code-task.md` docs at `HEAD` carry no
+  frontmatter, not one. It changes no verdict.
 
 ## Method
 
@@ -680,3 +684,69 @@ absent at `80309dc` and present at `56690c0`, line counts 881/881, 2242/2053,
 inside the block at `:2750`, the TUI numstat `0 189`, and the four
 `already-covered` paths byte-identical to the rollup tip. No verdict changes and
 no source is edited.
+
+### What revision 6 changed
+
+Revision 5 was rejected at `27ec1df` for two false state claims in revision-3
+text that revisions 4 and 5 reported as re-measured. Both are one-line fixes.
+Both commands below were re-run at `27ec1df` for this section.
+
+**The state-root itemization.** The smoke cluster section said "Four carry the
+Ralph-owned state root" and "Three carry analyzer fixes". Those two groups
+named seven distinct files, because `require_smoke_handoff.py` sits in both, so
+the itemization reached eight only by naming it twice. Five paths carry the
+state root. The fifth is `tools/tests/test_smoke_live_harnesses.py`, and it is
+also the eighth differing path the old text never named. Its count is 11 at
+`HEAD` against 0 in the rollup, the largest in the cluster.
+
+```bash
+for p in $(git diff --name-only HEAD origin/wip/v3-prerelease-rollup -- \
+  presets/live-harness-smoke tools/smoke-live-harnesses.sh \
+  tools/smoke_live_harness_results.py tools/smoke_process_group.py \
+  tools/tests/test_smoke_live_harnesses.py presets/README.md \
+  .ralph/specs/manual-live-harness-smoke.spec.md \
+  .ralph/tasks/manual-live-harness-smoke.code-task.md \
+  .github/workflows/ci.yml); do
+  printf '%s %s %s\n' "$(git show HEAD:"$p" | grep -c '\.ralph/autoloop')" \
+    "$(git show origin/wip/v3-prerelease-rollup:"$p" | grep -c '\.ralph/autoloop')" "$p"
+done | sort -k1,1nr
+```
+
+```text
+11 0 tools/tests/test_smoke_live_harnesses.py
+4 0 presets/live-harness-smoke/README.md
+2 0 tools/smoke-live-harnesses.sh
+1 0 presets/live-harness-smoke/scripts/require_smoke_handoff.py
+1 0 .ralph/tasks/manual-live-harness-smoke.code-task.md
+0 0 .github/workflows/ci.yml
+0 0 tools/smoke_live_harness_results.py
+0 0 tools/smoke_process_group.py
+```
+
+**The frontmatter sentence.** The swept code-task doc section said "The file
+carries no frontmatter, unlike the other `.ralph/tasks/*.code-task.md`
+documents." That made the file an exception to a rule that does not hold. Five
+tracked docs at `HEAD` carry no frontmatter, the file itself plus the four the
+text now names.
+
+```bash
+git ls-tree --name-only HEAD .ralph/tasks/ | grep '\.code-task\.md$' | while read f; do
+  [ "$(git show HEAD:"$f" | head -1)" = "---" ] || echo "$f"
+done
+```
+
+```text
+.ralph/tasks/backend-agnostic-e2e.code-task.md
+.ralph/tasks/context-window-utilization.code-task.md
+.ralph/tasks/manual-live-harness-smoke.code-task.md
+.ralph/tasks/multi-loop-concurrency.code-task.md
+.ralph/tasks/tui-stream-history-backpressure.code-task.md
+```
+
+Nothing else moved. The rest of the revision-3 and revision-4 text was
+re-measured at `27ec1df`: 12 preset files, 13 paths byte-identical to the rollup
+tip by `diff -q` over `git show` output, the 8 differing paths listed above, the
+83-line code-task doc in `HEAD`, `56690c0`, and the rollup tip, and the `ci.yml`
+cosmetic difference in the direction the record states. The tally stays 16
+`port`, 4 `already-covered`, 2 `superseded`, 22 rows. No verdict changes and no
+source is edited.
