@@ -2763,6 +2763,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "termimad",
  "thiserror 2.0.17",
