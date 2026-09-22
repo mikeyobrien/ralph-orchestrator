@@ -183,9 +183,30 @@ git diff --stat 2e1fc52 HEAD -- crates/ralph-tui/src/autoloop_source.rs \
 ```
 
 So for every wanted path except `Cargo.lock`, taking the rollup tip's content
-loses nothing of ours. `Cargo.lock` is not taken. `cargo` regenerates it, and the
-`sha2` line needs no lock change because `sha2` is already resolved in our lock
-at `Cargo.lock:3657`.
+loses nothing of ours. `Cargo.lock` is not taken verbatim, and the `sha2` port
+does change it. The `sha2` package is already resolved at `Cargo.lock:3657`, but
+`Cargo.lock` records dependency edges per package, and `ralph-adapters` has no
+`sha2` edge today. Measured in a detached worktree at `HEAD` with
+`sha2.workspace = true` added to `crates/ralph-adapters/Cargo.toml`:
+
+```bash
+cargo check --locked -p ralph-adapters   # exit 101
+cargo check -p ralph-adapters            # rewrites the lock, exit 0
+git diff -- Cargo.lock
+```
+
+```text
+error: cannot update the lock file .../Cargo.lock because --locked was passed to prevent this
+@@ -2763,6 +2763,7 @@ dependencies = [
+  "ratatui",
+  "serde",
+  "serde_json",
++ "sha2",
+  "tempfile",
+```
+
+The lock update lands in the same commit as the `Cargo.toml` line. Committing the
+line alone leaves a locked build broken.
 
 The rollup tip also carries the seam in the other direction.
 
@@ -238,8 +259,9 @@ commit. The verification task follows both.
    `crates/ralph-adapters/src/backend_stream_tailer.rs` (881 lines). Add
    `sha2.workspace = true` to `crates/ralph-adapters/Cargo.toml`; it is the only
    change to that file. Port
-   `.ralph/tasks/tui-stream-history-backpressure.code-task.md`. Leave
-   `Cargo.lock` to `cargo`. Prove the bounding with a render under load.
+   `.ralph/tasks/tui-stream-history-backpressure.code-task.md`. Let `cargo`
+   rewrite `Cargo.lock` and commit the result with the `sha2` line, since the
+   `ralph-adapters` edge is new. Prove the bounding with a render under load.
 2. `port-live-harness-smoke` (`task-1790097924-c8bd`). Take the rollup tip
    content of `presets/live-harness-smoke/` (12 files),
    `tools/smoke-live-harnesses.sh`, `tools/smoke_live_harness_results.py`,
