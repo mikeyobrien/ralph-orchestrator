@@ -562,16 +562,27 @@ LOOP_COMPLETE
 [progress] ts=2026-09-22T20:13:32.065Z run_id=sleek-flame iter=1 role=diagnoser recent=loop.start outcome=complete:completion_promise
 [progress] ts=2026-09-22T20:13:32.066Z run_id=sleek-flame iter=1 role=(none) recent=completion.provisional outcome=provisional:awaiting_acceptance
 [autoloops] [info] loop complete reason=completion_promise
+autoloops summary
+===================
+run_id: sleek-flame
+iterations: 1
 stop_reason: completion_promise
+cost_usd: 0.000000
+journal: /tmp/jev-probe/work/.autoloop/journal.jsonl
+memory: /tmp/jev-probe/work/.autoloop/memory.jsonl
+review_every: 4
+inspect scratchpad: /tmp/jev-probe/work/.autoloop/runs/sleek-flame/autoloops inspect scratchpad --format md
 EXIT=0
+
 0 failure(s), 1 warning(s)
 routing records: 0
 {'jev': {'enabled': 'true', 'routes_file': 'does-not-exist-routes.json', 'model': 'sentinel-xyz', 'min_confidence': '0.8', 'timeout_ms': '5000'}}
 ```
 
 The captured block is verbatim except that `run_id` and `ts` are regenerated on
-every run, and four summary lines (`autoloops summary` through `cost_usd`) are
-elided above the stop reason. Every other line reproduces on re-run.
+every run. Every other line reproduces on re-run, including the whole
+`autoloops summary` block and the blank line `tail -2` leaves above the doctor
+summary.
 
 The last line resolves a sentinel copy of the same preset with `model =
 "sentinel-xyz"` in place of `jev-1.13.0`. The substituted value returns through
