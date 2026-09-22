@@ -8,15 +8,21 @@ classifies every rollup-only commit, and names the ports that follow.
 - Rollup under review: `origin/wip/v3-prerelease-rollup` at `6e2545d`
 - Merge base of `v3/complete` and the rollup: `2e1fc52`
 - Classification measured at `80309dc`, re-verified at `44afa19`, and verified
-  against the landed ports at `635cb8c`
+  against the landed ports at `56690c0` (code-identical to `635cb8c`; the only
+  commit between them edits this file)
 - Source edits made by this record: none
 - Revision 2 corrects the port mechanism. The critic rejected revision 1 at
   `44afa19` for a false overlap claim, an inapplicable replay mechanism, and a
   wrong leaf count. The 22-row classification was confirmed sound and is
   unchanged.
 - Revision 3 is the Step 2 gate, `task-1790097924-daa7` / `code-assist:v3-complete:step-02:verify-reconciliation`.
-  It re-measured every surviving claim at `635cb8c` and appended the evidence in
+  It re-measured the landed state at `635cb8c` and appended the evidence in
   Verification. It changes no verdict and corrects one row reason, `3322fd7`.
+  It did not re-measure the classification table's per-row evidence, which is
+  stated at `80309dc`; revision 4 closes that gap.
+- Revision 4 re-measures every state claim in the classification table and in
+  Why the ports take final content at `56690c0`, and labels each one with the
+  commit it was measured at. It changes no verdict.
 
 ## Method
 
@@ -70,30 +76,37 @@ No base-only work is lost. The reconciliation only moves rollup work forward.
 
 Newest first, which is `git log` order.
 
+Each row's Evidence states what the commit contains and what `HEAD` held when
+the row was classified. Every state claim about `HEAD` names the commit it was
+measured at: `80309dc` for the classification, `56690c0` for the landed tree.
+Nine rows carried their `80309dc` measurement as unlabelled present tense; each
+`port` row now states the landed state as well. The five non-`port` rows that
+make a state claim were re-measured at `56690c0` and are unchanged.
+
 | Commit | Subject | Verdict | Evidence and reason |
 | --- | --- | --- | --- |
-| `6e2545d` | Merge WIP live harness smoke preset | port | Merge that lands the smoke cluster. Porting the ten leaf commits below covers it. `git cat-file -e HEAD:presets/live-harness-smoke` fails, so the cluster is absent from `HEAD`. |
+| `6e2545d` | Merge WIP live harness smoke preset | port | Merge that lands the smoke cluster. Porting the ten leaf commits below covers it. Measured at `80309dc`: `git cat-file -e HEAD:presets/live-harness-smoke` failed, so the cluster was absent. At `56690c0` the directory is present, ported by `b062e52` (`c8bd`). |
 | `7c9b0ff` | Merge WIP TUI stream history and backpressure fixes | port | Merge that lands the TUI cluster. Covered by taking the rollup tip content of the two TUI files. The commits cannot be replayed; see Why the ports take final content. |
-| `c90001e` | Merge WIP Ralph-owned Autoloop state | already-covered | The merge delta is 2 lines in `.ralph/tasks/ralph-owned-autoloop-state.code-task.md`. The code lives at `crates/ralph-core/src/engine_state.rs`, present in `HEAD` with 419 lines against the rollup's 377. `HEAD` tests assert `.ralph/autoloop` is the state root and that no top-level `.autoloop` appears. |
-| `3322fd7` | docs(engine): correct final gate evidence | superseded | Run-log bookkeeping in a code-task doc, not a shipped surface. The code it describes is present through `c90001e`. The two doc copies diverge in both directions, so neither is simply behind the other: the rollup carries "4 passed" where `HEAD` carries "3 passed", and `HEAD` carries `cargo clippy --workspace` where the rollup does not. Measured in Verification, Correction to the `3322fd7` row. |
-| `2242eec` | fix(smoke): harden live provider safety gates | port | Adds `tools/smoke_process_group.py` and rewrites the runner. `git cat-file -e HEAD:tools/smoke_process_group.py` fails. |
-| `5b7876c` | fix(tui): bound stream identities and lifecycle lines | port | `crates/ralph-adapters/src/backend_stream_tailer.rs` is 514 lines in `HEAD` and 881 in the rollup. `Cargo.lock` adds `sha2` to `ralph-adapters`. |
+| `c90001e` | Merge WIP Ralph-owned Autoloop state | already-covered | The merge delta is 2 lines in `.ralph/tasks/ralph-owned-autoloop-state.code-task.md`. The code lives at `crates/ralph-core/src/engine_state.rs`, present at `56690c0` with 419 lines against the rollup's 377. Tests at `56690c0` assert `.ralph/autoloop` is the state root and that no top-level `.autoloop` appears. |
+| `3322fd7` | docs(engine): correct final gate evidence | superseded | Run-log bookkeeping in a code-task doc, not a shipped surface. The code it describes is present through `c90001e`. The two doc copies diverge in both directions, so neither is simply behind the other: the rollup carries "4 passed" where `56690c0` carries "3 passed", and `56690c0` carries `cargo clippy --workspace` where the rollup does not. Measured in Verification, Correction to the `3322fd7` row. |
+| `2242eec` | fix(smoke): harden live provider safety gates | port | Adds `tools/smoke_process_group.py` and rewrites the runner. At `80309dc` `git cat-file -e HEAD:tools/smoke_process_group.py` failed; at `56690c0` the path is present, ported by `b062e52`. |
+| `5b7876c` | fix(tui): bound stream identities and lifecycle lines | port | `crates/ralph-adapters/src/backend_stream_tailer.rs` was 514 lines at `80309dc` and 881 in the rollup. `Cargo.lock` adds `sha2` to `ralph-adapters`. At `56690c0` the file is 881 lines and byte-identical to the rollup tip. |
 | `1e67e52` | chore: auto-commit before merge (loop primary) | superseded | It is not a change. It swept a then-untracked `.ralph/tasks/tui-stream-history-backpressure.code-task.md`. It is live evidence for `landing-untracked-sweep-yxv`, not a port. The swept doc itself is ported with the TUI cluster; see The swept code-task doc. |
-| `faa2b71` | fix(smoke): validate canonical completion without retries | port | Part of the smoke cluster. Absent from `HEAD`. |
-| `86066b6` | fix(tui): protect reconciled history under line pressure | port | `crates/ralph-tui/src/autoloop_source.rs` is 1331 lines in `HEAD` and 2053 in the rollup. |
-| `ebeb81f` | fix(smoke): abort immediately on missing provider handoff | port | Adds `presets/live-harness-smoke/scripts/require_smoke_handoff.py`. Absent from `HEAD`. |
-| `1a2a43d` | fix(smoke): render executable contracts for every role | port | Rewrites the six role contracts. Absent from `HEAD`. |
-| `0a5f660` | fix(smoke): resolve provider-visible run evidence path | port | Adds the manual spec and code-task docs. Absent from `HEAD`. |
-| `49434db` | chore: satisfy strict touched-crate clippy | already-covered | `autoloop_events.rs` and `autoloop_native_contract_integration.rs` are identical between `HEAD` and the rollup by `git diff --numstat`. Its `autoloop_runner.rs` hunk sits on a pre-resume base and is superseded by `HEAD`, which carries `AutoloopRunner::resume` at 1032 lines against the rollup's 896. Its two TUI hunks are already inside the rollup tip content the TUI port takes. |
-| `3d4b8ca` | fix: satisfy clippy lifetime lint | already-covered | `crates/ralph-core/src/event_parser.rs` is identical between `HEAD` and the rollup. |
-| `2ac3c1f` | style: apply workspace rustfmt | already-covered | `crates/ralph-tui/src/widgets/help.rs` is identical between `HEAD` and the rollup. Its `backend_stream_tailer.rs` hunk is already inside the rollup tip content the TUI port takes. |
+| `faa2b71` | fix(smoke): validate canonical completion without retries | port | Part of the smoke cluster. Absent at `80309dc`; present at `56690c0` through the `b062e52` port. |
+| `86066b6` | fix(tui): protect reconciled history under line pressure | port | `crates/ralph-tui/src/autoloop_source.rs` was 1331 lines at `80309dc` and 2053 in the rollup. At `56690c0` it is 2242 lines: the rollup tip content plus this branch's 189-line render-under-load test. |
+| `ebeb81f` | fix(smoke): abort immediately on missing provider handoff | port | Adds `presets/live-harness-smoke/scripts/require_smoke_handoff.py`. Absent at `80309dc`; present at `56690c0` through the `b062e52` port. |
+| `1a2a43d` | fix(smoke): render executable contracts for every role | port | Rewrites the six role contracts. Absent at `80309dc`; all six `roles/*.md` are present at `56690c0` through the `b062e52` port. |
+| `0a5f660` | fix(smoke): resolve provider-visible run evidence path | port | Adds the manual spec and code-task docs. Absent at `80309dc`; `.ralph/specs/manual-live-harness-smoke.spec.md` and `.ralph/tasks/manual-live-harness-smoke.code-task.md` are present at `56690c0` through the `b062e52` port. |
+| `49434db` | chore: satisfy strict touched-crate clippy | already-covered | `autoloop_events.rs` and `autoloop_native_contract_integration.rs` are identical between `56690c0` and the rollup by `git diff --numstat`. Its `autoloop_runner.rs` hunk sits on a pre-resume base and is superseded by `56690c0`, which carries `AutoloopRunner::resume` at 1032 lines against the rollup's 896. Its two TUI hunks are already inside the rollup tip content the TUI port takes. |
+| `3d4b8ca` | fix: satisfy clippy lifetime lint | already-covered | `crates/ralph-core/src/event_parser.rs` is identical between `56690c0` and the rollup. |
+| `2ac3c1f` | style: apply workspace rustfmt | already-covered | `crates/ralph-tui/src/widgets/help.rs` is identical between `56690c0` and the rollup. Its `backend_stream_tailer.rs` hunk is already inside the rollup tip content the TUI port takes. |
 | `e275303` | fix: preserve bounded TUI stream history | port | Same file pair as `86066b6`. 348 insertions against the rollup's merge base. Ported by final content, not replayed. |
 | `de2eaa4` | fix: bound backend stream identity and backpressure | port | 342 insertions across `backend_stream_tailer.rs` and `autoloop_source.rs`. |
 | `3c8eaed` | docs(presets): explain manual live smoke | port | Adds the `presets/README.md` section and the preset README. |
 | `91b094d` | test(smoke): cover fake live harness matrix | port | Adds `tools/tests/test_smoke_live_harnesses.py` and a CI step. |
 | `47f8dfd` | feat(tools): validate live smoke evidence | port | Adds `tools/smoke_live_harness_results.py`. |
 | `830ecfe` | feat(tools): add bounded live harness smoke runner | port | Adds `tools/smoke-live-harnesses.sh`. |
-| `e0178bf` | feat(presets): add manual live harness smoke | port | Adds `presets/live-harness-smoke/`, which is absent from `HEAD`. |
+| `e0178bf` | feat(presets): add manual live harness smoke | port | Adds `presets/live-harness-smoke/`, absent at `80309dc`; the 12-file preset is present at `56690c0` through the `b062e52` port. |
 
 Tally: 16 `port`, 4 `already-covered`, 2 `superseded`. The 16 port rows sit in
 two clusters, so two port commits cover them.
@@ -160,38 +173,47 @@ path. That is lossless here, and the reason is structural rather than
 file-by-file.
 
 ```bash
-git merge-base --is-ancestor 2e1fc52 HEAD && echo "ancestor of HEAD"
+git merge-base --is-ancestor 2e1fc52 80309dc && echo "ancestor of the classification commit"
 git merge-base --is-ancestor 2e1fc52 origin/wip/v3-prerelease-rollup && echo "ancestor of rollup tip"
-comm -12 <(git diff --name-only 2e1fc52 HEAD | sort) \
+comm -12 <(git diff --name-only 2e1fc52 80309dc | sort) \
          <(git diff --name-only 2e1fc52 origin/wip/v3-prerelease-rollup | sort)
 ```
 
 ```text
-ancestor of HEAD
+ancestor of the classification commit
 ancestor of rollup tip
 Cargo.lock
 ```
 
 `2e1fc52` is the merge base and an ancestor of both tips, so the rollup tip
-already contains every base-branch change up to the merge base. `Cargo.lock` is
-the only file both sides changed after it, and our two TUI files are
-byte-identical to the merge base.
+already contains every base-branch change up to the merge base. At `80309dc`,
+the classification commit, `Cargo.lock` was the only file both sides had changed
+after it, and our two TUI files were byte-identical to the merge base. At
+`56690c0` both sides also carry the two landed ports, so that `comm` set has
+grown to 24 paths. That does not weaken the structural argument; it means the
+argument's measurement commit has to be named.
 
 ```bash
-git diff --stat 2e1fc52 HEAD -- crates/ralph-tui/src/autoloop_source.rs \
+git diff --stat 2e1fc52 80309dc -- crates/ralph-tui/src/autoloop_source.rs \
+  crates/ralph-adapters/src/backend_stream_tailer.rs
+git diff --stat 2e1fc52 56690c0 -- crates/ralph-tui/src/autoloop_source.rs \
   crates/ralph-adapters/src/backend_stream_tailer.rs
 ```
 
 ```text
-(no output)
+(no output at 80309dc: both files were byte-identical to the merge base)
+ crates/ralph-adapters/src/backend_stream_tailer.rs |  451 +++++++-
+ crates/ralph-tui/src/autoloop_source.rs            | 1113 ++++++++++++++++++--
+ 2 files changed, 1421 insertions(+), 143 deletions(-)
 ```
 
 So for every wanted path except `Cargo.lock`, taking the rollup tip's content
 loses nothing of ours. `Cargo.lock` is not taken verbatim, and the `sha2` port
-does change it. The `sha2` package is already resolved at `Cargo.lock:3657`, but
-`Cargo.lock` records dependency edges per package, and `ralph-adapters` has no
-`sha2` edge today. Measured in a detached worktree at `HEAD` with
-`sha2.workspace = true` added to `crates/ralph-adapters/Cargo.toml`:
+does change it. The `sha2` package was already resolved at `Cargo.lock:3657` at
+`80309dc`, but `Cargo.lock` records dependency edges per package, and
+`ralph-adapters` had no `sha2` edge then. Measured in a detached worktree at the
+then-`HEAD` with `sha2.workspace = true` added to
+`crates/ralph-adapters/Cargo.toml`:
 
 ```bash
 cargo check --locked -p ralph-adapters   # exit 101
@@ -212,17 +234,23 @@ error: cannot update the lock file .../Cargo.lock because --locked was passed to
 The lock update lands in the same commit as the `Cargo.toml` line. Committing the
 line alone leaves a locked build broken.
 
-The rollup tip also carries the seam in the other direction.
+At `80309dc` the rollup tip carried the seam in the other direction: 12
+`reader_engine_root` call sites against our 8.
 
 ```bash
-git show HEAD:crates/ralph-tui/src/autoloop_source.rs | grep -c reader_engine_root
+git show 80309dc:crates/ralph-tui/src/autoloop_source.rs | grep -c reader_engine_root
+git show 56690c0:crates/ralph-tui/src/autoloop_source.rs | grep -c reader_engine_root
 git show origin/wip/v3-prerelease-rollup:crates/ralph-tui/src/autoloop_source.rs | grep -c reader_engine_root
 ```
 
 ```text
 8
+14
 12
 ```
+
+At `56690c0` the count is 14: the rollup tip's 12 came across with the port, and
+this branch's render-under-load test adds the other two.
 
 `run_autoloop_event_reader` keeps the same six parameters in both trees:
 `events_path, workspace_root, engine_state_root, state, cancel_rx, role_display_names`.
@@ -241,9 +269,10 @@ the brief requires is not measured here. It belongs to
 
 ## The swept code-task doc
 
-`.ralph/tasks/tui-stream-history-backpressure.code-task.md` is absent from `HEAD`
-and present in the rollup at 83 lines. `1e67e52`, the landing auto-commit sweep,
-created it. `5b7876c` appends 5 lines.
+`.ralph/tasks/tui-stream-history-backpressure.code-task.md` was absent from
+`HEAD` at `80309dc` and present in the rollup at 83 lines. `1e67e52`, the
+landing auto-commit sweep, created it. `5b7876c` appends 5 lines. At `56690c0`
+it is present, ported by `5fd8828`, and 83 lines in both trees.
 
 Port it with the TUI cluster. It is the acceptance spec for that work: it names
 the two beads, the two required behaviors, the July reproduction evidence, and
@@ -273,8 +302,8 @@ commit. The verification task follows both.
    `.ralph/specs/manual-live-harness-smoke.spec.md`,
    `.ralph/tasks/manual-live-harness-smoke.code-task.md`, the `presets/README.md`
    section (7 added lines), and the `.github/workflows/ci.yml` step (6 added
-   lines). Every one of those paths is absent from `HEAD` or untouched by us
-   since `2e1fc52`. Leave `tools/smoke-core-presets.sh` alone, since it already
+   lines). Every one of those paths was absent from `HEAD` at `80309dc` or
+   untouched by us since `2e1fc52`. Leave `tools/smoke-core-presets.sh` alone, since it already
    exists in both trees.
 3. `verify-reconciliation` (`task-1790097924-daa7`). Confirm every row above is
    settled and that `v3/complete` is not behind the rollup on any wanted
@@ -294,7 +323,8 @@ commit. The verification task follows both.
 
 `task-1790097924-daa7` /
 `code-assist:v3-complete:step-02:verify-reconciliation`. Every claim below was
-measured this turn. Raw transcripts live in the runtime planning directory at
+measured at `635cb8c`, the landed tree this revision re-verified. Raw transcripts
+live in the runtime planning directory at
 `.ralph/specs/v3-complete/logs/step-02-verify-reconciliation.md`,
 `step-02-verify-rust.txt`, and `step-02-verify-python.txt`. That directory is not
 committed.
@@ -449,3 +479,121 @@ above verifies. The row is corrected in place.
 ### What this revision changed
 
 Verdicts: none. Reasons: one, `3322fd7`. Evidence added: the sections above.
+
+## Verification (revision 4, the same gate re-checked at `56690c0`)
+
+`task-1790097924-daa7` /
+`code-assist:v3-complete:step-02:verify-reconciliation`. Revision 3 was rejected
+at `56690c0`. The rejection named five sentences that carried their `80309dc`
+measurement as unlabelled present tense. Re-measuring every state claim in the
+classification table and in Why the ports take final content found **nine rows
+and four further claims** of the same class: the `comm` set, the "two TUI files
+are byte-identical to the merge base" reading, the "`ralph-adapters` has no
+`sha2` edge today" reading, and the `reader_engine_root` 8/12 reading. Each now
+names its measurement commit and, where a port landed afterwards, the landed
+reading. No verdict changed.
+
+Raw transcript at
+`.ralph/specs/v3-complete/logs/step-02-verify-reconciliation-rev4.txt`.
+
+### `56690c0` is `635cb8c` plus this file
+
+```bash
+git diff --name-only 635cb8c 56690c0
+git diff --stat 635cb8c 56690c0 | tail -1
+```
+
+```text
+.ralph/specs/v3-reconciliation.md
+ .ralph/specs/v3-reconciliation.md | 168 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 166 insertions(+), 2 deletions(-)
+```
+
+The only commit between the two is the docs commit that landed revision 3, so
+every code and test measurement in the revision 3 section above holds unchanged
+at `56690c0`.
+
+### The corrected state claims, re-measured
+
+Presence of the nine smoke-cluster paths, at the classification commit and at
+`HEAD`:
+
+```bash
+for p in presets/live-harness-smoke presets/live-harness-smoke/scripts/require_smoke_handoff.py \
+         tools/smoke_process_group.py tools/smoke_live_harness_results.py \
+         tools/smoke-live-harnesses.sh tools/tests/test_smoke_live_harnesses.py \
+         .ralph/specs/manual-live-harness-smoke.spec.md \
+         .ralph/tasks/manual-live-harness-smoke.code-task.md \
+         .ralph/tasks/tui-stream-history-backpressure.code-task.md; do
+  for c in 80309dc 56690c0; do
+    git cat-file -e "$c:$p" 2>/dev/null && echo "PRESENT $c $p" || echo "ABSENT  $c $p"
+  done
+done
+```
+
+```text
+ABSENT  80309dc for all nine paths
+PRESENT 56690c0 for all nine paths
+```
+
+Line counts, `HEAD` against the rollup tip:
+
+```text
+HEAD=881   ROLLUP=881   crates/ralph-adapters/src/backend_stream_tailer.rs
+HEAD=2242  ROLLUP=2053  crates/ralph-tui/src/autoloop_source.rs
+HEAD=419   ROLLUP=377   crates/ralph-core/src/engine_state.rs
+HEAD=1032  ROLLUP=896   crates/ralph-adapters/src/autoloop_runner.rs
+HEAD=83    ROLLUP=83    .ralph/tasks/tui-stream-history-backpressure.code-task.md
+80309dc=514   crates/ralph-adapters/src/backend_stream_tailer.rs
+80309dc=1331  crates/ralph-tui/src/autoloop_source.rs
+```
+
+`engine_state.rs` (419/377) and `autoloop_runner.rs` (1032/896) are the two row
+counts that were already stated in present tense and are still correct at
+`56690c0`. The other three rows were not.
+
+The TUI numstat, unchanged by this revision:
+
+```bash
+git diff --numstat HEAD origin/wip/v3-prerelease-rollup -- \
+  crates/ralph-adapters/src/backend_stream_tailer.rs \
+  crates/ralph-tui/src/autoloop_source.rs
+```
+
+```text
+0	189	crates/ralph-tui/src/autoloop_source.rs
+```
+
+`reader_engine_root` counts: 8 at `80309dc`, 14 at `56690c0`, 12 at the rollup
+tip. The `sha2` package sits at `Cargo.lock:3657` at `80309dc` and `:3658` at
+`56690c0`; the `ralph-adapters` edge is at `Cargo.lock:2766` and
+`crates/ralph-adapters/Cargo.toml:19` at `56690c0`. The rollup tip carries no
+`sha2` edge for `ralph-adapters` at `80309dc` either, which is why the lock has
+to move with the manifest.
+
+### The ported surfaces still run green at `56690c0`
+
+```text
+cargo test -p ralph-tui --lib render_under_load_keeps_one_truthful_status_and_newest_lines
+test result: ok. 1 passed; 0 failed; 0 ignored; 273 filtered out
+
+cargo test -p ralph-cli --test integration_autoloop_tui_live_stream
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 filtered out
+
+cargo test -p ralph-core --lib engine_state
+test result: ok. 11 passed; 0 failed; 0 ignored; 740 filtered out
+
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest -v tools.tests.test_smoke_live_harnesses
+Ran 10 tests in 5.258s
+OK
+claude claude-sdk PASS / codex command PASS / opencode command PASS
+pi pi PASS / hermes acp PASS / kiro acp PASS
+```
+
+### What revision 4 changed
+
+Verdicts: none. Reasons: none. The nine `port` rows, the three structural state
+claims in Why the ports take final content, the `reader_engine_root` reading, and
+the swept-doc section now name the commit they were measured at and state the
+landed reading. The header's revision-3 bullet now claims only that the landed
+state was re-measured, which is what revision 3 did.
