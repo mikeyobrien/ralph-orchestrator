@@ -6,6 +6,9 @@
 //! - `list`: Show all configured hats (Name, Description)
 //! - `show`: Show detailed configuration for a specific hat
 
+mod registry;
+
+use self::registry::HatRegistry;
 use crate::backend_support;
 use crate::display::Palette;
 use crate::preflight;
@@ -14,7 +17,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use ralph_adapters::CliBackend;
-use ralph_core::{HatRegistry, RalphConfig, truncate_with_ellipsis};
+use ralph_core::{RalphConfig, truncate_with_ellipsis};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};

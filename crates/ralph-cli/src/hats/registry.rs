@@ -1,14 +1,13 @@
-//! Hat registry for managing agent personas.
+//! Hat registry for the `ralph hats` command surface.
 
-use crate::config::{HatConfig, RalphConfig};
+use ralph_core::{HatConfig, RalphConfig};
 use ralph_proto::{Hat, HatId, Topic};
 use std::collections::{BTreeMap, HashSet};
 
-/// Registry for managing and creating hats from configuration.
+/// Registry of configured hats for the `ralph hats` commands.
 #[derive(Debug, Default)]
 pub struct HatRegistry {
     hats: BTreeMap<HatId, Hat>,
-    configs: BTreeMap<HatId, HatConfig>,
     /// Prefix index for O(1) early-exit on no-match lookups.
     /// Contains all first segments of subscription patterns (e.g., "task" from "task.*").
     /// Also contains "*" if any global wildcard exists.
@@ -23,13 +22,13 @@ impl HatRegistry {
 
     /// Creates a registry from configuration.
     ///
-    /// Empty config → empty registry (HatlessRalph is the fallback, not default hats).
+    /// Empty config yields an empty registry. No default hats are injected.
     pub fn from_config(config: &RalphConfig) -> Self {
         let mut registry = Self::new();
 
         for (id, hat_config) in &config.hats {
             let hat = Self::hat_from_config(id, hat_config);
-            registry.register_with_config(hat, hat_config.clone());
+            registry.register(hat);
         }
 
         registry
@@ -51,14 +50,6 @@ impl HatRegistry {
         self.hats.insert(hat.id.clone(), hat);
     }
 
-    /// Registers a hat with its configuration.
-    pub fn register_with_config(&mut self, hat: Hat, config: HatConfig) {
-        let id = hat.id.clone();
-        self.index_hat_subscriptions(&hat);
-        self.hats.insert(id.clone(), hat);
-        self.configs.insert(id, config);
-    }
-
     /// Indexes a hat's subscriptions for O(1) prefix lookup.
     fn index_hat_subscriptions(&mut self, hat: &Hat) {
         for sub in &hat.subscriptions {
@@ -76,23 +67,16 @@ impl HatRegistry {
     }
 
     /// Gets a hat by ID.
+    ///
+    /// Test-only: the CLI reads hats through `all` and `get_for_topic`.
+    #[cfg(test)]
     pub fn get(&self, id: &HatId) -> Option<&Hat> {
         self.hats.get(id)
-    }
-
-    /// Gets a hat's configuration by ID.
-    pub fn get_config(&self, id: &HatId) -> Option<&HatConfig> {
-        self.configs.get(id)
     }
 
     /// Returns all hats in the registry.
     pub fn all(&self) -> impl Iterator<Item = &Hat> {
         self.hats.values()
-    }
-
-    /// Returns all hat IDs.
-    pub fn ids(&self) -> impl Iterator<Item = &HatId> {
-        self.hats.keys()
     }
 
     /// Returns the number of registered hats.
@@ -105,43 +89,10 @@ impl HatRegistry {
         self.hats.is_empty()
     }
 
-    /// Finds all hats subscribed to a topic.
-    /// BTreeMap iteration is already sorted by key.
-    pub fn subscribers(&self, topic: &Topic) -> Vec<&Hat> {
-        self.hats
-            .values()
-            .filter(|hat| hat.is_subscribed(topic))
-            .collect()
-    }
-
-    /// Finds the first hat that would be triggered by a topic.
-    /// Returns the hat ID if found, used for event logging.
-    /// BTreeMap iteration is already sorted by key.
-    pub fn find_by_trigger(&self, topic: &str) -> Option<&HatId> {
-        let topic = Topic::new(topic);
-        self.hats
-            .values()
-            .find(|hat| hat.is_subscribed(&topic))
-            .map(|hat| &hat.id)
-    }
-
     /// Returns true if any hat is subscribed to the given topic.
     pub fn has_subscriber(&self, topic: &str) -> bool {
         let topic = Topic::new(topic);
         self.hats.values().any(|hat| hat.is_subscribed(&topic))
-    }
-
-    /// Check if a hat is allowed to publish the given topic.
-    ///
-    /// Returns `true` for unregistered hats (Ralph can publish anything).
-    /// Uses the same pattern matching as subscription routing.
-    pub fn can_publish(&self, hat_id: &HatId, topic: &str) -> bool {
-        let Some(hat) = self.hats.get(hat_id) else {
-            return true; // Unregistered hat (ralph), no restriction
-        };
-        hat.publishes
-            .iter()
-            .any(|pub_topic| pub_topic.matches_str(topic))
     }
 
     /// Returns the first hat subscribed to the given topic.
@@ -175,7 +126,7 @@ mod tests {
         let config = RalphConfig::default();
         let registry = HatRegistry::from_config(&config);
 
-        // Empty config → empty registry (HatlessRalph is the fallback, not default hats)
+        // Empty config yields an empty registry. No default hats are injected.
         assert!(registry.is_empty());
         assert_eq!(registry.len(), 0);
     }
@@ -243,36 +194,13 @@ hats:
         let config = RalphConfig::default();
         let registry = HatRegistry::from_config(&config);
 
-        // Empty config → no subscribers (HatlessRalph handles orphaned events)
+        // Empty config → no subscribers
         assert!(!registry.has_subscriber("build.task"));
         assert!(registry.get_for_topic("build.task").is_none());
     }
 
-    #[test]
-    fn test_find_subscribers() {
-        let yaml = r#"
-hats:
-  impl:
-    name: "Implementer"
-    triggers: ["task.*", "review.done"]
-  reviewer:
-    name: "Reviewer"
-    triggers: ["impl.*"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        let task_subs = registry.subscribers(&Topic::new("task.start"));
-        assert_eq!(task_subs.len(), 1);
-        assert_eq!(task_subs[0].id.as_str(), "impl");
-
-        let impl_subs = registry.subscribers(&Topic::new("impl.done"));
-        assert_eq!(impl_subs.len(), 1);
-        assert_eq!(impl_subs[0].id.as_str(), "reviewer");
-    }
-
     /// Benchmark test for get_for_topic() performance.
-    /// Run with: cargo test -p ralph-core bench_get_for_topic -- --nocapture
+    /// Run with: cargo test -p ralph-cli --bin ralph bench_get_for_topic -- --nocapture
     #[test]
     fn bench_get_for_topic_baseline() {
         // Create registry with 20 hats (realistic production scenario)
@@ -351,118 +279,5 @@ hats:
             let hat = registry.get_for_topic("task.start").unwrap();
             assert_eq!(hat.id.as_str(), "alpha");
         }
-    }
-
-    #[test]
-    fn test_find_by_trigger_returns_alphabetically_first_hat() {
-        let yaml = r#"
-hats:
-  zebra:
-    name: "Zebra"
-    triggers: ["task.*"]
-  alpha:
-    name: "Alpha"
-    triggers: ["task.*"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        let hat_id = registry.find_by_trigger("task.start");
-        assert!(hat_id.is_some());
-        assert_eq!(
-            hat_id.unwrap().as_str(),
-            "alpha",
-            "find_by_trigger should return alphabetically first matching hat"
-        );
-    }
-
-    #[test]
-    fn test_subscribers_returns_deterministic_order() {
-        let yaml = r#"
-hats:
-  zebra:
-    name: "Zebra"
-    triggers: ["task.*"]
-  middle:
-    name: "Middle"
-    triggers: ["task.*"]
-  alpha:
-    name: "Alpha"
-    triggers: ["task.*"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        let subs = registry.subscribers(&Topic::new("task.start"));
-        assert_eq!(subs.len(), 3);
-        assert_eq!(subs[0].id.as_str(), "alpha");
-        assert_eq!(subs[1].id.as_str(), "middle");
-        assert_eq!(subs[2].id.as_str(), "zebra");
-    }
-
-    #[test]
-    fn test_can_publish_allows_declared_topic() {
-        let yaml = r#"
-hats:
-  builder:
-    name: "Builder"
-    triggers: ["build.start"]
-    publishes: ["build.done", "build.blocked"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        assert!(registry.can_publish(&HatId::new("builder"), "build.done"));
-        assert!(registry.can_publish(&HatId::new("builder"), "build.blocked"));
-    }
-
-    #[test]
-    fn test_can_publish_rejects_undeclared_topic() {
-        let yaml = r#"
-hats:
-  builder:
-    name: "Builder"
-    triggers: ["build.start"]
-    publishes: ["build.done"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        assert!(!registry.can_publish(&HatId::new("builder"), "LOOP_COMPLETE"));
-        assert!(!registry.can_publish(&HatId::new("builder"), "plan.approved"));
-    }
-
-    #[test]
-    fn test_can_publish_allows_wildcard() {
-        let yaml = r#"
-hats:
-  builder:
-    name: "Builder"
-    triggers: ["build.start"]
-    publishes: ["build.*"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        assert!(registry.can_publish(&HatId::new("builder"), "build.done"));
-        assert!(registry.can_publish(&HatId::new("builder"), "build.blocked"));
-        assert!(!registry.can_publish(&HatId::new("builder"), "LOOP_COMPLETE"));
-    }
-
-    #[test]
-    fn test_can_publish_unknown_hat_allows_all() {
-        let yaml = r#"
-hats:
-  builder:
-    name: "Builder"
-    triggers: ["build.start"]
-    publishes: ["build.done"]
-"#;
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        let registry = HatRegistry::from_config(&config);
-
-        // Unregistered hat (e.g. "ralph") should be able to publish anything
-        assert!(registry.can_publish(&HatId::new("ralph"), "anything"));
-        assert!(registry.can_publish(&HatId::new("ralph"), "LOOP_COMPLETE"));
     }
 }

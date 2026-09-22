@@ -23,7 +23,6 @@ mod event_reader;
 pub mod file_lock;
 mod git_ops;
 mod handoff;
-mod hat_registry;
 pub mod hooks;
 mod instructions;
 mod landing;
@@ -81,7 +80,6 @@ pub use git_ops::{
     prune_remote_refs,
 };
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
-pub use hat_registry::HatRegistry;
 pub use hooks::{
     HookDefaults, HookEngine, HookExecutor, HookExecutorContract, HookExecutorError,
     HookInvocationPayload, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
