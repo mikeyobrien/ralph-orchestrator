@@ -8,6 +8,9 @@ remains.
 - Date: 2026-09-22
 - Base for the tracker: `.beads/issues.jsonl` at `aff233d`
 - Source edits made by this audit: none
+- Added after the audit, by operator steer `task-1790100842-ebbb`: the
+  `## Related upstream context` section (`autoloop#86`). It records no verdict
+  and edits no audit row
 
 ## Method
 
@@ -437,6 +440,115 @@ These were found while verifying and must not propagate into later steps.
 10. **Upstream is no longer a blocker.** Issues `#34`, `#35`, `#37`, `#38`,
     `#39` are closed and PRs `#40`, `#41`, `#42` are merged. The cutover spec's
     "blocked on upstream" narrative is obsolete.
+
+## Related upstream context
+
+Operator steer `task-1790100842-ebbb`
+(`operator-steer:v3-complete:record-rfc-86`, P1, injected
+`2026-09-22T18:14:02Z`) asked for one upstream reference to be recorded in this
+context file. It is context for a later step. It is not evidence for any row in
+the table above, it changes no verdict, and it reopens no blocker.
+
+- **Issue:** [autoloop#86 — RFC: dispatch.jev, bus mode with a calibrated
+  fail-safe router (opt-in)](https://github.com/mikeyobrien/autoloop/issues/86),
+  state `open`, label `enhancement`, filed `2026-09-22T18:06:04Z`.
+- **What it proposes:** an opt-in bus mode in which roles publish to one event
+  bus and a calibrated decision model (Jev, System One) selects the next
+  specialist per handoff. Uncertainty below a confidence floor falls back to
+  the declared topology, then to a human ask, then stops fail-closed. Completion
+  stays deterministic and the RFC states that nothing about the default mode
+  changes. The RFC names the `[routing.jev]` component as the skeleton it
+  extends from one decision at loop start to one decision per handoff.
+- **Why it is recorded:** it is the upstream counterpart of two plan steps.
+  Step 9, "Jev routing parity, no silent drop (Phase 2c.1)", owns the
+  `core.routing.jev` surface, and Step 11, "Topology routing surface and
+  feasibility (Phase 2c.3)", owns the routing surface whose demo already accepts
+  either an implementation at a proven seam or "a filed upstream issue with the
+  seam table". Step 11's planner pass must read this issue before choosing that
+  branch, and Step 9's must reconcile the `[routing.jev]` wording below.
+- **Correction 10 above stands.** The issues that blocked `a7e.8` (#34, #35,
+  #37, #38, #39) are closed. #86 is newly open, opt-in, and default-mode
+  neutral, so it is context, not a dependency.
+
+The premise was re-measured this round rather than inherited from the steer:
+
+```bash
+# A. the installed engine, and the upstream repo it names
+npm ls -g --depth=0 2>/dev/null | grep -i autoloop
+python3 -c "import json,os; p=os.path.join(os.popen('npm root -g').read().strip(),'@mobrienv/autoloop/package.json'); d=json.load(open(p)); print(d['version'], d['repository']['url'])"
+
+# B. the referenced issue
+curl -sS -H 'Accept: application/vnd.github+json' \
+  https://api.github.com/repos/mikeyobrien/autoloop/issues/86 \
+| python3 -c "import json,sys; d=json.load(sys.stdin); print(d['number'], d['state'], '|', d['title']); print(d['html_url']); print('labels:', [l['name'] for l in d['labels']]); print('created:', d['created_at'])"
+
+# C. the [routing.jev] skeleton the RFC names: does the engine ship it?
+R="$(npm root -g)/@mobrienv/autoloop"
+echo "files scanned: $(find "$R" -type f -not -name '*.map' | wc -l)"
+for p in 'jev' 'typesafe\|noul\|routes_file'; do
+  printf '%s -> %s occurrences\n' "$p" "$(grep -rniI --exclude=*.map -c "$p" "$R" 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')"
+done
+T="$(mktemp -d)"; (cd "$T" && git init -q . && echo "pristine config show, jev matches: $(autoloop config show --preset code-assist 2>/dev/null | grep -ci jev)"); rm -rf "$T"
+echo "upstream main, routing.jev paths:"
+gh api -X GET 'search/code' -f q='routing.jev repo:mikeyobrien/autoloop' --jq '.items[].path' 2>/dev/null
+echo "upstream main sha: $(gh api repos/mikeyobrien/autoloop/commits/main --jq '.sha' 2>/dev/null)"
+echo "published latest: $(npm view @mobrienv/autoloop dist-tags.latest 2>/dev/null)"
+```
+
+```text
+├── @mobrienv/autoloop@0.11.0
+0.11.0 git+https://github.com/mikeyobrien/autoloop.git
+86 open | RFC: dispatch.jev — bus mode with a calibrated fail-safe router (opt-in)
+https://github.com/mikeyobrien/autoloop/issues/86
+labels: ['enhancement']
+created: 2026-09-22T18:06:04Z
+files scanned: 6041
+jev -> 0 occurrences
+typesafe\|noul\|routes_file -> 0 occurrences
+pristine config show, jev matches: 0
+upstream main, routing.jev paths:
+docs/reference/jev-routing.md
+packages/harness/src/jev-routing.ts
+docs/reference/configuration.md
+packages/harness/src/emit.ts
+packages/harness/test/harness/jev-routing.test.ts
+packages/harness/test/harness/iteration.test.ts
+packages/harness/test/harness/config-helpers.test.ts
+upstream main sha: fce46cc12ce5fecdd4757796b681ec51a0deb1c9
+published latest: 0.11.0
+```
+
+The link between the tracker and the installed package is direct: the local
+package is `@mobrienv/autoloop` 0.11.0 and its `repository` field is
+`github.com/mikeyobrien/autoloop`, so `#86` is an issue in the same tracker the
+shipped engine comes from, alongside the `#34` to `#42` entries in correction
+10.
+
+Part C is a correction, not a citation. The brief's Phase 2c.1 opens with
+autoloop already shipping `[routing.jev]` in a preset, and this RFC calls the
+same component the skeleton it extends. That is true of the upstream repo and
+false of the engine this branch ships against:
+
+| Where | `[routing.jev]` present | Evidence |
+| --- | --- | --- |
+| Upstream `main` at `fce46cc`, 2026-09-19 | yes | code search returns 7 paths, with the implementation at `packages/harness/src/jev-routing.ts` and the doc at `docs/reference/jev-routing.md` |
+| Installed `@mobrienv/autoloop` 0.11.0 | no | `jev`, `typesafe`, `noul`, and `routes_file` each occur 0 times across 6041 package files; a clean repo's `autoloop config show --preset code-assist` prints no `[routing]` section and 0 `jev` matches |
+| npm registry | no newer release | `npm view @mobrienv/autoloop dist-tags.latest` is `0.11.0`, published 2026-09-10, which predates the `main` commit above |
+
+Two consequences for the later steps:
+
+- Step 9 cannot "confirm each path by execution" for `[routing.jev]` on the
+  installed engine, because no reader for the block exists there. Ralph can
+  still emit the block and fail closed, but a live-path confirmation needs an
+  engine build newer than 0.11.0, and until one is published that half of
+  Step 9's demo is blocked on an unreleased engine rather than on Ralph code.
+- Step 11's seam table gains this RFC as candidate evidence, and its "filed
+  upstream issue" branch now has a live counterpart to link.
+
+One related question is left inferred rather than measured, because it is
+Step 9's and Step 12's work: whether the same release gap also accounts for the
+lifecycle-hook engine the brief attributes to autoloop #38 and the
+completion-gate store override it attributes to #36.
 
 ## Closed rows
 
