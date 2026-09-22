@@ -1,0 +1,71 @@
+name = "manual-live-harness-smoke"
+completion = "smoke.complete"
+
+[[role]]
+id = "claude"
+emits = ["smoke.claude.done"]
+prompt_file = "roles/claude.md"
+backend_kind = "claude-sdk"
+backend_command = "claude"
+backend_args = []
+backend_timeout_ms = 300000
+
+[[role]]
+id = "codex"
+emits = ["smoke.codex.done"]
+prompt_file = "roles/codex.md"
+backend_kind = "command"
+backend_command = "codex"
+backend_args = ["exec", "--yolo"]
+backend_prompt_mode = "arg"
+backend_timeout_ms = 300000
+
+[[role]]
+id = "opencode"
+emits = ["smoke.opencode.done"]
+prompt_file = "roles/opencode.md"
+backend_kind = "command"
+backend_command = "opencode"
+backend_args = ["run"]
+backend_prompt_mode = "arg"
+backend_timeout_ms = 300000
+
+[[role]]
+id = "pi"
+emits = ["smoke.pi.done"]
+prompt_file = "roles/pi.md"
+backend_kind = "pi"
+backend_command = "pi"
+backend_args = []
+backend_prompt_mode = "arg"
+backend_timeout_ms = 300000
+
+[[role]]
+id = "hermes"
+emits = ["smoke.hermes.done"]
+prompt_file = "roles/hermes.md"
+backend_kind = "acp"
+backend_provider = "hermes"
+backend_command = "hermes"
+backend_args = ["acp"]
+backend_prompt_mode = "acp"
+backend_timeout_ms = 300000
+
+[[role]]
+id = "kiro"
+emits = ["smoke.complete"]
+prompt_file = "roles/kiro.md"
+backend_kind = "acp"
+backend_provider = "kiro"
+backend_command = "kiro-cli"
+backend_args = ["acp"]
+backend_prompt_mode = "acp"
+backend_timeout_ms = 300000
+
+[handoff]
+"loop.start" = ["claude"]
+"smoke.claude.done" = ["codex"]
+"smoke.codex.done" = ["opencode"]
+"smoke.opencode.done" = ["pi"]
+"smoke.pi.done" = ["hermes"]
+"smoke.hermes.done" = ["kiro"]

@@ -22,6 +22,13 @@ These remain loadable for Ralph internals or testing, but are intentionally hidd
 - `hatless-baseline`
 - `merge-loop`
 
+### Manual live-provider smoke
+
+- [`live-harness-smoke`](live-harness-smoke/README.md) is an internal, manual,
+  paid six-provider harness check. It requires separately authenticated live
+  CLIs and is deliberately excluded from `presets/index.json`, supported
+  production builtins, defaults, and automated live-model tests.
+
 ## Product Positioning
 
 - `code-assist` is the recommended default for implementation work.
