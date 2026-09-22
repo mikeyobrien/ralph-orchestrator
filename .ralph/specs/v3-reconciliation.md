@@ -35,6 +35,12 @@ classifies every rollup-only commit, and names the ports that follow.
   section recorded the revision-5 rejection at `27ec1df`; revision 5 is
   `c40ebbd`, where both the `review.ready` and the `review.rejected` for that
   round sit. It changes no verdict.
+- Revision 8 repairs the revision-7 evidence listing. That command filtered on
+  object payloads, so it dropped `review.ready 56690c0` and the revision-4
+  `a04126e` pair, which store the payload as a joined string, and re-running it
+  appended the revision-7 round. The listing is now bounded to the commits
+  recorded through revision 6 and reads the commit from either payload form. It
+  changes no verdict.
 
 ## Method
 
@@ -765,7 +771,15 @@ revision 6's own rejection, and its single defect was the missing revision-log
 entry.
 
 ```bash
-jq -r 'select(type=="object") | select(.payload.artifact? == ".ralph/specs/v3-reconciliation.md") | "\(.topic) \(.payload.commit) \(.payload.revision // "-")"' .ralph/events-20260922-170542.jsonl
+jq -r '
+  def pk: if (.payload|type) == "object" then (.payload.commit // "")
+    else (try ((.payload|tostring) | capture("commit=(?<c>[0-9a-f]{7})").c) catch "") end;
+  select(.topic | startswith("review.")) |
+  select((.payload|tostring) | contains("v3-reconciliation")) |
+  pk as $c |
+  select(["44afa19","f4daacb","8c2a15e","56690c0","a04126e","c40ebbd","27ec1df","4878882"] | index($c)) |
+  "\(.topic) \($c) \(if (.payload|type) == "object" then (.payload.revision // "-") else "-" end)"
+' .ralph/events-20260922-170542.jsonl
 ```
 
 ```text
@@ -774,13 +788,22 @@ review.rejected 44afa19 -
 review.ready f4daacb -
 review.rejected f4daacb -
 review.ready 8c2a15e -
+review.ready 56690c0 -
 review.rejected 56690c0 -
+review.ready a04126e -
+review.rejected a04126e -
 review.ready c40ebbd -
 review.rejected c40ebbd -
 review.rejected 27ec1df 6
 review.ready 4878882 6
 review.rejected 4878882 6
 ```
+
+The listing is bounded to the commits recorded through revision 6, so a later
+round does not append to it, and it reads the commit from the payload text as
+well as the payload object. That is why `review.ready 56690c0` and the
+`a04126e` pair appear here and were dropped by the object-only filter this
+section carried before revision 8.
 
 The two `c40ebbd` payloads state the revision and its reason:
 
@@ -798,3 +821,55 @@ revision-6 section. Nothing else moved. The tally stays 16 `port`, 4
 `already-covered`, 2 `superseded`, 22 rows. No verdict changes. The only path
 this commit changes is this record, so the code tree is byte-identical to
 `4878882`.
+
+### What revision 8 changed
+
+The revision-7 critic rejected `3af3c24` on block 1 alone. That block's
+`.payload.artifact?` filter reads only object payloads, so it dropped
+`review.ready 56690c0` and the revision-4 `a04126e` pair, which store their
+payload as a joined string, and re-running it appended this round's own
+`3af3c24` lines. The revision-7 builder journal names both defects, so neither
+was unknown to the author of the block.
+
+Block 1 now carries a bounded listing. It reads the commit from the payload
+text as well as the payload object, and it is restricted to the commits
+recorded through revision 6, so it neither omits a string-payload round nor
+grows when a later round appends its events. The listing is the one in the
+revision-7 section above. The disclosure sentence below it states the bound and
+the two payload forms.
+
+Reproduction, run at the tip. The replaced filter, bounded to the same commits:
+
+```bash
+jq -r 'select(type=="object") | select(.payload.commit? as $c | ["44afa19","f4daacb","8c2a15e","56690c0","a04126e","c40ebbd","27ec1df","4878882"] | index($c)) | "\(.topic) \(.payload.commit) \(.payload.revision // "-")"' .ralph/events-20260922-170542.jsonl
+```
+
+```text
+review.ready 44afa19 -
+review.rejected 44afa19 -
+review.ready f4daacb -
+review.rejected f4daacb -
+review.ready 8c2a15e -
+review.rejected 56690c0 -
+review.ready c40ebbd -
+review.rejected c40ebbd -
+review.rejected 27ec1df 6
+review.ready 4878882 6
+review.rejected 4878882 6
+```
+
+Eleven lines against the fourteen in the block above. The three it drops are
+`review.ready 56690c0 -`, `review.ready a04126e -`, and `review.rejected
+a04126e -`. Running the bounded command twice gives byte-identical output.
+
+Nothing else moved. The revision-6 state-root and frontmatter blocks are
+unchanged, the tally stays 16 `port`, 4 `already-covered`, 2 `superseded`, 22
+rows, and no verdict changes.
+
+Evidence:
+
+- `cargo fmt --all -- --check` exit 0.
+- Python smoke matrix: `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest -v tools.tests.test_smoke_live_harnesses` is `Ran 10 tests`, OK, six rows PASS.
+- `git diff --name-only 3af3c24 HEAD` is this one record, so the code tree is
+  byte-identical and the Rust targets measured earlier still hold.
+- No clippy or full suite: no Rust source changed.
