@@ -581,7 +581,7 @@ hats:
         let preset_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../presets/wave-review.yml");
         let yaml = fs::read_to_string(&preset_path).expect("wave review preset should be readable");
-        let mut cfg: RalphConfig =
+        let cfg: RalphConfig =
             serde_yaml::from_str(&yaml).expect("wave review preset should parse");
         let mut cfg = pin_backend(cfg);
         cfg.normalize();
@@ -647,7 +647,7 @@ event_loop:
 
     #[test]
     fn writes_v1_budget_aliases_after_normalization() {
-        let mut cfg: RalphConfig = serde_yaml::from_str(
+        let cfg: RalphConfig = serde_yaml::from_str(
             r"
 max_runtime: 8
 max_cost: 1.25

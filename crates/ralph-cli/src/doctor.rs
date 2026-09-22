@@ -785,10 +785,14 @@ mod tests {
     #[test]
     fn auth_hint_warns_when_env_missing() {
         let backends = vec!["codex".to_string(), "gemini".to_string()];
-        let check = auth_hint_check(&backends, |key| match key {
-            "OPENAI_API_KEY" => Some("present".to_string()),
-            _ => None,
-        }, |_| false);
+        let check = auth_hint_check(
+            &backends,
+            |key| match key {
+                "OPENAI_API_KEY" => Some("present".to_string()),
+                _ => None,
+            },
+            |_| false,
+        );
 
         assert_eq!(check.status, CheckStatus::Warn);
         assert!(check.message.as_deref().unwrap_or("").contains("gemini"));
@@ -797,11 +801,15 @@ mod tests {
     #[test]
     fn auth_hint_passes_when_all_env_present() {
         let backends = vec!["codex".to_string(), "gemini".to_string()];
-        let check = auth_hint_check(&backends, |key| match key {
-            "OPENAI_API_KEY" => Some("present".to_string()),
-            "GEMINI_API_KEY" => Some("present".to_string()),
-            _ => None,
-        }, |_| false);
+        let check = auth_hint_check(
+            &backends,
+            |key| match key {
+                "OPENAI_API_KEY" => Some("present".to_string()),
+                "GEMINI_API_KEY" => Some("present".to_string()),
+                _ => None,
+            },
+            |_| false,
+        );
 
         assert_eq!(check.status, CheckStatus::Pass);
     }
@@ -874,7 +882,11 @@ mod tests {
 
         let claude_dir = home.path().join(".claude");
         std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join(".credentials.json"), r#"{"accessToken":"x"}"#).unwrap();
+        std::fs::write(
+            claude_dir.join(".credentials.json"),
+            r#"{"accessToken":"x"}"#,
+        )
+        .unwrap();
         assert!(credential_store_detected("claude", Some(home.path())));
 
         // ~/.claude.json (OAuth account state) also counts.
@@ -885,7 +897,10 @@ mod tests {
 
     #[test]
     fn credential_store_unknown_backends_and_missing_home_are_inconclusive() {
-        assert!(!credential_store_detected("gemini", Some(Path::new("/nonexistent-home"))));
+        assert!(!credential_store_detected(
+            "gemini",
+            Some(Path::new("/nonexistent-home"))
+        ));
         assert!(!credential_store_detected("codex", None));
     }
 
@@ -893,10 +908,14 @@ mod tests {
     fn orcarouter_api_key_satisfies_opencode_pi_roo_auth_hints() {
         for backend in ["opencode", "pi", "roo"] {
             let backends = vec![backend.to_string()];
-            let check = auth_hint_check(&backends, |key| match key {
-                "ORCAROUTER_API_KEY" => Some("present".to_string()),
-                _ => None,
-            }, |_| false);
+            let check = auth_hint_check(
+                &backends,
+                |key| match key {
+                    "ORCAROUTER_API_KEY" => Some("present".to_string()),
+                    _ => None,
+                },
+                |_| false,
+            );
             assert_eq!(
                 check.status,
                 CheckStatus::Pass,
