@@ -2,14 +2,16 @@
 
 use anyhow::Result;
 use clap::Parser;
-use ralph_adapters::{CliBackend, DEFAULT_PRIORITY};
-use ralph_core::{CheckResult, CheckStatus, ConfigError, HatBackend, PreflightReport, RalphConfig};
+use ralph_adapters::CliBackend;
+use ralph_core::{
+    CheckResult, CheckStatus, ConfigError, HatBackend, PreflightReport, RalphConfig, backend,
+};
 use std::collections::HashSet;
 use std::env;
 use std::path::Path;
 use std::process::Command;
 
-use crate::{ConfigSource, HatsSource};
+use crate::{ConfigSource, HatsSource, config_resolution::home_dir_from_env};
 
 /// Run first-run diagnostics and environment validation.
 #[derive(Parser, Debug)]
@@ -53,7 +55,11 @@ pub async fn execute(
     }
 
     let auth_backends = auth_backend_names(&config);
-    checks.push(auth_hint_check(&auth_backends, |key| env::var(key).ok()));
+    checks.push(auth_hint_check(
+        &auth_backends,
+        |key| env::var(key).ok(),
+        credential_store_probe(),
+    ));
 
     checks.extend(other_checks);
 
@@ -110,13 +116,12 @@ where
 
     match config.cli.backend.trim() {
         "auto" => {
-            for backend in DEFAULT_PRIORITY {
-                let command = command_for_backend(backend);
+            for metadata in backend::iter() {
                 push_backend_check(
                     &mut checks,
                     &mut seen,
-                    backend,
-                    &command,
+                    metadata.id,
+                    metadata.command,
                     false,
                     CommandCheckMode::Version,
                     &command_version_ok,
@@ -133,7 +138,7 @@ where
                 CheckResult::fail(
                     "backend:auto",
                     "No supported backend found",
-                    format!("Checked: {}", DEFAULT_PRIORITY.join(", ")),
+                    format!("Checked: {}", backend::default_priority().join(", ")),
                 )
             };
             checks.push(summary);
@@ -283,12 +288,15 @@ fn push_backend_check<F, G>(
     });
 }
 
-fn auth_hint_check<F>(_backends: &[String], _env_lookup: F) -> CheckResult
+fn auth_hint_check<F, S>(_backends: &[String], _env_lookup: F, _store_probe: S) -> CheckResult
 where
     F: Fn(&str) -> Option<String>,
+    S: Fn(&str) -> bool,
 {
     let env_lookup = _env_lookup;
+    let store_probe = _store_probe;
     let mut missing = Vec::new();
+    let mut store_notes = Vec::new();
 
     let mut backends: Vec<String> = _backends
         .iter()
@@ -299,6 +307,9 @@ where
 
     for backend in backends {
         let Some(envs) = auth_env_vars(&backend) else {
+            if store_probe(&backend) {
+                continue;
+            }
             missing.push(format!("{backend}: authenticate via the CLI"));
             continue;
         };
@@ -307,11 +318,30 @@ where
             continue;
         }
 
+        // Env-var auth is unset, but the backend's CLI may own its own
+        // credential store (e.g. `pi auth`, `claude login`). Probe it
+        // read-only before warning; warn only when neither is found.
+        if store_probe(&backend) {
+            store_notes.push(format!(
+                "{backend}: env-var auth not set (CLI credential store detected)"
+            ));
+            continue;
+        }
+
         missing.push(format!("{backend}: set {}", envs.join(" or ")));
     }
 
     if missing.is_empty() {
-        CheckResult::pass("auth", "Auth hints satisfied")
+        if store_notes.is_empty() {
+            CheckResult::pass("auth", "Auth hints satisfied")
+        } else {
+            CheckResult {
+                name: "auth".to_string(),
+                label: "Auth hints satisfied".to_string(),
+                status: CheckStatus::Pass,
+                message: Some(store_notes.join("\n")),
+            }
+        }
     } else {
         CheckResult::warn(
             "auth",
@@ -319,6 +349,40 @@ where
             missing.join("\n"),
         )
     }
+}
+
+/// Builds a read-only credential-store probe rooted at the user's home dir.
+fn credential_store_probe() -> impl Fn(&str) -> bool {
+    let home = home_dir_from_env();
+    move |backend| credential_store_detected(backend, home.as_deref())
+}
+
+/// Cheap, read-only check for backends whose CLI owns its own credential
+/// store. Returns `false` (inconclusive) for unknown backends so env-var
+/// hints remain the fallback.
+fn credential_store_detected(backend: &str, home: Option<&Path>) -> bool {
+    let Some(home) = home else {
+        return false;
+    };
+
+    match backend {
+        // `pi auth` writes ~/.pi/agent/auth.json.
+        "pi" => non_empty_file(&home.join(".pi").join("agent").join("auth.json")),
+        // Claude Code writes ~/.claude/.credentials.json on Linux; on macOS
+        // tokens live in the Keychain, but ~/.claude.json carries the OAuth
+        // account state. Both are cheap file stats.
+        "claude" => {
+            non_empty_file(&home.join(".claude").join(".credentials.json"))
+                || non_empty_file(&home.join(".claude.json"))
+        }
+        _ => false,
+    }
+}
+
+fn non_empty_file(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
 }
 
 fn hat_collection_check(_config: &RalphConfig) -> CheckResult {
@@ -351,8 +415,8 @@ fn auth_backend_names(config: &RalphConfig) -> Vec<String> {
 
     match config.cli.backend.trim() {
         "auto" => {
-            for backend in DEFAULT_PRIORITY {
-                names.insert((*backend).to_string());
+            for id in backend::default_priority() {
+                names.insert((*id).to_string());
             }
         }
         "custom" => {
@@ -394,27 +458,24 @@ fn auth_env_vars(backend: &str) -> Option<Vec<&'static str>> {
         "kiro-acp" => Some(vec!["KIRO_API_KEY"]),
         "opencode" => Some(vec![
             "OPENCODE_API_KEY",
+            "ORCAROUTER_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
         ]),
         "pi" => Some(vec![
+            "ORCAROUTER_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "GEMINI_API_KEY",
         ]),
         "roo" => Some(vec![
+            "ORCAROUTER_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "GEMINI_API_KEY",
         ]),
         _ => None,
     }
-}
-
-fn command_for_backend(backend: &str) -> String {
-    CliBackend::from_name(backend)
-        .map(|backend| backend.command)
-        .unwrap_or_else(|_| backend.to_string())
 }
 
 fn command_for_named_backend(
@@ -433,15 +494,12 @@ fn command_for_named_backend(
         .map_err(|_| format!("Unknown backend: {backend}"))
 }
 
-fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
-    if backend != "custom" {
-        return backend.to_lowercase();
-    }
-
-    let Some(command) = command else {
-        return "custom".to_string();
-    };
-
+/// Basename of `command` with any Windows executable extension stripped.
+///
+/// Case is preserved so an unrecognized command (e.g. `my-cli.exe`) keeps its
+/// original spelling in check labels; recognized commands are matched
+/// case-insensitively against the catalog in [`canonical_backend_name`].
+fn strip_executable_extension(command: &str) -> String {
     let basename = Path::new(command)
         .file_name()
         .and_then(|name| name.to_str())
@@ -456,21 +514,28 @@ fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
             break;
         }
     }
+    normalized
+}
 
-    let normalized_lower = normalized.to_lowercase();
-    match normalized_lower.as_str() {
-        "kiro-cli" => "kiro".to_string(),
-        "claude" => "claude".to_string(),
-        "gemini" => "gemini".to_string(),
-        "codex" => "codex".to_string(),
-        "forge" => "forge".to_string(),
-        "amp" => "amp".to_string(),
-        "copilot" => "copilot".to_string(),
-        "opencode" => "opencode".to_string(),
-        "pi" => "pi".to_string(),
-        "roo" => "roo".to_string(),
-        _ => normalized,
+fn canonical_backend_name(backend: &str, command: Option<&str>) -> String {
+    if backend != "custom" {
+        return backend.to_lowercase();
     }
+
+    let Some(command) = command else {
+        return "custom".to_string();
+    };
+
+    let basename = strip_executable_extension(command);
+
+    // Reverse-map the command basename to the first catalog backend that uses it
+    // (catalog order puts `kiro` before `kiro-acp`, so `kiro-cli` → `kiro`).
+    let lookup = basename.to_lowercase();
+    if let Some(metadata) = backend::iter().find(|metadata| metadata.command == lookup.as_str()) {
+        return metadata.id.to_string();
+    }
+
+    basename
 }
 
 fn backend_check_name(backend: &str, command: &str) -> String {
@@ -723,7 +788,7 @@ mod tests {
         let check = auth_hint_check(&backends, |key| match key {
             "OPENAI_API_KEY" => Some("present".to_string()),
             _ => None,
-        });
+        }, |_| false);
 
         assert_eq!(check.status, CheckStatus::Warn);
         assert!(check.message.as_deref().unwrap_or("").contains("gemini"));
@@ -736,9 +801,119 @@ mod tests {
             "OPENAI_API_KEY" => Some("present".to_string()),
             "GEMINI_API_KEY" => Some("present".to_string()),
             _ => None,
-        });
+        }, |_| false);
 
         assert_eq!(check.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn auth_hint_passes_with_store_note_when_store_detected_and_env_missing() {
+        // pi authenticated via its own credential store, no env vars: the auth
+        // check must NOT warn — it passes with an informational note.
+        let backends = vec!["pi".to_string()];
+        let check = auth_hint_check(&backends, |_| None, |backend| backend == "pi");
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        let message = check.message.as_deref().unwrap_or("");
+        assert!(
+            message.contains("env-var auth not set (CLI credential store detected)"),
+            "expected store-detected INFO note, got: {message}"
+        );
+        assert!(message.contains("pi"));
+    }
+
+    #[test]
+    fn auth_hint_warns_when_neither_store_nor_env() {
+        let backends = vec!["pi".to_string()];
+        let check = auth_hint_check(&backends, |_| None, |_| false);
+
+        assert_eq!(check.status, CheckStatus::Warn);
+        let message = check.message.as_deref().unwrap_or("");
+        assert!(message.contains("pi: set ORCAROUTER_API_KEY"), "{message}");
+    }
+
+    #[test]
+    fn auth_hint_env_still_wins_over_store_note() {
+        // With env vars set, no note is needed even when a store also exists.
+        let backends = vec!["claude".to_string()];
+        let check = auth_hint_check(
+            &backends,
+            |key| (key == "ANTHROPIC_API_KEY").then(|| "present".to_string()),
+            |_| true,
+        );
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert!(check.message.is_none());
+    }
+
+    #[test]
+    fn credential_store_detected_for_pi_auth_json() {
+        let home = tempfile::tempdir().expect("temp home");
+        let auth = home.path().join(".pi").join("agent");
+        std::fs::create_dir_all(&auth).unwrap();
+        std::fs::write(auth.join("auth.json"), r#"{"tokens":{}}"#).unwrap();
+
+        assert!(credential_store_detected("pi", Some(home.path())));
+    }
+
+    #[test]
+    fn credential_store_rejects_missing_or_empty_pi_store() {
+        let home = tempfile::tempdir().expect("temp home");
+        assert!(!credential_store_detected("pi", Some(home.path())));
+
+        let auth = home.path().join(".pi").join("agent");
+        std::fs::create_dir_all(&auth).unwrap();
+        std::fs::write(auth.join("auth.json"), "").unwrap();
+        assert!(!credential_store_detected("pi", Some(home.path())));
+    }
+
+    #[test]
+    fn credential_store_detected_for_claude_credential_files() {
+        let home = tempfile::tempdir().expect("temp home");
+        assert!(!credential_store_detected("claude", Some(home.path())));
+
+        let claude_dir = home.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join(".credentials.json"), r#"{"accessToken":"x"}"#).unwrap();
+        assert!(credential_store_detected("claude", Some(home.path())));
+
+        // ~/.claude.json (OAuth account state) also counts.
+        let home2 = tempfile::tempdir().expect("temp home");
+        std::fs::write(home2.path().join(".claude.json"), r#"{"oauthAccount":{}}"#).unwrap();
+        assert!(credential_store_detected("claude", Some(home2.path())));
+    }
+
+    #[test]
+    fn credential_store_unknown_backends_and_missing_home_are_inconclusive() {
+        assert!(!credential_store_detected("gemini", Some(Path::new("/nonexistent-home"))));
+        assert!(!credential_store_detected("codex", None));
+    }
+
+    #[test]
+    fn orcarouter_api_key_satisfies_opencode_pi_roo_auth_hints() {
+        for backend in ["opencode", "pi", "roo"] {
+            let backends = vec![backend.to_string()];
+            let check = auth_hint_check(&backends, |key| match key {
+                "ORCAROUTER_API_KEY" => Some("present".to_string()),
+                _ => None,
+            }, |_| false);
+            assert_eq!(
+                check.status,
+                CheckStatus::Pass,
+                "ORCAROUTER_API_KEY should satisfy {backend} auth hint"
+            );
+        }
+    }
+
+    #[test]
+    fn orcarouter_api_key_listed_in_auth_env_vars_for_models_dev_backends() {
+        for backend in ["opencode", "pi", "roo"] {
+            let envs = auth_env_vars(backend).expect("known backend");
+            assert!(
+                envs.contains(&"ORCAROUTER_API_KEY"),
+                "{backend} auth env vars should include ORCAROUTER_API_KEY: {envs:?}"
+            );
+        }
     }
 
     #[test]
@@ -754,6 +929,109 @@ mod tests {
         assert_eq!(
             canonical_backend_name("custom", Some("my-cli.exe")),
             "my-cli"
+        );
+    }
+
+    #[test]
+    fn canonical_name_maps_each_unique_catalog_command_to_first_id() {
+        // The reverse command→id map is derived from the catalog, so every
+        // distinct command basename canonicalizes to the first backend that uses
+        // it (kiro-cli → kiro, since kiro precedes kiro-acp). Adding a backend to
+        // the catalog must not require editing a parallel match here.
+        use std::collections::HashSet;
+        let mut seen_commands: HashSet<&str> = HashSet::new();
+        for metadata in ralph_core::backend::iter() {
+            if !seen_commands.insert(metadata.command) {
+                continue; // kiro-acp shares kiro-cli with kiro
+            }
+            assert_eq!(
+                canonical_backend_name("custom", Some(metadata.command)),
+                metadata.id,
+                "command {} should canonicalize to {}",
+                metadata.command,
+                metadata.id
+            );
+            // Case-insensitive and extension-tolerant.
+            assert_eq!(
+                canonical_backend_name("custom", Some(&metadata.command.to_uppercase())),
+                metadata.id,
+                "uppercase command {} should still canonicalize to {}",
+                metadata.command,
+                metadata.id
+            );
+        }
+    }
+
+    #[test]
+    fn auto_backend_checks_cover_every_catalog_backend() {
+        // `backend_checks` in auto mode must iterate the whole catalog, so a newly
+        // catalogued backend is checked without a parallel edit here. The check name
+        // is `backend:{id}` (or `backend:{id}@{command}` when id ≠ command, e.g. kiro).
+        let mut config = RalphConfig::default();
+        config.cli.backend = "auto".to_string();
+        let checks = backend_checks(&config, |_| false, |_| false);
+        for metadata in ralph_core::backend::iter() {
+            let exact = format!("backend:{}", metadata.id);
+            let with_command = format!("backend:{}@{}", metadata.id, metadata.command);
+            assert!(
+                checks
+                    .iter()
+                    .any(|check| check.name == exact || check.name == with_command),
+                "auto backend checks missing {} (got {:?})",
+                metadata.id,
+                checks.iter().map(|c| c.name.as_str()).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OMP auth boundary (R14 / AC11): doctor must NOT enumerate OMP's provider
+    // env vars as proof of auth, and missing env vars must stay a *warning*
+    // (the "authenticate via the CLI" hint) — never a hard executable failure.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn auth_env_vars_returns_none_for_omp() {
+        // OMP authenticates through its own CLI; Ralph must not mirror pi/roo's
+        // Some(vec![ANTHROPIC, OPENAI, GEMINI]) subset for omp.
+        assert_eq!(auth_env_vars("omp"), None);
+    }
+
+    #[test]
+    fn auth_hint_for_omp_is_a_warning_not_a_failure() {
+        // With no provider env vars set, omp routes to the generic CLI hint and
+        // produces a warning — not a failure (no false hard auth failure).
+        let check = auth_hint_check(&["omp".to_string()], |_| None, |_| false);
+
+        assert_eq!(
+            check.status,
+            CheckStatus::Warn,
+            "omp auth absence must be a warning, not a failure"
+        );
+        let message = check.message.as_deref().unwrap_or("");
+        assert!(
+            message.contains("omp: authenticate via the CLI"),
+            "omp must get the CLI-native auth hint: {message}"
+        );
+    }
+
+    #[test]
+    fn backend_check_for_omp_passes_when_command_available() {
+        // The executable check for a named omp backend passes when `omp --version`
+        // succeeds (Demo: controlled-PATH `ralph doctor` executable pass). Inject
+        // the version probe so this does not depend on OMP being installed.
+        let mut config = RalphConfig::default();
+        config.cli.backend = "omp".to_string();
+        let checks = backend_checks(&config, |cmd| cmd == "omp", |_| false);
+
+        let omp = checks
+            .iter()
+            .find(|check| check.name == "backend:omp")
+            .expect("expected a backend:omp check");
+        assert_eq!(
+            omp.status,
+            CheckStatus::Pass,
+            "omp executable check must pass when `omp --version` succeeds"
         );
     }
 }

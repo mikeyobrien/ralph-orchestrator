@@ -20,21 +20,64 @@ pub enum OutputFormat {
     CopilotStreamJson,
     /// Newline-delimited JSON stream (Pi with --mode json)
     PiStreamJson,
+    /// Newline-delimited JSON stream (OMP with --mode json). Shares the Pi-family
+    /// stream processor; kept distinct from `PiStreamJson` so OMP keeps its own
+    /// output identity (no Pi alias).
+    OmpStreamJson,
     /// Agent Client Protocol over stdio (Kiro v2)
     Acp,
 }
 
-/// Error when creating a custom backend without a command.
+/// Error constructing a [`CliBackend`] from configuration or a named selector.
+///
+/// Construction is fail-closed: an unrecognized backend name never silently
+/// resolves to another backend (historically it fell open to Claude). The
+/// actionable variant carries the valid selectable names so callers can render
+/// a helpful message.
 #[derive(Debug, Clone)]
-pub struct CustomBackendError;
+pub enum BackendConstructError {
+    /// The configured or selected backend name is not a known named backend.
+    UnknownBackend {
+        /// The unrecognized name.
+        name: String,
+        /// Valid selectable backend identifiers (catalogued names plus `custom`).
+        valid_names: Vec<&'static str>,
+    },
+    /// A `custom` backend was requested without specifying a command.
+    CustomBackendRequiresCommand,
+}
 
-impl fmt::Display for CustomBackendError {
+impl fmt::Display for BackendConstructError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "custom backend requires a command to be specified")
+        match self {
+            Self::UnknownBackend { name, valid_names } => write!(
+                f,
+                "Unknown backend: {}\n\nValid backends: {}",
+                name,
+                valid_names.join(", ")
+            ),
+            Self::CustomBackendRequiresCommand => {
+                write!(f, "custom backend requires a command to be specified")
+            }
+        }
     }
 }
 
-impl std::error::Error for CustomBackendError {}
+impl std::error::Error for BackendConstructError {}
+
+/// Builds an [`BackendConstructError::UnknownBackend`] with the current
+/// selectable name set.
+///
+/// Selectable names are the catalogued backends plus the `custom` escape hatch.
+/// `auto` is a detection selector, not a constructable backend, so it is absent.
+fn unknown_backend(name: &str) -> BackendConstructError {
+    let mut names = ralph_core::backend::valid_names();
+    names.push("custom");
+    BackendConstructError::UnknownBackend {
+        name: name.to_string(),
+        valid_names: names,
+    }
+}
 
 /// How to pass prompts to the CLI tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,8 +111,11 @@ impl CliBackend {
     /// Creates a backend from configuration.
     ///
     /// # Errors
-    /// Returns `CustomBackendError` if backend is "custom" but no command is specified.
-    pub fn from_config(config: &CliConfig) -> Result<Self, CustomBackendError> {
+    /// Returns [`BackendConstructError::UnknownBackend`] for an unrecognized
+    /// backend name, or [`BackendConstructError::CustomBackendRequiresCommand`]
+    /// when `custom` is selected without a command. An unknown name never falls
+    /// back to another backend.
+    pub fn from_config(config: &CliConfig) -> Result<Self, BackendConstructError> {
         let mut backend = match config.backend.as_str() {
             "claude" => Self::claude(),
             "kiro" => Self::kiro(),
@@ -82,8 +128,9 @@ impl CliBackend {
             "opencode" => Self::opencode(),
             "pi" => Self::pi(),
             "roo" => Self::roo(),
+            "omp" => Self::omp(),
             "custom" => return Self::custom(config),
-            _ => Self::claude(), // Default to claude
+            _ => return Err(unknown_backend(&config.backend)),
         };
 
         // Apply configured extra args for named backends too.
@@ -119,7 +166,7 @@ impl CliBackend {
                 "--output-format".to_string(),
                 "stream-json".to_string(),
                 "--setting-sources".to_string(),
-                "project,local".to_string(),
+                "user,project,local".to_string(),
                 "--print".to_string(),
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet".to_string(),
             ],
@@ -145,7 +192,7 @@ impl CliBackend {
             args: vec![
                 "--dangerously-skip-permissions".to_string(),
                 "--setting-sources".to_string(),
-                "project,local".to_string(),
+                "user,project,local".to_string(),
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
@@ -231,7 +278,7 @@ impl CliBackend {
     pub fn from_name_with_args(
         name: &str,
         extra_args: &[String],
-    ) -> Result<Self, CustomBackendError> {
+    ) -> Result<Self, BackendConstructError> {
         let mut backend = Self::from_name(name)?;
         backend.args.extend(extra_args.iter().cloned());
         if backend.command == "codex" {
@@ -244,7 +291,7 @@ impl CliBackend {
     ///
     /// # Errors
     /// Returns error if the backend name is invalid.
-    pub fn from_name(name: &str) -> Result<Self, CustomBackendError> {
+    pub fn from_name(name: &str) -> Result<Self, BackendConstructError> {
         match name {
             "claude" => Ok(Self::claude()),
             "kiro" => Ok(Self::kiro()),
@@ -257,7 +304,8 @@ impl CliBackend {
             "opencode" => Ok(Self::opencode()),
             "pi" => Ok(Self::pi()),
             "roo" => Ok(Self::roo()),
-            _ => Err(CustomBackendError),
+            "omp" => Ok(Self::omp()),
+            _ => Err(unknown_backend(name)),
         }
     }
 
@@ -265,7 +313,7 @@ impl CliBackend {
     ///
     /// # Errors
     /// Returns error if the backend configuration is invalid.
-    pub fn from_hat_backend(hat_backend: &HatBackend) -> Result<Self, CustomBackendError> {
+    pub fn from_hat_backend(hat_backend: &HatBackend) -> Result<Self, BackendConstructError> {
         match hat_backend {
             HatBackend::Named(name) => Self::from_name(name),
             HatBackend::NamedWithArgs { backend_type, args } => {
@@ -391,7 +439,7 @@ impl CliBackend {
             args: vec![
                 "--dangerously-skip-permissions".to_string(),
                 "--setting-sources".to_string(),
-                "project,local".to_string(),
+                "user,project,local".to_string(),
                 "--disallowedTools=TodoWrite".to_string(),
             ],
             prompt_mode: PromptMode::Arg,
@@ -422,8 +470,9 @@ impl CliBackend {
     /// | OpenCode| `run` subcommand with positional prompt |
     ///
     /// # Errors
-    /// Returns `CustomBackendError` if the backend name is not recognized.
-    pub fn for_interactive_prompt(backend_name: &str) -> Result<Self, CustomBackendError> {
+    /// Returns [`BackendConstructError::UnknownBackend`] if the backend name is
+    /// not recognized.
+    pub fn for_interactive_prompt(backend_name: &str) -> Result<Self, BackendConstructError> {
         match backend_name {
             "claude" => Ok(Self::claude_interactive()),
             // kiro-acp is a headless JSON-RPC stdio protocol with no TUI.
@@ -438,7 +487,8 @@ impl CliBackend {
             "opencode" => Ok(Self::opencode_interactive()),
             "pi" => Ok(Self::pi_interactive()),
             "roo" => Ok(Self::roo_interactive()),
-            _ => Err(CustomBackendError),
+            "omp" => Ok(Self::omp_interactive()),
+            _ => Err(unknown_backend(backend_name)),
         }
     }
 
@@ -626,6 +676,49 @@ impl CliBackend {
         }
     }
 
+    /// Creates the OMP backend for headless execution.
+    ///
+    /// Uses `-p` (print mode) with `--mode json` for NDJSON streaming output,
+    /// `--no-session` for an ephemeral session, and `--auto-approve` so
+    /// autonomous iterations are not blocked on permission prompts. OMP owns its
+    /// own tools, providers, credentials, and approval policy; Ralph never
+    /// interprets repeated OMP options. Emits `OmpStreamJson` output format
+    /// (shares the Pi-family processor); the prompt is a positional argument
+    /// after all flags.
+    pub fn omp() -> Self {
+        Self {
+            command: "omp".to_string(),
+            args: vec![
+                "-p".to_string(),
+                "--mode".to_string(),
+                "json".to_string(),
+                "--no-session".to_string(),
+                "--auto-approve".to_string(),
+            ],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        }
+    }
+
+    /// Creates the OMP backend for interactive mode with an initial prompt.
+    ///
+    /// Runs the OMP TUI with `--no-session` only — a dedicated factory, not
+    /// derived from [`Self::omp`] via `filter_args_for_interactive` (which would
+    /// leak `--mode json` and `--auto-approve`). The OMP TUI owns human
+    /// interaction and permission prompts; the prompt is a positional argument.
+    pub fn omp_interactive() -> Self {
+        Self {
+            command: "omp".to_string(),
+            args: vec!["--no-session".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None, // Positional argument
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        }
+    }
+
     /// Creates the Roo backend for headless execution.
     ///
     /// Uses `--print` for non-interactive output and `--ephemeral` for clean
@@ -661,9 +754,13 @@ impl CliBackend {
     /// Creates a custom backend from configuration.
     ///
     /// # Errors
-    /// Returns `CustomBackendError` if no command is specified.
-    pub fn custom(config: &CliConfig) -> Result<Self, CustomBackendError> {
-        let command = config.command.clone().ok_or(CustomBackendError)?;
+    /// Returns [`BackendConstructError::CustomBackendRequiresCommand`] if no
+    /// command is specified.
+    pub fn custom(config: &CliConfig) -> Result<Self, BackendConstructError> {
+        let command = config
+            .command
+            .clone()
+            .ok_or(BackendConstructError::CustomBackendRequiresCommand)?;
         let prompt_mode = if config.prompt_mode == "stdin" {
             PromptMode::Stdin
         } else {
@@ -889,7 +986,7 @@ mod tests {
                 "--output-format",
                 "stream-json",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--print",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
             ]
@@ -913,7 +1010,7 @@ mod tests {
             vec![
                 "--dangerously-skip-permissions",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 "test prompt"
             ]
@@ -1119,6 +1216,180 @@ mod tests {
     }
 
     #[test]
+    fn test_from_config_unknown_backend_fails_closed() {
+        // AC#1: an unknown configured name must NOT launch Claude or any other
+        // backend. Historically `from_config` fell open to `Self::claude()`.
+        let config = CliConfig {
+            backend: "ompp".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            ..Default::default()
+        };
+        let err = CliBackend::from_config(&config).unwrap_err();
+        match err {
+            BackendConstructError::UnknownBackend { name, valid_names } => {
+                assert_eq!(name, "ompp");
+                assert!(
+                    valid_names.contains(&"claude"),
+                    "valid names should list catalogued backends: {valid_names:?}"
+                );
+                assert!(
+                    valid_names.contains(&"roo"),
+                    "Roo must be a valid backend: {valid_names:?}"
+                );
+                assert!(
+                    valid_names.contains(&"custom"),
+                    "custom escape hatch must be listed: {valid_names:?}"
+                );
+                assert!(
+                    !valid_names.contains(&"ompp"),
+                    "the unknown name must not appear in valid names"
+                );
+            }
+            BackendConstructError::CustomBackendRequiresCommand => {
+                panic!("expected UnknownBackend, got CustomBackendRequiresCommand");
+            }
+        }
+    }
+
+    #[test]
+    fn test_from_name_unknown_fails_closed() {
+        let err = CliBackend::from_name("definitely-not-a-backend").unwrap_err();
+        assert!(matches!(err, BackendConstructError::UnknownBackend { .. }));
+    }
+
+    #[test]
+    fn test_for_interactive_prompt_unknown_fails_closed() {
+        let err = CliBackend::for_interactive_prompt("nope").unwrap_err();
+        assert!(matches!(err, BackendConstructError::UnknownBackend { .. }));
+    }
+
+    #[test]
+    fn test_custom_without_command_fails() {
+        // AC#6: `custom` without a command fails; the error is distinct from an
+        // unknown named backend.
+        let config = CliConfig {
+            backend: "custom".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            ..Default::default()
+        };
+        let err = CliBackend::from_config(&config).unwrap_err();
+        assert!(matches!(
+            err,
+            BackendConstructError::CustomBackendRequiresCommand
+        ));
+    }
+
+    #[test]
+    fn test_roo_is_accepted_everywhere_named() {
+        // AC#4: Roo is accepted in every named-backend path, fixing the historic
+        // `VALID_BACKENDS` omission.
+        assert!(CliBackend::from_name("roo").is_ok());
+        assert!(CliBackend::for_interactive_prompt("roo").is_ok());
+        let config = CliConfig {
+            backend: "roo".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            ..Default::default()
+        };
+        assert!(CliBackend::from_config(&config).is_ok());
+        assert_eq!(CliBackend::from_name("roo").unwrap().command, "roo");
+    }
+
+    #[test]
+    fn test_catalog_factory_conformance() {
+        // Catalog conformance matrix (TR#11 / AC#3). A backend catalogued in
+        // `ralph_core::backend` MUST be acknowledged by every consumer surface
+        // simultaneously, so adding a named backend in one place cannot silently
+        // misroute it in another. This test fails if a future backend is missing
+        // from any of: construction (`from_name`/`from_config`), interactive
+        // behavior (`for_interactive_prompt`), detection (`command_for`), help
+        // (`display_name`/`install_url`), or default priority order. The generic
+        // `adapter_settings` settings surface is covered in `ralph-core` config.
+        use ralph_core::backend;
+
+        for metadata in backend::iter() {
+            let headless = CliBackend::from_name(metadata.id)
+                .unwrap_or_else(|e| panic!("from_name({}) should succeed: {e}", metadata.id));
+            assert_eq!(
+                headless.command, metadata.command,
+                "from_name command drift for {}",
+                metadata.id
+            );
+            let interactive = CliBackend::for_interactive_prompt(metadata.id).unwrap_or_else(|e| {
+                panic!(
+                    "for_interactive_prompt({}) should succeed: {e}",
+                    metadata.id
+                )
+            });
+            assert_eq!(interactive.command, metadata.command);
+
+            // from_config must also accept every catalogued backend.
+            let config = CliConfig {
+                backend: metadata.id.to_string(),
+                command: None,
+                prompt_mode: "arg".to_string(),
+                ..Default::default()
+            };
+            assert!(
+                CliBackend::from_config(&config).is_ok(),
+                "from_config should accept catalogued backend {}",
+                metadata.id
+            );
+
+            // Detection surface: the factory command must agree with the catalog
+            // detection command (`command_for`), which `is_backend_available`
+            // probes as `<command> --version`.
+            assert_eq!(
+                backend::command_for(metadata.id),
+                Some(metadata.command),
+                "detection command drift for {}",
+                metadata.id
+            );
+
+            // Help surface: the catalog renders `display_name`/`install_url` in
+            // no-backend output and `ralph doctor`, so both must be populated.
+            assert!(
+                !metadata.display_name.is_empty(),
+                "display_name must be populated for {}",
+                metadata.id
+            );
+            assert!(
+                metadata.install_url.starts_with("http"),
+                "install_url must be an http(s) link for {}",
+                metadata.id
+            );
+        }
+
+        // Priority invariant: Roo is present and OMP stays last in default
+        // detection order (the newest named backend). Guards the cross-surface
+        // matrix against a future append that reorders the tail.
+        let priority = backend::default_priority();
+        assert!(
+            priority.contains(&"roo"),
+            "Roo must remain in default priority: {priority:?}"
+        );
+        assert_eq!(
+            priority.last().copied(),
+            Some("omp"),
+            "OMP must be appended last in default priority: {priority:?}"
+        );
+
+        // Non-catalogue names must be rejected by every construction entry point.
+        for unknown in ["ompp", "auto", "", "claude2"] {
+            assert!(
+                CliBackend::from_name(unknown).is_err(),
+                "from_name should reject {unknown:?}"
+            );
+            assert!(
+                CliBackend::for_interactive_prompt(unknown).is_err(),
+                "for_interactive_prompt should reject {unknown:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_kiro_interactive_mode_omits_no_interactive_flag() {
         let backend = CliBackend::kiro();
         let (cmd, args, stdin, _temp) = backend.build_command("test prompt", true);
@@ -1180,7 +1451,7 @@ mod tests {
                 "--output-format",
                 "stream-json",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
             ]
         );
@@ -1484,7 +1755,7 @@ mod tests {
             vec![
                 "--dangerously-skip-permissions",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite,TaskCreate,TaskUpdate,TaskList,TaskGet",
                 "test prompt"
             ]
@@ -1832,6 +2103,152 @@ mod tests {
         assert_eq!(args_auto, args_interactive);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tests for OMP backend
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_omp_backend_autonomous_argv() {
+        // AC3 / R2: the autonomous argv is exactly
+        // `-p --mode json --no-session --auto-approve`, then the positional prompt.
+        let backend = CliBackend::omp();
+        let (cmd, args, stdin, _temp) = backend.build_command("do the thing", false);
+
+        assert_eq!(cmd, "omp");
+        assert_eq!(
+            args,
+            vec![
+                "-p",
+                "--mode",
+                "json",
+                "--no-session",
+                "--auto-approve",
+                "do the thing"
+            ]
+        );
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::OmpStreamJson);
+        assert_eq!(backend.prompt_flag, None); // Positional argument
+    }
+
+    #[test]
+    fn test_omp_interactive_argv_is_dedicated() {
+        // R3: interactive argv contains only `--no-session` + the prompt and
+        // omits `-p`, `--mode json`, and `--auto-approve` (a dedicated factory —
+        // filter_args_for_interactive would leak --mode json / --auto-approve).
+        let backend = CliBackend::omp_interactive();
+        let (cmd, args, stdin, _temp) = backend.build_command("plan this", false);
+
+        assert_eq!(cmd, "omp");
+        assert_eq!(args, vec!["--no-session", "plan this"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+        assert_eq!(backend.prompt_flag, None);
+
+        // Forbidden autonomous flags must NOT leak into the interactive argv.
+        assert!(!args.contains(&"-p".to_string()));
+        assert!(!args.contains(&"--mode".to_string()));
+        assert!(!args.contains(&"json".to_string()));
+        assert!(!args.contains(&"--auto-approve".to_string()));
+    }
+
+    #[test]
+    fn test_from_name_omp() {
+        let backend = CliBackend::from_name("omp").expect("omp is a named backend");
+        assert_eq!(backend.command, "omp");
+        assert_eq!(backend.prompt_flag, None);
+        assert_eq!(backend.output_format, OutputFormat::OmpStreamJson);
+    }
+
+    #[test]
+    fn test_for_interactive_prompt_omp() {
+        let backend = CliBackend::for_interactive_prompt("omp").expect("omp interactive");
+        let (cmd, args, stdin, _temp) = backend.build_command("hi", false);
+
+        assert_eq!(cmd, "omp");
+        assert_eq!(args, vec!["--no-session", "hi"]);
+        assert!(stdin.is_none());
+        assert_eq!(backend.output_format, OutputFormat::Text);
+    }
+
+    #[test]
+    fn test_from_config_omp_threads_args_and_override() {
+        // Configured extra args appear exactly once (after the autonomous flags,
+        // before the positional prompt). Command override retains OMP identity.
+        let config = CliConfig {
+            backend: "omp".to_string(),
+            command: None,
+            prompt_mode: "arg".to_string(),
+            args: vec!["--model".to_string(), "claude-sonnet-4-5".to_string()],
+            ..Default::default()
+        };
+        let backend = CliBackend::from_config(&config).unwrap();
+        let (_cmd, args, _stdin, _temp) = backend.build_command("prompt", false);
+
+        assert_eq!(backend.command, "omp");
+        assert_eq!(backend.output_format, OutputFormat::OmpStreamJson);
+        // Autonomous prefix is intact and in order.
+        assert_eq!(
+            &args[..5],
+            &["-p", "--mode", "json", "--no-session", "--auto-approve"]
+        );
+        // Configured args appear exactly once.
+        assert_eq!(
+            args.iter().filter(|a| *a == "--model").count(),
+            1,
+            "--model must appear exactly once"
+        );
+        assert!(args.contains(&"claude-sonnet-4-5".to_string()));
+        // Positional prompt is last.
+        assert_eq!(args.last(), Some(&"prompt".to_string()));
+    }
+
+    #[test]
+    fn test_from_config_omp_command_override_keeps_omp_identity() {
+        // A custom binary path must not change the output format (OMP stays
+        // OmpStreamJson and routes through the Pi-family processor).
+        let config = CliConfig {
+            backend: "omp".to_string(),
+            command: Some("/usr/local/bin/omp-nightly".to_string()),
+            ..Default::default()
+        };
+        let backend = CliBackend::from_config(&config).unwrap();
+        assert_eq!(backend.command, "/usr/local/bin/omp-nightly");
+        assert_eq!(backend.output_format, OutputFormat::OmpStreamJson);
+    }
+
+    #[test]
+    fn test_omp_large_prompt_uses_temp_file_indirection() {
+        // OMP inherits the >7000-char temp-file prompt indirection unchanged.
+        let backend = CliBackend::omp();
+        let large_prompt = "x".repeat(7001);
+        let (cmd, args, _stdin, temp) = backend.build_command(&large_prompt, false);
+
+        assert_eq!(cmd, "omp");
+        assert!(temp.is_some());
+        assert!(args.iter().any(|a| a.contains("Please read and execute")));
+        // Autonomous flags remain before the temp-file instruction.
+        assert_eq!(
+            &args[..5],
+            &["-p", "--mode", "json", "--no-session", "--auto-approve"]
+        );
+    }
+
+    #[test]
+    fn test_omp_interactive_mode_is_not_filtered_from_autonomous() {
+        // `omp()` has no flags that `filter_args_for_interactive` strips, but the
+        // dedicated `omp_interactive()` factory is the source of truth: building
+        // `omp()` in interactive mode must never drop `--auto-approve`/`--mode json`
+        // (they are autonomous-only and stay when present).
+        let backend = CliBackend::omp();
+        let (_, args_interactive, _, _) = backend.build_command("test prompt", true);
+        assert!(
+            args_interactive.contains(&"--auto-approve".to_string()),
+            "autonomous omp flags must survive interactive build_command: {args_interactive:?}"
+        );
+        assert!(args_interactive.contains(&"--mode".to_string()));
+    }
+
     #[test]
     fn test_custom_args_can_be_appended() {
         // Verify that custom args can be appended to backend args
@@ -1876,7 +2293,7 @@ mod tests {
             vec![
                 "--dangerously-skip-permissions",
                 "--setting-sources",
-                "project,local",
+                "user,project,local",
                 "--disallowedTools=TodoWrite",
                 "test prompt"
             ]
@@ -1907,6 +2324,7 @@ mod tests {
         assert!(CliBackend::opencode().env_vars.is_empty());
         assert!(CliBackend::pi().env_vars.is_empty());
         assert!(CliBackend::roo().env_vars.is_empty());
+        assert!(CliBackend::omp().env_vars.is_empty());
     }
 
     #[test]
@@ -1928,7 +2346,7 @@ mod tests {
                 .filter(|window| window[0] == "--setting-sources")
                 .map(|window| window[1].as_str());
 
-            assert_eq!(setting_sources.next(), Some("project,local"));
+            assert_eq!(setting_sources.next(), Some("user,project,local"));
             assert_eq!(setting_sources.next(), None);
         }
     }

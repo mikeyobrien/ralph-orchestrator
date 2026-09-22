@@ -31,10 +31,6 @@ event_loop:
   max_runtime_seconds: 14400       # 4 hours max
   checkpoint_interval: 5
 
-cli:
-  backend: "claude"
-  prompt_mode: "arg"
-
 core:
   specs_dir: ".ralph/specs/"
   guardrails:

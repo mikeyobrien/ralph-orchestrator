@@ -11,6 +11,7 @@
 //! - Benchmark task definitions and workspace isolation
 
 pub mod autoloop_health;
+pub mod backend;
 #[cfg(feature = "recording")]
 mod cli_capture;
 mod config;
@@ -57,6 +58,7 @@ pub mod utils;
 pub mod workspace;
 pub mod worktree;
 
+pub use backend::BackendMetadata;
 #[cfg(feature = "recording")]
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
@@ -132,6 +134,7 @@ pub use task_store::TaskStore;
 pub use termination::TerminationReason;
 pub use text::{sanitize_tui_block_text, sanitize_tui_inline_text, truncate_with_ellipsis};
 pub use urgent_steer::{UrgentSteerRecord, UrgentSteerStore};
+
 pub use workspace::{
     CleanupPolicy, TaskWorkspace, VerificationResult, WorkspaceError, WorkspaceInfo,
     WorkspaceManager,

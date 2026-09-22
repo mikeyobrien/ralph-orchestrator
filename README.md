@@ -176,7 +176,7 @@ Ralph applies the [Ralph Wiggum technique](https://ghuntley.com/ralph/) as the
 terminal frontend and observation/coordination plane around autoloop. Autoloop
 is the execution engine and owns completion judgment; Ralph provides:
 
-- **Multi-Backend Support** — Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, OpenCode
+- **Multi-Backend Support** — Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, OpenCode, Pi, Roo, OMP
 - **Hat System** — Specialized personas translated into autoloop roles and event routing
 - **Observation** — TUI views over autoloop's journal, event stream, and summary contracts
 - **Coordination** — Loop registry, worktrees, merge queue, and completion bookkeeping
@@ -259,7 +259,7 @@ ralph run -p "Implement the approved authentication plan under .agents/planning/
 ```
 
 **What backends does Ralph support?**
-Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, and OpenCode.
+Claude Code, Kiro, Gemini CLI, Codex, Forge, Amp, Copilot CLI, OpenCode, Pi, Roo, and OMP (oh-my-pi).
 
 **What is the "hat system"?**
 Ralph uses specialized personas (hats) that coordinate through events. Each hat has a specific role — code-assist, debug, research, review, and pdd-to-code-assist — enabling structured multi-step task execution.

@@ -59,6 +59,25 @@ Ralph needs at least one AI CLI tool to function. Install one of the following:
     curl -fsSL https://opencode.ai/install | bash
     ```
 
+=== "Pi"
+
+    ```bash
+    npm install -g @mariozechner/pi-coding-agent
+    ```
+
+=== "Roo"
+
+    ```bash
+    # Visit https://github.com/RooVetGit/Roo-Code for installation
+    ```
+
+=== "OMP (oh-my-pi)"
+
+    ```bash
+    # Visit https://github.com/can1357/oh-my-pi for the current install method
+    omp --version   # verified baseline: omp/17.2.10
+    ```
+
 ## Installing Ralph
 
 ### Via npm (Recommended)

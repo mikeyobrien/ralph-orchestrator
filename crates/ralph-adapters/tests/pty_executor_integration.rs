@@ -1,8 +1,8 @@
 #[cfg(unix)]
 mod pty_executor_integration {
     use ralph_adapters::{
-        CliBackend, OutputFormat, PromptMode, PtyConfig, PtyExecutor, SessionResult, StreamHandler,
-        TerminationType,
+        CliBackend, CliExecutor, OutputFormat, PromptMode, PtyConfig, PtyExecutor, SessionResult,
+        StreamHandler, TerminationType,
     };
     use tempfile::TempDir;
 
@@ -228,8 +228,11 @@ mod pty_executor_integration {
         let (_tx, rx) = tokio::sync::watch::channel(false);
         let mut handler = CapturingHandler::default();
 
-        // Two turns with different costs
+        // Two turns with different costs. A text_delta makes this a realistic
+        // clean session (TR7: a non-tool turn with zero assistant text would
+        // otherwise be flagged as a protocol mismatch).
         let script = r#"printf '%s\n' \
+'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"working"}}' \
 '{"type":"turn_end","message":{"role":"assistant","content":[],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.05}},"stopReason":"toolUse"}}' \
 '{"type":"turn_end","message":{"role":"assistant","content":[],"usage":{"input":200,"output":100,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.03}},"stopReason":"stop"}}'"#;
 
@@ -268,6 +271,7 @@ mod pty_executor_integration {
 
         let script = r#"printf '%s\n' \
 '{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"thinking text"}}' \
+'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"final answer"}}' \
 '{"type":"turn_end","message":{"role":"assistant","content":[],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}'"#;
 
         let result = executor
@@ -276,8 +280,16 @@ mod pty_executor_integration {
             .expect("run_observe_streaming");
 
         assert!(result.success);
-        assert!(handler.texts.is_empty());
-        assert!(result.extracted_text.is_empty());
+        // Thinking is hidden outside TUI mode: only the assistant text is
+        // surfaced to the handler, never the thinking delta.
+        assert!(
+            !handler.texts.iter().any(|t| t.contains("thinking text")),
+            "thinking must be hidden without TUI: {:?}",
+            handler.texts
+        );
+        assert!(handler.texts.iter().any(|t| t.contains("final answer")));
+        // extracted_text (used for event parsing) holds assistant text only.
+        assert_eq!(result.extracted_text, "final answer");
     }
 
     #[tokio::test]
@@ -305,6 +317,7 @@ mod pty_executor_integration {
 
         let script = r#"printf '%s\n' \
 '{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"thinking text"}}' \
+'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"final answer"}}' \
 '{"type":"turn_end","message":{"role":"assistant","content":[],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}'"#;
 
         let result = executor
@@ -313,9 +326,584 @@ mod pty_executor_integration {
             .expect("run_observe_streaming");
 
         assert!(result.success);
-        assert_eq!(handler.texts, vec!["thinking text"]);
-        // Thinking text should not be included in extracted_text (used for event parsing).
-        assert!(result.extracted_text.is_empty());
+        // In TUI mode the thinking delta IS surfaced to the handler ...
+        assert!(
+            handler.texts.iter().any(|t| t.contains("thinking text")),
+            "thinking must be shown in TUI mode: {:?}",
+            handler.texts
+        );
+        // ... but extracted_text (used for event parsing) holds assistant text
+        // only, never thinking.
+        assert_eq!(result.extracted_text, "final answer");
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_pi_protocol_mismatch_header_only() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 80,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        // A successful Pi process that emits only header/unknown records must
+        // NOT be a silent empty success — TR7 surfaces a protocol mismatch
+        // (case 1: zero recognized assistant/tool/turn events).
+        let script = r#"printf '%s\n' \
+'{"type":"session","version":3}' \
+'{"type":"agent_start"}'"#;
+
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(
+            !result.success,
+            "header-only stream must not be a silent success"
+        );
+        assert_eq!(handler.completions.len(), 1);
+        assert!(handler.completions[0].is_error);
+        assert!(
+            result
+                .protocol_error
+                .as_ref()
+                .is_some_and(|pe| pe.contains("no usable")),
+            "must surface a case-1 protocol mismatch: {:?}",
+            result.protocol_error
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_pi_parity_no_tui_vs_pty() {
+        // Step-2 Demo / AC3: the same fake Pi session produces identical
+        // completion text and metrics through the no-TUI CliExecutor and the
+        // PtyExecutor. PTY cols are widened so each fixture line fits one row
+        // (80-column wrapping is exercised separately by realistic_long_lines).
+        let ndjson = [
+            r#"{"type":"session","version":3}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}"#,
+            r#"{"type":"turn_end","message":{"content":[],"stopReason":"stop","usage":{"input":5,"output":7,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.02}}}}"#,
+        ];
+        let script = format!(
+            "printf '%s\\n' {}",
+            ndjson
+                .iter()
+                .map(|l| format!("'{l}'"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+
+        // --- no-TUI: CliExecutor ---
+        let cli_backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        };
+        let cli_executor = CliExecutor::new(cli_backend);
+        let cli_result = cli_executor
+            .execute_capture(&script)
+            .await
+            .expect("no-TUI execute");
+        let cli_session = cli_result
+            .session_result
+            .expect("no-TUI Pi stream must produce a session result");
+
+        // --- PTY: PtyExecutor ---
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pty_backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(pty_backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+        let pty_result = executor
+            .run_observe_streaming(&script, rx, &mut handler)
+            .await
+            .expect("PTY execute");
+
+        // Identical completion text across modes.
+        assert_eq!(
+            cli_result.extracted_text.as_deref().unwrap_or(""),
+            pty_result.extracted_text,
+            "completion text must match across no-TUI and PTY"
+        );
+        // Identical fixture metrics across modes. The PTY result exposes
+        // cost/tokens directly; num_turns comes from the on_complete SessionResult.
+        let pty_session = handler
+            .completions
+            .first()
+            .expect("PTY on_complete must fire for a Pi session");
+        assert!(
+            (cli_session.total_cost_usd - pty_result.total_cost_usd).abs() < 1e-10,
+            "cost parity: {} vs {}",
+            cli_session.total_cost_usd,
+            pty_result.total_cost_usd
+        );
+        assert_eq!(cli_session.num_turns, pty_session.num_turns);
+        assert_eq!(cli_session.input_tokens, pty_result.input_tokens);
+        assert_eq!(cli_session.output_tokens, pty_result.output_tokens);
+        assert_eq!(cli_session.cache_read_tokens, pty_result.cache_read_tokens);
+        assert_eq!(
+            cli_session.cache_write_tokens,
+            pty_result.cache_write_tokens
+        );
+        assert!(
+            cli_result.success && pty_result.success,
+            "both modes must report success for a clean stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_pi_swallowed_delta_recovers_via_turn_end_content() {
+        // TR7a (PTY): when assistant text_delta events are an unrecognized shape
+        // (routed to Other, accumulating no delta) but turn_end carries the
+        // assistant text, the mandatory turn_end.content fallback recovers it,
+        // surfaces it to the display handler, and keeps the session non-mismatch.
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        // toolcall_start is an unrecognized assistant subevent (-> Other), so no
+        // delta text accumulates; recovery must come from turn_end.content.
+        let script = r#"printf '%s\n' \
+'{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0}}' \
+'{"type":"turn_end","message":{"content":[{"type":"text","text":"recovered answer"}],"stopReason":"stop","usage":{"input":1,"output":1,"cost":{"total":0.01}}}}'"#;
+
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(
+            result.success,
+            "recovered text means a clean (non-mismatch) session"
+        );
+        // Recovered fallback text is surfaced to the display handler ...
+        assert!(
+            handler.texts.iter().any(|t| t.contains("recovered answer")),
+            "recovered text must be shown on the display: {:?}",
+            handler.texts
+        );
+        // ... and present in extracted_text for event parsing.
+        assert_eq!(result.extracted_text, "recovered answer");
+    }
+
+    // =========================================================================
+    // OMP (oh-my-pi) — same shared Pi-family processor, distinct OmpStreamJson
+    // identity. Fixtures live under tests/fixtures/omp/ (see that README).
+    // =========================================================================
+
+    #[tokio::test]
+    async fn run_observe_streaming_omp_stream_json_parses_events() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        // An OMP session: text + tool lifecycle (isError omitted → defaults false)
+        // + a terminal turn_end with usage/cost. agent_end is ignored.
+        let script = r#"printf '%s\n' \
+'{"type":"session","version":3,"id":"omp-1","cwd":"/tmp/example"}' \
+'{"type":"agent_start"}' \
+'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello from OMP"}}' \
+'{"type":"tool_execution_start","toolCallId":"toolu_1","toolName":"bash","args":{"command":"echo omp"}}' \
+'{"type":"tool_execution_end","toolCallId":"toolu_1","toolName":"bash","result":{"content":[{"type":"text","text":"omp\n"}]}}' \
+'{"type":"turn_end","message":{"content":[{"type":"text","text":"Hello from OMP"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.05}},"stopReason":"stop"}}' \
+'{"type":"agent_end"}'"#;
+
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(result.success, "clean OMP stream should succeed");
+        assert!(
+            handler.texts.iter().any(|t| t.contains("Hello from OMP")),
+            "Expected text delta, got: {:?}",
+            handler.texts
+        );
+        assert_eq!(handler.tool_calls.len(), 1);
+        assert_eq!(handler.tool_calls[0].0, "bash");
+        assert_eq!(handler.tool_results.len(), 1);
+        assert_eq!(handler.tool_results[0].1, "omp\n");
+        // on_complete fires with accumulated cost; isError stays false even
+        // though the tool end omitted isError (OMP optional → default false).
+        assert_eq!(handler.completions.len(), 1);
+        assert!(!handler.completions[0].is_error);
+        assert!((handler.completions[0].total_cost_usd - 0.05).abs() < 1e-10);
+        assert_eq!(handler.completions[0].num_turns, 1);
+        // extracted_text (LOOP_COMPLETE source) holds the assistant text.
+        assert!(
+            result.extracted_text.contains("Hello from OMP"),
+            "Expected extracted text, got: {:?}",
+            result.extracted_text
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_omp_parity_no_tui_vs_pty() {
+        // AC8 parity for OMP: the same fake OMP session produces identical
+        // completion text and metrics through the no-TUI CliExecutor and the
+        // PtyExecutor. PTY cols are widened so each fixture line fits one row.
+        let ndjson = [
+            r#"{"type":"session","version":3}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}"#,
+            r#"{"type":"turn_end","message":{"content":[],"stopReason":"stop","usage":{"input":5,"output":7,"cacheRead":3,"cacheWrite":2,"cost":{"total":0.02}}}}"#,
+            r#"{"type":"agent_end"}"#,
+        ];
+        let script = format!(
+            "printf '%s\\n' {}",
+            ndjson
+                .iter()
+                .map(|l| format!("'{l}'"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+
+        // --- no-TUI: CliExecutor ---
+        let cli_backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let cli_executor = CliExecutor::new(cli_backend);
+        let cli_result = cli_executor
+            .execute_capture(&script)
+            .await
+            .expect("no-TUI execute");
+        let cli_session = cli_result
+            .session_result
+            .expect("no-TUI OMP stream must produce a session result");
+
+        // --- PTY: PtyExecutor ---
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pty_backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(pty_backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+        let pty_result = executor
+            .run_observe_streaming(&script, rx, &mut handler)
+            .await
+            .expect("PTY execute");
+
+        // Identical completion text across modes.
+        assert_eq!(
+            cli_result.extracted_text.as_deref().unwrap_or(""),
+            pty_result.extracted_text,
+            "OMP completion text must match across no-TUI and PTY"
+        );
+        let pty_session = handler
+            .completions
+            .first()
+            .expect("PTY on_complete must fire for an OMP session");
+        assert!(
+            (cli_session.total_cost_usd - pty_result.total_cost_usd).abs() < 1e-10,
+            "cost parity: {} vs {}",
+            cli_session.total_cost_usd,
+            pty_result.total_cost_usd
+        );
+        assert_eq!(cli_session.num_turns, pty_session.num_turns);
+        assert_eq!(cli_session.input_tokens, pty_result.input_tokens);
+        assert_eq!(cli_session.output_tokens, pty_result.output_tokens);
+        assert_eq!(cli_session.cache_read_tokens, pty_result.cache_read_tokens);
+        assert_eq!(
+            cli_session.cache_write_tokens,
+            pty_result.cache_write_tokens
+        );
+        assert!(
+            cli_result.success && pty_result.success,
+            "both modes must report success for a clean OMP stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_omp_protocol_mismatch_header_only() {
+        // OMP shares the case-1 protocol mismatch: a successful process that
+        // emits only header/agent records must NOT be a silent empty success.
+        // Drives the committed tests/fixtures/omp/no_usable_events.ndjson fixture
+        // through the real PtyExecutor (the file is a real input, not dead).
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/omp/no_usable_events.ndjson");
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        let script = format!("cat '{}'", fixture.display());
+        let result = executor
+            .run_observe_streaming(&script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(
+            !result.success,
+            "OMP header-only stream must not be a silent success"
+        );
+        assert_eq!(handler.completions.len(), 1);
+        assert!(handler.completions[0].is_error);
+        let pe = result
+            .protocol_error
+            .as_ref()
+            .expect("must surface an OMP case-1 mismatch");
+        assert!(pe.contains("no usable"), "case-1 wording: {pe}");
+        // Design Q1 / TR9: OMP diagnostics must say OMP.
+        assert!(
+            pe.contains("OMP"),
+            "OMP mismatch must be OMP-labelled: {pe}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_omp_fixture_malformed_lines_tolerated() {
+        // Drives tests/fixtures/omp/malformed_mixed.ndjson: malformed lines are
+        // skipped (counted), well-formed records still parse, and the recovered
+        // assistant text surfaces (real fixture input, not a dead artifact).
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/omp/malformed_mixed.ndjson");
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        let script = format!("cat '{}'", fixture.display());
+        let result = executor
+            .run_observe_streaming(&script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(
+            result.success,
+            "a stream with valid records after malformed lines is a clean session"
+        );
+        assert!(
+            result
+                .extracted_text
+                .contains("recovered after malformed line"),
+            "valid record after malformed lines must be parsed: {:?}",
+            result.extracted_text
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_omp_nonzero_exit_classified() {
+        // TR8: a non-zero OMP process exit is classified as failure (success ==
+        // false, exit code preserved) while the assistant text parsed before the
+        // exit is still recovered. The failed process skips the mismatch check.
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        // Emit a valid text_delta + turn_end, then exit non-zero.
+        let script = r#"printf '%s\n' \
+'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"partial OMP work"}}' \
+'{"type":"turn_end","message":{"content":[],"stopReason":"stop","usage":{"input":1,"output":1,"cost":{"total":0.0}}}}'
+exit 7"#;
+
+        let result = executor
+            .run_observe_streaming(script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(!result.success, "non-zero exit must be a failure");
+        assert_eq!(result.exit_code, Some(7), "exit code is preserved");
+        // Text parsed before the exit is still recovered.
+        assert!(
+            result.extracted_text.contains("partial OMP work"),
+            "pre-exit assistant text must be recovered: {:?}",
+            result.extracted_text
+        );
+        let session = handler
+            .completions
+            .first()
+            .expect("on_complete must fire even on non-zero exit");
+        assert!(session.is_error, "non-zero exit session is an error");
+        assert!(
+            result.protocol_error.is_none(),
+            "failed process must skip the mismatch check"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_observe_streaming_omp_fixture_session_completes() {
+        // Drives the committed tests/fixtures/omp/session.ndjson fixture through
+        // the real PtyExecutor via a fake `cat`-style backend, proving the
+        // fixture is a real input (not a dead artifact) and LOOP_COMPLETE is
+        // detected from extracted assistant text — never from raw NDJSON.
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/omp/session.ndjson");
+        let ndjson = std::fs::read_to_string(&fixture)
+            .unwrap_or_else(|e| panic!("failed to read OMP fixture {}: {e}", fixture.display()));
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::OmpStreamJson,
+            env_vars: vec![],
+        };
+        let config = PtyConfig {
+            interactive: false,
+            idle_timeout_secs: 0,
+            cols: 200,
+            rows: 24,
+            workspace_root: temp_dir.path().to_path_buf(),
+        };
+        let executor = PtyExecutor::new(backend, config);
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let mut handler = CapturingHandler::default();
+
+        // `cat` the fixture so the fake omp emits the pinned OMP 17.2.10 stream.
+        let script = format!("cat '{}'", fixture.display());
+        let _ = ndjson; // fixture is exercised via the cat script above
+        let result = executor
+            .run_observe_streaming(&script, rx, &mut handler)
+            .await
+            .expect("run_observe_streaming");
+
+        assert!(result.success, "OMP fixture session should succeed");
+        // Completion marker detected from extracted assistant text only.
+        assert!(
+            result.extracted_text.contains("LOOP_COMPLETE"),
+            "LOOP_COMPLETE must be recovered from extracted assistant text: {:?}",
+            result.extracted_text
+        );
+        assert!(
+            handler.tool_calls.iter().any(|(n, _, _)| n == "bash"),
+            "fixture tool lifecycle must be parsed"
+        );
+        // Metrics from the terminal turn_end.
+        let session = handler
+            .completions
+            .first()
+            .expect("on_complete must fire for the OMP fixture");
+        assert!(!session.is_error);
+        assert_eq!(session.num_turns, 1);
+        assert!((session.total_cost_usd - 0.01027).abs() < 1e-10);
     }
 
     /// Live test: run the actual Pi CLI through the PTY executor.

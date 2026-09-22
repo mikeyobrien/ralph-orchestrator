@@ -14,9 +14,6 @@ event_loop:
   max_runtime_seconds: 7200
   starting_event: "debug.start"  # Ralph publishes this after coordination
 
-cli:
-  backend: "claude"
-
 core:
   specs_dir: ".ralph/specs/"
 

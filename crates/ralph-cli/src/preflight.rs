@@ -1454,6 +1454,54 @@ hats:
     }
 
     #[tokio::test]
+    async fn ralph_omp_yml_parses_and_composes_with_builtin_hat_collection() {
+        // TR8 / AC3: `ralph.omp.yml` is the OMP backend example/overlay. It must
+        // (a) parse into a valid RalphConfig with backend=omp, (b) NOT define its
+        // own hat collection (builtin hats are backend-agnostic; the design forbids
+        // an OMP-only workflow preset), and (c) compose cleanly with a builtin hat
+        // collection through the same overlay path
+        // `ralph run -c ralph.omp.yml -H builtin:code-assist` uses.
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let omp_yml = std::fs::read_to_string(repo_root.join("ralph.omp.yml"))
+            .expect("ralph.omp.yml must exist at repo root (TR8 deliverable)");
+
+        // (a) parses + validates as a standalone OMP config.
+        let omp_core: Value =
+            serde_yaml::from_str(&omp_yml).expect("ralph.omp.yml must be valid YAML");
+        let omp_config = RalphConfig::parse_yaml(&omp_yml).expect("ralph.omp.yml loads");
+        assert_eq!(omp_config.cli.backend, "omp");
+        assert!(
+            omp_config.validate().is_ok(),
+            "ralph.omp.yml must validate on its own"
+        );
+        // (b) no OMP-only hat collection — compose with -H builtin:... instead.
+        assert!(
+            omp_config.hats.is_empty(),
+            "ralph.omp.yml must not define its own hat collection"
+        );
+
+        // (c) compose with a builtin hat collection via the real overlay path.
+        let hats = load_hats_value(&HatsSource::Builtin("code-assist".to_string()))
+            .await
+            .expect("builtin code-assist hat collection loads");
+        let merged = merge_hats_overlay(omp_core, hats).expect("overlay merges");
+        let merged_yaml = serde_yaml::to_string(&merged).expect("merged config serializes to YAML");
+        let composed = RalphConfig::parse_yaml(&merged_yaml).expect("composed config loads");
+        assert_eq!(
+            composed.cli.backend, "omp",
+            "backend must remain omp after hat overlay"
+        );
+        assert!(
+            !composed.hats.is_empty(),
+            "builtin hat collection must be present after overlay"
+        );
+        assert!(
+            composed.validate().is_ok(),
+            "composed ralph.omp.yml + builtin:code-assist must validate"
+        );
+    }
+
+    #[tokio::test]
     async fn load_config_for_preflight_hats_source_takes_precedence_over_core_hats() {
         let temp_dir = tempfile::tempdir().unwrap();
         let core_path = temp_dir.path().join("ralph.yml");

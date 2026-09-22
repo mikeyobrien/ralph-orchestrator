@@ -1,0 +1,3 @@
+{"ts": 1000, "event": "ux.terminal.write", "data": {"bytes": "U3RhcnRpbmcgT01QIHNlc3Npb24uLi4KQW5hbHl6aW5nIHJlcXVpcmVtZW50cy4uLgoK", "stdout": true, "offset_ms": 0}}
+{"ts": 2000, "event": "ux.terminal.write", "data": {"bytes": "SW1wbGVtZW50aW5nIGZlYXR1cmUgdmlhIGJhc2ggdG9vbC4uLgpSdW5uaW5nIHRlc3RzIHdpdGggY2FyZ28gdGVzdC4uLgpBbGwgdGVzdHMgcGFzcyEKCjxldmVudCB0b3BpYz0iYnVpbGQuZG9uZSI+CnRlc3RzOiBwYXNzCmxpbnQ6IHBhc3MKPC9ldmVudD4K", "stdout": true, "offset_ms": 1000}}
+{"ts": 3000, "event": "ux.terminal.write", "data": {"bytes": "VGFzayBjb21wbGV0ZSEKCjxldmVudCB0b3BpYz0iTE9PUF9DT01QTEVURSI+ZG9uZTwvZXZlbnQ+Cg==", "stdout": true, "offset_ms": 2000}}

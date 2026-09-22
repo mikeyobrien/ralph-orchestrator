@@ -1,0 +1,30 @@
+# ABOUTME: Ralph configuration overlay for the oh-my-pi (omp) backend.
+# ABOUTME: OMP owns providers, models, credentials, tools, and approvals.
+
+# OMP is a catalogued backend — select it in core config, then run:
+#   ralph run -c ralph.omp.yml -p "your task"
+#
+# Builtin hat collections are backend-agnostic. Compose this overlay with one
+# instead of defining OMP-only hats (the design forbids an OMP-only preset):
+#   ralph run -c ralph.omp.yml -H builtin:code-assist -p "your task"
+#
+# OMP owns its own providers, models, credentials, tools, extensions, skills,
+# rules, and approval policy. Ralph only selects OMP and threads `cli.args`
+# through verbatim; it never interprets them. Headless iterations run with the
+# exact argv `omp -p --mode json --no-session --auto-approve [--model ...] <prompt>`;
+# `ralph plan --backend omp` runs the OMP TUI with `omp --no-session <prompt>`
+# only (no `-p`/`--mode json`/`--auto-approve` autonomous flags).
+
+cli:
+  backend: omp
+  prompt_mode: arg
+
+  # Pass-through flags forwarded to every OMP invocation. Edit for your setup;
+  # OMP interprets these (e.g. --provider, --model, --profile, --max-time).
+  args:
+    - "--model"
+    - "claude-sonnet-4-5"
+
+event_loop:
+  max_iterations: 15
+  completion_promise: LOOP_COMPLETE

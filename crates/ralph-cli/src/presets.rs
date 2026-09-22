@@ -193,6 +193,20 @@ mod tests {
     }
 
     #[test]
+    fn test_presets_have_no_top_level_cli_block() {
+        for preset in PRESETS {
+            let value: serde_yaml::Value =
+                serde_yaml::from_str(preset.content).expect("preset should parse as YAML");
+            assert!(
+                value.get("cli").is_none(),
+                "Preset '{}' must not carry a top-level `cli:` block; \
+                 the backend comes from user config or auto-detection",
+                preset.name
+            );
+        }
+    }
+
+    #[test]
     fn test_preset_content_is_valid_yaml() {
         for preset in PRESETS {
             let result: Result<serde_yaml::Value, _> = serde_yaml::from_str(preset.content);

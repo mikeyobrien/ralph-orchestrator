@@ -1,0 +1,4 @@
+{"type":"session","version":3}
+this line is not valid json
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"recovered after malformed line"}}
+{"type":"turn_end","message":{"content":[],"stopReason":"stop","usage":{"input":3,"output":4,"cost":{"total":0.012}}}}

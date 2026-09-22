@@ -31,9 +31,6 @@ event_loop:
   max_runtime_seconds: 1800
   starting_event: "merge.start"
 
-cli:
-  backend: "auto"
-
 core:
   specs_dir: ".ralph/specs/"
 

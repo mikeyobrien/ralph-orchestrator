@@ -11,6 +11,11 @@ ralph init --list-presets
 ralph run -c ralph.yml -H builtin:code-assist -p "Add user authentication"
 ```
 
+> **Backend note:** `-H` mode never changes the backend — the backend always
+> comes from `cli.backend` in your config, or auto-detection when unset.
+> Shipped presets carry no `cli:` block of their own, so running one in
+> single-file mode (`-c presets/<name>.yml`) does not select a backend either.
+
 ## Supported Builtins
 
 | Collection | Hats | Best for | Notes |

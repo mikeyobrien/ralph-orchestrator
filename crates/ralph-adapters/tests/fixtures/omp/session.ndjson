@@ -1,0 +1,11 @@
+{"type":"session","version":3,"id":"omp-session-example","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp/example"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"Planning the response."}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"Hello from OMP."}}
+{"type":"tool_execution_start","toolCallId":"toolu_omp_1","toolName":"bash","args":{"command":"echo omp"}}
+{"type":"tool_execution_update","toolCallId":"toolu_omp_1","toolName":"bash","args":{"command":"echo omp"},"partialResult":{"content":[{"type":"text","text":"omp\n"}]}}
+{"type":"tool_execution_end","toolCallId":"toolu_omp_1","toolName":"bash","result":{"content":[{"type":"text","text":"omp\n"}]}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":" Done. LOOP_COMPLETE"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Hello from OMP. Done. LOOP_COMPLETE"}],"api":"omp-api","provider":"anthropic","model":"claude-sonnet-4-5","usage":{"input":120,"output":45,"cacheRead":1024,"cacheWrite":64,"totalTokens":1253,"cost":{"input":0.0006,"output":0.00135,"cacheRead":0.00512,"cacheWrite":0.0032,"total":0.01027}},"stopReason":"stop","timestamp":1770259166907}}
+{"type":"agent_end"}

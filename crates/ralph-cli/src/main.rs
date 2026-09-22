@@ -599,7 +599,8 @@ enum Commands {
 /// Arguments for the init subcommand.
 #[derive(Parser, Debug)]
 struct InitArgs {
-    /// Backend to use (claude, kiro, gemini, codex, forge, amp, copilot, opencode, pi, custom).
+    /// Backend to use (a catalogued backend id such as `claude`, `omp`, or the
+    /// `custom` selector). Run `ralph doctor` for the full, current list.
     /// Generates core config only.
     #[arg(long, conflicts_with = "list_presets")]
     backend: Option<String>,
@@ -758,6 +759,11 @@ struct CleanArgs {
     /// Clean diagnostic logs instead of `.ralph/` directory
     #[arg(long)]
     diagnostics: bool,
+
+    /// Clean event run history (`.ralph/events*.jsonl` + `current-events` marker)
+    /// instead of the agent directory
+    #[arg(long, conflicts_with = "diagnostics")]
+    events: bool,
 }
 
 /// Arguments for the emit subcommand.
@@ -1830,7 +1836,7 @@ fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
     println!("Usage:");
     println!("  ralph init --backend <backend>   Generate core config (ralph.yml)");
     println!("  ralph init --list-presets        Show builtin hat collections\n");
-    println!("Backends: {}", backend_support::valid_backends_label());
+    println!("Backends: {}", backend_support::valid_backend_label());
     println!("\nThen run with hats, e.g.: ralph run -c ralph.yml -H builtin:code-assist");
 
     Ok(())
@@ -1928,6 +1934,12 @@ fn clean_command(
         return ralph_cli::clean_diagnostics(&workspace_root, use_colors, args.dry_run);
     }
 
+    // If --events flag is set, clean event run history only
+    if args.events {
+        let workspace_root = std::env::current_dir().context("Failed to get current directory")?;
+        return ralph_cli::clean_events(&workspace_root, use_colors, args.dry_run);
+    }
+
     // Load config with overrides applied
     let config = load_config_with_overrides(config_sources)?;
 
@@ -2013,13 +2025,24 @@ fn clean_command(
 /// Events are written to the path specified in `.ralph/current-events` marker file
 /// (created by `ralph run`), or falls back to `.ralph/events.jsonl` if no marker exists.
 fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
-    emit_command_with_root(color_mode, args, None)
+    // `RALPH_EVENTS_FILE` (set by the active loop on agents/workers) overrides the
+    // marker/CLI path so `ralph emit` always targets the loop's events file. It is
+    // resolved here at the public boundary rather than inside `emit_command_with_root`
+    // so the resolver stays hermetic to ambient env in tests — this crate forbids
+    // `unsafe`, so process-wide env cannot be mutated per test (see `hats.rs`
+    // `discover_in_roots` for the same explicit-injection idiom).
+    let events_override = std::env::var("RALPH_EVENTS_FILE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from);
+    emit_command_with_root(color_mode, args, None, events_override)
 }
 
 fn emit_command_with_root(
     color_mode: ColorMode,
     args: EmitArgs,
     root: Option<&PathBuf>,
+    events_override: Option<PathBuf>,
 ) -> Result<()> {
     let use_colors = color_mode.should_use_colors();
     let workspace_root = resolve_workspace_root(root);
@@ -2077,17 +2100,15 @@ fn emit_command_with_root(
         "ts": ts
     });
 
-    // Resolve events file: RALPH_EVENTS_FILE env > marker file > CLI arg
-    // This ensures `ralph emit` writes to the same events file as the active run
-    let events_file = std::env::var("RALPH_EVENTS_FILE")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            fs::read_to_string(&current_events_marker)
-                .map(|s| resolve_marker_target(&workspace_root, &s))
-                .unwrap_or_else(|_| args.file.clone())
-        });
+    // Resolve events file: explicit override (RALPH_EVENTS_FILE) > marker file > CLI arg.
+    // This ensures `ralph emit` writes to the same events file as the active run. The
+    // override is threaded in from the public boundary (not read here) so resolution is
+    // hermetic to ambient env and deterministically testable.
+    let events_file = events_override.unwrap_or_else(|| {
+        fs::read_to_string(&current_events_marker)
+            .map(|s| resolve_marker_target(&workspace_root, &s))
+            .unwrap_or_else(|_| args.file.clone())
+    });
 
     // Ensure parent directory exists
     if let Some(parent) = events_file.parent()
@@ -2842,6 +2863,7 @@ mod tests {
                 file: PathBuf::from(".ralph/events.jsonl"),
             },
             Some(&workspace),
+            None,
         )
         .expect("emit command");
 
@@ -2870,6 +2892,7 @@ mod tests {
                 file: PathBuf::from(".ralph/events.jsonl"),
             },
             Some(&workspace),
+            None,
         )
         .expect_err("urgent steer should block first emit");
 

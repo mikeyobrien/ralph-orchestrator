@@ -35,10 +35,6 @@ event_loop:
   max_consecutive_failures: 5  # Stop after 5 consecutive crashes
   idle_timeout_secs: 300       # 5 min timeout per hat turn
 
-cli:
-  backend: "claude"
-  prompt_mode: "arg"
-
 core:
   specs_dir: ".ralph/specs/"
   guardrails:

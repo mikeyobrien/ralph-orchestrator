@@ -393,8 +393,23 @@ fn starting_role(config: &RalphConfig, hats: &[(&String, &ralph_core::HatConfig)
 mod tests {
     use super::*;
 
+    /// Pins a concrete backend for preset generation.
+    ///
+    /// Generation requires a resolved backend, and the run path resolves `auto`
+    /// by detection before it generates (see `autoloop_engine`). Tests that call
+    /// `generate_preset` directly must pin one, or they depend on the ambient
+    /// machine and fail when no backend is installed.
+    fn pin_backend(mut cfg: RalphConfig) -> RalphConfig {
+        if cfg.cli.backend == "auto" || cfg.cli.backend.is_empty() {
+            cfg.cli.backend = "claude".to_string();
+        }
+        cfg
+    }
+
     fn config_with_hats() -> RalphConfig {
         let yaml = r#"
+cli:
+  backend: claude
 event_loop:
   max_iterations: 42
   required_events: ["review.passed"]
@@ -417,7 +432,7 @@ hats:
 
     #[test]
     fn generates_a_single_role_preset_when_no_hats() {
-        let cfg = RalphConfig::default();
+        let cfg = pin_backend(RalphConfig::default());
         let dir = tempfile::tempdir().unwrap();
         generate_preset(&cfg, dir.path()).unwrap();
         assert!(dir.path().join("autoloops.toml").is_file());
@@ -429,7 +444,7 @@ hats:
 
     #[test]
     fn generated_preset_writes_effective_default_max_iterations() {
-        let cfg = RalphConfig::default();
+        let cfg = pin_backend(RalphConfig::default());
         let dir = tempfile::tempdir().unwrap();
 
         generate_preset(&cfg, dir.path()).unwrap();
@@ -513,6 +528,7 @@ hats:
 "#,
         )
         .expect("valid concurrent hat config");
+        let cfg = pin_backend(cfg);
         let dir = tempfile::tempdir().unwrap();
 
         generate_preset(&cfg, dir.path()).unwrap();
@@ -550,6 +566,7 @@ hats:
 "#,
         )
         .expect("valid aggregate hat config");
+        let cfg = pin_backend(cfg);
         let dir = tempfile::tempdir().unwrap();
 
         generate_preset(&cfg, dir.path()).unwrap();
@@ -566,6 +583,7 @@ hats:
         let yaml = fs::read_to_string(&preset_path).expect("wave review preset should be readable");
         let mut cfg: RalphConfig =
             serde_yaml::from_str(&yaml).expect("wave review preset should parse");
+        let mut cfg = pin_backend(cfg);
         cfg.normalize();
         cfg.validate()
             .expect("wave review preset should pass config validation");
@@ -593,7 +611,7 @@ hats:
 
     #[test]
     fn keeps_incompatible_ralph_and_autoloop_task_stores_separate() {
-        let cfg = RalphConfig::default();
+        let cfg = pin_backend(RalphConfig::default());
         let dir = tempfile::tempdir().unwrap();
 
         generate_preset(&cfg, dir.path()).unwrap();
@@ -615,6 +633,7 @@ event_loop:
 ",
         )
         .expect("valid v2 config");
+        let cfg = pin_backend(cfg);
         let dir = tempfile::tempdir().unwrap();
 
         generate_preset(&cfg, dir.path()).unwrap();
@@ -635,6 +654,7 @@ max_cost: 1.25
 ",
         )
         .expect("valid v1 config");
+        let mut cfg = pin_backend(cfg);
         cfg.normalize();
         let dir = tempfile::tempdir().unwrap();
 
