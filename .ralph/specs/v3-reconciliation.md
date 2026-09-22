@@ -31,6 +31,10 @@ classifies every rollup-only commit, and names the ports that follow.
   revision-3 text: the smoke cluster carries the state root in five paths, not
   four, and five tracked `.ralph/tasks/*.code-task.md` docs at `HEAD` carry no
   frontmatter, not one. It changes no verdict.
+- Revision 7 corrects a false commit attribution in the revision-6 section. That
+  section recorded the revision-5 rejection at `27ec1df`; revision 5 is
+  `c40ebbd`, where both the `review.ready` and the `review.rejected` for that
+  round sit. It changes no verdict.
 
 ## Method
 
@@ -687,7 +691,7 @@ no source is edited.
 
 ### What revision 6 changed
 
-Revision 5 was rejected at `27ec1df` for two false state claims in revision-3
+Revision 5 was rejected at `c40ebbd` for two false state claims in revision-3
 text that revisions 4 and 5 reported as re-measured. Both are one-line fixes.
 Both commands below were re-run at `27ec1df` for this section.
 
@@ -750,3 +754,47 @@ tip by `diff -q` over `git show` output, the 8 differing paths listed above, the
 cosmetic difference in the direction the record states. The tally stays 16
 `port`, 4 `already-covered`, 2 `superseded`, 22 rows. No verdict changes and no
 source is edited.
+
+### What revision 7 changed
+
+Revision 6 was rejected at `4878882` for one defect: the section above recorded
+the revision-5 rejection at `27ec1df`. Revision 5 is `c40ebbd`. Both the
+`review.ready` and the `review.rejected` for that round sit at `c40ebbd`, and
+the `review.ready` payload names the revision. The rejection at `27ec1df` is
+revision 6's own rejection, and its single defect was the missing revision-log
+entry.
+
+```bash
+jq -r 'select(type=="object") | select(.payload.artifact? == ".ralph/specs/v3-reconciliation.md") | "\(.topic) \(.payload.commit) \(.payload.revision // "-")"' .ralph/events-20260922-170542.jsonl
+```
+
+```text
+review.ready 44afa19 -
+review.rejected 44afa19 -
+review.ready f4daacb -
+review.rejected f4daacb -
+review.ready 8c2a15e -
+review.rejected 56690c0 -
+review.ready c40ebbd -
+review.rejected c40ebbd -
+review.rejected 27ec1df 6
+review.ready 4878882 6
+review.rejected 4878882 6
+```
+
+The two `c40ebbd` payloads state the revision and its reason:
+
+```bash
+jq -r 'select(type=="object") | select(.payload.commit? == "c40ebbd") | "\(.topic): \((.payload.summary // .payload.defect)[0:80])"' .ralph/events-20260922-170542.jsonl
+```
+
+```text
+review.ready: Revision 5 fixes the two false state claims the rejection named: the comm -12 ov
+review.rejected: Revision 5 two corrections are exact, and every verdict, count, containment read
+```
+
+One word changed, `27ec1df` to `c40ebbd`, in the opening sentence of the
+revision-6 section. Nothing else moved. The tally stays 16 `port`, 4
+`already-covered`, 2 `superseded`, 22 rows. No verdict changes. The only path
+this commit changes is this record, so the code tree is byte-identical to
+`4878882`.
