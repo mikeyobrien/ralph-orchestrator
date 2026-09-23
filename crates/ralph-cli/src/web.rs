@@ -24,7 +24,7 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(10);
 /// Timeout for both servers to become ready
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
-const DASHBOARD_LIVE_STATE_CAVEAT: &str = "WARNING: The Ralph web dashboard does NOT render live loop state under the v3 autoloop engine yet; the parser port is tracked by ga3-c4-dashboard-dead-svf.";
+const DASHBOARD_LIVE_STATE_CAVEAT: &str = "WARNING: The Ralph web dashboard does NOT show live loop state in v3; that view was retired. Watch loops with `ralph loops` or the TUI.";
 
 /// Arguments for the web subcommand
 #[derive(Parser, Debug)]
@@ -703,7 +703,7 @@ mod tests {
     fn startup_caveat_discloses_live_state_limitation() {
         assert_eq!(
             DASHBOARD_LIVE_STATE_CAVEAT,
-            "WARNING: The Ralph web dashboard does NOT render live loop state under the v3 autoloop engine yet; the parser port is tracked by ga3-c4-dashboard-dead-svf."
+            "WARNING: The Ralph web dashboard does NOT show live loop state in v3; that view was retired. Watch loops with `ralph loops` or the TUI."
         );
     }
 

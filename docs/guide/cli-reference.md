@@ -340,9 +340,9 @@ that aren't topics anywhere in the config.
 
 Run the web dashboard.
 
-> **Live-state limitation:** The dashboard does **not** render live loop state
-> under the v3 autoloop engine yet. The autoloop event parser port is tracked by
-> `ga3-c4-dashboard-dead-svf`. `ralph web` prints this caveat at startup.
+> **No live loop view in v3:** The dashboard's live loop view was retired and
+> its event readers deleted. Watch loops with `ralph loops` or the TUI.
+> `ralph web` prints this caveat at startup.
 
 ```bash
 ralph web [OPTIONS]

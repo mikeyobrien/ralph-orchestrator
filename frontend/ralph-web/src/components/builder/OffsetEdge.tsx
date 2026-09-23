@@ -55,7 +55,6 @@ export function OffsetEdge({
   label,
   markerEnd,
   selected,
-  data,
 }: EdgeProps) {
   // Find sibling edges (same source→target pair, either direction)
   const siblingInfo = useStore((s) => {
@@ -84,17 +83,16 @@ export function OffsetEdge({
   });
 
   const color = getEdgeColor(label as string | undefined);
-  const fired = (data as Record<string, unknown> | undefined)?.fired === true;
 
   return (
     <>
-      {/* Glow layer — brighter when selected or fired */}
+      {/* Glow layer — brighter when selected */}
       <path
         d={path}
         fill="none"
         stroke={color}
-        strokeWidth={fired ? 16 : selected ? 14 : 10}
-        strokeOpacity={fired ? 0.5 : selected ? 0.35 : 0.15}
+        strokeWidth={selected ? 14 : 10}
+        strokeOpacity={selected ? 0.35 : 0.15}
       />
       {/* Main edge — solid, thick */}
       <BaseEdge
@@ -102,16 +100,13 @@ export function OffsetEdge({
         markerEnd={markerEnd}
         style={{
           stroke: color,
-          strokeWidth: fired ? 6 : selected ? 5 : 4,
-          strokeDasharray: fired ? "8 4" : undefined,
-          animation: fired ? "edgePulse 1.5s linear" : undefined,
+          strokeWidth: selected ? 5 : 4,
         }}
       />
       {label && (
         <EdgeLabelRenderer>
           <div
             data-edge-id={id}
-            data-fired={fired ? "true" : "false"}
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,

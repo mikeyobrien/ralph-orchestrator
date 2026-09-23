@@ -36,9 +36,7 @@ import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useLoopObservation } from "@/hooks/useLoopObservation";
 import { cn } from "@/lib/utils";
-import { useObservationStore } from "@/stores/observationStore";
 import { AlertCircle, CheckCircle2, Download, Save } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { HatNode, type HatNodeData } from "./HatNode";
@@ -59,29 +57,6 @@ const nodeTypes: NodeTypes = {
 const edgeTypes: EdgeTypes = {
   offset: OffsetEdge,
 };
-
-/**
- * Inline legend shown in the observation toolbar. Explains what each
- * node-ring color means so the user doesn't have to guess.
- */
-function ObservationLegend() {
-  return (
-    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-      <span className="flex items-center gap-1.5">
-        <span className="inline-block w-3 h-3 rounded border-2 border-sky-400 bg-transparent" aria-hidden />
-        pending
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="inline-block w-3 h-3 rounded border-2 border-red-500 bg-transparent animate-border-pulse" aria-hidden />
-        active
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="inline-block w-3 h-3 rounded border-2 border-teal-400 bg-transparent" aria-hidden />
-        done ✓
-      </span>
-    </div>
-  );
-}
 
 interface CollectionBuilderProps {
   /** Collection ID (null for new collection) */
@@ -358,38 +333,6 @@ function CollectionBuilderInner({
     onMarkDirty?.();
   }, [onMarkDirty]);
 
-  // ── Live observation overlay ──────────────────────────────────────────
-  const observing = useObservationStore((s) => s.active);
-  const obsNodeStates = useObservationStore((s) => s.nodeStates);
-  const lastFiredEdgeId = useObservationStore((s) => s.lastFiredEdgeId);
-  const obsIteration = useObservationStore((s) => s.iteration);
-  const obsActiveHat = useObservationStore((s) => s.activeHatId);
-
-  // Subscribe to loop.orchestration events when observing.
-  useLoopObservation(edges);
-
-  // Overlay observation state onto nodes for rendering.
-  const displayNodes = useMemo(() => {
-    if (!observing) return nodes;
-    return nodes.map((node) => {
-      const obsState = obsNodeStates[node.id];
-      if (!obsState || obsState === "idle") return node;
-      return {
-        ...node,
-        data: { ...node.data, observationState: obsState },
-      };
-    });
-  }, [nodes, observing, obsNodeStates]);
-
-  // Overlay fired state onto edges for rendering.
-  const displayEdges = useMemo(() => {
-    if (!observing || !lastFiredEdgeId) return edges;
-    return edges.map((edge) => {
-      if (edge.id !== lastFiredEdgeId) return edge;
-      return { ...edge, data: { ...edge.data, fired: true } };
-    });
-  }, [edges, observing, lastFiredEdgeId]);
-
   // Save handler
   const handleSave = useCallback(() => {
     onSave({ nodes, edges, name, description });
@@ -399,86 +342,64 @@ function CollectionBuilderInner({
     <div className={cn("flex flex-col h-full", className)}>
       {/* Toolbar */}
       <div className="flex items-center gap-3 p-3 border-b bg-background flex-wrap">
-        {observing ? (
-          <>
-            <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-400 border-indigo-500/30">
-              ● Observing
-            </Badge>
-            <span className="text-sm text-muted-foreground">
-              Iteration <span className="font-mono font-bold text-foreground">{obsIteration}</span>
-            </span>
-            {obsActiveHat && obsActiveHat !== "loop" && (
-              <Badge variant="outline" className="text-indigo-400 border-indigo-400/40">
-                {getRoleMeta(obsActiveHat).emoji} {obsActiveHat}
-              </Badge>
-            )}
-            <div className="flex-1" />
-            <ObservationLegend />
-          </>
-        ) : (
-          <>
-            <Input
-              value={name}
-              onChange={(e) => onNameChange(e.target.value)}
-              placeholder="Collection name"
-              className="w-48 h-8"
-            />
-            <Input
-              value={description}
-              onChange={(e) => onDescriptionChange(e.target.value)}
-              placeholder="Description"
-              className="flex-1 h-8"
-            />
-          </>
-        )}
+        <Input
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder="Collection name"
+          className="w-48 h-8"
+        />
+        <Input
+          value={description}
+          onChange={(e) => onDescriptionChange(e.target.value)}
+          placeholder="Description"
+          className="flex-1 h-8"
+        />
         <div className="flex items-center gap-2">
-          {!observing && isDirty && (
+          {isDirty && (
             <Badge variant="outline" className="text-yellow-600 border-yellow-600">
               Unsaved changes
             </Badge>
           )}
-          {!observing && saveStatus === "success" && (
+          {saveStatus === "success" && (
             <span className="flex items-center gap-1 text-sm text-green-600">
               <CheckCircle2 className="h-4 w-4" />
               Saved
             </span>
           )}
-          {!observing && saveStatus === "error" && (
+          {saveStatus === "error" && (
             <span className="flex items-center gap-1 text-sm text-destructive">
               <AlertCircle className="h-4 w-4" />
               Error saving
             </span>
           )}
-          {!observing && onExportYaml && (
+          {onExportYaml && (
             <Button variant="outline" size="sm" onClick={onExportYaml}>
               <Download className="h-4 w-4 mr-2" />
               Export YAML
             </Button>
           )}
-          {!observing && (
-            <Button size="sm" onClick={handleSave} disabled={isSaving || !name.trim()}>
-              <Save className="h-4 w-4 mr-2" />
-              {isSaving ? "Saving..." : "Save"}
-            </Button>
-          )}
+          <Button size="sm" onClick={handleSave} disabled={isSaving || !name.trim()}>
+            <Save className="h-4 w-4 mr-2" />
+            {isSaving ? "Saving..." : "Save"}
+          </Button>
         </div>
       </div>
 
       {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar - Hat palette (hidden during observation) */}
-        {!observing && <HatPalette />}
+        {/* Left sidebar - Hat palette */}
+        <HatPalette />
 
         {/* Canvas */}
-        <div ref={reactFlowWrapper} className="flex-1" onDrop={observing ? undefined : onDrop} onDragOver={observing ? undefined : onDragOver}>
+        <div ref={reactFlowWrapper} className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
           <ReactFlow
-            nodes={displayNodes}
-            edges={displayEdges}
-            onNodesChange={observing ? undefined : onNodesChange}
-            onEdgesChange={observing ? undefined : onEdgesChange}
-            onConnect={observing ? undefined : onConnect}
-            onNodesDelete={observing ? undefined : handleNodesDelete}
-            deleteKeyCode={observing ? [] : ["Backspace", "Delete"]}
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodesDelete={handleNodesDelete}
+            deleteKeyCode={["Backspace", "Delete"]}
             nodeTypes={nodeTypes}
             fitView
             minZoom={0.1}
@@ -506,14 +427,12 @@ function CollectionBuilderInner({
           </ReactFlow>
         </div>
 
-        {/* Right sidebar - Properties panel (hidden during observation) */}
-        {!observing && (
-          <PropertiesPanel
-            selectedNode={selectedNode}
-            onUpdateNode={handleUpdateNode}
-            onDeleteNode={handleDeleteNode}
-          />
-        )}
+        {/* Right sidebar - Properties panel */}
+        <PropertiesPanel
+          selectedNode={selectedNode}
+          onUpdateNode={handleUpdateNode}
+          onDeleteNode={handleDeleteNode}
+        />
       </div>
     </div>
   );

@@ -14,15 +14,14 @@
 import { WebSocket } from "ws";
 import { LogEntry } from "../runner/LogStream";
 import { TaskLogRepository } from "../repositories/TaskLogRepository";
-import { RalphEvent } from "../runner/RalphEventParser";
 
 /**
  * Message sent to WebSocket clients
  */
 export interface LogMessage {
-  type: "log" | "status" | "error" | "event";
+  type: "log" | "status" | "error";
   taskId: string;
-  data: LogEntry | { status: string } | { error: string } | RalphEvent;
+  data: LogEntry | { status: string } | { error: string };
   timestamp: string;
 }
 
@@ -263,30 +262,6 @@ export class LogBroadcaster {
     }
   }
 
-  /**
-   * Broadcast a Ralph orchestrator event to all clients subscribed to a task.
-   * Events are parsed from stdout lines that match the JSONL event format.
-   */
-  broadcastEvent(taskId: string, event: RalphEvent): void {
-    const subscribers = this.taskSubscribers.get(taskId);
-    if (!subscribers || subscribers.size === 0) return;
-
-    const message: LogMessage = {
-      type: "event",
-      taskId,
-      data: event,
-      timestamp: new Date().toISOString(),
-    };
-
-    const json = JSON.stringify(message);
-
-    for (const clientId of subscribers) {
-      const client = this.clients.get(clientId);
-      if (client && client.socket.readyState === WebSocket.OPEN) {
-        client.socket.send(json);
-      }
-    }
-  }
 
   /**
    * Send a message to a specific client

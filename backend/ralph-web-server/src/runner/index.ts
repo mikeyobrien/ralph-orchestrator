@@ -32,5 +32,3 @@ export { createRalphTaskHandler } from "./RalphTaskHandler";
 export type { RalphTaskPayload, RalphTaskHandlerOptions } from "./RalphTaskHandler";
 
 // Event parsing (detects Ralph orchestrator events from stdout)
-export { RalphEventParser } from "./RalphEventParser";
-export type { RalphEvent, EventCallback } from "./RalphEventParser";

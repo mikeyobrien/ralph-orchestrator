@@ -16,7 +16,6 @@ import { BLUEPRINTS, type Blueprint } from "@/components/builder/blueprints";
 import { RunPromptDialog } from "@/components/builder/RunPromptDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useObservationStore } from "@/stores/observationStore";
 import type { Edge, Node } from "@xyflow/react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -402,11 +401,9 @@ export function BuilderPage() {
   }, [selectedId, exportYamlQuery, name]);
 
   // ── Run / Stop loop from the Builder ──────────────────────────────────
-  const observing = useObservationStore((s) => s.active);
-  const startObserving = useObservationStore((s) => s.startObserving);
-  const stopObserving = useObservationStore((s) => s.stopObserving);
-
-  const setHatActive = useObservationStore((s) => s.setHatActive);
+  // The dashboard does not render live loop state under the v3 autoloop
+  // engine, so a started loop is followed in the terminal, not here.
+  const [loopStarted, setLoopStarted] = useState(false);
 
   const [showRunPrompt, setShowRunPrompt] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
@@ -418,28 +415,23 @@ export function BuilderPage() {
     setShowRunPrompt(false);
     setRunError(null);
     try {
-      const result = await collectionRunMutation.mutateAsync({ id: selectedId, prompt });
-      startObserving(selectedId);
-      // Immediately highlight the entry hat so the user sees feedback
-      // before the first WebSocket event arrives (timing-race fix).
-      if (result.startingHat) {
-        setHatActive(result.startingHat);
-      }
+      await collectionRunMutation.mutateAsync({ id: selectedId, prompt });
+      setLoopStarted(true);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to start loop";
       setRunError(message);
     }
-  }, [selectedId, collectionRunMutation, startObserving, setHatActive]);
+  }, [selectedId, collectionRunMutation]);
 
   const handleStop = useCallback(async () => {
-    stopObserving();
+    setLoopStarted(false);
     // loop.stop reads the PID from .ralph/loop.lock and kills the process.
     try {
       await stopLoopMutation.mutateAsync({ id: "primary" });
     } catch {
       // Best effort — loop may have already terminated.
     }
-  }, [stopObserving, stopLoopMutation]);
+  }, [stopLoopMutation]);
 
   // Sync name/description when collection loads. Only fire when we don't yet
   // have the collection's name populated (avoids flipping dirty on every render).
@@ -458,7 +450,7 @@ export function BuilderPage() {
       {/* Page header */}
       <header className="px-6 py-4 border-b flex items-center justify-between">
         <div className="flex items-center gap-4">
-          {viewMode !== "list" && !observing && (
+          {viewMode !== "list" && !loopStarted && (
             <Button variant="ghost" size="sm" onClick={handleBack}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
@@ -471,15 +463,15 @@ export function BuilderPage() {
             <p className="text-muted-foreground text-sm">
               {viewMode === "list"
                 ? "Create visual workflows for hat collections"
-                : observing
-                  ? "Observing live loop execution"
+                : loopStarted
+                  ? "Loop running"
                   : "Drag hats from the palette and connect them"}
             </p>
           </div>
         </div>
         {viewMode !== "list" && (
           <div className="flex items-center gap-2">
-            {observing ? (
+            {loopStarted ? (
               <Button variant="destructive" size="sm" onClick={handleStop}>
                 <Square className="h-4 w-4 mr-2" />
                 Stop
@@ -498,6 +490,17 @@ export function BuilderPage() {
           </div>
         )}
       </header>
+
+      {/* Live progress is not rendered under v3 */}
+      {loopStarted && (
+        <div className="mx-6 mt-3 flex items-center gap-2 p-3 rounded-md bg-muted text-muted-foreground text-sm">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          <span className="flex-1">
+            Loop started. The dashboard does not show live progress under the v3 engine; follow it
+            with <code>ralph loops</code> or the terminal UI.
+          </span>
+        </div>
+      )}
 
       {/* Run error banner */}
       {runError && (

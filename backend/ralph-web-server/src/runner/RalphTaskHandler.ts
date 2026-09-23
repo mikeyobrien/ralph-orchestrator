@@ -19,7 +19,6 @@ import { QueuedTask, TaskExecutionContext, TaskHandler } from "../queue";
 import { RalphRunner, RalphRunnerOptions, RunnerResult } from "./RalphRunner";
 import { getLogBroadcaster } from "../api/LogBroadcaster";
 import { RunnerState } from "./RunnerState";
-import { RalphEventParser } from "./RalphEventParser";
 
 /**
  * Payload expected by the ralph task handler
@@ -79,18 +78,9 @@ export function createRalphTaskHandler(
       taskId: payload.dbTaskId,
     });
 
-    // Create event parser to detect Ralph events from stdout
-    const eventParser = new RalphEventParser((event) => {
-      broadcaster.broadcastEvent(broadcastId, event);
-    });
-
     // Wire output events to LogBroadcaster
     runner.on("output", (entry) => {
-      // Broadcast the log entry to clients
       broadcaster.broadcast(broadcastId, entry);
-
-      // Also check if this line is an event and broadcast if so
-      eventParser.parseLine(entry.line);
     });
 
     // Wire state changes to LogBroadcaster
