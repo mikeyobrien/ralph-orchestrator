@@ -476,8 +476,11 @@ fn configure_bounded_command(_command: &mut Command) {}
 #[cfg(unix)]
 fn terminate_bounded_child(child: &mut std::process::Child) -> std::io::Result<()> {
     let process_group = format!("-{}", child.id());
+    // `--` is required: procps-ng 4 `kill` exits 0 on `-KILL -<pgid>` without
+    // signalling the group, which left the timed-out child running and the
+    // harness blocked in `wait` forever.
     match Command::new("kill")
-        .args(["-KILL", &process_group])
+        .args(["-KILL", "--", &process_group])
         .status()
     {
         Ok(status) if status.success() => Ok(()),
